@@ -36,6 +36,8 @@
     "lint:all": "bun run --parallel lint lint:ui",
     "check": "bun run lint:all && bun run typecheck:all && bun run test:all",
     "smoke": "bash scripts/smoke.sh",
+    "harness:check": "bun run scripts/harness/check.ts",
+    "harness:snapshot": "bun run scripts/harness/snapshot.ts",
     "build": "bun run build:ui && bun run build:binary",
     "build:binary": "bun run scripts/build-binary.ts --target native --outfile dist/wisp",
     "build:linux": "bun run build:ui && bun run scripts/build-binary.ts --target linux-x64 --outfile dist/wisp-linux-x64",

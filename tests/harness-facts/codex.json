@@ -1,0 +1,127 @@
+{
+  "harness": "codex",
+  "bin": "codex",
+  "surfaces": {
+    "effortLevels": {
+      "cost": "free",
+      "verifiedAgainst": "0.153.4",
+      "source": "union of supported_reasoning_levels across 'codex debug models'",
+      "note": "codex's effort enum is per-model; this union is what the picker may offer",
+      "lists": {
+        "observed": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "ultra",
+          "xhigh"
+        ]
+      }
+    },
+    "fixtures": {
+      "cost": "live",
+      "verifiedAgainst": "0.149.0",
+      "source": "captured transcripts under tests/fixtures/",
+      "note": "the pin is the OLDEST capture: staleness is a weakest-link property",
+      "lists": {
+        "files": [
+          "codex-failed-turn.jsonl",
+          "codex-first-turn.jsonl",
+          "codex-resume-turn.jsonl",
+          "codex-subagent.jsonl"
+        ]
+      }
+    },
+    "flags": {
+      "cost": "free",
+      "verifiedAgainst": "0.153.4",
+      "source": "flag tokens parsed out of 'codex exec --json --dangerously-bypass-approvals-and-sandbox --help'",
+      "lists": {
+        "values": [
+          "--add-dir",
+          "--approve-for-me",
+          "--cd",
+          "--color",
+          "--config",
+          "--dangerously-bypass-approvals-and-sandbox",
+          "--dangerously-bypass-hook-trust",
+          "--disable",
+          "--enable",
+          "--ephemeral",
+          "--help",
+          "--ignore-rules",
+          "--ignore-user-config",
+          "--image",
+          "--json",
+          "--last",
+          "--local-provider",
+          "--model",
+          "--oss",
+          "--output-last-message",
+          "--output-schema",
+          "--profile",
+          "--sandbox",
+          "--skip-git-repo-check",
+          "--strict-config",
+          "--thread-source",
+          "--version",
+          "-C",
+          "-V",
+          "-c",
+          "-h",
+          "-i",
+          "-m",
+          "-o",
+          "-p",
+          "-s"
+        ]
+      }
+    },
+    "markerPresence": {
+      "cost": "free",
+      "verifiedAgainst": "0.153.4",
+      "source": "case-insensitive fixed-string search of the installed codex binary",
+      "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
+      "lists": {
+        "missing": [],
+        "present": [
+          "out of credits",
+          "quota exceeded",
+          "rate limit",
+          "rate_limit",
+          "spend cap",
+          "usage limit",
+          "usage not included"
+        ]
+      }
+    },
+    "models": {
+      "cost": "free",
+      "verifiedAgainst": "0.153.4",
+      "source": "'codex debug models' catalog, in codex's own priority order",
+      "lists": {
+        "ids": [
+          "gpt-5.4-mini",
+          "gpt-5.5",
+          "gpt-5.6-luna",
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-6-astra"
+        ]
+      },
+      "scalars": {
+        "default": "gpt-6-astra"
+      }
+    },
+    "steering": {
+      "cost": "live",
+      "verifiedAgainst": "0.149.0",
+      "source": "app-server turn/steer during an active turn"
+    },
+    "usageKeys": {
+      "cost": "live",
+      "verifiedAgainst": "0.153.4",
+      "source": "turn.completed's raw token keys, from a real turn"
+    }
+  }
+}

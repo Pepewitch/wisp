@@ -185,8 +185,12 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     model: ["-m", "{model}"],
     effort: ["-c", "model_reasoning_effort={effort}"],
     // codex 0.153.4 — generated app-server schemas accept a non-empty effort
-    // string and the current catalog includes xhigh/max models.
-    effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    // string and the current catalog includes xhigh/max models. `ultra` was
+    // added on the evidence of `codex debug models` itself: gpt-6-astra lists
+    // it in supported_reasoning_levels, so the picker was hiding a level codex
+    // accepts. Found by `bun run harness:snapshot`; none/minimal stay because
+    // the schema takes any non-empty string — the menu offers, it does not force.
+    effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
     // spike-verified live (codex-cli 0.149.0): multi-file is one -i with all
     // paths, and the trailing "--" is MANDATORY — without it the variadic -i
     // eats the prompt positional and codex exits 1 ("No prompt provided")

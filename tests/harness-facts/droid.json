@@ -1,0 +1,179 @@
+{
+  "harness": "droid",
+  "bin": "droid",
+  "surfaces": {
+    "effortLevels": {
+      "cost": "free",
+      "verifiedAgainst": "0.213.0",
+      "source": "droid's own rejection of an invalid reasoning effort",
+      "lists": {
+        "observed": [
+          "dynamic",
+          "high",
+          "low",
+          "max",
+          "medium",
+          "minimal",
+          "none",
+          "off",
+          "xhigh"
+        ]
+      }
+    },
+    "fixtures": {
+      "cost": "live",
+      "verifiedAgainst": "0.202.0",
+      "source": "captured transcripts under tests/fixtures/",
+      "note": "the pin is the OLDEST capture: staleness is a weakest-link property",
+      "lists": {
+        "files": [
+          "droid-init.jsonl",
+          "droid-subagent.jsonl",
+          "droid-transient-provider-error.jsonl",
+          "droid-unknown-model.stderr.txt"
+        ]
+      }
+    },
+    "flags": {
+      "cost": "free",
+      "verifiedAgainst": "0.213.0",
+      "source": "flag tokens parsed out of 'droid exec -o stream-json --skip-permissions-unsafe --help'",
+      "lists": {
+        "values": [
+          "--add-tools",
+          "--append-system-prompt",
+          "--append-system-prompt-file",
+          "--auto",
+          "--cwd",
+          "--disable-builtin-skills",
+          "--file",
+          "--force",
+          "--fork",
+          "--help",
+          "--input-format",
+          "--list-tools",
+          "--log-group-id",
+          "--mission",
+          "--model",
+          "--only-tools",
+          "--output-format",
+          "--reasoning-effort",
+          "--remove-tools",
+          "--rm",
+          "--session-id",
+          "--skip-permissions-unsafe",
+          "--spec-model",
+          "--spec-reasoning-effort",
+          "--tag",
+          "--use-spec",
+          "--validator-model",
+          "--validator-reasoning-effort",
+          "--worker-model",
+          "--worker-reasoning-effort",
+          "--worktree",
+          "--worktree-dir",
+          "-c",
+          "-f",
+          "-h",
+          "-m",
+          "-o",
+          "-r",
+          "-s",
+          "-v",
+          "-w"
+        ]
+      }
+    },
+    "markerPresence": {
+      "cost": "free",
+      "verifiedAgainst": "0.213.0",
+      "source": "case-insensitive fixed-string search of the installed droid binary",
+      "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
+      "lists": {
+        "missing": [
+          "insufficient credits",
+          "out of credits"
+        ],
+        "present": [
+          "floating point nan",
+          "not-a-number",
+          "rate limit",
+          "unrecoverable 402",
+          "usage limit"
+        ]
+      }
+    },
+    "models": {
+      "cost": "free",
+      "verifiedAgainst": "0.213.0",
+      "source": "'droid exec --help' default plus droid's invalid-model error text",
+      "lists": {
+        "ids": [
+          "auto",
+          "claude-fable-5",
+          "claude-fable-5.1",
+          "claude-haiku-4-5-20251001",
+          "claude-opus-4-5-20251101",
+          "claude-opus-4-6",
+          "claude-opus-4-7",
+          "claude-opus-4-8",
+          "claude-opus-4-8-fast",
+          "claude-opus-5",
+          "claude-opus-5-fast",
+          "claude-sonnet-4-5-20250929",
+          "claude-sonnet-4-6",
+          "claude-sonnet-5",
+          "deepseek-v4-flash-0731",
+          "deepseek-v4-pro",
+          "gemini-3-flash-preview",
+          "gemini-3.1-pro-preview",
+          "gemini-3.5-flash",
+          "gemini-3.6-flash",
+          "gemini-3.7-flash",
+          "gemini-3.8-flash",
+          "glm-5.2",
+          "glm-5.2-fast",
+          "glm-5.3",
+          "glm-5.3-flash",
+          "gpt-5.2",
+          "gpt-5.3-codex",
+          "gpt-5.3-codex-fast",
+          "gpt-5.4",
+          "gpt-5.4-fast",
+          "gpt-5.4-mini",
+          "gpt-5.4-mini-fast",
+          "gpt-5.5",
+          "gpt-5.5-fast",
+          "gpt-5.5-pro",
+          "gpt-5.6-luna",
+          "gpt-5.6-sol",
+          "gpt-5.6-sol-fast",
+          "gpt-5.6-terra",
+          "gpt-6-astra",
+          "grok-4.5",
+          "grok-4.6",
+          "inkling",
+          "kimi-k2.6",
+          "kimi-k2.7-code",
+          "kimi-k3",
+          "minimax-m2.7",
+          "minimax-m3",
+          "nemotron-3-ultra"
+        ]
+      },
+      "scalars": {
+        "default": "gpt-5.6-sol"
+      }
+    },
+    "steering": {
+      "cost": "live",
+      "verifiedAgainst": "0.205.0",
+      "source": "droid's Factory JSON-RPC queuePlacement steer, live-probed mid-turn"
+    },
+    "usageKeys": {
+      "cost": "live",
+      "verifiedAgainst": "0.213.0",
+      "source": "the completion event's raw token keys, from a real turn"
+    }
+  }
+}

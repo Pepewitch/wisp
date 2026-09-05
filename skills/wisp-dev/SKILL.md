@@ -36,7 +36,7 @@ Wisp is one Bun/TypeScript package with a daemon at the center:
 | Change | Read first | Then inspect |
 | --- | --- | --- |
 | Add or change a harness or capability | [Adding a harness](../../docs/ADDING-A-HARNESS.md) | `src/adapters/`, captured fixtures, adapter/API tests |
-| Refresh a builtin after its CLI or model lineup changes | [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, its version pins, fixtures, and narrow contract tests |
+| Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `tests/harness-facts/`, fixtures, and narrow contract tests |
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
 | Change React UI, styling, responsive behavior, or frontend data flow | [Frontend conventions](references/frontend.md) | `web/ui/README.md`, the owning component/hook, and its tests |
 | Prepare or publish a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, release notes, evaluator guide, and both repository diffs |
