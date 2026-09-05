@@ -152,6 +152,20 @@ export interface SendResponse extends ApiTask {
  */
 export type WorktreeReason = string | null;
 
+export type InstallMethod = "homebrew" | "managed-linux" | "unsupported"
+export type UpdateState = "up-to-date" | "available" | "installing" | "restarting" | "failed" | "unavailable"
+
+/** GET /api/update and the accepted POST /api/update response. */
+export interface UpdateStatus {
+  currentVersion: string
+  latestVersion: string | null
+  state: UpdateState
+  installMethod: InstallMethod
+  canAutoUpdate: boolean
+  message: string | null
+  checkedAt: string | null
+}
+
 /** GET /api/tasks/:id — the list row plus turns and a diffstat. */
 export interface TaskDetail extends ApiTask {
   turns: Turn[];

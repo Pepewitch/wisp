@@ -25,6 +25,7 @@ import {
   useCreateTask,
   useFreshSession,
   useInterruptTask,
+  useInstallUpdate,
   useMintSession,
   usePushTask,
   useRenameTask,
@@ -71,6 +72,27 @@ beforeEach(() => {
 })
 
 describe("task writes", () => {
+  it("starts the selected update and stores its progress response", async () => {
+    const status = {
+      currentVersion: "0.4.0-alpha.6",
+      latestVersion: "0.4.0-alpha.7",
+      state: "installing",
+    }
+    mocks.api.mockResolvedValue(status)
+    const { client, wrapper } = harness()
+    const { result } = renderHook(() => useInstallUpdate(), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync("0.4.0-alpha.7")
+    })
+
+    expect(mocks.api).toHaveBeenCalledWith("/api/update", {
+      method: "POST",
+      body: { version: "0.4.0-alpha.7" },
+    })
+    expect(client.getQueryData(qk.update)).toEqual(status)
+  })
+
   it("creating a task posts the composer's body and stales the task list", async () => {
     mocks.api.mockResolvedValue({ id: "t5qmha" })
     const { spy, wrapper } = harness()

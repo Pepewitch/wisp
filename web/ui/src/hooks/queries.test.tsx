@@ -15,6 +15,7 @@ import {
   pullRequestPollInterval,
   usePullRequestOverview,
   usePullRequestStatus,
+  useUpdateStatus,
 } from "./queries"
 
 const PR: PullRequestInfo = {
@@ -89,5 +90,19 @@ describe("usePullRequestOverview", () => {
 
   it("refreshes at the bounded one-minute overview interval", () => {
     expect(PULL_REQUEST_OVERVIEW_POLL_MS).toBe(60_000)
+  })
+})
+
+describe("useUpdateStatus", () => {
+  it("reads the daemon-cached update endpoint", async () => {
+    mocks.api.mockReset()
+    mocks.api.mockResolvedValue({
+      currentVersion: "0.4.0-alpha.6",
+      latestVersion: null,
+      state: "up-to-date",
+    })
+    const { wrapper } = harness()
+    renderHook(() => useUpdateStatus(), { wrapper })
+    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/api/update"))
   })
 })

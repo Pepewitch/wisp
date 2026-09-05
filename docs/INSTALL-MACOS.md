@@ -99,7 +99,18 @@ to the new URL. Keep `host` set to `127.0.0.1`.
 
 ## Upgrade
 
-Homebrew owns updates:
+The web header shows the running daemon version. When GitHub has a newer
+published Wisp release, a Homebrew installation running under its registered
+launchd service shows an **Update** button. Wisp asks Homebrew to refresh and
+upgrade the Formula, verifies the newly installed binary's version, exits, and
+lets launchd start the upgraded binary. The browser reloads only after the new
+daemon answers its health check.
+
+The restart is immediate. Open web terminal shells stop, and an in-progress
+task setup may need to be retried. Running turns retain their durable logs and
+are reconciled by the new daemon.
+
+The command-line fallback is:
 
 ```sh
 brew update
@@ -112,6 +123,14 @@ wisp doctor --harness droid
 Wisp must not overwrite Homebrew's binary with a self-updater. An upgrade
 changes the managed executable and preserves `~/.wisp`, repositories, task
 history, branches, worktrees, and user changes.
+
+The button stays informational for a Homebrew binary started manually rather
+than through `brew services`; Wisp cannot promise that such a process will
+restart. Start the managed service before using automatic updates:
+
+```sh
+brew services restart wisp
+```
 
 An earlier alpha-to-alpha upgrade preserved config, history, branches,
 worktrees, and repository work in one test environment. That is not broad

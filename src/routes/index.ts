@@ -15,6 +15,7 @@ import { ModelProbeCache, type ModelProbeCacheOptions } from "../model-probes";
 import { TaskProbeCache, type TaskProbeCacheOptions } from "../probes";
 import { PullRequestCache, type PullRequestCacheOptions } from "../pull-requests";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "../skills";
+import { UpdateManager } from "../update";
 import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
 import { err, json } from "./http";
@@ -28,12 +29,14 @@ import {
 } from "./suffix-prompts";
 import { attachmentRoute, taskMessageRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
+import { updateRoute } from "./update";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
 const standaloneSkillCaches = new WeakMap<Record<string, AdapterDef>, TaskSkillCache>();
 const standaloneCompactors = new WeakMap<Record<string, AdapterDef>, TaskCompactor>();
 const standalonePullRequestCaches = new WeakMap<WispConfig, PullRequestCache>();
+const standaloneUpdateManagers = new WeakMap<WispConfig, UpdateManager>();
 
 function modelCacheFor(adapters: Record<string, AdapterDef>, options?: ModelProbeCacheOptions): ModelProbeCache {
   const existing = standaloneModelCaches.get(adapters);
@@ -73,6 +76,14 @@ function pullRequestCacheFor(cfg: WispConfig, options?: PullRequestCacheOptions)
   const cache = new PullRequestCache(options);
   standalonePullRequestCaches.set(cfg, cache);
   return cache;
+}
+
+function updateManagerFor(cfg: WispConfig): UpdateManager {
+  const existing = standaloneUpdateManagers.get(cfg);
+  if (existing) return existing;
+  const manager = new UpdateManager();
+  standaloneUpdateManagers.set(cfg, manager);
+  return manager;
 }
 
 function taskRoutes(
@@ -140,6 +151,7 @@ export function route(
   skillCache?: TaskSkillCache,
   compactor?: TaskCompactor,
   pullRequestCache?: PullRequestCache,
+  updateManager?: UpdateManager,
 ): Response | Promise<Response> {
   const m = req.method;
   const models = modelCache ?? modelCacheFor(adapters);
@@ -147,6 +159,10 @@ export function route(
   const skills = skillCache ?? skillCacheFor(adapters);
   const compacts = compactor ?? compactorFor(adapters);
   const pullRequests = pullRequestCache ?? pullRequestCacheFor(cfg);
+  const updates = updateManager ?? updateManagerFor(cfg);
+
+  const updateResponse = updateRoute(req, path, m, updates);
+  if (updateResponse !== null) return updateResponse;
 
   const taskResponse = taskRoutes(req, url, path, m, cfg, adapters, probes, skills, compacts, pullRequests);
   if (taskResponse !== null) return taskResponse;

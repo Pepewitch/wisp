@@ -14,6 +14,7 @@ import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { TerminalSection } from "@/components/terminal-pane"
+import { WispUpdateControl } from "@/components/update-control"
 import {
   useHarnesses,
   usePullRequestOverview,
@@ -23,7 +24,9 @@ import {
   useTaskDetail,
   useTaskSkills,
   useTasks,
+  useUpdateStatus,
 } from "@/hooks/queries"
+import { useInstallUpdate } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
@@ -33,6 +36,7 @@ import { groupTasksByProject } from "@/lib/projects"
 import { qk, queryClient } from "@/lib/query"
 import { connectEventsBridge } from "@/lib/sse"
 import type { ApiTask, HarnessInfo, RepoInfo, StatusEntry, TaskSkills, Turn } from "@/lib/types"
+import { waitForUpdatedDaemon } from "@/lib/update"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 
@@ -63,9 +67,24 @@ function MainView() {
   const pullRequestQuery = usePullRequestStatus(selectedId)
   const pullRequestOverviewQuery = usePullRequestOverview()
   const harnessesQuery = useHarnesses(true)
+  const updateQuery = useUpdateStatus()
+  const installUpdate = useInstallUpdate()
+  const [updateError, setUpdateError] = useState<string | null>(null)
 
-  // ONE EventSource owns Wisp state invalidation. Provider-owned PR status is
-  // the only polling exception; both queries share one daemon cache.
+  const updateWisp = async (version: string) => {
+    setUpdateError(null)
+    try {
+      await installUpdate.mutateAsync(version)
+      await waitForUpdatedDaemon(version)
+      window.location.reload()
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : String(error))
+      void queryClient.invalidateQueries({ queryKey: qk.update })
+    }
+  }
+
+  // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
+  // daemon-cached release status are the only polling exceptions.
   useEffect(
     () =>
       connectEventsBridge({
@@ -213,6 +232,12 @@ function MainView() {
       <header className="flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3">
         <WispMark className="size-[17px]" />
         <span className="text-[13px] font-semibold tracking-[-0.005em]">Wisp</span>
+        <WispUpdateControl
+          status={updateQuery.data}
+          updating={installUpdate.isPending}
+          error={updateError}
+          onUpdate={(version) => void updateWisp(version)}
+        />
         <span className="flex-1" />
         <span className="ml-1">
           <ConnIndicator />

@@ -13,6 +13,7 @@ import { err, json } from "./routes/http";
 import { getTask } from "./store";
 import { MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
+import { UpdateManager } from "./update";
 // The web app's committed single-file bundle (skills/wisp-dev/references/frontend.md: never
 // hand-edit ui-dist; regenerate with `bun run build:ui`) — committed so this
 // import never breaks `bun test` on a fresh checkout. Everything it needs,
@@ -137,6 +138,8 @@ export interface ServeOptions {
   pullRequestRun?: PullRequestCacheOptions["run"];
   pullRequestTimeoutMs?: number;
   pullRequestCacheTtlMs?: number;
+  /** Update-route injection. Production uses the GitHub release and platform installers. */
+  updateManager?: UpdateManager;
 }
 
 async function occupiedListener(host: string, port: number): Promise<string> {
@@ -212,6 +215,7 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     timeoutMs: options.pullRequestTimeoutMs,
     ttlMs: options.pullRequestCacheTtlMs,
   });
+  const updates = options.updateManager ?? new UpdateManager();
   // P5b loud fallback: only here does the merged adapter set exist to check
   // harnessDefaults against — warn at every boot, never crash
   checkHarnessDefaults(cfg, adapters);
@@ -273,7 +277,7 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
         }
         return Promise.resolve()
           .then(() =>
-            route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests),
+            route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates),
           )
           .catch((e) => err(String(e instanceof Error ? e.message : e), 500));
       },

@@ -61,8 +61,8 @@ src/
 ```
 
 Data flow: TanStack Query for reads, a bridge from the daemon's `/api/events`
-SSE stream for invalidation, and `useLogStream` for the live turn. There is no
-polling anywhere.
+SSE stream for invalidation, and `useLogStream` for the live turn. Provider PR
+state and the daemon-cached release status are the only polling exceptions.
 
 Writes use the centralized TanStack mutation hooks in `hooks/mutations.ts`;
 feature hooks add only their local confirmation or refusal state. Keep that
