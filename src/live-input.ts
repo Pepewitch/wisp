@@ -62,13 +62,32 @@ export async function closeLiveInput(taskId: string, turnId: number): Promise<vo
 
 export { liveCommand };
 
+export type LiveStage = "live input setup" | "live output pump";
+
+/**
+ * Which half of a live transport broke. Setup runs once while the turn is
+ * starting; the pump runs for the whole turn, so a pump failure reported as
+ * "setup" sends whoever reads it to the wrong end of the pipe.
+ */
+export class LiveTransportError extends Error {
+  constructor(readonly stage: LiveStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
+function staged<T>(stage: LiveStage, work: Promise<T>): Promise<T> {
+  return work.catch((error) => {
+    throw error instanceof LiveTransportError ? error : new LiveTransportError(stage, error);
+  });
+}
+
 export function configureLiveTurn(options: ConfigureLiveTurnOptions): Promise<void> {
   switch (options.def.liveInput) {
     case "claude-stream-json":
       if (!options.claudeStrategy) throw new Error("Claude live input strategy is unavailable");
       return Promise.all([
-        configureClaude(options, options.claudeStrategy),
-        pumpClaude(options.child, options.task.id, options.turnId, options.outFd),
+        staged("live input setup", configureClaude(options, options.claudeStrategy)),
+        staged("live output pump", pumpClaude(options.child, options.task.id, options.turnId, options.outFd)),
       ]).then(() => {});
     case "droid-jsonrpc":
       return configureDroid(options);
@@ -152,7 +171,7 @@ async function pumpClaude(
   if (!stdout || typeof stdout === "number") return;
   const reader = (stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
-  const frames = new JsonLineBuffer();
+  const frames = new JsonLineBuffer({ onDrop: frameDropNote(outFd) });
   const consume = (line: string): void => {
     try {
       if ((JSON.parse(line) as { type?: unknown }).type === "result") {
@@ -173,6 +192,16 @@ async function pumpClaude(
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * An unreadable frame is visible in the turn log rather than fatal to the turn:
+ * the harness keeps running and only that one notification is lost.
+ */
+function frameDropNote(outFd: number): (chars: number) => void {
+  return (chars) => {
+    writeSync(outFd, `· dropped an oversized live protocol frame (${chars} characters); the turn continues\n`);
+  };
 }
 
 function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
@@ -221,8 +250,8 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     close: () => driver.close(),
   });
   return Promise.all([
-    driver.ready,
-    pumpJsonLines(options.child, options.outFd, driver, "Droid closed the JSON-RPC channel"),
+    staged("live input setup", driver.ready),
+    staged("live output pump", pumpJsonLines(options.child, options.outFd, driver, "Droid closed the JSON-RPC channel")),
   ]).then(() => {});
 }
 
@@ -262,8 +291,8 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     close: () => driver.close(),
   });
   return Promise.all([
-    driver.ready,
-    pumpJsonLines(options.child, options.outFd, driver, "Codex closed the app-server channel"),
+    staged("live input setup", driver.ready),
+    staged("live output pump", pumpJsonLines(options.child, options.outFd, driver, "Codex closed the app-server channel")),
   ]).then(() => {});
 }
 
@@ -288,7 +317,7 @@ async function pumpJsonLines(
   if (!stdout || typeof stdout === "number") return;
   const reader = (stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
-  const frames = new JsonLineBuffer();
+  const frames = new JsonLineBuffer({ onDrop: frameDropNote(outFd) });
   const consume = (line: string): void => {
     if (!line.trim()) return;
     try {

@@ -1,3 +1,4 @@
+import { elideMiddle } from "../../text";
 import type { AdapterDef } from "../types";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
 
@@ -19,6 +20,17 @@ interface CodexLiveOptions {
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
+}
+
+/**
+ * Codex inlines a command's entire output in the item that completes it, so a
+ * single grep can carry megabytes into the turn log and the activity stream.
+ * The ends are what a reader needs; the middle is named, not silently cut.
+ */
+const MAX_AGGREGATED_OUTPUT_CHARS = 32_000;
+
+function boundedOutput(value: unknown): unknown {
+  return typeof value === "string" ? elideMiddle(value, MAX_AGGREGATED_OUTPUT_CHARS) : value;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -53,7 +65,7 @@ function snakeItem(value: unknown): Record<string, unknown> {
         type: "command_execution",
         command: item.command,
         status: item.status,
-        aggregated_output: item.aggregatedOutput,
+        aggregated_output: boundedOutput(item.aggregatedOutput),
         exit_code: item.exitCode,
         duration_ms: item.durationMs,
       };
