@@ -2,13 +2,14 @@ import { useEffect, useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
 import { Button, Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
-import { useCopyPreview, useSaveProject } from "@/hooks/mutations"
+import { useCopyPreview, useRemoveProject, useSaveProject } from "@/hooks/mutations"
 import { ApiError, failureReason } from "@/lib/api"
 import type { RepoInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
- * Per-project settings: the two worktree hooks and the file-copy patterns.
+ * Per-project settings: the two worktree hooks, the file-copy patterns, and
+ * unregistering a configured project.
  *
  * Everything here applies to WORKTREE tasks only, and the modal says so once
  * at the top rather than three times. A local task runs in the checkout the
@@ -18,6 +19,10 @@ import { cn } from "@/lib/utils"
  * Saving sends only what this modal owns. The API treats every field as a
  * patch, so the project's display name — which this modal does not edit — is
  * preserved rather than blanked.
+ *
+ * Remove from Wisp is the same verb as `wisp project rm`: it drops the config
+ * entry, leaves task history, and never touches the directory on disk. A
+ * history-only repo has no entry to drop, so the control is absent.
  */
 export function ProjectSettingsDialog({
   project,
@@ -77,9 +82,18 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
   const [setupScript, setSetupScript] = useState(project.setupScript)
   const [archiveScript, setArchiveScript] = useState(project.archiveScript)
   const [copyText, setCopyText] = useState(project.copyFiles.join("\n"))
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   const saveProject = useSaveProject()
-  const error = saveProject.error ? failureReason(saveProject.error) : null
+  const removeProject = useRemoveProject()
+  const error = confirmingRemove
+    ? removeProject.error
+      ? failureReason(removeProject.error)
+      : null
+    : saveProject.error
+      ? failureReason(saveProject.error)
+      : null
+  const label = project.name ?? "this project"
 
   const patterns = copyText
     .split("\n")
@@ -97,6 +111,7 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
     <form
       onSubmit={(e) => {
         e.preventDefault()
+        if (confirmingRemove) return
         save()
       }}
       className={cn("flex flex-col", dialog && "max-h-[84vh]")}
@@ -149,12 +164,53 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
       {error && <div className="shrink-0 px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-        <Button type="button" size="lg" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button type="submit" size="lg" tone="primary" disabled={saveProject.isPending}>
-          {saveProject.isPending ? "Saving…" : "Save"}
-        </Button>
+        {project.configured && !confirmingRemove && (
+          <Button type="button" size="lg" className="mr-auto" onClick={() => setConfirmingRemove(true)}>
+            Remove from Wisp
+          </Button>
+        )}
+        {confirmingRemove && (
+          <p className="mr-auto min-w-0 text-[11.5px] leading-relaxed text-muted-foreground">
+            Unregisters this project. Tasks stay; nothing on disk is deleted.
+          </p>
+        )}
+        {confirmingRemove ? (
+          <>
+            <Button
+              type="button"
+              size="lg"
+              aria-label={`Keep ${label}`}
+              onClick={() => {
+                setConfirmingRemove(false)
+                removeProject.reset()
+              }}
+            >
+              Keep
+            </Button>
+            <button
+              type="button"
+              aria-label={`Confirm remove ${label}`}
+              disabled={removeProject.isPending}
+              onClick={() => removeProject.mutate(project.path, { onSuccess: onClose })}
+              className={cn(
+                "h-8 rounded-md px-3 text-[13px] font-medium text-destructive",
+                "hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                "disabled:pointer-events-none disabled:opacity-45",
+              )}
+            >
+              {removeProject.isPending ? "Removing…" : "Remove?"}
+            </button>
+          </>
+        ) : (
+          <>
+            <Button type="button" size="lg" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" size="lg" tone="primary" disabled={saveProject.isPending}>
+              {saveProject.isPending ? "Saving…" : "Save"}
+            </Button>
+          </>
+        )}
       </div>
     </form>
   )

@@ -538,7 +538,8 @@ function WorkflowSpecimens() {
                 All three fields are worktree-only, and the modal says so once at the top rather than three times.
                 Every field is a PATCH — the display name it does not edit is preserved. The copy patterns resolve
                 against the real repo and list what they take, debounced, because a glob is only trustworthy once you
-                have seen its output.
+                have seen its output. A configured project&apos;s Remove from Wisp is a two-click confirm; a
+                history-only repo has no config entry to drop, so that control is absent.
               </p>
             </div>
           </div>
