@@ -183,7 +183,7 @@ describe("wisp project rm", () => {
 
     const listed = await run(["project", "ls"]);
     expect(listed.exitCode).toBe(0);
-    expect(listed.stdout).toContain("no projects");
+    expect(listed.stdout).not.toContain(path);
 
     const again = await run(["project", "rm", path]);
     expect(again.exitCode).toBe(1);

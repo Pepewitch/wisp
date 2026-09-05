@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
+import { FACTORY_PROTOCOL_VERSION } from "../src/probes";
 import {
   failStaleCreatingTasks,
   finalizeTurn,
@@ -643,6 +644,11 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       "droid.add_user_message",
       "droid.add_user_message",
     ]);
+    expect(FACTORY_PROTOCOL_VERSION).toBe("1.204.0");
+    expect(calls[0]).toMatchObject({
+      factoryApiVersion: "1.0.0",
+      factoryProtocolVersion: FACTORY_PROTOCOL_VERSION,
+    });
     expect(calls[0].params).toMatchObject({
       cwd: task.worktree_path,
       skipPermissionsUnsafe: false,
