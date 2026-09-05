@@ -259,6 +259,20 @@ export function useSaveProject() {
   });
 }
 
+/**
+ * DELETE /api/projects — unregister a configured project. Task history stays
+ * and nothing on disk is deleted; the call site closes the settings modal.
+ */
+export function useRemoveProject() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => api("/api/projects", { method: "DELETE", body: { path } }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+    },
+  });
+}
+
 export interface CopyPreview {
   files: string[];
   truncated: boolean;

@@ -124,7 +124,8 @@ task creation, after the repo's own `.wisp/setup.sh`), an archive script
 (teardown hook; its failure never blocks an archive), and copy globs (files
 copied from the repo into each new worktree, e.g. `.env`). `--copy` repeats
 and the flags REPLACE the stored list. Task history survives `project rm`.
-Scripts never run for `--local` tasks.
+The gear dialog's **Remove from Wisp** is that same unregister. Scripts never
+run for `--local` tasks.
 
 ## Daemon & diagnostics
 

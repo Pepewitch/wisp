@@ -170,3 +170,23 @@ describe("wisp project show / set", () => {
     }
   });
 });
+
+describe("wisp project rm", () => {
+  test("unregisters a configured project; a second rm names the path", async () => {
+    await startDaemon();
+    const path = makeProject();
+    expect((await run(["project", "add", path])).exitCode).toBe(0);
+
+    const removed = await run(["project", "rm", path]);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.stdout).toContain(`project removed: ${path}`);
+
+    const listed = await run(["project", "ls"]);
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout).toContain("no projects");
+
+    const again = await run(["project", "rm", path]);
+    expect(again.exitCode).toBe(1);
+    expect(again.stderr).toContain(`project not found in config repos: ${path}`);
+  });
+});

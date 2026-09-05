@@ -28,6 +28,7 @@ import {
   useMintSession,
   usePushTask,
   useRenameTask,
+  useRemoveProject,
   useReprobeHarnesses,
   useSaveProject,
   useSendMessage,
@@ -288,6 +289,21 @@ describe("project writes", () => {
     expect(mocks.api).toHaveBeenCalledWith("/api/projects", {
       method: "POST",
       body: { path: "/repo", setupScript: "bun install", archiveScript: "", copyFiles: [".env*"] },
+    })
+    expect(invalidated(spy)).toEqual([qk.repos])
+  })
+
+  it("removing a project stales the repo list and nothing else", async () => {
+    const { spy, wrapper } = harness()
+    const { result } = renderHook(() => useRemoveProject(), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync("/repo")
+    })
+
+    expect(mocks.api).toHaveBeenCalledWith("/api/projects", {
+      method: "DELETE",
+      body: { path: "/repo" },
     })
     expect(invalidated(spy)).toEqual([qk.repos])
   })

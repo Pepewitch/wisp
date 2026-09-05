@@ -19,5 +19,7 @@ describe("Gallery", () => {
     expect(screen.getAllByLabelText("Setup script")).toHaveLength(2)
     expect(screen.getAllByLabelText("Archive script")).toHaveLength(2)
     expect(screen.getAllByLabelText("Files to copy")).toHaveLength(2)
+    // only the configured specimen can unregister; the history-only one cannot
+    expect(screen.getAllByRole("button", { name: "Remove from Wisp" })).toHaveLength(1)
   })
 })
