@@ -34,22 +34,16 @@ TASK_ID_PATTERN = re.compile(r"t[abcdefghjkmnpqrstuvwxyz23456789]{5}")
 def validate_argv(argv: object) -> list[str]:
     if not isinstance(argv, list) or any(not isinstance(value, str) for value in argv):
         raise ValueError("Droid arguments must be strings")
-    required = ["exec", "-o", "stream-json", "--skip-permissions-unsafe"]
-    if argv[: len(required)] != required:
-        raise ValueError("inner worker accepts only Wisp's default Droid exec command")
-
-    index = len(required)
-    options: dict[str, str] = {}
-    for option in ("-s", "-m", "-r"):
-        if index < len(argv) - 1 and argv[index] == option:
-            if index + 1 >= len(argv) - 1 or not argv[index + 1] or len(argv[index + 1]) > 200:
-                raise ValueError(f"invalid {option} value")
-            options[option] = argv[index + 1]
-            index += 2
-    if index != len(argv) - 1 or not argv[-1] or len(argv[-1]) > 1_000_000:
-        raise ValueError("inner Droid command must end in exactly one prompt")
-    if options.get("-m") != EXPECTED_MODEL:
-        raise ValueError(f"inner Droid model must be {EXPECTED_MODEL}")
+    required = [
+        "exec",
+        "--skip-permissions-unsafe",
+        "--input-format",
+        "stream-jsonrpc",
+        "-o",
+        "stream-jsonrpc",
+    ]
+    if argv != required:
+        raise ValueError("inner worker accepts only Wisp's default Droid JSON-RPC command")
     return list(argv)
 
 

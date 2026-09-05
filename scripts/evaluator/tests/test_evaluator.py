@@ -317,31 +317,18 @@ class InnerWorkerTest(unittest.TestCase):
         worker = load_script("inner-worker.py")
         valid = [
             "exec",
-            "-o",
-            "stream-json",
             "--skip-permissions-unsafe",
-            "-s",
-            "session-id",
-            "-m",
-            "glm-5.2-fast",
-            "-r",
-            "medium",
-            "prompt",
+            "--input-format",
+            "stream-jsonrpc",
+            "-o",
+            "stream-jsonrpc",
         ]
         self.assertEqual(worker.validate_argv(valid), valid)
         for invalid in (
             ["doctor", "--auth"],
-            ["exec", "--cwd", "/home/inner", "prompt"],
-            ["exec", "-o", "stream-json", "--skip-permissions-unsafe", "--file", "/secret"],
-            [
-                "exec",
-                "-o",
-                "stream-json",
-                "--skip-permissions-unsafe",
-                "-m",
-                "account-default",
-                "prompt",
-            ],
+            [*valid, "--cwd", "/home/inner"],
+            ["exec", "-o", "stream-json", "--skip-permissions-unsafe", "prompt"],
+            ["exec", "--skip-permissions-unsafe", "--input-format", "stream-jsonrpc"],
         ):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ValueError):
