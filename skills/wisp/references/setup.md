@@ -47,11 +47,15 @@ harmless preferences.
 ## Files under ~/.wisp (WISP_HOME env relocates)
 
 - `config.json` — daemon config. Wrong-typed values fail at boot with a named
-  field; unknown keys warn. Keys: `port` (8710), `host` (127.0.0.1), `token`,
+  field; unknown keys warn. Keys: `instanceId` (a generated, non-secret
+  Wisp-home identity), `port` (8710), `host` (127.0.0.1), `token`,
   `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
   at-least-once, dedup on task_id+seq), `repos`, `stuckMinutes` (10),
   `logMaxBytes`, `setupTimeoutMinutes` (10), `envAllowlist`,
   `harnessDefaults`.
+- `instance-id` — the create-exclusive authority mirrored by
+  `config.json.instanceId`; it prevents simultaneous legacy migrations from
+  minting different identities. Do not edit either value independently.
 - `harnessDefaults` example — the default model/effort for new tasks;
   `--model`/`--effort` always win over it:
   `"harnessDefaults": { "claude": { "model": "claude-sonnet-5", "reasoningEffort": "medium" } }`
@@ -90,6 +94,10 @@ HttpOnly cookie. Every other API route requires
 at `/`.
 
 - `GET /api/health` — liveness
+- `GET /api/capabilities` — authenticated stable instance identity, Wisp build,
+  integer API protocol version, and implemented API feature flags. Flags mean
+  an API surface exists; runtime readiness such as automatic-update support is
+  reported by that surface's own status response.
 - `POST /api/session` — exchange the token for the browser cookie
 - `GET /api/tasks?archived=1` · `POST /api/tasks` (`{repoPath, prompt,
   harness, model?, effort?, mode?, attachments?, suffixPromptId?}`)
@@ -114,6 +122,9 @@ at `/`.
 - `GET /api/harnesses` (capabilities, effort levels, offered models per
   harness) ·
   `GET /api/outbox` (undelivered webhook queue)
+- `GET|POST /api/update` — daemon update status/action. Status reports current
+  and latest API protocol versions; latest is `null` when legacy, malformed,
+  or unreachable release metadata cannot establish it.
 - `GET /api/tasks/:id/terminal` — browser-cookie-authenticated WebSocket
 
 Errors are JSON `{error}` with a named reason; 400 = bad request, 409 = state

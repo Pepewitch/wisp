@@ -1,6 +1,13 @@
 /** The Wisp release identity. Keep this equal to package.json. */
 export const VERSION = "0.4.0-alpha.6";
 
+/**
+ * Compatibility contract for daemon clients. Product releases and API
+ * protocol revisions intentionally move independently: additive API changes
+ * do not require a protocol bump, while a breaking change does.
+ */
+export const API_PROTOCOL_VERSION = 1;
+
 /*
  * The binary build injects these constants with Bun's --define. Source runs
  * deliberately report an unknown, dirty build instead of borrowing the

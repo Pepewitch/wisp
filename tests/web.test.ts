@@ -141,6 +141,7 @@ describe("S1 create-modal and project APIs", () => {
   test("task effort is explicit-over-config, persisted, and unsupported effort is rejected", async () => {
     const repo = mkdtempSync(join(tmpdir(), "wisp-web-effort-"));
     const cfg: WispConfig = {
+      instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 18710,
       host: "127.0.0.1",
       token,
@@ -213,6 +214,7 @@ describe("S1 create-modal and project APIs", () => {
       }),
     );
     server = await serve({ port: 0, modelProbeSpawn: () => { throw new Error("missing probe binary"); } });
+    const instanceId = (JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { instanceId: string }).instanceId;
     const base = `http://127.0.0.1:${server.port}`;
     const post = (body: unknown) =>
       fetch(`${base}/api/projects`, {
@@ -267,6 +269,7 @@ describe("S1 create-modal and project APIs", () => {
     });
     expect(remove.status).toBe(200);
     const after = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Record<string, unknown>;
+    expect(after.instanceId).toBe(instanceId);
     expect(after.unknownFutureSetting).toEqual({ keep: true });
     expect(after.repos).toEqual([]);
   });
@@ -372,6 +375,7 @@ describe("local vs worktree tasks", () => {
   const FAKE_HARNESS: AdapterDef = { bin: "true", exec: [], parse: { format: "text" } };
 
   const cfg = (): WispConfig => ({
+    instanceId: "123e4567-e89b-42d3-a456-426614174000",
     port: 18710,
     host: "127.0.0.1",
     token,
@@ -598,6 +602,7 @@ describe("the archived-tasks view", () => {
     // route() directly, the stream.test.ts pattern: a real-socket fetch of an
     // SSE endpoint that stays silent until the first event races Bun's fetch
     const cfg: WispConfig = {
+      instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 18710,
       host: "127.0.0.1",
       token,

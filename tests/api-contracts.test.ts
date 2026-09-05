@@ -26,6 +26,7 @@ let server: Awaited<ReturnType<typeof serve>> | null = null;
 
 function config(repos: WispConfig["repos"] = []): WispConfig {
   return {
+    instanceId: "123e4567-e89b-42d3-a456-426614174000",
     port: 18710,
     host: "127.0.0.1",
     token,

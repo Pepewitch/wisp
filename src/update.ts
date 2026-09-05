@@ -9,7 +9,8 @@ import { chmod, mkdir, open, rename, rm, symlink } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import type { SpawnResult } from "./doctor";
-import { BUILD_DIRTY, VERSION } from "./version";
+import { fetchReleaseApiProtocolVersion } from "./release-metadata";
+import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
 
 const RELEASES_URL = "https://api.github.com/repos/Pepewitch/wisp/releases?per_page=100";
 const RELEASE_URL = "https://github.com/Pepewitch/wisp/releases/download";
@@ -26,7 +27,9 @@ export type UpdateState = "up-to-date" | "available" | "installing" | "restartin
 
 export interface UpdateStatus {
   currentVersion: string;
+  currentApiProtocolVersion: number;
   latestVersion: string | null;
+  latestApiProtocolVersion: number | null;
   state: UpdateState;
   installMethod: InstallMethod;
   canAutoUpdate: boolean;
@@ -38,6 +41,7 @@ export interface ReleaseInfo {
   version: string;
   tag: string;
   publishedAt: string;
+  apiProtocolVersion: number | null;
 }
 
 interface GitHubRelease {
@@ -51,6 +55,7 @@ interface LinuxManifest {
   schemaVersion: 1;
   product: "wisp";
   version: string;
+  apiProtocolVersion?: number;
   commit: string;
   dirty: false;
   target: {
@@ -259,7 +264,7 @@ export function selectLatestRelease(releases: GitHubRelease[], currentVersion: s
     const version = tag.startsWith("v") ? tag.slice(1) : "";
     if (!parseVersion(version)) continue;
     if (compareVersions(version, currentVersion) < 0) continue;
-    candidates.push({ version, tag, publishedAt: release.published_at });
+    candidates.push({ version, tag, publishedAt: release.published_at, apiProtocolVersion: null });
   }
   return candidates.sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
 }
@@ -319,6 +324,8 @@ function validateLinuxManifest(value: unknown, release: ReleaseInfo): asserts va
     manifest.schemaVersion !== 1 ||
     manifest.product !== "wisp" ||
     manifest.version !== release.version ||
+    (manifest.apiProtocolVersion !== undefined &&
+      (!Number.isSafeInteger(manifest.apiProtocolVersion) || manifest.apiProtocolVersion < 1)) ||
     typeof manifest.commit !== "string" ||
     !/^[0-9a-f]{40}$/.test(manifest.commit) ||
     manifest.dirty !== false ||
@@ -390,7 +397,9 @@ export class UpdateManager {
         : null);
     return {
       currentVersion: this.currentVersion,
+      currentApiProtocolVersion: API_PROTOCOL_VERSION,
       latestVersion: release?.version ?? null,
+      latestApiProtocolVersion: release?.apiProtocolVersion ?? null,
       state,
       installMethod: installation.method,
       canAutoUpdate,
@@ -423,7 +432,11 @@ export class UpdateManager {
     if (!response.ok) throw new Error(`GitHub releases returned ${response.status}`);
     const body = (await response.json()) as unknown;
     if (!Array.isArray(body)) throw new Error("GitHub releases did not return a list");
-    this.release = selectLatestRelease(body as GitHubRelease[], this.currentVersion);
+    const release = selectLatestRelease(body as GitHubRelease[], this.currentVersion);
+    if (release !== null) {
+      release.apiProtocolVersion = await fetchReleaseApiProtocolVersion(this.fetcher, release);
+    }
+    this.release = release;
     this.checkedAt = now;
     this.etag = response.headers.get("etag");
   }

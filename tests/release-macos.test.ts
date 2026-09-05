@@ -11,7 +11,7 @@ import {
   MACOS_TARGET,
   type MacReleaseManifest,
 } from "../scripts/release-macos";
-import { VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 
 describe("Apple Silicon release metadata", () => {
   test("uses one stable native target and distinct metadata filenames", () => {
@@ -57,6 +57,7 @@ describe("Apple Silicon release metadata", () => {
       schemaVersion: 1,
       product: "wisp",
       version: VERSION,
+      apiProtocolVersion: API_PROTOCOL_VERSION,
       commit: "a".repeat(40),
       dirty: false,
       target: { os: "darwin", arch: "arm64" },

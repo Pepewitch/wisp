@@ -12,7 +12,7 @@ import {
 import { arch, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
 import { sha256File } from "./release-linux";
 
@@ -26,6 +26,7 @@ export interface MacReleaseManifest {
   schemaVersion: 1;
   product: "wisp";
   version: string;
+  apiProtocolVersion: number;
   commit: string;
   dirty: false;
   target: {
@@ -177,6 +178,7 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
       schemaVersion: 1,
       product: "wisp",
       version: VERSION,
+      apiProtocolVersion: API_PROTOCOL_VERSION,
       commit: identity.commit,
       dirty: false,
       target: { os: "darwin", arch: "arm64" },

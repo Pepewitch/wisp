@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,6 +14,7 @@ export interface ReleaseManifest {
   schemaVersion: 1;
   product: "wisp";
   version: string;
+  apiProtocolVersion: number;
   commit: string;
   dirty: false;
   target: {
@@ -83,6 +84,7 @@ export function releaseLinux(options: ReleaseLinuxOptions = {}): ReleaseManifest
     schemaVersion: 1,
     product: "wisp",
     version: VERSION,
+    apiProtocolVersion: API_PROTOCOL_VERSION,
     commit: identity.commit,
     dirty: false,
     target: { os: "linux", arch: "x86_64", libc: "glibc" },

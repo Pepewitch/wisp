@@ -30,6 +30,7 @@ import {
 import { attachmentRoute, taskMessageRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
+import { capabilitiesRoute } from "./capabilities";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -160,6 +161,8 @@ export function route(
   const compacts = compactor ?? compactorFor(adapters);
   const pullRequests = pullRequestCache ?? pullRequestCacheFor(cfg);
   const updates = updateManager ?? updateManagerFor(cfg);
+
+  if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
 
   const updateResponse = updateRoute(req, path, m, updates);
   if (updateResponse !== null) return updateResponse;

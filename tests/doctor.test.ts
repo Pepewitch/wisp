@@ -61,6 +61,7 @@ function missingFile(name: string): string {
 
 function config(repo: string): WispConfig {
   return {
+    instanceId: "123e4567-e89b-42d3-a456-426614174000",
     host: "127.0.0.1",
     port: 8710,
     token: "test",

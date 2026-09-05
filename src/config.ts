@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { AdapterDef } from "./adapters";
@@ -54,6 +54,8 @@ export function repoConfigFor(cfg: WispConfig, repoPath: string): RepoConfig | u
 }
 
 export interface WispConfig {
+  /** Stable, non-secret Wisp-home identity used to detect a changed daemon behind a saved URL. */
+  instanceId: string;
   port: number;
   host: string;
   token: string;
@@ -81,6 +83,8 @@ export const WORKTREE_ROOT = join(WISP_HOME, "worktrees");
 export const TASKS_DIR = join(WISP_HOME, "tasks");
 export const DB_PATH = join(WISP_HOME, "wisp.db");
 export const CONFIG_PATH = join(WISP_HOME, "config.json");
+/** No-clobber authority for instanceId; config.json mirrors it for discoverability and backup. */
+export const INSTANCE_ID_PATH = join(WISP_HOME, "instance-id");
 export const ADAPTERS_PATH = join(WISP_HOME, "adapters.json");
 export const SUFFIX_PROMPTS_PATH = join(WISP_HOME, "suffix-prompts.json");
 
@@ -90,6 +94,7 @@ mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
 mkdirSync(WORKTREE_ROOT, { recursive: true, mode: 0o700 });
 
 const DEFAULTS: WispConfig = {
+  instanceId: "",
   port: 8710,
   host: "127.0.0.1",
   token: "",
@@ -103,6 +108,7 @@ const DEFAULTS: WispConfig = {
 };
 
 const CONFIG_KEYS = [
+  "instanceId",
   "port",
   "host",
   "token",
@@ -190,13 +196,17 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     if (key === "port") assertPort(v);
     out[key] = v;
   };
-  const str = (key: "host" | "token"): void => {
+  const str = (key: "instanceId" | "host" | "token"): void => {
     const v = raw[key];
     if (v === undefined) return;
     if (typeof v !== "string") throw new Error(`config.json: ${key} must be a string, got ${typeName(v)}`);
     out[key] = v;
   };
   num("port");
+  str("instanceId");
+  if (out.instanceId !== undefined && !isInstanceId(out.instanceId)) {
+    throw new Error("config.json: instanceId must be a UUID");
+  }
   str("host");
   str("token");
   if (raw.webhooks !== undefined) out.webhooks = stringArray(raw.webhooks, "config.json: webhooks");
@@ -352,22 +362,75 @@ export interface LoadConfigOptions {
   portAvailable?: PortAvailable;
 }
 
+const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isInstanceId(value: string): boolean {
+  return INSTANCE_ID.test(value);
+}
+
+/**
+ * The create-exclusive sidecar serializes the one migration loadConfig cannot
+ * serialize itself: two daemons starting against a legacy config at once.
+ * config.json remains the human-visible mirror, and disagreement is corruption
+ * rather than permission to rotate an identity clients may have pinned.
+ */
+function loadOrCreateInstanceId(configured: string | undefined): string {
+  const candidate = configured ?? crypto.randomUUID();
+  try {
+    writeFileSync(INSTANCE_ID_PATH, `${candidate}\n`, { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  chmodSync(INSTANCE_ID_PATH, 0o600);
+  const persisted = readFileSync(INSTANCE_ID_PATH, "utf8").trim();
+  if (!isInstanceId(persisted)) throw new Error("instance-id: value must be a UUID");
+  if (configured !== undefined && persisted !== configured) {
+    throw new Error("config.json: instanceId does not match the Wisp home identity");
+  }
+  return persisted;
+}
+
+function persistConfig(value: Record<string, unknown>): void {
+  const temporary = `${CONFIG_PATH}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+    renameSync(temporary, CONFIG_PATH);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
 export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   let stored: Partial<WispConfig> = {};
+  let storedRaw: Record<string, unknown> = {};
   const configExists = existsSync(CONFIG_PATH);
   if (configExists) {
-    stored = validateConfig(readUserJson(CONFIG_PATH));
+    const raw = readUserJson(CONFIG_PATH);
+    stored = validateConfig(raw);
+    // validateConfig has already established this shape. Retain unknown
+    // top-level keys when a migration writes the file so an older Wisp does
+    // not erase configuration owned by a newer one.
+    storedRaw = raw as Record<string, unknown>;
     chmodSync(CONFIG_PATH, 0o600); // holds the bearer token; repair older installs
   }
   const cfg: WispConfig = { ...DEFAULTS, ...stored };
+  let mustPersist = false;
   if (!configExists) {
     cfg.port = selectInitialPort(options.initialPort, options.portAvailable);
+  }
+  const configuredInstanceId = stored.instanceId;
+  cfg.instanceId = loadOrCreateInstanceId(configuredInstanceId);
+  if (configuredInstanceId === undefined) {
+    mustPersist = true;
   }
   if (!cfg.token) {
     // First run (no config file, or one written without a token): mint a token
     // and persist the merged defaults so the file documents every knob.
     cfg.token = crypto.randomUUID().replaceAll("-", "");
-    writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
+    mustPersist = true;
+  }
+  if (mustPersist) {
+    persistConfig({ ...storedRaw, ...cfg });
   }
   return cfg;
 }

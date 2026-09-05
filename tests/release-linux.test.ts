@@ -9,7 +9,7 @@ import {
   SUPPORTED_BASELINE,
   type ReleaseManifest,
 } from "../scripts/release-linux";
-import { VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 
 describe("Linux release metadata", () => {
   test("uses one stable, explicit supported target", () => {
@@ -48,6 +48,7 @@ describe("Linux release metadata", () => {
       schemaVersion: 1,
       product: "wisp",
       version: VERSION,
+      apiProtocolVersion: API_PROTOCOL_VERSION,
       commit: "a".repeat(40),
       dirty: false,
       target: { os: "linux", arch: "x86_64", libc: "glibc" },
