@@ -14,13 +14,11 @@ alpha.6.
 - Apple Silicon arm64, with limited single-machine Homebrew testing.
 - Intel Macs are unsupported and have no artifact.
 
-This is the first Wisp release built and published by GitHub Actions from the
-`v0.4.0-alpha.6` tag. The binaries are
-compiled by the release workflow on GitHub's `ubuntu-latest` and arm64
-`macos-latest` runners with the pinned Bun 1.3.14, and the workflow proves
-each platform's assets reproduce byte for byte on a clean rebuild before
-publishing. Additional machine qualification is pending; this does not imply
-human validation or production support.
+This release was rebuilt from Wisp's sanitized public source and published
+manually after the source, installer, activation, and release-asset checks
+passed. The repository's tag-driven GitHub Actions workflow is configured for
+future releases. Additional machine qualification is pending; this does not
+imply human validation or production support.
 
 The Mac binary is **ad-hoc signed, not Developer ID signed or notarized**.
 Gatekeeper may require explicit approval. Do not disable Gatekeeper globally.
