@@ -1,10 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import {
   checkHarnessDefaults,
   CONFIG_PATH,
   FALLBACK_PORT_END,
+  INSTANCE_ID_PATH,
   loadConfig,
   MAX_CONFIGURED_PORT,
   MIN_CONFIGURED_PORT,
@@ -25,9 +28,28 @@ function thrownMessage(fn: () => unknown): string {
   throw new Error("expected function to throw, but it returned");
 }
 
+async function loadFromIsolatedProcess(home: string): Promise<{ instanceId: string; token: string }> {
+  const configModule = new URL("../src/config.ts", import.meta.url).href;
+  const source = `import { loadConfig } from ${JSON.stringify(configModule)}; console.log(JSON.stringify(loadConfig({ initialPort: 18710, portAvailable: () => true })));`;
+  const child = Bun.spawn({
+    cmd: [process.execPath, "-e", source],
+    env: { ...process.env, WISP_HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (exitCode !== 0) throw new Error(`isolated config load failed: ${stderr.trim()}`);
+  return JSON.parse(stdout) as { instanceId: string; token: string };
+}
+
 describe("validateConfig (a prior audit)", () => {
   test("a valid config passes through every known field", () => {
     const raw = {
+      instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 9000,
       host: "0.0.0.0",
       token: "t",
@@ -63,6 +85,15 @@ describe("validateConfig (a prior audit)", () => {
     );
     expect(thrownMessage(() => validateConfig({ host: 8710 }))).toBe("config.json: host must be a string, got number");
     expect(thrownMessage(() => validateConfig({ token: 42 }))).toBe("config.json: token must be a string, got number");
+    expect(thrownMessage(() => validateConfig({ instanceId: 42 }))).toBe(
+      "config.json: instanceId must be a string, got number",
+    );
+    expect(thrownMessage(() => validateConfig({ instanceId: "not-a-uuid" }))).toBe(
+      "config.json: instanceId must be a UUID",
+    );
+    expect(thrownMessage(() => validateConfig({ instanceId: "" }))).toBe(
+      "config.json: instanceId must be a UUID",
+    );
     expect(thrownMessage(() => validateConfig({ webhooks: "https://x" }))).toBe(
       "config.json: webhooks must be an array of strings, got string",
     );
@@ -119,7 +150,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: port, host, token, webhooks, repos, stuckMinutes, logMaxBytes, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, logMaxBytes, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
@@ -152,6 +183,67 @@ describe("loadConfig", () => {
       expect(probed).toBe(false);
     } finally {
       rmSync(CONFIG_PATH, { force: true });
+    }
+  });
+
+  test("adds one stable instance ID to an existing config", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    writeFileSync(CONFIG_PATH, JSON.stringify({ port: 9000, token: "t", futureSetting: "preserved" }));
+    try {
+      const first = loadConfig();
+      expect(first.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(loadConfig().instanceId).toBe(first.instanceId);
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
+        instanceId: first.instanceId,
+        port: 9000,
+        token: "t",
+        futureSetting: "preserved",
+      });
+      expect(statSync(CONFIG_PATH).mode & 0o777).toBe(0o600);
+      expect(statSync(INSTANCE_ID_PATH).mode & 0o777).toBe(0o600);
+    } finally {
+      warn.mockRestore();
+      rmSync(CONFIG_PATH, { force: true });
+    }
+  });
+
+  test("refuses a malformed persisted instance ID instead of silently changing identity", () => {
+    writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", instanceId: "not-a-uuid" }));
+    try {
+      expect(thrownMessage(() => loadConfig())).toBe("config.json: instanceId must be a UUID");
+    } finally {
+      rmSync(CONFIG_PATH, { force: true });
+    }
+  });
+
+  test("serializes identity creation across simultaneous legacy migrations", async () => {
+    const home = mkdtempSync(join(tmpdir(), "wisp-config-race-"));
+    try {
+      const [first, second] = await Promise.all([
+        loadFromIsolatedProcess(home),
+        loadFromIsolatedProcess(home),
+      ]);
+      const persisted = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as { instanceId: string };
+      expect(first.instanceId).toBe(second.instanceId);
+      expect(persisted.instanceId).toBe(first.instanceId);
+      expect(readFileSync(join(home, "instance-id"), "utf8").trim()).toBe(first.instanceId);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("uses different identities for independent Wisp homes", async () => {
+    const firstHome = mkdtempSync(join(tmpdir(), "wisp-config-home-"));
+    const secondHome = mkdtempSync(join(tmpdir(), "wisp-config-home-"));
+    try {
+      const [first, second] = await Promise.all([
+        loadFromIsolatedProcess(firstHome),
+        loadFromIsolatedProcess(secondHome),
+      ]);
+      expect(first.instanceId).not.toBe(second.instanceId);
+    } finally {
+      rmSync(firstHome, { recursive: true, force: true });
+      rmSync(secondHome, { recursive: true, force: true });
     }
   });
 
@@ -273,6 +365,7 @@ describe("harnessDefaults validation (P5b: warn and ignore, NEVER crash the daem
 });
 
 const baseCfg: WispConfig = {
+  instanceId: "123e4567-e89b-42d3-a456-426614174000",
   port: 0,
   host: "127.0.0.1",
   token: "t",

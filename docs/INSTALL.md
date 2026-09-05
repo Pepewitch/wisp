@@ -248,4 +248,8 @@ delete preserved data manually only after confirming no work remains.
 | systemd is unavailable | Reinstall with `--no-service` and use a foreground process or another restart-capable supervisor. |
 
 `GET /api/health` is the liveness endpoint. It includes the Wisp version,
-commit, and dirty-build state.
+commit, and dirty-build state. It deliberately excludes installation identity
+and feature details. Authenticated clients can use `GET /api/capabilities` for
+the stable Wisp-home instance ID, API protocol version, product build, and
+implemented API feature flags. The instance ID is not a credential, and a
+copied Wisp home retains it.

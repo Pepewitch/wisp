@@ -8,6 +8,7 @@ import { authorized, postSession, route } from "../src/daemon";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
 
 const cfg: WispConfig = {
+  instanceId: "123e4567-e89b-42d3-a456-426614174000",
   port: 0,
   host: "127.0.0.1",
   token: "testtoken",

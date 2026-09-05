@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { MacReleaseManifest } from "../scripts/release-macos";
 import { renderHomebrewFormula } from "../scripts/render-homebrew-formula";
-import { VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 
 function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManifest {
   return {
     schemaVersion: 1,
     product: "wisp",
     version: VERSION,
+    apiProtocolVersion: API_PROTOCOL_VERSION,
     commit: "a".repeat(40),
     dirty: false,
     target: { os: "darwin", arch: "arm64" },
@@ -51,6 +52,9 @@ describe("Homebrew Formula rendering", () => {
   });
 
   test("rejects a manifest outside the approved alpha posture", () => {
+    expect(() => renderHomebrewFormula(manifest({ apiProtocolVersion: 0 }))).toThrow(
+      "invalid API protocol version",
+    );
     expect(() =>
       renderHomebrewFormula(
         manifest({

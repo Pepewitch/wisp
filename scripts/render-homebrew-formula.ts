@@ -8,6 +8,9 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 export function renderHomebrewFormula(manifest: MacReleaseManifest): string {
   if (!VERSION.test(manifest.version)) throw new Error(`invalid release version: ${JSON.stringify(manifest.version)}`);
+  if (!Number.isSafeInteger(manifest.apiProtocolVersion) || manifest.apiProtocolVersion < 1) {
+    throw new Error(`invalid API protocol version: ${JSON.stringify(manifest.apiProtocolVersion)}`);
+  }
   if (!SHA256.test(manifest.artifact.sha256)) {
     throw new Error(`invalid artifact SHA-256: ${JSON.stringify(manifest.artifact.sha256)}`);
   }

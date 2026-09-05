@@ -5,6 +5,7 @@ import { createTask, db, freeSlot, newTaskId, transition, undeliveredOutbox } fr
 import type { OutboxRow, TaskState } from "../src/types";
 
 const baseCfg: WispConfig = {
+  instanceId: "123e4567-e89b-42d3-a456-426614174000",
   port: 0,
   host: "127.0.0.1",
   token: "test",

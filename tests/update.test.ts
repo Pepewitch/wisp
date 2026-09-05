@@ -15,6 +15,7 @@ import { serve } from "../src/daemon";
 import type { CommandResult, UpdateStatus } from "../src/update";
 import { compareVersions, isHomebrewServiceProcess, selectLatestRelease, UpdateManager } from "../src/update";
 import { updateRoute } from "../src/routes/update";
+import { API_PROTOCOL_VERSION } from "../src/version";
 
 const homes: string[] = [];
 let server: Awaited<ReturnType<typeof serve>> | null = null;
@@ -39,6 +40,18 @@ function jsonResponse(value: unknown, status = 200, headers: Record<string, stri
     status,
     headers: { "content-type": "application/json", ...headers },
   });
+}
+
+function protocolManifest(version: string, apiProtocolVersion: unknown = 1): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    product: "wisp",
+    version,
+    apiProtocolVersion,
+    commit: "a".repeat(40),
+    dirty: false,
+    target: { os: "linux", arch: "x86_64", libc: "glibc" },
+  };
 }
 
 async function waitFor(manager: UpdateManager, state: UpdateStatus["state"]): Promise<UpdateStatus> {
@@ -122,6 +135,7 @@ describe("UpdateManager", () => {
     complete(jsonResponse([release("0.4.0-alpha.7")]));
     expect((await first).latestVersion).toBe("0.4.0-alpha.7");
     expect((await second).latestVersion).toBe("0.4.0-alpha.7");
+    expect(requests).toBe(2);
   });
 
   test("caches the GitHub release response and reports unsupported builds honestly", async () => {
@@ -129,9 +143,11 @@ describe("UpdateManager", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => {
+      fetch: async (input) => {
         requests++;
-        return jsonResponse([release("0.4.0-alpha.7")], 200, { etag: '"release-7"' });
+        return String(input).includes("api.github.com")
+          ? jsonResponse([release("0.4.0-alpha.7")], 200, { etag: '"release-7"' })
+          : jsonResponse(protocolManifest("0.4.0-alpha.7"));
       },
       detectInstallation: () => ({
         method: "unsupported",
@@ -142,7 +158,9 @@ describe("UpdateManager", () => {
 
     expect(await manager.getStatus()).toEqual({
       currentVersion: "0.4.0-alpha.6",
+      currentApiProtocolVersion: API_PROTOCOL_VERSION,
       latestVersion: "0.4.0-alpha.7",
+      latestApiProtocolVersion: API_PROTOCOL_VERSION,
       state: "available",
       installMethod: "unsupported",
       canAutoUpdate: false,
@@ -150,7 +168,76 @@ describe("UpdateManager", () => {
       checkedAt: expect.any(String),
     });
     await manager.getStatus();
-    expect(requests).toBe(1);
+    expect(requests).toBe(2);
+  });
+
+  test("keeps legacy or invalid release protocol metadata explicitly unknown", async () => {
+    const valid = protocolManifest("0.4.0-alpha.7");
+    const cases: Array<[string, () => Response | Promise<Response>]> = [
+      ["missing", () => jsonResponse({ ...valid, apiProtocolVersion: undefined })],
+      ["numeric string", () => jsonResponse({ ...valid, apiProtocolVersion: "1" })],
+      ["zero", () => jsonResponse({ ...valid, apiProtocolVersion: 0 })],
+      ["fraction", () => jsonResponse({ ...valid, apiProtocolVersion: 1.5 })],
+      ["unsafe integer", () => jsonResponse({ ...valid, apiProtocolVersion: Number.MAX_SAFE_INTEGER + 1 })],
+      ["wrong schema", () => jsonResponse({ ...valid, schemaVersion: 2 })],
+      ["wrong product", () => jsonResponse({ ...valid, product: "other" })],
+      ["wrong version", () => jsonResponse({ ...valid, version: "0.4.0-alpha.8" })],
+      ["wrong target", () => jsonResponse({ ...valid, target: { os: "darwin", arch: "arm64" } })],
+      ["dirty", () => jsonResponse({ ...valid, dirty: true })],
+      ["bad commit", () => jsonResponse({ ...valid, commit: "not-a-commit" })],
+      ["not found", () => new Response(null, { status: 404 })],
+      ["malformed JSON", () => new Response("{", { status: 200 })],
+      ["network failure", () => Promise.reject(new Error("offline"))],
+    ];
+
+    for (const [label, manifestResponse] of cases) {
+      const manager = new UpdateManager({
+        currentVersion: "0.4.0-alpha.6",
+        dirty: false,
+        fetch: async (input) =>
+          String(input).includes("api.github.com")
+            ? jsonResponse([release("0.4.0-alpha.7")])
+            : manifestResponse(),
+        detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual installation" }),
+      });
+      const status = await manager.getStatus();
+      expect(status, label).toMatchObject({
+        latestVersion: "0.4.0-alpha.7",
+        latestApiProtocolVersion: null,
+        state: "available",
+        canAutoUpdate: false,
+        message: "manual installation",
+      });
+    }
+  });
+
+  test("retains fetched protocol metadata when the release list is unchanged", async () => {
+    let now = new Date("2026-09-05T12:00:00Z");
+    let releaseRequests = 0;
+    let manifestRequests = 0;
+    const manager = new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: false,
+      releaseCacheMs: 1,
+      now: () => now,
+      fetch: async (input) => {
+        if (String(input).includes("api.github.com")) {
+          releaseRequests++;
+          return releaseRequests === 1
+            ? jsonResponse([release("0.4.0-alpha.7")], 200, { etag: '"release-7"' })
+            : new Response(null, { status: 304 });
+        }
+        manifestRequests++;
+        return jsonResponse(protocolManifest("0.4.0-alpha.7", API_PROTOCOL_VERSION));
+      },
+      detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual" }),
+    });
+
+    expect((await manager.getStatus()).latestApiProtocolVersion).toBe(API_PROTOCOL_VERSION);
+    now = new Date("2026-09-05T12:00:01Z");
+    expect((await manager.getStatus()).latestApiProtocolVersion).toBe(API_PROTOCOL_VERSION);
+    expect(releaseRequests).toBe(2);
+    expect(manifestRequests).toBe(1);
   });
 
   test("updates a Homebrew installation without replacing its binary directly", async () => {
@@ -186,6 +273,7 @@ describe("UpdateManager", () => {
       state: "installing",
       canAutoUpdate: true,
       installMethod: "homebrew",
+      latestApiProtocolVersion: null,
     });
     await waitFor(manager, "restarting");
     expect(commands).toEqual([
@@ -244,6 +332,7 @@ describe("UpdateManager", () => {
             schemaVersion: 1,
             product: "wisp",
             version: "0.4.0-alpha.7",
+            apiProtocolVersion: 1,
             commit,
             dirty: false,
             target: { os: "linux", arch: "x86_64", libc: "glibc" },
