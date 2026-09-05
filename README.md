@@ -267,6 +267,7 @@ Release maintainers must follow the
 - [Install and activate](docs/INSTALL.md)
 - [Install on Apple Silicon](docs/INSTALL-MACOS.md)
 - [Secure remote access](docs/REMOTE-ACCESS.md)
+- [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Security policy and trust model](SECURITY.md)
 - [Adding a harness](docs/ADDING-A-HARNESS.md)
 - [Operator skill](skills/wisp/SKILL.md)
