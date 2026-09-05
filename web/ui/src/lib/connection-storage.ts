@@ -93,3 +93,28 @@ export function removeConnectionStorage(
     // blocked storage costs only this convenience
   }
 }
+
+/** Drop every browser-side convenience value owned by one removed remote. */
+export function clearConnectionStorage(
+  connectionId: string,
+  storage?: Storage
+): void {
+  if (connectionId === LOCAL_CONNECTION_ID) return
+  let target: Storage
+  try {
+    target = storage ?? localStorage
+  } catch {
+    return
+  }
+  const prefix = `${CONNECTION_STORAGE_PREFIX}:${encodeURIComponent(connectionId)}:`
+  const keys: string[] = []
+  try {
+    for (let index = 0; index < target.length; index += 1) {
+      const key = target.key(index)
+      if (key?.startsWith(prefix)) keys.push(key)
+    }
+    for (const key of keys) target.removeItem(key)
+  } catch {
+    // A blocked store costs cleanup of conveniences, never the native removal.
+  }
+}

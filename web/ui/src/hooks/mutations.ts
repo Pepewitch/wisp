@@ -262,6 +262,18 @@ function settleTask(client: ReturnType<typeof useQueryClient>, qk: Readonly<Conn
 
 /* ---------------- projects ---------------- */
 
+/** Register a daemon-local absolute path selected by the desktop or entered for a remote. */
+export function useAddProject() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: (path: string) => transport.request("/api/projects", { method: "POST", body: { path } }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+    },
+  });
+}
+
 export interface SaveProjectBody {
   path: string;
   setupScript: string;

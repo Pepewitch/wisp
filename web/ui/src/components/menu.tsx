@@ -114,11 +114,19 @@ export function MenuGroup({
  * caller recognises in onValueChange. A sentinel never equals real state, so
  * it never renders a checkmark.
  */
-export function MenuAction({ value, children }: { value: string; children: ReactNode }) {
+export function MenuAction({
+  value,
+  children,
+  disabled = false,
+}: {
+  value: string
+  children: ReactNode
+  disabled?: boolean
+}) {
   return (
     <>
       <div className="my-1 h-px bg-border" />
-      <Base.RadioItem value={value} className={cn(ROW, "text-muted-foreground")}>
+      <Base.RadioItem value={value} disabled={disabled} className={cn(ROW, "text-muted-foreground")}>
         <span className="size-3 shrink-0" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{children}</span>
       </Base.RadioItem>

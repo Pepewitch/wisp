@@ -22,7 +22,10 @@ import {
 import { useSteerSubmit } from "@/hooks/useSteerSubmit"
 import { useTick } from "@/hooks/useTick"
 import { usePendingAttachments, type AttachmentPayload, type PendingAttachments } from "@/lib/attachments"
+import { useDesktopConnections } from "@/lib/desktop-connections"
+import { readDraft, writeDraft } from "@/lib/drafts"
 import { handleComposerPaste } from "@/lib/paste-links"
+import { useDaemonRuntime } from "@/lib/runtime"
 import {
   compactEntry,
   isTier1Command,
@@ -44,6 +47,21 @@ import type {
   Turn,
 } from "@/lib/types"
 import { cn } from "@/lib/utils"
+
+function useRememberedDraft(taskId: string | null) {
+  const runtime = useDaemonRuntime()
+  const remember = useDesktopConnections() !== null
+  const [value, setValue] = useState(() =>
+    remember ? readDraft(runtime.connectionId, taskId) : "",
+  )
+  useEffect(
+    () => () => {
+      if (remember) writeDraft(runtime.connectionId, taskId, value)
+    },
+    [remember, runtime.connectionId, taskId, value],
+  )
+  return [value, setValue] as const
+}
 
 /**
  * The centre column's footer. Grows with the text, caps at 40% of the pane, and
@@ -119,7 +137,7 @@ export function SteerBox({
   /** thumb-sized controls and larger type below the md breakpoint */
   touch?: boolean
 }) {
-  const [value, setValue] = useState("")
+  const [value, setValue] = useRememberedDraft(task?.id ?? null)
   const [sending, setSending] = useState(false)
   const [note, setNote] = useState<SteerNote | null>(null)
   const [copied, setCopied] = useState(false)

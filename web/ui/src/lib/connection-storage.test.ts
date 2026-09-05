@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  clearConnectionStorage,
   connectionStorageKey,
   readConnectionStorage,
-  type ReadWriteStorage,
   writeConnectionStorage,
 } from "./connection-storage"
 
@@ -12,10 +12,15 @@ const REMOTE_CONNECTION = "remote-test"
 const LEGACY_SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
 
-function memoryStorage(seed: Record<string, string> = {}): ReadWriteStorage {
+function memoryStorage(seed: Record<string, string> = {}): Storage {
   const values = new Map(Object.entries(seed))
   return {
+    get length() {
+      return values.size
+    },
+    clear: () => values.clear(),
     getItem: (key: string) => values.get(key) ?? null,
+    key: (index: number) => Array.from(values.keys())[index] ?? null,
     setItem: (key: string, value: string) => {
       values.set(key, value)
     },
@@ -82,5 +87,27 @@ describe("show-archived connection storage", () => {
         storage
       )
     ).toBe("1")
+  })
+
+  it("clears every removed remote value without touching another connection", () => {
+    const remoteArchived = connectionStorageKey(
+      REMOTE_CONNECTION,
+      SHOW_ARCHIVED_SETTING
+    )
+    const remoteTask = connectionStorageKey(REMOTE_CONNECTION, "selected_task")
+    const localTask = connectionStorageKey(LOCAL_CONNECTION, "selected_task")
+    const storage = memoryStorage({
+      [remoteArchived]: "1",
+      [remoteTask]: "synthetic-task",
+      [localTask]: "local-task",
+      unrelated: "keep",
+    })
+
+    clearConnectionStorage(REMOTE_CONNECTION, storage)
+
+    expect(storage.getItem(remoteArchived)).toBeNull()
+    expect(storage.getItem(remoteTask)).toBeNull()
+    expect(storage.getItem(localTask)).toBe("local-task")
+    expect(storage.getItem("unrelated")).toBe("keep")
   })
 })

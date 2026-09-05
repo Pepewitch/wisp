@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 import { Drawer } from "@base-ui/react/drawer"
 
-import { Hamburger } from "@/components/icons"
+import { Hamburger, WispMark } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { StateDot, Tab } from "@/components/primitives"
@@ -40,6 +40,7 @@ export function MobileShell({
   changes,
   terminal,
   composer,
+  connectionSwitcher,
 }: {
   task: ApiTask | null
   pullRequest?: PullRequestStatus
@@ -48,6 +49,8 @@ export function MobileShell({
   changes: ReactNode
   terminal: ReactNode
   composer: ReactNode
+  /** Desktop mode uses one compact menu here; browser mode leaves it absent. */
+  connectionSwitcher?: ReactNode
 }) {
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
@@ -74,7 +77,12 @@ export function MobileShell({
           <Hamburger className="size-5" />
         </button>
 
+        <span role="img" aria-label="Wisp" className="shrink-0">
+          <WispMark className="size-[18px]" />
+        </span>
+
         <div className="min-w-0 flex-1 py-2">
+          {connectionSwitcher && <div className="mb-0.5 -ml-2">{connectionSwitcher}</div>}
           {task ? (
             <>
               <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em]">{task.title}</div>
