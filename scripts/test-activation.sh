@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${WISP_ACTIVATION_TEST_IMAGE:-ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517}"
-ARTIFACT="${WISP_ARTIFACT_PATH:-$ROOT/dist/release/v0.4.0-alpha.6/wisp-v0.4.0-alpha.6-linux-x86_64}"
+ARTIFACT="${WISP_ARTIFACT_PATH:-$ROOT/dist/release/v0.4.0-alpha.7/wisp-v0.4.0-alpha.7-linux-x86_64}"
 
 [[ -f "$ARTIFACT" ]] || {
   echo "activation test: missing artifact $ARTIFACT; run 'bun run release:linux' first" >&2

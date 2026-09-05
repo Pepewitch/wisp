@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${WISP_VERSION:-0.4.0-alpha.6}"
+VERSION="${WISP_VERSION:-0.4.0-alpha.7}"
 INSTALL_ROOT="${WISP_INSTALL_ROOT:-$HOME/.local/share/wisp}"
 BIN_DIR="${WISP_BIN_DIR:-$HOME/.local/bin}"
 WISP_HOME="${WISP_HOME:-$HOME/.wisp}"
@@ -23,7 +23,7 @@ usage() {
 usage: install.sh [--no-service]
 
 Environment:
-  WISP_VERSION             release version (default: 0.4.0-alpha.6)
+  WISP_VERSION             release version (default: 0.4.0-alpha.7)
   WISP_SHA256              pinned artifact checksum; otherwise fetch SHA256SUMS
   WISP_COMMIT              optional expected full build commit
   WISP_RELEASE_BASE_URL    release directory URL

@@ -7,14 +7,14 @@ import { BUILD_COMMIT, BUILD_DIRTY, BUILD_INFO, VERSION, versionLine } from "../
 describe("build identity", () => {
   test("the source tree is explicit about not being a release artifact", () => {
     expect(BUILD_INFO).toEqual({
-      version: "0.4.0-alpha.6",
+      version: "0.4.0-alpha.7",
       commit: "unknown",
       dirty: true,
     });
     expect(BUILD_COMMIT).toBe("unknown");
     expect(BUILD_DIRTY).toBe(true);
-    expect(VERSION).toBe("0.4.0-alpha.6");
-    expect(versionLine()).toBe("0.4.0-alpha.6 (commit unknown, dirty)");
+    expect(VERSION).toBe("0.4.0-alpha.7");
+    expect(versionLine()).toBe("0.4.0-alpha.7 (commit unknown, dirty)");
   });
 
   test("package.json carries the same release version", async () => {

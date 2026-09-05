@@ -1,6 +1,6 @@
 # Install and update Wisp on Apple Silicon
 
-The custom tap and native Mac artifact are public. Alpha.6 is the current
+The custom tap and native Mac artifact are public. Alpha.7 is the current
 maintenance prerelease. Apple Silicon support remains experimental and has
 only limited single-machine qualification.
 

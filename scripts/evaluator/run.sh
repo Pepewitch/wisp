@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVALUATOR_DIR="$ROOT/scripts/evaluator"
-VERSION="0.4.0-alpha.6"
+VERSION="0.4.0-alpha.7"
 BASE_IMAGE="ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517"
 IMAGE="${WISP_EVALUATOR_IMAGE:-wisp-evaluator:v0.4}"
 ARTIFACT="${WISP_ARTIFACT_PATH:-$ROOT/dist/release/v$VERSION/wisp-v$VERSION-linux-x86_64}"
