@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, parseOutput } from "../src/adapters";
+import { boundedOutput, MAX_INLINE_OUTPUT_CHARS } from "../src/adapters/live/bounded-output";
 import { CodexLiveDriver } from "../src/adapters/live/codex";
+import { DroidLiveDriver } from "../src/adapters/live/droid";
 import { JsonLineBuffer, MAX_PROTOCOL_FRAME_CHARS } from "../src/adapters/live/json-lines";
 import { JsonRpcPeer, type WritableRpcSink } from "../src/adapters/live/json-rpc";
 
@@ -212,5 +214,99 @@ describe("Codex live terminal events", () => {
     expect(bounded).toEndWith("TAIL");
     expect(bounded).toContain("characters elided");
     await driver.close();
+  });
+});
+
+describe("bounded inlined tool output", () => {
+  test("a string keeps both ends and names what was removed", () => {
+    const bounded = boundedOutput(`${"head".repeat(20_000)}TAIL`, 400) as string;
+
+    expect(bounded).toStartWith("head");
+    expect(bounded).toEndWith("TAIL");
+    expect(bounded).toContain("characters elided");
+    expect(bounded.length).toBeLessThan(600);
+  });
+
+  test("content blocks share one budget, so many small blocks cannot add up to a large one", () => {
+    const blocks = Array.from({ length: 40 }, (_, index) => ({ type: "text", text: "x".repeat(100 * index) }));
+    const bounded = boundedOutput(blocks, 500) as unknown[];
+
+    expect(bounded.length).toBeLessThan(blocks.length);
+    expect(bounded.at(-1)).toContain("more content blocks elided");
+    const spent = bounded
+      .filter((block): block is { text: string } => typeof (block as { text?: unknown }).text === "string")
+      .reduce((total, block) => total + block.text.length, 0);
+    // Elision markers add their own characters; the payload itself stays bounded.
+    expect(spent).toBeLessThan(1_500);
+  });
+
+  test("a shape the harness has never been observed to send is passed through untouched", () => {
+    const value = { status: "ok", exitCode: 0 };
+
+    expect(boundedOutput(value)).toBe(value);
+    expect(boundedOutput(null)).toBeNull();
+    expect(boundedOutput(7)).toBe(7);
+  });
+
+  test("output that already fits is returned unchanged", () => {
+    expect(boundedOutput("short")).toBe("short");
+    expect(MAX_INLINE_OUTPUT_CHARS).toBeGreaterThan(1_000);
+  });
+});
+
+describe("Droid live tool results", () => {
+  test("an inlined tool result is bounded before it reaches the log", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new DroidLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.droid!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialText: "hello",
+      initialImages: [],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: { sessionId: "droid-session" } });
+    const firstMessage = await requestAt(sink, 1);
+    driver.handle({ id: firstMessage.id, result: {} });
+    await driver.ready;
+
+    const output = `${"line\n".repeat(50_000)}TAIL`;
+    driver.handle({
+      method: "droid.session_notification",
+      params: {
+        notification: {
+          type: "create_message",
+          message: {
+            id: "message-1",
+            role: "user",
+            content: [{ type: "tool_result", toolUseId: "tool-1", content: output }],
+          },
+        },
+      },
+    });
+
+    const result = events.find((event) => event.type === "tool_result")!;
+    const value = result.value as string;
+    expect(value.length).toBeLessThan(output.length);
+    expect(value).toStartWith("line");
+    expect(value).toEndWith("TAIL");
+    expect(value).toContain("characters elided");
+    await driver.close();
+  });
+
+  test("a subagent handoff stays linkable: the markers it leads with survive bounding", () => {
+    const report = `task_id: child-1\nsession_id: session-1\n${"detail\n".repeat(50_000)}`;
+    const bounded = boundedOutput(report) as string;
+
+    expect(/(?:^|\n)task_id:\s*([^\s\n]+)/.exec(bounded)?.[1]).toBe("child-1");
+    expect(/(?:^|\n)session_id:\s*([^\s\n]+)/.exec(bounded)?.[1]).toBe("session-1");
   });
 });

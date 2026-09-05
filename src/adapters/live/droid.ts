@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import { FACTORY_PROTOCOL_VERSION } from "../../probes";
 import type { AdapterDef } from "../types";
+import { boundedOutput } from "./bounded-output";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
 
 export interface DroidLiveImage {
@@ -248,7 +249,7 @@ export class DroidLiveDriver {
         this.options.emit({
           type: "tool_result",
           id: block.toolUseId,
-          value: block.content,
+          value: boundedOutput(block.content),
           isError: block.isError === true,
           timestamp: message.createdAt,
           session_id: this.sessionId,
