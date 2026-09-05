@@ -16,6 +16,21 @@ def emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, separators=(",", ":")), flush=True)
 
 
+def respond(request: dict[str, object], result: dict[str, object]) -> None:
+    emit({"jsonrpc": "2.0", "id": request["id"], "result": result})
+
+
+def notify(notification: dict[str, object]) -> None:
+    emit(
+        {
+            "jsonrpc": "2.0",
+            "type": "notification",
+            "method": "droid.session_notification",
+            "params": {"notification": notification},
+        }
+    )
+
+
 def commit(cwd: Path, message: str) -> None:
     subprocess.run(["git", "add", "textfilter.py", "test_textfilter.py"], cwd=cwd, check=True)
     subprocess.run(["git", "commit", "-m", message], cwd=cwd, check=True, stdout=subprocess.DEVNULL)
@@ -86,38 +101,65 @@ def main(argv: list[str]) -> int:
         print(f"fake droid: unsupported arguments: {argv!r}", file=sys.stderr)
         return 2
 
-    prompt = argv[-1]
     cwd = Path.cwd()
     session = "fake-evaluator-session"
-    emit(
-        {
-            "type": "system",
-            "subtype": "init",
-            "cwd": str(cwd),
-            "session_id": session,
-            "tools": [],
-            "model": "fake-model",
-            "reasoning_effort": "off",
-        }
-    )
-    if FIRST_TASK in prompt:
-        final = first_turn(cwd)
-    elif FOLLOW_UP in prompt:
-        final = follow_up(cwd)
-    else:
-        emit({"type": "error", "source": "agent_loop", "message": "unexpected evaluator prompt"})
-        return 1
-    emit(
-        {
-            "type": "completion",
-            "subtype": "success",
-            "isError": False,
-            "finalText": final,
-            "session_id": session,
-            "model": "fake-model",
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-        }
-    )
+    for line in sys.stdin:
+        request = json.loads(line)
+        method = request.get("method")
+        if method in {"droid.initialize_session", "droid.load_session"}:
+            respond(
+                request,
+                {
+                    "sessionId": session,
+                    "settings": {"modelId": "fake-model", "reasoningEffort": "off"},
+                },
+            )
+            continue
+        if method == "droid.update_session_settings":
+            respond(request, {})
+            continue
+        if method != "droid.add_user_message":
+            emit(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request.get("id"),
+                    "error": {"message": f"unsupported method: {method}"},
+                }
+            )
+            continue
+
+        params = request.get("params")
+        prompt = params.get("text", "") if isinstance(params, dict) else ""
+        message_id = params.get("messageId", "") if isinstance(params, dict) else ""
+        respond(request, {})
+        if FIRST_TASK in prompt:
+            final = first_turn(cwd)
+        elif FOLLOW_UP in prompt:
+            final = follow_up(cwd)
+        else:
+            notify({"type": "agent_turn_completed", "reason": "failed", "turnId": message_id})
+            notify({"type": "droid_working_state_changed", "newState": "idle"})
+            continue
+        notify(
+            {
+                "type": "create_message",
+                "message": {
+                    "id": f"assistant-{message_id}",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": final}],
+                    "modelId": "fake-model",
+                },
+            }
+        )
+        notify(
+            {
+                "type": "agent_turn_completed",
+                "reason": "completed",
+                "turnId": message_id,
+                "tokenUsage": {"inputTokens": 1, "outputTokens": 1},
+            }
+        )
+        notify({"type": "droid_working_state_changed", "newState": "idle"})
     return 0
 
 
