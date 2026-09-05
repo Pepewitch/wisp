@@ -59,6 +59,18 @@ describe("Prose", () => {
   })
 
   /**
+   * The stream tells the person's words from the agent's by lightness alone,
+   * so the prompt bubble (`bg-card`) has to be the lightest surface in a turn.
+   * A code block sharing that fill made the two one shape at a glance.
+   */
+  it("keeps a code block off the prompt bubble's surface", () => {
+    const { container } = render(<Prose text={"```ts\nconst x = 1\n```"} />)
+    const pre = container.querySelector("pre")
+    expect(pre?.className).toContain("bg-code")
+    expect(pre?.className).not.toContain("bg-card")
+  })
+
+  /**
    * Each line of an agent transcript is a separate message the harness emitted.
    * CommonMark folds a single newline into a space, which ran a turn's status
    * lines together into one paragraph — the reported "string join" bug.
