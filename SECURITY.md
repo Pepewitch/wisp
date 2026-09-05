@@ -18,7 +18,8 @@ There is no production-supported release yet.
 - Wisp is a single-user, self-hosted tool. It has no account, tenant, or role
   boundary.
 - A Wisp API token grants full control of the daemon, including the ability to
-  launch coding agents and terminal shells. Do not share it.
+  launch coding agents and terminal shells and to install a published Wisp
+  update on a recognized managed installation. Do not share it.
 - Built-in harness adapters run unattended turns with the harness's permission
   bypass. Isolation comes from a dedicated Git worktree, not from an OS
   sandbox.
@@ -43,6 +44,12 @@ There is no production-supported release yet.
    documented `Pepewitch/tap/wisp` Formula, verify the GitHub owner and
    checksum, and do not disable Gatekeeper globally. Developer ID signing and
    notarization remain mandatory before an Apple Silicon RC.
+
+The update API accepts only a newer release returned by the fixed
+`Pepewitch/wisp` GitHub endpoint. Linux activation verifies the published
+manifest, artifact hash, and embedded build identity. macOS delegates
+installation and checksum verification to Homebrew. Neither path accepts a
+caller-provided URL or uses `sudo`.
 
 The browser exchanges the bearer token once for an HttpOnly, SameSite=Strict
 cookie. Tokens in URL query parameters are not accepted. This protects browser
