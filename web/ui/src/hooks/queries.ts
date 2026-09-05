@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { api, ApiError } from "@/lib/api";
-import { qk } from "@/lib/query";
+import { ApiError } from "@/lib/api";
+import { useDaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
   DiffResponse,
@@ -18,17 +18,19 @@ import type {
 
 /** GET /api/tasks — archived rows are only present when the sidebar toggle fetched ?archived=1. */
 export function useTasks(showArchived: boolean) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.tasksList(showArchived),
-    queryFn: () => api<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : ""}`),
+    queryFn: () => transport.request<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : ""}`),
   });
 }
 
 /** GET /api/status — sidebar git badges; covers live tasks only. */
 export function useStatus() {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.status,
-    queryFn: () => api<{ tasks: Record<string, StatusEntry> }>("/api/status"),
+    queryFn: () => transport.request<{ tasks: Record<string, StatusEntry> }>("/api/status"),
     select: (data) => data.tasks,
   });
 }
@@ -37,9 +39,10 @@ export const UPDATE_STATUS_POLL_MS = 60 * 60 * 1000
 
 /** Release discovery is daemon-cached, so one hourly read does not become one GitHub call per browser. */
 export function useUpdateStatus() {
+  const { transport, qk } = useDaemonRuntime()
   return useQuery({
     queryKey: qk.update,
-    queryFn: () => api<UpdateStatus>("/api/update"),
+    queryFn: () => transport.request<UpdateStatus>("/api/update"),
     refetchInterval: UPDATE_STATUS_POLL_MS,
     refetchIntervalInBackground: false,
   })
@@ -47,9 +50,10 @@ export function useUpdateStatus() {
 
 /** GET /api/tasks/:id — adds turns and diffstat to the list row. */
 export function useTaskDetail(id: string | null) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.task(id ?? ""),
-    queryFn: () => api<TaskDetail>(`/api/tasks/${id}`),
+    queryFn: () => transport.request<TaskDetail>(`/api/tasks/${id}`),
     enabled: id !== null,
   });
 }
@@ -74,9 +78,10 @@ export function pullRequestPollInterval(data: PullRequestStatus | undefined): nu
  * origins stop entirely; "none" keeps watching for a newly-created PR.
  */
 export function usePullRequestStatus(id: string | null) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.pullRequest(id ?? ""),
-    queryFn: () => api<PullRequestStatus>(`/api/tasks/${id}/pull-request`),
+    queryFn: () => transport.request<PullRequestStatus>(`/api/tasks/${id}/pull-request`),
     enabled: id !== null,
     refetchInterval: (query) => pullRequestPollInterval(query.state.data),
     refetchIntervalInBackground: false,
@@ -89,9 +94,10 @@ export function usePullRequestStatus(id: string | null) {
  * one GitHub request per row or per browser tab. Hidden tabs never poll.
  */
 export function usePullRequestOverview() {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.pullRequests,
-    queryFn: () => api<PullRequestOverview>("/api/pull-requests"),
+    queryFn: () => transport.request<PullRequestOverview>("/api/pull-requests"),
     refetchInterval: PULL_REQUEST_OVERVIEW_POLL_MS,
     refetchIntervalInBackground: false,
   });
@@ -104,27 +110,30 @@ export function usePullRequestOverview() {
  * boundary invalidates and the daemon can answer. Nothing is faked in between.
  */
 export function useTaskSkills(id: string | null, archived: boolean) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.skills(id ?? ""),
     enabled: id !== null && !archived,
-    queryFn: () => api<TaskSkills>(`/api/tasks/${id}/skills`),
+    queryFn: () => transport.request<TaskSkills>(`/api/tasks/${id}/skills`),
   });
 }
 
 /** GET /api/repos — the sidebar's project groups and the create modal's project picker. */
 export function useRepos() {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.repos,
-    queryFn: () => api<{ repos: RepoInfo[] }>("/api/repos"),
+    queryFn: () => transport.request<{ repos: RepoInfo[] }>("/api/repos"),
     select: (data) => data.repos,
   });
 }
 
 /** GET /api/suffix-prompts — the daemon-wide library shared by both composers. */
 export function useSuffixPrompts(enabled = true) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.suffixPrompts,
-    queryFn: () => api<{ suffixPrompts: SuffixPrompt[] }>("/api/suffix-prompts"),
+    queryFn: () => transport.request<{ suffixPrompts: SuffixPrompt[] }>("/api/suffix-prompts"),
     select: (data) => data.suffixPrompts,
     enabled,
   });
@@ -136,9 +145,10 @@ export function useSuffixPrompts(enabled = true) {
  * request never blocks on a CLI.
  */
 export function useHarnesses(enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.harnesses,
-    queryFn: () => api<{ harnesses: HarnessInfo[] }>("/api/harnesses"),
+    queryFn: () => transport.request<{ harnesses: HarnessInfo[] }>("/api/harnesses"),
     select: (data) => data.harnesses,
     enabled,
   });
@@ -155,12 +165,13 @@ export function useHarnesses(enabled: boolean) {
 export type DiffData = ({ kind: "ok" } & DiffResponse) | { kind: "unavailable"; message: string };
 
 export function useDiff(id: string | null, archived: boolean) {
+  const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.diff(id ?? ""),
     enabled: id !== null && !archived, // an archived task's worktree is gone — there is no diff to fetch
     queryFn: async (): Promise<DiffData> => {
       try {
-        const d = await api<DiffResponse>(`/api/tasks/${id}/diff`);
+        const d = await transport.request<DiffResponse>(`/api/tasks/${id}/diff`);
         if (d.worktreeReason !== null) return { kind: "unavailable", message: d.worktreeReason };
         return { kind: "ok", ...d };
       } catch (e) {

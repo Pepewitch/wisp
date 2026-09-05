@@ -1,14 +1,15 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { api } from "@/lib/api"
 import type {
   ApiTask,
   PullRequestInfo,
   PullRequestOverviewEntry,
   StatusEntry,
 } from "@/lib/types"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { TaskRow, TaskRowTouch } from "./task-row"
 
@@ -81,8 +82,9 @@ function found(
 }
 
 function mount(node: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>)
+  return render(node, {
+    wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: api })),
+  })
 }
 
 interface Call {

@@ -4,7 +4,9 @@ import { Terminal } from "@xterm/xterm"
 import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
 import { Dismiss, Plus } from "@/components/icons"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { loadShellTabs, saveShellTabs, TerminalConnection, type ShellTabs } from "@/lib/terminal"
+import type { DaemonTransport } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 
 /**
@@ -48,19 +50,23 @@ export function TerminalSection({
   /** thumb-sized shell tabs below the md breakpoint */
   touch?: boolean
 }) {
+  const runtime = useDaemonRuntime()
+  const taskIdentity = `${runtime.connectionId}:${taskId ?? ""}`
   // The tab list per task, restored from storage. A task switch swaps it during
   // RENDER, so no tab ever paints pointed at the previous task's worktree.
-  const [tabs, setTabsState] = useState<ShellTabs>(() => (taskId ? loadShellTabs(taskId) : { ids: [0], active: 0 }))
-  const [seenTask, setSeenTask] = useState(taskId)
-  if (seenTask !== taskId) {
-    setSeenTask(taskId)
-    setTabsState(taskId ? loadShellTabs(taskId) : { ids: [0], active: 0 })
+  const [tabs, setTabsState] = useState<ShellTabs>(() =>
+    taskId ? loadShellTabs(runtime.connectionId, taskId) : { ids: [0], active: 0 },
+  )
+  const [seenTask, setSeenTask] = useState(taskIdentity)
+  if (seenTask !== taskIdentity) {
+    setSeenTask(taskIdentity)
+    setTabsState(taskId ? loadShellTabs(runtime.connectionId, taskId) : { ids: [0], active: 0 })
   }
 
   // one writer, so no code path can change the tabs without recording them
   const setTabs = (next: ShellTabs) => {
     setTabsState(next)
-    if (taskId) saveShellTabs(taskId, next)
+    if (taskId) saveShellTabs(runtime.connectionId, taskId, next)
   }
 
   const shells = tabs.ids
@@ -129,7 +135,13 @@ export function TerminalSection({
           <div className="px-3.5 pt-1 font-mono text-[11px] text-faint">{unavailable}</div>
         ) : (
           shells.map((id) => (
-            <ShellView key={`${taskId}:${id}`} taskId={taskId!} shellId={id} active={id === activeId} />
+            <ShellView
+              key={`${runtime.connectionId}:${taskId}:${id}`}
+              transport={runtime.transport}
+              taskId={taskId!}
+              shellId={id}
+              active={id === activeId}
+            />
           ))
         )}
       </div>
@@ -207,7 +219,17 @@ const RETRY_DELAYS_MS = [400, 800, 1600, 3000, 3000, 3000]
  * scrollback survives a tab switch; the socket is disposed on deactivate and
  * rebuilt on activate, so an idle tab costs nothing on the daemon.
  */
-function ShellView({ taskId, shellId, active }: { taskId: string; shellId: number; active: boolean }) {
+function ShellView({
+  transport,
+  taskId,
+  shellId,
+  active,
+}: {
+  transport: DaemonTransport
+  taskId: string
+  shellId: number
+  active: boolean
+}) {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
@@ -336,7 +358,7 @@ function ShellView({ taskId, shellId, active }: { taskId: string; shellId: numbe
           retryTimer = setTimeout(() => setAttempt((n) => n + 1), delay)
         },
       },
-      undefined,
+      transport,
       () => live,
     )
     const phaseIsOpen = () => live
@@ -351,7 +373,7 @@ function ShellView({ taskId, shellId, active }: { taskId: string; shellId: numbe
       c.dispose()
       conn.current = null
     }
-  }, [taskId, shellId, active, attempt])
+  }, [transport, taskId, shellId, active, attempt])
 
   /**
    * Refit whenever the pane can actually be measured. An inactive tab is

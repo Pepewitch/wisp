@@ -15,9 +15,8 @@
  * and outlive the socket — so the same N always reattaches to the same
  * process, and `replay` is how a fresh xterm catches up with it.
  *
- * Auth rides the HttpOnly `wisp_token` cookie — the same-origin WS upgrade
- * carries cookies (see authorized() in src/daemon.ts). The token NEVER goes in
- * the URL (a prior audit), and there is deliberately no bearer fallback here.
+ * Authentication and target selection belong to the immutable daemon
+ * transport. The token NEVER goes in the URL.
  *
  * The generation guard is the classic page's: a stale socket (from a previous
  * task, tab switch, or reconnect) must never write into a new session. Every
@@ -25,8 +24,11 @@
  * invalidates the generation so late frames from a closing socket are dropped.
  *
  * xterm stays OUT of this module — it deals only in parsed frames, so the
- * wrapper is unit-testable in jsdom with a mock socket factory.
+ * wrapper is unit-testable in jsdom with a mock transport.
  */
+
+import { readConnectionStorage, writeConnectionStorage } from "./connection-storage";
+import type { DaemonTransport } from "./transport";
 
 export interface TerminalHello {
   pty: boolean;
@@ -68,19 +70,10 @@ export interface TerminalSocketLike {
   onclose: ((event: { code: number }) => void) | null;
 }
 
-export type TerminalSocketFactory = (url: string) => TerminalSocketLike;
-
-/**
- * Same-origin WS URL for ONE TAB of a task's terminal; wss when the page is
- * https. `shell` addresses the tab: the daemon keys its live shells by
- * (task, shell), so the same id always lands on the same process.
- */
-export function terminalSocketUrl(taskId: string, shellId: number): string {
-  const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
-  return `${protocol}${window.location.host}/api/tasks/${taskId}/terminal?shell=${shellId}`;
+/** The daemon path for one shell tab; the transport chooses its origin. */
+export function terminalSocketPath(taskId: string, shellId: number): string {
+  return `/api/tasks/${taskId}/terminal?shell=${shellId}`;
 }
-
-export const defaultTerminalSocketFactory: TerminalSocketFactory = (url) => new WebSocket(url) as TerminalSocketLike;
 
 // WebSocket readyState constants, mirrored so tests need no DOM constants.
 const WS_OPEN = 1;
@@ -98,7 +91,7 @@ export class TerminalConnection {
   private readonly taskId: string;
   private readonly shellId: number;
   private readonly handlers: TerminalClientHandlers;
-  private readonly factory: TerminalSocketFactory;
+  private readonly transport: Pick<DaemonTransport, "openWebSocket">;
   /** The owning component's staleness check — a stale connection ignores every event. */
   private readonly current: () => boolean;
 
@@ -106,13 +99,13 @@ export class TerminalConnection {
     taskId: string,
     shellId: number,
     handlers: TerminalClientHandlers,
-    factory: TerminalSocketFactory = defaultTerminalSocketFactory,
+    transport: Pick<DaemonTransport, "openWebSocket">,
     current: () => boolean = () => true,
   ) {
     this.taskId = taskId;
     this.shellId = shellId;
     this.handlers = handlers;
-    this.factory = factory;
+    this.transport = transport;
     this.current = current;
   }
 
@@ -122,7 +115,9 @@ export class TerminalConnection {
   }
 
   connect(): void {
-    const socket = this.factory(terminalSocketUrl(this.taskId, this.shellId));
+    const socket = this.transport.openWebSocket(
+      terminalSocketPath(this.taskId, this.shellId),
+    ) as unknown as TerminalSocketLike;
     this.socket = socket;
 
     socket.onopen = () => {
@@ -224,13 +219,10 @@ export const DEFAULT_SHELL_TABS: ShellTabs = { ids: [0], active: 0 };
 
 type TabStore = Record<string, ShellTabs>;
 
-function readStore(storage: Storage): TabStore {
-  let raw: string | null;
-  try {
-    raw = storage.getItem(SHELL_TABS_KEY);
-  } catch {
-    return {}; // storage disabled (private windows, blocked site data)
-  }
+const SHELL_TABS_SETTING = "shell_tabs_v1";
+
+function readStore(connectionId: string, storage: Storage): TabStore {
+  const raw = readConnectionStorage(connectionId, SHELL_TABS_SETTING, SHELL_TABS_KEY, storage);
   if (!raw) return {};
   let parsed: unknown;
   try {
@@ -258,14 +250,19 @@ function normalizeTabs(value: unknown): ShellTabs | null {
   return { ids, active };
 }
 
-export function loadShellTabs(taskId: string, storage: Storage = localStorage): ShellTabs {
-  return readStore(storage)[taskId] ?? DEFAULT_SHELL_TABS;
+export function loadShellTabs(connectionId: string, taskId: string, storage: Storage = localStorage): ShellTabs {
+  return readStore(connectionId, storage)[taskId] ?? DEFAULT_SHELL_TABS;
 }
 
-export function saveShellTabs(taskId: string, tabs: ShellTabs, storage: Storage = localStorage): void {
+export function saveShellTabs(
+  connectionId: string,
+  taskId: string,
+  tabs: ShellTabs,
+  storage: Storage = localStorage,
+): void {
   const normalized = normalizeTabs(tabs);
   if (!normalized) return;
-  const store = readStore(storage);
+  const store = readStore(connectionId, storage);
   // re-inserting moves the task to the END, so the cap drops the least
   // recently touched task rather than an arbitrary one
   delete store[taskId];
@@ -273,7 +270,7 @@ export function saveShellTabs(taskId: string, tabs: ShellTabs, storage: Storage 
   const keys = Object.keys(store);
   for (const stale of keys.slice(0, Math.max(0, keys.length - SHELL_TABS_MAX_TASKS))) delete store[stale];
   try {
-    storage.setItem(SHELL_TABS_KEY, JSON.stringify(store));
+    writeConnectionStorage(connectionId, SHELL_TABS_SETTING, SHELL_TABS_KEY, JSON.stringify(store), storage);
   } catch {
     // a full or disabled storage costs the memory of the tab list, nothing more
   }

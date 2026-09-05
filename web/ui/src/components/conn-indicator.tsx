@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react"
 
-import { connStore } from "@/lib/conn"
+import { connectionStore } from "@/lib/conn"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { cn } from "@/lib/utils"
 
 /** Presentational, so the gallery can render both states without a socket. */
@@ -15,6 +16,8 @@ export function ConnStatus({ live }: { live: boolean }) {
 
 /** "Live" only while BOTH SSE streams are healthy (lib/conn.ts). */
 export function ConnIndicator() {
-  const live = useSyncExternalStore(connStore.subscribe, connStore.isLive)
+  const { connectionId } = useDaemonRuntime()
+  const store = connectionStore(connectionId)
+  const live = useSyncExternalStore(store.subscribe, store.isLive)
   return <ConnStatus live={live} />
 }

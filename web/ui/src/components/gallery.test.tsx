@@ -1,18 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, test } from "vitest"
 
 import { Gallery } from "@/components/gallery"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 describe("Gallery", () => {
   test("renders the retained route with its dialog specimens", () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-
-    render(
-      <QueryClientProvider client={client}>
-        <Gallery />
-      </QueryClientProvider>,
-    )
+    render(<Gallery />, { wrapper: runtimeWrapper(fakeDaemonTransport()) })
 
     expect(screen.getByRole("heading", { name: "Graphite & violet", level: 1 })).toBeInTheDocument()
     expect(screen.getByText("A configured project")).toBeInTheDocument()
