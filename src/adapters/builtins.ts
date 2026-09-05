@@ -22,7 +22,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["-s", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-r", "{effort}"],
-    // droid 0.202.0, read off its own rejection message (see effortLevels).
+    // Rechecked against droid 0.213.0's model-specific help. This is the
+    // cross-model union; the valid subset still depends on the selected model.
     // `--help` only says "defaults per model", so the level is left unset by
     // default and droid picks per model — the menu offers, it does not force.
     effortLevels: ["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"],
@@ -35,9 +36,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // (png/jpeg only, and vision is a per-model unknown droid does not expose).
     imageDelivery: "read-tool-path",
     // droid's Factory JSON-RPC mode keeps one agent loop alive and accepts
-    // stable-id messages with queuePlacement:"end_of_turn". A live 0.205.0
-    // probe delivered a correction during a shell sleep, produced one
-    // agent_turn_completed event, and answered only the correction.
+    // stable-id messages with queuePlacement:"end_of_turn". Session start,
+    // completion, actual-model and usage capture were live-reverified on
+    // 0.213.0 with gpt-6-astra; steering was last live-probed on 0.205.0.
     liveInput: "droid-jsonrpc",
     // the init event carries model + reasoning_effort (verified against real
     // turn logs, droid 0.202.0 — tests/fixtures/droid-init.jsonl); the
@@ -167,7 +168,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     compactPrompt: "/compact",
   },
   codex: {
-    // Verified against codex-cli 0.149.0. `codex exec` is one headless turn;
+    // Reverified against codex-cli 0.153.4. `codex exec` is one headless turn;
     // resume is a SUBCOMMAND, not a flag (`codex exec resume <id> "<prompt>"`),
     // and codex applies the parent `exec` options to it — so appending
     // ["resume", "{session}"] still yields a valid argv:
@@ -183,16 +184,17 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-c", "model_reasoning_effort={effort}"],
-    // codex 0.149.0 — the API's own enum (see effortLevels). `xhigh` is real:
-    // it is the configured default on this machine and the API accepts it.
+    // codex 0.153.4 — generated app-server schemas accept a non-empty effort
+    // string and the current catalog includes xhigh/max models.
     effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
     // spike-verified live (codex-cli 0.149.0): multi-file is one -i with all
     // paths, and the trailing "--" is MANDATORY — without it the variadic -i
     // eats the prompt positional and codex exits 1 ("No prompt provided")
     image: ["-i", "{path}", "--"],
     // app-server's turn/steer has an active-turn precondition and stable
-    // client message IDs. A live 0.149.0 probe steered while `sleep 4` ran,
-    // emitted the correction as a user item, and completed the same turn once.
+    // client message IDs. Start/completion and usage were live-reverified on
+    // 0.153.4 with gpt-6-astra; steering's schema is current and its last live
+    // probe on 0.149.0 completed the same turn once.
     liveInput: "codex-app-server",
     // codex splits session id and result text across events and nests the text
     // one level deep, so the flat field mapping cannot express it.

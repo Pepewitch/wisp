@@ -51,7 +51,7 @@ Run in a throwaway git repo, stdin from /dev/null.
 | file | command | exit |
 |---|---|---|
 | `claude-unknown-model.jsonl` | `claude -p --output-format stream-json --verbose --dangerously-skip-permissions --model bogus-model "Reply with exactly the word: papaya"` (claude-code 2.1.240) | 1 |
-| `droid-unknown-model.stderr.txt` | `droid exec -o stream-json --auto medium -m bogus-model "Reply with exactly the word: papaya"` (droid 0.202.0) — this is the **stderr**; stdout was empty | 1 |
+| `droid-unknown-model.stderr.txt` | `droid exec -o stream-json --auto medium -m bogus-model "Reply with exactly the word: papaya"` (model catalog recaptured on droid 0.213.0; failure shape originally captured on 0.202.0) — this is the **stderr**; stdout was empty | 1 |
 
 What these prove:
 

@@ -143,8 +143,9 @@ function snakeUsage(value: unknown): Record<string, number> | null {
  * Long-lived Codex app-server turn.
  *
  * `turn/steer` is guarded by the active turn id and accepts a stable client
- * message id. A live 0.149.0 probe steered during a shell sleep, emitted the
- * correction as a user item, and completed the same turn exactly once.
+ * message id. Start/completion and usage were live-reverified on 0.153.4
+ * with gpt-6-astra, and all shapes were checked against its generated schema.
+ * Steering was last live-probed on 0.149.0 during a shell sleep.
  */
 export class CodexLiveDriver {
   readonly ready: Promise<void>;

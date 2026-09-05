@@ -222,8 +222,6 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
-  startOutboxLoop(cfg);
-  startStuckLoop(cfg);
 
   let server: Bun.Server<TerminalSocketData>;
   try {
@@ -288,6 +286,14 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     }
     throw error;
   }
+  const outboxTimer = startOutboxLoop(cfg);
+  const stuckTimer = startStuckLoop(cfg);
+  const stopServer = server.stop.bind(server);
+  server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
+    clearInterval(outboxTimer);
+    clearInterval(stuckTimer);
+    await stopServer(closeActiveConnections);
+  };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
   void modelCache.refresh();

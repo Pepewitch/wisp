@@ -46,9 +46,9 @@ export async function deliverOutbox(cfg: WispConfig): Promise<void> {
  * transition (store.transition); this loop retries with backoff until every
  * configured URL has accepted the event. Consumers dedup on (task_id, seq).
  */
-export function startOutboxLoop(cfg: WispConfig): void {
+export function startOutboxLoop(cfg: WispConfig): ReturnType<typeof setInterval> {
   let running = false;
-  setInterval(async () => {
+  const timer = setInterval(async () => {
     if (running) return; // don't overlap slow deliveries
     running = true;
     try {
@@ -57,4 +57,6 @@ export function startOutboxLoop(cfg: WispConfig): void {
       running = false;
     }
   }, 5000);
+  timer.unref?.();
+  return timer;
 }

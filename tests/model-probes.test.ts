@@ -3,8 +3,8 @@ import { BUILTIN_ADAPTERS, DROID_MODEL_PROBE_SENTINEL, type AdapterDef } from ".
 import { ModelProbeCache, type ModelProbeCacheOptions } from "../src/model-probes";
 import type { SpawnFn } from "../src/doctor";
 
-const help = "  -m, --model <id>  Model ID to use (default: claude-opus-5)\n";
-const errorText = "Invalid model\nAvailable built-in models:\n  auto, claude-opus-5, kimi-k3\n";
+const help = "  -m, --model <id>  Model ID to use (default: gpt-5.6-sol)\n";
+const errorText = "Invalid model\nAvailable built-in models:\n  auto, gpt-6-astra, gpt-5.6-sol, kimi-k3\n";
 
 function droidSpawn(seen: string[][] = []): SpawnFn {
   return (cmd) => {
@@ -25,8 +25,8 @@ describe("daemon model probe cache", () => {
     await pending;
 
     expect(cache.snapshot("droid").models).toEqual({
-      list: ["auto", "claude-opus-5", "kimi-k3"],
-      defaultModel: "claude-opus-5",
+      list: ["auto", "gpt-6-astra", "gpt-5.6-sol", "kimi-k3"],
+      defaultModel: "gpt-5.6-sol",
       probedAt: expect.any(String),
     });
   });
@@ -34,7 +34,7 @@ describe("daemon model probe cache", () => {
   test("refresh replaces the old snapshot asynchronously and coalesces concurrent refreshes", async () => {
     let generation = 0;
     const spawn: SpawnFn = (cmd) => {
-      if (cmd.includes("--help")) return { exitCode: 0, stdout: help.replace("claude-opus-5", generation ? "next" : "first"), stderr: "" };
+      if (cmd.includes("--help")) return { exitCode: 0, stdout: help.replace("gpt-5.6-sol", generation ? "next" : "first"), stderr: "" };
       return { exitCode: 1, stdout: "", stderr: `Available built-in models:\n  ${generation ? "next" : "first"}\n` };
     };
     const cache = new ModelProbeCache({ droid: BUILTIN_ADAPTERS.droid }, { spawn });

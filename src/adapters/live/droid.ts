@@ -82,7 +82,9 @@ function messageParams(
 /**
  * A single long-lived Droid JSON-RPC peer.
  *
- * The protocol shapes here were captured from Droid 0.205.0. Admission is the
+ * Session start, completion, actual-model and usage shapes plus the versioned
+ * transport envelope were live-reverified on Droid 0.213.0 with gpt-6-astra.
+ * Steering was last live-probed on 0.205.0. Admission is the
  * response to droid.add_user_message. Completion is agent_turn_completed,
  * followed by droid_working_state_changed:newState="idle"; only that idle
  * closes stdin. A correction admitted while a tool was sleeping completed in

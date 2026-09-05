@@ -28,12 +28,14 @@ export const PROBE_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–1
 export const PROBE_CACHE_TTL_MS = 120_000;
 
 /**
- * droid's envelope constant, read out of the 0.205.0 binary (SP1). droid
+ * droid's envelope constant, read out of the 0.213.0 binary. A zero-token
+ * transport probe confirmed 0.213.0 accepts this version and echoes it on
+ * responses (the prior 1.189.0 is still accepted for compatibility). droid
  * rejects bare JSON-RPC with -32700, so a probe request must carry it. It
  * WILL move with droid releases — a moved version must surface as a probe
  * error naming the protocol, not as a silently empty report.
  */
-export const FACTORY_PROTOCOL_VERSION = "1.189.0";
+export const FACTORY_PROTOCOL_VERSION = "1.204.0";
 
 /** Production one-shot process runner: spawn with a cwd, collect everything. */
 export const bunProbeSpawn: ProbeSpawnFn = async (cmd, opts): Promise<SpawnResult> => {

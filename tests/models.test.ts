@@ -11,16 +11,16 @@ import { formatModelsReport, modelsReport, probeModels } from "../src/models";
 import { fixture } from "./fixtures";
 
 /**
- * The droid exec --help option lines, verbatim from droid 0.202.0 (plus the
+ * The droid exec --help option lines, verbatim from droid 0.213.0 (plus the
  * JSON-RPC note line that also mentions --model): the -o line is a decoy
  * carrying its own "(default: …)", and the --spec-model/--worker-model lines
  * prove the parser keys on the --model line specifically.
  */
 const DROID_HELP = `  -o, --output-format <format>  Output format (default: "text")
-  --input-format <format>     Input format: stream-json for multi-turn sessions
+  --input-format <format>     Input format: stream-json for multi-turn sessions; stream-jsonrpc is controlled via JSON-RPC requests
   --auto <level>              Autonomy level: low|medium|high
   -s, --session-id <id>       Existing session to continue (requires a prompt)
-  -m, --model <id>            Model ID to use (default: claude-opus-5)
+  -m, --model <id>            Model ID to use (default: gpt-5.6-sol)
   -r, --reasoning-effort <level>  Reasoning effort (defaults per model)
   --spec-model <id>           Model ID to use for spec mode (defaults to main model)
   --worker-model <id>         Model ID used by mission workers (only valid with --mission)
@@ -61,16 +61,18 @@ describe("builtin wiring", () => {
 describe("droid-models strategy", () => {
   test("default comes from the --model line of exec --help, not other options' (default: …) text", async () => {
     const d = await discoverModels(BUILTIN_ADAPTERS.droid, droidSpawn({}));
-    expect(d.defaultModel).toBe("claude-opus-5");
+    expect(d.defaultModel).toBe("gpt-5.6-sol");
   });
 
   test("the model list is parsed from the real invalid-model error capture", async () => {
     const d = await discoverModels(BUILTIN_ADAPTERS.droid, droidSpawn({}));
     expect(d.models).not.toBeNull();
-    // the fixture block lists 44 ids and repeats itself; the parse dedupes the repeat
-    expect(d.models!.length).toBe(44);
+    // the fixture block lists 50 ids and repeats itself; the parse dedupes the repeat
+    expect(d.models!.length).toBe(50);
     expect(d.models).toContain("auto");
     expect(d.models).toContain("claude-opus-5");
+    expect(d.models).toContain("gpt-6-astra");
+    expect(d.models).toContain("glm-5.3");
     expect(d.models).toContain("kimi-k3");
     expect(d.models).not.toContain(DROID_MODEL_PROBE_SENTINEL);
     expect(d.notes.join(" ")).toContain("invalid-model error text");
@@ -97,7 +99,7 @@ describe("droid-models strategy", () => {
     const seen: string[][] = [];
     const d = await discoverModels(noModelTpl, droidSpawn({ seen }));
     expect(seen.every((cmd) => !cmd.includes(DROID_MODEL_PROBE_SENTINEL))).toBe(true);
-    expect(d.defaultModel).toBe("claude-opus-5"); // help probe still runs
+    expect(d.defaultModel).toBe("gpt-5.6-sol"); // help probe still runs
     expect(d.models).toBeNull();
     expect(d.notes.join(" ")).toContain("no model argv template");
   });
@@ -131,14 +133,14 @@ describe("codex-models strategy", () => {
       BUILTIN_ADAPTERS.codex,
       codexSpawn(
         catalog([
-          { slug: "gpt-z", visibility: "list", priority: 9, supported_in_api: true },
-          { slug: "gpt-a", visibility: "list", priority: 1, supported_in_api: true },
+          { slug: "gpt-5.6-sol", visibility: "list", priority: 9, supported_in_api: true },
+          { slug: "gpt-6-astra", visibility: "list", priority: 1, supported_in_api: true },
           { slug: "gpt-internal", visibility: "hide", priority: 0, supported_in_api: true },
         ]),
       ),
     );
-    expect(d.models).toEqual(["gpt-a", "gpt-z"]);
-    expect(d.defaultModel).toBe("gpt-a");
+    expect(d.models).toEqual(["gpt-6-astra", "gpt-5.6-sol"]);
+    expect(d.defaultModel).toBe("gpt-6-astra");
   });
 
   test("codex's own fallback: nothing picker-visible → first entry by priority", async () => {
@@ -214,16 +216,16 @@ describe("formatModelsReport — the effective-choice line", () => {
 
   test("config override beats a known harness default (the P5c example line)", async () => {
     const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "kimi-k3" } }, droidSpawn({}));
-    expect(lines).toContain("droid: effective kimi-k3 (from config; harness default claude-opus-5)");
-    expect(lines).toContain("  harness default: claude-opus-5");
+    expect(lines).toContain("droid: effective kimi-k3 (from config; harness default gpt-5.6-sol)");
+    expect(lines).toContain("  harness default: gpt-5.6-sol");
     expect(lines).toContain(
       "  config default: kimi-k3 — new tasks get this unless --model is passed (config.json harnessDefaults)",
     );
   });
 
   test("config override equal to the harness default says so", async () => {
-    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "claude-opus-5" } }, droidSpawn({}));
-    expect(lines).toContain("droid: effective claude-opus-5 (from config; same as the harness default)");
+    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "gpt-5.6-sol" } }, droidSpawn({}));
+    expect(lines).toContain("droid: effective gpt-5.6-sol (from config; same as the harness default)");
   });
 
   test("config override with no discoverable harness default names that gap", async () => {
@@ -233,7 +235,7 @@ describe("formatModelsReport — the effective-choice line", () => {
 
   test("no config override: the harness default wins and says no override exists", async () => {
     const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, {}, droidSpawn({}));
-    expect(lines).toContain("droid: effective claude-opus-5 (harness default; no config override)");
+    expect(lines).toContain("droid: effective gpt-5.6-sol (harness default; no config override)");
   });
 
   test("neither config nor a discoverable default: the report is honest and points at the fix", async () => {

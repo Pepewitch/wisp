@@ -34,7 +34,7 @@ function parseAvailableModelBlocks(text: string): string[] {
 
 export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   /**
-   * droid (verified against 0.202.0): the default model is named on the
+   * droid (reverified against 0.213.0): the default model is named on the
    * -m/--model line of `droid exec --help` ("Model ID to use (default:
    * claude-opus-5)") — the help argv is the adapter's own exec argv plus
    * --help, so user overrides of exec still land on the right help page.
@@ -84,7 +84,7 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   },
 
   /**
-   * codex (verified against 0.149.0, plus upstream rust-v0.149.0 source): `codex
+   * codex (reverified against 0.153.4 and its generated app-server schema): `codex
    * debug models` prints the model catalog as JSON. codex sorts it by
    * `priority`, keeps `visibility: "hide"` entries out of the picker, and its
    * default when -m is unset is the FIRST picker-visible model in priority
@@ -92,7 +92,8 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
    * build_available_models + default_model_from_available; openai_models.rs
    * show_in_picker = visibility == "list"). Auth-mode filtering
    * (supported_in_api) is NOT replicated — the raw catalog is what the CLI
-   * advertises, and every 0.149.0 catalog entry is api-supported anyway.
+   * advertises. In 0.153.4 this makes picker-visible `gpt-6-astra` the
+   * discovered default without a Wisp release or hardcoded model list.
    */
   "codex-models": async (def, spawn, signal) => {
     const res = await spawn([def.bin, "debug", "models"], signal);
