@@ -10,12 +10,53 @@ Read [Adding a harness](../../../docs/ADDING-A-HARNESS.md) for adapter field
 semantics and honest-absence rules. This guide covers refreshing an existing
 builtin without wasting model quota.
 
+## 0. Start here: two commands, then read on only if needed
+
+Do not begin by probing surfaces at random or reading this whole guide. Run:
+
+```sh
+bun run harness:check     # add --remote for the upstream "latest" column
+bun run harness:snapshot  # add --check to diff without writing
+```
+
+`harness:check` compares the installed CLI against Wisp's per-surface pins in
+`tests/harness-facts/<harness>.json`. `harness:snapshot` re-reads every
+zero-token surface from the installed CLI, rewrites those facts, and prints a
+graded diff. Both verdicts name the next action.
+
+Read the diff first, and let it decide how much of this guide you need:
+
+| Verdict | What it means | What to do |
+| --- | --- | --- |
+| no change to any free surface | The CLI update is irrelevant to Wisp, whatever its release notes say | Nothing. Commit the re-pinned facts |
+| `CATALOG` | Models, defaults or effort levels moved | §4 only — edit the builtin, run the narrow tests |
+| `CAPABILITY` | A new flag or surface Wisp could adopt | Optional; §3 for the field semantics |
+| `BREAKING` | A surface Wisp parses or passes has moved | §3 and §4, then §5 if a wire shape changed |
+
+Two things the commands deliberately will not do:
+
+- **They never spend model tokens.** Surfaces marked `cost: "live"` in the
+  facts — usage keys, steering, captured fixtures — are carried forward with
+  their pin and reported when stale. Refreshing one is §5, by hand.
+- **They never invent a fix.** `markerPresence` reports which declared limit
+  and transient markers still exist in the shipped binary; a missing one is
+  surfaced for you to judge, because replacing a marker needs a real captured
+  failure (§3), which no tool can supply.
+
+`bun test tests/harness-facts.test.ts` is the other half: it asserts the
+adapters still agree with the captured facts. Those assertions are containment,
+never equality — `staticModels` must not offer an id the catalog dropped, and
+the effort menu must not hide a level the CLI accepts. The reverse direction
+(the catalog grew) is a report, not a failure: curation stays the owner's call.
+
 ## 1. Establish the old and new baselines
 
 Work in an isolated Wisp worktree. Record:
 
 - the Wisp commit and builtin being checked;
 - `<bin> --version` and the executable path;
+- the per-surface pins in `tests/harness-facts/<harness>.json` (`harness:check`
+  prints these against the installed version);
 - the versions named in that builtin's comments and captured fixtures;
 - the release-note range between the last verified version and the installed
   one.
@@ -98,6 +139,7 @@ features.
 Update the builtin and every direct contract pin. Common locations:
 
 - `src/adapters/builtins.ts`;
+- `tests/harness-facts/<harness>.json` (rewritten by `harness:snapshot`);
 - `tests/adapters.test.ts`;
 - `tests/api-contracts.test.ts`;
 - the nearest strategy tests and `tests/fixtures/README.md`;

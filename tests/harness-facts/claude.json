@@ -1,0 +1,191 @@
+{
+  "harness": "claude",
+  "bin": "claude",
+  "surfaces": {
+    "effortLevels": {
+      "cost": "free",
+      "verifiedAgainst": "2.1.261",
+      "source": "the '--effort <level>' line of 'claude --help'",
+      "lists": {
+        "observed": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ]
+      }
+    },
+    "fixtures": {
+      "cost": "live",
+      "verifiedAgainst": "2.1.240",
+      "source": "captured transcripts under tests/fixtures/",
+      "note": "the pin is the OLDEST capture: staleness is a weakest-link property",
+      "lists": {
+        "files": [
+          "claude-init.jsonl",
+          "claude-subagent.jsonl",
+          "claude-unknown-model.jsonl"
+        ]
+      }
+    },
+    "flags": {
+      "cost": "free",
+      "verifiedAgainst": "2.1.261",
+      "source": "flag tokens parsed out of 'claude --help'",
+      "lists": {
+        "values": [
+          "--add-dir",
+          "--agent",
+          "--agents",
+          "--all",
+          "--allow-dangerously-skip-permissions",
+          "--allowed-tools",
+          "--append-system-prompt",
+          "--autocompact",
+          "--ax-screen-reader",
+          "--background",
+          "--bare",
+          "--betas",
+          "--bg",
+          "--brief",
+          "--chrome",
+          "--cloud",
+          "--continue",
+          "--dangerously-skip-permissions",
+          "--debug",
+          "--debug-file",
+          "--disable-slash-commands",
+          "--disallowed-tools",
+          "--effort",
+          "--environment",
+          "--exclude-dynamic-system-prompt-sections",
+          "--fallback-model",
+          "--file",
+          "--fork-session",
+          "--forward-subagent-text",
+          "--from-pr",
+          "--help",
+          "--ide",
+          "--include-hook-events",
+          "--include-partial-messages",
+          "--input-format",
+          "--json-schema",
+          "--max-budget-usd",
+          "--mcp-config",
+          "--model",
+          "--name",
+          "--no-chrome",
+          "--no-session-persistence",
+          "--output-format",
+          "--permission-mode",
+          "--permission-prompt-tool",
+          "--permission-prompts",
+          "--plugin-dir",
+          "--plugin-url",
+          "--print",
+          "--prompt-suggestions",
+          "--remote-control",
+          "--remote-control-session-name-prefix",
+          "--replay-user-messages",
+          "--restricted",
+          "--resume",
+          "--safe-mode",
+          "--session-id",
+          "--setting-sources",
+          "--settings",
+          "--strict-mcp-config",
+          "--system-prompt",
+          "--system-prompt-snapshot",
+          "--teleport",
+          "--tmux",
+          "--tools",
+          "--verbose",
+          "--version",
+          "--worktree",
+          "-c",
+          "-d",
+          "-h",
+          "-n",
+          "-p",
+          "-r",
+          "-v",
+          "-w"
+        ]
+      }
+    },
+    "markerPresence": {
+      "cost": "free",
+      "verifiedAgainst": "2.1.261",
+      "source": "case-insensitive fixed-string search of the installed claude binary",
+      "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
+      "lists": {
+        "missing": [],
+        "present": [
+          "credit balance",
+          "rate limit",
+          "usage limit",
+          "you've reached your"
+        ]
+      }
+    },
+    "models": {
+      "cost": "free",
+      "verifiedAgainst": "2.1.261",
+      "source": "model ids matching /claude-(fable|opus|sonnet|haiku)-[0-9a-z.-]+/ in the installed claude binary",
+      "note": "an unfiltered binary scan: it includes legacy, dated and vendor-suffixed ids the picker never offers. Sound for proving a pinned id still exists; NOT a list to add from.",
+      "lists": {
+        "ids": [
+          "claude-fable-5",
+          "claude-fable-5-1",
+          "claude-fable-5-mythos-5",
+          "claude-haiku-3-5",
+          "claude-haiku-3-55",
+          "claude-haiku-4",
+          "claude-haiku-4-5",
+          "claude-haiku-4-5-20251001",
+          "claude-haiku-4-5-20251001-v1",
+          "claude-opus-4",
+          "claude-opus-4-0",
+          "claude-opus-4-1",
+          "claude-opus-4-1-20250805",
+          "claude-opus-4-1-20250805-v1",
+          "claude-opus-4-20250514",
+          "claude-opus-4-20250514-v1",
+          "claude-opus-4-5",
+          "claude-opus-4-5-20251101",
+          "claude-opus-4-5-20251101-v1",
+          "claude-opus-4-6",
+          "claude-opus-4-6-v1",
+          "claude-opus-4-7",
+          "claude-opus-4-8",
+          "claude-opus-5",
+          "claude-sonnet-3-7",
+          "claude-sonnet-4",
+          "claude-sonnet-4-0",
+          "claude-sonnet-4-20250514",
+          "claude-sonnet-4-20250514-v1",
+          "claude-sonnet-4-5",
+          "claude-sonnet-4-5-20250929",
+          "claude-sonnet-4-5-20250929-v1",
+          "claude-sonnet-4-5-v1",
+          "claude-sonnet-4-6",
+          "claude-sonnet-5"
+        ]
+      },
+      "scalars": {
+        "default": null
+      }
+    },
+    "steering": {
+      "cost": "live",
+      "verifiedAgainst": "2.1.251",
+      "source": "claude's stream-json stdin admission of a mid-turn message"
+    },
+    "usageKeys": {
+      "cost": "live",
+      "verifiedAgainst": "2.1.240",
+      "source": "the result event's raw token keys, from a real turn"
+    }
+  }
+}

@@ -96,7 +96,9 @@ describe("buildArgv", () => {
   test("each adapter declares the effort levels its CLI actually accepts", () => {
     expect(droid.effortLevels).toEqual(["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
     expect(claude.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(codex.effortLevels).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    // `ultra` came from codex's own catalog: gpt-6-astra lists it in
+    // supported_reasoning_levels (found by `bun run harness:snapshot`)
+    expect(codex.effortLevels).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
     // every declared level must be one the adapter can actually forward
     for (const def of [droid, claude, codex]) expect(def.effort).toBeDefined();
   });
