@@ -265,6 +265,34 @@ describe("activity tree", () => {
   })
 })
 
+describe("a message steered into a running turn", () => {
+  it("keeps its place between the prose before it and the prose after it", () => {
+    const items = reduceActivity(
+      [],
+      [
+        { kind: "text", id: "t1", parentId: null, text: "Reading the config" },
+        { kind: "message", id: "mfaketestid01", parentId: null, text: "Use the safer approach" },
+        { kind: "text", id: "t2", parentId: null, text: "Switching approach" },
+      ],
+    )
+    expect(items).toEqual([
+      { kind: "text", id: "t1", text: "Reading the config" },
+      { kind: "message", id: "mfaketestid01", text: "Use the safer approach" },
+      { kind: "text", id: "t2", text: "Switching approach" },
+    ])
+  })
+
+  it("survives a replay of the same log without stacking duplicates", () => {
+    const events: ActivityEvent[] = [
+      { kind: "text", id: "t1", parentId: null, text: "Reading the config" },
+      { kind: "message", id: "mfaketestid01", parentId: null, text: "Use the safer approach" },
+    ]
+    const once = reduceActivity([], events)
+    const twice = reduceActivity(once, events)
+    expect(twice.filter((item) => item.kind === "message")).toHaveLength(1)
+  })
+})
+
 describe("you-block display rule", () => {
   it("keeps short prompts inline", () => {
     expect(youBlockDisplay("fix the flaky web test")).toEqual({

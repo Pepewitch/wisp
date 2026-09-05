@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, createActivityFormatter, type ActivityEvent, type AdapterDef } from "../src/adapters";
+import { formatSteerNote } from "../src/turn-notes";
 import { fixture } from "./fixtures";
 
 function render(def: AdapterDef, events: Record<string, unknown>[]): ActivityEvent[] {
@@ -380,6 +381,38 @@ describe("structured activity normalization", () => {
     const duplicateReasoning = { type: "reasoning", id: "reason-1", text: "One thought", timestamp: 123 };
     expect(render(optedOut, [duplicateReasoning, duplicateReasoning])).toEqual([
       { kind: "text", id: "text-1", parentId: null, text: "~ One thought" },
+    ]);
+  });
+
+  test("a steered message becomes a canonical event where the harness accepted it", () => {
+    const format = createActivityFormatter(BUILTIN_ADAPTERS.claude!);
+    const before = format(
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Reading the config" }] } }),
+    );
+    const steer = format(formatSteerNote("mfaketestid01", "Use the safer approach\nand keep the tests green"));
+    const after = format(
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Switching approach" }] } }),
+    );
+
+    expect(before).toEqual([expect.objectContaining({ kind: "text", text: "Reading the config" })]);
+    expect(steer).toEqual([
+      {
+        kind: "message",
+        id: "mfaketestid01",
+        parentId: null,
+        text: "Use the safer approach and keep the tests green",
+      },
+    ]);
+    expect(after).toEqual([expect.objectContaining({ kind: "text", text: "Switching approach" })]);
+  });
+
+  test("only Wisp's own marker becomes a message; other notes stay prose", () => {
+    const format = createActivityFormatter(BUILTIN_ADAPTERS.claude!);
+    expect(format("· attached: diagram.png (320 B)")).toEqual([
+      { kind: "text", id: "text-1", parentId: null, text: "· attached: diagram.png (320 B)" },
+    ]);
+    expect(format("· steer without an id")).toEqual([
+      { kind: "text", id: "text-2", parentId: null, text: "· steer without an id" },
     ]);
   });
 

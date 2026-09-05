@@ -10,6 +10,7 @@ import {
   readMessageAttachments,
   type StoredAttachment,
 } from "./attachments";
+import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage } from "./types";
 
 export interface ActiveLiveInput {
@@ -135,7 +136,7 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await write(envelopeFor(strategy, message.text, files));
-      noteAttachments(options.outFd, files);
+      noteDelivery(options.outFd, message, files);
     },
     close,
   });
@@ -179,7 +180,14 @@ function messageAttachments(taskId: string, message: TaskMessage): StoredAttachm
   return readMessageAttachments(taskId, message.id, parseAttachmentManifest(message.attachments_json));
 }
 
-function noteAttachments(outFd: number, files: StoredAttachment[]): void {
+/**
+ * The steer's own place in the turn's transcript, written to the harness's log
+ * fd once the delivery has been admitted. Ordering on that fd is the ordering
+ * the conversation replays, so the message lands between what the harness had
+ * already said and whatever it does next — never beside the turn's prompt.
+ */
+function noteDelivery(outFd: number, message: TaskMessage, files: StoredAttachment[]): void {
+  writeSync(outFd, `${formatSteerNote(message.id, message.text)}\n`);
   if (files.length > 0) writeSync(outFd, `${formatAttachNote(files)}\n`);
 }
 
@@ -216,7 +224,7 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await driver.send(message.id, message.text, droidImages(files));
-      noteAttachments(options.outFd, files);
+      noteDelivery(options.outFd, message, files);
     },
     close: () => driver.close(),
   });
@@ -257,7 +265,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await driver.send(message.id, codexInput(message.text, files));
-      noteAttachments(options.outFd, files);
+      noteDelivery(options.outFd, message, files);
     },
     close: () => driver.close(),
   });

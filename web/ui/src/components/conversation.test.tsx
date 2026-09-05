@@ -2,8 +2,8 @@ import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 
-import type { TaskDetail } from "@/lib/types"
-import { initialStreamState } from "@/stream/reducer"
+import type { ActivityEvent, TaskDetail, TaskMessage } from "@/lib/types"
+import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer"
 
 import { Conversation } from "./conversation"
 
@@ -171,5 +171,132 @@ describe("Conversation top fade", () => {
     expect(screen.getAllByText("not delivered; task is archived")).toHaveLength(2)
     expect(screen.queryByRole("button", { name: "Edit queued message" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Cancel queued message" })).toBeNull()
+  })
+})
+
+describe("a steer that lands inside a running turn", () => {
+  const message: TaskMessage = {
+    id: "mfaketestid01",
+    task_id: "tsteer",
+    text: "Use the safer approach",
+    status: "delivered",
+    delivery: "steered",
+    turn_n: 1,
+    delivery_uncertain: false,
+    attachments: [],
+    created_at: "2026-09-03T00:00:01Z",
+    updated_at: "2026-09-03T00:00:01Z",
+  }
+
+  const task = {
+    id: "tsteer",
+    title: "Place a steer where it landed",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/tsteer",
+    base_commit: "abc123",
+    harness: "claude-code",
+    model: "fake-model",
+    effort: null,
+    slot: 0,
+    state: "running",
+    state_detail: "turn 1",
+    session_id: "session-1",
+    seq: 1,
+    turn_count: 1,
+    archived: false,
+    mode: "worktree",
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:02Z",
+    diffstat: null,
+    worktreeReason: null,
+    turns: [
+      {
+        id: 1,
+        task_id: "tsteer",
+        n: 1,
+        prompt: "Original request",
+        result: null,
+        status: "running",
+        model: "fake-model",
+        usage: null,
+        attachments: [],
+        log_file: "/tmp/turn.log",
+        started_at: "2026-09-03T00:00:00Z",
+        ended_at: null,
+      },
+    ],
+    messages: [message],
+  } as TaskDetail
+
+  const streamOf = (activity: ActivityEvent[]): StreamState =>
+    streamReducer(initialStreamState, { type: "backlog", turn: 1, prompt: "Original request", activity })
+
+  const anchored = streamOf([
+    { kind: "text", id: "t1", parentId: null, text: "Reading the config" },
+    { kind: "message", id: message.id, parentId: null, text: "Use the safer approach" },
+    { kind: "text", id: "t2", parentId: null, text: "Switching approach" },
+  ])
+
+  const render1 = (stream: StreamState, detail: TaskDetail = task) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    return render(
+      <QueryClientProvider client={client}>
+        <Conversation task={detail} stream={stream} />
+      </QueryClientProvider>,
+    )
+  }
+
+  const orderIn = (text: string, ...needles: string[]) => needles.map((needle) => text.indexOf(needle))
+
+  it("renders between the activity before it and the activity after it", () => {
+    render1(anchored)
+
+    const article = screen.getByTestId("conversation-viewport").querySelector("[data-turn='1']")!
+    const [prompt, before, steer, after] = orderIn(
+      article.textContent ?? "",
+      "Original request",
+      "Reading the config",
+      "Use the safer approach",
+      "Switching approach",
+    )
+    expect(prompt).toBeGreaterThanOrEqual(0)
+    expect(before).toBeGreaterThan(prompt!)
+    expect(steer).toBeGreaterThan(before!)
+    expect(after).toBeGreaterThan(steer!)
+    expect(article.querySelectorAll("[data-steered-message]")).toHaveLength(1)
+    expect(screen.getByText("sent during this turn")).toBeInTheDocument()
+  })
+
+  it("falls back to the head of the turn when the timeline carries no anchor", () => {
+    render1(
+      streamOf([
+        { kind: "text", id: "t1", parentId: null, text: "Reading the config" },
+        { kind: "text", id: "t2", parentId: null, text: "Switching approach" },
+      ]),
+    )
+
+    const article = screen.getByTestId("conversation-viewport").querySelector("[data-turn='1']")!
+    const [prompt, steer, before] = orderIn(
+      article.textContent ?? "",
+      "Original request",
+      "Use the safer approach",
+      "Reading the config",
+    )
+    expect(steer).toBeGreaterThan(prompt!)
+    expect(before).toBeGreaterThan(steer!)
+    expect(article.querySelectorAll("[data-steered-message]")).toHaveLength(1)
+  })
+
+  it("leaves a queued message queued even when the log anchored an earlier attempt", () => {
+    const queued: TaskMessage = { ...message, id: "mfaketestid02", status: "queued", delivery: null, turn_n: null }
+    render1(streamOf([{ kind: "message", id: queued.id, parentId: null, text: "Use the safer approach" }]), {
+      ...task,
+      messages: [queued],
+    })
+
+    expect(screen.getByText("queued for the next turn")).toBeInTheDocument()
+    expect(screen.queryByText("sent during this turn")).toBeNull()
+    expect(screen.queryByTestId("conversation-viewport")!.querySelectorAll("[data-steered-message]")).toHaveLength(0)
   })
 })

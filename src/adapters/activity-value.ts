@@ -60,6 +60,31 @@ function boundedJson(value: unknown, chars: number): string {
   }
 }
 
+/**
+ * The four coercions every normalizer starts from. Harness wire shapes differ,
+ * but "is this a record", "is this a non-empty string", "is this a number" and
+ * "which field is the clock" do not — they live here with the rest of the
+ * activity projection's value handling.
+ */
+export function record(value: unknown): Record<string, any> {
+  return isRecord(value) ? value : {};
+}
+
+export function string(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function number(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+export function timestamp(event: Record<string, any>): string | number | null {
+  const value = event.timestamp ?? event.timestamp_ms ?? event.occurred_at_ms;
+  return typeof value === "string" || typeof value === "number" ? value : null;
+}
+
 export function text(value: unknown): string | null {
   if (typeof value === "string") return value.trim() || null;
   if (Array.isArray(value)) {

@@ -1,6 +1,6 @@
 import { trunc } from "../text";
-import { isRecord } from "../validate";
-import { boundedInput, text } from "./activity-value";
+import { steerActivityEvent } from "../turn-notes";
+import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
 import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
 import { createEventLineDecoder, cursorToolCall } from "./wire";
@@ -15,25 +15,6 @@ interface NormalizeContext {
 }
 
 type ActivityNormalizer = (event: Record<string, any>, context: NormalizeContext) => ActivityEvent[];
-
-function record(value: unknown): Record<string, any> {
-  return isRecord(value) ? value : {};
-}
-
-function string(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function number(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
-  return null;
-}
-
-function timestamp(event: Record<string, any>): string | number | null {
-  const value = event.timestamp ?? event.timestamp_ms ?? event.occurred_at_ms;
-  return typeof value === "string" || typeof value === "number" ? value : null;
-}
 
 function eventId(value: unknown, context: NormalizeContext, kind: string): string {
   return string(value) ?? context.id(kind);
@@ -627,6 +608,8 @@ export function createActivityFormatter(def?: AdapterDef): (line: string) => Act
   return (line) => {
     const decoded = decode(line);
     if (!decoded) return [];
+    const steer = steerActivityEvent(decoded.text);
+    if (steer) return [steer];
     if (!decoded.event) {
       return decoded.jsonLike
         ? []

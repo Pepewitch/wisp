@@ -272,6 +272,16 @@ export type ActivityEvent =
       text: string;
     })
   | (ActivityEventBase & {
+      /**
+       * A message Wisp steered into this turn, at the point in the transcript
+       * where the harness accepted it. `id` is the message row's id, which
+       * makes it idempotent across replays; `text` is only a one-line preview
+       * — the row owns the full text and the delivery wording.
+       */
+      kind: "message";
+      text: string;
+    })
+  | (ActivityEventBase & {
       kind: "thinking";
       /** null means the harness exposed a reasoning heartbeat but encrypted/omitted its text. */
       text: string | null;

@@ -46,6 +46,40 @@ export function stepsOf(activity: TurnActivity): ToolActivityItem[] {
   return out
 }
 
+/**
+ * One segment of a turn's timeline: the activity that ran, then the message
+ * that arrived after it. `messageId` is null on the trailing segment.
+ *
+ * The anchor comes from the turn's log, where the daemon wrote it at native
+ * admission, so this is the harness's own order rather than the browser's
+ * arrival order — a reload, a second tab and a settled turn's refetch all
+ * rebuild the same split.
+ */
+export interface TimelineSegment {
+  items: ActivityItem[]
+  messageId: string | null
+}
+
+export function splitByMessage(items: ActivityItem[]): TimelineSegment[] {
+  const segments: TimelineSegment[] = []
+  let pending: ActivityItem[] = []
+  for (const item of items) {
+    if (item.kind === "message") {
+      segments.push({ items: pending, messageId: item.id })
+      pending = []
+    } else {
+      pending.push(item)
+    }
+  }
+  segments.push({ items: pending, messageId: null })
+  return segments
+}
+
+/** The message ids this turn's timeline can place; everything else is unanchored. */
+export function anchoredMessageIds(items: ActivityItem[]): Set<string> {
+  return new Set(items.filter((item) => item.kind === "message").map((item) => item.id))
+}
+
 /** Split the live stream's blocks by turn. */
 export function activityByTurn(blocks: StreamBlock[]): Record<number, TurnActivity> {
   const out: Record<number, TurnActivity> = {}

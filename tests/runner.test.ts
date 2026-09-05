@@ -511,13 +511,51 @@ describe("non-destructive active messages", () => {
     await until(() => turnsFor(task.id)[0]?.status === "done");
 
     expect(turnsFor(task.id)).toHaveLength(1);
-    const lines = readFileSync(turnsFor(task.id)[0]!.log_file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-    const admitted = lines.find((line) => line.type === "input");
+    const lines = readFileSync(turnsFor(task.id)[0]!.log_file, "utf8").split("\n").filter(Boolean);
+    const admitted = lines
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line))
+      .find((line) => line.type === "input");
     expect(admitted.value.message.content.at(-1).text).toBe("correction");
+    expect(lines).toContain(`· steer ${result.message.id}: correction`);
     expect(getTask(task.id)!.session_id).toBe("session-live");
+  });
+
+  test("a mid-turn steer is recorded in the log where the harness accepted it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-steer-order-"));
+    const gate = join(dir, "gate");
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"before the steer"}]}}'`,
+      `while [ ! -f ${gate} ]; do sleep 0.02; done`,
+      "IFS= read -r second",
+      `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"after the steer"}]}}'`,
+      `printf '%s\\n' '{"type":"result","result":"after the steer","session_id":"session-order"}'`,
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+    const log = () => readFileSync(turnsFor(task.id)[0]!.log_file, "utf8");
+    // The harness has said its piece before the steer is submitted, so the
+    // note's position in the log is the delivery's position, not a race.
+    await until(() => log().includes("before the steer"));
+
+    const result = await submitTaskMessage(getTask(task.id)!, "switch approach", def, cfg);
+    expect(result.disposition).toBe("steered");
+    writeFileSync(gate, "");
+    await until(() => turnsFor(task.id)[0]?.status === "done");
+
+    const lines = log().split("\n").filter(Boolean);
+    const note = lines.findIndex((line) => line === `· steer ${result.message.id}: switch approach`);
+    expect(note).toBeGreaterThan(lines.findIndex((line) => line.includes("before the steer")));
+    expect(note).toBeLessThan(lines.findIndex((line) => line.includes("after the steer")));
   });
 
   test("a rejected live-driver boot kills the child and fails the turn truthfully", async () => {

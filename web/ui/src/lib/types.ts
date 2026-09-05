@@ -19,6 +19,9 @@ interface ActivityEventBase {
 /** Harness-neutral activity emitted by the daemon's adapter boundary. */
 export type ActivityEvent =
   | (ActivityEventBase & { kind: "text"; text: string })
+  /** A message steered into the turn, at the point the harness accepted it.
+   *  `id` is the message row's id; `text` is a one-line log preview only. */
+  | (ActivityEventBase & { kind: "message"; text: string })
   | (ActivityEventBase & { kind: "thinking"; text: string | null })
   | (ActivityEventBase & {
       kind: "tool"
