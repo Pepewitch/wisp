@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,89 @@ def load_script(name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class FakeDroidTest(unittest.TestCase):
+    def test_serves_the_live_json_rpc_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            shutil.copy(ROOT / "fixture/textfilter.py", repo / "textfilter.py")
+            shutil.copy(ROOT / "fixture/test_textfilter.py", repo / "test_textfilter.py")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Wisp Evaluator"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "config", "user.email", "wisp-evaluator@example.invalid"],
+                cwd=repo,
+                check=True,
+            )
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+
+            process = subprocess.Popen(
+                [sys.executable, str(ROOT / "fake-droid.py"), "exec", "-o", "stream-json"],
+                cwd=repo,
+                text=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertIsNotNone(process.stdin)
+            self.assertIsNotNone(process.stdout)
+
+            def exchange(payload: dict[str, object]) -> dict[str, object]:
+                assert process.stdin is not None
+                assert process.stdout is not None
+                process.stdin.write(json.dumps(payload) + "\n")
+                process.stdin.flush()
+                return json.loads(process.stdout.readline())
+
+            initialized = exchange(
+                {"jsonrpc": "2.0", "id": "1", "method": "droid.initialize_session", "params": {}}
+            )
+            self.assertEqual(initialized["result"]["sessionId"], "fake-evaluator-session")
+            admitted = exchange(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "2",
+                    "method": "droid.add_user_message",
+                    "params": {"messageId": "first", "text": FIRST_PROMPT_FOR_TEST},
+                }
+            )
+            self.assertEqual(admitted["result"], {})
+            assert process.stdout is not None
+            notifications = [json.loads(process.stdout.readline()) for _ in range(3)]
+            self.assertEqual(
+                [frame["params"]["notification"]["type"] for frame in notifications],
+                ["create_message", "agent_turn_completed", "droid_working_state_changed"],
+            )
+            self.assertEqual(
+                notifications[0]["params"]["notification"]["message"]["content"][0]["text"],
+                "Implemented case-insensitive filtering, added coverage, and committed the change.",
+            )
+            assert process.stdin is not None
+            process.stdin.close()
+            returncode = process.wait(timeout=5)
+            stderr = process.stderr.read() if process.stderr else ""
+            process.stdout.close()
+            if process.stderr:
+                process.stderr.close()
+            self.assertEqual(returncode, 0, stderr)
+            self.assertEqual(
+                subprocess.run(
+                    ["git", "log", "-1", "--format=%s"],
+                    cwd=repo,
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                ).stdout.strip(),
+                "feat: filter lines case-insensitively",
+            )
+
+
+FIRST_PROMPT_FOR_TEST = (
+    "Implement case-insensitive substring filtering in textfilter.py, preserve "
+    "result order, add or update tests, and commit the change."
+)
 
 
 class HiddenOracleTest(unittest.TestCase):
