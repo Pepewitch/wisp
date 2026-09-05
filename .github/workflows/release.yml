@@ -191,19 +191,20 @@ jobs:
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          git clone --depth 1 \
+          brew tap Pepewitch/tap \
             "https://x-access-token:${TAP_TOKEN}@github.com/Pepewitch/homebrew-tap" \
-            "$RUNNER_TEMP/homebrew-tap"
+            --custom-remote
+          tap="$(brew --repository Pepewitch/tap)"
           bun test tests/homebrew-formula.test.ts
           bun run scripts/render-homebrew-formula.ts \
             --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-darwin-arm64.json" \
-            --output "$RUNNER_TEMP/homebrew-tap/Formula/wisp.rb"
-          brew audit --strict --online "$RUNNER_TEMP/homebrew-tap/Formula/wisp.rb"
-          git -C "$RUNNER_TEMP/homebrew-tap" diff --check
+            --output "$tap/Formula/wisp.rb"
+          brew audit --strict --online Pepewitch/tap/wisp
+          git -C "$tap" diff --check
 
       - name: push the Homebrew tap
         run: |
-          tap="$RUNNER_TEMP/homebrew-tap"
+          tap="$(brew --repository Pepewitch/tap)"
           git -C "$tap" config user.name "github-actions[bot]"
           git -C "$tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$tap" add Formula/wisp.rb

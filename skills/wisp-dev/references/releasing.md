@@ -368,10 +368,12 @@ release metadata.
 
 ## 8. Render and publish the Homebrew Formula
 
-Do this only after the Mac asset is public. Start from a clean, synchronized
-`Pepewitch/homebrew-tap` checkout:
+Do this only after the Mac asset is public. Use Homebrew's registered
+`Pepewitch/homebrew-tap` checkout so current Homebrew can audit the candidate
+by Formula name, then synchronize it:
 
 ```sh
+tap="$(brew --repository Pepewitch/tap)"
 git -C "$tap" fetch origin
 test -z "$(git -C "$tap" status --porcelain=v1 --untracked-files=normal)"
 git -C "$tap" pull --ff-only
@@ -380,7 +382,7 @@ bun run scripts/render-homebrew-formula.ts \
   --manifest "$release_dir/release-manifest-darwin-arm64.json" \
   --output "$tap/Formula/wisp.rb"
 bun test tests/homebrew-formula.test.ts
-brew audit --strict --online "$tap/Formula/wisp.rb"
+brew audit --strict --online Pepewitch/tap/wisp
 git -C "$tap" diff --check
 git -C "$tap" diff -- Formula/wisp.rb
 ```
