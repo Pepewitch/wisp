@@ -70,8 +70,12 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
     if (lang) return <code className={cn(lang, "font-mono text-[11.5px]")}>{children}</code>
     return <code className="rounded bg-accent-wash px-1.5 py-px text-[12px] text-accent-soft">{children}</code>
   },
+  // `bg-code`, never `bg-card`: the prompt bubble owns `--card`, and a code
+  // block wearing the same fill made the two indistinguishable when scanning
+  // a transcript for "where did I say something". This one recedes toward the
+  // reading column so the bubble stays the brightest thing in the stream.
   pre: ({ children }) => (
-    <pre className="scroll-slim mt-2.5 overflow-x-auto rounded-md border border-border bg-card px-3 py-2 font-mono text-[11.5px] leading-[1.75]">
+    <pre className="scroll-slim mt-2.5 overflow-x-auto rounded-md border border-border bg-code px-3 py-2 font-mono text-[11.5px] leading-[1.75]">
       {children}
     </pre>
   ),
