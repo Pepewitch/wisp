@@ -13,6 +13,7 @@ import type {
   SuffixPrompt,
   TaskDetail,
   TaskSkills,
+  UpdateStatus,
 } from "@/lib/types";
 
 /** GET /api/tasks — archived rows are only present when the sidebar toggle fetched ?archived=1. */
@@ -30,6 +31,18 @@ export function useStatus() {
     queryFn: () => api<{ tasks: Record<string, StatusEntry> }>("/api/status"),
     select: (data) => data.tasks,
   });
+}
+
+export const UPDATE_STATUS_POLL_MS = 60 * 60 * 1000
+
+/** Release discovery is daemon-cached, so one hourly read does not become one GitHub call per browser. */
+export function useUpdateStatus() {
+  return useQuery({
+    queryKey: qk.update,
+    queryFn: () => api<UpdateStatus>("/api/update"),
+    refetchInterval: UPDATE_STATUS_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
 }
 
 /** GET /api/tasks/:id — adds turns and diffstat to the list row. */

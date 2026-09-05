@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, completeAuth, mintSession } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import { qk } from "@/lib/query";
-import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, TaskMode } from "@/lib/types";
+import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -19,6 +19,18 @@ import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, Task
  */
 
 /* ---------------- tasks ---------------- */
+
+/** POST /api/update — accept the release currently shown in the header. */
+export function useInstallUpdate() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (version: string) =>
+      api<UpdateStatus>("/api/update", { method: "POST", body: { version } }),
+    onSuccess: (status) => {
+      client.setQueryData(qk.update, status)
+    },
+  })
+}
 
 export interface CreateTaskBody {
   repoPath: string;

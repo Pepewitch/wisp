@@ -6,6 +6,7 @@ import {
   PROBE_CONTEXT_ANSWER,
   PR_SPECIMEN,
   ROW_PR_SPECIMENS,
+  UPDATE_SPECIMEN,
   SUBAGENT_SPECIMEN,
   SURFACES,
 } from "@/components/gallery-fixtures"
@@ -17,6 +18,7 @@ import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
+import { WispUpdateControl } from "@/components/update-control"
 import { STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { TASK_STATES } from "@/lib/types"
@@ -195,6 +197,17 @@ function FoundationSpecimens() {
             <PullRequestStatusLink pullRequest={PR_SPECIMEN} />
             <span className="text-[11.5px] text-muted-foreground">
               Branch outcome replaces the task header's Push button; unsupported or absent status renders nothing.
+            </span>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <WispUpdateControl
+              status={UPDATE_SPECIMEN}
+              updating={false}
+              error={null}
+              onUpdate={() => {}}
+            />
+            <span className="text-[11.5px] text-muted-foreground">
+              The quiet version text becomes an outlined action only when a managed update is available.
             </span>
           </div>
       </Section>

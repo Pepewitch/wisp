@@ -3,6 +3,7 @@ import type {
   ProbeAnswer,
   PullRequestInfo,
   PullRequestOverviewEntry,
+  UpdateStatus,
 } from "@/lib/types"
 import type { ActivityItem } from "@/stream/reducer"
 
@@ -15,6 +16,16 @@ export const PR_SPECIMEN: PullRequestInfo = {
   review: "approved",
   mergeState: "ready",
   updatedAt: "2026-09-04T12:00:00Z",
+}
+
+export const UPDATE_SPECIMEN: UpdateStatus = {
+  currentVersion: "0.4.0-alpha.6",
+  latestVersion: "0.4.0-alpha.7",
+  state: "available",
+  installMethod: "homebrew",
+  canAutoUpdate: true,
+  message: null,
+  checkedAt: "2026-09-05T12:00:00.000Z",
 }
 
 export const ROW_PR_SPECIMENS: Array<PullRequestOverviewEntry | undefined> = [
