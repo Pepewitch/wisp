@@ -30,6 +30,7 @@ import {
   closeLiveInput,
   configureLiveTurn,
   liveCommand,
+  LiveTransportError,
   pendingDelivery,
   setPendingDelivery,
   writeImageEnvelope,
@@ -251,9 +252,9 @@ export function startTurn(
         claudeStrategy: stdinStrategy,
       });
     } catch (error) {
-      failLiveSetup(child, turnId, outFd, error);
+      failLiveTurn(child, turnId, outFd, error);
     }
-    void outputPump.catch((error) => failLiveSetup(child, turnId, outFd, error));
+    void outputPump.catch((error) => failLiveTurn(child, turnId, outFd, error));
   }
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
@@ -624,14 +625,11 @@ function childRunning(child: ReturnType<typeof Bun.spawn>): boolean {
   return child.exitCode === null && child.signalCode === null;
 }
 
-function failLiveSetup(
-  child: ReturnType<typeof Bun.spawn>,
-  turnId: number,
-  outFd: number,
-  error: unknown,
-): void {
+/** Kill a live turn whose transport broke, naming the half that failed (LiveTransportError). */
+function failLiveTurn(child: ReturnType<typeof Bun.spawn>, turnId: number, outFd: number, error: unknown): void {
   if (!childRunning(child)) return;
-  const detail = `live input setup failed: ${error instanceof Error ? error.message : String(error)}`;
+  const stage = error instanceof LiveTransportError ? error.stage : "live input setup";
+  const detail = `${stage} failed: ${error instanceof Error ? error.message : String(error)}`;
   writeSync(outFd, `· ${detail}\n`);
   recordKillReason(turnId, detail);
   child.kill();

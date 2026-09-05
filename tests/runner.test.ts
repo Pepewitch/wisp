@@ -675,6 +675,61 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     expect(getTask(task.id)?.session_id).toBe("droid-live-session");
   });
 
+  test("an oversized live frame is dropped and the turn still completes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-live-oversized-"));
+    const harnessPath = join(dir, "fake-droid");
+    writeFileSync(
+      harnessPath,
+      `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const notify = (notification) => frame({
+  jsonrpc: "2.0",
+  type: "notification",
+  method: "droid.session_notification",
+  params: { notification },
+});
+for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+  const request = JSON.parse(line);
+  if (request.method === "droid.initialize_session") {
+    frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-oversized-session" } });
+  } else if (request.method === "droid.add_user_message") {
+    frame({ jsonrpc: "2.0", id: request.id, result: {} });
+    // One notification carrying more inlined output than framing accepts,
+    // written in pieces so the pump sees it overflow before its newline.
+    process.stdout.write('{"jsonrpc":"2.0","params":{"junk":"');
+    for (let i = 0; i < ${17 * 4}; i++) process.stdout.write("x".repeat(256 * 1024));
+    process.stdout.write('"}}\\n');
+    notify({ type: "create_message", message: {
+      id: "assistant-1",
+      role: "assistant",
+      content: [{ type: "text", text: "SURVIVED" }],
+      createdAt: 123,
+    } });
+    notify({ type: "agent_turn_completed", reason: "completed", turnId: request.params.messageId });
+    notify({ type: "droid_working_state_changed", newState: "idle" });
+  }
+}
+`,
+    );
+    chmodSync(harnessPath, 0o755);
+    const def: AdapterDef = {
+      bin: harnessPath,
+      exec: [],
+      liveInput: "droid-jsonrpc",
+      parse: { format: "json", resultType: "completion", result: "finalText", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done", 30_000);
+
+    const [turn] = turnsFor(task.id);
+    expect(turn?.result).toBe("SURVIVED");
+    expect(getTask(task.id)?.state).not.toBe("failed");
+    expect(readFileSync(turn!.log_file, "utf8")).toContain("dropped an oversized live protocol frame");
+  });
+
   test("Codex app-server steers the active turn with its expected turn id", async () => {
     const dir = mkdtempSync(join(tmpdir(), "wisp-codex-live-"));
     const callsPath = join(dir, "calls.jsonl");
