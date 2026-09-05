@@ -178,10 +178,14 @@ synthetic task ID. It verifies:
 The proof establishes that the daemon protocols support an immutable
 connection transport without browser cookies and catches accidental
 cross-daemon assumptions at the server boundary. It deliberately does not
-claim that a test client is the shipping native proxy. Loopback-origin binding,
-redirect refusal, cookie stripping, credential-service storage, TLS behavior,
-and removal revocation remain acceptance gates for the actual Tauri
-implementation.
+claim that a test client is the shipping native proxy.
+
+Those remaining gates — loopback binding and the per-launch capability, origin
+checking, redirect refusal, cookie stripping, credential-service storage, TLS
+behavior, and removal revocation — are now implemented in `desktop/` and are
+covered by `desktop/src-tauri/tests/proxy.rs` against two synthetic daemons
+seeded with the same task ID. That suite tests the native hop; this one tests
+the daemons. Neither replaces the other.
 
 ## Runtime interface for the next slice
 
@@ -203,3 +207,35 @@ web build and scopes every daemon-owned query key by its reserved connection
 ID. No visible connection tabs are required for that refactor. The Tauri
 runtime can then provide additional transports without forking the UI or
 changing hooks back to global URLs.
+
+## Native command surface
+
+The desktop native core lives in `desktop/`. It exposes seven Tauri invoke
+commands and nothing else; `desktop/README.md` documents the payloads.
+
+```text
+desktop_bootstrap        proxy base + non-secret connection metadata
+add_remote_connection    capability check, then save
+rename_connection        label only
+reconnect_connection     re-prove; a changed URL returns a REPLACEMENT id
+remove_connection        revoke route, delete credential, clear tombstone
+pick_local_project       native folder picker
+setup_local_wisp         report on the local install; never installs
+```
+
+`desktop_bootstrap` returns a per-launch unguessable proxy base of the form
+`http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base
+plus `/connections/<connectionId>/api/...`. The capability travels in the path
+because `EventSource`, `WebSocket`, and `<img>` cannot set headers; it
+authorizes talking to the proxy, never to a daemon, and it does not outlive the
+process. No command returns a daemon token, and no connection metadata has a
+field one could occupy.
+
+Two consequences the shared React shell must handle:
+
+- `reconnect_connection` with a new URL returns a connection with a **new
+  immutable ID**. Editing an address is a connection swap, because retargeting
+  an ID in place would redirect in-flight work onto a different daemon.
+- A `409` carrying `x-wisp-proxy-error: identity-changed` means a different
+  daemon now answers a saved address. It is connection state, not a task
+  refusal, and `reconnect_connection` is the remedy.

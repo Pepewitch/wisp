@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Native core surface of the Wisp desktop shell: the packaged webview may invoke the desktop commands and open a native folder picker. It gets no filesystem, shell, or HTTP capability of its own — every daemon byte travels through the native loopback proxy.",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}

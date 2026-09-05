@@ -49,6 +49,8 @@
     "test:evaluator": "python3 -m unittest discover -s scripts/evaluator/tests -p 'test_*.py'",
     "evaluator:preflight": "bash scripts/evaluator/run.sh --preflight",
     "build:ui": "bun run --cwd web/ui build",
+    "desktop:check": "bash scripts/desktop/check.sh",
+    "desktop:build": "bash scripts/desktop/build-macos.sh",
     "brand": "bun run scripts/brand/build.ts",
     "brand:check": "bun run scripts/brand/build.ts --check"
   },

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wisp",
+  "version": "0.4.0-alpha.7",
+  "identifier": "dev.wisp.desktop",
+  "build": {
+    "frontendDist": "../../web/ui-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Wisp",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 520,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "'self' http://127.0.0.1:* ws://127.0.0.1:* ipc: http://ipc.localhost",
+        "img-src": "'self' data: blob: http://127.0.0.1:*",
+        "media-src": "'self' data: blob: http://127.0.0.1:*",
+        "font-src": "'self' data:",
+        "style-src": "'self' 'unsafe-inline'",
+        "script-src": "'self'"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Every coding agent, one daemon.",
+    "copyright": "MIT",
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}

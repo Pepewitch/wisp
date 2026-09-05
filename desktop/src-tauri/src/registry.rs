@@ -1,0 +1,1027 @@
+//! Native connection state: the only place a proxy target can come from.
+//!
+//! Three invariants this module exists to hold:
+//!
+//! * **IDs are immutable.** A label is what a person edits; an ID is what
+//!   routes, keys caches, and names a Keychain account. Renaming touches only
+//!   the label. Retargeting mints a *new* ID rather than moving an old one, so
+//!   in-flight work on the old connection can never be silently redirected.
+//! * **The file holds no secrets.** Metadata on disk, credentials in the
+//!   Keychain. That split is what makes a removal tombstone safe to write.
+//! * **Removal revokes before it deletes.** The route dies in the same atomic
+//!   file write that records the tombstone; the credential and the tombstone
+//!   are cleaned up after. A crash between the two resumes at next launch.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
+use url::Url;
+
+use crate::local::{
+    LocalError, LocalProfile, LocalStatus, LOCAL_CONNECTION_ID, LOCAL_CONNECTION_LABEL,
+};
+use crate::secrets::{SecretError, SecretStore};
+use crate::urls::normalize_daemon_url;
+
+/// Current on-disk schema version of `connections.json`.
+const FILE_VERSION: u32 = 1;
+
+/// Connection IDs are ASCII path segments — they appear literally in proxy
+/// routes and in query-cache keys, so anything needing encoding is out.
+pub fn is_valid_connection_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// A fresh remote ID. Opaque on purpose: nothing may parse meaning out of it.
+fn new_connection_id() -> String {
+    format!("c-{}", crate::random::random_hex(12))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionKind {
+    Local,
+    Remote,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RegistryError {
+    #[error("no connection named {0}")]
+    UnknownConnection(String),
+    #[error("that connection is being removed")]
+    PendingRemoval,
+    #[error("the built-in local connection cannot be {0}")]
+    LocalIsBuiltIn(&'static str),
+    #[error("a label is required")]
+    EmptyLabel,
+    #[error("no credential is stored for this connection — reconnect to enter its token")]
+    MissingCredential,
+    #[error("could not read the local Wisp profile: {0}")]
+    Local(#[from] LocalError),
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+    #[error("could not write {path}: {source}")]
+    Persist {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// One saved remote connection, exactly as it is written to disk.
+///
+/// Everything here is non-secret by construction. There is no token field and
+/// no place to add one: the type is what the tombstone protocol relies on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredConnection {
+    pub id: String,
+    pub label: String,
+    pub url: String,
+    /// Daemon identity pinned at the capability check that admitted this URL.
+    pub instance_id: String,
+    pub created_at: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryFile {
+    version: u32,
+    #[serde(default)]
+    connections: Vec<StoredConnection>,
+    /// Non-secret removal tombstones. An ID here has already lost its route.
+    #[serde(default)]
+    pending_removals: Vec<String>,
+}
+
+/// What the webview is allowed to know about a connection.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionInfo {
+    pub id: String,
+    pub label: String,
+    pub kind: ConnectionKind,
+    /// Display address. Non-secret: the user typed it, or it is loopback.
+    pub url: String,
+    pub instance_id: String,
+    /// False when the credential or local profile is gone and the connection
+    /// needs attention before it will serve traffic.
+    pub ready: bool,
+}
+
+/// A resolved proxy target. Produced only by the registry, never by a request.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub id: String,
+    pub kind: ConnectionKind,
+    pub base: Url,
+    pub instance_id: String,
+}
+
+/// Result of the pinned-identity check performed before the first write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Identity {
+    Unchecked,
+    Verified,
+    Mismatch,
+}
+
+struct State {
+    connections: BTreeMap<String, StoredConnection>,
+    pending_removals: BTreeSet<String>,
+    /// Remote credentials, read from the Keychain once per launch so the proxy
+    /// hot path never blocks on Security.framework.
+    credentials: HashMap<String, String>,
+    identity: HashMap<String, Identity>,
+}
+
+/// The native connection registry.
+pub struct Registry {
+    path: PathBuf,
+    secrets: Arc<dyn SecretStore>,
+    local: Option<LocalProfile>,
+    local_home: PathBuf,
+    local_error: Option<String>,
+    state: Mutex<State>,
+}
+
+impl Registry {
+    /// Open the registry, replay any interrupted removal, and warm the
+    /// credential cache. Blocking: call it off the async runtime.
+    pub fn open(
+        path: PathBuf,
+        secrets: Arc<dyn SecretStore>,
+        local_home: PathBuf,
+        local: Result<LocalProfile, LocalError>,
+    ) -> Result<Self, RegistryError> {
+        let file = read_file(&path);
+        let (local_profile, local_error) = match local {
+            Ok(profile) => (Some(profile), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+
+        let mut connections = BTreeMap::new();
+        for entry in file.connections {
+            // A record that fails today's rules is dropped rather than trusted:
+            // it can only have come from a downgrade, an edit, or corruption.
+            if !is_valid_connection_id(&entry.id)
+                || entry.id == LOCAL_CONNECTION_ID
+                || normalize_daemon_url(&entry.url).is_err()
+            {
+                continue;
+            }
+            connections.insert(entry.id.clone(), entry);
+        }
+
+        let registry = Self {
+            path,
+            secrets,
+            local: local_profile,
+            local_home,
+            local_error,
+            state: Mutex::new(State {
+                connections,
+                pending_removals: file.pending_removals.into_iter().collect(),
+                credentials: HashMap::new(),
+                identity: HashMap::new(),
+            }),
+        };
+        registry.finish_pending_removals()?;
+        registry.warm_credentials()?;
+        Ok(registry)
+    }
+
+    /// Resume removals that a crash interrupted between the tombstone write and
+    /// the credential delete. Deleting an absent credential is a no-op, so this
+    /// is safe to run on every launch.
+    fn finish_pending_removals(&self) -> Result<(), RegistryError> {
+        let pending: Vec<String> = {
+            let state = self.lock();
+            state.pending_removals.iter().cloned().collect()
+        };
+        if pending.is_empty() {
+            return Ok(());
+        }
+        for id in &pending {
+            self.secrets.delete(id)?;
+        }
+        let mut state = self.lock();
+        for id in &pending {
+            state.pending_removals.remove(id);
+            state.connections.remove(id);
+        }
+        self.persist(&state)
+    }
+
+    fn warm_credentials(&self) -> Result<(), RegistryError> {
+        let ids: Vec<String> = {
+            let state = self.lock();
+            state.connections.keys().cloned().collect()
+        };
+        let mut found = HashMap::new();
+        for id in ids {
+            if let Some(secret) = self.secrets.get(&id)? {
+                found.insert(id, secret);
+            }
+        }
+        self.lock().credentials.extend(found);
+        Ok(())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().expect("registry mutex")
+    }
+
+    fn persist(&self, state: &State) -> Result<(), RegistryError> {
+        let file = RegistryFile {
+            version: FILE_VERSION,
+            connections: state.connections.values().cloned().collect(),
+            pending_removals: state.pending_removals.iter().cloned().collect(),
+        };
+        write_file(&self.path, &file)
+    }
+
+    /// Non-secret metadata for every connection, local first.
+    pub fn list(&self) -> Vec<ConnectionInfo> {
+        let state = self.lock();
+        let mut out = Vec::with_capacity(state.connections.len() + 1);
+        if let Some(profile) = &self.local {
+            out.push(ConnectionInfo {
+                id: LOCAL_CONNECTION_ID.to_string(),
+                label: LOCAL_CONNECTION_LABEL.to_string(),
+                kind: ConnectionKind::Local,
+                url: profile.base().to_string(),
+                instance_id: profile.instance_id().to_string(),
+                ready: true,
+            });
+        }
+        for entry in state.connections.values() {
+            if state.pending_removals.contains(&entry.id) {
+                continue;
+            }
+            out.push(ConnectionInfo {
+                id: entry.id.clone(),
+                label: entry.label.clone(),
+                kind: ConnectionKind::Remote,
+                url: entry.url.clone(),
+                instance_id: entry.instance_id.clone(),
+                ready: state.credentials.contains_key(&entry.id),
+            });
+        }
+        out
+    }
+
+    pub fn local_status(&self) -> LocalStatus {
+        match &self.local {
+            Some(profile) => LocalStatus {
+                available: true,
+                config_path: profile.config_path().display().to_string(),
+                base_url: Some(profile.base().to_string()),
+                instance_id: Some(profile.instance_id().to_string()),
+                has_token: true,
+                reason: None,
+            },
+            None => LocalStatus {
+                available: false,
+                config_path: self.local_home.join("config.json").display().to_string(),
+                base_url: None,
+                instance_id: None,
+                has_token: false,
+                reason: self.local_error.clone(),
+            },
+        }
+    }
+
+    /// Resolve a route's connection ID to an upstream target.
+    ///
+    /// Returns `None` for an unknown ID and for one whose tombstone is written,
+    /// which is what makes removal a revocation rather than a cleanup.
+    pub fn resolve(&self, id: &str) -> Option<Target> {
+        if id == LOCAL_CONNECTION_ID {
+            let profile = self.local.as_ref()?;
+            return Some(Target {
+                id: LOCAL_CONNECTION_ID.to_string(),
+                kind: ConnectionKind::Local,
+                base: profile.base().clone(),
+                instance_id: profile.instance_id().to_string(),
+            });
+        }
+        let state = self.lock();
+        if state.pending_removals.contains(id) {
+            return None;
+        }
+        let entry = state.connections.get(id)?;
+        // Stored URLs pass the same rule they passed when saved; a record that
+        // no longer does was already dropped at open().
+        let base = normalize_daemon_url(&entry.url).ok()?;
+        Some(Target {
+            id: entry.id.clone(),
+            kind: ConnectionKind::Remote,
+            base,
+            instance_id: entry.instance_id.clone(),
+        })
+    }
+
+    /// The bearer token for a resolved target. Never returned to the webview:
+    /// the only caller is the proxy's upstream request builder.
+    pub fn credential(&self, target: &Target) -> Result<String, RegistryError> {
+        match target.kind {
+            ConnectionKind::Local => self
+                .local
+                .as_ref()
+                .map(|profile| profile.token().to_string())
+                .ok_or(RegistryError::MissingCredential),
+            ConnectionKind::Remote => self
+                .lock()
+                .credentials
+                .get(&target.id)
+                .cloned()
+                .ok_or(RegistryError::MissingCredential),
+        }
+    }
+
+    pub fn identity(&self, id: &str) -> Identity {
+        self.lock()
+            .identity
+            .get(id)
+            .copied()
+            .unwrap_or(Identity::Unchecked)
+    }
+
+    pub fn set_identity(&self, id: &str, value: Identity) {
+        self.lock().identity.insert(id.to_string(), value);
+    }
+
+    /// Save a remote connection whose URL and credential already passed an
+    /// authenticated `/api/capabilities` check.
+    pub fn add_remote(
+        &self,
+        label: &str,
+        url: &Url,
+        token: &str,
+        instance_id: &str,
+    ) -> Result<ConnectionInfo, RegistryError> {
+        let label = clean_label(label)?;
+        let id = self.mint_id();
+        // Credential first: a saved connection with no credential is a broken
+        // one, while an orphaned credential is collected by the same delete the
+        // tombstone protocol already performs.
+        self.secrets.set(&id, token)?;
+        let entry = StoredConnection {
+            id: id.clone(),
+            label,
+            url: url.to_string(),
+            instance_id: instance_id.to_string(),
+            created_at: now_seconds(),
+        };
+        let mut state = self.lock();
+        state.credentials.insert(id.clone(), token.to_string());
+        state.identity.insert(id.clone(), Identity::Verified);
+        state.connections.insert(id.clone(), entry.clone());
+        self.persist(&state)?;
+        Ok(ConnectionInfo {
+            id: entry.id,
+            label: entry.label,
+            kind: ConnectionKind::Remote,
+            url: entry.url,
+            instance_id: entry.instance_id,
+            ready: true,
+        })
+    }
+
+    fn mint_id(&self) -> String {
+        let state = self.lock();
+        loop {
+            let id = new_connection_id();
+            if !state.connections.contains_key(&id) && !state.pending_removals.contains(&id) {
+                return id;
+            }
+        }
+    }
+
+    /// Change a display label. The ID, route, cache scope, and Keychain account
+    /// are all untouched.
+    pub fn rename(&self, id: &str, label: &str) -> Result<ConnectionInfo, RegistryError> {
+        if id == LOCAL_CONNECTION_ID {
+            return Err(RegistryError::LocalIsBuiltIn("renamed"));
+        }
+        let label = clean_label(label)?;
+        let mut state = self.lock();
+        if state.pending_removals.contains(id) {
+            return Err(RegistryError::PendingRemoval);
+        }
+        let entry = state
+            .connections
+            .get_mut(id)
+            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?;
+        entry.label = label;
+        let info = ConnectionInfo {
+            id: entry.id.clone(),
+            label: entry.label.clone(),
+            kind: ConnectionKind::Remote,
+            url: entry.url.clone(),
+            instance_id: entry.instance_id.clone(),
+            ready: state.credentials.contains_key(id),
+        };
+        self.persist(&state)?;
+        Ok(info)
+    }
+
+    /// Refresh a connection in place after a successful capability check.
+    ///
+    /// Only for a re-check of the *same* target: a new URL goes through
+    /// [`Registry::replace`], because editing an address is a different daemon
+    /// until proven otherwise and must not retarget in-flight work.
+    pub fn refresh(
+        &self,
+        id: &str,
+        token: Option<&str>,
+        instance_id: &str,
+    ) -> Result<ConnectionInfo, RegistryError> {
+        if id == LOCAL_CONNECTION_ID {
+            return Err(RegistryError::LocalIsBuiltIn("re-credentialed"));
+        }
+        if let Some(token) = token {
+            self.secrets.set(id, token)?;
+        }
+        let mut state = self.lock();
+        if state.pending_removals.contains(id) {
+            return Err(RegistryError::PendingRemoval);
+        }
+        let entry = state
+            .connections
+            .get_mut(id)
+            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?;
+        entry.instance_id = instance_id.to_string();
+        let info = ConnectionInfo {
+            id: entry.id.clone(),
+            label: entry.label.clone(),
+            kind: ConnectionKind::Remote,
+            url: entry.url.clone(),
+            instance_id: entry.instance_id.clone(),
+            ready: true,
+        };
+        if let Some(token) = token {
+            state.credentials.insert(id.to_string(), token.to_string());
+        }
+        state.identity.insert(id.to_string(), Identity::Verified);
+        self.persist(&state)?;
+        Ok(info)
+    }
+
+    /// Retarget: save a replacement connection with a new immutable ID and
+    /// remove the old one. The caller keeps the old ID for anything already in
+    /// flight; that work fails closed against a revoked route instead of
+    /// silently addressing a different daemon.
+    pub fn replace(
+        &self,
+        id: &str,
+        url: &Url,
+        token: &str,
+        instance_id: &str,
+    ) -> Result<ConnectionInfo, RegistryError> {
+        if id == LOCAL_CONNECTION_ID {
+            return Err(RegistryError::LocalIsBuiltIn("retargeted"));
+        }
+        let label = {
+            let state = self.lock();
+            state
+                .connections
+                .get(id)
+                .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?
+                .label
+                .clone()
+        };
+        let replacement = self.add_remote(&label, url, token, instance_id)?;
+        self.remove(id)?;
+        Ok(replacement)
+    }
+
+    /// Revoke, then delete. Step one drops the route and records a non-secret
+    /// tombstone in a single atomic write; step two deletes the credential;
+    /// step three clears the tombstone. A crash after step one resumes at open.
+    pub fn remove(&self, id: &str) -> Result<(), RegistryError> {
+        if id == LOCAL_CONNECTION_ID {
+            return Err(RegistryError::LocalIsBuiltIn("removed"));
+        }
+        {
+            let mut state = self.lock();
+            if !state.connections.contains_key(id) && !state.pending_removals.contains(id) {
+                return Err(RegistryError::UnknownConnection(id.to_string()));
+            }
+            state.connections.remove(id);
+            state.credentials.remove(id);
+            state.identity.remove(id);
+            state.pending_removals.insert(id.to_string());
+            self.persist(&state)?;
+        }
+        self.secrets.delete(id)?;
+        let mut state = self.lock();
+        state.pending_removals.remove(id);
+        self.persist(&state)
+    }
+}
+
+fn clean_label(label: &str) -> Result<String, RegistryError> {
+    let trimmed = label.trim();
+    if trimmed.is_empty() {
+        return Err(RegistryError::EmptyLabel);
+    }
+    Ok(trimmed.chars().take(120).collect())
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+/// A missing or unreadable file is an empty registry, never a crash: a desktop
+/// app that will not start because one JSON file is damaged is worse than one
+/// that starts with the built-in local connection and lets the user re-add.
+fn read_file(path: &Path) -> RegistryFile {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return RegistryFile {
+            version: FILE_VERSION,
+            ..RegistryFile::default()
+        };
+    };
+    serde_json::from_str(&raw).unwrap_or(RegistryFile {
+        version: FILE_VERSION,
+        ..RegistryFile::default()
+    })
+}
+
+/// Write through a temporary file and rename, so a crash mid-write leaves the
+/// previous complete state rather than a truncated one.
+fn write_file(path: &Path, file: &RegistryFile) -> Result<(), RegistryError> {
+    let persist_error = |source: std::io::Error| RegistryError::Persist {
+        path: path.to_path_buf(),
+        source,
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(persist_error)?;
+    }
+    let body = serde_json::to_vec_pretty(file)
+        .map_err(|error| persist_error(std::io::Error::other(error)))?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, &body).map_err(persist_error)?;
+    set_owner_only(&temporary).map_err(persist_error)?;
+    std::fs::rename(&temporary, path).map_err(persist_error)
+}
+
+#[cfg(unix)]
+fn set_owner_only(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn set_owner_only(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_valid_connection_id, ConnectionKind, Identity, Registry, RegistryError, StoredConnection,
+    };
+    use crate::local::{LocalError, LocalProfile, LOCAL_CONNECTION_ID};
+    use crate::secrets::{MemorySecretStore, SecretStore};
+    use crate::urls::normalize_daemon_url;
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use url::Url;
+
+    struct Harness {
+        _dir: tempfile::TempDir,
+        path: PathBuf,
+        secrets: Arc<MemorySecretStore>,
+        registry: Registry,
+    }
+
+    fn remote(raw: &str) -> Url {
+        normalize_daemon_url(raw).expect("test URL is valid")
+    }
+
+    fn local_profile() -> LocalProfile {
+        LocalProfile::new(
+            remote("http://127.0.0.1:18710"),
+            "synthetic-local-token".into(),
+            "wisp-instance-local".into(),
+            PathBuf::from("/synthetic/.wisp/config.json"),
+        )
+    }
+
+    fn harness(with_local: bool) -> Harness {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("connections.json");
+        let secrets = Arc::new(MemorySecretStore::new());
+        let registry = open(&path, secrets.clone(), with_local);
+        Harness {
+            _dir: dir,
+            path,
+            secrets,
+            registry,
+        }
+    }
+
+    fn open(path: &Path, secrets: Arc<MemorySecretStore>, with_local: bool) -> Registry {
+        let local = if with_local {
+            Ok(local_profile())
+        } else {
+            Err(LocalError::NoProfile(PathBuf::from(
+                "/synthetic/.wisp/config.json",
+            )))
+        };
+        Registry::open(
+            path.to_path_buf(),
+            secrets,
+            PathBuf::from("/synthetic/.wisp"),
+            local,
+        )
+        .expect("registry opens")
+    }
+
+    #[test]
+    fn ids_are_restricted_to_ascii_path_segments() {
+        assert!(is_valid_connection_id("local"));
+        assert!(is_valid_connection_id("c-0123456789abcdef"));
+        assert!(!is_valid_connection_id(""));
+        assert!(!is_valid_connection_id("has space"));
+        assert!(!is_valid_connection_id("has/slash"));
+        assert!(!is_valid_connection_id("has.dot"));
+        assert!(!is_valid_connection_id(".."));
+        assert!(!is_valid_connection_id(&"c".repeat(65)));
+    }
+
+    #[test]
+    fn the_local_connection_is_built_in_and_unmanaged() {
+        let h = harness(true);
+        let target = h
+            .registry
+            .resolve(LOCAL_CONNECTION_ID)
+            .expect("local resolves");
+        assert_eq!(target.kind, ConnectionKind::Local);
+        assert_eq!(
+            h.registry.credential(&target).expect("local credential"),
+            "synthetic-local-token"
+        );
+        assert!(matches!(
+            h.registry.rename(LOCAL_CONNECTION_ID, "Nope"),
+            Err(RegistryError::LocalIsBuiltIn(_))
+        ));
+        assert!(matches!(
+            h.registry.remove(LOCAL_CONNECTION_ID),
+            Err(RegistryError::LocalIsBuiltIn(_))
+        ));
+    }
+
+    #[test]
+    fn a_missing_local_profile_leaves_only_saved_remotes() {
+        let h = harness(false);
+        assert!(h.registry.resolve(LOCAL_CONNECTION_ID).is_none());
+        let status = h.registry.local_status();
+        assert!(!status.available);
+        assert!(!status.has_token);
+        assert!(status.reason.is_some());
+    }
+
+    #[test]
+    fn adding_stores_metadata_on_disk_and_the_token_only_in_the_credential_service() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "  Studio  ",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        assert_eq!(info.label, "Studio");
+        assert!(is_valid_connection_id(&info.id));
+        assert!(info.ready);
+
+        let on_disk = std::fs::read_to_string(&h.path).expect("file written");
+        assert!(on_disk.contains(&info.id));
+        assert!(on_disk.contains("wisp.example.com"));
+        assert!(!on_disk.contains("synthetic-remote-token"));
+        assert!(!on_disk.to_lowercase().contains("token"));
+
+        assert_eq!(h.secrets.accounts(), vec![info.id.clone()]);
+        let target = h.registry.resolve(&info.id).expect("resolves");
+        assert_eq!(
+            h.registry.credential(&target).expect("credential"),
+            "synthetic-remote-token"
+        );
+    }
+
+    #[test]
+    fn serialized_connection_metadata_never_carries_a_secret() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        let listed = serde_json::to_string(&h.registry.list()).expect("serializes");
+        assert!(listed.contains(&info.id));
+        assert!(!listed.contains("synthetic-remote-token"));
+        assert!(!listed.contains("synthetic-local-token"));
+
+        let stored = StoredConnection {
+            id: info.id.clone(),
+            label: info.label.clone(),
+            url: info.url.clone(),
+            instance_id: info.instance_id.clone(),
+            created_at: 0,
+        };
+        let json = serde_json::to_value(&stored).expect("serializes");
+        let mut keys: Vec<&str> = json
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        // The exhaustive list is the assertion: a future field cannot quietly
+        // become a place a credential could live.
+        assert_eq!(keys, vec!["createdAt", "id", "instanceId", "label", "url"]);
+    }
+
+    #[test]
+    fn renaming_changes_only_the_label() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        let renamed = h.registry.rename(&info.id, "Studio (EU)").expect("rename");
+        assert_eq!(renamed.id, info.id);
+        assert_eq!(renamed.label, "Studio (EU)");
+        assert_eq!(renamed.url, info.url);
+        // The Keychain account is the ID, so a rename cannot orphan a token.
+        assert_eq!(h.secrets.accounts(), vec![info.id.clone()]);
+        assert!(h.registry.resolve(&info.id).is_some());
+        assert!(matches!(
+            h.registry.rename(&info.id, "   "),
+            Err(RegistryError::EmptyLabel)
+        ));
+    }
+
+    #[test]
+    fn retargeting_mints_a_new_id_and_revokes_the_old_route() {
+        let h = harness(true);
+        let original = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        let replacement = h
+            .registry
+            .replace(
+                &original.id,
+                &remote("https://wisp-2.example.com"),
+                "synthetic-replacement-token",
+                "wisp-instance-remote-2",
+            )
+            .expect("replace");
+
+        assert_ne!(replacement.id, original.id);
+        assert_eq!(replacement.label, "Studio");
+        // In-flight work holding the old ID fails closed rather than following
+        // the edit onto a different daemon.
+        assert!(h.registry.resolve(&original.id).is_none());
+        assert_eq!(h.secrets.accounts(), vec![replacement.id.clone()]);
+        let target = h.registry.resolve(&replacement.id).expect("resolves");
+        assert_eq!(
+            h.registry.credential(&target).expect("credential"),
+            "synthetic-replacement-token"
+        );
+    }
+
+    #[test]
+    fn removal_revokes_the_route_then_clears_credential_and_tombstone() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        h.registry.remove(&info.id).expect("remove");
+        assert!(h.registry.resolve(&info.id).is_none());
+        assert!(h.registry.list().iter().all(|c| c.id != info.id));
+        assert!(h.secrets.accounts().is_empty());
+        let on_disk = std::fs::read_to_string(&h.path).expect("file");
+        assert!(!on_disk.contains(&info.id));
+        assert!(matches!(
+            h.registry.remove(&info.id),
+            Err(RegistryError::UnknownConnection(_))
+        ));
+    }
+
+    #[test]
+    fn an_interrupted_removal_is_finished_at_the_next_launch() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+
+        // Simulate a crash after the tombstone write: the route is already gone
+        // from the file, the Keychain item is not.
+        let crashed = serde_json::json!({
+            "version": 1,
+            "connections": [],
+            "pendingRemovals": [info.id],
+        });
+        std::fs::write(&h.path, serde_json::to_vec_pretty(&crashed).expect("json")).expect("write");
+        assert_eq!(h.secrets.accounts(), vec![info.id.clone()]);
+
+        let reopened = open(&h.path, h.secrets.clone(), true);
+        assert!(reopened.resolve(&info.id).is_none());
+        assert!(h.secrets.accounts().is_empty());
+        let on_disk = std::fs::read_to_string(&h.path).expect("file");
+        assert!(!on_disk.contains(&info.id));
+    }
+
+    #[test]
+    fn a_tombstoned_connection_has_no_route_even_before_cleanup_runs() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        // The record survives, but the tombstone is authoritative.
+        let crashed = serde_json::json!({
+            "version": 1,
+            "connections": [{
+                "id": info.id,
+                "label": info.label,
+                "url": info.url,
+                "instanceId": info.instance_id,
+                "createdAt": 0,
+            }],
+            "pendingRemovals": [info.id],
+        });
+        std::fs::write(&h.path, serde_json::to_vec_pretty(&crashed).expect("json")).expect("write");
+        let reopened = open(&h.path, h.secrets.clone(), true);
+        assert!(reopened.resolve(&info.id).is_none());
+        assert!(reopened.list().iter().all(|c| c.id != info.id));
+    }
+
+    #[test]
+    fn records_that_fail_todays_rules_are_dropped_rather_than_trusted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("connections.json");
+        let poisoned = serde_json::json!({
+            "version": 1,
+            "connections": [
+                { "id": "local", "label": "Impostor", "url": "https://evil.example.com", "instanceId": "x", "createdAt": 0 },
+                { "id": "bad id", "label": "Spaces", "url": "https://wisp.example.com", "instanceId": "x", "createdAt": 0 },
+                { "id": "c-plainhttp", "label": "Insecure", "url": "http://wisp.example.com", "instanceId": "x", "createdAt": 0 },
+                { "id": "c-file", "label": "Scheme", "url": "file:///etc/passwd", "instanceId": "x", "createdAt": 0 },
+                { "id": "c-good", "label": "Fine", "url": "https://wisp.example.com", "instanceId": "x", "createdAt": 0 }
+            ],
+            "pendingRemovals": []
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&poisoned).expect("json")).expect("write");
+        let registry = open(&path, Arc::new(MemorySecretStore::new()), true);
+
+        // `local` still resolves to the built-in profile, not the impostor.
+        let local = registry.resolve(LOCAL_CONNECTION_ID).expect("local");
+        assert_eq!(local.kind, ConnectionKind::Local);
+        assert_eq!(local.base.host_str(), Some("127.0.0.1"));
+
+        assert!(registry.resolve("bad id").is_none());
+        assert!(registry.resolve("c-plainhttp").is_none());
+        assert!(registry.resolve("c-file").is_none());
+        assert!(registry.resolve("c-good").is_some());
+    }
+
+    #[test]
+    fn a_connection_whose_credential_vanished_is_listed_but_not_ready() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        h.secrets
+            .delete(&info.id)
+            .expect("delete out from under it");
+        let reopened = open(&h.path, h.secrets.clone(), true);
+        let listed = reopened.list();
+        let entry = listed
+            .iter()
+            .find(|c| c.id == info.id)
+            .expect("still listed");
+        assert!(!entry.ready);
+        let target = reopened.resolve(&info.id).expect("route exists");
+        assert!(matches!(
+            reopened.credential(&target),
+            Err(RegistryError::MissingCredential)
+        ));
+    }
+
+    #[test]
+    fn identity_state_is_per_connection_and_survives_a_rename() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-remote-token",
+                "wisp-instance-remote",
+            )
+            .expect("add");
+        assert_eq!(h.registry.identity(&info.id), Identity::Verified);
+        h.registry.set_identity(&info.id, Identity::Mismatch);
+        assert_eq!(h.registry.identity(&info.id), Identity::Mismatch);
+        h.registry.rename(&info.id, "Renamed").expect("rename");
+        assert_eq!(h.registry.identity(&info.id), Identity::Mismatch);
+        assert_eq!(h.registry.identity("c-never-seen"), Identity::Unchecked);
+    }
+
+    #[test]
+    fn two_connections_keep_independent_targets_and_credentials() {
+        let h = harness(true);
+        let first = h
+            .registry
+            .add_remote(
+                "One",
+                &remote("https://one.example.com"),
+                "synthetic-token-one",
+                "wisp-instance-one",
+            )
+            .expect("add one");
+        let second = h
+            .registry
+            .add_remote(
+                "Two",
+                &remote("https://two.example.com"),
+                "synthetic-token-two",
+                "wisp-instance-two",
+            )
+            .expect("add two");
+        assert_ne!(first.id, second.id);
+
+        let a = h.registry.resolve(&first.id).expect("one");
+        let b = h.registry.resolve(&second.id).expect("two");
+        assert_eq!(a.base.host_str(), Some("one.example.com"));
+        assert_eq!(b.base.host_str(), Some("two.example.com"));
+        assert_eq!(
+            h.registry.credential(&a).expect("cred"),
+            "synthetic-token-one"
+        );
+        assert_eq!(
+            h.registry.credential(&b).expect("cred"),
+            "synthetic-token-two"
+        );
+
+        h.registry.remove(&first.id).expect("remove one");
+        assert!(h.registry.resolve(&first.id).is_none());
+        assert!(h.registry.resolve(&second.id).is_some());
+        assert_eq!(h.secrets.accounts(), vec![second.id]);
+    }
+}
