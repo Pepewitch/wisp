@@ -48,6 +48,30 @@ Source and tests are authoritative for architecture, fields, payloads, and
 behavior. Keep public documentation focused on installation, operation,
 security, extension points, and contribution workflows.
 
+## Open-source safety
+
+This repository and its collaboration metadata are public. Treat tracked and
+generated files, fixtures, branch names, commit authors and messages, issue and
+PR titles, descriptions, comments, screenshots, logs, and release material as
+publication surfaces.
+
+- Never include employer, client, organization, repository, project, or issue
+  names learned from private work, even when the organization itself is
+  publicly known. Also exclude internal URLs and domains, real user data,
+  machine-local absolute paths, session or task identifiers, credentials, and
+  text or artifacts copied from private systems.
+- Turn work-derived feedback into a clean-room reproduction written from
+  scratch. Use clearly synthetic names, paths, IDs, repositories, logs, and
+  screenshots while preserving only the behavior needed to understand and test
+  the change. Partial find-and-replace sanitization is not sufficient.
+- Keep raw prompts, task databases, transcripts, logs, screenshots, and
+  evaluation output in an approved private system. A personal private
+  repository is not automatically approved for employer or client data.
+- Before committing or preparing a PR, inspect the complete diff, generated
+  output, branch and commit metadata, and proposed PR text for accidental
+  disclosure. If provenance or permission is uncertain, stop and ask the
+  maintainer instead of publishing.
+
 ## Working rules
 
 1. Start from the owning source and tests, not a broad documentation crawl.
