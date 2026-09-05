@@ -18,9 +18,9 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, and desktop/phone web app.
 
-**Current source version: `0.4.0-alpha.6`.** This is experimental software,
-not a production-ready release. Alpha.6 includes linked pull-request status,
-its batched sidebar view, and durable native steering.
+**Current source version: `0.4.0-alpha.7`.** This is experimental software,
+not a production-ready release. Alpha.7 adds managed updates, project removal,
+harness drift checks, refreshed harness contracts, and safer native steering.
 
 ## Why Wisp
 
@@ -59,7 +59,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.6 # replace with the current published alpha
+version=0.4.0-alpha.7 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -69,7 +69,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.6/wisp-v0.4.0-alpha.6-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.7/wisp-v0.4.0-alpha.7-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -198,7 +198,7 @@ connection restarts.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.6 # replace with the installed alpha
+version=0.4.0-alpha.7 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh

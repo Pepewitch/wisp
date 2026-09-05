@@ -1,7 +1,7 @@
 # Install and activate Wisp on Linux
 
 This guide covers **Ubuntu 24.04 LTS, x86_64, glibc**.
-`0.4.0-alpha.6` is an experimental maintenance prerelease. The Apple Silicon
+`0.4.0-alpha.7` is an experimental maintenance prerelease. The Apple Silicon
 Homebrew path is documented separately in
 [INSTALL-MACOS.md](INSTALL-MACOS.md).
 
@@ -27,7 +27,7 @@ account in a separate container.
 Use the public release installer:
 
 ```sh
-version=0.4.0-alpha.6 # replace with the current published alpha
+version=0.4.0-alpha.7 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -45,7 +45,7 @@ candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.6/wisp-v0.4.0-alpha.6-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.7/wisp-v0.4.0-alpha.7-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -221,7 +221,7 @@ The uninstaller removes only installer-managed binaries, symlinks, and the
 managed systemd user unit:
 
 ```sh
-version=0.4.0-alpha.6 # replace with the installed alpha
+version=0.4.0-alpha.7 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh
