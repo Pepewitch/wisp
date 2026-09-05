@@ -284,6 +284,23 @@ class LeakScanTest(unittest.TestCase):
 
 
 class InnerWorkerTest(unittest.TestCase):
+    def test_relay_accepts_only_bounded_base64_stdin_frames(self) -> None:
+        client = load_script("inner-client.py")
+        worker = load_script("inner-worker.py")
+        data = b'{"jsonrpc":"2.0","id":"1"}\n'
+        frame = json.loads(client.stdin_frame(data))
+        self.assertEqual(worker.decode_stdin_frame(frame), data)
+        self.assertIsNone(worker.decode_stdin_frame({"type": "stdin_end"}))
+        for invalid in (
+            {"stream": "stdout", "data": ""},
+            {"stream": "stdin", "data": "***"},
+            {"type": "stdin_end", "extra": True},
+            {"stream": "stdin", "data": "eA==", "extra": True},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    worker.decode_stdin_frame(invalid)
+
     def test_maps_only_one_existing_worktree_component(self) -> None:
         worker = load_script("inner-worker.py")
         with tempfile.TemporaryDirectory() as directory:

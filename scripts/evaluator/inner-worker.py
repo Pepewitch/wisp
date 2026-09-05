@@ -7,7 +7,6 @@ import base64
 import json
 import os
 import re
-import select
 import signal
 import socket
 import socketserver
@@ -27,6 +26,7 @@ INNER_DROID = os.environ.get(
 EXPECTED_MODEL = os.environ.get("WISP_EVALUATOR_INNER_MODEL", "glm-5.2-fast")
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_CHUNK = 64 * 1024
+MAX_INPUT_CHUNK = 64 * 1024
 TASK_ENV_NAMES = ("WISP_TASK_ID", "WISP_TASK_SLOT", "WISP_WORKTREE", "WISP_REPO")
 TASK_ID_PATTERN = re.compile(r"t[abcdefghjkmnpqrstuvwxyz23456789]{5}")
 
@@ -95,6 +95,25 @@ def validate_request(payload: object) -> tuple[list[str], Path, dict[str, str]]:
     return argv, worktree, dict(task_env)
 
 
+def decode_stdin_frame(payload: object) -> bytes | None:
+    if not isinstance(payload, dict):
+        raise ValueError("inner stdin frame must be an object")
+    if payload.get("type") == "stdin_end" and set(payload) == {"type"}:
+        return None
+    if set(payload) != {"stream", "data"} or payload.get("stream") != "stdin":
+        raise ValueError("unknown inner stdin frame")
+    encoded = payload.get("data")
+    if not isinstance(encoded, str):
+        raise ValueError("inner stdin data must be base64 text")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except ValueError as error:
+        raise ValueError("inner stdin data is not valid base64") from error
+    if len(data) > MAX_INPUT_CHUNK:
+        raise ValueError("inner stdin chunk is too large")
+    return data
+
+
 def terminate(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -142,7 +161,7 @@ class InnerHandler(socketserver.StreamRequestHandler):
                 [INNER_DROID, *argv],
                 cwd=worktree,
                 env=child_env,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
@@ -163,21 +182,37 @@ class InnerHandler(socketserver.StreamRequestHandler):
             except OSError:
                 disconnected.set()
 
+        def pump_input() -> None:
+            try:
+                while True:
+                    line = self.rfile.readline(MAX_FRAME_BYTES + 1)
+                    if not line:
+                        disconnected.set()
+                        return
+                    if len(line) > MAX_FRAME_BYTES:
+                        raise ValueError("inner stdin frame is too large")
+                    data = decode_stdin_frame(json.loads(line))
+                    if data is None:
+                        process.stdin.close()
+                        return
+                    process.stdin.write(data)
+                    process.stdin.flush()
+            except (BrokenPipeError, OSError):
+                return
+            except (ValueError, json.JSONDecodeError) as error:
+                send({"type": "error", "message": str(error)})
+                disconnected.set()
+
         pumps = [
             threading.Thread(target=pump, args=(process.stdout, "stdout"), daemon=True),
             threading.Thread(target=pump, args=(process.stderr, "stderr"), daemon=True),
         ]
         for thread in pumps:
             thread.start()
+        threading.Thread(target=pump_input, daemon=True).start()
 
-        while process.poll() is None and not disconnected.is_set():
-            readable, _, _ = select.select([self.request], [], [], 0.2)
-            if readable:
-                try:
-                    if self.request.recv(1) == b"":
-                        disconnected.set()
-                except OSError:
-                    disconnected.set()
+        while process.poll() is None and not disconnected.wait(0.2):
+            pass
         if disconnected.is_set():
             terminate(process)
         code = process.wait()
