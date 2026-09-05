@@ -8,6 +8,7 @@ import json
 import os
 import socket
 import sys
+import threading
 from pathlib import Path
 
 SOCKET_PATH = Path(os.environ.get("WISP_EVALUATOR_INNER_SOCKET", "/run/inner-rpc/droid.sock"))
@@ -16,6 +17,7 @@ WORKTREE_ROOT = Path(
 )
 EXPOSED_WORKTREE_ROOT = Path("/home/evaluator/.wisp/worktrees")
 MAX_FRAME_BYTES = 4 * 1024 * 1024
+MAX_INPUT_CHUNK = 64 * 1024
 
 
 def request_payload(argv: list[str], cwd: Path, environ: dict[str, str]) -> dict[str, object]:
@@ -53,6 +55,27 @@ def write_stream(stream: object, encoded: str) -> None:
     target.flush()
 
 
+def stdin_frame(data: bytes) -> bytes:
+    payload = {
+        "stream": "stdin",
+        "data": base64.b64encode(data).decode("ascii"),
+    }
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n"
+    if len(encoded) > MAX_FRAME_BYTES:
+        raise ValueError("inner Droid stdin frame is too large")
+    return encoded
+
+
+def forward_stdin(connection: socket.socket) -> None:
+    try:
+        while data := os.read(sys.stdin.fileno(), MAX_INPUT_CHUNK):
+            connection.sendall(stdin_frame(data))
+        connection.sendall(b'{"type":"stdin_end"}\n')
+    except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
+        # The worker or child exited first; the response loop reports its exit.
+        return
+
+
 def main(argv: list[str]) -> int:
     try:
         payload = request_payload(argv, Path.cwd(), dict(os.environ))
@@ -63,6 +86,7 @@ def main(argv: list[str]) -> int:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.connect(str(SOCKET_PATH))
             connection.sendall(encoded + b"\n")
+            threading.Thread(target=forward_stdin, args=(connection,), daemon=True).start()
             reader = connection.makefile("rb")
             while True:
                 line = reader.readline(MAX_FRAME_BYTES + 1)
