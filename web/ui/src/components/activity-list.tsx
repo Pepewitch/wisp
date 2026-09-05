@@ -30,6 +30,10 @@ export function ActivityList({
     <div className={cn("flex flex-col gap-0.5", depth > 0 && "mt-1")}>
       {items.map((item) => {
         if (item.kind === "text") return <Prose key={item.id} text={item.text.trimEnd()} className="my-2" />
+        // A steered message is a conversation bubble, not an activity row: the
+        // Conversation splits the timeline at its anchor and renders it there,
+        // where the message row (full text, attachments, delivery wording) is.
+        if (item.kind === "message") return null
         if (item.kind === "thinking") {
           return <ThinkingRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
         }

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -6,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react"
 
 import { ActivityList } from "@/components/activity-list"
@@ -14,7 +16,14 @@ import { MessageAttachments } from "@/components/message-attachments"
 import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
-import { activityByTurn, conclusionText, fetchTurnActivity, type TurnActivity } from "@/lib/activity"
+import {
+  activityByTurn,
+  anchoredMessageIds,
+  conclusionText,
+  fetchTurnActivity,
+  splitByMessage,
+  type TurnActivity,
+} from "@/lib/activity"
 import { duration } from "@/lib/state"
 import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntents } from "@/lib/ui-intents"
@@ -34,6 +43,12 @@ import type { StreamState } from "@/stream/reducer"
    3. The live turn appends into the same list. overflow-anchor + a 60px pin
       threshold; a group opening above the viewport compensates scrollTop.
    4. Raw format replaces the pane — it never interleaves.
+   5. A message steered INTO a running turn is part of that turn's order, not
+      part of its prompt. The daemon anchors it in the turn's log at native
+      admission; the timeline is split at that anchor so the bubble sits
+      immediately before whatever the harness did next. A message with no
+      anchor — an older log, or a turn whose timeline is not on screen —
+      falls back to the turn's head rather than being hidden.
    ──────────────────────────────────────────────────────────────────────── */
 
 const PIN_THRESHOLD = 60
@@ -235,6 +250,12 @@ function TurnBlock({
    */
   const settledWithoutResult = !running && !turn.result
   const timeline = live ?? expanded
+  // Rule 5: only a timeline that is on screen can place a message. Everything
+  // it cannot place still renders, at the head of the turn.
+  const timelineItems = timeline?.items
+  const anchored = useMemo(() => anchoredMessageIds(timelineItems ?? []), [timelineItems])
+  const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages])
+  const unanchored = messages.filter((message) => !anchored.has(message.id))
   // Live frames need only their activity items. Avoid materializing the
   // accumulated parent prose until a settled turn needs duplicate detection.
   const conclusion = conclusionText(turn, running ? undefined : timeline?.text)
@@ -261,31 +282,8 @@ function TurnBlock({
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
       <TurnAttachments taskId={taskId} turn={turn.n} attachments={turn.attachments ?? []} archived={archived} />
 
-      {messages.map((message) => (
-        <div key={message.id} className="mt-3">
-          <div className="flex justify-end">
-            <div
-              className={cn(
-                "max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card",
-                "px-3.5 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-foreground/90",
-              )}
-            >
-              {message.text}
-              <div className="mt-1 text-[10.5px] text-faint">sent during this turn</div>
-              {message.delivery_uncertain && (
-                <div className="mt-1 text-[10.5px] text-faint">
-                  delivery retried after an unconfirmed native admission
-                </div>
-              )}
-            </div>
-          </div>
-          <MessageAttachments
-            taskId={taskId}
-            messageId={message.id}
-            attachments={message.attachments}
-            archived={archived}
-          />
-        </div>
+      {unanchored.map((message) => (
+        <SteeredMessage key={message.id} taskId={taskId} message={message} archived={archived} />
       ))}
 
       <Activity
@@ -296,6 +294,14 @@ function TurnBlock({
         onLoaded={setExpanded}
         autoLoad={latest && settledWithoutResult}
         onBeforeToggle={onBeforeToggle}
+        renderMessage={(id) => {
+          const message = byId.get(id)
+          // The log says a delivery landed here; the row says what it WAS. A
+          // message the row does not report as steered (still queued, or
+          // cancelled after an unconfirmed admission) keeps its own honest
+          // placement and wording rather than borrowing this one.
+          return message ? <SteeredMessage taskId={taskId} message={message} archived={archived} /> : null
+        }}
       />
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
@@ -321,6 +327,49 @@ function TurnBlock({
         {turn.model && <span className="font-mono">{turn.model}</span>}
       </div>
     </article>
+  )
+}
+
+/**
+ * One message that reached a RUNNING turn. Same bubble wherever it lands —
+ * only its position changes — so an anchored steer and an unanchored one are
+ * never told apart by their styling, and neither is ever confused with the
+ * separately worded queued-for-the-next-turn bubble below the transcript.
+ */
+function SteeredMessage({
+  taskId,
+  message,
+  archived,
+}: {
+  taskId: string
+  message: TaskMessage
+  archived: boolean
+}) {
+  return (
+    <div data-steered-message={message.id} className="mt-3">
+      <div className="flex justify-end">
+        <div
+          className={cn(
+            "max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card",
+            "px-3.5 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-foreground/90",
+          )}
+        >
+          {message.text}
+          <div className="mt-1 text-[10.5px] text-faint">sent during this turn</div>
+          {message.delivery_uncertain && (
+            <div className="mt-1 text-[10.5px] text-faint">
+              delivery retried after an unconfirmed native admission
+            </div>
+          )}
+        </div>
+      </div>
+      <MessageAttachments
+        taskId={taskId}
+        messageId={message.id}
+        attachments={message.attachments}
+        archived={archived}
+      />
+    </div>
   )
 }
 
@@ -451,6 +500,7 @@ function Activity({
   onLoaded,
   autoLoad = false,
   onBeforeToggle,
+  renderMessage,
 }: {
   taskId: string
   turn: Turn
@@ -461,13 +511,16 @@ function Activity({
   /** fetch on mount instead of waiting for a click — a turn with no result row */
   autoLoad?: boolean
   onBeforeToggle: (node: HTMLElement | null, before: number) => void
+  /** rule 5: what to draw at a message anchor, resolved against the task's rows */
+  renderMessage: (messageId: string) => ReactNode
 }) {
   const [loading, setLoading] = useState(false)
   const node = useRef<HTMLDivElement>(null)
   const request = useRef<AbortController | null>(null)
 
   const activity = live ?? loaded
-  const items = activity?.items ?? []
+  const items = activity?.items
+  const segments = useMemo(() => splitByMessage(items ?? []), [items])
 
   const load = () => {
     if (loading) return
@@ -546,8 +599,13 @@ function Activity({
           Hide activity
         </button>
       )}
-      <ActivityList items={items} onBeforeToggle={onBeforeToggle} />
-      {items.length === 0 && <span className="text-[11px] text-faint">No activity in this turn</span>}
+      {segments.map((segment) => (
+        <Fragment key={segment.messageId ?? "tail"}>
+          {segment.items.length > 0 && <ActivityList items={segment.items} onBeforeToggle={onBeforeToggle} />}
+          {segment.messageId && renderMessage(segment.messageId)}
+        </Fragment>
+      ))}
+      {!items?.length && <span className="text-[11px] text-faint">No activity in this turn</span>}
     </div>
   )
 }

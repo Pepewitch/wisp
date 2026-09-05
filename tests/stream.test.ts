@@ -6,6 +6,7 @@ import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { authorized, postSession, route } from "../src/daemon";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
+import { formatSteerNote } from "../src/turn-notes";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -327,6 +328,48 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
       expect(JSON.parse(backlog.data)).toEqual({ turn: 1, prompt: "inspect it", text: raw });
     } finally {
       await rawReader.cancel();
+    }
+  });
+
+  test("activity format anchors a steered message where the log recorded it", async () => {
+    const log = join(dir, "steered-message.out.log");
+    writeFileSync(
+      log,
+      [
+        JSON.stringify({ type: "message", role: "assistant", text: "Reading the config" }),
+        formatSteerNote("mfaketestid01", "Use the safer approach\nand keep the tests green"),
+        JSON.stringify({ type: "message", role: "assistant", text: "Switching approach" }),
+        "",
+      ].join("\n"),
+    );
+    const task = makeTask();
+    const turnId = createTurn(task.id, 1, "original request", null, log);
+    finishTurn(turnId, "done", 0, "Switching approach");
+
+    // Twice: a reload re-reads the same log from byte zero, and the anchor has
+    // to come back identically rather than drifting or duplicating.
+    for (const _attempt of [1, 2]) {
+      const res = await call(`/api/tasks/${task.id}/log/stream?format=activity&turn=1`);
+      const reader = res.body!.getReader();
+      const sse = sseReader(reader);
+      try {
+        const backlog = await sse.nextFrame();
+        expect(backlog.event).toBe("backlog");
+        const { activity } = JSON.parse(backlog.data) as { activity: { kind: string; id: string }[] };
+        expect(activity.map((event) => [event.kind, event.id])).toEqual([
+          ["text", "text-1"],
+          ["message", "mfaketestid01"],
+          ["text", "text-2"],
+        ]);
+        expect(activity[1]).toEqual({
+          kind: "message",
+          id: "mfaketestid01",
+          parentId: null,
+          text: "Use the safer approach and keep the tests green",
+        });
+      } finally {
+        await reader.cancel();
+      }
     }
   });
 

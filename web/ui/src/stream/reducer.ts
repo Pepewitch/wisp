@@ -6,6 +6,18 @@ export interface TextActivityItem {
   text: string
 }
 
+/**
+ * A message steered into this turn, anchored where the harness accepted it.
+ * The item carries only the log's one-line preview; the conversation resolves
+ * `id` against the task's message rows for the full text, its attachments and
+ * its delivery wording.
+ */
+export interface MessageActivityItem {
+  kind: "message"
+  id: string
+  text: string
+}
+
 export interface ThinkingActivityItem {
   kind: "thinking"
   id: string
@@ -42,7 +54,12 @@ export interface SubagentActivityItem {
   items: ActivityItem[]
 }
 
-export type ActivityItem = TextActivityItem | ThinkingActivityItem | ToolActivityItem | SubagentActivityItem
+export type ActivityItem =
+  | TextActivityItem
+  | MessageActivityItem
+  | ThinkingActivityItem
+  | ToolActivityItem
+  | SubagentActivityItem
 
 export type StreamBlock =
   | { kind: "separator"; turn: number; end: TurnStatus | null }
@@ -179,6 +196,7 @@ function subagentEndedAt(
 class ActivityDraft {
   readonly items: ActivityItem[]
   changed = false
+  private readonly messages = new Set<string>()
   private readonly tools = new Map<string, Slot<ToolActivityItem>>()
   private readonly thoughts = new Map<string, Slot<ThinkingActivityItem>>()
   private readonly subagents = new Map<string, Slot<SubagentActivityItem>>()
@@ -204,7 +222,9 @@ class ActivityDraft {
   }
 
   private register(slot: Slot<ActivityItem>): void {
-    if (slot.item.kind === "tool" && !this.tools.has(slot.item.id)) {
+    if (slot.item.kind === "message") {
+      this.messages.add(slot.item.id)
+    } else if (slot.item.kind === "tool" && !this.tools.has(slot.item.id)) {
       this.tools.set(slot.item.id, slot as Slot<ToolActivityItem>)
     } else if (slot.item.kind === "thinking" && !this.thoughts.has(slot.item.id)) {
       this.thoughts.set(slot.item.id, slot as Slot<ThinkingActivityItem>)
@@ -230,6 +250,18 @@ class ActivityDraft {
     } else {
       target.push({ kind: "text", id: event.id, text: event.text })
     }
+    this.changed = true
+  }
+
+  /**
+   * A delivery happens once. Replay re-reads the same log from byte zero, so
+   * the message id is what keeps a reconnect from stacking duplicate bubbles.
+   */
+  private applyMessage(event: Extract<ActivityEvent, { kind: "message" }>): void {
+    if (this.messages.has(event.id)) return
+    const target = this.target(event.parentId)
+    target.push({ kind: "message", id: event.id, text: event.text })
+    this.messages.add(event.id)
     this.changed = true
   }
 
@@ -320,6 +352,9 @@ class ActivityDraft {
     switch (event.kind) {
       case "text":
         this.applyText(event)
+        break
+      case "message":
+        this.applyMessage(event)
         break
       case "thinking":
         this.applyThinking(event)

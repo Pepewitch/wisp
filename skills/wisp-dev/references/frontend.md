@@ -100,7 +100,7 @@ when a line should look technical.
 ## 5. The scroll contract
 
 The centre column is ONE conversation — prompt, the tool calls it made, then the
-result — not a raw stream pane stacked on a chat pane. Four rules:
+result — not a raw stream pane stacked on a chat pane. Five rules:
 
 1. **One scroller owns the whole task.** No per-turn clamp, no nested
    `overflow`, no separate stream pane. `GET /api/tasks/:id` already returns
@@ -116,6 +116,20 @@ result — not a raw stream pane stacked on a chat pane. Four rules:
    60px pin threshold; a group expanding above the viewport compensates
    `scrollTop` by the height delta so the reader's line stays put.
 4. **Raw format replaces the pane.** It never interleaves with the chat.
+5. **A steer belongs to the turn's order, not to its prompt.** A message
+   accepted by a RUNNING turn is an event inside it, so the daemon writes one
+   plain-text marker (`· steer <message id>: …`) to that turn's log at native
+   admission — same fd as the harness's own output, so the position is the
+   harness's order rather than the browser's arrival order, and a reload, a
+   second tab and a settled turn's refetch all rebuild it. The activity
+   projection turns that marker into a `message` event keyed by the message
+   id; the conversation splits the timeline there and renders the bubble
+   immediately before whatever the harness did next. Never reorder by render
+   time. A message the timeline cannot place — an older log with no marker, or
+   a settled turn whose activity is not on screen — falls back to the head of
+   the turn rather than disappearing, and the message ROW still decides what
+   the bubble says: a still-queued or cancelled message keeps its own
+   queued-for-the-next-turn wording no matter what the log anchored.
 
 There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
