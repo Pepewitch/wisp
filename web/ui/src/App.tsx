@@ -30,29 +30,36 @@ import { useInstallUpdate } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
-import { ensureSession } from "@/lib/api"
-import { connStore } from "@/lib/conn"
+import { connectionStore } from "@/lib/conn"
+import { readConnectionStorage, writeConnectionStorage } from "@/lib/connection-storage"
 import { groupTasksByProject } from "@/lib/projects"
-import { qk, queryClient } from "@/lib/query"
+import { queryClient } from "@/lib/query"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { connectEventsBridge } from "@/lib/sse"
 import type { ApiTask, HarnessInfo, RepoInfo, StatusEntry, TaskSkills, Turn } from "@/lib/types"
 import { waitForUpdatedDaemon } from "@/lib/update"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
+const SHOW_ARCHIVED_SETTING = "show_archived"
 
 export default function App() {
+  const runtime = useDaemonRuntime()
   const route = useHashRoute()
-  return route === "/gallery" ? <Gallery /> : <MainView />
+  return route === "/gallery" ? <Gallery /> : <MainView key={runtime.connectionId} />
 }
 
 function MainView() {
+  const runtime = useDaemonRuntime()
+  const conn = connectionStore(runtime.connectionId)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selectedRef = useRef<string | null>(null)
   useLayoutEffect(() => {
     selectedRef.current = selectedId
   }, [selectedId])
 
-  const [showArchived, setShowArchived] = useState(() => localStorage.getItem(SHOW_ARCHIVED_KEY) === "1")
+  const [showArchived, setShowArchived] = useState(
+    () => readConnectionStorage(runtime.connectionId, SHOW_ARCHIVED_SETTING, SHOW_ARCHIVED_KEY) === "1",
+  )
   // open state carries the project the sidebar's `+` preselected
   const [createFor, setCreateFor] = useState<{ repoPath: string | null } | null>(null)
   const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
@@ -75,11 +82,11 @@ function MainView() {
     setUpdateError(null)
     try {
       await installUpdate.mutateAsync(version)
-      await waitForUpdatedDaemon(version)
-      window.location.reload()
+      await waitForUpdatedDaemon(version, { transport: runtime.transport })
+      await runtime.recoverAfterUpdate()
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : String(error))
-      void queryClient.invalidateQueries({ queryKey: qk.update })
+      void queryClient.invalidateQueries({ queryKey: runtime.qk.update })
     }
   }
 
@@ -89,12 +96,13 @@ function MainView() {
     () =>
       connectEventsBridge({
         client: queryClient,
+        transport: runtime.transport,
+        qk: runtime.qk,
         getSelectedId: () => selectedRef.current,
-        ensureSession,
-        onConnectionChange: (live) => connStore.set("events", live),
+        onConnectionChange: (live) => conn.set("events", live),
         onReconnect: bumpLogGeneration,
       }),
-    [],
+    [runtime, conn],
   )
 
   // a fresh [] every render would re-run every memo below it
@@ -147,7 +155,12 @@ function MainView() {
       }}
       showArchived={showArchived}
       onShowArchivedChange={(v) => {
-        localStorage.setItem(SHOW_ARCHIVED_KEY, v ? "1" : "0")
+        writeConnectionStorage(
+          runtime.connectionId,
+          SHOW_ARCHIVED_SETTING,
+          SHOW_ARCHIVED_KEY,
+          v ? "1" : "0",
+        )
         setShowArchived(v)
       }}
       onNewTask={(repoPath) => {
@@ -181,7 +194,9 @@ function MainView() {
       // the base is NOT passed in: only the daemon knows which commit it
       // actually diffed from (it resolves GitHub's base), and a local task
       // diffs against the working tree with no base at all
-      onRefresh={() => selectedId && void queryClient.invalidateQueries({ queryKey: qk.diff(selectedId) })}
+      onRefresh={() =>
+        selectedId && void queryClient.invalidateQueries({ queryKey: runtime.qk.diff(selectedId) })
+      }
     />
   )
   const terminalNode = (

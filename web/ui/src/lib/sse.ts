@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
-import { qk } from "./query";
+import type { ConnectionQueryKeys } from "./query";
+import type { DaemonTransport } from "./transport";
 import type { ApiTask, TaskDetail, TaskState, WispEvent } from "./types";
 
 /**
@@ -29,19 +30,18 @@ export interface SseLike {
 
 export type SseFactory = (url: string) => SseLike;
 
-// EventSource's handler types (MessageEvent) don't narrow structurally to the
-// bridge's minimal frame shape under strictFunctionTypes — adapt at the seam
-export const defaultSseFactory: SseFactory = (url) => new EventSource(url) as unknown as SseLike;
-
 /** EventSource.CLOSED — a hard failure (e.g. 401); the browser never retries these. */
 export const SSE_CLOSED = 2;
 
 export interface EventsBridgeOptions {
   client: QueryClient;
+  /** immutable connection transport captured when this bridge was created */
+  transport: Pick<DaemonTransport, "openEventStream" | "ensureReady">;
+  /** every invalidation remains under this connection's cache prefix */
+  qk: ConnectionQueryKeys;
   /** detail/diff invalidations only fire for the currently selected task */
   getSelectedId: () => string | null;
-  /** mint the wisp_token cookie before reconnecting (opens the token modal when needed) */
-  ensureSession: () => Promise<void>;
+  /** test seam; production streams always come from the captured transport */
   factory?: SseFactory;
   onConnectionChange?: (live: boolean) => void;
   /** a reconnect also reopens the selected task's log stream (both die together on a slept laptop) */
@@ -53,9 +53,14 @@ export interface EventsBridgeOptions {
   reconnectDelayMs?: number;
 }
 
-function debounce(fn: () => void, ms: number): () => void {
+interface Debounced {
+  (): void;
+  cancel(): void;
+}
+
+function debounce(fn: () => void, ms: number): Debounced {
   let t: ReturnType<typeof setTimeout> | null = null;
-  return () => {
+  const run: Debounced = () => {
     if (ms <= 0) {
       fn();
       return;
@@ -66,10 +71,17 @@ function debounce(fn: () => void, ms: number): () => void {
       fn();
     }, ms);
   };
+  run.cancel = () => {
+    if (t === null) return;
+    clearTimeout(t);
+    t = null;
+  };
+  return run;
 }
 
 export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
-  const factory = opts.factory ?? defaultSseFactory;
+  const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path) as unknown as SseLike);
+  const qk = opts.qk;
   const reconnectDelayMs = opts.reconnectDelayMs ?? 3_000;
   let source: SseLike | null = null;
   let closed = false;
@@ -144,11 +156,15 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
 
   function onOpen(): void {
     if (closed) return;
-    if (!wasDown) return; // the initial connect reports nothing
-    // the stream went down and came back: report, refetch the world once, and
-    // reopen the log stream so its pane restarts from a fresh backlog
-    wasDown = false;
+    // An initial success is meaningful after returning to a connection whose
+    // previous mounted view observed an outage. The per-connection health
+    // store intentionally outlives that view, so every fresh stream must heal
+    // it rather than waiting for another drop/reconnect cycle.
     opts.onConnectionChange?.(true);
+    if (!wasDown) return;
+    // the stream went down and came back: refetch the world once, and reopen
+    // the log stream so its pane restarts from a fresh backlog
+    wasDown = false;
     void opts.client.invalidateQueries({ queryKey: qk.tasks });
     void opts.client.invalidateQueries({ queryKey: qk.status });
     void opts.client.invalidateQueries({ queryKey: qk.repos });
@@ -170,7 +186,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (source && source.readyState === SSE_CLOSED && reconnectTimer === null) {
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        void opts.ensureSession().then(() => {
+        void opts.transport.ensureReady().then(() => {
           if (!closed) open();
         });
       }, reconnectDelayMs);
@@ -181,7 +197,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     source?.close();
     const next = factory("/api/events");
     next.onmessage = (ev) => {
-      if (closed) return;
+      if (closed || source !== next) return;
       let evt: WispEvent;
       try {
         evt = JSON.parse(ev.data) as WispEvent;
@@ -190,8 +206,12 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       }
       onEvent(evt);
     };
-    next.onopen = onOpen;
-    next.onerror = onError;
+    next.onopen = () => {
+      if (source === next) onOpen();
+    };
+    next.onerror = () => {
+      if (source === next) onError();
+    };
     source = next;
   }
 
@@ -200,6 +220,11 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   return () => {
     closed = true;
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    invalidateTasks.cancel();
+    invalidateStatus.cancel();
+    invalidateRepos.cancel();
+    invalidateSelectedTurn.cancel();
+    invalidateSelectedMessages.cancel();
     source?.close();
   };
 }

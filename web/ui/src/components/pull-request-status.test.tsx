@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
 import { TASKS } from "@/lib/fixtures"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { MobileShell } from "./mobile-shell"
 import { PullRequestStatusLink } from "./pull-request-status"
@@ -26,8 +26,7 @@ const FOUND: PullRequestStatus = {
 }
 
 function withClient(node: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>)
+  return render(node, { wrapper: runtimeWrapper(fakeDaemonTransport()) })
 }
 
 describe("PullRequestStatusLink", () => {

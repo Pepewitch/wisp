@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { connectionStorageKey } from "./connection-storage";
 import {
   DEFAULT_SHELL_TABS,
   loadShellTabs,
@@ -7,7 +8,7 @@ import {
   SHELL_TABS_KEY,
   SHELL_TABS_MAX_TASKS,
   TerminalConnection,
-  terminalSocketUrl,
+  terminalSocketPath,
   type TerminalClientHandlers,
   type TerminalSocketLike,
 } from "./terminal";
@@ -81,25 +82,24 @@ function setup(current: () => boolean = () => true) {
     "t1",
     0,
     h,
-    (url: string) => {
-      socket = new MockSocket(url);
-      return socket;
+    {
+      openWebSocket: (url: string) => {
+        socket = new MockSocket(url);
+        return socket as unknown as WebSocket;
+      },
     },
     current,
   );
   return { conn, h, socket: () => socket! };
 }
 
-describe("terminalSocketUrl", () => {
-  it("targets the daemon's WS route for the task, same-origin", () => {
-    // jsdom's location is http://localhost:3000
-    const { host } = window.location;
-    expect(terminalSocketUrl("tabc", 0)).toBe(`ws://${host}/api/tasks/tabc/terminal?shell=0`);
+describe("terminalSocketPath", () => {
+  it("leaves daemon origin selection to the transport", () => {
+    expect(terminalSocketPath("tabc", 0)).toBe("/api/tasks/tabc/terminal?shell=0");
   });
 
   it("addresses the tab, so the same id reattaches to the same daemon shell", () => {
-    const { host } = window.location;
-    expect(terminalSocketUrl("tabc", 3)).toBe(`ws://${host}/api/tasks/tabc/terminal?shell=3`);
+    expect(terminalSocketPath("tabc", 3)).toBe("/api/tasks/tabc/terminal?shell=3");
   });
 });
 
@@ -139,28 +139,30 @@ describe("shell tab persistence", () => {
   }
 
   it("defaults to one tab for a task it has never seen", () => {
-    expect(loadShellTabs("t1", memoryStorage())).toEqual(DEFAULT_SHELL_TABS);
+    expect(loadShellTabs("local", "t1", memoryStorage())).toEqual(DEFAULT_SHELL_TABS);
   });
 
   it("round-trips a task's tabs and active tab", () => {
     const storage = memoryStorage();
-    saveShellTabs("t1", { ids: [0, 2, 3], active: 2 }, storage);
-    expect(loadShellTabs("t1", storage)).toEqual({ ids: [0, 2, 3], active: 2 });
-    expect(loadShellTabs("t2", storage)).toEqual(DEFAULT_SHELL_TABS);
+    saveShellTabs("local", "t1", { ids: [0, 2, 3], active: 2 }, storage);
+    expect(loadShellTabs("local", "t1", storage)).toEqual({ ids: [0, 2, 3], active: 2 });
+    expect(loadShellTabs("local", "t2", storage)).toEqual(DEFAULT_SHELL_TABS);
   });
 
   it("treats absent, unparseable and wrong-shaped records as the default", () => {
-    expect(loadShellTabs("t1", memoryStorage("not json"))).toEqual(DEFAULT_SHELL_TABS);
-    expect(loadShellTabs("t1", memoryStorage("[1,2,3]"))).toEqual(DEFAULT_SHELL_TABS);
-    expect(loadShellTabs("t1", memoryStorage(JSON.stringify({ t1: { ids: [] } })))).toEqual(DEFAULT_SHELL_TABS);
-    expect(loadShellTabs("t1", memoryStorage(JSON.stringify({ t1: { ids: ["a", -1, 1.5] } })))).toEqual(
+    expect(loadShellTabs("local", "t1", memoryStorage("not json"))).toEqual(DEFAULT_SHELL_TABS);
+    expect(loadShellTabs("local", "t1", memoryStorage("[1,2,3]"))).toEqual(DEFAULT_SHELL_TABS);
+    expect(loadShellTabs("local", "t1", memoryStorage(JSON.stringify({ t1: { ids: [] } })))).toEqual(
+      DEFAULT_SHELL_TABS,
+    );
+    expect(loadShellTabs("local", "t1", memoryStorage(JSON.stringify({ t1: { ids: ["a", -1, 1.5] } })))).toEqual(
       DEFAULT_SHELL_TABS,
     );
   });
 
   it("repairs an active tab that is not in the list, rather than dropping the record", () => {
     const storage = memoryStorage(JSON.stringify({ t1: { ids: [1, 2], active: 9 } }));
-    expect(loadShellTabs("t1", storage)).toEqual({ ids: [1, 2], active: 1 });
+    expect(loadShellTabs("local", "t1", storage)).toEqual({ ids: [1, 2], active: 1 });
   });
 
   it("never throws when storage is unavailable", () => {
@@ -172,16 +174,19 @@ describe("shell tab persistence", () => {
         throw new Error("blocked");
       },
     } as unknown as Storage;
-    expect(loadShellTabs("t1", dead)).toEqual(DEFAULT_SHELL_TABS);
-    expect(() => saveShellTabs("t1", { ids: [0], active: 0 }, dead)).not.toThrow();
+    expect(loadShellTabs("local", "t1", dead)).toEqual(DEFAULT_SHELL_TABS);
+    expect(() => saveShellTabs("local", "t1", { ids: [0], active: 0 }, dead)).not.toThrow();
   });
 
   it("caps remembered tasks, dropping the least recently written", () => {
     const storage = memoryStorage();
     for (let i = 0; i < SHELL_TABS_MAX_TASKS + 5; i++) {
-      saveShellTabs(`task${i}`, { ids: [0, 1], active: 1 }, storage);
+      saveShellTabs("local", `task${i}`, { ids: [0, 1], active: 1 }, storage);
     }
-    const stored = JSON.parse(storage.getItem(SHELL_TABS_KEY)!) as Record<string, unknown>;
+    const stored = JSON.parse(storage.getItem(connectionStorageKey("local", "shell_tabs_v1"))!) as Record<
+      string,
+      unknown
+    >;
     expect(Object.keys(stored)).toHaveLength(SHELL_TABS_MAX_TASKS);
     expect(stored.task0).toBeUndefined();
     expect(stored[`task${SHELL_TABS_MAX_TASKS + 4}`]).toBeDefined();
@@ -189,14 +194,24 @@ describe("shell tab persistence", () => {
 
   it("re-saving a task keeps it from being evicted by newer ones", () => {
     const storage = memoryStorage();
-    saveShellTabs("keeper", { ids: [0], active: 0 }, storage);
+    saveShellTabs("local", "keeper", { ids: [0], active: 0 }, storage);
     for (let i = 0; i < SHELL_TABS_MAX_TASKS - 1; i++) {
-      saveShellTabs(`filler${i}`, { ids: [0], active: 0 }, storage);
+      saveShellTabs("local", `filler${i}`, { ids: [0], active: 0 }, storage);
     }
-    saveShellTabs("keeper", { ids: [0, 1], active: 1 }, storage); // touch it
-    saveShellTabs("newcomer", { ids: [0], active: 0 }, storage); // evicts filler0
-    expect(loadShellTabs("keeper", storage)).toEqual({ ids: [0, 1], active: 1 });
-    expect(loadShellTabs("filler0", storage)).toEqual(DEFAULT_SHELL_TABS);
+    saveShellTabs("local", "keeper", { ids: [0, 1], active: 1 }, storage); // touch it
+    saveShellTabs("local", "newcomer", { ids: [0], active: 0 }, storage); // evicts filler0
+    expect(loadShellTabs("local", "keeper", storage)).toEqual({ ids: [0, 1], active: 1 });
+    expect(loadShellTabs("local", "filler0", storage)).toEqual(DEFAULT_SHELL_TABS);
+  });
+
+  it("keeps duplicate task IDs isolated by connection", () => {
+    const storage = memoryStorage();
+    saveShellTabs("connection-one", "duplicate-task", { ids: [0, 1], active: 1 }, storage);
+    saveShellTabs("connection-two", "duplicate-task", { ids: [0, 3], active: 3 }, storage);
+
+    expect(loadShellTabs("connection-one", "duplicate-task", storage)).toEqual({ ids: [0, 1], active: 1 });
+    expect(loadShellTabs("connection-two", "duplicate-task", storage)).toEqual({ ids: [0, 3], active: 3 });
+    expect(storage.getItem(SHELL_TABS_KEY)).toBeNull();
   });
 });
 

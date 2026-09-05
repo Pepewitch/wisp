@@ -1,6 +1,7 @@
 import { useFreshSession, useInterruptTask, usePushTask } from "@/hooks/mutations"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
-import { api, ApiError, failureDisplay } from "@/lib/api"
+import { ApiError, failureDisplay } from "@/lib/api"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { statusNote, type Tier1CommandName } from "@/lib/slash"
 import type {
   ApiTask,
@@ -9,7 +10,8 @@ import type {
   ProbeCommandName,
   StatusEntry,
 } from "@/lib/types"
-import { uiIntents } from "@/lib/ui-intents"
+import type { DaemonTransport } from "@/lib/transport"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import type { Dispatch, SetStateAction } from "react"
 
 export interface SteerNote {
@@ -41,6 +43,9 @@ export function useSteerCommands({
   setNote: Dispatch<SetStateAction<SteerNote | null>>
   setReport: Dispatch<SetStateAction<ReportState>>
 }) {
+  const runtime = useDaemonRuntime()
+  const transport = runtime.transport
+  const uiIntents = uiIntentsFor(runtime.connectionId)
   const interruptTask = useInterruptTask()
   const pushTask = usePushTask()
   const freshSessionTask = useFreshSession()
@@ -86,7 +91,7 @@ export function useSteerCommands({
         })
         break
       case "attach":
-        void attachCommand(id, say, refuse)
+        void attachCommand(transport, id, say, refuse)
         break
       default: {
         const unreachable: never = name
@@ -101,7 +106,10 @@ export function useSteerCommands({
     setReport({ kind: "probe", taskId: id, command, answer: null })
     void (async () => {
       try {
-        const answer = await api<ProbeAnswer>(`/api/tasks/${id}/probe`, { method: "POST", body: { command } })
+        const answer = await transport.request<ProbeAnswer>(`/api/tasks/${id}/probe`, {
+          method: "POST",
+          body: { command },
+        })
         setReport((current) =>
           current?.kind === "probe" && current.taskId === id && current.command === command
             ? { ...current, answer }
@@ -120,7 +128,7 @@ export function useSteerCommands({
     if (!task) return
     setReport((current) => (current?.kind === "tokens" ? null : current))
     setNote({ taskId: task.id, tone: "muted", text: "compacting the session…" })
-    void compactSession(task.id, setNote)
+    void compactSession(transport, task.id, setNote)
   }
 
   return { archive, compact, dispatch, probe }
@@ -133,12 +141,13 @@ interface AttachResponse {
 }
 
 async function attachCommand(
+  transport: DaemonTransport,
   taskId: string,
   say: (text: string, extra?: { title?: string; copyable?: string }) => void,
   refuse: (error: unknown) => void,
 ): Promise<void> {
   try {
-    const response = await api<AttachResponse>(`/api/tasks/${taskId}/attach`)
+    const response = await transport.request<AttachResponse>(`/api/tasks/${taskId}/attach`)
     if (!response.argv) {
       say(response.message ?? "no session yet")
       return
@@ -151,11 +160,12 @@ async function attachCommand(
 }
 
 async function compactSession(
+  transport: DaemonTransport,
   taskId: string,
   setNote: Dispatch<SetStateAction<SteerNote | null>>,
 ): Promise<void> {
   try {
-    const response = await api<CompactAnswer>(`/api/tasks/${taskId}/compact`, { method: "POST" })
+    const response = await transport.request<CompactAnswer>(`/api/tasks/${taskId}/compact`, { method: "POST" })
     const bits: string[] = []
     if (response.removedCount !== null) bits.push(`${response.removedCount} messages dropped`)
     if (response.sessionReplaced) bits.push("the session continues as a new one")

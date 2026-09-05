@@ -1,9 +1,10 @@
+import { QueryClient } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 
 import type { ActivityEvent, TaskDetail, TaskMessage } from "@/lib/types"
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { Conversation } from "./conversation"
 
@@ -49,7 +50,9 @@ describe("Conversation top fade", () => {
       ],
     } as TaskDetail
 
-    render(<Conversation task={task} stream={initialStreamState} />)
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport()),
+    })
 
     const viewport = screen.getByTestId("conversation-viewport")
     expect(viewport.firstElementChild).toHaveClass("pt-6")
@@ -148,11 +151,9 @@ describe("Conversation top fade", () => {
     } as TaskDetail
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
 
-    const view = render(
-      <QueryClientProvider client={client}>
-        <Conversation task={task} stream={initialStreamState} />
-      </QueryClientProvider>,
-    )
+    const view = render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
 
     expect(screen.getByText("Use the safer approach")).toBeInTheDocument()
     expect(screen.getByText(/retried after an unconfirmed delivery/)).toBeInTheDocument()
@@ -163,11 +164,7 @@ describe("Conversation top fade", () => {
     expect(screen.getByRole("button", { name: "Edit queued message" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Cancel queued message" })).toBeInTheDocument()
 
-    view.rerender(
-      <QueryClientProvider client={client}>
-        <Conversation task={{ ...task, archived: true }} stream={initialStreamState} />
-      </QueryClientProvider>,
-    )
+    view.rerender(<Conversation task={{ ...task, archived: true }} stream={initialStreamState} />)
     expect(screen.getAllByText("not delivered; task is archived")).toHaveLength(2)
     expect(screen.queryByRole("button", { name: "Edit queued message" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Cancel queued message" })).toBeNull()
@@ -240,11 +237,9 @@ describe("a steer that lands inside a running turn", () => {
 
   const render1 = (stream: StreamState, detail: TaskDetail = task) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-    return render(
-      <QueryClientProvider client={client}>
-        <Conversation task={detail} stream={stream} />
-      </QueryClientProvider>,
-    )
+    return render(<Conversation task={detail} stream={stream} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
   }
 
   const orderIn = (text: string, ...needles: string[]) => needles.map((needle) => text.indexOf(needle))

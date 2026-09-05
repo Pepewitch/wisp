@@ -10,7 +10,16 @@ import {
   savePreferredModel,
   unusableReason,
 } from "./model-choice"
+import {
+  connectionStorageKey,
+  type ReadWriteStorage,
+} from "./connection-storage"
 import type { HarnessInfo } from "./types"
+
+const LOCAL_CONNECTION = "local"
+const REMOTE_CONNECTION = "remote-test"
+const LEGACY_PREFERRED_MODEL_KEY = "wisp_preferred_model"
+const SCOPED_PREFERRED_MODEL_NAME = "preferred_model"
 
 const h = (name: string, over: Partial<HarnessInfo> = {}): HarnessInfo => ({
   name,
@@ -28,22 +37,29 @@ const probed = (list: string[], defaultModel: string | null = null) => ({
   probedAt: "2026-08-26T00:00:00.000Z",
 })
 
-function memoryStorage(seed?: string) {
-  let value = seed ?? null
+function memoryStorage(seed: Record<string, string> = {}): ReadWriteStorage {
+  const values = new Map(Object.entries(seed))
   return {
-    getItem: () => value,
-    setItem: (_key: string, next: string) => {
-      value = next
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, next: string) => {
+      values.set(key, next)
     },
-    removeItem: () => {
-      value = null
+    removeItem: (key: string) => {
+      values.delete(key)
     },
   }
 }
 
 describe("orderHarnesses", () => {
   it("puts the built-ins in product order and leaves custom adapters after them", () => {
-    const input = [h("droid"), h("custom-b"), h("cursor"), h("claude"), h("custom-a"), h("codex")]
+    const input = [
+      h("droid"),
+      h("custom-b"),
+      h("cursor"),
+      h("claude"),
+      h("custom-a"),
+      h("codex"),
+    ]
     expect(orderHarnesses(input).map((entry) => entry.name)).toEqual([
       "claude",
       "codex",
@@ -63,16 +79,25 @@ describe("modelOptionsFor", () => {
 
   it("uses a configured default as the whole list when the probe returned nothing", () => {
     // we know a model id, so there is nothing for the user to type
-    expect(modelOptionsFor(h("droid", { defaults: { model: "kimi-k3" } }))).toEqual(["kimi-k3"])
+    expect(
+      modelOptionsFor(h("droid", { defaults: { model: "kimi-k3" } }))
+    ).toEqual(["kimi-k3"])
   })
 
   it("prepends a configured default the probe did not return", () => {
-    const x = h("codex", { defaults: { model: "gpt-5.6-luna" }, models: probed(["gpt-5.5"]) })
+    const x = h("codex", {
+      defaults: { model: "gpt-5.6-luna" },
+      models: probed(["gpt-5.5"]),
+    })
     expect(modelOptionsFor(x)).toEqual(["gpt-5.6-luna", "gpt-5.5"])
   })
 
   it("does not duplicate a default the probe already has", () => {
-    expect(modelOptionsFor(h("codex", { defaults: { model: "a" }, models: probed(["a", "b"]) }))).toEqual(["a", "b"])
+    expect(
+      modelOptionsFor(
+        h("codex", { defaults: { model: "a" }, models: probed(["a", "b"]) })
+      )
+    ).toEqual(["a", "b"])
   })
 })
 
@@ -87,18 +112,26 @@ describe("isUsable / unusableReason", () => {
   })
 
   it("prefers the daemon's own probe error as the reason", () => {
-    expect(unusableReason(h("droid", { modelsError: "bin not found" }))).toBe("bin not found")
+    expect(unusableReason(h("droid", { modelsError: "bin not found" }))).toBe(
+      "bin not found"
+    )
   })
 
   it("distinguishes never-probed from probed-and-empty", () => {
     expect(unusableReason(h("droid"))).toBe("not probed on this machine")
-    expect(unusableReason(h("droid", { models: probed([]) }))).toBe("no models reported")
+    expect(unusableReason(h("droid", { models: probed([]) }))).toBe(
+      "no models reported"
+    )
   })
 })
 
 describe("defaultModelFor", () => {
   it("prefers the configured default over the probed one", () => {
-    expect(defaultModelFor(h("x", { defaults: { model: "cfg" }, models: probed(["p"], "p") }))).toBe("cfg")
+    expect(
+      defaultModelFor(
+        h("x", { defaults: { model: "cfg" }, models: probed(["p"], "p") })
+      )
+    ).toBe("cfg")
   })
 
   it("falls back to the probed default", () => {
@@ -112,7 +145,9 @@ describe("initialChoice", () => {
       h("claude", { models: probed(["claude-a"], "claude-a") }),
       h("codex", { models: probed(["codex-a", "codex-b"], "codex-a") }),
     ]
-    expect(initialChoice(harnesses, { harness: "codex", model: "codex-b" })).toEqual({
+    expect(
+      initialChoice(harnesses, { harness: "codex", model: "codex-b" })
+    ).toEqual({
       harness: "codex",
       model: "codex-b",
     })
@@ -123,11 +158,15 @@ describe("initialChoice", () => {
       h("claude", { models: probed(["claude-a"], "claude-a") }),
       h("codex", { models: probed(["codex-a"], "codex-a") }),
     ]
-    expect(initialChoice(harnesses, { harness: "missing", model: "anything" })).toEqual({
+    expect(
+      initialChoice(harnesses, { harness: "missing", model: "anything" })
+    ).toEqual({
       harness: "claude",
       model: "claude-a",
     })
-    expect(initialChoice(harnesses, { harness: "codex", model: "retired" })).toEqual({
+    expect(
+      initialChoice(harnesses, { harness: "codex", model: "retired" })
+    ).toEqual({
       harness: "claude",
       model: "claude-a",
     })
@@ -135,12 +174,22 @@ describe("initialChoice", () => {
 
   it("skips an unusable first harness so the composer opens ready to submit", () => {
     // a real daemon reports droid first with models:null when its bin is absent
-    const choice = initialChoice([h("droid"), h("codex", { models: probed(["gpt-5.6-luna"], "gpt-5.6-luna") })])
+    const choice = initialChoice([
+      h("droid"),
+      h("codex", { models: probed(["gpt-5.6-luna"], "gpt-5.6-luna") }),
+    ])
     expect(choice).toEqual({ harness: "codex", model: "gpt-5.6-luna" })
   })
 
   it("honours a configured default over the probed order", () => {
-    expect(initialChoice([h("codex", { defaults: { model: "b" }, models: probed(["a", "b"], "a") })])).toEqual({
+    expect(
+      initialChoice([
+        h("codex", {
+          defaults: { model: "b" },
+          models: probed(["a", "b"], "a"),
+        }),
+      ])
+    ).toEqual({
       harness: "codex",
       model: "b",
     })
@@ -160,11 +209,50 @@ describe("initialChoice", () => {
 describe("preferred model persistence", () => {
   it("round-trips one choice and clears it", () => {
     const storage = memoryStorage()
-    savePreferredModel({ harness: "codex", model: "gpt-5.6-luna" }, storage)
-    expect(loadPreferredModel(storage)).toEqual({ harness: "codex", model: "gpt-5.6-luna" })
+    savePreferredModel(
+      LOCAL_CONNECTION,
+      { harness: "codex", model: "gpt-5.6-luna" },
+      storage
+    )
+    expect(loadPreferredModel(LOCAL_CONNECTION, storage)).toEqual({
+      harness: "codex",
+      model: "gpt-5.6-luna",
+    })
 
-    savePreferredModel(null, storage)
-    expect(loadPreferredModel(storage)).toBeNull()
+    savePreferredModel(LOCAL_CONNECTION, null, storage)
+    expect(loadPreferredModel(LOCAL_CONNECTION, storage)).toBeNull()
+  })
+
+  it("lazily migrates the legacy preference for the reserved local connection", () => {
+    const choice = { harness: "codex", model: "gpt-5.6-luna" }
+    const storage = memoryStorage({
+      [LEGACY_PREFERRED_MODEL_KEY]: JSON.stringify(choice),
+    })
+
+    expect(loadPreferredModel(LOCAL_CONNECTION, storage)).toEqual(choice)
+    expect(storage.getItem(LEGACY_PREFERRED_MODEL_KEY)).toBeNull()
+    expect(
+      storage.getItem(
+        connectionStorageKey(LOCAL_CONNECTION, SCOPED_PREFERRED_MODEL_NAME)
+      )
+    ).toBe(JSON.stringify(choice))
+  })
+
+  it("does not expose or migrate the local legacy preference to a remote connection", () => {
+    const localChoice = { harness: "claude", model: "opus" }
+    const remoteChoice = { harness: "codex", model: "gpt" }
+    const storage = memoryStorage({
+      [LEGACY_PREFERRED_MODEL_KEY]: JSON.stringify(localChoice),
+    })
+
+    expect(loadPreferredModel(REMOTE_CONNECTION, storage)).toBeNull()
+    expect(storage.getItem(LEGACY_PREFERRED_MODEL_KEY)).toBe(
+      JSON.stringify(localChoice)
+    )
+
+    savePreferredModel(REMOTE_CONNECTION, remoteChoice, storage)
+    expect(loadPreferredModel(REMOTE_CONNECTION, storage)).toEqual(remoteChoice)
+    expect(loadPreferredModel(LOCAL_CONNECTION, storage)).toEqual(localChoice)
   })
 
   it.each([
@@ -175,6 +263,11 @@ describe("preferred model persistence", () => {
     '{"harness":"","model":"gpt"}',
     '{"harness":"codex","model":42}',
   ])("ignores malformed storage: %s", (raw) => {
-    expect(loadPreferredModel(memoryStorage(raw))).toBeNull()
+    expect(
+      loadPreferredModel(
+        LOCAL_CONNECTION,
+        memoryStorage({ [LEGACY_PREFERRED_MODEL_KEY]: raw })
+      )
+    ).toBeNull()
   })
 })
