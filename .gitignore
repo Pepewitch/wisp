@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# main-session-only context (HANDOFF etc.) — never ships, never read by wisp task worktrees
+.context/
+*.bun-build
+__pycache__/
+*.py[cod]
+
+# local environment artifacts (owner call 2026-08-24: ignore, don't track)
+.agents/
+skills-lock.json

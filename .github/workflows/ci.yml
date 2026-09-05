@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: lint, typecheck, and unit tests
+        run: bun run check
+      - name: brand assets are current
+        # SVGs + the app's inlined favicon only; the two PNGs need Chrome, and
+        # build.ts skips them (rather than failing) when there is no browser
+        run: bun run brand:check
+      - name: end-to-end smoke (fake harness)
+        run: bash scripts/smoke.sh
+      - name: build (the compiled binary must not break silently)
+        run: bun run build
+      - name: committed web bundle is current
+        run: git diff --exit-code -- web/ui-dist/index.html
+      - name: build linux-x64 deploy artifact
+        run: bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/wisp-linux-x64

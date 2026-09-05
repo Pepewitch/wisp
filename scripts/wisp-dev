@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd "$(dirname "$0")/.." && pwd -P)
+DEV_HOME=${WISP_DEV_HOME:-"$HOME/.wisp-dev"}
+DEV_PORT=${WISP_DEV_PORT:-18710}
+PRODUCTION_HOME=${WISP_PRODUCTION_HOME:-"$HOME/.wisp"}
+
+fail() {
+  printf 'wisp-dev: %s\n' "$*" >&2
+  exit 1
+}
+
+[ -n "$DEV_HOME" ] || fail "WISP_DEV_HOME cannot be empty"
+[ "$DEV_HOME" != "/" ] || fail "WISP_DEV_HOME cannot be /"
+command -v bun >/dev/null 2>&1 || fail "Bun is required to run Wisp from source"
+
+canonical_path() {
+  WISP_PATH=$1 bun -e '
+    import { existsSync, realpathSync } from "node:fs";
+    import { resolve } from "node:path";
+    const path = resolve(process.env.WISP_PATH);
+    console.log(existsSync(path) ? realpathSync(path) : path);
+  '
+}
+
+DEV_HOME=$(canonical_path "$DEV_HOME")
+PRODUCTION_HOME=$(canonical_path "$PRODUCTION_HOME")
+[ "$DEV_HOME" != "$PRODUCTION_HOME" ] ||
+  fail "refusing production home $PRODUCTION_HOME; choose a separate WISP_DEV_HOME"
+
+case "$DEV_PORT" in
+  *[!0-9]*|"") fail "WISP_DEV_PORT must be an integer from 1024 to 65535" ;;
+esac
+[ "$DEV_PORT" -ge 1024 ] && [ "$DEV_PORT" -le 65535 ] ||
+  fail "WISP_DEV_PORT must be an integer from 1024 to 65535"
+
+# Ignore any globally exported WISP_HOME. The development command owns this
+# process-local boundary before config.ts is loaded.
+export WISP_HOME=$DEV_HOME
+export WISP_COMMAND_NAME=wisp-dev
+
+command_name=${1:-}
+if [ "$command_name" = "init" ]; then
+  has_port=no
+  for arg in "$@"; do
+    [ "$arg" = "--port" ] && has_port=yes
+  done
+  if [ "$has_port" = no ]; then
+    set -- "$@" --port "$DEV_PORT"
+  fi
+elif [ ! -f "$DEV_HOME/config.json" ]; then
+  case "$command_name" in
+    ""|help|-h|--help|version|--version) ;;
+    *) bun "$ROOT/src/index.ts" init --port "$DEV_PORT" >/dev/null ;;
+  esac
+fi
+
+exec bun "$ROOT/src/index.ts" "$@"

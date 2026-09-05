@@ -1,0 +1,2 @@
+{"type":"error","source":"agent_loop","message":"Floating point NaN (not-a-number) is detected in generation. It's likely a model issue leading to overflow. Please contact Fireworks if it's a Fireworks-hosted model or check your model weights if it's a custom model.","timestamp":1787489210226,"session_id":"bf034311-85ad-5a84-bdc9-44322f4a2088"}
+{"type":"error","source":"cli","message":"Now the core S0 library files:","timestamp":1787489210236,"session_id":"bf034311-85ad-5a84-bdc9-44322f4a2088"}

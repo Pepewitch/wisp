@@ -1,0 +1,3 @@
+# Historical vendored xterm.js minification. `FourKeyMap=<hex> 0` is code,
+# not a credential. Keep this exception fingerprint-exact.
+5d5e9a7c330473bf724b2b3a068389fb2ec58d2a:web/vendor/xterm.js:generic-api-key:1

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Pepewitch/wisp/blob/main/scripts/evaluator/summary.schema.json",
+  "title": "Wisp v0.4 evaluator summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "verdict", "cases"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string" },
+    "verdict": { "enum": ["pass", "fail"] },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["case", "verdict", "failedOracles"],
+        "properties": {
+          "case": { "type": "string" },
+          "verdict": { "enum": ["pass", "fail"] },
+          "failedOracles": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

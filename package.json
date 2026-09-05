@@ -1,0 +1,61 @@
+{
+  "name": "wisp",
+  "version": "0.4.0-alpha.6",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pepewitch/wisp.git"
+  },
+  "homepage": "https://github.com/Pepewitch/wisp#readme",
+  "bugs": {
+    "url": "https://github.com/Pepewitch/wisp/issues"
+  },
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "workspaces": [
+    "web/ui"
+  ],
+  "bin": {
+    "wisp": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run dev:init && WISP_HOME=\"${WISP_DEV_HOME:-$HOME/.wisp-dev}\" WISP_COMMAND_NAME=wisp-dev bun run --no-orphans --parallel dev:server dev:ui",
+    "dev:init": "WISP_HOME=\"${WISP_DEV_HOME:-$HOME/.wisp-dev}\" WISP_COMMAND_NAME=wisp-dev bun src/index.ts init --port \"${WISP_DEV_PORT:-18710}\"",
+    "dev:server": "WISP_HOME=\"${WISP_DEV_HOME:-$HOME/.wisp-dev}\" WISP_COMMAND_NAME=wisp-dev bun --watch --no-clear-screen src/index.ts serve",
+    "dev:ui": "WISP_HOME=\"${WISP_DEV_HOME:-$HOME/.wisp-dev}\" WISP_COMMAND_NAME=wisp-dev bun run --cwd web/ui dev",
+    "dev:install-cli": "sh scripts/install-wisp-dev.sh",
+    "test": "bun test",
+    "test:ui": "bun run --cwd web/ui test",
+    "test:all": "bun run test && bun run test:ui",
+    "typecheck": "bunx tsc --noEmit",
+    "typecheck:ui": "bun run --cwd web/ui typecheck",
+    "typecheck:all": "bun run --parallel typecheck typecheck:ui",
+    "lint": "bunx eslint src tests scripts",
+    "lint:ui": "bun run --cwd web/ui lint",
+    "lint:all": "bun run --parallel lint lint:ui",
+    "check": "bun run lint:all && bun run typecheck:all && bun run test:all",
+    "smoke": "bash scripts/smoke.sh",
+    "build": "bun run build:ui && bun run build:binary",
+    "build:binary": "bun run scripts/build-binary.ts --target native --outfile dist/wisp",
+    "build:linux": "bun run build:ui && bun run scripts/build-binary.ts --target linux-x64 --outfile dist/wisp-linux-x64",
+    "build:macos": "bun run build:ui && bun run scripts/build-binary.ts --target darwin-arm64 --outfile dist/wisp-darwin-arm64",
+    "release:linux": "bun run build:ui && bun run scripts/release-linux.ts",
+    "release:macos": "bun run build:ui && bun run scripts/release-macos.ts",
+    "test:install": "bash scripts/test-install.sh",
+    "test:activation": "bash scripts/test-activation.sh",
+    "test:evaluator": "python3 -m unittest discover -s scripts/evaluator/tests -p 'test_*.py'",
+    "evaluator:preflight": "bash scripts/evaluator/run.sh --preflight",
+    "build:ui": "bun run --cwd web/ui build",
+    "brand": "bun run scripts/brand/build.ts",
+    "brand:check": "bun run scripts/brand/build.ts --check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "^1.2.0",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.68.0"
+  }
+}
