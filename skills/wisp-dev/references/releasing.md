@@ -426,8 +426,20 @@ bun run scripts/render-homebrew-cask.ts \
   --output "$tap/Casks/wisp-desktop.rb"
 bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts
 brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
-brew audit --strict --online Pepewitch/tap/wisp
-brew audit --cask --new Pepewitch/tap/wisp-desktop
+homebrew_api_token="$(gh auth token)" || {
+  echo "GitHub authentication is required for Homebrew's online audits" >&2
+  exit 1
+}
+test -n "$homebrew_api_token" || {
+  echo "GitHub authentication returned an empty token" >&2
+  exit 1
+}
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online Pepewitch/tap/wisp
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online --cask \
+    --except signing,github_prerelease_version \
+    Pepewitch/tap/wisp-desktop
 git -C "$tap" diff --check
 git -C "$tap" diff -- Formula/wisp.rb Casks/wisp-desktop.rb
 ```
@@ -438,6 +450,14 @@ daemon state outside Homebrew's prefix and exposes the launchd service. The
 Cask installs `Wisp.app`, depends on the Formula, and states that uninstall
 preserves desktop metadata and Keychain credentials unless the user removes
 connections or resets desktop data first.
+
+The two named exceptions are deliberate and temporary for the disclosed custom
+tap alpha: `signing` skips Homebrew's Gatekeeper audit while the app is ad-hoc
+signed, and `github_prerelease_version` permits the immutable prerelease asset.
+The Cask must also skip livecheck while no stable desktop release exists. Keep
+all other strict online audits enabled. Remove each exception as part of the
+same change that makes its premise false; never carry `signing` into a release
+whose manifest claims Developer ID signing and notarization.
 
 Commit and push the tap only with explicit authorization:
 
@@ -457,8 +477,20 @@ Then verify the public tap:
 
 ```sh
 brew update
-brew audit --strict --online Pepewitch/tap/wisp
-brew audit --cask --new Pepewitch/tap/wisp-desktop
+homebrew_api_token="$(gh auth token)" || {
+  echo "GitHub authentication is required for Homebrew's online audits" >&2
+  exit 1
+}
+test -n "$homebrew_api_token" || {
+  echo "GitHub authentication returned an empty token" >&2
+  exit 1
+}
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online Pepewitch/tap/wisp
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online --cask \
+    --except signing,github_prerelease_version \
+    Pepewitch/tap/wisp-desktop
 ```
 
 ## 9. Qualify fresh install and upgrade

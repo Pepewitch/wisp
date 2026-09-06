@@ -278,10 +278,17 @@ jobs:
       # releasing.md step 8: now that URLs exist, run online audits and update
       # exactly the two prepared tap files in one commit.
       - name: audit the published Homebrew Formula and Cask
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           brew audit --strict --online Pepewitch/tap/wisp
-          brew audit --new --cask Pepewitch/tap/wisp-desktop
+          # This custom-tap alpha is both prerelease and explicitly ad-hoc
+          # signed. Keep strict online checks, excluding only the inapplicable
+          # stable-release and Gatekeeper policies disclosed by the Cask.
+          brew audit --strict --online --cask \
+            --except signing,github_prerelease_version \
+            Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
       - name: push the Homebrew tap
