@@ -678,6 +678,9 @@ impl Registry {
         // and so concurrent probes cannot observe a premature `Verified`.
         let _mutation = self.mutation_lock();
         let mut state = self.lock();
+        if !target_is_current(&state, target) {
+            return Err(RegistryError::LocalProfileChanged);
+        }
         state.local = Some(profile);
         state.local_error = None;
         Ok(credential)

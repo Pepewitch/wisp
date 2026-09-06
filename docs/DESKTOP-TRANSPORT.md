@@ -137,7 +137,9 @@ ready:
    capability; local clients can forge an `Origin` header.
 3. Resolve targets exclusively from native connection state. Reject unknown,
    removed, or cleanup-pending connection IDs before opening an upstream
-   request.
+   request. Recheck the exact target generation after client-controlled await
+   points such as request-body buffering and immediately before the first
+   upstream send, so removal or retargeting revokes work already in progress.
 4. Allow HTTPS remote URLs. Plain HTTP is accepted only when the URL host is
    the literal IPv4 `127.0.0.1` or IPv6 `::1` loopback address used by a
    user-managed tunnel. `localhost` and other hostnames do not qualify.

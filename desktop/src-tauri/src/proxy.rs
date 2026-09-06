@@ -782,6 +782,12 @@ async fn proxy_http(
     } else {
         None
     };
+    // Body buffering is an await point controlled by the webview. A Local
+    // retarget or remote removal that happened while bytes were arriving must
+    // revoke this request before the first upstream byte can be sent.
+    if !state.registry.route_is_current(target) {
+        return stale_route();
+    }
     let mut builder = upstream_request(state, &parts, upstream.clone(), &credential);
     if let Some(bytes) = &buffered_body {
         builder = builder.body(bytes.clone());

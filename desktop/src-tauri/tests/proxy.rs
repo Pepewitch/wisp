@@ -15,7 +15,7 @@ use support::{attachment_bytes, Harness, MockDaemon, Tripwire, SHARED_TASK_ID};
 use wisp_desktop::capability::Capability;
 use wisp_desktop::local::LocalProfile;
 use wisp_desktop::proxy::{self, ProxyHandle, ProxyState};
-use wisp_desktop::registry::Identity;
+use wisp_desktop::registry::{Identity, Registry, RegistryError, Target};
 use wisp_desktop::secrets::SecretStore;
 
 const TOKEN_ONE: &str = "synthetic-token-alpha-0000000000";
@@ -67,6 +67,29 @@ async fn short_timeout_proxy(harness: &Harness) -> ProxyHandle {
     .expect("proxy state")
     .with_upstream_handshake_timeout(Duration::from_millis(100));
     proxy::start(Arc::new(state)).await.expect("proxy binds")
+}
+
+fn held_request_body() -> (reqwest::Body, tokio::sync::oneshot::Sender<()>) {
+    let (release, wait) = tokio::sync::oneshot::channel();
+    let stream = futures_util::stream::once(async move {
+        wait.await
+            .map_err(|_| std::io::Error::other("held request body was cancelled"))?;
+        Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"{}"))
+    });
+    (reqwest::Body::wrap_stream(stream), release)
+}
+
+async fn wait_for_verified(registry: &Registry, target: &Target) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if matches!(registry.identity(target), Ok(Identity::Verified)) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("identity probe completed before the held body");
 }
 
 /* ── routing ─────────────────────────────────────────────────────────────── */
@@ -180,6 +203,124 @@ async fn a_stale_local_generation_cannot_reach_a_replacement_daemon() {
         .seen_paths()
         .iter()
         .any(|path| path.ends_with("/action")));
+}
+
+#[tokio::test]
+async fn local_retarget_while_a_request_body_is_pending_revokes_the_write() {
+    let (alpha, bravo) = two_daemons().await;
+    let (mut harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    harness.relaunch().await;
+    let old_target = harness.registry.resolve("local").expect("old Local");
+    assert!(matches!(
+        harness.registry.identity(&old_target),
+        Ok(Identity::Unchecked)
+    ));
+    let (body, release_body) = held_request_body();
+    let client = harness.client.clone();
+    let route = harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action"));
+    let pending = tokio::spawn(async move {
+        client
+            .post(route)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .expect("held Local write")
+    });
+
+    // Unchecked -> Verified is observable only after the handler has completed
+    // its identity probe and yielded while collecting the held body.
+    wait_for_verified(&harness.registry, &old_target).await;
+    harness
+        .registry
+        .refresh_local(LocalProfile::new(
+            bravo.url(),
+            TOKEN_TWO.to_string(),
+            bravo.instance_id(),
+            harness.wisp_home().join("config.json"),
+        ))
+        .expect("retarget Local");
+    assert!(matches!(
+        harness.registry.reload_local_credential(&old_target),
+        Err(RegistryError::LocalProfileChanged)
+    ));
+    assert_eq!(
+        harness
+            .registry
+            .resolve("local")
+            .expect("current Local")
+            .instance_id,
+        bravo.instance_id(),
+        "a stale credential reload cannot overwrite the replacement profile"
+    );
+
+    release_body.send(()).expect("release request body");
+    let response = pending.await.expect("held request task");
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("stale-route")
+    );
+    assert_eq!(
+        alpha
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        0,
+        "the revoked write never reaches the former Local daemon"
+    );
+}
+
+#[tokio::test]
+async fn remote_removal_while_a_request_body_is_pending_revokes_the_write() {
+    let (alpha, bravo) = two_daemons().await;
+    let (mut harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
+    let remote = ids[0].clone();
+    harness.relaunch().await;
+    let target = harness.registry.resolve(&remote).expect("remote target");
+    assert!(matches!(
+        harness.registry.identity(&target),
+        Ok(Identity::Unchecked)
+    ));
+    let (body, release_body) = held_request_body();
+    let client = harness.client.clone();
+    let route = harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}/action"));
+    let pending = tokio::spawn(async move {
+        client
+            .post(route)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .expect("held remote write")
+    });
+
+    wait_for_verified(&harness.registry, &target).await;
+    harness.registry.remove(&remote).expect("remove remote");
+    release_body.send(()).expect("release request body");
+
+    let response = pending.await.expect("held request task");
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("stale-route")
+    );
+    assert_eq!(
+        bravo
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        0,
+        "the removed connection never reaches the remote mutation endpoint"
+    );
 }
 
 #[tokio::test]
