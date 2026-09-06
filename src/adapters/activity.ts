@@ -449,10 +449,14 @@ export const ACTIVITY_NORMALIZERS: Record<string, ActivityNormalizer> = {
  * adapters degrade to their existing human formatter as prose rather than
  * leaking wire JSON or pretending to understand a lifecycle.
  */
-export function createActivityFormatter(def?: AdapterDef): (line: string) => ActivityEvent[] {
+export function createActivityFormatter(def?: AdapterDef): (line: string, recordSequence?: number) => ActivityEvent[] {
   let sequence = 0;
+  let suppliedSequence: number | null = null;
+  let suppliedOrdinal = 0;
   const context: NormalizeContext = {
-    id: (kind) => `${kind}-${++sequence}`,
+    id: (kind) => suppliedSequence === null
+      ? `${kind}-${++sequence}`
+      : `${kind}-${suppliedSequence}-${++suppliedOrdinal}`,
     subagents: new Set(),
     background: new Map(),
     toolParents: new Map(),
@@ -470,7 +474,9 @@ export function createActivityFormatter(def?: AdapterDef): (line: string) => Act
   // structured stream too; opting out of structure must not change prose.
   const decode = createEventLineDecoder((def?.activity ?? def?.events) === "droid-stream-json");
 
-  return (line) => {
+  return (line, recordSequence) => {
+    suppliedSequence = recordSequence ?? null;
+    suppliedOrdinal = 0;
     const decoded = decode(line);
     if (!decoded) return [];
     const steer = steerActivityEvent(decoded.text);

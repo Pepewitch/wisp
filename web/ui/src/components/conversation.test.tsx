@@ -42,6 +42,13 @@ describe("Conversation top fade", () => {
           status: "done",
           model: "cursor-grok-4.6-high",
           usage: null,
+          capture_mode: "recorder-v1",
+          capture_state: "degraded",
+          captured_bytes: 5_000_000,
+          omitted_bytes: 2_048,
+          omitted_records: 12,
+          capture_categories: null,
+          capture_detail: "primary transcript budget reached",
           attachments: [],
           log_file: "/tmp/turn.log",
           started_at: "2026-09-03T00:00:00Z",
@@ -57,6 +64,8 @@ describe("Conversation top fade", () => {
     const viewport = screen.getByTestId("conversation-viewport")
     expect(viewport.firstElementChild).toHaveClass("pt-6")
     expect(viewport.querySelector("[data-turn='1']")).not.toHaveClass("pt-2")
+    expect(screen.getByText("Activity history incomplete")).toBeInTheDocument()
+    expect(screen.getByText(/12 records \(2 KB\) were not retained/)).toBeInTheDocument()
   })
 
   it("places steered messages inside their turn and keeps fallback messages visibly queued", () => {

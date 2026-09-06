@@ -4,6 +4,8 @@ export interface TextActivityItem {
   kind: "text"
   id: string
   text: string
+  /** Present only on Wisp's synthetic bounded-window marker. */
+  omittedItems?: number
 }
 
 /**
@@ -75,6 +77,10 @@ export interface StreamState {
 }
 
 export const initialStreamState: StreamState = { blocks: [], currentTurn: 0, note: null }
+
+const MAX_LIVE_ACTIVITY_ITEMS = 1_000
+const MAX_TEXT_ACTIVITY_CHARS = 32_768
+const LIVE_WINDOW_MARKER_ID = "wisp-live-window"
 
 export type StreamAction =
   | { type: "reset"; note: string | null }
@@ -162,7 +168,62 @@ export function reduceActivity(items: ActivityItem[], events: ActivityEvent[]): 
   if (events.length === 0) return items
   const draft = new ActivityDraft(items)
   for (const event of events) draft.apply(event)
-  return draft.changed ? draft.items : items
+  return draft.changed ? boundActivityWindow(draft.items) : items
+}
+
+function activityTreeSize(items: ActivityItem[]): number {
+  let count = 0
+  for (const item of items) count += 1 + (item.kind === "subagent" ? activityTreeSize(item.items) : 0)
+  return count
+}
+
+function retainNewestActivity(
+  items: ActivityItem[],
+  budget: { remaining: number },
+): { items: ActivityItem[]; omitted: number } {
+  const kept: ActivityItem[] = []
+  let omitted = 0
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!
+    if (budget.remaining === 0) {
+      omitted += 1 + (item.kind === "subagent" ? activityTreeSize(item.items) : 0)
+      continue
+    }
+    budget.remaining--
+    if (item.kind === "subagent") {
+      const nested = retainNewestActivity(item.items, budget)
+      omitted += nested.omitted
+      kept.push(nested.items === item.items ? item : { ...item, items: nested.items })
+    } else {
+      kept.push(item)
+    }
+  }
+  kept.reverse()
+  return { items: kept, omitted }
+}
+
+/** Keep the live render cache finite even when a viewer consumes for hours. */
+function boundActivityWindow(items: ActivityItem[]): ActivityItem[] {
+  const existing = items.find(
+    (item): item is TextActivityItem => item.kind === "text" && item.id === LIVE_WINDOW_MARKER_ID,
+  )
+  const candidates = existing ? items.filter((item) => item !== existing) : items
+  const size = activityTreeSize(candidates)
+  if (!existing && size <= MAX_LIVE_ACTIVITY_ITEMS) return items
+  const retained = retainNewestActivity(candidates, { remaining: MAX_LIVE_ACTIVITY_ITEMS - 1 })
+  const omittedItems = (existing?.omittedItems ?? 0) + retained.omitted
+  return [{
+    kind: "text",
+    id: LIVE_WINDOW_MARKER_ID,
+    omittedItems,
+    text: `· ${omittedItems} earlier live activity items omitted from this viewer`,
+  }, ...retained.items]
+}
+
+function boundedText(value: string): string {
+  if (value.length <= MAX_TEXT_ACTIVITY_CHARS) return value
+  const marker = "· earlier text in this activity item omitted\n"
+  return marker + value.slice(-(MAX_TEXT_ACTIVITY_CHARS - marker.length))
 }
 
 interface Slot<T extends ActivityItem> {
@@ -249,11 +310,11 @@ class ActivityDraft {
   private applyText(event: Extract<ActivityEvent, { kind: "text" }>): void {
     const target = this.target(event.parentId)
     const last = target[target.length - 1]
-    if (last?.kind === "text") {
+    if (last?.kind === "text" && last.id !== LIVE_WINDOW_MARKER_ID) {
       const separator = last.text.endsWith("\n") ? "" : "\n"
-      target[target.length - 1] = { ...last, text: last.text + separator + event.text }
+      target[target.length - 1] = { ...last, text: boundedText(last.text + separator + event.text) }
     } else {
-      target.push({ kind: "text", id: event.id, text: event.text })
+      target.push({ kind: "text", id: event.id, text: boundedText(event.text) })
     }
     this.changed = true
   }

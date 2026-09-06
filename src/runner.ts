@@ -1,15 +1,12 @@
 import { openSync, writeSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildArgv,
-  errorDetail,
+  hasIncrementalOutcomeReducer,
   IMAGE_DELIVERY_STRATEGIES,
   IMAGE_INPUT_STRATEGIES,
-  isLimitError,
-  isTransientError,
-  parseOutput,
   type AdapterDef,
+  type ImageInputStrategy,
 } from "./adapters";
 import {
   attachmentManifest,
@@ -23,7 +20,7 @@ import {
   type StoredAttachment,
   writeMessageAttachments,
 } from "./attachments";
-import { LOG_DIR, type WispConfig } from "./config";
+import { LOG_DIR, transcriptBudgetBytes, type WispConfig } from "./config";
 import {
   activeLiveInput,
   clearPendingDelivery,
@@ -34,6 +31,7 @@ import {
   pendingDelivery,
   setPendingDelivery,
   writeImageEnvelope,
+  type LiveOutputSink,
 } from "./live-input";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { processStartTime } from "./procid";
@@ -58,20 +56,18 @@ import {
   runningTurn,
   setTaskFields,
   setTurnInterrupt,
-  setTurnModel,
-  setTurnUsage,
+  setTurnKillDetail,
   transition,
   turnForTask,
 } from "./store";
-import { summarize } from "./text";
+import { TurnRecorder } from "./recording/turn-recorder";
+import { finalizeTurn } from "./turn-finalize";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
 export { startStuckLoop, stuckTick } from "./stuck";
+export { finalizeTurn } from "./turn-finalize";
 /** Live children by turn id — for interrupts. Re-adopted turns (post-restart) fall back to pid. */
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
-/** Why wisp itself killed a turn (e.g. log cap) — surfaced in state_detail. */
-const killReasons = new Map<number, string>();
-
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
 
@@ -89,7 +85,7 @@ export function markInterrupted(turnId: number, detail: string): void {
 
 /** Record why wisp itself killed a turn (e.g. log cap); finalize reports it over any exit code. */
 export function recordKillReason(turnId: number, reason: string): void {
-  killReasons.set(turnId, reason);
+  setTurnKillDetail(turnId, reason);
 }
 
 export function taskEnv(task: Task): Record<string, string> {
@@ -111,13 +107,47 @@ function preamble(task: Task): string {
   ].join("\n");
 }
 
-/** Async (M1): logs can be multi-MB even capped, and finalize runs on the daemon's only thread. */
-async function safeRead(path: string): Promise<string> {
-  try {
-    return await readFile(path, "utf8");
-  } catch {
-    return "";
+function deliveredMessage(def: AdapterDef, attachments: StoredAttachment[], message: string): string {
+  if (
+    attachments.length === 0 ||
+    !def.imageDelivery ||
+    def.liveInput === "droid-jsonrpc" ||
+    def.liveInput === "codex-app-server"
+  ) {
+    return message;
   }
+  const delivery = IMAGE_DELIVERY_STRATEGIES[def.imageDelivery];
+  return delivery ? `${delivery.preamble(attachments.map((attachment) => attachment.path))}\n\n${message}` : message;
+}
+
+function inputStrategyFor(
+  def: AdapterDef,
+  hasImages: boolean,
+): ImageInputStrategy | undefined {
+  const name = def.liveInput === "claude-stream-json" ? def.liveInput : hasImages ? def.imageInput : undefined;
+  return name ? IMAGE_INPUT_STRATEGIES[name] : undefined;
+}
+
+interface StartedCapture {
+  recorder: TurnRecorder | null;
+  sink: LiveOutputSink;
+  stderrPump: Promise<void>;
+}
+
+function startCapture(
+  enabled: boolean,
+  turnId: number,
+  def: AdapterDef,
+  cfg: WispConfig,
+  child: ReturnType<typeof Bun.spawn>,
+  outFd: number,
+  errFd: number,
+  attachments: StoredAttachment[],
+): StartedCapture {
+  if (!enabled) return { recorder: null, sink: legacyLiveOutput(outFd), stderrPump: Promise.resolve() };
+  const recorder = new TurnRecorder(turnId, def, cfg, outFd, errFd);
+  if (attachments.length > 0) recorder.recordNote(formatAttachNote(attachments));
+  return { recorder, sink: recorder, stderrPump: recorder.drain(child.stderr, "stderr") };
 }
 
 /**
@@ -150,14 +180,7 @@ export function startTurn(
   // A1c: a delivery adapter gets its images by having their paths named in the
   // prompt, so the strategy's sentence goes immediately before the user's
   // message — inside the first turn's task preamble, not in front of it.
-  const delivery =
-    attachments.length > 0 &&
-    def.imageDelivery &&
-    def.liveInput !== "droid-jsonrpc" &&
-    def.liveInput !== "codex-app-server"
-      ? IMAGE_DELIVERY_STRATEGIES[def.imageDelivery]
-      : undefined;
-  const body = delivery ? `${delivery.preamble(attachments.map((a) => a.path))}\n\n${message}` : message;
+  const body = deliveredMessage(def, attachments, message);
   const prompt = n === 1 ? `${preamble(task)}\n${body}` : body;
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
@@ -176,14 +199,9 @@ export function startTurn(
     });
   // A live strategy keeps stdin open for safe-boundary messages. The older
   // attachment-only strategy still writes one envelope and closes immediately.
-  const inputStrategyName =
-    def.liveInput === "claude-stream-json"
-      ? def.liveInput
-      : images.length > 0
-        ? def.imageInput
-        : undefined;
-  const stdinStrategy = inputStrategyName ? IMAGE_INPUT_STRATEGIES[inputStrategyName] : undefined;
+  const stdinStrategy = inputStrategyFor(def, images.length > 0);
   const isLive = Boolean(def.liveInput);
+  const recorderEligible = isLive && hasIncrementalOutcomeReducer(def);
   const outFd = openSync(outPath, "a");
   let errFd: number;
   try {
@@ -194,13 +212,14 @@ export function startTurn(
   }
   let child: ReturnType<typeof Bun.spawn>;
   try {
-    // the attach note precedes harness output on the same fd, so ordering is guaranteed
-    if (attachments.length > 0) writeSync(outFd, `${formatAttachNote(attachments)}\n`);
+    // Recorder-owned pipes are not drained until after the row/recorder exists,
+    // so their note can be written immediately afterward and still lead output.
+    if (!recorderEligible && attachments.length > 0) writeSync(outFd, `${formatAttachNote(attachments)}\n`);
     child = Bun.spawn({
       cmd: argv,
       cwd: task.worktree_path!,
       stdout: isLive ? "pipe" : outFd,
-      stderr: errFd,
+      stderr: recorderEligible ? "pipe" : errFd,
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
       env: { ...process.env, ...taskEnv(task) },
     });
@@ -228,6 +247,7 @@ export function startTurn(
       // spawn: a crash between them would otherwise leave bytes on disk that no
       // turn admits to owning
       attachmentManifest(attachments),
+      recorderEligible ? "recorder-v1" : null,
     );
   } catch (error) {
     // No turn row exists for a watcher to reconcile or escalate this child.
@@ -236,6 +256,14 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
+  const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
+  const { recorder, sink, stderrPump } = capture;
+  // stderr must be drained independently of the stdout protocol pump. A noisy
+  // stderr can otherwise fill its OS pipe and stall an otherwise healthy turn.
+  if (recorder) {
+    void stderrPump.catch((error) =>
+      failLiveTurn(child, turnId, sink, new LiveTransportError("live output pump", error)));
+  }
   let outputPump = Promise.resolve();
   if (isLive) {
     try {
@@ -245,21 +273,33 @@ export function startTurn(
         def,
         turnId,
         turn: n,
-        outFd,
+        recorder: sink,
         prompt,
         attachments,
         initialMessageId: sourceMessageId ?? `wisp-${task.id}-turn-${n}`,
         claudeStrategy: stdinStrategy,
       });
     } catch (error) {
-      failLiveTurn(child, turnId, outFd, error);
+      failLiveTurn(child, turnId, sink, error);
     }
-    void outputPump.catch((error) => failLiveTurn(child, turnId, outFd, error));
+    void outputPump.catch((error) => failLiveTurn(child, turnId, sink, error));
   }
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
-  void watchTurn(child, task.id, turnId, def, cfg, outPath, errPath, [outFd, errFd], outputPump);
+  void watchTurn(
+    child,
+    task.id,
+    turnId,
+    def,
+    cfg,
+    outPath,
+    errPath,
+    [outFd, errFd],
+    outputPump,
+    stderrPump,
+    recorder,
+  );
 }
 
 /** Persist first, then deliver without ever interrupting the active process. */
@@ -403,6 +443,8 @@ async function watchTurn(
   errPath: string,
   fds: number[],
   outputPump: Promise<void> = Promise.resolve(),
+  stderrPump: Promise<void> = Promise.resolve(),
+  recorder: TurnRecorder | null = null,
 ): Promise<void> {
   let capTermAt: number | null = null;
   let capChecking = false;
@@ -410,17 +452,18 @@ async function watchTurn(
     if (capChecking) return;
     capChecking = true;
     try {
-      const hit = await fileOverCap([outPath, errPath], cfg.logMaxBytes);
+      const budget = transcriptBudgetBytes(cfg);
+      const hit = await fileOverCap([outPath, errPath], budget);
       if (!hit) return;
       if (capTermAt === null) {
         capTermAt = Date.now();
         console.error(`[wisp] task ${taskId}: log cap exceeded (${hit}), killing turn`);
-        recordKillReason(turnId, `log cap exceeded (${cfg.logMaxBytes} bytes)`);
+        recordKillReason(turnId, `log cap exceeded (${budget} bytes)`);
         child.kill();
       } else if (Date.now() - capTermAt >= KILL_GRACE_MS && childRunning(child)) {
         // M3: a harness that traps SIGTERM must not keep the turn alive forever
         console.error(`[wisp] task ${taskId}: turn survived SIGTERM, escalating to SIGKILL`);
-        recordKillReason(turnId, `log cap exceeded (${cfg.logMaxBytes} bytes); escalated to SIGKILL after SIGTERM was trapped`);
+        recordKillReason(turnId, `log cap exceeded (${budget} bytes); escalated to SIGKILL after SIGTERM was trapped`);
         child.kill("SIGKILL");
       }
     } finally {
@@ -428,118 +471,20 @@ async function watchTurn(
     }
   };
   // detached tick, same idiom as `void watchTurn`: interval callbacks can't be awaited
-  const capTimer = setInterval(() => void capTick(), 5000);
+  const capTimer = recorder ? null : setInterval(() => void capTick(), 5000);
   const exitCode = await child.exited;
-  clearInterval(capTimer);
+  if (capTimer !== null) clearInterval(capTimer);
   liveChildren.delete(turnId);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
   await outputPump.catch(() => {});
+  await stderrPump.catch(() => {});
+  const recorderOutcome = recorder?.finish();
   for (const fd of fds) {
     closeDescriptors([fd]);
   }
-  await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath);
+  await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
   if (!getTurn(turnId)?.interrupt_detail?.includes("force-archive")) startNextQueuedMessage(taskId, def, cfg);
-}
-
-export async function finalizeTurn(
-  taskId: string,
-  turnId: number,
-  def: AdapterDef,
-  exitCode: number | null,
-  outPath: string,
-  errPath: string,
-): Promise<void> {
-  const rawOut = await safeRead(outPath);
-  const parsed = parseOutput(def, rawOut);
-  if (parsed.session) setTaskFields(taskId, { session_id: parsed.session });
-  // the session's skill list (A4, claude's init event; SP2) — refreshed on
-  // every turn that announces one, so a CLI upgrade that adds a skill shows
-  // up on the next turn without any probe at all
-  if (parsed.skills !== null) setTaskFields(taskId, { skills_json: JSON.stringify(parsed.skills) });
-  // the model the turn ACTUALLY ran on (P5b), parsed from the harness's own events
-  if (parsed.model) setTurnModel(turnId, parsed.model);
-  // the harness's own usage report (Theme B), persisted raw — success and
-  // failure paths alike: the tokens were spent either way. A field update,
-  // not a transition; the freeze holds.
-  if (parsed.usage != null) setTurnUsage(turnId, JSON.stringify(parsed.usage));
-  // interrupt intent is read from the turn row (M2): a daemon that crashed
-  // between the kill and this finalize still reports "interrupted", not "failed"
-  const interruptDetail = getTurn(turnId)?.interrupt_detail ?? null;
-  const killReason = killReasons.get(turnId);
-  killReasons.delete(turnId);
-  if (interruptDetail !== null) {
-    finishTurn(turnId, "interrupted", exitCode, parsed.result);
-    transition(taskId, "needs-input", interruptDetail);
-    return;
-  }
-  // Spawn contract rule 3 (a prior audit): done requires a positive signal. For
-  // json adapters that signal is a parsed result payload — bare exit 0 is the
-  // orca bug we swore off. allowEmptyResult on the adapter is the explicit
-  // opt-out for harnesses that legitimately exit result-less.
-  const missingResult = def.parse.format === "json" && !def.allowEmptyResult && parsed.result === null;
-  const exitedCleanly = exitCode === 0 || (exitCode === null && parsed.result !== null);
-  const succeeded = !killReason && !parsed.isError && exitedCleanly && !missingResult;
-  if (succeeded) {
-    finishTurn(turnId, "done", exitCode, parsed.result);
-    transition(taskId, parsed.needsInput ? "needs-input" : "done", parsed.result ? summarize(parsed.result) : null);
-    return;
-  }
-  await finalizeFailedTurn({
-    taskId,
-    turnId,
-    def,
-    exitCode,
-    result: parsed.result,
-    rawOut,
-    errPath,
-    killReason,
-    reportedFailure: parsed.isError,
-    exitedCleanly,
-    missingResult,
-  });
-}
-
-async function finalizeFailedTurn({
-  taskId,
-  turnId,
-  def,
-  exitCode,
-  result,
-  rawOut,
-  errPath,
-  killReason,
-  reportedFailure,
-  exitedCleanly,
-  missingResult,
-}: {
-  taskId: string;
-  turnId: number;
-  def: AdapterDef;
-  exitCode: number | null;
-  result: string | null;
-  rawOut: string;
-  errPath: string;
-  killReason: string | undefined;
-  reportedFailure: boolean;
-  exitedCleanly: boolean;
-  missingResult: boolean;
-}): Promise<void> {
-  // stderr alone can't be trusted to name the cause: codex reports turn
-  // failures on STDOUT, and droid buries the cause under help text.
-  const detail = errorDetail(def, rawOut, await safeRead(errPath));
-  const limitPrefix = !killReason && detail !== null && isLimitError(def, detail) ? "limit: " : "";
-  const transientPrefix =
-    !limitPrefix && !killReason && detail !== null && isTransientError(def, detail) ? "transient: " : "";
-  finishTurn(turnId, "failed", exitCode, result);
-  const why = killReason
-    ? `turn killed: ${killReason}`
-    : reportedFailure && exitedCleanly
-      ? `turn reported failure${detail ? `: ${detail.slice(0, 300)}` : ""}`
-    : exitedCleanly && missingResult
-      ? `turn exited 0 but emitted no parseable result — not done (set allowEmptyResult on the adapter if this harness legitimately exits without one)${detail ? `: ${detail.slice(0, 300)}` : ""}`
-      : `turn exited ${exitCode === null ? "unknown" : exitCode}${detail ? `: ${detail.slice(0, 300)}` : ""}`;
-  transition(taskId, "failed", `${limitPrefix || transientPrefix}${why}`);
 }
 
 /**
@@ -572,7 +517,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
         pid: turn.pid!,
         pidStartTime: turn.pid_start_time,
         paths: [turn.log_file, errPath],
-        maxBytes: cfg.logMaxBytes,
+        maxBytes: turn.capture_mode === "recorder-v1" ? null : transcriptBudgetBytes(cfg),
         killGraceMs: KILL_GRACE_MS,
         onKillReason: (reason) => recordKillReason(turn.id, reason),
         onEnded: async () => {
@@ -625,12 +570,31 @@ function childRunning(child: ReturnType<typeof Bun.spawn>): boolean {
   return child.exitCode === null && child.signalCode === null;
 }
 
+/** Compatibility sink for live transports whose parser is not recorder-capable. */
+function legacyLiveOutput(outFd: number): LiveOutputSink {
+  const line = (value: string): void => {
+    writeSync(outFd, `${value}\n`);
+  };
+  return {
+    recordEvent: (event) => line(JSON.stringify(event)),
+    recordStdoutLine: line,
+    recordNote: line,
+    recordFrameDrop: (_source, chars) =>
+      line(`· dropped an oversized live protocol frame (${chars} characters); the turn continues`),
+  };
+}
+
 /** Kill a live turn whose transport broke, naming the half that failed (LiveTransportError). */
-function failLiveTurn(child: ReturnType<typeof Bun.spawn>, turnId: number, outFd: number, error: unknown): void {
+function failLiveTurn(
+  child: ReturnType<typeof Bun.spawn>,
+  turnId: number,
+  sink: LiveOutputSink,
+  error: unknown,
+): void {
   if (!childRunning(child)) return;
   const stage = error instanceof LiveTransportError ? error.stage : "live input setup";
   const detail = `${stage} failed: ${error instanceof Error ? error.message : String(error)}`;
-  writeSync(outFd, `· ${detail}\n`);
+  sink.recordNote(`· ${detail}`);
   recordKillReason(turnId, detail);
   child.kill();
   const timer = setTimeout(() => childRunning(child) && child.kill("SIGKILL"), KILL_GRACE_MS);

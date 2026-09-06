@@ -61,7 +61,8 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
 - `wisp show <id>` — state, state_detail, per-turn model/usage/attachments,
   worktree + branch, diffstat.
 - `wisp log <id> [turn] [-f] [--raw]` — the activity feed. Only when debugging
-  the agent's behavior, never for waiting or for the final answer.
+  the agent's behavior, never for waiting or for the final answer. `-f` follows
+  current activity even after the bounded retained transcript is full.
 
 ## 5. Steering
 

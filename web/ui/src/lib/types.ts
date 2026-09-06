@@ -7,6 +7,7 @@ export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck
 export type TaskState = (typeof TASK_STATES)[number];
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
+export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy";
 
 export type ActivityStatus = "running" | "completed" | "failed" | "stopped" | "unknown"
 
@@ -114,6 +115,13 @@ export interface Turn {
   model: string | null;
   /** the harness's own usage numbers, normalized (Theme B); null = none reported */
   usage: UsageSummary | null;
+  capture_mode?: "recorder-v1" | null;
+  capture_state?: TurnCaptureState;
+  captured_bytes?: number;
+  omitted_bytes?: number;
+  omitted_records?: number;
+  capture_categories?: Record<string, { records: number; bytes: number }> | null;
+  capture_detail?: string | null;
   /**
    * The images this turn carried (A1a). Always present, `[]` for a turn that
    * carried none. It survives archive, which deletes the bytes — so a non-empty

@@ -38,7 +38,10 @@ branch, every turn (status, actual model, usage tokens, prompt excerpt, result
 excerpt, attached files), diffstat of the worktree. `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
-per-harness (`--raw` for the harness's own stream, `-f` to tail live).
+per-harness (`--raw` for the retained harness stream, `-f` to follow live).
+Recorder-capable live turns continue beyond the retained transcript budget:
+`-f` still receives their current activity, while a settled log clearly marks
+any history that was not retained.
 
 ```
 wisp wait <task> [--timeout <sec>]

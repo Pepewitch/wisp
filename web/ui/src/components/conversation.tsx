@@ -16,6 +16,7 @@ import { MessageAttachments } from "@/components/message-attachments"
 import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
+import { formatBytes } from "@/lib/attachments"
 import {
   activityByTurn,
   anchoredMessageIds,
@@ -39,8 +40,8 @@ import type { StreamState } from "@/stream/reducer"
    2. Activity rows are SUMMARY LINES, in the order the harness emitted them:
       a tool call, the prose that explains the next one, the next call. A live
       turn's timeline comes from the log stream; a settled turn's is fetched on
-      demand and dropped on collapse. Logs cap at 5MB per turn: eager bodies
-      kill the tab.
+      demand and dropped on collapse. Primary transcripts and the live browser
+      window are bounded; omissions are visible instead of killing the turn.
    3. The live turn appends into the same list. overflow-anchor + a 60px pin
       threshold; a group opening above the viewport compensates scrollTop.
    4. Raw format replaces the pane — it never interleaves.
@@ -312,6 +313,20 @@ function TurnBlock({
           return message ? <SteeredMessage taskId={taskId} message={message} archived={archived} /> : null
         }}
       />
+
+      {(turn.capture_state === "degraded" || turn.capture_state === "disabled") && (
+        <div data-capture-state={turn.capture_state} className="mt-3.5 rounded-md border border-border bg-card px-3 py-2">
+          <div className="text-[10.5px] font-semibold tracking-[0.075em] text-fg-secondary uppercase">
+            Activity history incomplete
+          </div>
+          <div className="mt-1 text-[12px] leading-relaxed text-fg-secondary">
+            {turn.capture_state === "degraded"
+              ? `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) were not retained. `
+              : "Transcript storage stopped during this turn. "}
+            The final outcome was recorded independently.
+          </div>
+        </div>
+      )}
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
 
