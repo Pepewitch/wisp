@@ -329,10 +329,10 @@ so once at the top rather than three times.
   blanked. An explicit empty value is the only thing that clears.
 - **Remove from Wisp** unregisters a configured project — the same verb as
   `wisp project rm`. It is a two-click confirm in this modal, not a sidebar
-  control: the first click only arms a red **Remove?**, the second drops the
-  config entry. Tasks stay and nothing on disk is deleted. A history-only
-  repo (one Wisp only knows from tasks) has no config entry to drop, so the
-  control is absent.
+  control: the contained red button first arms a red **Remove?**, then the
+  second click drops the config entry. Tasks stay and nothing on disk is
+  deleted. A history-only repo (one Wisp only knows from tasks) has no config
+  entry to drop, so the footer explains why the control is absent.
 - Scripts run in a fixed order: the repo's committed `.wisp/setup.sh` (the
   team's) before the configured one (this machine's). Both run — dropping
   either would silently change behaviour for a repo already relying on it.
