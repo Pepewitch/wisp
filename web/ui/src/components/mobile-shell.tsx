@@ -41,6 +41,7 @@ export function MobileShell({
   terminal,
   composer,
   connectionSwitcher,
+  updateControl,
 }: {
   task: ApiTask | null
   pullRequest?: PullRequestStatus
@@ -51,6 +52,8 @@ export function MobileShell({
   composer: ReactNode
   /** Desktop mode uses one compact menu here; browser mode leaves it absent. */
   connectionSwitcher?: ReactNode
+  /** Global application/daemon update surface. */
+  updateControl?: ReactNode
 }) {
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
@@ -104,6 +107,11 @@ export function MobileShell({
 
         {pullRequest?.kind === "found" && (
           <PullRequestStatusLink pullRequest={pullRequest.pullRequest} compact />
+        )}
+        {updateControl && (
+          <span className="flex size-11 shrink-0 items-center justify-center">
+            {updateControl}
+          </span>
         )}
         {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}
         {task && (

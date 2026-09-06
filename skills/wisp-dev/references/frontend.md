@@ -26,8 +26,12 @@ Every UI change must classify its impact on both clients:
   `createConnectionQueryKeys(connectionId)` in connection-explicit test
   infrastructure.
 - Daemon-owned state, drafts, attachments, preferences, streams, terminals,
-  updates, and late async callbacks stay bound to their initiating
+  daemon updates, and late async callbacks stay bound to their initiating
   `connectionId`. Pure layout and theme state may remain global.
+- The Desktop application updater is deliberately global. Render it separately
+  from the selected connection's daemon updater, name both actions, and retain
+  the initiating connection for any daemon operation across tab changes. See
+  [`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 - Browser-only auth and native-only connection/folder-picker/setup behavior
   stay behind their runtime boundaries. Any intentional difference is named in
   the change and covered without regressing the other client.

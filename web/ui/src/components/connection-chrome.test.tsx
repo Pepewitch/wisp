@@ -87,6 +87,27 @@ function bridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       message: "Local Wisp is ready.",
     }),
     openExternalUrl: async () => undefined,
+    desktopUpdateStatus: async () => ({
+      channel: "alpha",
+      configured: false,
+      currentVersion: "0.4.0-synthetic",
+      latestVersion: null,
+      phase: "unconfigured",
+      releaseNotes: null,
+      publishedAt: null,
+      checkedAt: null,
+      downloadedBytes: 0,
+      totalBytes: null,
+      message: "Updater is not configured.",
+    }),
+    checkDesktopUpdate: async () => {
+      throw new Error("Updater is not configured.")
+    },
+    installDesktopUpdate: async () => {
+      throw new Error("Updater is not configured.")
+    },
+    relaunchDesktop: async () => undefined,
+    onDesktopUpdateStatus: async () => () => undefined,
     ...overrides,
   }
 }

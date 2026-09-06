@@ -99,3 +99,17 @@ fn script_src_keeps_its_tauri_managed_hashes() {
         "the inline bundle script must be authorized by a hash"
     );
 }
+
+/// Updater and relaunch authority stays behind bespoke Rust commands. Merely
+/// installing the official plugin must never grant its generic commands to
+/// the shared webview.
+#[test]
+fn the_webview_has_no_direct_native_update_or_system_authority() {
+    let capability = include_str!("../capabilities/default.json");
+    for forbidden in ["updater:", "process:", "shell:", "fs:", "http:", "dialog:"] {
+        assert!(
+            !capability.contains(forbidden),
+            "default capability unexpectedly grants {forbidden}"
+        );
+    }
+}

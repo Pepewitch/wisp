@@ -47,7 +47,8 @@
     "copyright": "MIT",
     "macOS": {
       "minimumSystemVersion": "12.3",
-      "signingIdentity": "-"
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist"
     }
   }
 }

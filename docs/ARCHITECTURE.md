@@ -37,7 +37,7 @@ process.
 | Daemon | projects, tasks, turns, messages, worktrees, harness execution, logs, terminals, lifecycle, update state | desktop tabs or client layout |
 | Shared React app | presentation, connection-scoped query state, navigation, drafts, attachments, stream and terminal clients | daemon credentials or task truth |
 | Browser runtime | one implicit same-origin daemon, browser session exchange and cookie | remote connection registry |
-| Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy, macOS task notifications and their click | projects, tasks, or a child daemon |
+| Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy, macOS task notifications, signed application updates | projects, tasks, or a child daemon |
 | CLI | task/project API client plus local profile, install, and diagnostic commands | alternate daemon business logic |
 
 For each daemon, SQLite is the durable task ledger. Persisted logs are that
@@ -116,9 +116,11 @@ Desktop
 ```
 
 The active desktop tab therefore selects the scope for projects, tasks,
-terminals, updates, and all mutations. Local project add can return a native
-folder-picker path because the picker and daemon share a machine. A remote
-project path must be entered as it exists on the remote daemon's machine.
+terminals, daemon updates, and all daemon mutations. The Desktop application
+update is global and does not change when a tab changes. Local project add can
+return a native folder-picker path because the picker and daemon share a
+machine. A remote project path must be entered as it exists on the remote
+daemon's machine.
 
 ## Change-impact contract
 
@@ -157,6 +159,13 @@ The public macOS distribution keeps the service and interface composable:
   Formula;
 - the desktop app connects to the service but does not bundle, spawn, or stop
   it as an owned child.
+
+Desktop application releases are Developer ID signed, notarized, and updater
+signed before the tag workflow can publish them. Homebrew bootstraps and
+repairs the app; the native Tauri updater owns normal in-app upgrades. The
+selected daemon keeps its independent Homebrew-backed update lifecycle. See
+[Desktop updates](DESKTOP-UPDATES.md) for the trust boundary, channel, rollout,
+and two-version qualification contract.
 
 See [Apple Silicon installation](INSTALL-MACOS.md) and the
 [release playbook](../skills/wisp-dev/references/releasing.md) for current

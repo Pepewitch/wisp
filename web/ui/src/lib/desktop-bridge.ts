@@ -4,8 +4,9 @@ import { listen } from "@tauri-apps/api/event"
 import { LOCAL_CONNECTION_ID } from "./transport"
 
 export const MAX_DESKTOP_CONNECTIONS = 8
-/** Native daemon API contract compiled into this Desktop build. */
-export const DESKTOP_API_PROTOCOL_VERSION = 1
+/** Native daemon API contracts this Desktop build genuinely implements. */
+export const SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS: readonly number[] =
+  Object.freeze([1])
 
 export type DesktopConnectionKind = "local" | "remote"
 
@@ -54,6 +55,31 @@ export interface DesktopBootstrap {
     readonly connectionId: string
     readonly message: string
   }[]
+}
+
+export type DesktopUpdatePhase =
+  | "unconfigured"
+  | "idle"
+  | "checking"
+  | "up-to-date"
+  | "available"
+  | "downloading"
+  | "installing"
+  | "ready-to-relaunch"
+  | "failed"
+
+export interface DesktopUpdateStatus {
+  readonly channel: "alpha"
+  readonly configured: boolean
+  readonly currentVersion: string
+  readonly latestVersion: string | null
+  readonly phase: DesktopUpdatePhase
+  readonly releaseNotes: string | null
+  readonly publishedAt: string | null
+  readonly checkedAt: string | null
+  readonly downloadedBytes: number
+  readonly totalBytes: number | null
+  readonly message: string | null
 }
 
 export interface AddRemoteConnectionInput {
@@ -147,6 +173,13 @@ export interface DesktopBridge {
   notifyTaskTransition(input: TaskNotificationInput): Promise<void>
   /** Resolves to the unsubscribe function; malformed native payloads are dropped. */
   onFocusTask(handler: (request: TaskFocusRequest) => void): Promise<() => void>
+  desktopUpdateStatus(): Promise<DesktopUpdateStatus>
+  checkDesktopUpdate(): Promise<DesktopUpdateStatus>
+  installDesktopUpdate(confirmedVersion: string): Promise<DesktopUpdateStatus>
+  relaunchDesktop(): Promise<void>
+  onDesktopUpdateStatus(
+    listener: (status: DesktopUpdateStatus) => void
+  ): Promise<() => void>
 }
 
 const CONNECTION_ID = /^[A-Za-z0-9_-]+$/
@@ -342,13 +375,73 @@ function normalizeRemotePreview(
   })
 }
 
+const DESKTOP_UPDATE_PHASES: readonly DesktopUpdatePhase[] = [
+  "unconfigured",
+  "idle",
+  "checking",
+  "up-to-date",
+  "available",
+  "downloading",
+  "installing",
+  "ready-to-relaunch",
+  "failed",
+]
+
+function optionalText(value: unknown): value is string | null {
+  return value === null || typeof value === "string"
+}
+
+export function normalizeDesktopUpdateStatus(
+  value: DesktopUpdateStatus
+): Readonly<DesktopUpdateStatus> {
+  if (
+    value.channel !== "alpha" ||
+    typeof value.configured !== "boolean" ||
+    typeof value.currentVersion !== "string" ||
+    !value.currentVersion ||
+    !DESKTOP_UPDATE_PHASES.includes(value.phase) ||
+    !optionalText(value.latestVersion) ||
+    !optionalText(value.releaseNotes) ||
+    !optionalText(value.publishedAt) ||
+    !optionalText(value.checkedAt) ||
+    !Number.isSafeInteger(value.downloadedBytes) ||
+    value.downloadedBytes < 0 ||
+    (value.totalBytes !== null &&
+      (!Number.isSafeInteger(value.totalBytes) || value.totalBytes <= 0)) ||
+    !optionalText(value.message)
+  ) {
+    throw new Error("Desktop returned invalid application update status")
+  }
+  if (
+    (value.phase === "unconfigured") !== !value.configured ||
+    (value.phase === "available" && value.latestVersion === null) ||
+    (value.phase === "ready-to-relaunch" && value.latestVersion === null)
+  ) {
+    throw new Error("Desktop returned inconsistent application update status")
+  }
+  return Object.freeze({
+    channel: value.channel,
+    configured: value.configured,
+    currentVersion: value.currentVersion,
+    latestVersion: value.latestVersion,
+    phase: value.phase,
+    releaseNotes: value.releaseNotes,
+    publishedAt: value.publishedAt,
+    checkedAt: value.checkedAt,
+    downloadedBytes: value.downloadedBytes,
+    totalBytes: value.totalBytes,
+    message: value.message,
+  })
+}
+
 /** Validate native data once, before it becomes routing or cache identity. */
 export function normalizeDesktopBootstrap(
   value: DesktopBootstrap
 ): Readonly<DesktopBootstrap> {
   const proxyBaseUrl = normalizeProxyBaseUrl(value.proxyBaseUrl)
   if (
-    (value.cleanupIssues !== undefined && !Array.isArray(value.cleanupIssues)) ||
+    (value.cleanupIssues !== undefined &&
+      !Array.isArray(value.cleanupIssues)) ||
     (value.cleanupIssues ?? []).some(
       (issue) =>
         !issue ||
@@ -480,7 +573,10 @@ export function createDesktopBridge(
       ),
     openExternalUrl: (url) => nativeInvoke<void>("open_external_url", { url }),
     notifyTaskTransition: (input) => {
-      if (!CONNECTION_ID.test(input.connectionId) || !TASK_ID.test(input.taskId))
+      if (
+        !CONNECTION_ID.test(input.connectionId) ||
+        !TASK_ID.test(input.taskId)
+      )
         return Promise.reject(
           new Error("A task notification needs valid connection and task ids")
         )
@@ -503,6 +599,25 @@ export function createDesktopBridge(
         }
         handler(request)
       }),
+    desktopUpdateStatus: async () =>
+      normalizeDesktopUpdateStatus(
+        await nativeInvoke<DesktopUpdateStatus>("desktop_update_status")
+      ),
+    checkDesktopUpdate: async () =>
+      normalizeDesktopUpdateStatus(
+        await nativeInvoke<DesktopUpdateStatus>("check_desktop_update")
+      ),
+    installDesktopUpdate: async (confirmedVersion) =>
+      normalizeDesktopUpdateStatus(
+        await nativeInvoke<DesktopUpdateStatus>("install_desktop_update", {
+          confirmedVersion,
+        })
+      ),
+    relaunchDesktop: () => nativeInvoke<void>("relaunch_desktop"),
+    onDesktopUpdateStatus: (listener) =>
+      nativeListen("desktop-update-status", ({ payload }) =>
+        listener(normalizeDesktopUpdateStatus(payload as DesktopUpdateStatus))
+      ),
   }
   return Object.freeze(bridge)
 }

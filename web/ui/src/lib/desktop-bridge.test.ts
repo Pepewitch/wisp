@@ -6,8 +6,9 @@ import {
   normalizeDesktopBootstrap,
   normalizeRemoteUrl,
   type DesktopBootstrap,
-  type NativeInvoke,
+  type DesktopUpdateStatus,
   type NativeListen,
+  type NativeInvoke,
   type TaskFocusRequest,
 } from "./desktop-bridge"
 
@@ -44,9 +45,24 @@ const BOOTSTRAP: DesktopBootstrap = {
   },
 }
 
+const DESKTOP_UPDATE: DesktopUpdateStatus = {
+  channel: "alpha",
+  configured: true,
+  currentVersion: "0.4.0-alpha.8",
+  latestVersion: "0.4.0-alpha.9",
+  phase: "available",
+  releaseNotes: "Synthetic release notes.",
+  publishedAt: "2026-09-06T12:00:00Z",
+  checkedAt: "2026-09-06T12:01:00Z",
+  downloadedBytes: 0,
+  totalBytes: 42,
+  message: null,
+}
+
 describe("desktop native bridge", () => {
   it("uses the exact command names and direct camelCase arguments", async () => {
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = []
+    const events: string[] = []
     const nativeInvoke: NativeInvoke = async <T>(
       command: string,
       args?: Record<string, unknown>
@@ -75,9 +91,20 @@ describe("desktop native bridge", () => {
           message: "Local Wisp is ready.",
         } as T
       if (command === "remove_connection") return undefined as T
+      if (
+        command === "desktop_update_status" ||
+        command === "check_desktop_update" ||
+        command === "install_desktop_update"
+      )
+        return DESKTOP_UPDATE as T
       return BOOTSTRAP.connections[0] as T
     }
-    const bridge = createDesktopBridge(nativeInvoke)
+    const nativeListen: NativeListen = async (event, listener) => {
+      events.push(event)
+      listener({ payload: DESKTOP_UPDATE })
+      return () => undefined
+    }
+    const bridge = createDesktopBridge(nativeInvoke, nativeListen)
 
     await bridge.bootstrap()
     await bridge.selectConnection("remote-one")
@@ -104,6 +131,15 @@ describe("desktop native bridge", () => {
     await bridge.setupLocalWisp()
     await bridge.applyLocalWispSetup("start-daemon")
     await bridge.openExternalUrl("https://example.test/pull/1")
+    await bridge.desktopUpdateStatus()
+    await bridge.checkDesktopUpdate()
+    await bridge.installDesktopUpdate("0.4.0-alpha.9")
+    await bridge.relaunchDesktop()
+    let eventStatus: DesktopUpdateStatus | null = null
+    const unlisten = await bridge.onDesktopUpdateStatus((status) => {
+      eventStatus = status
+    })
+    unlisten()
 
     expect(calls).toEqual([
       { command: "desktop_bootstrap", args: undefined },
@@ -158,7 +194,16 @@ describe("desktop native bridge", () => {
         command: "open_external_url",
         args: { url: "https://example.test/pull/1" },
       },
+      { command: "desktop_update_status", args: undefined },
+      { command: "check_desktop_update", args: undefined },
+      {
+        command: "install_desktop_update",
+        args: { confirmedVersion: "0.4.0-alpha.9" },
+      },
+      { command: "relaunch_desktop", args: undefined },
     ])
+    expect(events).toEqual(["desktop-update-status"])
+    expect(eventStatus).toEqual(DESKTOP_UPDATE)
   })
 
   it("orders Local first, freezes routing metadata, and strips unknown native fields", () => {
@@ -230,6 +275,18 @@ describe("desktop native bridge", () => {
       })
     ).toThrow("at most 8 connections")
   })
+
+  it("rejects inconsistent native application update state", async () => {
+    const nativeInvoke: NativeInvoke = async <T>() =>
+      ({
+        ...DESKTOP_UPDATE,
+        configured: false,
+      }) as T
+    const bridge = createDesktopBridge(nativeInvoke)
+    await expect(bridge.desktopUpdateStatus()).rejects.toThrow(
+      "inconsistent application update status"
+    )
+  })
 })
 
 describe("remote daemon URL policy", () => {
@@ -263,7 +320,10 @@ describe("desktop task notifications", () => {
       calls.push({ command, args })
       return undefined as T
     }
-    const bridge = createDesktopBridge(nativeInvoke, async () => () => undefined)
+    const bridge = createDesktopBridge(
+      nativeInvoke,
+      async () => () => undefined
+    )
 
     await bridge.notifyTaskTransition({
       connectionId: "remote-one",

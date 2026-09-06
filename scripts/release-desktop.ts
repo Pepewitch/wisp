@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
@@ -26,7 +27,7 @@ export const DESKTOP_CHECKSUMS = "SHA256SUMS-desktop-darwin-arm64";
 export const DESKTOP_BUNDLE_ID = "dev.wisp.desktop";
 
 export interface DesktopReleaseManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   product: "wisp-desktop";
   version: string;
   commit: string;
@@ -34,10 +35,20 @@ export interface DesktopReleaseManifest {
   target: { os: "darwin"; arch: "arm64"; minimumVersion: "12.3" };
   minimumSystemVersion: string;
   signing: {
-    kind: "ad-hoc";
-    developerId: false;
-    notarized: false;
-    timestamp: false;
+    kind: "ad-hoc" | "developer-id";
+    developerId: boolean;
+    notarized: boolean;
+    timestamp: boolean;
+    hardenedRuntime: boolean;
+    identity: string | null;
+    teamIdentifier: string | null;
+  };
+  publishedAt: string | null;
+  updater: null | {
+    algorithm: "minisign-ed25519";
+    signatureFile: string;
+    signature: string;
+    publicKeySha256: string;
   };
   bundle: { directory: "Wisp.app"; identifier: typeof DESKTOP_BUNDLE_ID };
   artifact: {
@@ -54,6 +65,18 @@ export interface ReleaseDesktopOptions {
   outDir?: string;
   identity?: SourceIdentity;
   requireTag?: boolean;
+  /** Production-only Developer ID, notarization, and updater signing path. */
+  signed?: boolean;
+}
+
+interface VerifiedSigning {
+  kind: "ad-hoc" | "developer-id";
+  developerId: boolean;
+  notarized: boolean;
+  timestamp: boolean;
+  hardenedRuntime: boolean;
+  identity: string | null;
+  teamIdentifier: string | null;
 }
 
 export function desktopTargetDir(root: string, configured = process.env.CARGO_TARGET_DIR): string {
@@ -201,7 +224,11 @@ export function machOHasUuid(loadCommands: string): boolean {
   return /^\s*cmd LC_UUID\s*$/m.test(loadCommands);
 }
 
-function verifyDesktopApp(app: string): void {
+function signatureField(output: string, name: string): string | null {
+  return output.match(new RegExp(`^${name}=(.+)$`, "m"))?.[1]?.trim() ?? null;
+}
+
+function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
   verifyDesktopInventory(app);
   const binary = join(app, "Contents/MacOS/wisp-desktop");
   const fileType = run(["/usr/bin/file", "-b", binary]);
@@ -209,7 +236,47 @@ function verifyDesktopApp(app: string): void {
   if (run(["/usr/bin/lipo", "-archs", binary]) !== "arm64") throw new Error("desktop binary is not arm64-only");
   run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
   const signature = run(["/usr/bin/codesign", "--display", "--verbose=4", app]);
-  if (!signature.includes("Signature=adhoc")) throw new Error("desktop application is not ad-hoc signed");
+  let signing: VerifiedSigning;
+  if (signed) {
+    const identity = signatureField(signature, "Authority");
+    const teamIdentifier = signatureField(signature, "TeamIdentifier");
+    if (!identity?.startsWith("Developer ID Application:")) {
+      throw new Error("desktop application is not Developer ID Application signed");
+    }
+    if (!teamIdentifier || teamIdentifier === "not set") {
+      throw new Error("desktop application has no Developer ID team identifier");
+    }
+    if (!/^Timestamp=.+$/m.test(signature)) {
+      throw new Error("desktop application has no trusted signing timestamp");
+    }
+    if (!/^CodeDirectory .*flags=.*\(runtime\)/m.test(signature)) {
+      throw new Error("desktop application does not enable the hardened runtime");
+    }
+    run(["/usr/bin/xcrun", "stapler", "validate", app]);
+    run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", app]);
+    signing = {
+      kind: "developer-id",
+      developerId: true,
+      notarized: true,
+      timestamp: true,
+      hardenedRuntime: true,
+      identity,
+      teamIdentifier,
+    };
+  } else {
+    if (!signature.includes("Signature=adhoc")) {
+      throw new Error("desktop development application is not ad-hoc signed");
+    }
+    signing = {
+      kind: "ad-hoc",
+      developerId: false,
+      notarized: false,
+      timestamp: false,
+      hardenedRuntime: signature.includes("(runtime)"),
+      identity: null,
+      teamIdentifier: null,
+    };
+  }
   const buildVersion = run(["/usr/bin/vtool", "-show-build", binary]);
   if (!/^\s*minos\s+12\.3(?:\.0)?\s*$/m.test(buildVersion)) {
     throw new Error(`desktop Mach-O minimum macOS version mismatch: ${buildVersion}`);
@@ -223,6 +290,67 @@ function verifyDesktopApp(app: string): void {
   if (plist(app, "LSMinimumSystemVersion") !== "12.3") throw new Error("desktop minimum macOS version mismatch");
   const strings = run(["/usr/bin/strings", binary]);
   if (!strings.includes(`wisp-desktop/${VERSION}`)) throw new Error("desktop binary package version mismatch");
+  return signing;
+}
+
+function requireReleaseEnvironment(root: string): string {
+  for (const name of [
+    "APPLE_CERTIFICATE",
+    "APPLE_CERTIFICATE_PASSWORD",
+    "APPLE_SIGNING_IDENTITY",
+    "APPLE_API_ISSUER",
+    "APPLE_API_KEY",
+    "APPLE_API_KEY_PATH",
+    "TAURI_SIGNING_PRIVATE_KEY",
+    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+  ]) {
+    if (!process.env[name]) throw new Error(`signed desktop release requires ${name}`);
+  }
+  const publicKey = readFileSync(resolve(root, "desktop/src-tauri/updater-public.key"), "utf8").trim();
+  if (!publicKey || publicKey === "UNCONFIGURED") {
+    throw new Error("signed desktop release requires a committed updater public key");
+  }
+  return publicKey;
+}
+
+function annotatedTagDate(root: string): string {
+  const tag = `v${VERSION}`;
+  const raw = run(["git", "-C", root, "for-each-ref", `refs/tags/${tag}`, "--format=%(taggerdate:iso-strict)"]);
+  const parsed = new Date(raw);
+  if (!raw || Number.isNaN(parsed.valueOf())) throw new Error(`annotated tag ${tag} has no valid tagger date`);
+  return parsed.toISOString();
+}
+
+function signUpdaterArtifact(root: string, artifactPath: string, publicKey: string): DesktopReleaseManifest["updater"] {
+  run(["bun", "run", "tauri", "signer", "sign", artifactPath], root, process.env);
+  const signaturePath = `${artifactPath}.sig`;
+  const signature = readFileSync(signaturePath, "utf8").trim();
+  if (!signature) throw new Error("Tauri signer produced an empty updater signature");
+  run(
+    [
+      "cargo",
+      "run",
+      "--quiet",
+      "--locked",
+      "--manifest-path",
+      "desktop/src-tauri/Cargo.toml",
+      "--bin",
+      "verify-update-signature",
+      "--features",
+      "release-verifier",
+      "--",
+      artifactPath,
+      signaturePath,
+      "desktop/src-tauri/updater-public.key",
+    ],
+    root,
+  );
+  return {
+    algorithm: "minisign-ed25519",
+    signatureFile: basename(signaturePath),
+    signature,
+    publicKeySha256: createHash("sha256").update(publicKey).digest("hex"),
+  };
 }
 
 export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopReleaseManifest {
@@ -230,6 +358,11 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
     throw new Error(`desktop releases require an Apple Silicon build host, got ${process.platform} ${arch()}`);
   }
   const root = options.root ?? SCRIPT_ROOT;
+  const signed = options.signed ?? false;
+  if (signed && !(options.requireTag ?? false)) {
+    throw new Error("a signed desktop release requires --require-tag");
+  }
+  const updaterPublicKey = signed ? requireReleaseEnvironment(root) : null;
   const identity = options.identity ?? sourceIdentity(root);
   assertMacReleaseSource(root, identity, options.requireTag ?? false);
   const cargoVersion = desktopPackageVersion(root);
@@ -247,32 +380,38 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
     throw new Error("desktop build changed the clean release source");
   }
   const app = resolve(targetDir, "aarch64-apple-darwin/release/bundle/macos/Wisp.app");
-  verifyDesktopApp(app);
+  const signing = verifyDesktopApp(app, signed);
 
   const outDir = resolve(root, options.outDir ?? `dist/release/v${VERSION}`);
   mkdirSync(outDir, { recursive: true });
   const artifactName = `wisp-desktop-v${VERSION}-${DESKTOP_TARGET}.tar.gz`;
   const artifactPath = resolve(outDir, artifactName);
   writeFileSync(artifactPath, deterministicAppTarGz(app), { mode: 0o644 });
+  const updater = signed ? signUpdaterArtifact(root, artifactPath, updaterPublicKey!) : null;
 
   const temp = mkdtempSync(join(tmpdir(), "wisp-desktop-release-"));
   try {
     run(["/usr/bin/tar", "-xzf", artifactPath, "-C", temp]);
-    verifyDesktopApp(join(temp, "Wisp.app"));
+    const extractedSigning = verifyDesktopApp(join(temp, "Wisp.app"), signed);
+    if (JSON.stringify(extractedSigning) !== JSON.stringify(signing)) {
+      throw new Error("extracted desktop signing identity differs from the staged application");
+    }
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
 
   const binary = join(app, "Contents/MacOS/wisp-desktop");
   const manifest: DesktopReleaseManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "wisp-desktop",
     version: VERSION,
     commit: identity.commit,
     dirty: false,
     target: { os: "darwin", arch: "arm64", minimumVersion: "12.3" },
     minimumSystemVersion: DESKTOP_MINIMUM_SYSTEM_VERSION,
-    signing: { kind: "ad-hoc", developerId: false, notarized: false, timestamp: false },
+    signing,
+    publishedAt: signed ? annotatedTagDate(root) : null,
+    updater,
     bundle: { directory: "Wisp.app", identifier: DESKTOP_BUNDLE_ID },
     artifact: {
       file: artifactName,
@@ -291,7 +430,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
   writeFileSync(
     resolve(outDir, DESKTOP_CHECKSUMS),
-    `${manifest.artifact.sha256}  ${artifactName}\n${sha256File(manifestPath)}  ${DESKTOP_MANIFEST}\n`,
+    `${manifest.artifact.sha256}  ${artifactName}\n${updater ? `${sha256File(resolve(outDir, updater.signatureFile))}  ${updater.signatureFile}\n` : ""}${sha256File(manifestPath)}  ${DESKTOP_MANIFEST}\n`,
     { mode: 0o644 },
   );
   return manifest;
@@ -300,9 +439,10 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
 if (import.meta.main) {
   try {
     const requireTag = process.argv.slice(2).includes("--require-tag");
-    const unknown = process.argv.slice(2).filter((arg) => arg !== "--require-tag");
+    const signed = process.argv.slice(2).includes("--signed");
+    const unknown = process.argv.slice(2).filter((arg) => arg !== "--require-tag" && arg !== "--signed");
     if (unknown.length > 0) throw new Error(`unknown argument: ${unknown[0]}`);
-    const manifest = releaseDesktop({ requireTag });
+    const manifest = releaseDesktop({ requireTag, signed });
     console.log(`released ${manifest.artifact.file} (${manifest.artifact.sha256}) from ${manifest.commit}`);
   } catch (error) {
     console.error(`release-desktop: ${error instanceof Error ? error.message : String(error)}`);

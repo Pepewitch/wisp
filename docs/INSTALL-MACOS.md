@@ -10,14 +10,15 @@ The experimental v0.4 target is:
 - Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
 - qualified on a limited Apple Silicon test environment;
 - installed from the fully qualified custom Homebrew tap; and
-- ad-hoc signed, not Developer ID signed or notarized.
+- for public alpha.8, ad-hoc signed rather than Developer ID signed or notarized.
 
 Intel Macs are unsupported. The configured 12.3 deployment target is enforced
 by the app metadata and Mach-O loader command, but it is not evidence that
 12.3 or every later macOS version has been qualified. Local release
-qualification used Apple Silicon macOS 26.6.2. Because the alpha is not
-notarized, Gatekeeper may require Finder's Open command or explicit approval
-in Privacy & Security. Do not disable Gatekeeper globally. Verify that the
+qualification used Apple Silicon macOS 26.6.2. Because alpha.8 is not notarized,
+Gatekeeper may require Finder's Open command or explicit approval in Privacy &
+Security. Future Desktop tag releases are blocked unless Developer ID signing,
+notarization, and stapling pass. Do not disable Gatekeeper globally. Verify the
 download URL is under `github.com/Pepewitch/wisp`, that Homebrew accepts the
 recipe checksum, and that `wisp version --json` reports the release version
 and commit.
@@ -158,27 +159,34 @@ to the new URL. Keep `host` set to `127.0.0.1`.
 
 ## Upgrade
 
-The web header shows the running daemon version. When GitHub has a newer
-published Wisp release, a Homebrew installation running under its registered
-launchd service shows an **Update** button. Wisp asks Homebrew to refresh and
-upgrade the Formula, verifies the newly installed binary's version, exits, and
-lets launchd start the upgraded binary. The browser reloads only after the new
-daemon answers its health check.
+The browser header shows the running daemon version and an explicitly named
+daemon update action when its Homebrew service can update safely. Wisp asks
+Homebrew to refresh and upgrade the Formula, verifies the installed binary,
+exits, and lets launchd start the new daemon. The browser reloads only after the
+new daemon answers its health check.
 
-In Wisp Desktop, that header control applies to the daemon on the selected
-connection; it does not upgrade the desktop Cask. Upgrade the app through
-Homebrew as shown below.
+Wisp Desktop has one **Updates** popover with two independent rows:
+
+- **Wisp Desktop** checks and installs the global application version;
+- **<selected connection> daemon** updates only that daemon.
+
+Checking never installs. Desktop download and replacement start only after
+**Update Desktop and relaunch** is clicked. The app checks once shortly after
+launch by default, has a **Check now** action, and does not poll periodically.
+A daemon update in progress temporarily disables Desktop relaunch.
 
 The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
 are reconciled by the new daemon.
 
-Upgrade the Formula first, then the Cask:
+Alpha.8 predates the Desktop updater. Bootstrap the first future signed release
+through Homebrew; `--greedy` is required because the new Cask declares that the
+application can update itself:
 
 ```sh
 brew update
 brew upgrade Pepewitch/tap/wisp
-brew upgrade --cask Pepewitch/tap/wisp-desktop
+brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop
 brew services restart wisp
 wisp version
 wisp doctor --harness droid
@@ -187,14 +195,24 @@ wisp doctor --harness droid
 If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
-Because this alpha is only ad-hoc signed, Keychain authorization continuity is
-not as predictable as it will be with a stable Developer ID signature. If a
-future desktop upgrade reports a saved remote as not ready, reconnect it and
-enter the token again; do not weaken Keychain access controls.
+After that bootstrap release, normal Desktop upgrades use the signed Tauri
+updater. Homebrew remains the recovery path:
 
-Wisp must not overwrite Homebrew's binary with a self-updater. An upgrade
+```sh
+brew update
+brew reinstall --cask Pepewitch/tap/wisp-desktop
+```
+
+The updater and Cask install the same Developer ID signed, notarized archive.
+The update channel, version, URL, release notes, size, and Minisign signature
+are release-generated and native-controlled; the webview cannot choose them.
+See [Desktop updates](DESKTOP-UPDATES.md) for the trust and qualification
+contract.
+
+Wisp Desktop never overwrites the Homebrew-managed daemon binary. An upgrade
 changes the managed executable and preserves `~/.wisp`, repositories, task
-history, branches, worktrees, and user changes.
+history, branches, worktrees, user changes, Desktop metadata, and remote
+Keychain credentials.
 
 The button stays informational for a Homebrew binary started manually rather
 than through `brew services`; Wisp cannot promise that such a process will

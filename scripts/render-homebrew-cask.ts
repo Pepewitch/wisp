@@ -16,23 +16,29 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
     throw new Error(`unexpected desktop artifact filename: expected ${expectedArtifact}, got ${JSON.stringify(manifest.artifact.file)}`);
   }
   if (
-    manifest.schemaVersion !== 1 ||
+    manifest.schemaVersion !== 2 ||
     manifest.product !== "wisp-desktop" ||
     manifest.dirty !== false ||
     manifest.target.os !== "darwin" ||
     manifest.target.arch !== "arm64" ||
     manifest.target.minimumVersion !== "12.3" ||
     manifest.minimumSystemVersion !== "macOS 12.3 (Apple Silicon arm64)" ||
-    manifest.signing.kind !== "ad-hoc" ||
-    manifest.signing.developerId ||
-    manifest.signing.notarized ||
-    manifest.signing.timestamp ||
+    manifest.signing.kind !== "developer-id" ||
+    !manifest.signing.developerId ||
+    !manifest.signing.notarized ||
+    !manifest.signing.timestamp ||
+    !manifest.signing.hardenedRuntime ||
+    !manifest.signing.identity?.startsWith("Developer ID Application:") ||
+    !manifest.signing.teamIdentifier ||
+    !manifest.publishedAt ||
+    !manifest.updater ||
+    manifest.updater.signatureFile !== `${expectedArtifact}.sig` ||
     manifest.bundle.directory !== "Wisp.app" ||
     manifest.bundle.identifier !== "dev.wisp.desktop" ||
     manifest.artifact.format !== "app-tar.gz" ||
     manifest.artifact.binary.file !== "Wisp.app/Contents/MacOS/wisp-desktop"
   ) {
-    throw new Error("manifest is not the approved ad-hoc Apple Silicon desktop alpha");
+    throw new Error("manifest is not the approved signed Apple Silicon desktop release");
   }
 
   return `cask "wisp-desktop" do
@@ -45,7 +51,10 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
   homepage "https://github.com/Pepewitch/wisp"
 
   livecheck do
-    skip "Wisp Desktop is currently distributed as a prerelease"
+    url "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json"
+    strategy :json do |json|
+      json["version"]
+    end
   end
 
   depends_on arch: :arm64
@@ -54,13 +63,14 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
 
   app "Wisp.app"
 
+  auto_updates true
+
   uninstall quit: "dev.wisp.desktop"
 
   caveats <<~EOS
-    This experimental Apple Silicon alpha requires macOS 12.3 or newer. It is
-    ad-hoc signed, not Developer ID signed or notarized. On first launch,
-    macOS may require explicit approval in Privacy & Security or Finder's Open
-    command. Do not disable Gatekeeper globally.
+    This Apple Silicon alpha requires macOS 12.3 or newer. Wisp Desktop is
+    Developer ID signed and notarized. After the initial Homebrew install, the
+    application can install its own cryptographically signed updates.
 
     The required Wisp daemon Formula is installed as a dependency. Wisp Desktop
     asks for confirmation before initializing its profile or starting its

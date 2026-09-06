@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type RefObject,
   type ReactNode,
 } from "react"
 
@@ -29,8 +30,6 @@ import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { TerminalSection } from "@/components/terminal-pane"
-import { WispUpdateControl } from "@/components/update-control"
-import { DESKTOP_API_PROTOCOL_VERSION } from "@/lib/desktop-bridge"
 import {
   useHarnesses,
   usePullRequestOverview,
@@ -40,9 +39,8 @@ import {
   useTaskDetail,
   useTaskSkills,
   useTasks,
-  useUpdateStatus,
 } from "@/hooks/queries"
-import { useAddProject, useInstallUpdate } from "@/hooks/mutations"
+import { useAddProject } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
@@ -73,7 +71,7 @@ import type {
   Turn,
 } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
-import { waitForUpdatedDaemon } from "@/lib/update"
+import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
@@ -84,8 +82,14 @@ export default function App() {
   return route === "/gallery" ? (
     <Gallery />
   ) : (
-    <MainView key={runtime.connectionId} />
+    <ConnectedApp runtimeKey={runtime.connectionId} />
   )
+}
+
+/** Persists update-operation identity while the connection-keyed app remounts. */
+function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
+  const updateControls = useWispUpdateControl()
+  return <MainView key={runtimeKey} updateControls={updateControls} />
 }
 
 function useConnectionTaskSelection(connectionId: string) {
@@ -167,37 +171,6 @@ function useProjectAddFlow() {
   return { desktop, onAddProject, pending: addProject.isPending, dialogs }
 }
 
-function useWispUpdateControl() {
-  const runtime = useDaemonRuntime()
-  const desktop = useDesktopConnections()
-  const updateQuery = useUpdateStatus()
-  const installUpdate = useInstallUpdate()
-  const [updateError, setUpdateError] = useState<string | null>(null)
-
-  const updateWisp = async (version: string) => {
-    setUpdateError(null)
-    try {
-      await installUpdate.mutateAsync(version)
-      await waitForUpdatedDaemon(version, { transport: runtime.transport })
-      await runtime.recoverAfterUpdate()
-    } catch (error) {
-      setUpdateError(error instanceof Error ? error.message : String(error))
-      void queryClient.invalidateQueries({ queryKey: runtime.qk.update })
-    }
-  }
-
-  return (
-    <WispUpdateControl
-      status={updateQuery.data}
-      updating={installUpdate.isPending}
-      error={updateError}
-      onUpdate={(version) => void updateWisp(version)}
-      supportedApiProtocolVersion={desktop ? DESKTOP_API_PROTOCOL_VERSION : undefined}
-      connectionName={desktop?.active.metadata.name}
-    />
-  )
-}
-
 function useDesktopConnectionHealth(
   connectionId: string,
   tasks: readonly ApiTask[],
@@ -217,17 +190,39 @@ function useDesktopConnectionHealth(
   const reportReachability = desktop?.reportReachability
   useEffect(() => {
     if (!reportReachability) return
-    if (error)
-      reportReachability(connectionId, classifyConnectionError(error))
+    if (error) reportReachability(connectionId, classifyConnectionError(error))
     else if (loaded) reportReachability(connectionId, "online")
   }, [connectionId, error, loaded, reportReachability])
 }
 
-function MainView() {
+function useDaemonEventsBridge(
+  runtime: ReturnType<typeof useDaemonRuntime>,
+  selectedRef: RefObject<string | null>,
+  onReconnect: () => void
+) {
+  const connection = connectionStore(runtime.connectionId)
+  useEffect(
+    () =>
+      connectEventsBridge({
+        client: queryClient,
+        transport: runtime.transport,
+        qk: runtime.qk,
+        getSelectedId: () => selectedRef.current,
+        onConnectionChange: (live) => connection.set("events", live),
+        onReconnect,
+      }),
+    [runtime, selectedRef, connection, onReconnect]
+  )
+}
+
+function MainView({
+  updateControls,
+}: {
+  updateControls: { desktop: ReactNode; mobile: ReactNode }
+}) {
   const runtime = useDaemonRuntime()
   const projectAdd = useProjectAddFlow()
   const desktop = projectAdd.desktop
-  const conn = connectionStore(runtime.connectionId)
   const [selectedId, selectTask] = useConnectionTaskSelection(
     runtime.connectionId
   )
@@ -260,22 +255,10 @@ function MainView() {
   const pullRequestQuery = usePullRequestStatus(selectedId)
   const pullRequestOverviewQuery = usePullRequestOverview()
   const harnessesQuery = useHarnesses(true)
-  const updateControl = useWispUpdateControl()
 
   // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
   // daemon-cached release status are the only polling exceptions.
-  useEffect(
-    () =>
-      connectEventsBridge({
-        client: queryClient,
-        transport: runtime.transport,
-        qk: runtime.qk,
-        getSelectedId: () => selectedRef.current,
-        onConnectionChange: (live) => conn.set("events", live),
-        onReconnect: bumpLogGeneration,
-      }),
-    [runtime, conn]
-  )
+  useDaemonEventsBridge(runtime, selectedRef, bumpLogGeneration)
 
   // a fresh [] every render would re-run every memo below it
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
@@ -444,7 +427,8 @@ function MainView() {
           worktreeReason={detailQuery.data?.worktreeReason ?? null}
         />
       }
-      updateControl={updateControl}
+      updateControl={updateControls.desktop}
+      mobileUpdateControl={updateControls.mobile}
       dialogs={dialogs}
     />
   )
@@ -462,6 +446,7 @@ function AppShell({
   composer,
   taskHeader,
   updateControl,
+  mobileUpdateControl,
   dialogs,
 }: {
   mobile: boolean
@@ -478,6 +463,7 @@ function AppShell({
   composer: ReactNode
   taskHeader: ReactNode
   updateControl: ReactNode
+  mobileUpdateControl: ReactNode
   dialogs: ReactNode
 }) {
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
@@ -496,6 +482,7 @@ function AppShell({
           connectionSwitcher={
             desktop ? <DesktopConnectionChrome mobile /> : undefined
           }
+          updateControl={mobileUpdateControl}
         />
         {dialogs}
       </>

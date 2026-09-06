@@ -31,9 +31,10 @@ brew install --cask Pepewitch/tap/wisp-desktop
 
 The Cask depends on the separate `wisp` Formula, so Homebrew installs the
 CLI/daemon too when needed. The app does not bundle or own a child daemon;
-Local uses the standard `~/.wisp` profile and Homebrew service. Current alpha
-builds are ad-hoc signed and not notarized, so follow the documented macOS
-Privacy & Security approval instead of disabling Gatekeeper.
+Local uses the standard `~/.wisp` profile and Homebrew service. Public alpha.8
+is ad-hoc signed and not notarized, so follow the documented macOS Privacy &
+Security approval instead of disabling Gatekeeper. Future tag releases fail
+closed unless Developer ID signing and notarization pass.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
@@ -54,6 +55,20 @@ After Homebrew installation, launch with `open -a Wisp`. Local diagnoses the
 standard profile and service and asks before running `wisp init` or starting
 the Formula service. If macOS blocks the ad-hoc alpha, use its per-app Privacy
 & Security **Open Anyway** flow; never disable Gatekeeper globally.
+
+The Desktop **Updates** popover separates the global **Wisp Desktop** release
+from the selected connection's daemon release. Checks do not install anything;
+Desktop replacement requires **Update Desktop and relaunch**. Alpha.8 cannot
+self-update, so bootstrap the first signed updater release with:
+
+```sh
+brew update
+brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop
+```
+
+Later Desktop releases can use the native signed updater. Homebrew remains the
+repair path with `brew reinstall --cask Pepewitch/tap/wisp-desktop`. See
+[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 
 Before uninstalling, remove each remote or use **Reset desktop data** if saved
 credentials should be deleted. `brew uninstall --cask wisp-desktop` removes

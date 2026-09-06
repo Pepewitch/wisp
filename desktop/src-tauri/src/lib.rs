@@ -16,6 +16,8 @@
 //!   the machine's browser, which the webview cannot do by itself.
 //! * [`notifications`] — macOS task notifications and the click that brings
 //!   the window back to the task that finished.
+//! * [`updater`] — fixed-channel signed application discovery, installation,
+//!   status, and explicit relaunch.
 //!
 //! `docs/DESKTOP-TRANSPORT.md` states the contract these modules implement.
 
@@ -31,6 +33,7 @@ pub mod random;
 pub mod registry;
 pub mod secrets;
 pub mod setup;
+pub mod updater;
 pub mod urls;
 
 use std::sync::Arc;
@@ -60,6 +63,7 @@ pub fn context() -> tauri::Context<tauri::Wry> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(updater::plugin())
         .setup(|app| {
             let registry_path = app.path().app_config_dir()?.join("connections.json");
             let wisp_home = local::wisp_home();
@@ -77,6 +81,7 @@ pub fn run() {
                     "[wisp-desktop] task notifications are off: this process is not a bundled Wisp.app"
                 );
             }
+            app.manage(updater::DesktopUpdater::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -94,6 +99,10 @@ pub fn run() {
             commands::apply_local_wisp_setup,
             commands::open_external_url,
             commands::notify_task_transition,
+            commands::desktop_update_status,
+            commands::check_desktop_update,
+            commands::install_desktop_update,
+            commands::relaunch_desktop,
         ])
         .run(context())
         .expect("failed to start the Wisp desktop shell");

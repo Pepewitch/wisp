@@ -107,7 +107,11 @@ describe("connection-bound update recovery", () => {
       </DaemonRuntimeProvider>,
     )
 
-    fireEvent.click(screen.getByRole("button", { name: `Update ${UPDATE.latestVersion}` }))
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Update daemon ${UPDATE.latestVersion}`,
+      })
+    )
     await waitFor(() => expect(mocks.install).toHaveBeenCalledWith(UPDATE.latestVersion))
 
     view.rerender(
@@ -115,6 +119,7 @@ describe("connection-bound update recovery", () => {
         <App />
       </DaemonRuntimeProvider>,
     )
+    expect(screen.queryByText("Updating daemon…")).toBeNull()
     finishInstall({ ...UPDATE, state: "restarting" })
 
     await waitFor(() =>

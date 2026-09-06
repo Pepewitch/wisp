@@ -12,6 +12,7 @@ use crate::notifications::{self, TaskNotification};
 use crate::probe::DaemonIdentity;
 use crate::registry::ConnectionInfo;
 use crate::setup::{LocalSetupReport, NextStep};
+use crate::updater::{DesktopUpdateError, DesktopUpdateStatus, DesktopUpdater};
 
 /// Hand the webview its per-launch proxy base and the non-secret connection
 /// list. Called once, before the shared React app mounts.
@@ -178,4 +179,40 @@ pub async fn notify_task_transition(
         return Err(format!("unknown connection {}", notification.connection_id));
     }
     notifications::deliver(&notification).map_err(|error| error.to_string())
+}
+
+/// Return application-update state without performing network I/O.
+#[tauri::command]
+pub fn desktop_update_status(updater: State<'_, DesktopUpdater>) -> DesktopUpdateStatus {
+    updater.status()
+}
+
+/// Resolve the one embedded release channel. No caller-controlled endpoint is
+/// accepted at this boundary.
+#[tauri::command]
+pub async fn check_desktop_update(
+    app: tauri::AppHandle,
+    updater: State<'_, DesktopUpdater>,
+) -> Result<DesktopUpdateStatus, DesktopUpdateError> {
+    updater.check(&app).await
+}
+
+/// Install only the version returned by the most recent native check. The
+/// string is a stale-confirmation guard, never a release selector.
+#[tauri::command]
+pub async fn install_desktop_update(
+    app: tauri::AppHandle,
+    updater: State<'_, DesktopUpdater>,
+    confirmed_version: String,
+) -> Result<DesktopUpdateStatus, DesktopUpdateError> {
+    updater.download_and_install(&app, &confirmed_version).await
+}
+
+/// Relaunch only after the native installer reached its completed state.
+#[tauri::command]
+pub fn relaunch_desktop(
+    app: tauri::AppHandle,
+    updater: State<'_, DesktopUpdater>,
+) -> Result<(), DesktopUpdateError> {
+    updater.relaunch(&app)
 }

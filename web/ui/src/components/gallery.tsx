@@ -20,16 +20,12 @@ import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
+import { UpdateGallerySpecimen } from "@/components/update-gallery-specimen"
 import { STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { TASK_STATES } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
-/**
- * The living rulebook. The wisp-dev frontend reference is the law; this route is the law
- * rendered on real components. Add a primitive, add its entry here in the same
- * diff — an undocumented primitive is an incomplete change.
- */
 /** A stand-in for a real thumbnail: the gallery has no daemon to fetch bytes from. */
 function SpecimenThumb({ label }: { label: string }) {
   return (
@@ -221,7 +217,7 @@ function FoundationSpecimens() {
           </div>
       </Section>
 
-      <ConnectionGallerySpecimen />
+      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">
@@ -592,8 +588,7 @@ function WorkflowSpecimens() {
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
+function Section({ title, children }: { title: string; children: ReactNode }) { return (
     <section className="mt-9">
       <div className="mb-4 flex items-center gap-3">
         <Eyebrow>{title}</Eyebrow>

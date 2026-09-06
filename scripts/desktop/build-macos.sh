@@ -5,8 +5,8 @@
 #   bash scripts/desktop/build-macos.sh --app-only # skip the .dmg
 #
 # The webview loads the same committed web/ui-dist bundle the daemon serves, so
-# this refreshes it first. The whole app bundle receives an ad-hoc signature;
-# Developer ID signing and Apple notarization remain separate release work.
+# this refreshes it first. Ordinary builds receive an ad-hoc signature. The tag
+# workflow supplies Developer ID/notarization credentials for its final pass.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -40,5 +40,13 @@ cd desktop/src-tauri
 # Always use the pinned official npm distribution. A developer's unrelated
 # global cargo-tauri/tauri executable must not change release bundle behavior.
 tauri=(bun run tauri)
+signing_config=()
+if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+  # With no distribution credential Tauri otherwise leaves only the linker's
+  # executable signature, which is not a valid signed application bundle.
+  signing_config=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
+fi
 
-"${tauri[@]}" build --target aarch64-apple-darwin --bundles "$(IFS=,; echo "${bundles[*]}")" -- --locked
+"${tauri[@]}" build --target aarch64-apple-darwin \
+  --bundles "$(IFS=,; echo "${bundles[*]}")" \
+  "${signing_config[@]}" -- --locked
