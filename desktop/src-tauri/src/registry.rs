@@ -638,16 +638,16 @@ impl Registry {
     /// Terminal input checks this for every frame, so an already-open socket
     /// loses write authority as soon as Local is retargeted.
     pub fn route_is_current(&self, target: &Target) -> bool {
-        self.resolve_route(&target.id, target.route_revision)
-            .is_ok_and(|current| {
-                current.base == target.base && current.instance_id == target.instance_id
-            })
+        target_is_current(&self.lock(), target)
     }
 
     /// The bearer token for a resolved target. Never returned to the webview:
     /// the only caller is the proxy's upstream request builder.
     pub fn credential(&self, target: &Target) -> Result<String, RegistryError> {
         let state = self.lock();
+        if !target_is_current(&state, target) {
+            return Err(RegistryError::StaleRoute);
+        }
         match target.kind {
             ConnectionKind::Local => state
                 .local
@@ -683,16 +683,48 @@ impl Registry {
         Ok(credential)
     }
 
-    pub fn identity(&self, id: &str) -> Identity {
-        self.lock()
+    /// Read identity state only for the exact target generation that was
+    /// resolved. A Local reconnect can replace the stable logical ID while an
+    /// older request is awaiting its capability response.
+    pub fn identity(&self, target: &Target) -> Result<Identity, RegistryError> {
+        let state = self.lock();
+        if !target_is_current(&state, target) {
+            return Err(RegistryError::StaleRoute);
+        }
+        Ok(state
             .identity
-            .get(id)
+            .get(&target.id)
             .copied()
-            .unwrap_or(Identity::Unchecked)
+            .unwrap_or(Identity::Unchecked))
     }
 
-    pub fn set_identity(&self, id: &str, value: Identity) {
-        self.lock().identity.insert(id.to_string(), value);
+    /// Atomically record one capability probe for a current target.
+    ///
+    /// Mismatch is monotonic within a target generation: an older successful
+    /// probe cannot race a newer mismatch and restore read authority. Only an
+    /// explicit checked reconnect writes `Verified` directly when it updates
+    /// the saved connection/profile.
+    pub fn record_probe_identity(
+        &self,
+        target: &Target,
+        observed: Identity,
+    ) -> Result<Identity, RegistryError> {
+        let mut state = self.lock();
+        if !target_is_current(&state, target) {
+            return Err(RegistryError::StaleRoute);
+        }
+        let current = state
+            .identity
+            .get(&target.id)
+            .copied()
+            .unwrap_or(Identity::Unchecked);
+        let effective = if current == Identity::Mismatch {
+            Identity::Mismatch
+        } else {
+            observed
+        };
+        state.identity.insert(target.id.clone(), effective);
+        Ok(effective)
     }
 
     /// Save a remote connection whose URL and credential already passed an
@@ -1057,6 +1089,25 @@ fn clean_label(label: &str) -> Result<String, RegistryError> {
     Ok(trimmed.chars().take(120).collect())
 }
 
+fn target_is_current(state: &State, target: &Target) -> bool {
+    match target.kind {
+        ConnectionKind::Local => {
+            target.id == LOCAL_CONNECTION_ID
+                && target.route_revision == state.local_route_revision
+                && state.local.as_ref().is_some_and(|profile| {
+                    profile.base() == &target.base && profile.instance_id() == target.instance_id
+                })
+        }
+        ConnectionKind::Remote => {
+            target.route_revision == 0
+                && !state.pending_removals.contains(&target.id)
+                && state.connections.get(&target.id).is_some_and(|entry| {
+                    entry.url == target.base.as_str() && entry.instance_id == target.instance_id
+                })
+        }
+    }
+}
+
 fn mint_id(state: &State) -> String {
     loop {
         let id = new_connection_id();
@@ -1314,6 +1365,7 @@ mod tests {
         let h = harness(true);
         assert_eq!(h.registry.list()[0].route_revision, 0);
         assert!(h.registry.resolve_route(LOCAL_CONNECTION_ID, 0).is_ok());
+        let old_target = h.registry.resolve(LOCAL_CONNECTION_ID).expect("old target");
 
         let path = h.path.clone();
         let secrets = h.secrets.clone();
@@ -1334,6 +1386,10 @@ mod tests {
         assert_eq!(reopened.list()[0].route_revision, 1);
         assert!(matches!(
             reopened.resolve_route(LOCAL_CONNECTION_ID, 0),
+            Err(RegistryError::StaleRoute)
+        ));
+        assert!(matches!(
+            reopened.credential(&old_target),
             Err(RegistryError::StaleRoute)
         ));
         assert!(reopened.resolve_route(LOCAL_CONNECTION_ID, 1).is_ok());
@@ -1958,12 +2014,35 @@ mod tests {
                 REMOTE_INSTANCE,
             )
             .expect("add");
-        assert_eq!(h.registry.identity(&info.id), Identity::Verified);
-        h.registry.set_identity(&info.id, Identity::Mismatch);
-        assert_eq!(h.registry.identity(&info.id), Identity::Mismatch);
+        let target = h.registry.resolve(&info.id).expect("target");
+        assert_eq!(
+            h.registry.identity(&target).expect("current target"),
+            Identity::Verified
+        );
+        assert_eq!(
+            h.registry
+                .record_probe_identity(&target, Identity::Mismatch)
+                .expect("record mismatch"),
+            Identity::Mismatch
+        );
+        assert_eq!(
+            h.registry
+                .record_probe_identity(&target, Identity::Verified)
+                .expect("late success stays failed closed"),
+            Identity::Mismatch
+        );
         h.registry.rename(&info.id, "Renamed").expect("rename");
-        assert_eq!(h.registry.identity(&info.id), Identity::Mismatch);
-        assert_eq!(h.registry.identity("c-never-seen"), Identity::Unchecked);
+        assert_eq!(
+            h.registry.identity(&target).expect("renamed target"),
+            Identity::Mismatch
+        );
+        h.registry
+            .refresh(&info.id, None, REMOTE_INSTANCE)
+            .expect("explicit checked reconnect");
+        assert_eq!(
+            h.registry.identity(&target).expect("refreshed target"),
+            Identity::Verified
+        );
     }
 
     #[test]

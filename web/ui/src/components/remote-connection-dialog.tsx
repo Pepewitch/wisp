@@ -20,6 +20,28 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function remoteUrlChanged(
+  url: string,
+  connection: DesktopConnectionMetadata
+): boolean {
+  try {
+    return normalizeRemoteUrl(url) !== connection.url
+  } catch {
+    return url.trim() !== connection.url
+  }
+}
+
+function missingTokenError(
+  editing: boolean,
+  urlChanged: boolean,
+  token: string
+): string | null {
+  if (token.trim() || (editing && !urlChanged)) return null
+  return urlChanged
+    ? "A new token is required when changing the daemon URL"
+    : "Token is required"
+}
+
 const INPUT = cn(
   "h-8 rounded-md border border-input bg-surface px-2.5 text-[12.5px] font-normal text-foreground",
   "placeholder:text-faint focus:border-accent-dim focus:ring-2 focus:ring-ring/15 focus:outline-none"
@@ -99,6 +121,12 @@ function RemoteConnectionFields({
   onUrl: (value: string) => void
   onToken: (value: string) => void
 }) {
+  const tokenRequired =
+    editing &&
+    connection !== undefined &&
+    remoteUrlChanged(url, connection)
+  const tokenLabel = tokenRequired ? "New token" : "New token (optional)"
+
   return (
     <div className="flex flex-col gap-3.5 px-4 py-3.5">
       {!editing && (
@@ -129,16 +157,18 @@ function RemoteConnectionFields({
         />
       </Field>
       <Field
-        label={editing ? "New token (optional)" : "Token"}
+        label={editing ? tokenLabel : "Token"}
         hint={
           editing
-            ? "Leave blank to keep the credential already stored by Wisp Desktop."
+            ? tokenRequired
+              ? "Required for a new URL so the saved credential is never sent to another host."
+              : "Leave blank to keep the credential already stored by Wisp Desktop."
             : "Held only until you confirm the checked daemon, then stored by native credential services."
         }
       >
         <input
           ref={tokenRef}
-          aria-label={editing ? "New token (optional)" : "Token"}
+          aria-label={editing ? tokenLabel : "Token"}
           type="password"
           autoComplete="off"
           value={token}
@@ -215,8 +245,10 @@ export function RemoteConnectionDialog({
       setError(errorMessage(validationError))
       return
     }
-    if (!editing && !token) {
-      setError("Token is required")
+    const urlChanged = editing && normalizedUrl !== connection.url
+    const tokenError = missingTokenError(editing, urlChanged, token)
+    if (tokenError) {
+      setError(tokenError)
       tokenRef.current?.focus()
       return
     }

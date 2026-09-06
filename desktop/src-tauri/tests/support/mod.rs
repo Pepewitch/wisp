@@ -72,10 +72,16 @@ struct DaemonState {
     token_after_capabilities: Mutex<Option<String>>,
     instance_id: Mutex<String>,
     protocol_version: Mutex<u32>,
+    capability_gate: Mutex<Option<CapabilityGate>>,
     update_protocol_version: Mutex<u32>,
     seen: Mutex<Vec<SeenRequest>>,
     /// Where `/api/redirect` points. A hit on that server is a test failure.
     redirect_to: Mutex<String>,
+}
+
+struct CapabilityGate {
+    started: tokio::sync::oneshot::Sender<()>,
+    release: tokio::sync::oneshot::Receiver<()>,
 }
 
 /// A synthetic daemon on loopback.
@@ -95,6 +101,7 @@ impl MockDaemon {
             token_after_capabilities: Mutex::new(None),
             instance_id: Mutex::new(synthetic_instance_id(instance_id)),
             protocol_version: Mutex::new(1),
+            capability_gate: Mutex::new(None),
             update_protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
@@ -187,6 +194,30 @@ impl MockDaemon {
             .expect("deferred token") = Some(token.to_string());
     }
 
+    /// Hold exactly the next capability response after its daemon identity has
+    /// been captured. Tests use the two one-shot ends to deterministically
+    /// reorder otherwise concurrent identity checks.
+    pub fn hold_next_capabilities(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (started, wait_for_started) = tokio::sync::oneshot::channel();
+        let (release, wait_for_release) = tokio::sync::oneshot::channel();
+        let previous = self
+            .state
+            .capability_gate
+            .lock()
+            .expect("capability gate")
+            .replace(CapabilityGate {
+                started,
+                release: wait_for_release,
+            });
+        assert!(previous.is_none(), "only one capability gate may be armed");
+        (wait_for_started, release)
+    }
+
     pub fn point_redirect_at(&self, url: &str) {
         *self.state.redirect_to.lock().expect("redirect") = url.to_string();
     }
@@ -244,9 +275,22 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
+    // Capture before waiting: a later request can observe a replacement daemon
+    // and complete first, precisely modeling reordered network responses.
+    let protocol_version = *state.protocol_version.lock().expect("protocol");
+    let instance_id = state.instance_id.lock().expect("instance").clone();
+    let gate = state
+        .capability_gate
+        .lock()
+        .expect("capability gate")
+        .take();
+    if let Some(gate) = gate {
+        let _ = gate.started.send(());
+        let _ = gate.release.await;
+    }
     let response = Json(json!({
-        "apiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
-        "instanceId": *state.instance_id.lock().expect("instance"),
+        "apiProtocolVersion": protocol_version,
+        "instanceId": instance_id,
         "version": "0.0.0-synthetic",
         "commit": "0000000",
         "dirty": false,

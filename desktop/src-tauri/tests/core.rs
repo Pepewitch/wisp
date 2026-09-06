@@ -15,6 +15,7 @@ use wisp_desktop::secrets::{MemorySecretStore, SecretStore};
 
 const LOCAL_TOKEN: &str = "synthetic-local-token-000000";
 const REMOTE_TOKEN: &str = "synthetic-remote-token-11111";
+const REPLACEMENT_TOKEN: &str = "synthetic-replacement-token-22222";
 
 struct App {
     core: DesktopCore,
@@ -342,6 +343,65 @@ async fn reconnecting_to_a_new_address_mints_a_replacement_rather_than_retargeti
     // of quietly addressing the new daemon.
     assert!(app.core.registry().resolve(&saved.id).is_none());
     assert_eq!(app.secrets.accounts(), vec![replacement.id.clone()]);
+}
+
+#[tokio::test]
+async fn changing_a_remote_url_never_reuses_the_saved_origin_token() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let first = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let second = MockDaemon::start("charlie", REPLACEMENT_TOKEN, "wisp-instance-charlie").await;
+    let app = app(Some(&local)).await;
+    let saved = app
+        .core
+        .add_remote("Studio", first.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("saved");
+
+    let preview_error = app
+        .core
+        .probe_reconnect(&saved.id, Some(second.url().as_str()), None)
+        .await
+        .expect_err("a changed URL needs a new token before probing");
+    assert!(preview_error.to_string().contains("new token"));
+    let commit_error = app
+        .core
+        .reconnect_checked(&saved.id, Some(second.url().as_str()), None, None)
+        .await
+        .expect_err("a changed URL needs a new token before reconnecting");
+    assert!(commit_error.to_string().contains("new token"));
+    assert!(
+        second.seen().is_empty(),
+        "native validation must reject before contacting the new origin"
+    );
+
+    let preview = app
+        .core
+        .probe_reconnect(
+            &saved.id,
+            Some(second.url().as_str()),
+            Some(REPLACEMENT_TOKEN),
+        )
+        .await
+        .expect("preview with new token");
+    let replacement = app
+        .core
+        .reconnect_checked(
+            &saved.id,
+            Some(second.url().as_str()),
+            Some(REPLACEMENT_TOKEN),
+            Some(&preview.instance_id),
+        )
+        .await
+        .expect("reconnect with new token");
+    assert_ne!(replacement.id, saved.id);
+    let expected = format!("Bearer {REPLACEMENT_TOKEN}");
+    assert!(
+        second
+            .seen()
+            .iter()
+            .all(|request| request.authorization.as_deref() == Some(expected.as_str())),
+        "the new origin sees only its explicitly entered token"
+    );
 }
 
 #[tokio::test]

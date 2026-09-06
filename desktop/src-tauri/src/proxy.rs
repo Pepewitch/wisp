@@ -436,6 +436,7 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
 
     let mut credential = match state.registry.credential(&target) {
         Ok(credential) => credential,
+        Err(RegistryError::StaleRoute) => return stale_route(),
         Err(RegistryError::MissingCredential) => {
             return refuse(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -462,7 +463,17 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
     // GET. It must prove the pinned daemon identity just like an HTTP write.
     // The first read after launch proves identity too, and a known mismatch
     // blocks every later route so read-only data cannot cross daemon scope.
-    let identity = state.registry.identity(&target.id);
+    let identity = match state.registry.identity(&target) {
+        Ok(identity) => identity,
+        Err(RegistryError::StaleRoute) => return stale_route(),
+        Err(error) => {
+            return refuse(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "connection-unavailable",
+                error.to_string(),
+            )
+        }
+    };
     if identity == Identity::Mismatch {
         return identity_mismatch();
     }
@@ -595,12 +606,20 @@ async fn ensure_pinned_identity(
         .get("instanceId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    if seen == target.instance_id {
-        state.registry.set_identity(&target.id, Identity::Verified);
-        Ok(checked_credential)
+    let observed = if seen == target.instance_id {
+        Identity::Verified
     } else {
-        state.registry.set_identity(&target.id, Identity::Mismatch);
-        Err(Box::new(identity_mismatch()))
+        Identity::Mismatch
+    };
+    match state.registry.record_probe_identity(target, observed) {
+        Ok(Identity::Verified) => Ok(checked_credential),
+        Ok(Identity::Mismatch | Identity::Unchecked) => Err(Box::new(identity_mismatch())),
+        Err(RegistryError::StaleRoute) => Err(Box::new(stale_route())),
+        Err(error) => Err(Box::new(refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "connection-unavailable",
+            error.to_string(),
+        ))),
     }
 }
 

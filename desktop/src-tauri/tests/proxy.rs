@@ -517,8 +517,12 @@ async fn local_get_reloads_a_rotated_profile_token_once_and_retries() {
         seen[2].authorization.as_deref(),
         Some(format!("Bearer {rotated}").as_str())
     );
+    let local_target = harness.registry.resolve("local").expect("local target");
     assert_eq!(
-        harness.registry.identity("local"),
+        harness
+            .registry
+            .identity(&local_target)
+            .expect("current local target"),
         Identity::Verified,
         "only the successful capabilities retry proves identity"
     );
@@ -1159,6 +1163,154 @@ async fn a_write_is_refused_when_a_different_daemon_answers_the_saved_address() 
             .count(),
         0,
         "the terminal upgrade must not reach a daemon whose identity changed"
+    );
+}
+
+#[tokio::test]
+async fn an_older_success_cannot_overwrite_a_newer_identity_mismatch() {
+    let (alpha, bravo) = two_daemons().await;
+    let (harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
+    let remote = ids[0].clone();
+    let route = harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}/action"));
+    let saved_instance = bravo.instance_id();
+    let (probe_started, release_probe) = bravo.hold_next_capabilities();
+
+    let delayed_client = harness.client.clone();
+    let delayed_route = route.clone();
+    let delayed = tokio::spawn(async move {
+        delayed_client
+            .post(delayed_route)
+            .header("content-type", "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("delayed write")
+    });
+    tokio::time::timeout(Duration::from_secs(2), probe_started)
+        .await
+        .expect("first capability probe started")
+        .expect("probe start signal");
+
+    bravo.become_a_different_daemon("wisp-instance-newer-mismatch");
+    let newer = harness
+        .client
+        .post(&route)
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("newer write");
+    assert_eq!(newer.status(), reqwest::StatusCode::CONFLICT);
+
+    release_probe.send(()).expect("release older probe");
+    let older = delayed.await.expect("delayed task");
+    assert_eq!(
+        older.status(),
+        reqwest::StatusCode::CONFLICT,
+        "the late matching response must inherit the latched mismatch"
+    );
+    assert_eq!(
+        bravo
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        0,
+        "neither reordered write may reach the mutation endpoint"
+    );
+
+    // Even restoring the original answer cannot silently clear the latch;
+    // only an explicit checked reconnect may do that.
+    bravo.become_a_different_daemon(&saved_instance);
+    let seen_before = bravo.seen().len();
+    let read = harness
+        .client
+        .get(harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}")))
+        .send()
+        .await
+        .expect("read after mismatch");
+    assert_eq!(read.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(bravo.seen().len(), seen_before, "the mismatch stays native");
+}
+
+#[tokio::test]
+async fn an_old_local_probe_cannot_write_identity_into_a_new_generation() {
+    let (alpha, bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let action_path = format!("api/tasks/{SHARED_TASK_ID}/action");
+    let old_route = harness.route_at("local", 0, &action_path);
+    let (probe_started, release_probe) = alpha.hold_next_capabilities();
+
+    let delayed_client = harness.client.clone();
+    let delayed = tokio::spawn(async move {
+        delayed_client
+            .post(old_route)
+            .header("content-type", "application/json")
+            .body("{}")
+            .send()
+            .await
+            .expect("old-generation write")
+    });
+    tokio::time::timeout(Duration::from_secs(2), probe_started)
+        .await
+        .expect("old capability probe started")
+        .expect("probe start signal");
+
+    harness
+        .registry
+        .refresh_local(LocalProfile::new(
+            bravo.url(),
+            TOKEN_TWO.to_string(),
+            bravo.instance_id(),
+            harness.wisp_home().join("config.json"),
+        ))
+        .expect("checked Local replacement");
+    release_probe.send(()).expect("release old probe");
+
+    let stale = delayed.await.expect("delayed task");
+    assert_eq!(stale.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        stale
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("stale-route")
+    );
+    assert_eq!(
+        alpha
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        0,
+        "the old request never mutates its former daemon"
+    );
+
+    let current_target = harness.registry.resolve("local").expect("current Local");
+    assert_eq!(
+        harness
+            .registry
+            .identity(&current_target)
+            .expect("current identity"),
+        Identity::Verified,
+        "the stale completion did not alter the checked generation"
+    );
+    let current = harness
+        .client
+        .post(harness.route("local", &action_path))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("current-generation write");
+    assert!(current.status().is_success());
+    assert_eq!(
+        bravo
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        1
     );
 }
 

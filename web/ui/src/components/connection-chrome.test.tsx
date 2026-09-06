@@ -25,6 +25,13 @@ const LOCAL = {
   ready: true,
 } as const
 
+const REPLACEMENT_RECONNECT = {
+  connectionId: "remote-one",
+  url: "https://replacement.example.test",
+  token: "synthetic-replacement-token",
+  expectedInstanceId: "wisp-instance-remote-one",
+}
+
 function bootstrap(
   connections: DesktopBootstrap["connections"] = [LOCAL]
 ): DesktopBootstrap {
@@ -119,6 +126,50 @@ function PartialReconnectHarness() {
       <output aria-label="active connection">{desktop.active.metadata.id}</output>
       {desktop.actionError ? <p role="alert">{desktop.actionError}</p> : null}
     </>
+  )
+}
+
+async function changedRemoteUrlNeedsToken() {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+  const remote = {
+    id: "remote-one",
+    kind: "remote",
+    name: "Remote one",
+    url: "https://remote.example.test",
+    instanceId: "wisp-instance-remote-one",
+    ready: true,
+  } as const
+  const probeSavedConnection = vi.fn(async () => ({
+    instanceId: "wisp-instance-remote-two",
+    apiProtocolVersion: 1,
+    version: "0.4.0-synthetic",
+  }))
+  renderChrome(bootstrap([LOCAL, remote]), bridge({ probeSavedConnection }))
+
+  fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+  fireEvent.click(screen.getByRole("button", { name: "Manage Remote one" }))
+  fireEvent.click(await screen.findByText("Edit connection"))
+  fireEvent.change(screen.getByLabelText("Daemon URL"), {
+    target: { value: "https://replacement.example.test" },
+  })
+  expect(screen.getByLabelText("New token")).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }))
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "new token is required"
+  )
+  expect(probeSavedConnection).not.toHaveBeenCalled()
+
+  fireEvent.change(screen.getByLabelText("New token"), {
+    target: { value: "synthetic-replacement-token" },
+  })
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }))
+  await waitFor(() =>
+    expect(probeSavedConnection).toHaveBeenCalledWith({
+      connectionId: remote.id,
+      url: "https://replacement.example.test",
+      token: "synthetic-replacement-token",
+    })
   )
 }
 
@@ -496,6 +547,9 @@ describe("desktop connection chrome", () => {
     fireEvent.change(screen.getByLabelText("Daemon URL"), {
       target: { value: "https://replacement.example.test" },
     })
+    fireEvent.change(screen.getByLabelText("New token"), {
+      target: { value: "synthetic-replacement-token" },
+    })
     fireEvent.click(screen.getByRole("button", { name: "Check connection" }))
     await screen.findByText("Reached Wisp 0.4.0-synthetic")
     fireEvent.click(screen.getByRole("button", { name: "Reconnect" }))
@@ -508,8 +562,10 @@ describe("desktop connection chrome", () => {
         name: "Reconnect and discard local data",
       })
     )
-    await waitFor(() => expect(reconnectConnection).toHaveBeenCalled())
+    await waitFor(() => expect(reconnectConnection).toHaveBeenCalledWith(REPLACEMENT_RECONNECT))
   })
+
+  it("requires a new token before probing a changed remote URL", changedRemoteUrlNeedsToken)
 
   it("requires explicit trust when reconnect reaches a different daemon", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))

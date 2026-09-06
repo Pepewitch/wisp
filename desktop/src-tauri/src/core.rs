@@ -50,6 +50,8 @@ pub enum CoreError {
     LocalIdentityMismatch,
     #[error("a token is required")]
     EmptyToken,
+    #[error("a new token is required when changing a remote daemon URL")]
+    RemoteUrlTokenRequired,
     #[error("that daemon changed after the connection check; check it again before saving")]
     RemoteIdentityChanged,
     #[error(
@@ -272,11 +274,7 @@ impl DesktopCore {
             Some(raw) => normalize_daemon_url(raw)?,
             None => target.base.clone(),
         };
-        let next_token = match token {
-            Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
-            Some(_) => return Err(CoreError::EmptyToken),
-            None => self.registry.credential(&target)?,
-        };
+        let next_token = self.reconnect_token(&target, &next_url, token)?;
         Ok(probe::probe(self.state.client(), &next_url, &next_token).await?)
     }
 
@@ -308,11 +306,7 @@ impl DesktopCore {
             Some(raw) => normalize_daemon_url(raw)?,
             None => target.base.clone(),
         };
-        let next_token = match token {
-            Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
-            Some(_) => return Err(CoreError::EmptyToken),
-            None => self.registry.credential(&target)?,
-        };
+        let next_token = self.reconnect_token(&target, &next_url, token)?;
 
         let identity = probe::probe(self.state.client(), &next_url, &next_token).await?;
         if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
@@ -337,6 +331,29 @@ impl DesktopCore {
             self.replace_selected_connection(connection_id, &reconnected.id);
         }
         Ok(reconnected)
+    }
+
+    /// Select a credential without ever carrying one saved for an old origin
+    /// to a newly entered URL. Omitting the token is convenient only while the
+    /// normalized origin is unchanged.
+    fn reconnect_token(
+        &self,
+        target: &crate::registry::Target,
+        next_url: &Url,
+        token: Option<&str>,
+    ) -> Result<String, CoreError> {
+        if next_url != &target.base {
+            return token
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or(CoreError::RemoteUrlTokenRequired);
+        }
+        match token {
+            Some(raw) if !raw.trim().is_empty() => Ok(raw.trim().to_string()),
+            Some(_) => Err(CoreError::EmptyToken),
+            None => Ok(self.registry.credential(target)?),
+        }
     }
 
     pub fn rename(&self, connection_id: &str, label: &str) -> Result<ConnectionInfo, CoreError> {

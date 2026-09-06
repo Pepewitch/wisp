@@ -113,7 +113,10 @@ The native process resolves the exact `(connectionId, routeRevision)` through
 saved metadata. A frontend request cannot supply or override an upstream URL,
 and a stale Local generation is rejected before reaching any daemon. Editing a
 saved remote URL creates a replacement transport after a successful capability
-check; it never mutates the target underneath in-flight work.
+check; it never mutates the target underneath in-flight work. Identity probe
+results are recorded atomically against that exact target generation. Once a
+mismatch is observed, a late matching response cannot clear it; only an
+explicit checked reconnect may restore the connection.
 
 Every completion path retains the initiating `connectionId`. Changing the
 selected tab cannot retarget a REST mutation, reconnect timer, update poll,
@@ -144,11 +147,15 @@ ready:
    use the daemon's browser-session exchange.
 7. Replace, rather than append, upstream `Authorization` with the credential
    selected by native connection state. Never log it.
-8. Apply the same authentication and routing rules to JSON, SSE, media, and
+8. When a saved remote URL changes, require a newly entered token before any
+   network probe. Never reuse or send the old origin's saved credential to the
+   new URL. A blank token may retain a credential only when the normalized URL
+   is unchanged.
+9. Apply the same authentication and routing rules to JSON, SSE, media, and
    WebSocket upgrades.
-9. Preserve TLS verification. Certificate failures are connection-scoped and
+10. Preserve TLS verification. Certificate failures are connection-scoped and
    are never bypassed silently.
-10. Revoke a connection's route before deleting its saved token and metadata.
+11. Revoke a connection's route before deleting its saved token and metadata.
     Crash recovery resumes removal from a non-secret tombstone.
 
 ## Client state that must be scoped
@@ -227,7 +234,7 @@ select_desktop_connection mirror selection for native-only capability leases
 probe_remote_connection  authenticated identity preview; no persistence
 add_remote_connection    re-prove the confirmed identity, then save
 rename_connection        connectionId + display name only
-probe_saved_connection   authenticated reconnect identity preview
+probe_saved_connection   authenticated reconnect preview; a changed URL requires a new token
 reconnect_connection     re-prove identity; changed URL/identity returns a replacement id
 remove_connection        revoke route, delete credential, clear tombstone
 reset_desktop_data       revoke all remotes and delete desktop-owned credentials
