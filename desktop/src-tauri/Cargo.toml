@@ -12,6 +12,11 @@
 #   macOS, so the Apple API is both smaller and more honest about what happens.
 # * `getrandom` (not `rand`) supplies the per-launch capability and connection
 #   IDs. It is the OS CSPRNG with an API that does not churn between majors.
+# * `objc2-user-notifications` (with `objc2`, `objc2-foundation`, `block2`,
+#   all already in the Tauri dependency graph) reaches Apple's current
+#   UNUserNotificationCenter directly. The official Tauri notification plugin
+#   can post a banner but cannot report a click on desktop, and a click that
+#   opens the right task is the whole point of a task notification.
 [package]
 name = "wisp-desktop"
 version = "0.4.0-alpha.8"
@@ -34,10 +39,30 @@ tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
+block2 = "0.6"
 bytes = "1"
 futures-util = "0.3"
 getrandom = "0.4"
 http = "1"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+  "NSBundle",
+  "NSDictionary",
+  "NSError",
+  "NSString",
+] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = [
+  "std",
+  "bitflags",
+  "block2",
+  "UNNotification",
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationResponse",
+  "UNNotificationSound",
+  "UNNotificationTrigger",
+  "UNUserNotificationCenter",
+] }
 percent-encoding = "2"
 reqwest = { version = "0.12", default-features = false, features = [
   "charset",

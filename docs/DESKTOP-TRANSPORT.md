@@ -257,6 +257,13 @@ exists because the packaged webview has no new-window handler, so
 `target="_blank"` is inert there and every link simply did nothing; `http` and
 `https` are the only schemes that open, and the shared UI applies the same rule
 before it renders an anchor at all.
+notify_task_transition   post one macOS notification for a task the UI saw stop running
+```
+
+One native event flows the other way: `desktop://focus-task` carries
+`{ connectionId, taskId }` when a task notification is clicked. The React shell
+treats it as routing input — it validates both IDs like bootstrap metadata and
+ignores a connection it does not have — and never as a credential or a target.
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base
