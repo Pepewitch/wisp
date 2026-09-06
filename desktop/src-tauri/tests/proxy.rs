@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use futures_util::{SinkExt, StreamExt};
 use support::{attachment_bytes, Harness, MockDaemon, Tripwire, SHARED_TASK_ID};
 use wisp_desktop::capability::Capability;
+use wisp_desktop::local::LocalProfile;
 use wisp_desktop::proxy::{self, ProxyHandle, ProxyState};
 use wisp_desktop::registry::Identity;
 use wisp_desktop::secrets::SecretStore;
@@ -102,6 +103,86 @@ async fn two_daemons_sharing_a_task_id_never_answer_for_each_other() {
 }
 
 #[tokio::test]
+async fn a_stale_local_generation_cannot_reach_a_replacement_daemon() {
+    let (alpha, bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let action_path = format!("api/tasks/{SHARED_TASK_ID}/action");
+    let terminal_path = format!("api/tasks/{SHARED_TASK_ID}/terminal?shell=1");
+    let stale_action = harness.route_at("local", 0, &action_path);
+    let stale_terminal = harness
+        .route_at("local", 0, &terminal_path)
+        .replacen("http://", "ws://", 1);
+    let (mut open_terminal, _) = tokio_tungstenite::connect_async(stale_terminal.clone())
+        .await
+        .expect("generation zero terminal opens before retarget");
+    let _hello = open_terminal.next().await.expect("hello frame");
+
+    harness
+        .registry
+        .refresh_local(LocalProfile::new(
+            bravo.url(),
+            TOKEN_TWO.to_string(),
+            bravo.instance_id(),
+            harness.wisp_home().join("config.json"),
+        ))
+        .expect("retarget Local");
+    assert_eq!(harness.registry.list()[0].route_revision, 1);
+    let before = bravo.seen().len();
+
+    let refused = harness
+        .client
+        .post(stale_action)
+        .send()
+        .await
+        .expect("proxy refuses stale write");
+    assert_eq!(refused.status().as_u16(), 409);
+    assert_eq!(
+        refused
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("stale-route")
+    );
+    match tokio_tungstenite::connect_async(stale_terminal).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status().as_u16(), 409);
+        }
+        other => panic!("stale terminal must be rejected locally, got {other:?}"),
+    }
+    assert_eq!(bravo.seen().len(), before, "stale routes stayed native");
+
+    open_terminal
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "stale command".into(),
+        ))
+        .await
+        .ok();
+    let after_retarget = tokio::time::timeout(Duration::from_secs(1), open_terminal.next())
+        .await
+        .expect("an already-open stale terminal is revoked promptly");
+    assert!(
+        !matches!(
+            after_retarget,
+            Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text)))
+                if text.contains("stale command")
+        ),
+        "stale terminal input must not reach its former daemon"
+    );
+
+    let accepted = harness
+        .client
+        .post(harness.route("local", &action_path))
+        .send()
+        .await
+        .expect("current generation writes");
+    assert!(accepted.status().is_success());
+    assert!(bravo
+        .seen_paths()
+        .iter()
+        .any(|path| path.ends_with("/action")));
+}
+
+#[tokio::test]
 async fn each_daemon_only_ever_sees_its_own_credential() {
     let (alpha, bravo) = two_daemons().await;
     let (harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
@@ -183,7 +264,7 @@ async fn every_route_kind_requires_the_per_launch_capability() {
 
     let forged = "f".repeat(harness.capability.len());
     let socket_url = format!(
-        "ws://127.0.0.1:{}/{forged}/connections/local/api/tasks/{SHARED_TASK_ID}/terminal",
+        "ws://127.0.0.1:{}/{forged}/connections/local/0/api/tasks/{SHARED_TASK_ID}/terminal",
         harness.proxy.port()
     );
     assert!(
@@ -703,7 +784,7 @@ async fn an_upstream_that_never_sends_http_headers_times_out() {
     let response = harness
         .client
         .get(format!(
-            "{}/connections/{}/api/whoami",
+            "{}/connections/{}/0/api/whoami",
             proxy.base(),
             connection.id
         ))
@@ -816,7 +897,7 @@ async fn an_upstream_that_never_completes_a_websocket_handshake_times_out() {
         .expect("save stalled connection");
     let proxy = short_timeout_proxy(&harness).await;
     let route = format!(
-        "{}/connections/{}/api/tasks/{SHARED_TASK_ID}/terminal?shell=1",
+        "{}/connections/{}/0/api/tasks/{SHARED_TASK_ID}/terminal?shell=1",
         proxy.base().replacen("http://", "ws://", 1),
         connection.id,
     );

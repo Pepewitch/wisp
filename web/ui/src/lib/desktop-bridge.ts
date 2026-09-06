@@ -46,7 +46,7 @@ export interface LocalSetupReport {
 export interface DesktopBootstrap {
   readonly connections: readonly DesktopConnectionMetadata[]
   readonly activeConnectionId: string
-  /** Per-launch native proxy root. The transport appends /connections/:id/api/… */
+  /** Per-launch proxy root. Transport appends /connections/:id/:revision/api/… */
   readonly proxyBaseUrl: string
   readonly local: LocalStatus
   readonly cleanupIssues?: readonly {

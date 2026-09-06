@@ -296,7 +296,7 @@ impl DesktopCore {
             if identity.instance_id != profile.instance_id() {
                 return Err(CoreError::LocalIdentityMismatch);
             }
-            return Ok(self.registry.refresh_local(profile));
+            return Ok(self.registry.refresh_local(profile)?);
         }
 
         let target = self
@@ -371,7 +371,7 @@ impl DesktopCore {
             Ok(profile) => {
                 match probe::probe(self.state.client(), profile.base(), profile.token()).await {
                     Ok(identity) if identity.instance_id == profile.instance_id() => {
-                        self.registry.refresh_local(profile.clone());
+                        self.registry.refresh_local(profile.clone())?;
                         true
                     }
                     Ok(_) => return Err(CoreError::LocalIdentityMismatch),
@@ -408,7 +408,7 @@ impl DesktopCore {
                             if identity.instance_id != profile.instance_id() {
                                 return Err(CoreError::LocalIdentityMismatch);
                             }
-                            self.registry.refresh_local(profile);
+                            self.registry.refresh_local(profile)?;
                             return self.local_setup().await;
                         }
                         Err(ProbeError::Unreachable(_)) => {}

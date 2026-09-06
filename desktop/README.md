@@ -43,7 +43,7 @@ transport all live in Rust.
 ## The proxy route
 
 ```text
-http://127.0.0.1:<ephemeral>/<per-launch capability>/connections/<id>/api/...
+http://127.0.0.1:<ephemeral>/<capability>/connections/<id>/<revision>/api/...
 ```
 
 * The port is ephemeral and bound to the **literal** IPv4 loopback address.
@@ -54,8 +54,9 @@ http://127.0.0.1:<ephemeral>/<per-launch capability>/connections/<id>/api/...
   dies with the process.
 * `Origin` is also checked against the packaged-app origins, but only as a
   supplement: any local process can forge that header.
-* The connection ID is the entire addressing scheme. A frontend request names a
-  saved connection; there is no code path from a frontend string to a host.
+* The connection ID and route revision are the entire addressing scheme. A
+  frontend request names one saved connection generation; there is no code
+  path from a frontend string to a host, and stale Local work is refused.
 * Everything after `/api` is relayed verbatim, still percent-encoded.
 
 Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
@@ -78,6 +79,9 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
    refused, and proxy error headers are exposed to the webview.
 10. Response-header and WebSocket-handshake waits have finite budgets, while
     established SSE, download, log, and terminal streams remain unbounded.
+11. Local's non-secret target identity and monotonic revision survive app
+    launches. Old revisions receive a native 409, and an open terminal is
+    revoked as soon as its revision stops being current.
 
 ## Credentials
 

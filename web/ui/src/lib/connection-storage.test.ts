@@ -4,6 +4,7 @@ import {
   clearConnectionStorage,
   connectionStorageKey,
   readConnectionStorage,
+  synchronizeLocalRouteRevision,
   writeConnectionStorage,
 } from "./connection-storage"
 
@@ -131,5 +132,35 @@ describe("show-archived connection storage", () => {
     expect(storage.getItem("wisp_shell_tabs_v1")).toBeNull()
     expect(storage.getItem(remoteTask)).toBe("remote-task")
     expect(storage.getItem("unrelated")).toBe("keep")
+  })
+
+  it("clears stale Local values across app launches before accepting a revision", () => {
+    const localTask = connectionStorageKey(LOCAL_CONNECTION, "selected_task")
+    const remoteTask = connectionStorageKey(REMOTE_CONNECTION, "selected_task")
+    const storage = memoryStorage({
+      wisp_desktop_local_route_revision: "4",
+      [localTask]: "old-local-task",
+      [remoteTask]: "remote-task",
+      wisp_selected_task: "old-legacy-task",
+      unrelated: "keep",
+    })
+
+    expect(synchronizeLocalRouteRevision(5, storage)).toBe(true)
+    expect(storage.getItem("wisp_desktop_local_route_revision")).toBe("5")
+    expect(storage.getItem(localTask)).toBeNull()
+    expect(storage.getItem("wisp_selected_task")).toBeNull()
+    expect(storage.getItem(remoteTask)).toBe("remote-task")
+    expect(storage.getItem("unrelated")).toBe("keep")
+  })
+
+  it("preserves current Local values when the accepted revision matches", () => {
+    const localTask = connectionStorageKey(LOCAL_CONNECTION, "selected_task")
+    const storage = memoryStorage({
+      wisp_desktop_local_route_revision: "5",
+      [localTask]: "current-local-task",
+    })
+
+    expect(synchronizeLocalRouteRevision(5, storage)).toBe(false)
+    expect(storage.getItem(localTask)).toBe("current-local-task")
   })
 })

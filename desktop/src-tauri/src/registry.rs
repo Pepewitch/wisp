@@ -60,6 +60,8 @@ pub enum ConnectionKind {
 pub enum RegistryError {
     #[error("no connection named {0}")]
     UnknownConnection(String),
+    #[error("that connection route belongs to an earlier target generation")]
+    StaleRoute,
     #[error("that connection is being removed")]
     PendingRemoval,
     #[error("the built-in local connection cannot be {0}")]
@@ -119,12 +121,38 @@ pub struct StoredConnection {
     pub created_at: u64,
 }
 
+/// Non-secret identity of the daemon most recently accepted for Local.
+///
+/// Local keeps its reserved logical ID across launches, so this is persisted
+/// with a monotonic route revision. That lets both the native proxy and the
+/// webview reject convenience state or requests that belonged to an earlier
+/// daemon without ever copying Local's token into desktop-owned storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredLocalTarget {
+    url: String,
+    instance_id: String,
+}
+
+impl StoredLocalTarget {
+    fn from_profile(profile: &LocalProfile) -> Self {
+        Self {
+            url: profile.base().to_string(),
+            instance_id: profile.instance_id().to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegistryFile {
     version: u32,
     #[serde(default = "default_local_label")]
     local_label: String,
+    #[serde(default)]
+    local_target: Option<StoredLocalTarget>,
+    #[serde(default)]
+    local_route_revision: u32,
     #[serde(default)]
     connections: Vec<StoredConnection>,
     /// Non-secret removal tombstones. An ID here has already lost its route.
@@ -137,6 +165,8 @@ impl Default for RegistryFile {
         Self {
             version: FILE_VERSION,
             local_label: default_local_label(),
+            local_target: None,
+            local_route_revision: 0,
             connections: Vec::new(),
             pending_removals: Vec::new(),
         }
@@ -148,8 +178,9 @@ impl Default for RegistryFile {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfo {
     pub id: String,
-    /// Process-local routing generation. The reserved Local ID stays stable,
-    /// so a target change increments this value to invalidate webview state.
+    /// Persisted routing generation. The reserved Local ID stays stable, so a
+    /// target change increments this value to invalidate proxy routes and
+    /// webview state across both reconnects and application launches.
     pub route_revision: u32,
     #[serde(rename = "name")]
     pub label: String,
@@ -175,6 +206,7 @@ pub struct CleanupIssue {
 #[derive(Debug, Clone)]
 pub struct Target {
     pub id: String,
+    pub route_revision: u32,
     pub kind: ConnectionKind,
     pub base: Url,
     pub instance_id: String,
@@ -201,6 +233,7 @@ struct State {
     credential_errors: HashMap<String, String>,
     cleanup_errors: BTreeMap<String, String>,
     identity: HashMap<String, Identity>,
+    local_target: Option<StoredLocalTarget>,
     local_route_revision: u32,
 }
 
@@ -225,12 +258,26 @@ impl Registry {
         local_home: PathBuf,
         local: Result<LocalProfile, LocalError>,
     ) -> Result<Self, RegistryError> {
-        let file = read_file(&path)?;
+        let mut file = read_file(&path)?;
         validate_file(&path, &file)?;
         let (local_profile, local_error) = match local {
             Ok(profile) => (Some(profile), None),
             Err(error) => (None, Some(error.to_string())),
         };
+
+        // Record the first observed Local target without advancing the
+        // generation. Thereafter, an address or identity change advances and
+        // persists the generation before the proxy becomes available. A
+        // launch that cannot durably record the new scope fails closed.
+        if let Some(observed) = local_profile.as_ref().map(StoredLocalTarget::from_profile) {
+            if file.local_target.as_ref() != Some(&observed) {
+                if file.local_target.is_some() {
+                    file.local_route_revision = file.local_route_revision.saturating_add(1);
+                }
+                file.local_target = Some(observed);
+                write_file(&path, &file)?;
+            }
+        }
 
         let local_label = clean_label(&file.local_label)?;
         let mut connections = BTreeMap::new();
@@ -253,7 +300,8 @@ impl Registry {
                 credential_errors: HashMap::new(),
                 cleanup_errors: BTreeMap::new(),
                 identity: HashMap::new(),
-                local_route_revision: 0,
+                local_target: file.local_target,
+                local_route_revision: file.local_route_revision,
             }),
             #[cfg(test)]
             persist_failure_countdown: Mutex::new(None),
@@ -360,6 +408,8 @@ impl Registry {
         let file = RegistryFile {
             version: FILE_VERSION,
             local_label: state.local_label.clone(),
+            local_target: state.local_target.clone(),
+            local_route_revision: state.local_route_revision,
             connections: state.connections.values().cloned().collect(),
             pending_removals: state.pending_removals.iter().cloned().collect(),
         };
@@ -504,14 +554,15 @@ impl Registry {
     /// Replace the in-memory Local profile after an authenticated reconnect.
     /// The source of truth remains `~/.wisp/config.json`; only the mutable
     /// launch snapshot and identity state change here.
-    pub fn refresh_local(&self, profile: LocalProfile) -> ConnectionInfo {
+    pub fn refresh_local(&self, profile: LocalProfile) -> Result<ConnectionInfo, RegistryError> {
         let _mutation = self.mutation_lock();
         let mut state = self.lock();
-        let target_changed = state.local.as_ref().is_none_or(|current| {
-            current.base() != profile.base() || current.instance_id() != profile.instance_id()
-        });
+        let observed = StoredLocalTarget::from_profile(&profile);
+        let target_changed = state.local_target.as_ref() != Some(&observed);
+        let before = state.clone();
         if target_changed {
             state.local_route_revision = state.local_route_revision.saturating_add(1);
+            state.local_target = Some(observed);
         }
         let info = ConnectionInfo {
             id: LOCAL_CONNECTION_ID.to_string(),
@@ -528,7 +579,13 @@ impl Registry {
         state
             .identity
             .insert(LOCAL_CONNECTION_ID.to_string(), Identity::Verified);
-        info
+        if target_changed {
+            if let Err(error) = self.persist(&state) {
+                *state = before;
+                return Err(error);
+            }
+        }
+        Ok(info)
     }
 
     /// Resolve a route's connection ID to an upstream target.
@@ -541,6 +598,7 @@ impl Registry {
             let profile = state.local.as_ref()?;
             return Some(Target {
                 id: LOCAL_CONNECTION_ID.to_string(),
+                route_revision: state.local_route_revision,
                 kind: ConnectionKind::Local,
                 base: profile.base().clone(),
                 instance_id: profile.instance_id().to_string(),
@@ -555,10 +613,35 @@ impl Registry {
         let base = normalize_daemon_url(&entry.url).ok()?;
         Some(Target {
             id: entry.id.clone(),
+            route_revision: 0,
             kind: ConnectionKind::Remote,
             base,
             instance_id: entry.instance_id.clone(),
         })
+    }
+
+    /// Resolve only the exact route generation issued to the webview.
+    ///
+    /// This is stricter than [`Self::resolve`]: a stale Local transport cannot
+    /// silently follow the reserved `local` ID when its target changes.
+    pub fn resolve_route(&self, id: &str, route_revision: u32) -> Result<Target, RegistryError> {
+        let target = self
+            .resolve(id)
+            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?;
+        if target.route_revision != route_revision {
+            return Err(RegistryError::StaleRoute);
+        }
+        Ok(target)
+    }
+
+    /// Whether a previously resolved target is still the active generation.
+    /// Terminal input checks this for every frame, so an already-open socket
+    /// loses write authority as soon as Local is retargeted.
+    pub fn route_is_current(&self, target: &Target) -> bool {
+        self.resolve_route(&target.id, target.route_revision)
+            .is_ok_and(|current| {
+                current.base == target.base && current.instance_id == target.instance_id
+            })
     }
 
     /// The bearer token for a resolved target. Never returned to the webview:
@@ -1046,6 +1129,15 @@ fn validate_file(path: &Path, file: &RegistryFile) -> Result<(), RegistryError> 
     if !clean_label(&file.local_label).is_ok_and(|label| label == file.local_label) {
         return Err(invalid("the Local label is invalid"));
     }
+    if let Some(target) = &file.local_target {
+        if normalize_daemon_url(&target.url).is_err()
+            || !crate::probe::is_instance_id(&target.instance_id)
+        {
+            return Err(invalid("the saved Local target is invalid"));
+        }
+    } else if file.local_route_revision != 0 {
+        return Err(invalid("a Local route revision has no saved target"));
+    }
     if file.connections.len() >= MAX_CONNECTIONS {
         return Err(invalid("the connection limit is exceeded"));
     }
@@ -1138,7 +1230,7 @@ mod tests {
         LocalProfile::new(
             remote("http://127.0.0.1:18710"),
             "synthetic-local-token".into(),
-            "wisp-instance-local".into(),
+            "00000000-0000-4000-8000-000000000002".into(),
             PathBuf::from("/synthetic/.wisp/config.json"),
         )
     }
@@ -1215,6 +1307,46 @@ mod tests {
             .find(|connection| connection.id == LOCAL_CONNECTION_ID)
             .expect("local stays present");
         assert_eq!(local.label, "This Mac");
+    }
+
+    #[test]
+    fn local_route_revision_survives_launches_and_rejects_the_old_generation() {
+        let h = harness(true);
+        assert_eq!(h.registry.list()[0].route_revision, 0);
+        assert!(h.registry.resolve_route(LOCAL_CONNECTION_ID, 0).is_ok());
+
+        let path = h.path.clone();
+        let secrets = h.secrets.clone();
+        drop(h.registry);
+        let replacement = LocalProfile::new(
+            remote("http://127.0.0.1:18711"),
+            "synthetic-replacement-token".into(),
+            "00000000-0000-4000-8000-000000000003".into(),
+            PathBuf::from("/synthetic/.wisp/config.json"),
+        );
+        let reopened = Registry::open(
+            path.clone(),
+            secrets.clone(),
+            PathBuf::from("/synthetic/.wisp"),
+            Ok(replacement.clone()),
+        )
+        .expect("replacement launch opens");
+        assert_eq!(reopened.list()[0].route_revision, 1);
+        assert!(matches!(
+            reopened.resolve_route(LOCAL_CONNECTION_ID, 0),
+            Err(RegistryError::StaleRoute)
+        ));
+        assert!(reopened.resolve_route(LOCAL_CONNECTION_ID, 1).is_ok());
+
+        drop(reopened);
+        let stable = Registry::open(
+            path,
+            secrets,
+            PathBuf::from("/synthetic/.wisp"),
+            Ok(replacement),
+        )
+        .expect("same target reopens");
+        assert_eq!(stable.list()[0].route_revision, 1);
     }
 
     #[test]

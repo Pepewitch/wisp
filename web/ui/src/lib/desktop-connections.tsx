@@ -35,6 +35,7 @@ import {
 } from "@/lib/desktop-bridge"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
+import { prepareLocalScope } from "@/lib/desktop-local-scope"
 import { reconnectDesktopConnection } from "@/lib/desktop-reconnect"
 import { removeDesktopConnection } from "@/lib/desktop-remove"
 import { resetDesktopApplication } from "@/lib/desktop-reset"
@@ -95,8 +96,16 @@ function reconcileConnections(
       previous.connections.find((entry) => entry.metadata.id === metadata.id)
         ?.metadata.routeRevision === metadata.routeRevision
         ? (prior.get(metadata.id) ??
-          createDesktopTransport(bootstrap.proxyBaseUrl, metadata.id))
-        : createDesktopTransport(bootstrap.proxyBaseUrl, metadata.id),
+          createDesktopTransport(
+            bootstrap.proxyBaseUrl,
+            metadata.id,
+            metadata.routeRevision ?? 0
+          ))
+        : createDesktopTransport(
+            bootstrap.proxyBaseUrl,
+            metadata.id,
+            metadata.routeRevision ?? 0
+          ),
   }))
   const candidate = preferredActiveId ?? bootstrap.activeConnectionId
   const activeId = connections.some((entry) => entry.metadata.id === candidate)
@@ -277,6 +286,22 @@ function useConnectionActions({
   }
 }
 
+function initializeConnectionState(initial: DesktopBootstrap): ConnectionState {
+  prepareLocalScope(initial)
+  return reconcileConnections(null, initial)
+}
+
+function initializeReachability(
+  connections: readonly DesktopConnectionMetadata[]
+): ReadonlyMap<string, ConnectionReachability> {
+  return new Map(
+    connections.map((connection) => [
+      connection.id,
+      connection.ready ? "unknown" : "offline",
+    ])
+  )
+}
+
 export function DesktopApplicationProvider({
   initial,
   bridge = desktopBridge,
@@ -287,7 +312,7 @@ export function DesktopApplicationProvider({
   children: ReactNode
 }) {
   const [state, setState] = useState<ConnectionState>(() =>
-    reconcileConnections(null, initial)
+    initializeConnectionState(initial)
   )
   const stateRef = useRef(state)
   const [attention, setAttention] = useState<
@@ -295,15 +320,7 @@ export function DesktopApplicationProvider({
   >(() => new Map())
   const [reachability, setReachability] = useState<
     ReadonlyMap<string, ConnectionReachability>
-  >(
-    () =>
-      new Map(
-        initial.connections.map((connection) => [
-          connection.id,
-          connection.ready ? "unknown" : "offline",
-        ])
-      )
-  )
+  >(() => initializeReachability(initial.connections))
   const [actionError, setActionError] = useState<string | null>(
     initial.cleanupIssues?.[0]?.message ?? null
   )
@@ -313,6 +330,7 @@ export function DesktopApplicationProvider({
 
   const apply = useCallback(
     (bootstrap: DesktopBootstrap, preferredActiveId?: string) => {
+      prepareLocalScope(bootstrap)
       setState((previous) => {
         const next = reconcileConnections(
           previous,
@@ -346,7 +364,7 @@ export function DesktopApplicationProvider({
       !stateRef.current.connections.some(
         (entry) => entry.metadata.id === connectionId
       )
-      )
+    )
       return
     const previousId = stateRef.current.activeId
     setState((previous) => {

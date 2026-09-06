@@ -27,7 +27,8 @@ describe("desktop daemon transport", () => {
 
     const transport = createDesktopTransport(
       "http://127.0.0.1:45123/per-launch-capability/",
-      "remote-one"
+      "remote-one",
+      7
     )
     await transport.request("/api/tasks?archived=1", {
       method: "POST",
@@ -37,7 +38,7 @@ describe("desktop daemon transport", () => {
     transport.openWebSocket("/api/tasks/synthetic/terminal?shell=0")
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/api/tasks?archived=1",
+      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/tasks?archived=1",
       expect.objectContaining({
         method: "POST",
         body: '{"value":1}',
@@ -47,15 +48,15 @@ describe("desktop daemon transport", () => {
       })
     )
     expect(eventUrls).toEqual([
-      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/api/events",
+      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/events",
     ])
     expect(socketUrls).toEqual([
-      "ws://127.0.0.1:45123/per-launch-capability/connections/remote-one/api/tasks/synthetic/terminal?shell=0",
+      "ws://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/tasks/synthetic/terminal?shell=0",
     ])
     expect(
       transport.assetUrl("/api/tasks/synthetic/attachments/1/image.png")
     ).toBe(
-      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/api/tasks/synthetic/attachments/1/image.png"
+      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/tasks/synthetic/attachments/1/image.png"
     )
     expect(Object.isFrozen(transport)).toBe(true)
     expect(JSON.stringify(transport)).not.toContain("token")
@@ -74,7 +75,8 @@ describe("desktop daemon transport", () => {
     )
     const transport = createDesktopTransport(
       "http://127.0.0.1:45123/per-launch-capability",
-      "local"
+      "local",
+      0
     )
 
     await expect(

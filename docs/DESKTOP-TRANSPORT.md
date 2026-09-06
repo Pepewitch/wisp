@@ -96,22 +96,24 @@ opaque generated identifiers restricted to the ASCII path-segment pattern
 cache keys, or credential lookup.
 
 The reserved Local ID remains stable, so its non-secret metadata also carries a
-process-local `routeRevision`. Native code increments it only when Local's URL
-or daemon identity changes. The shared UI treats `(connectionId,
-routeRevision)` as the runtime lifetime: it closes old streams and terminals,
-creates a fresh transport, and clears Local-owned cache, drafts, attachments,
-and preferences. Credential-only rotation keeps the revision and local work.
+persisted `routeRevision`. Native code increments it only when Local's URL or
+daemon identity changes, including changes observed between app launches. The
+shared UI treats `(connectionId, routeRevision)` as the runtime lifetime: it
+closes old streams and terminals, creates a fresh transport, and clears
+Local-owned cache, drafts, attachments, and preferences. Credential-only
+rotation keeps the revision and local work.
 
 The desktop loopback route is connection-qualified:
 
 ```text
-/connections/:connectionId/api/...
+/connections/:connectionId/:routeRevision/api/...
 ```
 
-The native process resolves `connectionId` through saved metadata. A frontend
-request cannot supply or override an upstream URL. Editing a saved URL creates
-a replacement transport after a successful capability check; it never mutates
-the target underneath in-flight work.
+The native process resolves the exact `(connectionId, routeRevision)` through
+saved metadata. A frontend request cannot supply or override an upstream URL,
+and a stale Local generation is rejected before reaching any daemon. Editing a
+saved remote URL creates a replacement transport after a successful capability
+check; it never mutates the target underneath in-flight work.
 
 Every completion path retains the initiating `connectionId`. Changing the
 selected tab cannot retarget a REST mutation, reconnect timer, update poll,
@@ -236,7 +238,7 @@ apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base
-plus `/connections/<connectionId>/api/...`. The capability travels in the path
+plus `/connections/<connectionId>/<routeRevision>/api/...`. The capability travels in the path
 because `EventSource`, `WebSocket`, and `<img>` cannot set headers; it
 authorizes talking to the proxy, never to a daemon, and it does not outlive the
 process. No command returns a daemon token, and no connection metadata has a

@@ -3,16 +3,17 @@
 //! Route shape, and why it looks like this:
 //!
 //! ```text
-//! http://127.0.0.1:<ephemeral>/<per-launch capability>/connections/<id>/api/...
+//! http://127.0.0.1:<ephemeral>/<capability>/connections/<id>/<revision>/api/...
 //! ```
 //!
 //! * The **capability** is in the path because `EventSource`, `WebSocket`, and
 //!   `<img src>` cannot set a header, and every one of those is load-bearing in
 //!   this UI. It authorizes talking to the proxy; it is never a daemon
 //!   credential, and it dies with the process.
-//! * The **connection ID** is the whole addressing scheme. A request names a
-//!   saved connection, never a URL. There is no code path from a frontend
-//!   string to an upstream host.
+//! * The **connection ID and route revision** are the whole addressing scheme.
+//!   A request names a saved connection generation, never a URL. There is no
+//!   code path from a frontend string to an upstream host, and an old Local
+//!   transport cannot follow the stable `local` ID onto a replacement daemon.
 //! * Everything after `/api` is forwarded verbatim, still percent-encoded, so
 //!   attachment filenames and query strings survive the hop unaltered.
 //!
@@ -209,7 +210,8 @@ pub struct ProxyHandle {
 
 impl ProxyHandle {
     /// The unguessable per-launch base handed to the webview. Everything the
-    /// frontend builds is this string plus `/connections/<id>/api/...`.
+    /// frontend builds is this string plus
+    /// `/connections/<id>/<revision>/api/...`.
     pub fn base(&self) -> &str {
         &self.base
     }
@@ -253,6 +255,7 @@ pub async fn start(state: Arc<ProxyState>) -> Result<ProxyHandle, ProxyStartErro
 struct ProxyRoute<'a> {
     capability: &'a str,
     connection_id: &'a str,
+    route_revision: u32,
     /// `api/...`, exactly as it appeared on the request line.
     rest: &'a str,
 }
@@ -266,6 +269,11 @@ impl<'a> ProxyRoute<'a> {
         if !crate::registry::is_valid_connection_id(connection_id) {
             return None;
         }
+        let (raw_revision, rest) = rest.split_once('/')?;
+        let route_revision = raw_revision.parse::<u32>().ok()?;
+        if route_revision.to_string() != raw_revision {
+            return None;
+        }
         // Only the daemon API is reachable. There is no proxy route to a
         // daemon's web bundle, and no route that is not a daemon route.
         if rest != "api" && !rest.starts_with("api/") {
@@ -274,6 +282,7 @@ impl<'a> ProxyRoute<'a> {
         Some(Self {
             capability,
             connection_id,
+            route_revision,
             rest,
         })
     }
@@ -396,12 +405,26 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
 
     // The only source of an upstream target. A removed or tombstoned
     // connection resolves to nothing, which is what makes removal a revocation.
-    let Some(target) = state.registry.resolve(route.connection_id) else {
-        return refuse(
-            StatusCode::NOT_FOUND,
-            "unknown-connection",
-            "that connection is not available",
-        );
+    let target = match state
+        .registry
+        .resolve_route(route.connection_id, route.route_revision)
+    {
+        Ok(target) => target,
+        Err(RegistryError::StaleRoute) => return stale_route(),
+        Err(RegistryError::UnknownConnection(_)) => {
+            return refuse(
+                StatusCode::NOT_FOUND,
+                "unknown-connection",
+                "that connection is not available",
+            )
+        }
+        Err(error) => {
+            return refuse(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "connection-unavailable",
+                error.to_string(),
+            )
+        }
     };
 
     // Webview JSON writes cross from the Tauri document origin to loopback.
@@ -698,6 +721,14 @@ fn identity_mismatch() -> Response {
     )
 }
 
+fn stale_route() -> Response {
+    refuse(
+        StatusCode::CONFLICT,
+        "stale-route",
+        "this connection changed; retry from its current tab",
+    )
+}
+
 fn bearer(credential: &str) -> HeaderValue {
     let mut value = HeaderValue::from_str(&format!("Bearer {credential}"))
         .unwrap_or_else(|_| HeaderValue::from_static("Bearer"));
@@ -714,6 +745,9 @@ async fn proxy_http(
     parts: http::request::Parts,
     body: Body,
 ) -> Response {
+    if !state.registry.route_is_current(target) {
+        return stale_route();
+    }
     let request_has_body = has_request_body(&parts.headers);
     let buffered_body = if request_has_body {
         match axum::body::to_bytes(body, MAX_REPLAYABLE_REQUEST_BODY).await {
@@ -746,6 +780,9 @@ async fn proxy_http(
     {
         match state.registry.reload_local_credential(target) {
             Ok(refreshed) if refreshed != credential => {
+                if !state.registry.route_is_current(target) {
+                    return stale_route();
+                }
                 let mut retry = upstream_request(state, &parts, upstream, &refreshed);
                 if let Some(bytes) = &buffered_body {
                     retry = retry.body(bytes.clone());
@@ -879,6 +916,10 @@ async fn proxy_websocket(
 ) -> Response {
     use tungstenite::client::IntoClientRequest;
 
+    if !state.registry.route_is_current(&target) {
+        return stale_route();
+    }
+
     let socket_url = to_websocket_url(&upstream);
     // Only the subprotocol crosses over. Everything else in a handshake is
     // connection-scoped and is generated fresh by the client library.
@@ -979,7 +1020,10 @@ async fn proxy_websocket(
     if let Some(protocol) = negotiated {
         upgrade = upgrade.protocols([protocol]);
     }
-    upgrade.on_upgrade(move |client| relay(client, upstream_socket))
+    if !state.registry.route_is_current(&target) {
+        return stale_route();
+    }
+    upgrade.on_upgrade(move |client| relay(client, upstream_socket, state, target))
 }
 
 fn forward_upgrade_rejection(rejection: http::Response<Option<Vec<u8>>>) -> Response {
@@ -1017,15 +1061,22 @@ async fn relay(
     upstream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    state: Arc<ProxyState>,
+    target: Target,
 ) {
     let (mut client_tx, mut client_rx) = client.split();
     let (mut upstream_tx, mut upstream_rx) = upstream.split();
 
+    let input_state = state.clone();
+    let input_target = target.clone();
     let to_upstream = async {
         while let Some(Ok(message)) = client_rx.next().await {
             let Some(message) = client_message_to_upstream(message) else {
                 continue;
             };
+            if !input_state.registry.route_is_current(&input_target) {
+                break;
+            }
             if upstream_tx.send(message).await.is_err() {
                 break;
             }
@@ -1043,10 +1094,19 @@ async fn relay(
         }
         let _ = client_tx.close().await;
     };
+    let revoked = async {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if !state.registry.route_is_current(&target) {
+                break;
+            }
+        }
+    };
 
     tokio::select! {
         _ = to_upstream => {}
         _ = to_client => {}
+        _ = revoked => {}
     }
 }
 
@@ -1090,27 +1150,31 @@ mod tests {
 
     #[test]
     fn a_route_needs_a_capability_a_connection_and_an_api_path() {
-        let route = ProxyRoute::parse("/CAP/connections/c-abc/api/tasks").expect("valid route");
+        let route = ProxyRoute::parse("/CAP/connections/c-abc/7/api/tasks").expect("valid route");
         assert_eq!(route.capability, "CAP");
         assert_eq!(route.connection_id, "c-abc");
+        assert_eq!(route.route_revision, 7);
         assert_eq!(route.rest, "api/tasks");
 
-        assert!(ProxyRoute::parse("/CAP/connections/local/api").is_some());
+        assert!(ProxyRoute::parse("/CAP/connections/local/0/api").is_some());
         assert!(ProxyRoute::parse("/api/tasks").is_none());
         assert!(ProxyRoute::parse("/CAP/connections/c-abc").is_none());
         assert!(ProxyRoute::parse("/CAP/c-abc/api/tasks").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/c-abc/nope/api/tasks").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/c-abc/00/api/tasks").is_none());
         // Nothing but the daemon API is reachable through this proxy.
-        assert!(ProxyRoute::parse("/CAP/connections/c-abc/index.html").is_none());
-        assert!(ProxyRoute::parse("/CAP/connections/c-abc/apiary").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/c-abc/0/index.html").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/c-abc/0/apiary").is_none());
         // An ID that is not a clean path segment never becomes a lookup.
-        assert!(ProxyRoute::parse("/CAP/connections/c%2Fabc/api/tasks").is_none());
-        assert!(ProxyRoute::parse("/CAP/connections/../api/tasks").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/c%2Fabc/0/api/tasks").is_none());
+        assert!(ProxyRoute::parse("/CAP/connections/../0/api/tasks").is_none());
     }
 
     #[test]
     fn the_suffix_keeps_its_original_encoding() {
-        let route = ProxyRoute::parse("/CAP/connections/local/api/tasks/t-1/attachments/a%20b.png")
-            .expect("valid route");
+        let route =
+            ProxyRoute::parse("/CAP/connections/local/4/api/tasks/t-1/attachments/a%20b.png")
+                .expect("valid route");
         assert_eq!(route.rest, "api/tasks/t-1/attachments/a%20b.png");
     }
 

@@ -579,16 +579,39 @@ impl Harness {
         self.proxy.base()
     }
 
-    /// `<proxy base>/connections/<id>/<path>`.
+    /// `<proxy base>/connections/<id>/<revision>/<path>` using the current
+    /// native generation.
     pub fn route(&self, connection_id: &str, path: &str) -> String {
-        format!("{}/connections/{connection_id}/{path}", self.proxy.base())
+        let revision = self
+            .registry
+            .list()
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| connection.route_revision)
+            .unwrap_or(0);
+        self.route_at(connection_id, revision, path)
+    }
+
+    /// Build a route for an explicitly captured generation.
+    pub fn route_at(&self, connection_id: &str, revision: u32, path: &str) -> String {
+        format!(
+            "{}/connections/{connection_id}/{revision}/{path}",
+            self.proxy.base()
+        )
     }
 
     /// The same route under a capability the caller was never given.
     pub fn route_with_wrong_capability(&self, connection_id: &str, path: &str) -> String {
         let forged = "f".repeat(self.capability.len());
+        let revision = self
+            .registry
+            .list()
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| connection.route_revision)
+            .unwrap_or(0);
         format!(
-            "http://127.0.0.1:{}/{forged}/connections/{connection_id}/{path}",
+            "http://127.0.0.1:{}/{forged}/connections/{connection_id}/{revision}/{path}",
             self.proxy.port()
         )
     }

@@ -25,18 +25,23 @@ function socketUrl(url: string): string {
  * A frozen connection route through the per-launch native proxy.
  *
  * The daemon URL and token are deliberately absent: native code resolves both
- * from connectionId and injects credentials on every HTTP/SSE/WS/media hop.
+ * from connectionId plus routeRevision and injects credentials on every
+ * HTTP/SSE/WS/media hop. A stale Local transport cannot follow its stable ID
+ * after native code accepts a replacement daemon.
  */
 export function createDesktopTransport(
   proxyBaseUrl: string,
-  connectionId: string
+  connectionId: string,
+  routeRevision: number
 ): Readonly<DaemonTransport> {
   if (!CONNECTION_ID.test(connectionId))
     throw new Error(`Invalid desktop connection id: ${connectionId}`)
+  if (!Number.isSafeInteger(routeRevision) || routeRevision < 0)
+    throw new Error(`Invalid desktop route revision: ${routeRevision}`)
   const base = proxyBaseUrl.replace(/\/+$/, "")
   const qualify = (path: string): string => {
     daemonPath(path)
-    return `${base}/connections/${connectionId}${path}`
+    return `${base}/connections/${connectionId}/${routeRevision}${path}`
   }
 
   const request = async <T>(

@@ -27,10 +27,18 @@ describe("connection-local unsent data", () => {
   it("clears only the removed connection", () => {
     writeDraft(CONNECTION, "task-one", "first")
     writeDraft("other-connection", "task-one", "other")
+    writePendingAttachmentCount(CONNECTION, "task-one", 2)
+    writePendingAttachmentCount("other-connection", "task-one", 3)
     clearConnectionDrafts(CONNECTION)
 
-    expect(connectionLocalData(CONNECTION).drafts).toBe(0)
-    expect(connectionLocalData("other-connection").drafts).toBe(1)
+    expect(connectionLocalData(CONNECTION)).toEqual({
+      drafts: 0,
+      pendingAttachments: 0,
+    })
+    expect(connectionLocalData("other-connection")).toEqual({
+      drafts: 1,
+      pendingAttachments: 3,
+    })
     clearConnectionDrafts("other-connection")
   })
 })

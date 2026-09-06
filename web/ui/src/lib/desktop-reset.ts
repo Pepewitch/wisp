@@ -1,5 +1,8 @@
 import { clearRememberedAttachments } from "@/lib/attachments"
-import { clearConnectionStorage } from "@/lib/connection-storage"
+import {
+  clearConnectionStorage,
+  synchronizeLocalRouteRevision,
+} from "@/lib/connection-storage"
 import type {
   DesktopBootstrap,
   DesktopBridge,
@@ -60,6 +63,11 @@ export async function resetDesktopApplication({
       await clearForgottenConnection(entry.metadata.id, forgetAttention)
     }
     clearDesktopWebviewData()
+    const localRevision = bootstrap.connections.find(
+      (connection) => connection.id === "local"
+    )?.routeRevision
+    if (localRevision !== undefined)
+      synchronizeLocalRouteRevision(localRevision)
   }
   if (resetError) throw resetError
 }

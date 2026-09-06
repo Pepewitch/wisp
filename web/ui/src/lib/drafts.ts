@@ -25,7 +25,10 @@ export function clearConnectionDrafts(connectionId: string): void {
   for (const draftKey of drafts.keys()) {
     if (draftKey.startsWith(prefix)) drafts.delete(draftKey)
   }
-  pendingAttachments.delete(connectionId)
+  for (const attachmentKey of pendingAttachments.keys()) {
+    if (attachmentKey.startsWith(prefix))
+      pendingAttachments.delete(attachmentKey)
+  }
 }
 
 /** Only a count is shared; attachment bytes stay inside the mounted composer. */

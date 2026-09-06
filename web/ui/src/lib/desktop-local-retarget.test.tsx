@@ -24,6 +24,7 @@ const LOCAL: DesktopConnectionMetadata = {
   instanceId: "wisp-instance-local",
   ready: true,
 }
+const LOCAL_ROUTE_REVISION_KEY = "wisp_desktop_local_route_revision"
 
 function bootstrap(local: DesktopConnectionMetadata = LOCAL): DesktopBootstrap {
   return {
@@ -127,6 +128,7 @@ function renderHarness(
   },
   action?: "reconnect" | "diagnose"
 ) {
+  localStorage.setItem(LOCAL_ROUTE_REVISION_KEY, "0")
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -145,6 +147,43 @@ afterEach(() => {
 })
 
 describe("Local native target revisions", () => {
+  it("clears daemon-A state before a restarted webview mounts daemon B", () => {
+    const retargeted = {
+      ...LOCAL,
+      routeRevision: 1,
+      instanceId: "wisp-instance-local-after-restart",
+    }
+    const scopedKey = connectionStorageKey("local", "selected_task")
+    localStorage.setItem(LOCAL_ROUTE_REVISION_KEY, "0")
+    localStorage.setItem(scopedKey, "old-daemon-task")
+    localStorage.setItem("wisp_selected_task", "old-legacy-task")
+    writeDraft("local", "old-daemon-task", "old in-memory draft")
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider
+          initial={bootstrap(retargeted)}
+          bridge={bridge({})}
+        >
+          <LocalReconnectHarness
+            onMount={vi.fn()}
+            onUnmount={vi.fn()}
+            onSettled={vi.fn()}
+          />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+
+    expect(screen.getByLabelText("local route revision")).toHaveTextContent("1")
+    expect(localStorage.getItem(LOCAL_ROUTE_REVISION_KEY)).toBe("1")
+    expect(localStorage.getItem(scopedKey)).toBeNull()
+    expect(localStorage.getItem("wisp_selected_task")).toBeNull()
+    expect(readDraft("local", "old-daemon-task")).toBe("")
+  })
+
   it("remounts and clears Local-owned state when the target changes", async () => {
     const retargeted = {
       ...LOCAL,
