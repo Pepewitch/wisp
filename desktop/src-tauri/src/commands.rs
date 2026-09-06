@@ -8,7 +8,6 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::core::{Bootstrap, CoreError, DesktopCore};
-use crate::local::LOCAL_CONNECTION_ID;
 use crate::probe::DaemonIdentity;
 use crate::registry::ConnectionInfo;
 use crate::setup::{LocalSetupReport, NextStep};
@@ -18,6 +17,16 @@ use crate::setup::{LocalSetupReport, NextStep};
 #[tauri::command]
 pub fn desktop_bootstrap(core: State<'_, DesktopCore>) -> Bootstrap {
     core.bootstrap()
+}
+
+/// Keep native-only UI capabilities scoped to the selected connection. Proxy
+/// routing remains explicitly connection-qualified and never uses this state.
+#[tauri::command]
+pub fn select_desktop_connection(
+    core: State<'_, DesktopCore>,
+    connection_id: String,
+) -> Result<(), CoreError> {
+    core.select_connection(&connection_id)
 }
 
 /// Test, then save. The capability check runs before anything is written, so a
@@ -107,11 +116,12 @@ pub fn reset_desktop_data(core: State<'_, DesktopCore>) -> Result<(), CoreError>
 #[tauri::command]
 pub async fn pick_local_project(
     app: tauri::AppHandle,
+    core: State<'_, DesktopCore>,
     connection_id: String,
 ) -> Result<Option<String>, String> {
-    if connection_id != LOCAL_CONNECTION_ID {
-        return Err("the native folder picker is only available for Local".to_string());
-    }
+    let generation = core
+        .begin_local_picker(&connection_id)
+        .map_err(|error| error.to_string())?;
     let (send, receive) = tokio::sync::oneshot::channel();
     app.dialog().file().pick_folder(move |picked| {
         let _ = send.send(picked);
@@ -119,6 +129,8 @@ pub async fn pick_local_project(
     let picked = receive
         .await
         .map_err(|_| "the folder picker closed unexpectedly".to_string())?;
+    core.finish_local_picker(generation)
+        .map_err(|error| error.to_string())?;
     Ok(picked.and_then(|path| path.into_path().ok().map(|p| p.display().to_string())))
 }
 

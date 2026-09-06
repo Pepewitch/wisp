@@ -74,9 +74,12 @@ function connectionIssue(
   reachability: ConnectionReachability = "unknown"
 ): string | null {
   if (!connection.ready)
-    return connection.kind === "local"
-      ? "Local Wisp needs setup"
-      : "Connection needs attention"
+    return (
+      connection.problem ??
+      (connection.kind === "local"
+        ? "Local Wisp needs setup"
+        : "Connection needs attention")
+    )
   if (reachability === "offline") return "Daemon unavailable"
   if (reachability === "unauthorized") return "Authentication required"
   if (reachability === "identity-changed") return "Daemon identity changed"
@@ -252,7 +255,7 @@ function DesktopConnections() {
                 active={active}
                 attention={attention}
                 reachability={desktop.reachability.get(entry.metadata.id)}
-                onSelect={() => desktop.select(entry.metadata.id)}
+                onSelect={() => void desktop.select(entry.metadata.id)}
               />
             )
           })}
@@ -262,7 +265,7 @@ function DesktopConnections() {
           <Menu label="More connections" icon={<More />} iconOnly>
             <MenuRadioGroup
               value={desktop.active.metadata.id}
-              onValueChange={desktop.select}
+              onValueChange={(value) => void desktop.select(value)}
             >
               {split.overflow.map((entry) => (
                 <MenuRadioItem
@@ -345,7 +348,7 @@ function MobileConnections() {
             value={desktop.active.metadata.id}
             onValueChange={(value) => {
               if (value === ADD_CONNECTION_ACTION && canAdd) setDialog("add")
-              else desktop.select(value)
+              else void desktop.select(value)
             }}
           >
             {desktop.connections.map((entry) => (

@@ -7,15 +7,23 @@ export function WispUpdateControl({
   updating,
   error,
   onUpdate,
+  supportedApiProtocolVersion,
 }: {
   status: UpdateStatus | undefined
   updating: boolean
   error: string | null
   onUpdate: (version: string) => void
+  /** Present only in Desktop, whose native proxy has a fixed daemon contract. */
+  supportedApiProtocolVersion?: number
 }) {
   if (!status) return null
 
   const target = status.latestVersion
+  const incompatible =
+    target !== null &&
+    supportedApiProtocolVersion !== undefined &&
+    (status.currentApiProtocolVersion !== supportedApiProtocolVersion ||
+      status.latestApiProtocolVersion !== supportedApiProtocolVersion)
   const busy = !error && (updating || status.state === "installing" || status.state === "restarting")
   if (target && busy) {
     return (
@@ -25,7 +33,12 @@ export function WispUpdateControl({
     )
   }
 
-  if (target && status.canAutoUpdate && (status.state === "available" || status.state === "failed")) {
+  if (
+    target &&
+    !incompatible &&
+    status.canAutoUpdate &&
+    (status.state === "available" || status.state === "failed")
+  ) {
     return (
       <Button
         size="sm"
@@ -35,6 +48,17 @@ export function WispUpdateControl({
       >
         {status.state === "failed" || error ? "Retry update" : `Update ${target}`}
       </Button>
+    )
+  }
+
+  if (incompatible) {
+    return (
+      <span
+        className="text-[11.5px] text-warning"
+        title={`Wisp ${target} uses API protocol ${status.latestApiProtocolVersion ?? "unknown"}; this Desktop supports protocol ${supportedApiProtocolVersion}`}
+      >
+        Update blocked
+      </span>
     )
   }
 

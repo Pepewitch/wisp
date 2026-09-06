@@ -35,6 +35,7 @@ import {
 } from "@/lib/desktop-bridge"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
+import { removeDesktopConnection } from "@/lib/desktop-remove"
 import {
   clearForgottenConnection,
   resetDesktopApplication,
@@ -56,7 +57,7 @@ export interface DesktopConnectionContextValue {
   readonly reachability: ReadonlyMap<string, ConnectionReachability>
   readonly pendingAction: string | null
   readonly actionError: string | null
-  select(connectionId: string): void
+  select(connectionId: string): Promise<void>
   probeRemote(input: RemoteConnectionProbeInput): Promise<RemoteDaemonPreview>
   probeReconnect(input: ReconnectConnectionInput): Promise<RemoteDaemonPreview>
   addRemote(input: AddRemoteConnectionInput): Promise<void>
@@ -75,7 +76,7 @@ export interface DesktopConnectionContextValue {
 const DesktopConnectionContext =
   createContext<DesktopConnectionContextValue | null>(null)
 
-interface ConnectionState {
+export interface ConnectionState {
   readonly proxyBaseUrl: string
   readonly connections: readonly DesktopConnectionEntry[]
   readonly activeId: string
@@ -112,7 +113,7 @@ export function useDesktopConnections(): DesktopConnectionContextValue | null {
   return useContext(DesktopConnectionContext)
 }
 
-type ApplyBootstrap = (
+export type ApplyBootstrap = (
   bootstrap: DesktopBootstrap,
   preferredActiveId?: string
 ) => void
@@ -158,6 +159,7 @@ function useConnectionActions({
           )
         }
         const added = await bridge.addRemoteConnection(input)
+        await bridge.selectConnection(added.id)
         apply(await bridge.bootstrap(), added.id)
       }),
     [apply, bridge, stateRef, transact]
@@ -213,6 +215,13 @@ function useConnectionActions({
               connection.id !== input.connectionId &&
               connection.name === targetName
           )
+          if (
+            activeBefore === input.connectionId &&
+            !oldStillExists &&
+            replacement
+          ) {
+            await bridge.selectConnection(replacement.id)
+          }
           apply(
             bootstrap,
             activeBefore === input.connectionId && !oldStillExists
@@ -222,63 +231,34 @@ function useConnectionActions({
           if (!oldStillExists) {
             await clearForgottenConnection(input.connectionId, forgetAttention)
           }
+          onBackgroundError(
+            error instanceof Error ? error.message : String(error)
+          )
           throw error
         }
       }),
-    [apply, bridge, forgetAttention, stateRef, transact]
+    [
+      apply,
+      bridge,
+      forgetAttention,
+      onBackgroundError,
+      stateRef,
+      transact,
+    ]
   )
   const remove = useCallback(
     (connectionId: string) =>
-      transact(`remove:${connectionId}`, async () => {
-        const before = stateRef.current
-        const target = before.connections.find(
-          (entry) => entry.metadata.id === connectionId
-        )
-        if (!target) throw new Error("Unknown desktop connection")
-        if (target.metadata.kind === "local")
-          throw new Error("The built-in Local connection cannot be removed")
-        const local = before.connections.find(
-          (entry) => entry.metadata.kind === "local"
-        )!
-        const withoutTarget = Object.freeze({
-          ...before,
-          connections: Object.freeze(
-            before.connections.filter(
-              (entry) => entry.metadata.id !== connectionId
-            )
-          ),
-          activeId:
-            before.activeId === connectionId
-              ? local.metadata.id
-              : before.activeId,
+      transact(`remove:${connectionId}`, () =>
+        removeDesktopConnection({
+          connectionId,
+          bridge,
+          stateRef,
+          setState,
+          apply,
+          forgetAttention,
+          onBackgroundError,
         })
-        stateRef.current = withoutTarget
-        setState(withoutTarget)
-        await queryClient.cancelQueries({ queryKey: [connectionId] })
-        let removalError: unknown = null
-        try {
-          await bridge.removeConnection(connectionId)
-        } catch (error) {
-          removalError = error
-        }
-        const bootstrap = await bridge.bootstrap()
-        apply(bootstrap, stateRef.current.activeId)
-        if (
-          !bootstrap.connections.some(
-            (connection) => connection.id === connectionId
-          )
-        ) {
-          await clearForgottenConnection(connectionId, forgetAttention)
-        }
-        if (removalError) {
-          onBackgroundError(
-            removalError instanceof Error
-              ? removalError.message
-              : String(removalError)
-          )
-          throw removalError
-        }
-      }),
+      ),
     [
       apply,
       bridge,
@@ -291,15 +271,29 @@ function useConnectionActions({
   )
   const resetDesktopData = useCallback(
     () =>
-      transact("reset-desktop-data", () =>
-        resetDesktopApplication({
-          bridge,
-          connections: stateRef.current.connections,
-          apply,
-          forgetAttention,
-        })
-      ),
-    [apply, bridge, forgetAttention, stateRef, transact]
+      transact("reset-desktop-data", async () => {
+        try {
+          await resetDesktopApplication({
+            bridge,
+            connections: stateRef.current.connections,
+            apply,
+            forgetAttention,
+          })
+        } catch (error) {
+          onBackgroundError(
+            error instanceof Error ? error.message : String(error)
+          )
+          throw error
+        }
+      }),
+    [
+      apply,
+      bridge,
+      forgetAttention,
+      onBackgroundError,
+      stateRef,
+      transact,
+    ]
   )
   const { pickLocalProject, setupLocalWisp, applyLocalWispSetup } =
     useLocalConnectionActions({ bridge, stateRef, apply, transact })
@@ -345,7 +339,9 @@ export function DesktopApplicationProvider({
         ])
       )
   )
-  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(
+    initial.cleanupIssues?.[0]?.message ?? null
+  )
   useEffect(() => {
     stateRef.current = state
   }, [state])
@@ -373,23 +369,39 @@ export function DesktopApplicationProvider({
         }
         return next
       })
+      if (bootstrap.cleanupIssues?.[0]) {
+        setActionError(bootstrap.cleanupIssues[0].message)
+      }
     },
     []
   )
 
-  const select = useCallback((connectionId: string) => {
+  const select = useCallback(async (connectionId: string) => {
     if (
       !stateRef.current.connections.some(
         (entry) => entry.metadata.id === connectionId
       )
-    )
+      )
       return
+    const previousId = stateRef.current.activeId
     setState((previous) => {
       const next = { ...previous, activeId: connectionId }
       stateRef.current = next
       return next
     })
-  }, [])
+    try {
+      await bridge.selectConnection(connectionId)
+    } catch (error) {
+      if (stateRef.current.activeId === connectionId) {
+        setState((previous) => {
+          const next = { ...previous, activeId: previousId }
+          stateRef.current = next
+          return next
+        })
+      }
+      setActionError(error instanceof Error ? error.message : String(error))
+    }
+  }, [bridge, stateRef])
 
   const reportAttention = useCallback(
     (connectionId: string, value: ConnectionAttention) => {

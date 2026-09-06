@@ -5,6 +5,10 @@ webview runs the **same** React bundle the daemon serves in a browser
 (`web/ui-dist/index.html`), plus a native core that lets that one bundle talk to
 several independent Wisp daemons at once.
 
+The alpha requires macOS 12.3 or newer on Apple Silicon. Release builds are
+ad-hoc signed and are not notarized yet; the installation guide must keep that
+limitation visible until Developer ID signing is part of the release pipeline.
+
 Status: working alpha. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned
 operation and client record to an immutable connection ID.
@@ -94,9 +98,10 @@ No command returns a token, `LocalProfile` and `Capability` have redacting
 ```ts
 interface Bootstrap {
   proxyBaseUrl: string       // http://127.0.0.1:<port>/<capability>
-  activeConnectionId: "local"
+  activeConnectionId: string
   connections: ConnectionInfo[]
   local: LocalStatus
+  cleanupIssues: { connectionId: string; message: string }[]
 }
 
 interface ConnectionInfo {
@@ -106,6 +111,7 @@ interface ConnectionInfo {
   url: string                // display only
   instanceId: string
   ready: boolean             // false when the credential or profile is gone
+  problem: string | null     // scoped, secret-free recovery detail
 }
 ```
 
@@ -124,6 +130,7 @@ The other commands:
 
 | Command | Arguments | Returns |
 | --- | --- | --- |
+| `select_desktop_connection` | `connectionId` | `void` |
 | `probe_remote_connection` | `url`, `token` | authenticated daemon identity |
 | `add_remote_connection` | `name`, `url`, `token`, `expectedInstanceId` | `ConnectionInfo` |
 | `rename_connection` | `connectionId`, `name` | `ConnectionInfo` |
@@ -137,13 +144,22 @@ The other commands:
 
 Two adjustments the React shell has to absorb:
 
-* **`reconnect_connection` may return a different `id`.** Editing a saved URL
-  mints a replacement connection and revokes the old one, because retargeting an
-  ID in place would silently redirect in-flight work onto a different daemon.
+* **`reconnect_connection` may return a different `id`.** Changing a saved URL
+  or trusting a new daemon identity at the same URL mints a replacement and
+  revokes the old connection, because reusing the ID would carry local state
+  across daemon scope.
   Treat a changed `id` as a connection swap, not a field update.
 * **A 409 with `x-wisp-proxy-error: identity-changed` is a connection-level
   state**, not a task-level refusal. It means a different daemon now answers a
   saved address; the fix is `reconnect_connection`, and the UI should say so.
+* **Native project picking uses a selection generation lease.** The webview
+  mirrors tab selection with `select_desktop_connection`; if selection changes
+  before the folder dialog resolves, native code refuses the path.
+
+Keychain read failures leave only that connection `ready: false` with a
+secret-free `problem`. Deferred deletion failures appear in `cleanupIssues`;
+the route is already revoked, and Reset Desktop Data or the next launch retries
+the persisted tombstone.
 
 Errors are relayed with the daemon's own status and body, so the existing
 `ApiError` handling works unchanged. Responses the *proxy* generated carry an

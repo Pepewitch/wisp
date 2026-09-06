@@ -68,9 +68,10 @@ pub struct SeenRequest {
 
 struct DaemonState {
     label: String,
-    token: String,
+    token: Mutex<String>,
     instance_id: Mutex<String>,
     protocol_version: Mutex<u32>,
+    update_protocol_version: Mutex<u32>,
     seen: Mutex<Vec<SeenRequest>>,
     /// Where `/api/redirect` points. A hit on that server is a test failure.
     redirect_to: Mutex<String>,
@@ -89,9 +90,10 @@ impl MockDaemon {
     pub async fn start(label: &str, token: &str, instance_id: &str) -> Self {
         let state = Arc::new(DaemonState {
             label: label.to_string(),
-            token: token.to_string(),
+            token: Mutex::new(token.to_string()),
             instance_id: Mutex::new(synthetic_instance_id(instance_id)),
             protocol_version: Mutex::new(1),
+            update_protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
         });
@@ -106,6 +108,7 @@ impl MockDaemon {
             .route("/api/events", get(events))
             .route("/api/redirect", get(redirect))
             .route("/api/cookie", get(cookie))
+            .route("/api/update", get(update_status).post(start_update))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 record_and_authenticate,
@@ -162,6 +165,18 @@ impl MockDaemon {
         *self.state.protocol_version.lock().expect("protocol") = version;
     }
 
+    pub fn use_update_protocol(&self, version: u32) {
+        *self
+            .state
+            .update_protocol_version
+            .lock()
+            .expect("update protocol") = version;
+    }
+
+    pub fn rotate_token(&self, token: &str) {
+        *self.state.token.lock().expect("token") = token.to_string();
+    }
+
     pub fn point_redirect_at(&self, url: &str) {
         *self.state.redirect_to.lock().expect("redirect") = url.to_string();
     }
@@ -196,7 +211,8 @@ async fn record_and_authenticate(
     if path == "/api/health" {
         return next.run(request).await;
     }
-    if authorization.as_deref() != Some(format!("Bearer {}", state.token).as_str()) {
+    let expected = format!("Bearer {}", state.token.lock().expect("token"));
+    if authorization.as_deref() != Some(expected.as_str()) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "unauthorized" })),
@@ -226,6 +242,24 @@ async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoRespons
         "dirty": false,
         "capabilities": { "terminal": true, "attachments": true },
     }))
+}
+
+async fn update_status(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
+    Json(json!({
+        "currentVersion": "0.0.0-synthetic",
+        "latestVersion": "0.0.1-synthetic",
+        "currentApiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
+        "latestApiProtocolVersion": *state.update_protocol_version.lock().expect("update protocol"),
+        "state": "available",
+        "installMethod": "homebrew",
+        "canAutoUpdate": true,
+        "message": null,
+        "checkedAt": null,
+    }))
+}
+
+async fn start_update() -> impl IntoResponse {
+    Json(json!({ "ok": true }))
 }
 
 /// Echoes back exactly what arrived, so a test can assert on the *upstream*
@@ -435,6 +469,21 @@ impl Harness {
         let secrets = Arc::new(MemorySecretStore::new());
         let local_parts =
             local.map(|daemon| (daemon.url(), daemon.token.clone(), daemon.instance_id()));
+        if let Some((url, token, instance_id)) = &local_parts {
+            let home = dir.path().join("wisp-home");
+            std::fs::create_dir_all(&home).expect("local home");
+            std::fs::write(
+                home.join("config.json"),
+                serde_json::to_vec(&json!({
+                    "host": url.host_str().expect("local host"),
+                    "port": url.port().expect("local port"),
+                    "token": token,
+                    "instanceId": instance_id,
+                }))
+                .expect("local config json"),
+            )
+            .expect("local config");
+        }
         let registry = Arc::new(
             Registry::open(
                 dir.path().join("connections.json"),
@@ -530,6 +579,19 @@ impl Harness {
 
     pub fn wisp_home(&self) -> PathBuf {
         self.dir.path().join("wisp-home")
+    }
+
+    pub fn set_local_profile_token(&self, token: &str) {
+        let path = self.wisp_home().join("config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read local config"))
+                .expect("local config json");
+        config["token"] = serde_json::Value::String(token.to_string());
+        std::fs::write(
+            path,
+            serde_json::to_vec(&config).expect("updated local config json"),
+        )
+        .expect("update local config");
     }
 }
 

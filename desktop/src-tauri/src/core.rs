@@ -3,7 +3,7 @@
 //! driven from integration tests without a running application.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use url::Url;
@@ -12,7 +12,7 @@ use crate::capability::Capability;
 use crate::local::{self, LocalError, LocalStatus};
 use crate::probe::{self, ProbeError};
 use crate::proxy::{self, ProxyHandle, ProxyStartError, ProxyState};
-use crate::registry::{ConnectionInfo, Registry, RegistryError};
+use crate::registry::{CleanupIssue, ConnectionInfo, Registry, RegistryError};
 use crate::secrets::SecretStore;
 use crate::setup::{self, LocalSetupReport, SetupError};
 use crate::urls::{normalize_daemon_url, UrlError};
@@ -28,9 +28,11 @@ pub struct Bootstrap {
     /// `http://127.0.0.1:<port>/<capability>` — prefix for every daemon call.
     pub proxy_base_url: String,
     /// The desktop opens on Local. Selection after bootstrap is webview state.
-    pub active_connection_id: &'static str,
+    pub active_connection_id: String,
     pub connections: Vec<ConnectionInfo>,
     pub local: LocalStatus,
+    /// Deferred Keychain deletions that are safe to retry without blocking the app.
+    pub cleanup_issues: Vec<CleanupIssue>,
 }
 
 /// Every way a command can refuse, as a sentence the UI can show.
@@ -62,6 +64,10 @@ pub enum CoreError {
     SetupTimeout,
     #[error("local Wisp changed after it was diagnosed; review the new status before confirming")]
     SetupPlanChanged,
+    #[error("the native folder picker is only available while Local is selected")]
+    LocalPickerUnavailable,
+    #[error("project selection was cancelled after changing connections")]
+    LocalPickerExpired,
 }
 
 /// Commands cross into JavaScript, so the error becomes a string there. This is
@@ -78,6 +84,12 @@ pub struct DesktopCore {
     proxy: ProxyHandle,
     registry: Arc<Registry>,
     wisp_home: PathBuf,
+    selection: Mutex<NativeSelection>,
+}
+
+struct NativeSelection {
+    connection_id: String,
+    generation: u64,
 }
 
 impl DesktopCore {
@@ -109,6 +121,10 @@ impl DesktopCore {
             proxy,
             registry,
             wisp_home,
+            selection: Mutex::new(NativeSelection {
+                connection_id: local::LOCAL_CONNECTION_ID.to_string(),
+                generation: 0,
+            }),
         })
     }
 
@@ -123,9 +139,71 @@ impl DesktopCore {
     pub fn bootstrap(&self) -> Bootstrap {
         Bootstrap {
             proxy_base_url: self.proxy.base().to_string(),
-            active_connection_id: local::LOCAL_CONNECTION_ID,
+            active_connection_id: self.active_connection_id(),
             connections: self.registry.list(),
             local: self.registry.local_status(),
+            cleanup_issues: self.registry.cleanup_issues(),
+        }
+    }
+
+    fn active_connection_id(&self) -> String {
+        let selection = self.selection.lock().expect("selection mutex");
+        if self
+            .registry
+            .list()
+            .iter()
+            .any(|connection| connection.id == selection.connection_id)
+        {
+            selection.connection_id.clone()
+        } else {
+            local::LOCAL_CONNECTION_ID.to_string()
+        }
+    }
+
+    /// Mirror only UI selection for native-only actions such as the folder
+    /// picker. Proxy routing never consults this mutable state.
+    pub fn select_connection(&self, connection_id: &str) -> Result<(), CoreError> {
+        if !self
+            .registry
+            .list()
+            .iter()
+            .any(|connection| connection.id == connection_id)
+        {
+            return Err(RegistryError::UnknownConnection(connection_id.to_string()).into());
+        }
+        let mut selection = self.selection.lock().expect("selection mutex");
+        if selection.connection_id != connection_id {
+            selection.connection_id = connection_id.to_string();
+            selection.generation = selection.generation.wrapping_add(1);
+        }
+        Ok(())
+    }
+
+    pub fn begin_local_picker(&self, connection_id: &str) -> Result<u64, CoreError> {
+        let selection = self.selection.lock().expect("selection mutex");
+        if connection_id != local::LOCAL_CONNECTION_ID
+            || selection.connection_id != local::LOCAL_CONNECTION_ID
+        {
+            return Err(CoreError::LocalPickerUnavailable);
+        }
+        Ok(selection.generation)
+    }
+
+    pub fn finish_local_picker(&self, generation: u64) -> Result<(), CoreError> {
+        let selection = self.selection.lock().expect("selection mutex");
+        if selection.connection_id != local::LOCAL_CONNECTION_ID
+            || selection.generation != generation
+        {
+            return Err(CoreError::LocalPickerExpired);
+        }
+        Ok(())
+    }
+
+    fn replace_selected_connection(&self, old_id: &str, new_id: &str) {
+        let mut selection = self.selection.lock().expect("selection mutex");
+        if selection.connection_id == old_id {
+            selection.connection_id = new_id.to_string();
+            selection.generation = selection.generation.wrapping_add(1);
         }
     }
 
@@ -167,9 +245,9 @@ impl DesktopCore {
 
     /// Re-prove a saved connection.
     ///
-    /// Same URL: refresh the credential and clear the identity pin in place.
-    /// New URL: mint a replacement connection with a new immutable ID and
-    /// remove the old one, so nothing already in flight is retargeted.
+    /// The same URL and daemon identity refresh in place. A URL or identity
+    /// change mints a replacement ID and revokes the old route so no cache,
+    /// draft, attachment, terminal, or in-flight work crosses daemon scope.
     pub async fn reconnect(
         &self,
         connection_id: &str,
@@ -245,20 +323,20 @@ impl DesktopCore {
         {
             return Err(CoreError::RemoteIdentityConfirmationRequired);
         }
-        if next_url == target.base {
-            Ok(self.registry.refresh(
+        let reconnected = if next_url == target.base && identity.instance_id == target.instance_id {
+            self.registry.refresh(
                 connection_id,
                 token.map(|_| next_token.as_str()),
                 &identity.instance_id,
-            )?)
+            )?
         } else {
-            Ok(self.registry.replace(
-                connection_id,
-                &next_url,
-                &next_token,
-                &identity.instance_id,
-            )?)
+            self.registry
+                .replace(connection_id, &next_url, &next_token, &identity.instance_id)?
+        };
+        if reconnected.id != connection_id {
+            self.replace_selected_connection(connection_id, &reconnected.id);
         }
+        Ok(reconnected)
     }
 
     pub fn rename(&self, connection_id: &str, label: &str) -> Result<ConnectionInfo, CoreError> {
@@ -266,11 +344,22 @@ impl DesktopCore {
     }
 
     pub fn remove(&self, connection_id: &str) -> Result<(), CoreError> {
-        Ok(self.registry.remove(connection_id)?)
+        let result = self.registry.remove(connection_id);
+        if self.registry.resolve(connection_id).is_none() {
+            self.replace_selected_connection(connection_id, local::LOCAL_CONNECTION_ID);
+        }
+        Ok(result?)
     }
 
     pub fn reset_desktop_data(&self) -> Result<(), CoreError> {
-        Ok(self.registry.reset_desktop_data()?)
+        let result = self.registry.reset_desktop_data();
+        let mut selection = self.selection.lock().expect("selection mutex");
+        if selection.connection_id != local::LOCAL_CONNECTION_ID {
+            selection.connection_id = local::LOCAL_CONNECTION_ID.to_string();
+            selection.generation = selection.generation.wrapping_add(1);
+        }
+        drop(selection);
+        Ok(result?)
     }
 
     /// Report on the local install without changing it.

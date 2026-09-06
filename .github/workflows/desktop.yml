@@ -8,11 +8,21 @@ on:
     paths:
       - "desktop/**"
       - "scripts/desktop/**"
+      - "web/ui/**"
+      - "web/ui-dist/**"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
       - ".github/workflows/desktop.yml"
   pull_request:
     paths:
       - "desktop/**"
       - "scripts/desktop/**"
+      - "web/ui/**"
+      - "web/ui-dist/**"
+      - "package.json"
+      - "bun.lock"
+      - "tsconfig.json"
       - ".github/workflows/desktop.yml"
 
 jobs:

@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core"
 import { LOCAL_CONNECTION_ID } from "./transport"
 
 export const MAX_DESKTOP_CONNECTIONS = 8
+/** Native daemon API contract compiled into this Desktop build. */
+export const DESKTOP_API_PROTOCOL_VERSION = 1
 
 export type DesktopConnectionKind = "local" | "remote"
 
@@ -15,6 +17,8 @@ export interface DesktopConnectionMetadata {
   readonly url: string | null
   readonly instanceId: string
   readonly ready: boolean
+  /** Secret-free recovery detail when this connection is not ready. */
+  readonly problem?: string | null
 }
 
 export interface LocalStatus {
@@ -43,6 +47,10 @@ export interface DesktopBootstrap {
   /** Per-launch native proxy root. The transport appends /connections/:id/api/… */
   readonly proxyBaseUrl: string
   readonly local: LocalStatus
+  readonly cleanupIssues?: readonly {
+    readonly connectionId: string
+    readonly message: string
+  }[]
 }
 
 export interface AddRemoteConnectionInput {
@@ -81,6 +89,7 @@ export type NativeInvoke = <T>(
 /** The complete TypeScript/native boundary. No React component calls invoke. */
 export interface DesktopBridge {
   bootstrap(): Promise<DesktopBootstrap>
+  selectConnection(connectionId: string): Promise<void>
   probeRemoteConnection(
     input: RemoteConnectionProbeInput
   ): Promise<RemoteDaemonPreview>
@@ -164,7 +173,12 @@ function normalizeConnection(
       throw new Error(
         "The local desktop connection must use the reserved id local"
       )
-    if (typeof value.ready !== "boolean")
+    if (
+      typeof value.ready !== "boolean" ||
+      (value.problem !== undefined &&
+        value.problem !== null &&
+        typeof value.problem !== "string")
+    )
       throw new Error(
         "The local desktop connection has invalid readiness metadata"
       )
@@ -175,6 +189,7 @@ function normalizeConnection(
       url: null,
       instanceId: typeof value.instanceId === "string" ? value.instanceId : "",
       ready: value.ready,
+      problem: value.problem ?? null,
     })
   }
   if (value.id === LOCAL_CONNECTION_ID)
@@ -184,7 +199,10 @@ function normalizeConnection(
     typeof value.url !== "string" ||
     typeof value.instanceId !== "string" ||
     !value.instanceId ||
-    typeof value.ready !== "boolean"
+    typeof value.ready !== "boolean" ||
+    (value.problem !== undefined &&
+      value.problem !== null &&
+      typeof value.problem !== "string")
   ) {
     throw new Error(`Desktop connection ${value.id} has invalid metadata`)
   }
@@ -195,6 +213,7 @@ function normalizeConnection(
     url: normalizeRemoteUrl(value.url),
     instanceId: value.instanceId,
     ready: value.ready,
+    problem: value.problem ?? null,
   })
 }
 
@@ -280,6 +299,18 @@ export function normalizeDesktopBootstrap(
   value: DesktopBootstrap
 ): Readonly<DesktopBootstrap> {
   const proxyBaseUrl = normalizeProxyBaseUrl(value.proxyBaseUrl)
+  if (
+    (value.cleanupIssues !== undefined && !Array.isArray(value.cleanupIssues)) ||
+    (value.cleanupIssues ?? []).some(
+      (issue) =>
+        !issue ||
+        !CONNECTION_ID.test(issue.connectionId) ||
+        typeof issue.message !== "string" ||
+        !issue.message
+    )
+  ) {
+    throw new Error("Desktop returned invalid credential cleanup status")
+  }
   const connections = value.connections.map(normalizeConnection)
   if (connections.length > MAX_DESKTOP_CONNECTIONS) {
     throw new Error(
@@ -311,6 +342,9 @@ export function normalizeDesktopBootstrap(
     activeConnectionId: value.activeConnectionId,
     proxyBaseUrl,
     local: normalizeLocalStatus(value.local),
+    cleanupIssues: Object.freeze(
+      (value.cleanupIssues ?? []).map((issue) => Object.freeze({ ...issue }))
+    ),
   })
 }
 
@@ -322,6 +356,8 @@ export function createDesktopBridge(
       normalizeDesktopBootstrap(
         await nativeInvoke<DesktopBootstrap>("desktop_bootstrap")
       ),
+    selectConnection: (connectionId) =>
+      nativeInvoke<void>("select_desktop_connection", { connectionId }),
     probeRemoteConnection: async (input) =>
       normalizeRemotePreview(
         await nativeInvoke<RemoteDaemonPreview>("probe_remote_connection", {

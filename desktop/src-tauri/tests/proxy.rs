@@ -401,6 +401,165 @@ async fn a_connection_whose_credential_is_gone_fails_closed_rather_than_open() {
 }
 
 #[tokio::test]
+async fn local_get_reloads_a_rotated_profile_token_once_and_retries() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    let rotated = "synthetic-token-rotated-2222222222";
+    local.rotate_token(rotated);
+    harness.set_local_profile_token(rotated);
+
+    let response = harness
+        .client
+        .get(harness.route("local", "api/whoami"))
+        .send()
+        .await
+        .expect("request");
+    assert!(response.status().is_success());
+    let seen = local.seen();
+    assert_eq!(seen.len(), 2, "one stale attempt and one retry");
+    assert_eq!(
+        seen[0].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN_ONE}").as_str())
+    );
+    assert_eq!(
+        seen[1].authorization.as_deref(),
+        Some(format!("Bearer {rotated}").as_str())
+    );
+}
+
+#[tokio::test]
+async fn local_mutation_replays_its_bounded_body_after_token_rotation() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    let path = format!("api/tasks/{SHARED_TASK_ID}/action");
+    assert!(harness
+        .client
+        .post(harness.route("local", &path))
+        .header("content-type", "application/json")
+        .body(r#"{"before":true}"#)
+        .send()
+        .await
+        .expect("prime identity")
+        .status()
+        .is_success());
+
+    let rotated = "synthetic-token-rotated-3333333333";
+    local.rotate_token(rotated);
+    harness.set_local_profile_token(rotated);
+    let before = local.seen().len();
+    let response = harness
+        .client
+        .post(harness.route("local", &path))
+        .header("content-type", "application/json")
+        .body(r#"{"after":true}"#)
+        .send()
+        .await
+        .expect("rotated mutation");
+    assert!(response.status().is_success());
+    assert_eq!(
+        local.seen().len() - before,
+        2,
+        "one stale mutation and one replay"
+    );
+}
+
+#[tokio::test]
+async fn local_auth_retry_preserves_unauthorized_after_one_failed_reload() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    local.rotate_token("synthetic-daemon-token-4444444444");
+    harness.set_local_profile_token("synthetic-still-wrong-token-555555");
+
+    let response = harness
+        .client
+        .get(harness.route("local", "api/whoami"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(local.seen().len(), 2, "the proxy retries exactly once");
+}
+
+#[tokio::test]
+async fn desktop_update_refuses_an_incompatible_target_protocol() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    local.use_update_protocol(2);
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+
+    let response = harness
+        .client
+        .post(harness.route("local", "api/update"))
+        .header("content-type", "application/json")
+        .body(r#"{"version":"0.0.1-synthetic"}"#)
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("incompatible-update")
+    );
+    assert_eq!(
+        local
+            .seen()
+            .iter()
+            .filter(|request| request.path == "/api/update" && request.method == "POST")
+            .count(),
+        0,
+        "the incompatible update command must not reach the daemon"
+    );
+}
+
+#[tokio::test]
+async fn compatible_update_reloads_a_rotated_local_token_before_posting() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    // Prime the per-launch identity so the update compatibility preflight is
+    // the component responsible for recovering this rotation.
+    assert!(harness
+        .client
+        .post(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action")))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("prime identity")
+        .status()
+        .is_success());
+
+    let rotated = "synthetic-token-rotated-update-66666";
+    local.rotate_token(rotated);
+    harness.set_local_profile_token(rotated);
+    let response = harness
+        .client
+        .post(harness.route("local", "api/update"))
+        .header("content-type", "application/json")
+        .body(r#"{"version":"0.0.1-synthetic"}"#)
+        .send()
+        .await
+        .expect("update");
+    assert!(response.status().is_success());
+    let update_requests: Vec<_> = local
+        .seen()
+        .into_iter()
+        .filter(|request| request.path == "/api/update")
+        .collect();
+    assert_eq!(update_requests.len(), 3, "stale GET, retried GET, one POST");
+    assert_eq!(update_requests.last().expect("POST").method, "POST");
+    assert_eq!(
+        update_requests
+            .last()
+            .expect("POST")
+            .authorization
+            .as_deref(),
+        Some(format!("Bearer {rotated}").as_str())
+    );
+}
+
+#[tokio::test]
 async fn an_unknown_connection_id_is_not_a_target() {
     let (alpha, _bravo) = two_daemons().await;
     let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;

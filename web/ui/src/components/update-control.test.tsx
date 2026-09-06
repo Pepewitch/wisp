@@ -8,6 +8,8 @@ import { WispUpdateControl } from "./update-control"
 const STATUS: UpdateStatus = {
   currentVersion: "0.4.0-alpha.6",
   latestVersion: null,
+  currentApiProtocolVersion: 1,
+  latestApiProtocolVersion: null,
   state: "up-to-date",
   installMethod: "homebrew",
   canAutoUpdate: true,
@@ -53,6 +55,28 @@ describe("WispUpdateControl", () => {
     )
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
     expect(screen.getByText("0.4.0-alpha.6")).toHaveAttribute("title", "source builds update manually")
+  })
+
+  it("blocks a daemon update outside the native Desktop protocol", () => {
+    render(
+      <WispUpdateControl
+        status={{
+          ...STATUS,
+          state: "available",
+          latestVersion: "0.5.0",
+          latestApiProtocolVersion: 2,
+        }}
+        updating={false}
+        error={null}
+        onUpdate={() => {}}
+        supportedApiProtocolVersion={1}
+      />,
+    )
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+    expect(screen.getByText("Update blocked")).toHaveAttribute(
+      "title",
+      "Wisp 0.5.0 uses API protocol 2; this Desktop supports protocol 1",
+    )
   })
 
   it("shows progress and offers a retry after failure", () => {

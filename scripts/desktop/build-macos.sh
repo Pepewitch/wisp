@@ -26,14 +26,8 @@ bundles=(app dmg)
 if [ "${1:-}" = "--app-only" ]; then bundles=(app); fi
 
 cd desktop/src-tauri
-if command -v cargo-tauri >/dev/null 2>&1; then
-  tauri=(cargo tauri)
-elif command -v tauri >/dev/null 2>&1; then
-  tauri=(tauri)
-else
-  # Pin the official npm distribution so the same source does not silently
-  # acquire different bundle behavior on another build host.
-  tauri=(bunx --bun @tauri-apps/cli@2.11.4)
-fi
+# Always use the pinned official npm distribution. A developer's unrelated
+# global cargo-tauri/tauri executable must not change release bundle behavior.
+tauri=(bunx --bun @tauri-apps/cli@2.11.4)
 
 "${tauri[@]}" build --target aarch64-apple-darwin --bundles "$(IFS=,; echo "${bundles[*]}")" -- --locked

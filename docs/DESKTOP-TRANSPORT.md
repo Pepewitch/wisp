@@ -214,11 +214,12 @@ documented in `desktop/README.md`; none returns a credential.
 
 ```text
 desktop_bootstrap        proxyBaseUrl + activeConnectionId + non-secret connection metadata
+select_desktop_connection mirror selection for native-only capability leases
 probe_remote_connection  authenticated identity preview; no persistence
 add_remote_connection    re-prove the confirmed identity, then save
 rename_connection        connectionId + display name only
 probe_saved_connection   authenticated reconnect identity preview
-reconnect_connection     re-prove confirmed identity; changed URL returns a replacement id
+reconnect_connection     re-prove identity; changed URL/identity returns a replacement id
 remove_connection        revoke route, delete credential, clear tombstone
 reset_desktop_data       revoke all remotes and delete desktop-owned credentials
 pick_local_project       native folder picker, restricted to Local
@@ -234,11 +235,23 @@ authorizes talking to the proxy, never to a daemon, and it does not outlive the
 process. No command returns a daemon token, and no connection metadata has a
 field one could occupy.
 
+The folder picker captures a native selection generation before it opens and
+checks it again before returning a path. Switching tabs therefore invalidates
+the picker in native code as well as in React. This selection state never
+chooses proxy targets; daemon routes remain explicitly connection-qualified.
+
+Keychain failures are connection-scoped. A failed credential read leaves that
+remote visible but not ready, with a secret-free repair reason. A failed delete
+keeps a durable tombstone and a bootstrap cleanup issue; unrelated connections
+and Local continue to open, and Reset Desktop Data or a later launch retries it.
+New Keychain accounts are preceded by a persisted recovery marker so a metadata
+write plus cleanup failure cannot orphan an undiscoverable credential.
+
 Two consequences the shared React shell must handle:
 
-- `reconnect_connection` with a new URL returns a connection with a **new
-  immutable ID**. Editing an address is a connection swap, because retargeting
-  an ID in place would redirect in-flight work onto a different daemon.
+- `reconnect_connection` with a new URL or newly trusted daemon identity
+  returns a connection with a **new immutable ID**. The swap prevents local
+  state and in-flight work from crossing daemon scope.
 - A `409` carrying `x-wisp-proxy-error: identity-changed` means a different
   daemon now answers a saved address. It is connection state, not a task
   refusal, and `reconnect_connection` is the remedy.

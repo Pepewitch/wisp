@@ -90,6 +90,9 @@ impl SecretStore for KeychainSecretStore {
 #[derive(Default)]
 pub struct MemorySecretStore {
     entries: Mutex<HashMap<String, String>>,
+    fail_get: Mutex<HashMap<String, usize>>,
+    fail_set: Mutex<HashMap<String, usize>>,
+    fail_delete: Mutex<HashMap<String, usize>>,
 }
 
 impl MemorySecretStore {
@@ -104,10 +107,60 @@ impl MemorySecretStore {
         accounts.sort();
         accounts
     }
+
+    #[doc(hidden)]
+    pub fn fail_next_get(&self, account: &str) {
+        *self
+            .fail_get
+            .lock()
+            .expect("failure mutex")
+            .entry(account.to_string())
+            .or_default() += 1;
+    }
+
+    #[doc(hidden)]
+    pub fn fail_next_set(&self, account: &str) {
+        *self
+            .fail_set
+            .lock()
+            .expect("failure mutex")
+            .entry(account.to_string())
+            .or_default() += 1;
+    }
+
+    #[doc(hidden)]
+    pub fn fail_next_delete(&self, account: &str) {
+        *self
+            .fail_delete
+            .lock()
+            .expect("failure mutex")
+            .entry(account.to_string())
+            .or_default() += 1;
+    }
+
+    fn should_fail(failures: &Mutex<HashMap<String, usize>>, account: &str) -> bool {
+        let mut failures = failures.lock().expect("failure mutex");
+        let key = if failures.contains_key(account) {
+            account
+        } else {
+            "*"
+        };
+        let Some(remaining) = failures.get_mut(key) else {
+            return false;
+        };
+        *remaining -= 1;
+        if *remaining == 0 {
+            failures.remove(key);
+        }
+        true
+    }
 }
 
 impl SecretStore for MemorySecretStore {
     fn set(&self, account: &str, secret: &str) -> Result<(), SecretError> {
+        if Self::should_fail(&self.fail_set, account) {
+            return Err(SecretError::Keychain("synthetic set failure".to_string()));
+        }
         self.entries
             .lock()
             .expect("secret store mutex")
@@ -116,6 +169,9 @@ impl SecretStore for MemorySecretStore {
     }
 
     fn get(&self, account: &str) -> Result<Option<String>, SecretError> {
+        if Self::should_fail(&self.fail_get, account) {
+            return Err(SecretError::Keychain("synthetic get failure".to_string()));
+        }
         Ok(self
             .entries
             .lock()
@@ -125,6 +181,11 @@ impl SecretStore for MemorySecretStore {
     }
 
     fn delete(&self, account: &str) -> Result<(), SecretError> {
+        if Self::should_fail(&self.fail_delete, account) {
+            return Err(SecretError::Keychain(
+                "synthetic delete failure".to_string(),
+            ));
+        }
         self.entries
             .lock()
             .expect("secret store mutex")

@@ -20,6 +20,8 @@ const fixtures = vi.hoisted(() => ({
 const UPDATE: UpdateStatus = {
   currentVersion: "0.4.0-alpha.6",
   latestVersion: "0.4.0-alpha.7",
+  currentApiProtocolVersion: 1,
+  latestApiProtocolVersion: 1,
   canAutoUpdate: true,
   state: "available",
   installMethod: "homebrew",

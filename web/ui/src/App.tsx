@@ -29,6 +29,7 @@ import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WispUpdateControl } from "@/components/update-control"
+import { DESKTOP_API_PROTOCOL_VERSION } from "@/lib/desktop-bridge"
 import {
   useHarnesses,
   usePullRequestOverview,
@@ -165,6 +166,7 @@ function useProjectAddFlow() {
 
 function useWispUpdateControl() {
   const runtime = useDaemonRuntime()
+  const desktop = useDesktopConnections()
   const updateQuery = useUpdateStatus()
   const installUpdate = useInstallUpdate()
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -187,6 +189,7 @@ function useWispUpdateControl() {
       updating={installUpdate.isPending}
       error={updateError}
       onUpdate={(version) => void updateWisp(version)}
+      supportedApiProtocolVersion={desktop ? DESKTOP_API_PROTOCOL_VERSION : undefined}
     />
   )
 }

@@ -189,6 +189,17 @@ export function RemoteConnectionDialog({
     }
   }
 
+  const close = () => {
+    // A closed dialog must not retain a daemon credential in React state.
+    // This also covers escape/backdrop dismissal and cancellation while a
+    // capability probe is still in flight.
+    setToken("")
+    setPreview(null)
+    setError(null)
+    setConfirmedRetarget(false)
+    onClose()
+  }
+
   const submit = async () => {
     const nameError = editing
       ? null
@@ -226,7 +237,10 @@ export function RemoteConnectionDialog({
       return
     }
     const localData = editing ? connectionLocalData(connection.id) : null
-    const retargets = editing && normalizedUrl !== connection.url
+    const retargets =
+      editing &&
+      (normalizedUrl !== connection.url ||
+        preview.identity.instanceId !== connection.instanceId)
     if (
       retargets &&
       localData &&
@@ -235,7 +249,7 @@ export function RemoteConnectionDialog({
     ) {
       setConfirmedRetarget(true)
       setError(
-        `Changing the daemon URL will discard ${localData.drafts} unsent draft${localData.drafts === 1 ? "" : "s"} and ${localData.pendingAttachments} pending attachment${localData.pendingAttachments === 1 ? "" : "s"} on this computer. Confirm once more to reconnect.`
+        `Changing which daemon this connection trusts will discard ${localData.drafts} unsent draft${localData.drafts === 1 ? "" : "s"} and ${localData.pendingAttachments} pending attachment${localData.pendingAttachments === 1 ? "" : "s"} on this computer. Confirm once more to reconnect.`
       )
       return
     }
@@ -258,7 +272,7 @@ export function RemoteConnectionDialog({
     setToken("")
     try {
       await pending
-      onClose()
+      close()
     } catch (nativeError) {
       setPreview(null)
       setError(errorMessage(nativeError))
@@ -281,7 +295,7 @@ export function RemoteConnectionDialog({
           : "Check connection"
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+    <Dialog.Root open={open} onOpenChange={(next) => !next && close()}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
         <Dialog.Popup
@@ -330,7 +344,7 @@ export function RemoteConnectionDialog({
               </p>
             )}
             <div className="flex justify-end gap-2 border-t border-border px-4 py-2.5">
-              <Button size="lg" onClick={onClose}>
+              <Button size="lg" onClick={close}>
                 Cancel
               </Button>
               <Button

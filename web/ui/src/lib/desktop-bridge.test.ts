@@ -75,6 +75,7 @@ describe("desktop native bridge", () => {
     const bridge = createDesktopBridge(nativeInvoke)
 
     await bridge.bootstrap()
+    await bridge.selectConnection("remote-one")
     await bridge.probeRemoteConnection({
       url: "https://two.example.test",
       token: "test-token",
@@ -100,6 +101,10 @@ describe("desktop native bridge", () => {
 
     expect(calls).toEqual([
       { command: "desktop_bootstrap", args: undefined },
+      {
+        command: "select_desktop_connection",
+        args: { connectionId: "remote-one" },
+      },
       {
         command: "probe_remote_connection",
         args: {

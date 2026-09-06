@@ -56,6 +56,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::desktop_bootstrap,
+            commands::select_desktop_connection,
             commands::probe_remote_connection,
             commands::add_remote_connection,
             commands::rename_connection,

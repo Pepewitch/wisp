@@ -39,9 +39,10 @@ pub struct LocalSetupReport {
     pub message: String,
 }
 
-/// Directories a Wisp install lands in, beyond whatever `PATH` says. The
-/// packaged app inherits a login `PATH` that often omits all of them.
-const EXTRA_BIN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+/// Homebrew's supported macOS prefixes. Mutating setup actions deliberately do
+/// not trust inherited PATH: a GUI launched from a project shell must never run
+/// a shadow `wisp` or `brew` binary.
+const HOMEBREW_BINARIES: &[&str] = &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
 
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
@@ -97,21 +98,24 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// Locate the `wisp` CLI the same way a login shell would, plus the two package
-/// manager prefixes a GUI process usually cannot see.
-pub fn find_wisp_cli(home: Option<&Path>) -> Option<PathBuf> {
-    let mut extra: Vec<PathBuf> = EXTRA_BIN_DIRS.iter().map(PathBuf::from).collect();
-    if let Some(home) = home {
-        extra.push(home.join(".local/bin"));
-    }
-    let path_var = std::env::var("PATH").ok();
-    find_executable("wisp", path_var.as_deref(), &extra, &is_executable_file)
+fn formula_cli_for_brew(brew: &Path) -> Option<PathBuf> {
+    let prefix = brew.parent()?.parent()?;
+    Some(prefix.join("opt/wisp/bin/wisp"))
 }
 
 fn find_homebrew() -> Option<PathBuf> {
-    let extra: Vec<PathBuf> = EXTRA_BIN_DIRS.iter().map(PathBuf::from).collect();
-    let path_var = std::env::var("PATH").ok();
-    find_executable("brew", path_var.as_deref(), &extra, &is_executable_file)
+    HOMEBREW_BINARIES
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| is_executable_file(path))
+}
+
+/// Locate the executable owned by the Homebrew Wisp Formula. `home` is kept in
+/// the signature for the diagnostic call site, but intentionally does not add
+/// user-controlled search paths.
+pub fn find_wisp_cli(_home: Option<&Path>) -> Option<PathBuf> {
+    let brew = find_homebrew()?;
+    formula_cli_for_brew(&brew).filter(|path| is_executable_file(path))
 }
 
 fn run_step(program: &Path, args: &[&str], step: &'static str) -> Result<(), SetupError> {
@@ -151,12 +155,10 @@ pub fn apply(report: &LocalSetupReport) -> Result<(), SetupError> {
         NextStep::Ready => return Ok(()),
         NextStep::InstallCli => return Err(SetupError::MissingCli),
         NextStep::RunInit => {
-            let cli = report
-                .cli_path
-                .as_deref()
-                .map(Path::new)
-                .ok_or(SetupError::MissingCli)?;
-            run_step(cli, &["init"], "wisp init")?;
+            // Resolve again after confirmation; never execute a path supplied
+            // through report/UI state.
+            let cli = find_wisp_cli(None).ok_or(SetupError::MissingCli)?;
+            run_step(&cli, &["init"], "wisp init")?;
         }
         NextStep::StartDaemon => {}
     }
@@ -214,7 +216,7 @@ pub fn decide(status: &LocalStatus, cli_path: Option<&Path>, reachable: bool) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, find_executable, NextStep};
+    use super::{decide, find_executable, formula_cli_for_brew, NextStep};
     use crate::local::LocalStatus;
     use std::path::{Path, PathBuf};
 
@@ -230,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn path_entries_win_over_the_extra_directories() {
+    fn generic_executable_lookup_has_an_explicit_search_order() {
         let present: Vec<PathBuf> = vec![
             PathBuf::from("/synthetic/bin/wisp"),
             PathBuf::from("/opt/homebrew/bin/wisp"),
@@ -244,6 +246,18 @@ mod tests {
         )
         .expect("found");
         assert_eq!(found, PathBuf::from("/synthetic/bin/wisp"));
+    }
+
+    #[test]
+    fn formula_cli_is_derived_from_the_trusted_brew_prefix() {
+        assert_eq!(
+            formula_cli_for_brew(Path::new("/opt/homebrew/bin/brew")),
+            Some(PathBuf::from("/opt/homebrew/opt/wisp/bin/wisp"))
+        );
+        assert_eq!(
+            formula_cli_for_brew(Path::new("/usr/local/bin/brew")),
+            Some(PathBuf::from("/usr/local/opt/wisp/bin/wisp"))
+        );
     }
 
     #[test]

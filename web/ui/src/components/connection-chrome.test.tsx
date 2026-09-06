@@ -8,7 +8,10 @@ import type {
   DesktopBridge,
   DesktopConnectionMetadata,
 } from "@/lib/desktop-bridge"
-import { DesktopApplicationProvider } from "@/lib/desktop-connections"
+import {
+  DesktopApplicationProvider,
+  useDesktopConnections,
+} from "@/lib/desktop-connections"
 import { validateConnectionName } from "@/lib/connection-validation"
 import { clearConnectionDrafts, writeDraft } from "@/lib/drafts"
 
@@ -42,6 +45,7 @@ function bootstrap(
 function bridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
   return {
     bootstrap: async () => bootstrap(),
+    selectConnection: async () => undefined,
     probeRemoteConnection: async () => ({
       instanceId: "wisp-instance-remote-one",
       apiProtocolVersion: 1,
@@ -90,6 +94,30 @@ function renderChrome(
         <DesktopConnectionChrome mobile={mobile} />
       </DesktopApplicationProvider>
     </QueryClientProvider>
+  )
+}
+
+function PartialReconnectHarness() {
+  const desktop = useDesktopConnections()!
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          void desktop
+            .reconnect({
+              connectionId: "remote-one",
+              url: "https://replacement.example.test",
+              expectedInstanceId: "wisp-instance-remote-two",
+            })
+            .catch(() => undefined)
+        }}
+      >
+        Reconnect now
+      </button>
+      <output aria-label="active connection">{desktop.active.metadata.id}</output>
+      {desktop.actionError ? <p role="alert">{desktop.actionError}</p> : null}
+    </>
   )
 }
 
@@ -157,6 +185,21 @@ describe("desktop connection chrome", () => {
     )
     expect(screen.getByLabelText("Token")).toHaveValue("")
     finish()
+  })
+
+  it("forgets a remote token when the dialog is cancelled", () => {
+    renderChrome(bootstrap(), bridge())
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add remote connection" })
+    )
+    fireEvent.change(screen.getByLabelText("Token"), {
+      target: { value: "synthetic-token-to-forget" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add remote connection" })
+    )
+    expect(screen.getByLabelText("Token")).toHaveValue("")
   })
 
   it("never offers removal for the built-in local connection", async () => {
@@ -288,6 +331,122 @@ describe("desktop connection chrome", () => {
     )
   })
 
+  it("shows a deferred launch cleanup issue without hiding healthy connections", async () => {
+    renderChrome(
+      {
+        ...bootstrap(),
+        cleanupIssues: [
+          {
+            connectionId: "remote-removed",
+            message: "Credential cleanup is incomplete; retry reset.",
+          },
+        ],
+      },
+      bridge()
+    )
+    expect(await screen.findByText("Connection action failed")).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Credential cleanup is incomplete"
+    )
+    expect(
+      screen.getByRole("tab", { name: "Local", hidden: true })
+    ).toBeInTheDocument()
+  })
+
+  it("keeps a partial reset cleanup failure in provider-owned UI", async () => {
+    const remote = {
+      id: "remote-one",
+      kind: "remote",
+      name: "Remote one",
+      url: "https://remote.example.test",
+      instanceId: "wisp-instance-remote-one",
+      ready: true,
+    } as const
+    let resetStarted = false
+    renderChrome(
+      bootstrap([LOCAL, remote]),
+      bridge({
+        resetDesktopData: async () => {
+          resetStarted = true
+          throw new Error("synthetic deferred reset cleanup")
+        },
+        bootstrap: async () =>
+          resetStarted ? bootstrap([LOCAL]) : bootstrap([LOCAL, remote]),
+      })
+    )
+    fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+    fireEvent.click(screen.getByRole("button", { name: "Manage Remote one" }))
+    fireEvent.click(await screen.findByText("Reset desktop data"))
+    fireEvent.click(screen.getByRole("button", { name: "Reset desktop data" }))
+
+    expect(await screen.findByText("Connection action failed")).toBeInTheDocument()
+    expect(screen.getAllByRole("alert").some((alert) =>
+      alert.textContent?.includes("synthetic deferred reset cleanup")
+    )).toBe(true)
+    expect(screen.getByRole("tab", { name: /Local/, hidden: true })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    )
+  })
+
+  it("adopts a committed replacement when reconnect cleanup reports failure", async () => {
+    const remote = {
+      id: "remote-one",
+      kind: "remote",
+      name: "Remote one",
+      url: "https://remote.example.test",
+      instanceId: "wisp-instance-remote-one",
+      ready: true,
+    } as const
+    const replacement = {
+      ...remote,
+      id: "remote-two",
+      url: "https://replacement.example.test",
+      instanceId: "wisp-instance-remote-two",
+    } as const
+    let committed = false
+    const selectConnection = vi.fn(async () => undefined)
+    const nativeBridge = bridge({
+      selectConnection,
+      reconnectConnection: async () => {
+        committed = true
+        throw new Error("synthetic old credential cleanup failed")
+      },
+      bootstrap: async () =>
+        committed
+          ? bootstrap([LOCAL, replacement])
+          : bootstrap([LOCAL, remote]),
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider
+          initial={{
+            ...bootstrap([LOCAL, remote]),
+            activeConnectionId: remote.id,
+          }}
+          bridge={nativeBridge}
+        >
+          <PartialReconnectHarness />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect now" }))
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("active connection")).toHaveTextContent(
+        replacement.id
+      )
+    )
+    expect(selectConnection).toHaveBeenCalledWith(replacement.id)
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "synthetic old credential cleanup failed"
+    )
+  })
+
   it("resets desktop-owned state without claiming to remove daemon data", async () => {
     const remote = {
       id: "remote-one",
@@ -340,7 +499,7 @@ describe("desktop connection chrome", () => {
     await screen.findByText("Reached Wisp 0.4.0-synthetic")
     fireEvent.click(screen.getByRole("button", { name: "Reconnect" }))
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Changing the daemon URL will discard 1 unsent draft"
+      "Changing which daemon this connection trusts will discard 1 unsent draft"
     )
     expect(reconnectConnection).not.toHaveBeenCalled()
     fireEvent.click(
@@ -363,8 +522,10 @@ describe("desktop connection chrome", () => {
     } as const
     const reconnectConnection = vi.fn(async () => ({
       ...remote,
+      id: "remote-two",
       instanceId: "wisp-instance-remote-two",
     }))
+    writeDraft(remote.id, "synthetic-task", "unsent work")
     renderChrome(
       bootstrap([LOCAL, remote]),
       bridge({
@@ -388,6 +549,15 @@ describe("desktop connection chrome", () => {
     fireEvent.click(
       screen.getByRole("button", {
         name: "Trust new daemon and reconnect",
+      })
+    )
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Changing which daemon this connection trusts will discard 1 unsent draft"
+    )
+    expect(reconnectConnection).not.toHaveBeenCalled()
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reconnect and discard local data",
       })
     )
     await waitFor(() =>

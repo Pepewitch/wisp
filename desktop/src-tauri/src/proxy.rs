@@ -42,7 +42,7 @@ use tokio_tungstenite::tungstenite;
 use url::Url;
 
 use crate::capability::Capability;
-use crate::registry::{Identity, Registry, RegistryError, Target};
+use crate::registry::{ConnectionKind, Identity, Registry, RegistryError, Target};
 use crate::urls::{join_upstream, to_websocket_url};
 
 /// Origins the packaged macOS webview actually uses. An `Origin` header is
@@ -115,6 +115,9 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// the response/socket: once headers arrive, response bodies and WebSocket
 /// frames may stream for as long as their callers keep them open.
 const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Ten 5 MiB attachments expand under base64 plus JSON framing. Keeping one
+/// bounded copy makes a Local request safely replayable after token rotation.
+const MAX_REPLAYABLE_REQUEST_BODY: usize = 80 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyStartError {
@@ -406,7 +409,7 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
         return response;
     }
 
-    let credential = match state.registry.credential(&target) {
+    let mut credential = match state.registry.credential(&target) {
         Ok(credential) => credential,
         Err(RegistryError::MissingCredential) => {
             return refuse(
@@ -433,8 +436,16 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
     // A terminal upgrade is command execution even though its handshake is a
     // GET. It must prove the pinned daemon identity just like an HTTP write.
     if websocket || is_write(&parts.method) {
-        if let Err(response) = ensure_pinned_identity(&state, &target, &credential).await {
-            return *response;
+        match ensure_pinned_identity(&state, &target, &credential).await {
+            Ok(checked_credential) => credential = checked_credential,
+            Err(response) => return *response,
+        }
+    }
+
+    if route.rest == "api/update" && parts.method == http::Method::POST {
+        match ensure_compatible_daemon_update(&state, &target, &credential).await {
+            Ok(checked_credential) => credential = checked_credential,
+            Err(response) => return *response,
         }
     }
 
@@ -448,7 +459,7 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
         .await;
     }
 
-    proxy_http(&state, credential, upstream, parts, body).await
+    proxy_http(&state, &target, credential, upstream, parts, body).await
 }
 
 /// Anything that is not a read. The daemon's own refusals still apply; this is
@@ -473,19 +484,20 @@ async fn ensure_pinned_identity(
     state: &ProxyState,
     target: &Target,
     credential: &str,
-) -> Result<(), Box<Response>> {
+) -> Result<String, Box<Response>> {
     match state.registry.identity(&target.id) {
-        Identity::Verified => return Ok(()),
+        Identity::Verified => return Ok(credential.to_string()),
         Identity::Mismatch => return Err(Box::new(identity_mismatch())),
         Identity::Unchecked => {}
     }
 
     let url = join_upstream(&target.base, "api/capabilities", None)
         .map_err(|error| Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string())))?;
-    let response = state
+    let mut checked_credential = credential.to_string();
+    let mut response = state
         .client
         .get(url)
-        .header(AUTHORIZATION, bearer(credential))
+        .header(AUTHORIZATION, bearer(&checked_credential))
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
@@ -496,7 +508,50 @@ async fn ensure_pinned_identity(
                 format!("could not confirm the daemon's identity: {error}"),
             ))
         })?;
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) && target.kind == ConnectionKind::Local
+    {
+        checked_credential = state
+            .registry
+            .reload_local_credential(target)
+            .map_err(|error| {
+                Box::new(refuse(
+                    StatusCode::CONFLICT,
+                    "local-profile-changed",
+                    error.to_string(),
+                ))
+            })?;
+        let retry_url = join_upstream(&target.base, "api/capabilities", None).map_err(|error| {
+            Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string()))
+        })?;
+        response = state
+            .client
+            .get(retry_url)
+            .header(AUTHORIZATION, bearer(&checked_credential))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| {
+                Box::new(refuse(
+                    StatusCode::BAD_GATEWAY,
+                    "identity-unreachable",
+                    format!("could not confirm the daemon's identity: {error}"),
+                ))
+            })?;
+    }
     if !response.status().is_success() {
+        if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            return Err(Box::new(refuse(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "the daemon rejected its stored credential — reconnect this connection",
+            )));
+        }
         return Err(Box::new(refuse(
             StatusCode::BAD_GATEWAY,
             "identity-unreachable",
@@ -513,17 +568,140 @@ async fn ensure_pinned_identity(
             format!("could not read the daemon's identity: {error}"),
         ))
     })?;
+    let seen_protocol = body
+        .get("apiProtocolVersion")
+        .and_then(serde_json::Value::as_u64);
+    if seen_protocol != Some(crate::probe::API_PROTOCOL_VERSION.into()) {
+        return Err(Box::new(refuse(
+            StatusCode::CONFLICT,
+            "incompatible-protocol",
+            format!(
+                "this Wisp Desktop supports daemon API protocol {}, but the daemon reported {}",
+                crate::probe::API_PROTOCOL_VERSION,
+                seen_protocol.map_or_else(|| "unknown".to_string(), |value| value.to_string())
+            ),
+        )));
+    }
     let seen = body
         .get("instanceId")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     if seen == target.instance_id {
         state.registry.set_identity(&target.id, Identity::Verified);
-        Ok(())
+        Ok(checked_credential)
     } else {
         state.registry.set_identity(&target.id, Identity::Mismatch);
         Err(Box::new(identity_mismatch()))
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCompatibility {
+    current_api_protocol_version: u32,
+    latest_api_protocol_version: Option<u32>,
+}
+
+/// The web bundle can reload with a daemon update; the native proxy cannot.
+/// Enforce the compiled protocol at the trusted hop as well as in the button.
+async fn ensure_compatible_daemon_update(
+    state: &ProxyState,
+    target: &Target,
+    credential: &str,
+) -> Result<String, Box<Response>> {
+    let url = join_upstream(&target.base, "api/update", None)
+        .map_err(|error| Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string())))?;
+    let mut checked_credential = credential.to_string();
+    let mut response = state
+        .client
+        .get(url)
+        .header(AUTHORIZATION, bearer(&checked_credential))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|error| {
+            Box::new(refuse(
+                StatusCode::BAD_GATEWAY,
+                "update-check-unreachable",
+                format!("could not verify update compatibility: {error}"),
+            ))
+        })?;
+    if matches!(
+        response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) && target.kind == ConnectionKind::Local
+    {
+        checked_credential = state
+            .registry
+            .reload_local_credential(target)
+            .map_err(|error| {
+                Box::new(refuse(
+                    StatusCode::CONFLICT,
+                    "local-profile-changed",
+                    error.to_string(),
+                ))
+            })?;
+        let retry_url = join_upstream(&target.base, "api/update", None).map_err(|error| {
+            Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string()))
+        })?;
+        response = state
+            .client
+            .get(retry_url)
+            .header(AUTHORIZATION, bearer(&checked_credential))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| {
+                Box::new(refuse(
+                    StatusCode::BAD_GATEWAY,
+                    "update-check-unreachable",
+                    format!("could not verify update compatibility: {error}"),
+                ))
+            })?;
+    }
+    if !response.status().is_success() {
+        if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
+            return Err(Box::new(refuse(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "the daemon rejected its stored credential — reconnect this connection",
+            )));
+        }
+        return Err(Box::new(refuse(
+            StatusCode::BAD_GATEWAY,
+            "update-check-refused",
+            format!(
+                "the daemon refused the update compatibility check with status {}",
+                response.status().as_u16()
+            ),
+        )));
+    }
+    let compatibility: UpdateCompatibility = response.json().await.map_err(|error| {
+        Box::new(refuse(
+            StatusCode::BAD_GATEWAY,
+            "update-check-unreadable",
+            format!("could not read update compatibility: {error}"),
+        ))
+    })?;
+    let supported = crate::probe::API_PROTOCOL_VERSION;
+    if compatibility.current_api_protocol_version != supported
+        || compatibility.latest_api_protocol_version != Some(supported)
+    {
+        return Err(Box::new(refuse(
+            StatusCode::CONFLICT,
+            "incompatible-update",
+            format!(
+                "this Desktop supports daemon API protocol {supported}; the requested update targets protocol {}",
+                compatibility
+                    .latest_api_protocol_version
+                    .map_or_else(|| "unknown".to_string(), |value| value.to_string())
+            ),
+        )));
+    }
+    Ok(checked_credential)
 }
 
 fn identity_mismatch() -> Response {
@@ -544,11 +722,80 @@ fn bearer(credential: &str) -> HeaderValue {
 
 async fn proxy_http(
     state: &ProxyState,
+    target: &Target,
     credential: String,
     upstream: Url,
     parts: http::request::Parts,
     body: Body,
 ) -> Response {
+    let request_has_body = has_request_body(&parts.headers);
+    let buffered_body = if request_has_body {
+        match axum::body::to_bytes(body, MAX_REPLAYABLE_REQUEST_BODY).await {
+            Ok(bytes) => Some(bytes),
+            Err(_) => {
+                return refuse(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "request-too-large",
+                    "the desktop proxy accepts request bodies up to 80 MiB",
+                )
+            }
+        }
+    } else {
+        None
+    };
+    let mut builder = upstream_request(state, &parts, upstream.clone(), &credential);
+    if let Some(bytes) = &buffered_body {
+        builder = builder.body(bytes.clone());
+    }
+
+    let mut upstream_response = match send_upstream(state, builder).await {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    if matches!(
+        upstream_response.status(),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+    ) && target.kind == ConnectionKind::Local
+    {
+        match state.registry.reload_local_credential(target) {
+            Ok(refreshed) if refreshed != credential => {
+                let mut retry = upstream_request(state, &parts, upstream, &refreshed);
+                if let Some(bytes) = &buffered_body {
+                    retry = retry.body(bytes.clone());
+                }
+                upstream_response = match send_upstream(state, retry).await {
+                    Ok(response) => response,
+                    Err(response) => return response,
+                };
+            }
+            Ok(_) => {}
+            Err(RegistryError::LocalProfileChanged) => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "local-profile-changed",
+                    RegistryError::LocalProfileChanged.to_string(),
+                )
+            }
+            Err(error) => {
+                return refuse(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "local-credential-unavailable",
+                    error.to_string(),
+                )
+            }
+        }
+    }
+
+    relay_http_response(upstream_response)
+}
+
+fn upstream_request(
+    state: &ProxyState,
+    parts: &http::request::Parts,
+    upstream: Url,
+    credential: &str,
+) -> reqwest::RequestBuilder {
     let mut builder = state.client.request(parts.method.clone(), upstream);
     for (name, value) in parts.headers.iter() {
         if REQUEST_HEADER_DENYLIST.contains(&name.as_str()) {
@@ -558,31 +805,29 @@ async fn proxy_http(
     }
     // Set, never append: whatever the caller sent is already gone, and exactly
     // one Authorization header leaves this process.
-    builder = builder.header(AUTHORIZATION, bearer(&credential));
+    builder.header(AUTHORIZATION, bearer(credential))
+}
 
-    if has_request_body(&parts.headers) {
-        builder = builder.body(reqwest::Body::wrap_stream(body.into_data_stream()));
+async fn send_upstream(
+    state: &ProxyState,
+    builder: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, Response> {
+    match tokio::time::timeout(state.upstream_handshake_timeout, builder.send()).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) => Err(refuse(
+            StatusCode::BAD_GATEWAY,
+            "upstream",
+            describe_upstream_failure(&error),
+        )),
+        Err(_) => Err(refuse(
+            StatusCode::GATEWAY_TIMEOUT,
+            "upstream-timeout",
+            "the daemon did not send response headers in time",
+        )),
     }
+}
 
-    let upstream_response =
-        match tokio::time::timeout(state.upstream_handshake_timeout, builder.send()).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => {
-                return refuse(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream",
-                    describe_upstream_failure(&error),
-                )
-            }
-            Err(_) => {
-                return refuse(
-                    StatusCode::GATEWAY_TIMEOUT,
-                    "upstream-timeout",
-                    "the daemon did not send response headers in time",
-                )
-            }
-        };
-
+fn relay_http_response(upstream_response: reqwest::Response) -> Response {
     let status = upstream_response.status();
     let mut response = Response::builder().status(status);
     if let Some(headers) = response.headers_mut() {

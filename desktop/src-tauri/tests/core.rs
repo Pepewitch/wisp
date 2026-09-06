@@ -103,6 +103,26 @@ async fn a_missing_local_profile_is_reported_rather_than_fatal() {
 }
 
 #[tokio::test]
+async fn switching_connections_expires_a_native_local_picker_lease() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let app = app(Some(&local)).await;
+    let saved = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("remote");
+
+    app.core.select_connection("local").expect("select local");
+    let lease = app.core.begin_local_picker("local").expect("begin picker");
+    app.core
+        .select_connection(&saved.id)
+        .expect("switch while picker is open");
+    assert!(app.core.finish_local_picker(lease).is_err());
+    assert!(app.core.begin_local_picker("local").is_err());
+}
+
+#[tokio::test]
 async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
     let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
@@ -406,8 +426,10 @@ async fn a_changed_remote_requires_confirmation_and_is_reproved_at_commit() {
         .reconnect_checked(&saved.id, None, None, Some(&confirmed.instance_id))
         .await
         .expect("confirmed replacement");
-    assert_eq!(reconnected.id, saved.id);
+    assert_ne!(reconnected.id, saved.id);
     assert_eq!(reconnected.instance_id, remote.instance_id());
+    assert!(app.core.registry().resolve(&saved.id).is_none());
+    assert_eq!(app.secrets.accounts(), vec![reconnected.id.clone()]);
 }
 
 #[tokio::test]
@@ -427,6 +449,30 @@ async fn removing_a_connection_takes_its_credential_with_it() {
     assert_eq!(app.core.bootstrap().connections.len(), 1);
     // The built-in local connection is not removable.
     assert!(app.core.remove("local").is_err());
+}
+
+#[tokio::test]
+async fn deferred_keychain_cleanup_is_exposed_without_restoring_the_route() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let app = app(Some(&local)).await;
+    let saved = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("saved");
+    app.secrets.fail_next_delete(&saved.id);
+
+    assert!(app.core.remove(&saved.id).is_err());
+    let bootstrap = app.core.bootstrap();
+    assert!(bootstrap
+        .connections
+        .iter()
+        .all(|connection| connection.id != saved.id));
+    assert_eq!(bootstrap.cleanup_issues.len(), 1);
+    assert_eq!(bootstrap.cleanup_issues[0].connection_id, saved.id);
+    assert!(bootstrap.cleanup_issues[0].message.contains("incomplete"));
+    assert!(app.core.registry().resolve(&saved.id).is_none());
 }
 
 #[tokio::test]
