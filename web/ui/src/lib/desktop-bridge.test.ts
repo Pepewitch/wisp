@@ -140,6 +140,11 @@ describe("desktop native bridge", () => {
       eventStatus = status
     })
     unlisten()
+    await bridge.revealWorktreeFile({
+      connectionId: "local",
+      worktreePath: "/synthetic/worktree",
+      path: ".context/PLAN.md",
+    })
 
     expect(calls).toEqual([
       { command: "desktop_bootstrap", args: undefined },
@@ -201,6 +206,14 @@ describe("desktop native bridge", () => {
         args: { confirmedVersion: "0.4.0-alpha.9" },
       },
       { command: "relaunch_desktop", args: undefined },
+      {
+        command: "reveal_worktree_file",
+        args: {
+          connectionId: "local",
+          worktreePath: "/synthetic/worktree",
+          path: ".context/PLAN.md",
+        },
+      },
     ])
     expect(events).toEqual(["desktop-update-status"])
     expect(eventStatus).toEqual(DESKTOP_UPDATE)

@@ -451,6 +451,91 @@ export async function diffStat(worktree: string): Promise<string> {
 const DIFF_CAP = 512 * 1024;
 
 /**
+ * `worktree`-relative or absolute `path` resolved inside the worktree, or null
+ * when it lands anywhere else.
+ *
+ * The comparison is on resolved absolute paths, so `..`, a doubled slash and an
+ * absolute path that merely starts with the worktree's name are all handled by
+ * `resolve` rather than by string rules. The trailing separator matters: without
+ * it `/w/task` would contain `/w/task-other`.
+ *
+ * Symlinks are deliberately NOT resolved. A worktree may legitimately contain
+ * one, and `realpath` would either follow it out of the tree (refusing a real
+ * file the task owns) or require a second policy for what an escaping link
+ * means. The contents of the tree are the task's own; the boundary this
+ * enforces is which tree a request may name.
+ */
+export function containedPath(worktree: string, path: string): string | null {
+  const root = resolve(worktree);
+  const abs = resolve(root, path);
+  const prefix = root.endsWith("/") ? root : `${root}/`;
+  return abs !== root && !abs.startsWith(prefix) ? null : abs;
+}
+
+/** Cap on one file served to the viewer (512 KB) — the same budget as a diff. */
+export const FILE_CAP = 512 * 1024;
+
+/** How much of a file's head decides text-or-binary; git uses the same 8 KB. */
+const BINARY_PROBE = 8192;
+
+export type WorktreeFile =
+  | { kind: "text"; path: string; text: string; bytes: number; truncated: boolean }
+  | { kind: "binary"; path: string; bytes: number };
+
+/**
+ * One file out of a task's worktree, for the UI's file viewer.
+ *
+ * "Exists but is not text" is a STATE, not a request failure — the same choice
+ * the diff route makes for a worktree git has forgotten. The caller can offer
+ * to reveal a binary in Finder; it cannot do anything with a 415.
+ *
+ * A path outside the worktree and a path that is not there at all both return
+ * null, and the route says the same thing about both. Distinguishing them would
+ * turn this into an oracle for what exists elsewhere on the daemon's machine.
+ */
+export async function readWorktreeFile(worktree: string, path: string): Promise<WorktreeFile | null> {
+  const abs = containedPath(worktree, path);
+  if (abs === null) return null;
+  const relative = abs.slice(resolve(worktree).length).replace(/^\//, "");
+  if (relative === "") return null;
+
+  let fh;
+  try {
+    fh = await open(abs, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) return null;
+    const probeLen = Math.min(BINARY_PROBE, st.size);
+    const probe = Buffer.alloc(probeLen);
+    const { bytesRead: probed } = await fh.read(probe, 0, probeLen, 0);
+    const head = probe.subarray(0, probed);
+    if (head.includes(0)) return { kind: "binary", path: relative, bytes: st.size };
+
+    const len = Math.min(FILE_CAP, st.size);
+    const buf = Buffer.alloc(len);
+    head.copy(buf, 0, 0, Math.min(probed, len));
+    let filled = Math.min(probed, len);
+    while (filled < len) {
+      const { bytesRead } = await fh.read(buf, filled, len - filled, filled);
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    return {
+      kind: "text",
+      path: relative,
+      text: buf.subarray(0, filled).toString("utf8"),
+      bytes: st.size,
+      truncated: st.size > len,
+    };
+  } finally {
+    await fh.close();
+  }
+}
+
+/**
  * A task's full diff for the web UI's diff pane. With a base commit, the diff
  * runs from resolveDiffBase() — GitHub's base, not the worktree's creation
  * commit — against the WORKING TREE, so committed branch work, staged and
@@ -520,10 +605,8 @@ async function appendUntrackedDiffs(
  * binary (NUL in the first 8 KB) is a marker, never bytes.
  */
 async function untrackedPatch(worktree: string, relPath: string, room: number): Promise<string | null> {
-  const abs = resolve(worktree, relPath);
-  const root = resolve(worktree);
-  const prefix = root.endsWith("/") ? root : `${root}/`;
-  if (abs !== root && !abs.startsWith(prefix)) return null;
+  const abs = containedPath(worktree, relPath);
+  if (abs === null) return null;
 
   let fh;
   try {

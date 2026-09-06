@@ -11,7 +11,9 @@ import {
   hasUnpushedWork,
   isDirty,
   localWorktree,
+  FILE_CAP,
   matchCopyFiles,
+  readWorktreeFile,
   removeWorktree,
   resolveDiffBase,
   runSetup,
@@ -311,6 +313,75 @@ describe("archive teardown hooks", () => {
     const wt = await createWorktree(repo, "ttd003", "bad-teardown", withScript);
     await removeWorktree(repo, wt.path, wt.branch, false, withScript, "ttd003");
     expect(existsSync(wt.path)).toBe(false);
+  });
+});
+
+/**
+ * The file viewer's reader. The point of the containment cases is that the
+ * boundary is which TREE a request may name — an agent writes the path into
+ * prose, so `..` and an absolute path both arrive here as ordinary input.
+ */
+describe("readWorktreeFile (the UI's file viewer)", () => {
+  test("reads a text file by relative or absolute path, canonicalizing what it read", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tfil01", "file-read", cfg);
+    mkdirSync(join(wt.path, ".context"));
+    writeFileSync(join(wt.path, ".context", "PLAN.md"), "# Plan\n\nStep one.\n");
+
+    for (const path of [".context/PLAN.md", "./.context/PLAN.md", join(wt.path, ".context", "PLAN.md")]) {
+      const file = await readWorktreeFile(wt.path, path);
+      expect(file).toEqual({
+        kind: "text",
+        path: ".context/PLAN.md",
+        text: "# Plan\n\nStep one.\n",
+        bytes: 18,
+        truncated: false,
+      });
+    }
+  });
+
+  test("a binary file is a state the caller can act on, not a failure", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tfil02", "file-binary", cfg);
+    writeFileSync(join(wt.path, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0xff]));
+    expect(await readWorktreeFile(wt.path, "blob.bin")).toEqual({
+      kind: "binary",
+      path: "blob.bin",
+      bytes: 5,
+    });
+  });
+
+  test("nothing outside the worktree is readable, and the answer never says which reason", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tfil03", "file-contain", cfg);
+    const outside = join(mkdtempSync(join(tmpdir(), "wisp-outside-")), "secret.txt");
+    writeFileSync(outside, "SECRET\n");
+
+    for (const path of [
+      "../secret.txt",
+      "../../etc/passwd",
+      ".context/../../secret.txt",
+      outside,
+      "/etc/passwd",
+      // the worktree root itself, and a sibling directory that merely shares its prefix
+      "",
+      ".",
+      `${wt.path}-other/secret.txt`,
+    ]) {
+      expect(await readWorktreeFile(wt.path, path)).toBeNull();
+    }
+    // a directory inside the worktree is not a file either
+    expect(await readWorktreeFile(wt.path, ".")).toBeNull();
+  });
+
+  test("a file past the cap comes back truncated with its real size", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tfil04", "file-cap", cfg);
+    const size = FILE_CAP + 4096;
+    writeFileSync(join(wt.path, "big.log"), "x".repeat(size));
+    const file = await readWorktreeFile(wt.path, "big.log");
+    expect(file).toMatchObject({ kind: "text", path: "big.log", bytes: size, truncated: true });
+    expect(file!.kind === "text" && file.text.length).toBe(FILE_CAP);
   });
 });
 

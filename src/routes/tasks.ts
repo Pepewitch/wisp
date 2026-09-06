@@ -39,6 +39,7 @@ import {
   fullDiff,
   localWorktree,
   pushBranch,
+  readWorktreeFile,
   removeWorktree,
   runSetup,
   slugify,
@@ -705,29 +706,54 @@ export function taskRoute(
     })();
   }
 
-  if (action === "diff" && m === "GET") {
-    return (async () => {
-      // archived rows keep their worktree_path but the directory is gone —
-      // answer honestly instead of spawn-crashing git on a removed cwd
-      if (task.archived) return err("task is archived — worktree removed", 409);
-      if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
-      // A worktree git has forgotten is a STATE, not a request failure: 200
-      // with an empty diff and the reason, the same shape the UI already uses
-      // for an archived task. Erroring here is what rendered git's usage text
-      // in the diff pane (D1).
-      const health = await worktreeHealth(task.worktree_path);
-      if (!health.ok) {
-        return json({ diff: "", truncated: false, untracked: [], base: null, worktreeReason: health.reason });
-      }
-      // A local task's base_commit is HEAD-at-creation, but its checkout is
-      // ALSO where the human works: they commit and the branch moves on, and
-      // diffing against that stale base keeps reporting their own landed
-      // commits as pending "changes". A worktree task's base IS its branch
-      // point, so there it stays the right answer.
-      const diff = await fullDiff(task.worktree_path, taskMode(task) === "local" ? null : task.base_commit);
-      return json({ ...diff, worktreeReason: null });
-    })();
-  }
+  if (action === "diff" && m === "GET") return diffRoute(task);
+
+  if (action === "file" && m === "GET") return worktreeFileRoute(task, url);
 
   return null;
+}
+
+/** The Changes pane's whole diff, and the states that are not a failure. */
+async function diffRoute(task: Task): Promise<Response> {
+  // archived rows keep their worktree_path but the directory is gone —
+  // answer honestly instead of spawn-crashing git on a removed cwd
+  if (task.archived) return err("task is archived — worktree removed", 409);
+  if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
+  // A worktree git has forgotten is a STATE, not a request failure: 200 with
+  // an empty diff and the reason, the same shape the UI already uses for an
+  // archived task. Erroring here is what rendered git's usage text in the
+  // diff pane (D1).
+  const health = await worktreeHealth(task.worktree_path);
+  if (!health.ok) {
+    return json({ diff: "", truncated: false, untracked: [], base: null, worktreeReason: health.reason });
+  }
+  // A local task's base_commit is HEAD-at-creation, but its checkout is ALSO
+  // where the human works: they commit and the branch moves on, and diffing
+  // against that stale base keeps reporting their own landed commits as
+  // pending "changes". A worktree task's base IS its branch point, so there
+  // it stays the right answer.
+  const diff = await fullDiff(task.worktree_path, taskMode(task) === "local" ? null : task.base_commit);
+  return json({ ...diff, worktreeReason: null });
+}
+
+/**
+ * One file out of the task's worktree, so the UI can read a plan an agent
+ * wrote without leaving the task. The daemon serves it rather than the desktop
+ * app reading local disk: the worktree belongs to whichever daemon owns the
+ * task, which is the only arrangement that also works for a remote connection
+ * — and it gives the browser the same feature.
+ *
+ * `path` may be worktree-relative or absolute; what it may not be is anywhere
+ * outside the worktree, and the refusal never says which of "not there" or
+ * "not yours" it was. Distinguishing them would answer questions about the
+ * daemon's whole disk.
+ */
+async function worktreeFileRoute(task: Task, url: URL): Promise<Response> {
+  const path = url.searchParams.get("path");
+  if (path === null || path.trim() === "") return err("path is required", 400);
+  if (task.archived) return err("task is archived — worktree removed", 409);
+  if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
+  const file = await readWorktreeFile(task.worktree_path, path);
+  if (!file) return err("no such file in this task's worktree", 404);
+  return json(file);
 }

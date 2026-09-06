@@ -1,9 +1,11 @@
 import type { ComponentProps } from "react"
 import remarkBreaks from "remark-breaks"
-import { defaultRemarkPlugins, Streamdown } from "streamdown"
+import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown"
 
 import { externalLinkProps } from "@/lib/external-links"
+import { safeHttpUrl } from "@/lib/paste-links"
 import { cn } from "@/lib/utils"
+import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
 
 /** Agent prose, rendered safely while markdown is still streaming. */
 export function Prose({ text, className }: { text: string; className?: string }) {
@@ -13,6 +15,7 @@ export function Prose({ text, className }: { text: string; className?: string })
         parseIncompleteMarkdown
         controls={false}
         remarkPlugins={PROSE_REMARK_PLUGINS}
+        rehypePlugins={PROSE_REHYPE_PLUGINS}
         components={PROSE_COMPONENTS}
       >
         {text}
@@ -23,25 +26,41 @@ export function Prose({ text, className }: { text: string; className?: string })
 
 const PROSE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBreaks]
 
+/**
+ * Streamdown's rehype chain without `harden`, which is the only reason a
+ * repository path could not be a link.
+ *
+ * Its configured allow-lists are already `["*"]` for prefixes and protocols,
+ * so the sole rule it contributes here is "the URL must resolve" — and a
+ * relative path never does. Dropping it costs nothing else, and it does NOT
+ * loosen what a scheme may be: `sanitize` stays, and it is what empties a
+ * `javascript:` or `file:` href. `linkSafety` is a different mechanism and
+ * blocks none of this; leaving it at its default is deliberate.
+ */
+const PROSE_REHYPE_PLUGINS = Object.entries(defaultRehypePlugins)
+  .filter(([name]) => name !== "harden")
+  .map(([, plugin]) => plugin) as ComponentProps<typeof Streamdown>["rehypePlugins"]
+
 const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   p: ({ children }) => <p className="mt-2.5 first:mt-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
 
-  a: ({ children, href }) => {
-    // Agent prose is the least trusted href in the app, and Streamdown already
-    // refuses a non-web one before it reaches here — this is the second line,
-    // not the first, and it exists so the rule holds if that default moves.
-    const link = externalLinkProps(href)
-    if (!link) return <>{children}</>
-    return (
-      <a
-        {...link}
-        className="text-accent-soft underline decoration-accent-dim underline-offset-2 hover:text-primary hover:decoration-primary"
-      >
-        {children}
-      </a>
-    )
+  a: ({ children, href }) => <ProseLink href={href}>{children}</ProseLink>,
+
+  /**
+   * Only an image that can actually load is an image.
+   *
+   * `harden` used to replace every non-absolute `src` with a grey placeholder,
+   * and dropping it (see the rehype chain above) would otherwise turn a
+   * relative path into a broken-image icon: it resolves against the app's own
+   * origin, where there is no asset route to answer it. Its alt text is the
+   * one thing left that says anything, so that is what renders.
+   */
+  img: ({ src, alt }) => {
+    const url = typeof src === "string" ? safeHttpUrl(src) : null
+    if (!url) return <>{alt}</>
+    return <img src={url} alt={alt ?? ""} className="mt-2.5 max-w-full rounded-md" />
   },
 
   ul: ({ children }) => <ul className="mt-2.5 ml-4 list-outside list-disc space-y-1 marker:text-faint">{children}</ul>,
@@ -85,4 +104,49 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
       {children}
     </pre>
   ),
+}
+
+/** Prose's `a`, which resolves to one of the three things an href can be. */
+const LINK_CLASS =
+  "text-accent-soft underline decoration-accent-dim underline-offset-2 hover:text-primary hover:decoration-primary"
+
+function ProseLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  // A hook, so this cannot be inlined into the component map above.
+  const openFile = useWorktreeFileOpener()
+
+  // A web address leaves the app. Desktop needs the click; the browser does not.
+  const link = externalLinkProps(href)
+  if (link) {
+    return (
+      <a {...link} className={LINK_CLASS}>
+        {children}
+      </a>
+    )
+  }
+
+  /**
+   * A repository path opens in the viewer — a button, because it goes nowhere:
+   * an anchor would offer a context menu full of things that cannot work, and
+   * a middle-click that navigates the shell away from itself.
+   *
+   * Whether the file is there is the daemon's answer, on click. Verifying every
+   * path on render would cost a request per link per turn of a transcript
+   * nobody has clicked yet.
+   */
+  const path = worktreeFilePath(href)
+  if (path && openFile) {
+    return (
+      <button
+        type="button"
+        onClick={() => openFile(path)}
+        title={path}
+        className={cn(LINK_CLASS, "cursor-pointer text-left focus-visible:outline-none")}
+      >
+        {children}
+      </button>
+    )
+  }
+
+  // No worktree behind this prose, or an href `sanitize` already emptied.
+  return <>{children}</>
 }

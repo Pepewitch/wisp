@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { externalLinkProps } from "./external-links"
+import { externalLinkProps, revealFileHandler } from "./external-links"
 
 const isTauri = vi.hoisted(() => vi.fn(() => false))
 vi.mock("@tauri-apps/api/core", () => ({ isTauri }))
@@ -8,7 +8,12 @@ vi.mock("@tauri-apps/api/core", () => ({ isTauri }))
 // The frozen real bridge cannot be spied on, and its only relevance here is
 // which URL reaches native code.
 const openExternalUrl = vi.hoisted(() => vi.fn<(url: string) => Promise<void>>())
-vi.mock("./desktop-bridge", () => ({ desktopBridge: { openExternalUrl } }))
+const revealWorktreeFile = vi.hoisted(() =>
+  vi.fn<(input: Record<string, string>) => Promise<void>>()
+)
+vi.mock("./desktop-bridge", () => ({
+  desktopBridge: { openExternalUrl, revealWorktreeFile },
+}))
 
 /** A click React would deliver, with only what the handler reads. */
 function click(modified = false): {
@@ -35,6 +40,8 @@ describe("external link props", () => {
     isTauri.mockReturnValue(false)
     openExternalUrl.mockReset()
     openExternalUrl.mockResolvedValue(undefined)
+    revealWorktreeFile.mockReset()
+    revealWorktreeFile.mockResolvedValue(undefined)
   })
 
   it("is an ordinary blank-target anchor, so a link still reads as one", () => {
@@ -106,6 +113,47 @@ describe("external link props", () => {
       new Error("only http and https links open outside the app")
     )
     externalLinkProps("https://example.test/a")!.onClick(click() as unknown as Click)
+    await Promise.resolve()
+    expect(error).toHaveBeenCalled()
+  })
+})
+
+/**
+ * Revealing a file is a this-machine action, so the button's absence is the
+ * feature: a browser has no file manager to point at, and a remote daemon's
+ * worktree is not on this Mac.
+ */
+describe("revealFileHandler", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    isTauri.mockReturnValue(true)
+    revealWorktreeFile.mockReset()
+    revealWorktreeFile.mockResolvedValue(undefined)
+  })
+
+  it("is absent in the browser, off Local, and before a worktree exists", () => {
+    isTauri.mockReturnValue(false)
+    expect(revealFileHandler("local", "/w/task")).toBeUndefined()
+    isTauri.mockReturnValue(true)
+    expect(revealFileHandler("remote-one", "/w/task")).toBeUndefined()
+    expect(revealFileHandler("local", null)).toBeUndefined()
+  })
+
+  it("names the connection, the worktree, and the file", () => {
+    const reveal = revealFileHandler("local", "/w/task")
+    expect(reveal).toBeDefined()
+    reveal!(".context/PLAN.md")
+    expect(revealWorktreeFile).toHaveBeenCalledExactlyOnceWith({
+      connectionId: "local",
+      worktreePath: "/w/task",
+      path: ".context/PLAN.md",
+    })
+  })
+
+  it("reports a refused reveal rather than throwing into the click", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
+    revealWorktreeFile.mockRejectedValue(new Error("only an absolute path can be revealed"))
+    revealFileHandler("local", "/w/task")!("PLAN.md")
     await Promise.resolve()
     expect(error).toHaveBeenCalled()
   })

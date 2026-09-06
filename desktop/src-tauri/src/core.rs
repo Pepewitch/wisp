@@ -186,7 +186,10 @@ impl DesktopCore {
         Ok(())
     }
 
-    pub fn begin_local_picker(&self, connection_id: &str) -> Result<u64, CoreError> {
+    /// Refuse a native-only, this-machine action unless Local is both the
+    /// named and the selected connection. A remote daemon's paths and folders
+    /// are on another machine, so there is nothing here to act on.
+    fn require_local(&self, connection_id: &str) -> Result<u64, CoreError> {
         let selection = self.selection.lock().expect("selection mutex");
         if connection_id != local::LOCAL_CONNECTION_ID
             || selection.connection_id != local::LOCAL_CONNECTION_ID
@@ -194,6 +197,25 @@ impl DesktopCore {
             return Err(CoreError::LocalPickerUnavailable);
         }
         Ok(selection.generation)
+    }
+
+    pub fn begin_local_picker(&self, connection_id: &str) -> Result<u64, CoreError> {
+        self.require_local(connection_id)
+    }
+
+    /// Ask Finder to select one file in a Local task's worktree.
+    ///
+    /// The join happens here rather than in the webview so `..` is refused on
+    /// a settled path. Nothing is opened — see `external::reveal`.
+    pub fn reveal_local_file(
+        &self,
+        connection_id: &str,
+        worktree_path: &str,
+        path: &str,
+    ) -> Result<(), CoreError> {
+        self.require_local(connection_id)?;
+        let joined = std::path::Path::new(worktree_path).join(path);
+        Ok(crate::external::reveal(&joined.to_string_lossy())?)
     }
 
     pub fn finish_local_picker(&self, generation: u64) -> Result<(), CoreError> {

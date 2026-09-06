@@ -253,6 +253,7 @@ desktop_update_status    read global application-update state; no network
 check_desktop_update     check the one native-owned release channel
 install_desktop_update   install only the exact pending confirmed version
 relaunch_desktop         relaunch only after native installation completes
+reveal_worktree_file     select one Local worktree file in Finder, never open it
 ```
 
 `open_external_url` and the Desktop updater commands carry no connection. A link in a
@@ -273,6 +274,12 @@ The updater is application-global by design; it never selects or mutates a
 daemon. Its endpoint, public key, candidate, URL, signature, installation path,
 and relaunch gate are native-owned rather than webview arguments. See
 [Desktop updates](DESKTOP-UPDATES.md) for that separate trust boundary.
+
+`reveal_worktree_file` is Local-only and reveals rather than opens. Reading a
+worktree file is deliberately NOT a native command: `GET /api/tasks/:id/file`
+serves it from the daemon that owns the worktree, so a remote connection's
+files are readable too and the browser gets the same viewer. Native code only
+does the thing a daemon cannot — point this machine's Finder at a file.
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base

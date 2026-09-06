@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
@@ -488,6 +488,66 @@ describe("daemon API contracts", () => {
       base: repo.base,
       worktreeReason: null,
     });
+  });
+
+  /**
+   * The file viewer's route. The path arrives from a link an agent wrote, so
+   * the interesting cases are the refusals — and "outside the worktree" must
+   * answer exactly like "not there", or the route becomes a way to ask what
+   * exists elsewhere on the daemon's machine.
+   */
+  test("serves one worktree file, and refuses anything outside the worktree the same way", async () => {
+    const base = await startServer();
+    const repo = makeRepo();
+    mkdirSync(join(repo.path, ".context"));
+    writeFileSync(join(repo.path, ".context", "PLAN.md"), "# Plan\n");
+    writeFileSync(join(repo.path, "blob.bin"), Buffer.from([0x00, 0x01]));
+    const task = makeTask({ repo_path: repo.path });
+    setTaskFields(task.id, { worktree_path: repo.path, branch: repo.branch, base_commit: repo.base });
+
+    const file = await api(base, `/api/tasks/${task.id}/file?path=.context/PLAN.md`);
+    expect(file.status).toBe(200);
+    expect(await json(file)).toEqual({
+      kind: "text",
+      path: ".context/PLAN.md",
+      text: "# Plan\n",
+      bytes: 7,
+      truncated: false,
+    });
+
+    // a binary is a state the viewer can act on (offer Finder), not an error
+    expect(await json(await api(base, `/api/tasks/${task.id}/file?path=blob.bin`))).toEqual({
+      kind: "binary",
+      path: "blob.bin",
+      bytes: 2,
+    });
+
+    // one sentence for every path the task does not own, whatever the reason
+    const refused = "no such file in this task's worktree";
+    const outside = mkdtempSync(join(tmpdir(), "wisp-api-outside-"));
+    writeFileSync(join(outside, "secret.txt"), "SECRET\n");
+    for (const path of ["missing.md", "../secret.txt", "/etc/passwd", join(outside, "secret.txt"), "."]) {
+      await expectError(base, `/api/tasks/${task.id}/file?path=${encodeURIComponent(path)}`, 404, refused);
+    }
+
+    await expectError(base, `/api/tasks/${task.id}/file`, 400, "path is required");
+    await expectError(base, `/api/tasks/${task.id}/file?path=%20`, 400, "path is required");
+    await expectError(base, "/api/tasks/tnope9/file?path=a.md", 404, "no such task: tnope9");
+    const noWorktree = makeTask();
+    await expectError(
+      base,
+      `/api/tasks/${noWorktree.id}/file?path=a.md`,
+      409,
+      "task has no worktree (failed before setup?)",
+    );
+    const archived = makeTask();
+    setTaskFields(archived.id, { archived: 1 });
+    await expectError(
+      base,
+      `/api/tasks/${archived.id}/file?path=a.md`,
+      409,
+      "task is archived — worktree removed",
+    );
   });
 
   test("status reports live git rows and repos merge configured paths with history", async () => {

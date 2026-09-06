@@ -1,5 +1,7 @@
-import { render, screen } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { fireEvent, render, screen } from "@testing-library/react"
+import { describe, expect, it, vi } from "vitest"
+
+import { WorktreeFileContext } from "@/lib/worktree-files"
 
 import { Prose } from "./prose"
 
@@ -41,17 +43,60 @@ describe("Prose", () => {
   })
 
   /**
-   * A repository path is the other thing agents link, and it is not a web
-   * address: opening one would resolve against the app's own origin and take
-   * the shell somewhere it cannot come back from. Asserted on the rendering
-   * rather than on which layer refuses it, because both do.
+   * A repository path is the other thing agents link. It is never an anchor:
+   * navigating to it would resolve against the app's own origin and take the
+   * shell somewhere it cannot come back from. With a task behind the prose it
+   * is a button that opens the viewer; without one it is text.
    */
-  it("never turns a non-web link into something openable", () => {
+  it("asks for a repository path to be opened rather than navigating to it", () => {
+    const open = vi.fn()
     const { container } = render(
-      <Prose text="see [terminal.ts](web/ui/src/lib/terminal.ts) and [this](file:///etc/passwd)" />
+      <WorktreeFileContext.Provider value={open}>
+        <Prose text="see [terminal.ts](web/ui/src/lib/terminal.ts)" />
+      </WorktreeFileContext.Provider>
     )
     expect(container.querySelector("a")).toBeNull()
+    const button = screen.getByRole("button", { name: "terminal.ts" })
+    expect(button).toHaveAttribute("title", "web/ui/src/lib/terminal.ts")
+    fireEvent.click(button)
+    expect(open).toHaveBeenCalledExactlyOnceWith("web/ui/src/lib/terminal.ts")
+  })
+
+  it("leaves a path as plain text where no worktree is behind the prose", () => {
+    const { container } = render(<Prose text="see [terminal.ts](web/ui/src/lib/terminal.ts)" />)
+    expect(container.querySelector("a")).toBeNull()
+    expect(container.querySelector("button")).toBeNull()
     expect(container.textContent).toContain("terminal.ts")
+  })
+
+  /** `sanitize` empties these before Prose sees them; neither may become a file request. */
+  it("never asks to open a foreign scheme or an in-document anchor", () => {
+    const open = vi.fn()
+    const { container } = render(
+      <WorktreeFileContext.Provider value={open}>
+        <Prose text={"[a](file:///etc/passwd) [b](javascript:alert(1)) [c](#section)"} />
+      </WorktreeFileContext.Provider>
+    )
+    expect(container.querySelector("button")).toBeNull()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  /**
+   * The rehype chain no longer carries `harden`, which used to replace a
+   * relative image with a grey placeholder. A relative `src` resolves against
+   * the app's own origin, where nothing answers it, so only an absolute
+   * address is rendered as an image at all.
+   */
+  it("renders only an image that can load, and its alt text otherwise", () => {
+    const { container } = render(
+      <Prose
+        text={"![shot](https://example.test/a.png)\n\n![local shot](docs/shot.png)"}
+      />
+    )
+    const images = container.querySelectorAll("img")
+    expect(images).toHaveLength(1)
+    expect(images[0]).toHaveAttribute("src", "https://example.test/a.png")
+    expect(container.textContent).toContain("local shot")
   })
 
   it("autolinks a bare URL, which is how agents usually paste one", () => {

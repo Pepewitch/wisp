@@ -61,6 +61,11 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   client to connect owns it and the previous one is told it was displaced. Two
   clients on one task — a browser and the desktop app — is therefore normal
   and visible, never a terminal that silently ignores what you type.
+- Worktree file reads belong to the daemon, not to a client's own filesystem
+  access: it owns the tree, so a remote connection and the browser get the
+  same viewer. The path arrives from a link an agent wrote, so containment is
+  the boundary, and "outside the worktree" answers exactly like "not there" —
+  a distinguishable refusal is an oracle for the daemon's whole disk.
 
 ### Adapters
 

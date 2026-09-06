@@ -103,6 +103,7 @@ pub fn run() {
             commands::check_desktop_update,
             commands::install_desktop_update,
             commands::relaunch_desktop,
+            commands::reveal_worktree_file,
         ])
         .run(context())
         .expect("failed to start the Wisp desktop shell");

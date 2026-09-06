@@ -124,6 +124,48 @@ async fn switching_connections_expires_a_native_local_picker_lease() {
     assert!(app.core.begin_local_picker("local").is_err());
 }
 
+/**
+ * Revealing a file is a this-machine action, so it is gated exactly like the
+ * folder picker: a remote daemon's worktree paths are not on this Mac, and
+ * naming Local while a remote is selected is not a way in either.
+ */
+#[tokio::test]
+async fn revealing_a_file_is_refused_for_anything_but_the_selected_local() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let app = app(Some(&local)).await;
+    let saved = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("remote");
+
+    app.core
+        .select_connection(&saved.id)
+        .expect("select remote");
+    // the remote itself, and Local named while the remote is the selected one
+    assert!(app
+        .core
+        .reveal_local_file(&saved.id, "/tmp/worktree", "PLAN.md")
+        .is_err());
+    assert!(app
+        .core
+        .reveal_local_file("local", "/tmp/worktree", "PLAN.md")
+        .is_err());
+
+    // Local selected, but the path still has to be one: `..` is declined
+    // rather than resolved, so no join can walk out of the worktree.
+    app.core.select_connection("local").expect("select local");
+    assert!(app
+        .core
+        .reveal_local_file("local", "/tmp/worktree", "../../etc/passwd")
+        .is_err());
+    assert!(app
+        .core
+        .reveal_local_file("local", "relative/worktree", "PLAN.md")
+        .is_err());
+}
+
 #[tokio::test]
 async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;

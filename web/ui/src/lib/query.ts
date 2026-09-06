@@ -37,6 +37,10 @@ export interface ConnectionQueryKeys {
   pullRequest(id: string): readonly [string, "pull-request", string]
   readonly pullRequests: readonly [string, "pull-requests"]
   diff(id: string): readonly [string, "diff", string]
+  worktreeFile(
+    id: string,
+    path: string
+  ): readonly [string, "worktree-file", string, string]
   skills(id: string): readonly [string, "skills", string]
   readonly repos: readonly [string, "repos"]
   readonly suffixPrompts: readonly [string, "suffix-prompts"]
@@ -63,6 +67,8 @@ export function createConnectionQueryKeys(
       Object.freeze([connectionId, "pull-request", id] as const),
     pullRequests: Object.freeze([connectionId, "pull-requests"] as const),
     diff: (id: string) => Object.freeze([connectionId, "diff", id] as const),
+    worktreeFile: (id: string, path: string) =>
+      Object.freeze([connectionId, "worktree-file", id, path] as const),
     skills: (id: string) =>
       Object.freeze([connectionId, "skills", id] as const),
     repos: Object.freeze([connectionId, "repos"] as const),

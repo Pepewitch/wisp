@@ -3,9 +3,10 @@ import { isTauri } from "@tauri-apps/api/core"
 
 import { desktopBridge } from "./desktop-bridge"
 import { safeHttpUrl } from "./paste-links"
+import { LOCAL_CONNECTION_ID } from "./transport"
 
 /**
- * Making a link leave the app, in both runtimes.
+ * The two things that leave the app, in both runtimes.
  *
  * `target="_blank"` is enough in a browser and inert in the packaged app: a
  * WKWebView with no new-window handler simply drops the click, so every PR
@@ -55,5 +56,31 @@ export function externalLinkProps(
         console.error("could not open a link outside the app", error)
       })
     },
+  }
+}
+
+/**
+ * A handler that reveals one of a task's worktree files, or `undefined` when
+ * this client cannot — which is most of the time, and deliberately visible as
+ * an absent button rather than one that fails.
+ *
+ * A browser has no file manager to point at. A remote connection's worktree is
+ * on the daemon's machine, not this one. And a task with no worktree yet has no
+ * file to point at either. Native code re-checks the first two; this is what
+ * keeps the UI from offering an action it knows will be refused.
+ */
+export function revealFileHandler(
+  connectionId: string,
+  worktreePath: string | null
+): ((path: string) => void) | undefined {
+  if (!isTauri() || connectionId !== LOCAL_CONNECTION_ID || !worktreePath)
+    return undefined
+  return (path) => {
+    void desktopBridge
+      .revealWorktreeFile({ connectionId, worktreePath, path })
+      .catch((error: unknown) => {
+        // The file is still on screen; the reveal was the extra.
+        console.error("could not reveal a file", error)
+      })
   }
 }
