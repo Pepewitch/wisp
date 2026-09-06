@@ -197,6 +197,10 @@ function plist(app: string, key: string): string {
   return run(["/usr/libexec/PlistBuddy", "-c", `Print :${key}`, join(app, "Contents/Info.plist")]);
 }
 
+export function machOHasUuid(loadCommands: string): boolean {
+  return /^\s*cmd LC_UUID\s*$/m.test(loadCommands);
+}
+
 function verifyDesktopApp(app: string): void {
   verifyDesktopInventory(app);
   const binary = join(app, "Contents/MacOS/wisp-desktop");
@@ -209,6 +213,9 @@ function verifyDesktopApp(app: string): void {
   const buildVersion = run(["/usr/bin/vtool", "-show-build", binary]);
   if (!/^\s*minos\s+12\.3(?:\.0)?\s*$/m.test(buildVersion)) {
     throw new Error(`desktop Mach-O minimum macOS version mismatch: ${buildVersion}`);
+  }
+  if (machOHasUuid(run(["/usr/bin/otool", "-l", binary]))) {
+    throw new Error("desktop Mach-O contains a non-reproducible LC_UUID load command");
   }
   if (plist(app, "CFBundleIdentifier") !== DESKTOP_BUNDLE_ID) throw new Error("desktop bundle identifier mismatch");
   if (plist(app, "CFBundleShortVersionString") !== VERSION) throw new Error("desktop bundle version mismatch");
