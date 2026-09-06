@@ -17,7 +17,13 @@ cd "$root"
 # also make release archives independent of the builder's account name.
 cargo_cache="${CARGO_HOME:-${HOME}/.cargo}"
 rust_sysroot="$(rustc --print sysroot)"
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain"
+cargo_target_dir="${CARGO_TARGET_DIR:-$root/desktop/src-tauri/target}"
+case "$cargo_target_dir" in
+  /*) ;;
+  *) cargo_target_dir="$root/$cargo_target_dir" ;;
+esac
+export CARGO_TARGET_DIR="$cargo_target_dir"
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target"
 
 bun run build:ui
 bash scripts/desktop/icons.sh
@@ -28,6 +34,6 @@ if [ "${1:-}" = "--app-only" ]; then bundles=(app); fi
 cd desktop/src-tauri
 # Always use the pinned official npm distribution. A developer's unrelated
 # global cargo-tauri/tauri executable must not change release bundle behavior.
-tauri=(bunx --bun @tauri-apps/cli@2.11.4)
+tauri=(bun run tauri)
 
 "${tauri[@]}" build --target aarch64-apple-darwin --bundles "$(IFS=,; echo "${bundles[*]}")" -- --locked

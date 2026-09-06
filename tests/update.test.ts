@@ -79,7 +79,7 @@ describe("release selection", () => {
     expect(
       selectLatestRelease(
         [
-          release("0.4.0-alpha.7"),
+          release("0.4.0-alpha.8"),
           release("0.4.0-alpha.10"),
           release("0.4.0-beta.2"),
           release("0.4.0-alpha.99", { draft: true }),
@@ -132,9 +132,9 @@ describe("UpdateManager", () => {
     const second = manager.getStatus();
     await Bun.sleep(0);
     expect(requests).toBe(1);
-    complete(jsonResponse([release("0.4.0-alpha.7")]));
-    expect((await first).latestVersion).toBe("0.4.0-alpha.7");
-    expect((await second).latestVersion).toBe("0.4.0-alpha.7");
+    complete(jsonResponse([release("0.4.0-alpha.8")]));
+    expect((await first).latestVersion).toBe("0.4.0-alpha.8");
+    expect((await second).latestVersion).toBe("0.4.0-alpha.8");
     expect(requests).toBe(2);
   });
 
@@ -146,8 +146,8 @@ describe("UpdateManager", () => {
       fetch: async (input) => {
         requests++;
         return String(input).includes("api.github.com")
-          ? jsonResponse([release("0.4.0-alpha.7")], 200, { etag: '"release-7"' })
-          : jsonResponse(protocolManifest("0.4.0-alpha.7"));
+          ? jsonResponse([release("0.4.0-alpha.8")], 200, { etag: '"release-7"' })
+          : jsonResponse(protocolManifest("0.4.0-alpha.8"));
       },
       detectInstallation: () => ({
         method: "unsupported",
@@ -159,7 +159,7 @@ describe("UpdateManager", () => {
     expect(await manager.getStatus()).toEqual({
       currentVersion: "0.4.0-alpha.6",
       currentApiProtocolVersion: API_PROTOCOL_VERSION,
-      latestVersion: "0.4.0-alpha.7",
+      latestVersion: "0.4.0-alpha.8",
       latestApiProtocolVersion: API_PROTOCOL_VERSION,
       state: "available",
       installMethod: "unsupported",
@@ -172,7 +172,7 @@ describe("UpdateManager", () => {
   });
 
   test("keeps legacy or invalid release protocol metadata explicitly unknown", async () => {
-    const valid = protocolManifest("0.4.0-alpha.7");
+    const valid = protocolManifest("0.4.0-alpha.8");
     const cases: Array<[string, () => Response | Promise<Response>]> = [
       ["missing", () => jsonResponse({ ...valid, apiProtocolVersion: undefined })],
       ["numeric string", () => jsonResponse({ ...valid, apiProtocolVersion: "1" })],
@@ -181,7 +181,7 @@ describe("UpdateManager", () => {
       ["unsafe integer", () => jsonResponse({ ...valid, apiProtocolVersion: Number.MAX_SAFE_INTEGER + 1 })],
       ["wrong schema", () => jsonResponse({ ...valid, schemaVersion: 2 })],
       ["wrong product", () => jsonResponse({ ...valid, product: "other" })],
-      ["wrong version", () => jsonResponse({ ...valid, version: "0.4.0-alpha.8" })],
+      ["wrong version", () => jsonResponse({ ...valid, version: "0.4.0-alpha.9" })],
       ["wrong target", () => jsonResponse({ ...valid, target: { os: "darwin", arch: "arm64" } })],
       ["dirty", () => jsonResponse({ ...valid, dirty: true })],
       ["bad commit", () => jsonResponse({ ...valid, commit: "not-a-commit" })],
@@ -196,13 +196,13 @@ describe("UpdateManager", () => {
         dirty: false,
         fetch: async (input) =>
           String(input).includes("api.github.com")
-            ? jsonResponse([release("0.4.0-alpha.7")])
+            ? jsonResponse([release("0.4.0-alpha.8")])
             : manifestResponse(),
         detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual installation" }),
       });
       const status = await manager.getStatus();
       expect(status, label).toMatchObject({
-        latestVersion: "0.4.0-alpha.7",
+        latestVersion: "0.4.0-alpha.8",
         latestApiProtocolVersion: null,
         state: "available",
         canAutoUpdate: false,
@@ -224,11 +224,11 @@ describe("UpdateManager", () => {
         if (String(input).includes("api.github.com")) {
           releaseRequests++;
           return releaseRequests === 1
-            ? jsonResponse([release("0.4.0-alpha.7")], 200, { etag: '"release-7"' })
+            ? jsonResponse([release("0.4.0-alpha.8")], 200, { etag: '"release-7"' })
             : new Response(null, { status: 304 });
         }
         manifestRequests++;
-        return jsonResponse(protocolManifest("0.4.0-alpha.7", API_PROTOCOL_VERSION));
+        return jsonResponse(protocolManifest("0.4.0-alpha.8", API_PROTOCOL_VERSION));
       },
       detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual" }),
     });
@@ -251,7 +251,7 @@ describe("UpdateManager", () => {
       if (cmd.at(-2) === "version") {
         return {
           exitCode: 0,
-          stdout: JSON.stringify({ version: "0.4.0-alpha.7", commit: "b".repeat(40), dirty: false }),
+          stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit: "b".repeat(40), dirty: false }),
           stderr: "",
         };
       }
@@ -260,7 +260,7 @@ describe("UpdateManager", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.7")]),
+      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
       run,
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
       restart: () => {
@@ -269,7 +269,7 @@ describe("UpdateManager", () => {
       restartDelayMs: 0,
     });
 
-    expect(await manager.start("0.4.0-alpha.7")).toMatchObject({
+    expect(await manager.start("0.4.0-alpha.8")).toMatchObject({
       state: "installing",
       canAutoUpdate: true,
       installMethod: "homebrew",
@@ -290,7 +290,7 @@ describe("UpdateManager", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.7")]),
+      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
       run: async () => ({ exitCode: 1, stdout: "", stderr: "tap unavailable" }),
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
       restart: () => {
@@ -299,9 +299,9 @@ describe("UpdateManager", () => {
       restartDelayMs: 0,
     });
 
-    await manager.start("0.4.0-alpha.7");
+    await manager.start("0.4.0-alpha.8");
     expect(await waitFor(manager, "failed")).toMatchObject({
-      latestVersion: "0.4.0-alpha.7",
+      latestVersion: "0.4.0-alpha.8",
       message: "update failed: brew update exited 1: tap unavailable",
     });
     expect(restarted).toBe(false);
@@ -326,18 +326,18 @@ describe("UpdateManager", () => {
       dirty: false,
       fetch: async (input) => {
         const url = String(input);
-        if (url.includes("api.github.com")) return jsonResponse([release("0.4.0-alpha.7")]);
+        if (url.includes("api.github.com")) return jsonResponse([release("0.4.0-alpha.8")]);
         if (url.endsWith("/release-manifest.json")) {
           return jsonResponse({
             schemaVersion: 1,
             product: "wisp",
-            version: "0.4.0-alpha.7",
+            version: "0.4.0-alpha.8",
             apiProtocolVersion: 1,
             commit,
             dirty: false,
             target: { os: "linux", arch: "x86_64", libc: "glibc" },
             artifact: {
-              file: "wisp-v0.4.0-alpha.7-linux-x86_64",
+              file: "wisp-v0.4.0-alpha.8-linux-x86_64",
               sha256: checksum,
               size: artifact.byteLength,
             },
@@ -347,7 +347,7 @@ describe("UpdateManager", () => {
       },
       run: async (_cmd) => ({
         exitCode: 0,
-        stdout: JSON.stringify({ version: "0.4.0-alpha.7", commit, dirty: false }),
+        stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit, dirty: false }),
         stderr: "",
       }),
       detectInstallation: () => ({
@@ -362,10 +362,10 @@ describe("UpdateManager", () => {
       restartDelayMs: 0,
     });
 
-    await manager.start("0.4.0-alpha.7");
+    await manager.start("0.4.0-alpha.8");
     await waitFor(manager, "restarting");
     await Bun.sleep(5);
-    const installed = join(root, "versions/0.4.0-alpha.7/wisp");
+    const installed = join(root, "versions/0.4.0-alpha.8/wisp");
     expect(readFileSync(installed, "utf8")).toBe("verified executable");
     expect(readlinkSync(join(root, "current"))).toBe(installed);
     expect(readFileSync(oldBinary, "utf8")).toBe("old");
@@ -378,7 +378,7 @@ describe("update API", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.7")]),
+      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
     });
     writeFileSync(
@@ -411,7 +411,7 @@ describe("update API", () => {
         await fetch(`${base}/api/update`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ version: "0.4.0-alpha.7" }),
+          body: JSON.stringify({ version: "0.4.0-alpha.8" }),
         })
       ).status,
     ).toBe(401);
@@ -428,7 +428,7 @@ describe("update API", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.7")]),
+      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
       detectInstallation: () => ({
         method: "unsupported",
         supervised: false,
@@ -441,7 +441,7 @@ describe("update API", () => {
     expect(status!.status).toBe(200);
     expect(await status!.json()).toMatchObject({
       currentVersion: "0.4.0-alpha.6",
-      latestVersion: "0.4.0-alpha.7",
+      latestVersion: "0.4.0-alpha.8",
       state: "available",
       canAutoUpdate: false,
     });

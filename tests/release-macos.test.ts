@@ -13,6 +13,12 @@ import {
 } from "../scripts/release-macos";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 
+function git(root: string, ...args: string[]): string {
+  const result = Bun.spawnSync({ cmd: ["git", "-C", root, ...args], stdout: "pipe", stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(Buffer.from(result.stderr).toString("utf8"));
+  return Buffer.from(result.stdout).toString("utf8").trim();
+}
+
 describe("Apple Silicon release metadata", () => {
   test("uses one stable native target and distinct metadata filenames", () => {
     expect(MACOS_TARGET).toBe("darwin-arm64");
@@ -50,6 +56,24 @@ describe("Apple Silicon release metadata", () => {
         false,
       ),
     ).toThrow("release builds require a clean working tree");
+  });
+
+  test("requires the exact release tag to be annotated", () => {
+    const root = mkdtempSync(join(tmpdir(), "wisp-release-tag-"));
+    writeFileSync(join(root, "package.json"), `${JSON.stringify({ version: VERSION })}\n`);
+    writeFileSync(join(root, "tracked"), "release source\n");
+    git(root, "init", "-q");
+    git(root, "config", "user.name", "Release Test");
+    git(root, "config", "user.email", "release-test@example.invalid");
+    git(root, "add", "package.json", "tracked");
+    git(root, "commit", "-qm", "release source");
+    const identity = { commit: git(root, "rev-parse", "HEAD"), dirty: false as const };
+
+    git(root, "tag", `v${VERSION}`);
+    expect(() => assertMacReleaseSource(root, identity, true)).toThrow("must be annotated");
+    git(root, "tag", "-d", `v${VERSION}`);
+    git(root, "tag", "-a", `v${VERSION}`, "-m", `Wisp ${VERSION}`);
+    expect(() => assertMacReleaseSource(root, identity, true)).not.toThrow();
   });
 
   test("manifest states the ad-hoc and non-notarized security posture", () => {

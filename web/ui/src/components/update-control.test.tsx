@@ -27,14 +27,14 @@ describe("WispUpdateControl", () => {
     const onUpdate = vi.fn()
     render(
       <WispUpdateControl
-        status={{ ...STATUS, state: "available", latestVersion: "0.4.0-alpha.7" }}
+        status={{ ...STATUS, state: "available", latestVersion: "0.4.0-alpha.8" }}
         updating={false}
         error={null}
         onUpdate={onUpdate}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: "Update 0.4.0-alpha.7" }))
-    expect(onUpdate).toHaveBeenCalledWith("0.4.0-alpha.7")
+    fireEvent.click(screen.getByRole("button", { name: "Update 0.4.0-alpha.8" }))
+    expect(onUpdate).toHaveBeenCalledWith("0.4.0-alpha.8")
   })
 
   it("keeps an unsupported update informational", () => {
@@ -43,7 +43,7 @@ describe("WispUpdateControl", () => {
         status={{
           ...STATUS,
           state: "available",
-          latestVersion: "0.4.0-alpha.7",
+          latestVersion: "0.4.0-alpha.8",
           installMethod: "unsupported",
           canAutoUpdate: false,
           message: "source builds update manually",
@@ -81,7 +81,7 @@ describe("WispUpdateControl", () => {
   })
 
   it("names the active Desktop connection throughout the update lifecycle", () => {
-    const available = { ...STATUS, state: "available" as const, latestVersion: "0.4.0-alpha.7" }
+    const available = { ...STATUS, state: "available" as const, latestVersion: "0.4.0-alpha.8" }
     const { rerender } = render(
       <WispUpdateControl
         status={available}
@@ -91,9 +91,9 @@ describe("WispUpdateControl", () => {
         connectionName="Remote lab"
       />,
     )
-    expect(screen.getByRole("button", { name: "Update 0.4.0-alpha.7" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Update 0.4.0-alpha.8" })).toHaveAttribute(
       "title",
-      "Install Wisp 0.4.0-alpha.7 and restart — Remote lab",
+      "Install Wisp 0.4.0-alpha.8 and restart — Remote lab",
     )
 
     rerender(
@@ -107,7 +107,7 @@ describe("WispUpdateControl", () => {
     )
     expect(screen.getByRole("button", { name: "Updating…" })).toHaveAttribute(
       "title",
-      "Installing Wisp 0.4.0-alpha.7 — Local lab",
+      "Installing Wisp 0.4.0-alpha.8 — Local lab",
     )
 
     rerender(
@@ -126,7 +126,7 @@ describe("WispUpdateControl", () => {
   })
 
   it("shows progress and offers a retry after failure", () => {
-    const available = { ...STATUS, latestVersion: "0.4.0-alpha.7" }
+    const available = { ...STATUS, latestVersion: "0.4.0-alpha.8" }
     const { rerender } = render(
       <WispUpdateControl
         status={{ ...available, state: "installing" }}
@@ -154,16 +154,16 @@ describe("WispUpdateControl", () => {
   it("does not stay disabled after restart polling times out", () => {
     render(
       <WispUpdateControl
-        status={{ ...STATUS, state: "restarting", latestVersion: "0.4.0-alpha.7" }}
+        status={{ ...STATUS, state: "restarting", latestVersion: "0.4.0-alpha.8" }}
         updating={false}
-        error="Wisp 0.4.0-alpha.7 did not start within 300 seconds"
+        error="Wisp 0.4.0-alpha.8 did not start within 300 seconds"
         onUpdate={() => {}}
       />,
     )
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
     expect(screen.getByText("Update failed")).toHaveAttribute(
       "title",
-      "Wisp 0.4.0-alpha.7 did not start within 300 seconds",
+      "Wisp 0.4.0-alpha.8 did not start within 300 seconds",
     )
   })
 })

@@ -86,7 +86,7 @@ jobs:
     # release-macos.ts refuses any host except arm64 macOS, so the Mac asset
     # must build here. This job is also the single publication point: nothing
     # is public until it runs, so a Linux-side failure cannot half-publish.
-    runs-on: macos-latest
+    runs-on: macos-15
     permissions:
       contents: write # create the GitHub prerelease
     steps:
@@ -98,25 +98,39 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
       - name: build web bundle
         run: bun run build:ui
       - name: committed web bundle is current
         run: git diff --exit-code -- web/ui-dist
-      - name: build macOS release artifact
-        run: bun run scripts/release-macos.ts --require-tag
+      - name: build macOS release artifacts
+        run: |
+          bun run scripts/release-macos.ts --require-tag
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-first" \
+            bun run scripts/release-desktop.ts --require-tag
       - name: rebuild and require byte-identical assets
         run: |
           dir="dist/release/$GITHUB_REF_NAME"
           first="$(mktemp -d)"
           cp "$dir"/* "$first"/
           bun run scripts/release-macos.ts --require-tag
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-second" \
+            bun run scripts/release-desktop.ts --require-tag
           for file in "$first"/*; do
             cmp -s "$file" "$dir/$(basename "$file")" || {
               echo "non-reproducible asset: $(basename "$file")" >&2
               exit 1
             }
           done
-          (cd "$dir" && shasum -a 256 -c SHA256SUMS-darwin-arm64)
+          (cd "$dir" &&
+            shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
+            shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 
       - name: resolve version and require release notes
         id: version
@@ -131,22 +145,78 @@ jobs:
           name: linux-release-assets
           path: dist/release/${{ github.ref_name }}
 
-      - name: verify all six checksums
+      - name: verify all nine checksums
         run: |
           cd "dist/release/$GITHUB_REF_NAME"
           shasum -a 256 -c SHA256SUMS
           shasum -a 256 -c SHA256SUMS-darwin-arm64
+          shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64
 
-      # releasing.md step 6: one prerelease, the exact six assets, and the
+      - name: require an unused public release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          probe="$(mktemp)"
+          if gh api --include \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" >"$probe" 2>&1; then
+            echo "release already exists and will not be mutated: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          grep -Eq '^HTTP/[0-9.]+ 404 ' "$probe" || {
+            echo "could not prove release identity is unused: $(head -n 1 "$probe")" >&2
+            exit 1
+          }
+
+      # Checkout persists the masked tap token through Git's credential
+      # helper. Never place that token in a remote URL or process argument.
+      - name: checkout the Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: Pepewitch/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          ref: main
+          fetch-depth: 0
+          path: homebrew-tap
+
+      # Render from the locally verified manifests and prove both recipes load
+      # before the public release exists. Online URL audits follow publication.
+      - name: prepare and audit the Homebrew Formula and Cask offline
+        run: |
+          tap="$GITHUB_WORKSPACE/homebrew-tap"
+          git -C "$tap" fetch origin main
+          test "$(git -C "$tap" rev-parse HEAD)" = "$(git -C "$tap" rev-parse origin/main)"
+          test -z "$(git -C "$tap" status --porcelain=v1 --untracked-files=all)"
+          bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts
+          bun run scripts/render-homebrew-formula.ts \
+            --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-darwin-arm64.json" \
+            --output "$tap/Formula/wisp.rb"
+          bun run scripts/render-homebrew-cask.ts \
+            --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
+            --output "$tap/Casks/wisp-desktop.rb"
+          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb)"
+          actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
+          test "$actual" = "$expected"
+          brew tap-new --no-git Pepewitch/tap
+          audit_tap="$(brew --repository Pepewitch/tap)"
+          mkdir -p "$audit_tap/Casks"
+          cp "$tap/Formula/wisp.rb" "$audit_tap/Formula/wisp.rb"
+          cp "$tap/Casks/wisp-desktop.rb" "$audit_tap/Casks/wisp-desktop.rb"
+          brew style "$audit_tap/Formula/wisp.rb" "$audit_tap/Casks/wisp-desktop.rb"
+          brew audit --strict Pepewitch/tap/wisp
+          brew audit --strict --cask Pepewitch/tap/wisp-desktop
+          git -C "$tap" diff --check
+
+      # releasing.md step 6: one prerelease, the exact nine assets, and the
       # release notes as the body. Never clobber or mutate after publishing.
       - name: publish the GitHub prerelease
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           name: "Wisp ${{ steps.version.outputs.version }}"
           body_path: ${{ steps.version.outputs.notes }}
           prerelease: true
           make_latest: false
           fail_on_unmatched_files: true
+          overwrite_files: false
           files: |
             dist/release/${{ github.ref_name }}/wisp-${{ github.ref_name }}-linux-x86_64
             dist/release/${{ github.ref_name }}/release-manifest.json
@@ -154,6 +224,9 @@ jobs:
             dist/release/${{ github.ref_name }}/wisp-${{ github.ref_name }}-darwin-arm64.tar.gz
             dist/release/${{ github.ref_name }}/release-manifest-darwin-arm64.json
             dist/release/${{ github.ref_name }}/SHA256SUMS-darwin-arm64
+            dist/release/${{ github.ref_name }}/wisp-desktop-${{ github.ref_name }}-darwin-arm64.tar.gz
+            dist/release/${{ github.ref_name }}/release-manifest-desktop-darwin-arm64.json
+            dist/release/${{ github.ref_name }}/SHA256SUMS-desktop-darwin-arm64
 
       # releasing.md step 7: verify the bytes anonymous users can fetch.
       - name: verify anonymous public downloads
@@ -166,7 +239,10 @@ jobs:
             SHA256SUMS \
             "wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             release-manifest-darwin-arm64.json \
-            SHA256SUMS-darwin-arm64
+            SHA256SUMS-darwin-arm64 \
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            release-manifest-desktop-darwin-arm64.json \
+            SHA256SUMS-desktop-darwin-arm64
           do
             ok=0
             for _ in 1 2 3 4 5; do
@@ -183,31 +259,32 @@ jobs:
           done
           (cd "$anon" &&
             shasum -a 256 -c SHA256SUMS &&
-            shasum -a 256 -c SHA256SUMS-darwin-arm64)
+            shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
+            shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 
-      # releasing.md step 8: render the Formula from the published Mac
-      # manifest, test and audit it, then push the tap repository.
-      - name: render and audit the Homebrew Formula
-        env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # releasing.md step 8: now that URLs exist, run online audits and update
+      # exactly the two prepared tap files in one commit.
+      - name: audit the published Homebrew Formula and Cask
         run: |
-          brew tap Pepewitch/tap \
-            "https://x-access-token:${TAP_TOKEN}@github.com/Pepewitch/homebrew-tap" \
-            --custom-remote
-          tap="$(brew --repository Pepewitch/tap)"
-          bun test tests/homebrew-formula.test.ts
-          bun run scripts/render-homebrew-formula.ts \
-            --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-darwin-arm64.json" \
-            --output "$tap/Formula/wisp.rb"
+          tap="$GITHUB_WORKSPACE/homebrew-tap"
           brew audit --strict --online Pepewitch/tap/wisp
+          brew audit --new --cask Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
       - name: push the Homebrew tap
         run: |
-          tap="$(brew --repository Pepewitch/tap)"
+          tap="$GITHUB_WORKSPACE/homebrew-tap"
+          git -C "$tap" fetch origin main
+          test "$(git -C "$tap" rev-parse HEAD)" = "$(git -C "$tap" rev-parse origin/main)"
+          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb)"
+          actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
+          test "$actual" = "$expected"
           git -C "$tap" config user.name "github-actions[bot]"
           git -C "$tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap" add Formula/wisp.rb
+          git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb
+          staged="$(git -C "$tap" diff --cached --name-only | LC_ALL=C sort)"
+          test "$staged" = "$expected"
+          git -C "$tap" diff --quiet
           git -C "$tap" diff --cached --check
           git -C "$tap" commit -m "release: update Wisp to ${GITHUB_REF_NAME#v}"
           git -C "$tap" push origin HEAD:main

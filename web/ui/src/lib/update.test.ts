@@ -12,11 +12,11 @@ describe("waitForUpdatedDaemon", () => {
         healthCalls++
         if (healthCalls === 1) return { ok: true, version: "0.4.0-alpha.6" }
         if (healthCalls === 2) throw new TypeError("connection refused")
-        return { ok: true, version: "0.4.0-alpha.7" }
+        return { ok: true, version: "0.4.0-alpha.8" }
       }
       return {
         currentVersion: "0.4.0-alpha.6",
-        latestVersion: "0.4.0-alpha.7",
+        latestVersion: "0.4.0-alpha.8",
         state: "restarting",
       }
     })
@@ -25,7 +25,7 @@ describe("waitForUpdatedDaemon", () => {
     })
 
     await expect(
-      waitForUpdatedDaemon("0.4.0-alpha.7", { transport, timeoutMs: 100, pollMs: 0 }),
+      waitForUpdatedDaemon("0.4.0-alpha.8", { transport, timeoutMs: 100, pollMs: 0 }),
     ).resolves.toBeUndefined()
     expect(healthCalls).toBe(3)
   })
@@ -41,7 +41,7 @@ describe("waitForUpdatedDaemon", () => {
     })
 
     await expect(
-      waitForUpdatedDaemon("0.4.0-alpha.7", { transport, timeoutMs: 100, pollMs: 0 }),
+      waitForUpdatedDaemon("0.4.0-alpha.8", { transport, timeoutMs: 100, pollMs: 0 }),
     ).rejects.toThrow("update failed: checksum mismatch")
   })
 
@@ -57,7 +57,7 @@ describe("waitForUpdatedDaemon", () => {
     })
 
     await expect(
-      waitForUpdatedDaemon("0.4.0-alpha.7", { transport, timeoutMs: 10, pollMs: 0 }),
+      waitForUpdatedDaemon("0.4.0-alpha.8", { transport, timeoutMs: 10, pollMs: 0 }),
     ).rejects.toThrow("did not start within 0 seconds")
     expect(request).toHaveBeenCalledTimes(1)
   })

@@ -85,8 +85,15 @@ export function assertMacReleaseSource(root: string, identity: SourceIdentity, r
     throw new Error(`version mismatch: package.json=${JSON.stringify(pkg.version)}, source=${JSON.stringify(VERSION)}`);
   }
   if (requireTag) {
-    const tag = git(root, ["describe", "--tags", "--exact-match", "HEAD"]);
-    if (tag !== `v${VERSION}`) throw new Error(`release tag must be v${VERSION}, got ${JSON.stringify(tag)}`);
+    const expectedTag = `v${VERSION}`;
+    const exactTag = git(root, ["tag", "--points-at", "HEAD", "--list", expectedTag]);
+    if (exactTag !== expectedTag) throw new Error(`release tag must be ${expectedTag}, got ${JSON.stringify(exactTag)}`);
+    const tagType = git(root, ["cat-file", "-t", `refs/tags/${expectedTag}`]);
+    if (tagType !== "tag") throw new Error(`release tag ${expectedTag} must be annotated, got ${JSON.stringify(tagType)}`);
+    const taggedCommit = git(root, ["rev-list", "-n", "1", expectedTag]);
+    if (taggedCommit !== identity.commit) {
+      throw new Error(`release tag ${expectedTag} points at ${taggedCommit}, expected ${identity.commit}`);
+    }
   }
 }
 

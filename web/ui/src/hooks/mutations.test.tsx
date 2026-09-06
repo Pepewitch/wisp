@@ -78,7 +78,7 @@ describe("task writes", () => {
   it("starts the selected update and stores its progress response", async () => {
     const status = {
       currentVersion: "0.4.0-alpha.6",
-      latestVersion: "0.4.0-alpha.7",
+      latestVersion: "0.4.0-alpha.8",
       state: "installing",
     }
     mocks.request.mockResolvedValue(status)
@@ -86,12 +86,12 @@ describe("task writes", () => {
     const { result } = renderHook(() => useInstallUpdate(), { wrapper })
 
     await act(async () => {
-      await result.current.mutateAsync("0.4.0-alpha.7")
+      await result.current.mutateAsync("0.4.0-alpha.8")
     })
 
     expect(mocks.request).toHaveBeenCalledWith("/api/update", {
       method: "POST",
-      body: { version: "0.4.0-alpha.7" },
+      body: { version: "0.4.0-alpha.8" },
     })
     expect(client.getQueryData(qk.update)).toEqual(status)
   })
