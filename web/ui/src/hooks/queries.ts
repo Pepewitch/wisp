@@ -63,19 +63,14 @@ export const PULL_REQUEST_OVERVIEW_POLL_MS = 60_000;
 
 export function pullRequestPollInterval(data: PullRequestStatus | undefined): number | false {
   if (data?.kind === "unsupported") return false;
-  if (
-    data?.kind === "found" &&
-    (data.pullRequest.lifecycle === "merged" || data.pullRequest.lifecycle === "closed")
-  ) {
-    return false;
-  }
   return PULL_REQUEST_POLL_MS;
 }
 
 /**
  * The selected task's forge status. `refetchIntervalInBackground` stays false,
- * so a hidden tab makes no provider calls. Terminal states and unsupported
- * origins stop entirely; "none" keeps watching for a newly-created PR.
+ * so a hidden tab makes no provider calls. Unsupported origins stop entirely.
+ * Every GitHub result keeps watching because a task branch can be reused for
+ * another PR after the current one closes or merges.
  */
 export function usePullRequestStatus(id: string | null) {
   const { transport, qk } = useDaemonRuntime();
