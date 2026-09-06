@@ -316,7 +316,7 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
 
     if is_write(&parts.method) {
         if let Err(response) = ensure_pinned_identity(&state, &target, &credential).await {
-            return response;
+            return *response;
         }
     }
 
@@ -345,15 +345,15 @@ async fn ensure_pinned_identity(
     state: &ProxyState,
     target: &Target,
     credential: &str,
-) -> Result<(), Response> {
+) -> Result<(), Box<Response>> {
     match state.registry.identity(&target.id) {
         Identity::Verified => return Ok(()),
-        Identity::Mismatch => return Err(identity_mismatch()),
+        Identity::Mismatch => return Err(Box::new(identity_mismatch())),
         Identity::Unchecked => {}
     }
 
     let url = join_upstream(&target.base, "api/capabilities", None)
-        .map_err(|error| refuse(StatusCode::BAD_REQUEST, "path", error.to_string()))?;
+        .map_err(|error| Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string())))?;
     let response = state
         .client
         .get(url)
@@ -361,28 +361,28 @@ async fn ensure_pinned_identity(
         .send()
         .await
         .map_err(|error| {
-            refuse(
+            Box::new(refuse(
                 StatusCode::BAD_GATEWAY,
                 "identity-unreachable",
                 format!("could not confirm the daemon's identity: {error}"),
-            )
+            ))
         })?;
     if !response.status().is_success() {
-        return Err(refuse(
+        return Err(Box::new(refuse(
             StatusCode::BAD_GATEWAY,
             "identity-unreachable",
             format!(
                 "the daemon refused the identity check with status {}",
                 response.status().as_u16()
             ),
-        ));
+        )));
     }
     let body: serde_json::Value = response.json().await.map_err(|error| {
-        refuse(
+        Box::new(refuse(
             StatusCode::BAD_GATEWAY,
             "identity-unreadable",
             format!("could not read the daemon's identity: {error}"),
-        )
+        ))
     })?;
     let seen = body
         .get("instanceId")
@@ -393,7 +393,7 @@ async fn ensure_pinned_identity(
         Ok(())
     } else {
         state.registry.set_identity(&target.id, Identity::Mismatch);
-        Err(identity_mismatch())
+        Err(Box::new(identity_mismatch()))
     }
 }
 
