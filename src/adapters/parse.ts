@@ -51,6 +51,9 @@ export const PARSE_STRATEGIES: Record<string, ParseStrategy> = {
           if (e.usage !== undefined && e.usage !== null) usage = e.usage;
           break;
         case "item.completed":
+          // a spawned child's final message (app-server tags it with the
+          // child's thread_id) is that child's result, not the turn's
+          if (typeof e.thread_id === "string" && session && e.thread_id !== session) break;
           if (e.item?.type === "agent_message" && typeof e.item.text === "string") result = e.item.text;
           break;
         // turn.completed carries the turn's usage blob (Theme B); a failed

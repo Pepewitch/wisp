@@ -457,6 +457,8 @@ export function createActivityFormatter(def?: AdapterDef): (line: string) => Act
     background: new Map(),
     toolParents: new Map(),
     models: new Map(),
+    rootThread: null,
+    settled: new Map(),
   };
   const normalizer = def?.activity ? ACTIVITY_NORMALIZERS[def.activity] : undefined;
   if (def?.activity && !normalizer) {

@@ -26,6 +26,20 @@ function record(value: unknown): Record<string, any> {
   return typeof value === "object" && value !== null ? (value as Record<string, any>) : {};
 }
 
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/** The child's final `agentMessage` in a completed turn's item summary, if the payload carried one. */
+function lastAgentMessage(items: unknown): string | null {
+  if (!Array.isArray(items)) return null;
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = record(items[index]);
+    if (item.type === "agentMessage" && str(item.text)) return boundedOutput(item.text) as string;
+  }
+  return null;
+}
+
 function rpcError(value: unknown): string {
   const message = record(value).message;
   return typeof message === "string" && message.trim() ? message.trim() : "unknown app-server error";
@@ -147,6 +161,14 @@ function snakeUsage(value: unknown): Record<string, number> | null {
  * message id. Start/completion and usage were live-reverified on 0.153.4
  * with gpt-6-astra, and all shapes were checked against its generated schema.
  * Steering was last live-probed on 0.149.0 during a shell sleep.
+ *
+ * Child threads (Multi-Agent V2 on 0.153.4): the app-server attaches this
+ * connection to every thread the turn spawns, so a child's items, and its own
+ * `turn/completed`, arrive here tagged with the child's `threadId`. Each item
+ * is forwarded with that `thread_id` so the activity stream can nest it, a
+ * child's turn completion becomes `subagent.completed` rather than the
+ * parent's terminal, and one metadata-only `thread/read` per child supplies
+ * the model, effort and role that the spawn marker lacks.
  */
 export class CodexLiveDriver {
   readonly ready: Promise<void>;
@@ -157,6 +179,7 @@ export class CodexLiveDriver {
   private turnId: string | null = null;
   private model: string | null;
   private usage: Record<string, number> | null = null;
+  private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
     this.threadId = options.sessionId;
@@ -237,20 +260,41 @@ export class CodexLiveDriver {
     const params = record(frame.params);
     switch (frame.method) {
       case "item/started":
-      case "item/completed":
-        if (record(params.item).type === "userMessage") return;
+      case "item/completed": {
+        const item = record(params.item);
+        if (item.type === "userMessage") return;
+        const threadId = str(params.threadId);
         this.options.emit({
           type: frame.method === "item/started" ? "item.started" : "item.completed",
           item: snakeItem(params.item),
           timestamp: params.startedAtMs ?? params.completedAtMs ?? null,
+          ...(threadId ? { thread_id: threadId } : {}),
         });
+        if (item.type === "subAgentActivity" && item.kind === "started" && str(item.agentThreadId)) {
+          void this.describeChild(item.agentThreadId as string);
+        }
         return;
+      }
       case "thread/tokenUsage/updated":
         if (!this.turnId || params.turnId === this.turnId) this.usage = snakeUsage(record(params.tokenUsage).last);
         return;
       case "turn/completed": {
         if (this.terminal) return;
         const turn = record(params.turn);
+        const threadId = str(params.threadId);
+        if (threadId && this.threadId && threadId !== this.threadId) {
+          // A child's turn settling is that card's outcome, never ours.
+          this.options.emit({
+            type: "subagent.completed",
+            thread_id: threadId,
+            status: str(turn.status),
+            error: str(record(turn.error).message),
+            result: lastAgentMessage(turn.items),
+            duration_ms: typeof turn.durationMs === "number" ? turn.durationMs : null,
+            timestamp: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : null,
+          });
+          return;
+        }
         if (this.turnId && turn.id !== this.turnId) return;
         if (turn.status !== "completed") {
           this.options.emit({
@@ -272,6 +316,33 @@ export class CodexLiveDriver {
           this.options.emit({ type: "error", message: record(params.error).message });
         }
         return;
+    }
+  }
+
+  /**
+   * A V2 spawn marker names only the child's thread and agent path; the
+   * model, effort and role live on its Thread record. One metadata-only read
+   * per child, no history hydration. Failure is silent: the card simply stays
+   * unlabelled, and nothing here may throw into the frame pump.
+   */
+  private async describeChild(threadId: string): Promise<void> {
+    if (this.children.has(threadId)) return;
+    this.children.add(threadId);
+    try {
+      const response = record(await this.call("thread/read", { threadId, includeTurns: false }));
+      const thread = record(response.thread);
+      if (this.terminal) return;
+      this.options.emit({
+        type: "thread.child",
+        thread_id: threadId,
+        parent_thread_id: str(thread.parentThreadId),
+        model: str(thread.model),
+        reasoning_effort: str(thread.reasoningEffort),
+        agent_role: str(thread.agentRole),
+        agent_nickname: str(thread.agentNickname),
+      });
+    } catch {
+      // The child still renders from its markers and items.
     }
   }
 

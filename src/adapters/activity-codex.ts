@@ -1,6 +1,6 @@
 import { trunc } from "../text";
 import { eventId, type NormalizeContext, status } from "./activity-context";
-import { boundedInput, record, string, text, timestamp } from "./activity-value";
+import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import type { ActivityEvent } from "./types";
 
 /**
@@ -62,6 +62,9 @@ function codexSubagentActivity(
   const agentId = string(item.agent_thread_id);
   if (!agentId) return [];
   const kind = string(item.kind)?.toLowerCase() ?? null;
+  // The child's own turn/completed already said how it ended; a trailing
+  // "completed" marker must not repaint a failed or interrupted card.
+  if (kind !== "started" && context.settled.has(agentId)) return [];
   const next = status(kind, "unknown");
   const spawn = kind === "started";
   const id = spawn ? eventId(item.id, context, "subagent") : agentId;
@@ -160,11 +163,105 @@ function codexCommand(
   }];
 }
 
+/**
+ * Which card an event belongs to: null for the turn's own thread, otherwise
+ * the child thread that emitted it. `codex exec --json` never tags events, so
+ * everything stays at the top level there.
+ */
+function codexScope(event: Record<string, any>, context: NormalizeContext): string | null {
+  const thread = string(event.thread_id);
+  if (!thread || thread === context.rootThread) return null;
+  if (context.subagents.has(thread)) return thread;
+  return context.rootThread ? thread : null;
+}
+
+/**
+ * A child starts working before the parent's spawn marker is delivered, so
+ * its first item can outrun the card. Open the card from the thread id alone;
+ * the marker and the metadata read fill in title, model and role later.
+ */
+function codexOpenChild(thread: string, at: string | number | null, context: NormalizeContext): ActivityEvent[] {
+  if (context.subagents.has(thread)) return [];
+  context.subagents.add(thread);
+  return [{
+    kind: "subagent",
+    id: thread,
+    agentId: thread,
+    parentId: null,
+    timestamp: at,
+    phase: "started",
+    status: "running",
+    background: true,
+  }];
+}
+
+/** `thread.child`: the driver's metadata-only read of a spawned thread. */
+function codexChildThread(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+  const id = string(event.thread_id);
+  if (!id) return [];
+  const settled = context.settled.get(id);
+  return [...codexOpenChild(id, null, context), {
+    kind: "subagent",
+    id,
+    agentId: id,
+    parentId: null,
+    phase: settled ? "completed" : "updated",
+    status: settled ?? "running",
+    model: string(event.model),
+    effort: string(event.reasoning_effort),
+    agentType: string(event.agent_role),
+  }];
+}
+
+/** `subagent.completed`: a child thread's own turn/completed, the authoritative outcome. */
+function codexChildTurn(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+  const id = string(event.thread_id);
+  if (!id) return [];
+  const at = timestamp(event);
+  const next = status(event.status, "completed");
+  const opened = codexOpenChild(id, at, context);
+  if (next === "running" || next === "unknown") return opened;
+  context.settled.set(id, next);
+  return [...opened, {
+    kind: "subagent",
+    id,
+    agentId: id,
+    parentId: null,
+    timestamp: at,
+    phase: "completed",
+    status: next,
+    result: next === "completed" ? text(event.result) : null,
+    error: next === "failed" ? text(event.error) ?? "Subagent turn failed" : null,
+    durationMs: number(event.duration_ms),
+  }];
+}
+
 export function codex(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+  if (event.type === "thread.started") {
+    context.rootThread = string(event.thread_id) ?? context.rootThread;
+    return [];
+  }
+  if (event.type === "thread.child") return codexChildThread(event, context);
+  if (event.type === "subagent.completed") return codexChildTurn(event, context);
   if (!["item.started", "item.updated", "item.completed"].includes(event.type)) return [];
   const item = record(event.item);
   const phase = event.type === "item.started" ? "started" : event.type === "item.completed" ? "completed" : "updated";
   const at = timestamp(event);
+  const parentId = codexScope(event, context);
+  const opened = parentId ? codexOpenChild(parentId, at, context) : [];
+  const scoped = codexItem(item, phase, at, context).map((entry) =>
+    // A marker about the child itself, emitted on the child's thread, is not its own child.
+    entry.kind === "subagent" && (entry.id === parentId || entry.agentId === parentId) ? entry : { ...entry, parentId },
+  );
+  return [...opened, ...scoped];
+}
+
+function codexItem(
+  item: Record<string, any>,
+  phase: CodexPhase,
+  at: string | number | null,
+  context: NormalizeContext,
+): ActivityEvent[] {
   if (item.type === "agent_message" && phase === "completed" && string(item.text)) {
     return [{ kind: "text", id: eventId(item.id, context, "text"), parentId: null, timestamp: at, text: trunc(item.text.trim(), 4_000) }];
   }

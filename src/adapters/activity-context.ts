@@ -11,6 +11,10 @@ export interface NormalizeContext {
   toolParents: Map<string, string>;
   /** Subagent call id → the model its last forwarded message reported. */
   models: Map<string, string>;
+  /** The turn's own thread, when the harness scopes events by thread (Codex app-server). */
+  rootThread: string | null;
+  /** Child thread id → the outcome its own turn reported; later lifecycle markers must not overwrite it. */
+  settled: Map<string, ActivityStatus>;
 }
 
 export function eventId(value: unknown, context: NormalizeContext, kind: string): string {

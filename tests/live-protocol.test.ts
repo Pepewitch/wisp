@@ -260,6 +260,128 @@ describe("Codex live terminal events", () => {
   });
 });
 
+describe("Codex child threads", () => {
+  test("a child's items are scoped, its thread is described once, and its own turn settles the card", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    let terminalCount = 0;
+    const driver = new CodexLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.codex!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialInput: [{ type: "text", text: "hello", text_elements: [] }],
+      emit: (event) => events.push(event),
+      onTerminal: () => {
+        terminalCount++;
+      },
+    });
+
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: {} });
+    const startThread = await requestAt(sink, 2);
+    driver.handle({ id: startThread.id, result: { thread: { id: "thread-1" } } });
+    const startTurn = await requestAt(sink, 3);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+
+    const spawn = { id: "call-1", type: "subAgentActivity", kind: "started", agentThreadId: "thread-2", agentPath: "/root/reviewer" };
+    driver.handle({ method: "item/started", params: { threadId: "thread-1", turnId: "turn-1", item: spawn, startedAtMs: 1 } });
+    driver.handle({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: spawn, completedAtMs: 1 } });
+
+    // One metadata-only read per child, not one per marker.
+    const read = await requestAt(sink, 4);
+    expect(read).toMatchObject({ method: "thread/read", params: { threadId: "thread-2", includeTurns: false } });
+    expect(sink.lines).toHaveLength(5);
+    driver.handle({
+      id: read.id,
+      result: { thread: { id: "thread-2", parentThreadId: "thread-1", model: "gpt-test", reasoningEffort: "high", agentRole: "reviewer", agentNickname: "quiet-otter" } },
+    });
+    await Bun.sleep(0);
+
+    driver.handle({
+      method: "item/completed",
+      params: { threadId: "thread-2", turnId: "turn-2", item: { id: "msg-1", type: "agentMessage", text: "No findings." }, completedAtMs: 2 },
+    });
+    driver.handle({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-2",
+        turn: { id: "turn-2", status: "completed", items: [{ id: "msg-1", type: "agentMessage", text: "No findings." }], durationMs: 1234, completedAt: 3 },
+      },
+    });
+    expect(terminalCount).toBe(0);
+    expect(events.filter((event) => event.type === "turn.completed")).toEqual([]);
+
+    driver.handle({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed" } } });
+    expect(terminalCount).toBe(1);
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "thread.started", thread_id: "thread-1" }),
+      expect.objectContaining({ type: "item.started", thread_id: "thread-1", item: expect.objectContaining({ type: "subagent_activity" }) }),
+      expect.objectContaining({ type: "item.completed", thread_id: "thread-1" }),
+      { type: "thread.child", thread_id: "thread-2", parent_thread_id: "thread-1", model: "gpt-test", reasoning_effort: "high", agent_role: "reviewer", agent_nickname: "quiet-otter" },
+      expect.objectContaining({ type: "item.completed", thread_id: "thread-2", item: expect.objectContaining({ type: "agent_message", text: "No findings." }) }),
+      { type: "subagent.completed", thread_id: "thread-2", status: "completed", error: null, result: "No findings.", duration_ms: 1234, timestamp: 3000 },
+      expect.objectContaining({ type: "turn.completed" }),
+    ]);
+
+    // End to end: the card carries the child's identity and its work nests beneath it.
+    const format = createActivityFormatter(BUILTIN_ADAPTERS.codex!);
+    const activity = events.flatMap((event) => format(JSON.stringify(event)));
+    expect(activity).toEqual([
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-2", parentId: null, phase: "started", title: "reviewer" }),
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-2", phase: "updated" }),
+      expect.objectContaining({ kind: "subagent", id: "thread-2", model: "gpt-test", effort: "high", agentType: "reviewer", status: "running" }),
+      expect.objectContaining({ kind: "text", parentId: "thread-2", text: "No findings." }),
+      expect.objectContaining({ kind: "subagent", id: "thread-2", phase: "completed", status: "completed", result: "No findings.", durationMs: 1234, timestamp: 3000 }),
+    ]);
+    await driver.close();
+  });
+
+  test("a failed metadata read leaves the card unlabelled and the turn unharmed", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new CodexLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.codex!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialInput: [{ type: "text", text: "hello", text_elements: [] }],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: {} });
+    const startThread = await requestAt(sink, 2);
+    driver.handle({ id: startThread.id, result: { thread: { id: "thread-1" } } });
+    const startTurn = await requestAt(sink, 3);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+
+    driver.handle({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        item: { id: "call-1", type: "subAgentActivity", kind: "started", agentThreadId: "thread-2", agentPath: "/root/reviewer" },
+        completedAtMs: 1,
+      },
+    });
+    const read = await requestAt(sink, 4);
+    driver.handle({ id: read.id, error: { code: -32601, message: "method not found" } });
+    await Bun.sleep(0);
+    expect(events.filter((event) => event.type === "thread.child")).toEqual([]);
+    expect(events.filter((event) => event.type === "error")).toEqual([]);
+    await driver.close();
+  });
+});
+
 describe("bounded inlined tool output", () => {
   test("a string keeps both ends and names what was removed", () => {
     const bounded = boundedOutput(`${"head".repeat(20_000)}TAIL`, 400) as string;

@@ -43,6 +43,15 @@ is the only correlation key. The parent's `wait` collab call does arrive, but
 with empty `receiver_thread_ids` and `agents_states`, and its `status` is
 camelCase (`inProgress`) where `codex exec --json` says `in_progress`.
 
+This capture predates thread scoping in the driver. The app-server attaches
+the connection to every spawned child, so the child's own items arrive on it
+too; in this turn they were indistinguishable from the parent's and rendered
+at the top level. The driver now tags every item with its `thread_id`, emits
+`thread.child` from a metadata-only `thread/read` of each spawned thread, and
+turns a child's `turn/completed` into `subagent.completed`. Those projected
+shapes are pinned by driver tests in tests/live-protocol.test.ts; a fresh
+sanitized capture that shows them is the next re-capture to make.
+
 ## codex — codex-cli 0.149.0, model `gpt-5.6-luna`, 2026-08-22
 
 Run in a throwaway git repo, stdin from /dev/null (Wisp spawns turns with

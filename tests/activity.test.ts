@@ -480,6 +480,46 @@ describe("Codex app-server subagent dialect", () => {
     ]);
   });
 
+  test("Codex child-thread items nest under the child's card, even when they outrun the spawn marker", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      { type: "thread.started", thread_id: "root" },
+      { type: "item.completed", thread_id: "root", item: { id: "msg-1", type: "agent_message", text: "Delegating." } },
+      // The child's first command lands before the parent's marker does.
+      { type: "item.started", thread_id: "child", item: { id: "exec-1", type: "command_execution", command: "ls" } },
+      {
+        type: "item.completed",
+        thread_id: "root",
+        item: { id: "call-1", type: "subagent_activity", kind: "started", agent_thread_id: "child", agent_path: "/root/reviewer" },
+      },
+      { type: "thread.child", thread_id: "child", parent_thread_id: "root", model: "gpt-test", reasoning_effort: "high", agent_role: "reviewer", agent_nickname: "quiet-otter" },
+      { type: "item.completed", thread_id: "child", item: { id: "msg-2", type: "agent_message", text: "No findings." } },
+      { type: "subagent.completed", thread_id: "child", status: "failed", error: "context window exceeded", result: null, duration_ms: 4200 },
+      // The trailing marker must not repaint the failed card as completed.
+      {
+        type: "item.completed",
+        thread_id: "child",
+        item: { id: "subagent-completed-1", type: "subagent_activity", kind: "completed", agent_thread_id: "child", agent_path: "/root/reviewer" },
+      },
+    ]);
+    expect(events).toEqual([
+      expect.objectContaining({ kind: "text", parentId: null, text: "Delegating." }),
+      expect.objectContaining({ kind: "subagent", id: "child", agentId: "child", phase: "started", status: "running" }),
+      expect.objectContaining({ kind: "tool", id: "exec-1", parentId: "child", name: "Run" }),
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "child", parentId: null, title: "reviewer", status: "running" }),
+      expect.objectContaining({ kind: "subagent", id: "child", phase: "updated", model: "gpt-test", effort: "high", agentType: "reviewer" }),
+      expect.objectContaining({ kind: "text", parentId: "child", text: "No findings." }),
+      expect.objectContaining({ kind: "subagent", id: "child", phase: "completed", status: "failed", error: "context window exceeded", durationMs: 4200 }),
+    ]);
+  });
+
+  test("Codex exec --json events carry no thread scope and stay at the top level", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      { type: "thread.started", thread_id: "root" },
+      { type: "item.completed", item: { id: "exec-1", type: "command_execution", command: "ls", exit_code: 0, aggregated_output: "" } },
+    ]);
+    expect(events).toEqual([expect.objectContaining({ kind: "tool", id: "exec-1", parentId: null })]);
+  });
+
   test("Codex app-server collab calls speak camelCase and still drive the subagent lifecycle", () => {
     const events = render(BUILTIN_ADAPTERS.codex!, [
       {

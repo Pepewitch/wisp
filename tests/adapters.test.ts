@@ -424,6 +424,17 @@ describe("parseOutput (codex, captured fixtures)", () => {
     });
   });
 
+  test("a child thread's final message is the child's result, not the turn's", () => {
+    const raw = [
+      `{"type":"thread.started","thread_id":"t-1"}`,
+      `{"type":"turn.started"}`,
+      `{"type":"item.completed","thread_id":"t-1","item":{"id":"item_0","type":"agent_message","text":"delegating"}}`,
+      `{"type":"item.completed","thread_id":"t-child","item":{"id":"item_1","type":"agent_message","text":"child verdict"}}`,
+      `{"type":"turn.completed"}`,
+    ].join("\n");
+    expect(parseOutput(codex, raw).result).toBe("delegating");
+  });
+
   test("interrupted mid-turn: session salvaged, no result", () => {
     const raw = `{"type":"thread.started","thread_id":"t-2"}\n{"type":"turn.started"}\n{"type":"ite`;
     expect(parseOutput(codex, raw)).toEqual({
