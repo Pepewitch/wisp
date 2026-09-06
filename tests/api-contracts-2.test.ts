@@ -181,13 +181,27 @@ describe("daemon API contracts, batch 2", () => {
     expect(Object.keys(turns[0]!).sort()).toEqual([
       // A1a: the parsed manifest is served, [] for a turn that carried none
       "attachments",
+      "capture_categories",
+      "capture_detail",
+      "capture_mode",
+      "capture_state",
+      "captured_bytes",
+      "diagnostic_bytes",
+      "diagnostic_detail",
+      "diagnostic_evicted_at",
+      "diagnostic_first_seq",
+      "diagnostic_last_seq",
+      "diagnostic_state",
       "ended_at",
       "exit_code",
       "id",
       "interrupt_detail",
+      "kill_detail",
       "log_file",
       "model",
       "n",
+      "omitted_bytes",
+      "omitted_records",
       "pid",
       "pid_start_time",
       "prompt",
@@ -201,6 +215,8 @@ describe("daemon API contracts, batch 2", () => {
     // the storage columns are internal encodings and must never reach a client
     expect(turns[0]).not.toHaveProperty("attachments_json");
     expect(turns[0]).not.toHaveProperty("usage_json");
+    expect(turns[0]).not.toHaveProperty("outcome_json");
+    expect(turns[0]).not.toHaveProperty("capture_categories_json");
     expect(turns[0]!.attachments).toEqual([]);
     expect(turns[0]).toMatchObject({
       id: expect.any(Number),
@@ -215,6 +231,15 @@ describe("daemon API contracts, batch 2", () => {
       model: null,
       exit_code: 0,
       usage: null,
+      capture_mode: null,
+      capture_state: "legacy",
+      captured_bytes: 0,
+      omitted_bytes: 0,
+      omitted_records: 0,
+      capture_categories: null,
+      capture_detail: null,
+      kill_detail: null,
+      diagnostic_state: "unavailable",
       log_file: logFile,
       started_at: expect.any(String),
       ended_at: expect.any(String),

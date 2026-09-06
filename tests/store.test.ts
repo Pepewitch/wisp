@@ -24,13 +24,16 @@ import {
   releaseOrphanedTaskMessageClaims,
   runningTurns,
   setTaskFields,
+  setTurnCaptureCheckpoint,
+  setTurnDiagnosticCheckpoint,
+  setTurnKillDetail,
   setTurnModel,
   setTurnUsage,
   transition,
   undeliveredOutbox,
   updateQueuedTaskMessage,
 } from "../src/store";
-import { displayStateWord } from "../src/types";
+import { displayStateWord, turnCaptureState, turnDiagnosticState } from "../src/types";
 
 function makeTask(over: Partial<Parameters<typeof createTask>[0]> = {}) {
   return createTask({
@@ -93,6 +96,64 @@ describe("task message migrations", () => {
         "attachment_hash",
         "delivery_uncertain",
         "attachments_json",
+      ]),
+    );
+  });
+});
+
+describe("turn recorder migrations", () => {
+  test("a legacy turns table gains the complete recorder checkpoint schema", () => {
+    const home = mkdtempSync(join(tmpdir(), "wisp-turn-recorder-migration-"));
+    const path = join(home, "wisp.db");
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE turns (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        n INTEGER NOT NULL,
+        prompt TEXT NOT NULL,
+        result TEXT,
+        status TEXT NOT NULL,
+        pid INTEGER,
+        exit_code INTEGER,
+        log_file TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        ended_at TEXT
+      );
+    `);
+    legacy.close();
+
+    const migrated = Bun.spawnSync({
+      cmd: [process.execPath, "-e", `await import("./src/store.ts")`],
+      cwd: process.cwd(),
+      env: { ...process.env, WISP_HOME: home },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(migrated.exitCode, migrated.stderr.toString()).toBe(0);
+
+    const reopened = new Database(path);
+    const columns = (reopened.query(`PRAGMA table_info(turns)`).all() as { name: string }[]).map(
+      (column) => column.name,
+    );
+    reopened.close();
+    expect(columns).toEqual(
+      expect.arrayContaining([
+        "capture_mode",
+        "capture_state",
+        "captured_bytes",
+        "omitted_bytes",
+        "omitted_records",
+        "capture_categories_json",
+        "capture_detail",
+        "outcome_json",
+        "kill_detail",
+        "diagnostic_state",
+        "diagnostic_bytes",
+        "diagnostic_first_seq",
+        "diagnostic_last_seq",
+        "diagnostic_detail",
+        "diagnostic_evicted_at",
       ]),
     );
   });
@@ -258,6 +319,58 @@ describe("turns", () => {
     const t = makeTask();
     createTurn(t.id, 1, "one", null, "/tmp/x.out.log");
     expect(() => createTurn(t.id, 1, "dup", null, "/tmp/y.out.log")).toThrow(/UNIQUE/);
+  });
+
+  test("capture semantics are durable and legacy rows never opt themselves in", () => {
+    const legacyTask = makeTask();
+    const legacyId = createTurn(legacyTask.id, 1, "legacy", null, "/tmp/legacy.out.log");
+    const legacy = getTurn(legacyId)!;
+    expect(legacy.capture_mode).toBeNull();
+    expect(turnCaptureState(legacy)).toBe("legacy");
+    expect(turnDiagnosticState(legacy)).toBe("unavailable");
+
+    const recorderTask = makeTask();
+    const recorderId = createTurn(
+      recorderTask.id,
+      1,
+      "record",
+      null,
+      "/tmp/record.out.log",
+      null,
+      null,
+      "recorder-v1",
+    );
+    setTurnCaptureCheckpoint(recorderId, {
+      state: "degraded",
+      capturedBytes: 100,
+      omittedBytes: 25,
+      omittedRecords: 2,
+      categoriesJson: JSON.stringify({ command: { records: 2, bytes: 25 } }),
+      detail: "primary transcript budget reached",
+      outcomeJson: JSON.stringify({ version: 1, settled: false }),
+    });
+    setTurnKillDetail(recorderId, "transport closed");
+    setTurnDiagnosticCheckpoint(recorderId, {
+      state: "partial",
+      bytes: 80,
+      firstSeq: 1,
+      lastSeq: 4,
+      detail: "quota unavailable",
+      evictedAt: null,
+    });
+    expect(getTurn(recorderId)).toMatchObject({
+      capture_mode: "recorder-v1",
+      capture_state: "degraded",
+      captured_bytes: 100,
+      omitted_bytes: 25,
+      omitted_records: 2,
+      capture_detail: "primary transcript budget reached",
+      kill_detail: "transport closed",
+      diagnostic_state: "partial",
+      diagnostic_bytes: 80,
+      diagnostic_first_seq: 1,
+      diagnostic_last_seq: 4,
+    });
   });
 });
 

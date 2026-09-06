@@ -56,6 +56,7 @@ describe("validateConfig (a prior audit)", () => {
       webhooks: ["https://example.test/hook"],
       repos: ["/repo/a", "/repo/b"],
       stuckMinutes: 5,
+      turnTranscriptBytes: 123,
       logMaxBytes: 123,
       setupTimeoutMinutes: 2,
       envAllowlist: { myrepo: [".env"] },
@@ -118,6 +119,9 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ logMaxBytes: null }))).toBe(
       "config.json: logMaxBytes must be a number, got null",
     );
+    expect(thrownMessage(() => validateConfig({ turnTranscriptBytes: "large" }))).toBe(
+      "config.json: turnTranscriptBytes must be a number, got string",
+    );
     expect(thrownMessage(() => validateConfig({ setupTimeoutMinutes: true }))).toBe(
       "config.json: setupTimeoutMinutes must be a number, got boolean",
     );
@@ -150,7 +154,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, logMaxBytes, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, turnTranscriptBytes, logMaxBytes, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
@@ -287,12 +291,40 @@ describe("loadConfig", () => {
       expect(cfg.port).toBe(9999);
       expect(cfg.token).toBe("abc");
       expect(cfg.stuckMinutes).toBe(10); // default
+      expect(cfg.turnTranscriptBytes).toBe(5_000_000);
+      expect(cfg.logMaxBytes).toBe(5_000_000); // synchronized legacy alias
       expect(cfg.repos).toEqual([]); // default
       expect(cfg.envAllowlist).toEqual({}); // default
       expect(cfg.harnessDefaults).toEqual({}); // default
     } finally {
       rmSync(CONFIG_PATH);
     }
+  });
+
+  test("normalizes the legacy transcript setting to the canonical name", () => {
+    writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", logMaxBytes: 321 }));
+    try {
+      const cfg = loadConfig();
+      expect(cfg.turnTranscriptBytes).toBe(321);
+      expect(cfg.logMaxBytes).toBe(321);
+    } finally {
+      rmSync(CONFIG_PATH);
+    }
+  });
+
+  test("prefers the canonical transcript setting and rejects conflicting aliases", () => {
+    writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", turnTranscriptBytes: 654 }));
+    try {
+      const cfg = loadConfig();
+      expect(cfg.turnTranscriptBytes).toBe(654);
+      expect(cfg.logMaxBytes).toBe(654);
+    } finally {
+      rmSync(CONFIG_PATH);
+    }
+
+    expect(
+      thrownMessage(() => validateConfig({ turnTranscriptBytes: 10, logMaxBytes: 11 })),
+    ).toBe("config.json: turnTranscriptBytes and its legacy alias logMaxBytes must match when both are set");
   });
 });
 

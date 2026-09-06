@@ -38,6 +38,14 @@ export { BUILTIN_ADAPTERS } from "./builtins";
 export { ACTIVITY_NORMALIZERS, createActivityFormatter } from "./activity";
 export { createEventFormatter, EVENT_FORMATTERS, formatEvent } from "./format";
 export { PARSE_STRATEGIES, parseOutput } from "./parse";
+export {
+  createIncrementalOutcomeReducer,
+  foldIncrementalOutcome,
+  hasIncrementalOutcomeReducer,
+  IncrementalOutcomeReducer,
+  type OutcomeCheckpointV1,
+  type OutcomePolicy,
+} from "./outcome";
 export { USAGE_FORMATTERS, formatUsage } from "./usage";
 export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
 export { ERROR_STRATEGIES, errorDetail, isLimitError, isTransientError } from "./errors";
