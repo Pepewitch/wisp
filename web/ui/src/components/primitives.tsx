@@ -45,7 +45,7 @@ export function Rule({ className }: { className?: string }) {
   return <span aria-hidden className={cn("h-px flex-1 bg-border", className)} />
 }
 
-type ButtonTone = "quiet" | "outline" | "primary"
+type ButtonTone = "quiet" | "outline" | "primary" | "destructive"
 
 const TONE: Record<ButtonTone, string> = {
   // the default: no chrome until you touch it
@@ -54,6 +54,8 @@ const TONE: Record<ButtonTone, string> = {
   outline: "border-border-strong bg-card text-foreground hover:bg-hover",
   // the one action on the screen. Exactly one, or none.
   primary: "bg-primary text-primary-foreground font-semibold hover:brightness-110",
+  // an irreversible action, filled so it cannot read as a low-risk text link
+  destructive: "bg-destructive text-destructive-foreground font-semibold hover:brightness-110",
 }
 
 /**
