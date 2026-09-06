@@ -18,9 +18,9 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, and desktop/phone web app.
 
-**Current source version: `0.4.0-alpha.7`.** This is experimental software,
-not a production-ready release. Alpha.7 adds managed updates, project removal,
-harness drift checks, refreshed harness contracts, and safer native steering.
+**Current source version: `0.4.0-alpha.8`.** This is experimental software,
+not a production-ready release. Alpha.8 adds the first Apple Silicon Wisp
+Desktop alpha: one Local-first workspace for local and remote Wisp daemons.
 
 ## Why Wisp
 
@@ -43,7 +43,7 @@ lifecycle state, and phone-capable steering.
 | Platform | Current v0.4 claim |
 |---|---|
 | Ubuntu 24.04 LTS, x86_64, glibc | Experimental alpha |
-| Apple Silicon arm64 | Experimental alpha; ad-hoc signed and not notarized |
+| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; ad-hoc signed and not notarized |
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
@@ -59,7 +59,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.7 # replace with the current published alpha
+version=0.4.0-alpha.8 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -69,7 +69,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.7/wisp-v0.4.0-alpha.7-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.8/wisp-v0.4.0-alpha.8-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -85,11 +85,15 @@ is available. It refuses to replace unmanaged paths.
 Full prerequisites, foreground operation, service credentials, upgrades,
 troubleshooting, and removal: [Linux install and activation](docs/INSTALL.md).
 
-The public Apple Silicon command is:
+The public Apple Silicon desktop command is:
 
 ```sh
-brew install Pepewitch/tap/wisp
+brew install --cask Pepewitch/tap/wisp-desktop
 ```
+
+The Cask declares `Pepewitch/tap/wisp` as a required Formula dependency, so a
+fresh machine gets the CLI/daemon too. Install only the Formula with
+`brew install Pepewitch/tap/wisp` when the desktop app is not wanted.
 
 See [Apple Silicon installation](docs/INSTALL-MACOS.md) for the current
 platform limits and activation steps.
@@ -184,6 +188,27 @@ it for an HttpOnly, SameSite=Strict cookie. The app provides:
 The UI is one self-contained HTML bundle embedded in the binary. It loads no
 runtime assets from a CDN.
 
+## Desktop UI
+
+Wisp Desktop uses that same React bundle inside a Tauri shell. Its header is a
+connection workspace: the built-in Local tab comes first, and `+` adds saved
+remote daemons. Local and remote tabs can be renamed; remotes can be edited,
+reconnected, or removed without touching their daemon data. Local project add
+uses the native macOS folder picker, while a remote project takes a path on the
+remote daemon's machine.
+
+The app keeps daemon credentials in native storage: remote tokens live in the
+macOS Keychain, and the standard Local token is read from Wisp's own profile.
+The webview talks through immutable connection-qualified loopback routes and
+never receives those tokens. A URL and token do not create connectivity—the
+remote daemon must already be reachable through trusted HTTPS or a
+user-managed exact-loopback tunnel.
+
+The first alpha requires Apple Silicon and is configured for macOS 12.3 or
+newer, but that oldest version has not been broadly qualified. It is ad-hoc
+signed and not notarized, so first launch may require Finder's Open command or
+Privacy & Security approval. Do not disable Gatekeeper globally.
+
 For another device, keep Wisp bound to loopback and use Tailscale Serve or an
 SSH tunnel. Never publish the configured Wisp port directly to the internet.
 Follow [Secure remote and phone access](docs/REMOTE-ACCESS.md) and
@@ -214,7 +239,7 @@ connection restarts.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.7 # replace with the installed alpha
+version=0.4.0-alpha.8 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh

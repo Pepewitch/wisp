@@ -20,7 +20,7 @@ export const PR_SPECIMEN: PullRequestInfo = {
 
 export const UPDATE_SPECIMEN: UpdateStatus = {
   currentVersion: "0.4.0-alpha.6",
-  latestVersion: "0.4.0-alpha.7",
+  latestVersion: "0.4.0-alpha.8",
   currentApiProtocolVersion: 1,
   latestApiProtocolVersion: 1,
   state: "available",

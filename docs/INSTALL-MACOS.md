@@ -1,24 +1,26 @@
-# Install and update Wisp on Apple Silicon
+# Install Wisp Desktop and the daemon on Apple Silicon
 
-The custom tap and native Mac artifact are public. Alpha.7 is the current
-maintenance prerelease. Apple Silicon support remains experimental and has
-only limited single-machine qualification.
+Alpha.8 is the first Wisp Desktop prerelease. Apple Silicon support remains
+experimental and has only limited single-machine qualification.
 
 ## Scope and security notice
 
 The experimental v0.4 target is:
 
-- Apple Silicon arm64 only;
+- Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
 - qualified on a limited Apple Silicon test environment;
 - installed from the fully qualified custom Homebrew tap; and
 - ad-hoc signed, not Developer ID signed or notarized.
 
-Intel Macs are unsupported. One-machine testing does not prove every
-Apple Silicon model or macOS version. Because the alpha is not notarized,
-Gatekeeper may require explicit approval in System Settings. Do not disable
-Gatekeeper globally. Verify that the download URL is under
-`github.com/Pepewitch/wisp`, that Homebrew accepts the recipe checksum, and
-that `wisp version --json` reports the release version and commit.
+Intel Macs are unsupported. The configured 12.3 deployment target is enforced
+by the app metadata and Mach-O loader command, but it is not evidence that
+12.3 or every later macOS version has been qualified. Local release
+qualification used Apple Silicon macOS 26.6.2. Because the alpha is not
+notarized, Gatekeeper may require Finder's Open command or explicit approval
+in Privacy & Security. Do not disable Gatekeeper globally. Verify that the
+download URL is under `github.com/Pepewitch/wisp`, that Homebrew accepts the
+recipe checksum, and that `wisp version --json` reports the release version
+and commit.
 
 ## Before you start
 
@@ -38,18 +40,38 @@ the service a path to Git and documented harness locations. Prefer each
 harness's secure per-user login or keychain. Never put an API key in the
 Formula or launchd plist.
 
-## Install and activate
+## Install the desktop app and daemon
 
-Install from the public tap:
+Install the desktop app from the public tap:
+
+```sh
+brew install --cask Pepewitch/tap/wisp-desktop
+```
+
+The Cask declares `Pepewitch/tap/wisp` as a required Formula dependency.
+Homebrew therefore installs the CLI/daemon as part of this command when Wisp
+is absent. Both recipes download immutable arm64 release assets and verify
+their SHA-256 checksums. Neither requires Bun.
+
+To install only the daemon, CLI, and browser UI, use:
 
 ```sh
 brew install Pepewitch/tap/wisp
 ```
 
-Homebrew downloads the immutable arm64 release asset and verifies its SHA-256
-from the Formula. The Formula rejects Intel Macs and does not require Bun.
+Launch the desktop app:
 
-Initialize production state and start the managed launchd service:
+```sh
+open -a Wisp
+```
+
+On first launch, Local reports whether the standard Wisp profile and service
+are ready. Wisp Desktop asks for confirmation before it initializes the
+profile or starts the Homebrew service. It never starts a second child daemon
+owned by the app.
+
+The command-line equivalent initializes production state and starts the
+managed launchd service:
 
 ```sh
 wisp init
@@ -58,9 +80,30 @@ wisp token
 wisp doctor --harness droid
 ```
 
-Open the URL printed by `wisp token`, register a repository, and complete one
-task plus browser follow-up. Do not assume the URL ends in `:8710`; use the
-persisted URL printed by Wisp.
+The desktop Add Project action uses the native folder picker while Local is
+active. You can still open the URL printed by `wisp token` to use the browser
+UI. Do not assume the URL ends in `:8710`; use the persisted URL printed by
+Wisp.
+
+## Add a remote daemon
+
+Click `+` in the desktop header and enter a unique tab name, the daemon URL,
+and its access token. Wisp Desktop performs an authenticated capability check
+before saving the connection, pins the daemon identity it reached, and stores
+the token in the macOS Keychain. Tokens never return from native code to the
+webview.
+
+A URL and token do not create network connectivity. The remote daemon must
+already be reachable through a trusted HTTPS route such as Tailscale Serve, or
+through an exact-loopback user-managed tunnel. Never expose the Wisp port
+directly to the public internet. When adding a project on a remote tab, enter
+the absolute path as it exists on the remote daemon's machine; the local
+folder picker is deliberately unavailable there.
+
+Local and remote tab names are desktop-only labels and can be renamed. Remove
+connection deletes the saved remote metadata and Keychain credential even
+when the daemon is offline; it does not stop remote agents or delete daemon
+projects, tasks, worktrees, or history.
 
 ## Port selection and collision behavior
 
@@ -106,19 +149,32 @@ upgrade the Formula, verifies the newly installed binary's version, exits, and
 lets launchd start the upgraded binary. The browser reloads only after the new
 daemon answers its health check.
 
+In Wisp Desktop, that header control applies to the daemon on the selected
+connection; it does not upgrade the desktop Cask. Upgrade the app through
+Homebrew as shown below.
+
 The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
 are reconciled by the new daemon.
 
-The command-line fallback is:
+Upgrade the Formula first, then the Cask:
 
 ```sh
 brew update
-brew upgrade wisp
+brew upgrade Pepewitch/tap/wisp
+brew upgrade --cask Pepewitch/tap/wisp-desktop
 brew services restart wisp
 wisp version
 wisp doctor --harness droid
 ```
+
+If the desktop Cask is not installed yet, replace its upgrade command with
+`brew install --cask Pepewitch/tap/wisp-desktop`.
+
+Because this alpha is only ad-hoc signed, Keychain authorization continuity is
+not as predictable as it will be with a stable Developer ID signature. If a
+future desktop upgrade reports a saved remote as not ready, reconnect it and
+enter the token again; do not weaken Keychain access controls.
 
 Wisp must not overwrite Homebrew's binary with a self-updater. An upgrade
 changes the managed executable and preserves `~/.wisp`, repositories, task
@@ -164,6 +220,21 @@ unless `WISP_DEV_HOME` explicitly chooses another non-production directory.
 Do not copy the production token or database into the development home.
 
 ## Remove
+
+If you want saved remote credentials deleted, remove each remote connection or
+use **Reset Desktop Data** before uninstalling. Cask uninstall quits and
+removes the application but intentionally has no destructive `zap`; desktop
+metadata and remote Keychain entries otherwise remain available for a later
+reinstall.
+
+Remove only the desktop app:
+
+```sh
+brew uninstall --cask wisp-desktop
+```
+
+The daemon is a separate Formula and remains installed. Remove it only when it
+is no longer needed:
 
 ```sh
 brew services stop wisp

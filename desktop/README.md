@@ -191,6 +191,32 @@ signature, but it is **not Developer ID signed or Apple-notarized**. Nothing in
 this tree disables Gatekeeper; the experimental build may require the normal
 Finder Open confirmation until release credentials are available.
 
+## Install and release
+
+The public desktop package is a Homebrew Cask:
+
+```sh
+brew install --cask Pepewitch/tap/wisp-desktop
+```
+
+The Cask installs `Wisp.app` and declares the separate Wisp Formula as a
+required dependency, so a machine without the CLI/daemon receives it in the
+same Homebrew transaction. The app never bundles or owns a daemon child; Local
+uses the standard Formula service and asks before initializing or starting it.
+
+`scripts/release-desktop.ts` builds from a clean source identity, checks that
+the Cargo, Tauri, plist, and compiled user-agent versions agree, verifies the
+arm64-only Mach-O deployment minimum and complete signature, rejects an
+unexpected bundle member or builder path, and produces a deterministic
+`Wisp.app` archive plus manifest and checksums. The tag workflow rebuilds it
+with a second isolated Cargo target and requires byte-identical output before
+publication.
+
+Uninstalling the Cask quits and removes the app but does not delete native
+metadata or Keychain entries. Remove remote connections or use **Reset Desktop
+Data** first when credentials should be removed. This is deliberate: the Cask
+does not guess that uninstall means destructive credential cleanup.
+
 ## Dependency notes
 
 * `reqwest` and `tokio-tungstenite` are both pinned to `rustls-tls-native-roots`

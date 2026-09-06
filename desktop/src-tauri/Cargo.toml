@@ -14,7 +14,7 @@
 #   IDs. It is the OS CSPRNG with an API that does not churn between majors.
 [package]
 name = "wisp-desktop"
-version = "0.4.0-alpha.7"
+version = "0.4.0-alpha.8"
 edition = "2021"
 rust-version = "1.82"
 description = "Native core for the Wisp desktop shell"

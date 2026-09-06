@@ -8,22 +8,32 @@ on:
     paths:
       - "desktop/**"
       - "scripts/desktop/**"
+      - "scripts/release-desktop.ts"
+      - "scripts/render-homebrew-cask.ts"
+      - "tests/release-desktop.test.ts"
+      - "tests/homebrew-cask.test.ts"
       - "web/ui/**"
       - "web/ui-dist/**"
       - "package.json"
       - "bun.lock"
       - "tsconfig.json"
       - ".github/workflows/desktop.yml"
+      - ".github/workflows/release.yml"
   pull_request:
     paths:
       - "desktop/**"
       - "scripts/desktop/**"
+      - "scripts/release-desktop.ts"
+      - "scripts/render-homebrew-cask.ts"
+      - "tests/release-desktop.test.ts"
+      - "tests/homebrew-cask.test.ts"
       - "web/ui/**"
       - "web/ui-dist/**"
       - "package.json"
       - "bun.lock"
       - "tsconfig.json"
       - ".github/workflows/desktop.yml"
+      - ".github/workflows/release.yml"
 
 jobs:
   native-core:
@@ -54,9 +64,9 @@ jobs:
         # Every test uses the in-memory credential store; nothing here reads or
         # writes a real login keychain.
         run: cargo test --locked
-      - name: bundle the packaged application
+      - name: build and verify the release application
         working-directory: .
-        run: bash scripts/desktop/build-macos.sh --app-only
+        run: bun run scripts/release-desktop.ts
       - name: verify the complete ad-hoc signature and architecture
         working-directory: .
         run: |

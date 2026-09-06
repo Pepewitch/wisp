@@ -27,9 +27,11 @@ qualification do not imply permission to publish.
 - Wisp and its Homebrew tap are separate repositories. Review, commit, and
   publish each one independently.
 
-Current distribution targets are Ubuntu 24.04 LTS x86_64/glibc and an
-experimental Apple Silicon arm64 archive. `scripts/release-macos.ts` ad-hoc
-signs the binary; it does not Developer ID sign, notarize, or timestamp it.
+Current distribution targets are Ubuntu 24.04 LTS x86_64/glibc, an
+experimental Apple Silicon arm64 daemon archive, and an Apple Silicon desktop
+`.app` configured for macOS 12.3 or newer. `scripts/release-macos.ts` and
+`scripts/release-desktop.ts` ad-hoc sign their outputs; they do not Developer
+ID sign, notarize, or timestamp them.
 
 ## Automated publishing on tag push
 
@@ -43,17 +45,17 @@ authorization and the sole trigger. It runs two jobs:
    artifact through `scripts/test-install.sh` and
    `scripts/test-activation.sh`.
 2. `publish` runs on arm64 macOS, builds and reproducibility-checks the Mac
-   asset the same way, verifies all six checksums, creates the
+   daemon and desktop assets the same way, verifies all nine checksums, renders
+   and audits both Homebrew recipes offline, creates the
    "Wisp <version>" GitHub prerelease with the release notes as its body,
-   verifies the six public URLs anonymously, renders the Formula from the
-   published Mac manifest, runs `tests/homebrew-formula.test.ts` and
-   `brew audit --strict --online`, and pushes `Formula/wisp.rb` to
-   `Pepewitch/homebrew-tap`.
+   verifies the nine public URLs anonymously, audits the Formula and Cask
+   online, and pushes exactly `Formula/wisp.rb` and
+   `Casks/wisp-desktop.rb` to `Pepewitch/homebrew-tap` in one commit.
 
 The workflow needs the `HOMEBREW_TAP_TOKEN` repository secret: a fine-grained
 personal access token with Contents write access to the tap repository. It
 never writes back to this repository — assets attach to the GitHub release
-and the Formula commit lands in the tap repository — so publishing cannot
+and the Formula/Cask commit lands in the tap repository — so publishing cannot
 re-trigger this repository's CI. Nothing is public until the `publish` job
 runs, so a failed Linux-side gate cannot half-publish a release.
 
@@ -86,8 +88,12 @@ tag="v$version"
 repo="$(git rev-parse --show-toplevel)"
 release_dir="$repo/dist/release/$tag"
 notes="$repo/docs/v0.N/RELEASE-NOTES-alpha.N.md"
-tap=/absolute/path/to/homebrew-tap
+tap="$(brew --repository Pepewitch/tap)"
 ```
+
+The manual fallback requires `Pepewitch/tap` to be Homebrew's registered,
+clean tap checkout so name-based Formula and Cask audits resolve the files just
+rendered. Do not substitute an arbitrary clone without registering it first.
 
 Confirm that the target version and tag do not already exist locally or
 remotely. Stop if either exists; release identities are not reusable.
@@ -110,6 +116,7 @@ For every release, update these direct pins:
 
 - `package.json`;
 - `src/version.ts`;
+- `desktop/src-tauri/Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`;
 - the literal source-build expectations in `tests/version.test.ts`;
 - the default and help text in `scripts/install.sh`;
 - the default artifact paths in `scripts/test-install.sh` and
@@ -131,7 +138,7 @@ old version look current.
 pin.
 
 Write release notes before tagging. State platform scope, signing posture,
-install/upgrade commands, changes, known limits, and the exact six expected
+install/upgrade commands, changes, known limits, and the exact nine expected
 assets. Before public verification, describe unrun gates as pending.
 
 ## 3. Run the source gates
@@ -168,7 +175,7 @@ git tag -a "$tag" -m "Wisp $version"
 test "$(git describe --tags --exact-match HEAD)" = "$tag"
 ```
 
-## 4. Build and reproduce all six assets
+## 4. Build and reproduce all nine assets
 
 Build on Apple Silicon macOS so the same checkout can cross-compile Linux and
 produce, sign, and verify the native Mac binary:
@@ -177,6 +184,7 @@ produce, sign, and verify the native Mac binary:
 bun run build:ui
 bun run scripts/release-linux.ts --require-tag
 bun run scripts/release-macos.ts --require-tag
+CARGO_TARGET_DIR="$(mktemp -d)" bun run scripts/release-desktop.ts --require-tag
 ```
 
 The release directory must contain exactly:
@@ -188,6 +196,9 @@ SHA256SUMS
 wisp-v<version>-darwin-arm64.tar.gz
 release-manifest-darwin-arm64.json
 SHA256SUMS-darwin-arm64
+wisp-desktop-v<version>-darwin-arm64.tar.gz
+release-manifest-desktop-darwin-arm64.json
+SHA256SUMS-desktop-darwin-arm64
 ```
 
 Snapshot those files, rebuild from the same clean tag, and compare every byte:
@@ -197,6 +208,7 @@ first="$(mktemp -d)"
 cp "$release_dir"/* "$first/"
 bun run scripts/release-linux.ts --require-tag
 bun run scripts/release-macos.ts --require-tag
+CARGO_TARGET_DIR="$(mktemp -d)" bun run scripts/release-desktop.ts --require-tag
 for file in "$first"/*; do
   cmp -s "$file" "$release_dir/$(basename "$file")" || {
     echo "non-reproducible asset: $(basename "$file")" >&2
@@ -205,12 +217,18 @@ for file in "$first"/*; do
 done
 (cd "$release_dir" &&
   shasum -a 256 -c SHA256SUMS &&
-  shasum -a 256 -c SHA256SUMS-darwin-arm64)
+  shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
+  shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 ```
 
 The builders refuse a dirty tree or a `package.json`/`src/version.ts`
 mismatch. The Mac builder also verifies arm64 architecture, ad-hoc signature,
 archive contents, and embedded version/commit identity.
+The desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
+Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
+and a clean committed web bundle after packaging. Use different
+`CARGO_TARGET_DIR` values for the two desktop builds so Cargo cannot turn the
+reproducibility check into a cache hit.
 
 Exercise the Linux artifact through the public installer contract and the
 fake-model evaluator before spending model quota:
@@ -245,7 +263,7 @@ The tracked ignore file has one fingerprint-exact exception for a reviewed
 minified `web/vendor/xterm.js` false positive in history. Never replace it
 with a path/rule-wide exclusion. Any new fingerprint fails the gate.
 
-Also scan the six release files and every retained evaluator directory for
+Also scan the nine release files and every retained evaluator directory for
 the exact active credential used during qualification. The following scanner
 reads the secret from its file, checks tracked files plus explicit artifact
 roots, and prints paths only:
@@ -298,8 +316,24 @@ boundary.
 ## 6. Publish the GitHub prerelease
 
 Reconfirm explicit authorization, GitHub authentication, repository
-visibility, the tag target, and the asset list. Then push the tag and create
-the release from the existing tag:
+visibility, the tag target, and the asset list. Before pushing the tag, render
+the Formula and Cask from the local manifests and run offline audits so a DSL
+error cannot strand public assets without an installable tap update:
+
+```sh
+bun run scripts/render-homebrew-formula.ts \
+  --manifest "$release_dir/release-manifest-darwin-arm64.json" \
+  --output "$tap/Formula/wisp.rb"
+bun run scripts/render-homebrew-cask.ts \
+  --manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
+  --output "$tap/Casks/wisp-desktop.rb"
+bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts
+brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
+brew audit --strict Pepewitch/tap/wisp
+brew audit --strict --cask Pepewitch/tap/wisp-desktop
+```
+
+Then push the tag and create the release from the existing tag:
 
 ```sh
 gh auth status
@@ -313,6 +347,9 @@ gh release create "$tag" \
   "$release_dir/wisp-v$version-darwin-arm64.tar.gz" \
   "$release_dir/release-manifest-darwin-arm64.json" \
   "$release_dir/SHA256SUMS-darwin-arm64" \
+  "$release_dir/wisp-desktop-v$version-darwin-arm64.tar.gz" \
+  "$release_dir/release-manifest-desktop-darwin-arm64.json" \
+  "$release_dir/SHA256SUMS-desktop-darwin-arm64" \
   --repo Pepewitch/wisp \
   --verify-tag \
   --prerelease \
@@ -337,7 +374,7 @@ test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
 
 ## 7. Verify anonymously
 
-Download all six assets through their public URLs without a GitHub token and
+Download all nine assets through their public URLs without a GitHub token and
 compare them with the qualified local bytes:
 
 ```sh
@@ -348,7 +385,10 @@ for file in \
   SHA256SUMS \
   "wisp-v$version-darwin-arm64.tar.gz" \
   release-manifest-darwin-arm64.json \
-  SHA256SUMS-darwin-arm64
+  SHA256SUMS-darwin-arm64 \
+  "wisp-desktop-v$version-darwin-arm64.tar.gz" \
+  release-manifest-desktop-darwin-arm64.json \
+  SHA256SUMS-desktop-darwin-arm64
 do
   curl --proto '=https' --tlsv1.2 -fsSL \
     "https://github.com/Pepewitch/wisp/releases/download/$tag/$file" \
@@ -360,17 +400,17 @@ do
 done
 (cd "$anon" &&
   shasum -a 256 -c SHA256SUMS &&
-  shasum -a 256 -c SHA256SUMS-darwin-arm64)
+  shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
+  shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 ```
 
 This checks the bytes users can actually fetch, not only GitHub's authenticated
 release metadata.
 
-## 8. Render and publish the Homebrew Formula
+## 8. Render and publish the Homebrew Formula and Cask
 
-Do this only after the Mac asset is public. Use Homebrew's registered
-`Pepewitch/homebrew-tap` checkout so current Homebrew can audit the candidate
-by Formula name, then synchronize it:
+Once the Mac assets are public, repeat the prepared recipe audits online and
+synchronize the two files in one tap commit:
 
 ```sh
 tap="$(brew --repository Pepewitch/tap)"
@@ -381,22 +421,30 @@ git -C "$tap" pull --ff-only
 bun run scripts/render-homebrew-formula.ts \
   --manifest "$release_dir/release-manifest-darwin-arm64.json" \
   --output "$tap/Formula/wisp.rb"
-bun test tests/homebrew-formula.test.ts
+bun run scripts/render-homebrew-cask.ts \
+  --manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
+  --output "$tap/Casks/wisp-desktop.rb"
+bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts
+brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
 brew audit --strict --online Pepewitch/tap/wisp
+brew audit --cask --new Pepewitch/tap/wisp-desktop
 git -C "$tap" diff --check
-git -C "$tap" diff -- Formula/wisp.rb
+git -C "$tap" diff -- Formula/wisp.rb Casks/wisp-desktop.rb
 ```
 
-The Formula must pin the immutable GitHub URL and archive SHA-256, keep state
-outside Homebrew's prefix, expose the launchd service, contain no credential,
-and retain the ad-hoc/non-notarized caveat.
+The Formula and Cask must pin immutable GitHub URLs and SHA-256 values, contain
+no credential, and retain the ad-hoc/non-notarized caveat. The Formula keeps
+daemon state outside Homebrew's prefix and exposes the launchd service. The
+Cask installs `Wisp.app`, depends on the Formula, and states that uninstall
+preserves desktop metadata and Keychain credentials unless the user removes
+connections or resets desktop data first.
 
 Commit and push the tap only with explicit authorization:
 
 ```sh
-git -C "$tap" add Formula/wisp.rb
+git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb
 git -C "$tap" diff --cached --check
-git -C "$tap" diff --cached -- Formula/wisp.rb
+git -C "$tap" diff --cached -- Formula/wisp.rb Casks/wisp-desktop.rb
 git -C "$tap" commit -F - <<EOF
 release: update Wisp to $version
 
@@ -410,6 +458,7 @@ Then verify the public tap:
 ```sh
 brew update
 brew audit --strict --online Pepewitch/tap/wisp
+brew audit --cask --new Pepewitch/tap/wisp-desktop
 ```
 
 ## 9. Qualify fresh install and upgrade
@@ -422,11 +471,12 @@ worktree, and dirty path. Never infer preservation from a successful command.
 For a fresh Mac:
 
 ```sh
-brew install Pepewitch/tap/wisp
+brew install --cask Pepewitch/tap/wisp-desktop
 wisp init
 brew services start wisp
 wisp doctor --harness droid
 brew test Pepewitch/tap/wisp
+open -a Wisp
 ```
 
 For an existing installation:
@@ -434,6 +484,7 @@ For an existing installation:
 ```sh
 brew update
 brew upgrade wisp
+brew upgrade --cask wisp-desktop
 brew services restart wisp
 wisp version --json
 wisp doctor --harness droid
@@ -457,6 +508,29 @@ wisp-dev token
 Bare `wisp` must use production `~/.wisp`; `wisp-dev` must use
 `~/.wisp-dev`. Their configured ports must differ.
 
+For the desktop receipt, verify the installed Cask and Formula, `.app`
+architecture, plist and Mach-O deployment minimum, code-signing posture,
+launch survival, Local connection, native folder picker, one remote connection,
+rename, reconnect, and offline Remove connection. Do not uninstall a user's
+working daemon merely to simulate an absent dependency; the audited Cask
+`depends_on formula:` contract is the install proof.
+
+The mechanical installed-app checks are:
+
+```sh
+brew list --formula wisp
+brew list --cask wisp-desktop
+app=/Applications/Wisp.app
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = dev.wisp.desktop
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$version"
+test "$(lipo -archs "$app/Contents/MacOS/wisp-desktop")" = arm64
+vtool -show-build "$app/Contents/MacOS/wisp-desktop" | grep -Eq '^ *minos +12\.3(\.0)?$'
+codesign --verify --deep --strict "$app"
+open -a Wisp
+sleep 4
+pgrep -x wisp-desktop
+```
+
 ## 10. Close out without rewriting history
 
 After public qualification, update the README, install guides, and release
@@ -467,9 +541,10 @@ the private project record rather than rewriting them.
 The final receipt should name:
 
 - version, tag, full commit, and clean-tree status;
-- all six filenames and SHA-256 values;
-- reproducibility result and supported baselines;
-- source, install, activation, evaluator, security, Formula audit/test, and
+- all nine filenames and SHA-256 values;
+- reproducibility result, configured desktop minimum, and actually qualified
+  host versions;
+- source, install, activation, evaluator, security, Formula/Cask audit/test, and
   anonymous-download results;
 - production backup and state-preservation result;
 - exact limitations, including signing/notarization and unrun human gates;
