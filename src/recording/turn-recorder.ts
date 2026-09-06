@@ -11,6 +11,7 @@ import { transcriptBudgetBytes, type WispConfig } from "../config";
 import { setTurnCaptureCheckpoint } from "../store";
 import { boundJsonRecord, SequencedRecordBudget, truncateUtf8 } from "./bounds";
 import { closeTurnBroker, openTurnBroker, type TurnBroker } from "./broker";
+import { createTurnDiagnosticWriter, type TurnDiagnosticWriter } from "./diagnostic";
 
 const CRITICAL_LANE_MAX_BYTES = 16 * 1024;
 const MAX_PRIMARY_RECORDS = 100_000;
@@ -49,6 +50,7 @@ export class TurnRecorder {
   private readonly reducer: IncrementalOutcomeReducer;
   private readonly budget: SequencedRecordBudget;
   private readonly broker: TurnBroker;
+  private diagnostic: TurnDiagnosticWriter | null;
   private readonly transcriptBudget: number;
   private readonly criticalLaneBytes: number;
   private state: "complete" | "degraded" | "disabled" = "complete";
@@ -80,6 +82,7 @@ export class TurnRecorder {
     const ordinaryBytes = Math.max(0, this.transcriptBudget - this.criticalLaneBytes - this.capturedBytes);
     this.budget = new SequencedRecordBudget(ordinaryBytes, MAX_PRIMARY_RECORDS);
     this.broker = openTurnBroker(turnId);
+    this.diagnostic = createTurnDiagnosticWriter(turnId, cfg);
     this.broker.setPrimaryOffset(this.outOffset);
     this.persistCheckpoint(true);
   }
@@ -172,6 +175,12 @@ export class TurnRecorder {
       this.finished = true;
       if (this.state === "degraded") this.writeCritical(this.captureSummary());
       this.persistCheckpoint(true);
+      try {
+        this.diagnostic?.finish();
+      } catch (error) {
+        console.error(`[wisp] turn ${this.turnId}: diagnostic finalization failed: ${String(error)}`);
+        this.diagnostic = null;
+      }
       closeTurnBroker(this.turnId);
     }
     return this.currentOutcome();
@@ -191,6 +200,12 @@ export class TurnRecorder {
 
   private project(source: RecorderSource, line: string, category: string): void {
     const admission = this.budget.offer(line, category, this.state === "complete");
+    try {
+      this.diagnostic?.record(admission.sequence, source, line);
+    } catch (error) {
+      console.error(`[wisp] turn ${this.turnId}: diagnostic recording failed: ${String(error)}`);
+      this.diagnostic = null;
+    }
     let stateChanged = false;
     if (admission.retained) {
       const fd = source === "stdout" ? this.outFd : this.errFd;

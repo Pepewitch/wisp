@@ -206,6 +206,26 @@ export function Conversation({
   )
 }
 
+function DiagnosticAvailability({ taskId, turn }: { taskId: string; turn: Turn }) {
+  const command = <code>wisp log {taskId} {turn.n} --diagnostic</code>
+  switch (turn.diagnostic_state) {
+    case "complete":
+      return <> The retained diagnostic history can be exported with {command}.</>
+    case "partial":
+      return (turn.diagnostic_bytes ?? 0) > 0
+        ? <> A partial diagnostic archive can be exported with {command}.</>
+        : <> No diagnostic records were retained.</>
+    case "evicted":
+      return <> The diagnostic archive has been evicted.</>
+    case "disabled":
+      return <> Diagnostic recording was disabled.</>
+    case "unavailable":
+      return <> Diagnostic recording was unavailable.</>
+    default:
+      return null
+  }
+}
+
 /**
  * One turn. No "Turn N" rule — the right-aligned bubble is the boundary and
  * the gap carries the rhythm (30px above a bubble, 16px inside a turn).
@@ -324,6 +344,7 @@ function TurnBlock({
               ? `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) were not retained. `
               : "Transcript storage stopped during this turn. "}
             The final outcome was recorded independently.
+            <DiagnosticAvailability taskId={taskId} turn={turn} />
           </div>
         </div>
       )}

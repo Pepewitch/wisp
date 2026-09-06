@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { taskMessageAttachmentsFingerprint } from "../src/attachments";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { ModelProbeCache } from "../src/model-probes";
+import { createTurnDiagnosticWriter } from "../src/recording/diagnostic";
 import { route, serve } from "../src/daemon";
 import { subscribe, type WispEvent } from "../src/events";
 import {
@@ -175,6 +176,52 @@ describe("daemon API contracts", () => {
     await expectError(base, `/api/tasks/${task.id}/log?offset=1.5`, 400, 'offset must be a non-negative integer, got "1.5"');
     await expectError(base, "/api/tasks/tnope9/log", 404, "no such task: tnope9");
     await expectError(base, "/api/tasks/tnope9", 404, "no such task: tnope9");
+  });
+
+  test("streams a turn diagnostic archive and reports unavailable legacy history truthfully", async () => {
+    const base = await startServer();
+    const task = makeTask();
+    const logFile = join(LOG_DIR, `${task.id}-diagnostic.out.log`);
+    writeFileSync(logFile, "");
+    const turnId = createTurn(task.id, 1, "diagnose", null, logFile, null, null, "recorder-v1");
+    const writer = createTurnDiagnosticWriter(turnId, config())!;
+    writer.record(1, "stdout", "retained event");
+    writer.record(2, "stderr", "retained warning");
+    writer.finish();
+    finishTurn(turnId, "done", 0, "done");
+    setTaskFields(task.id, { turn_count: 1 });
+
+    const exported = await api(base, `/api/tasks/${task.id}/log/diagnostic?turn=1`);
+    expect(exported.status).toBe(200);
+    expect(exported.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(exported.headers.get("x-wisp-diagnostic-state")).toBe("complete");
+    const records = (await exported.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(records.map((record) => [record.sequence, record.source, record.line])).toEqual([
+      [1, "stdout", "retained event"],
+      [2, "stderr", "retained warning"],
+    ]);
+
+    const partialId = createTurn(task.id, 2, "still running", null, logFile, null, null, "recorder-v1");
+    const partialWriter = createTurnDiagnosticWriter(partialId, config())!;
+    partialWriter.record(1, "stdout", "available so far");
+    setTaskFields(task.id, { turn_count: 2 });
+    const partial = await api(base, `/api/tasks/${task.id}/log/diagnostic?turn=2`);
+    expect(partial.status).toBe(200);
+    expect(partial.headers.get("x-wisp-diagnostic-state")).toBe("partial");
+    expect(await partial.text()).toContain("available so far");
+    partialWriter.finish();
+    finishTurn(partialId, "done", 0, "done");
+
+    const legacy = makeTask();
+    const legacyId = createTurn(legacy.id, 1, "legacy", null, join(LOG_DIR, `${legacy.id}.out.log`));
+    setTaskFields(legacy.id, { turn_count: 1 });
+    await expectError(
+      base,
+      `/api/tasks/${legacy.id}/log/diagnostic`,
+      404,
+      "diagnostic history for turn 1 is unavailable",
+    );
+    finishTurn(legacyId, "done", 0, "done");
   });
 
   test("renames a task and validates the display title", async () => {

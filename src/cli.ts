@@ -2,7 +2,7 @@ import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
 import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
 import { sendCommand, taskMessageSummary } from "./cli-send";
-import { followHumanLog } from "./cli-stream";
+import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
 import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
 import { bunSpawn, runDoctor } from "./doctor";
@@ -24,7 +24,7 @@ usage:
   ${COMMAND} ls [-a]                                 list your tasks (alias: list; -a includes archived)
   ${COMMAND} show <task>                             task detail: turns, attachments, diffstat
   ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)
-  ${COMMAND} log <task> [turn] [-f] [--raw]          activity feed of a turn; -f/--follow tails live
+  ${COMMAND} log <task> [turn] [-f] [--raw] [--diagnostic]  activity feed; --diagnostic exports retained JSONL
   ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout
   ${COMMAND} send <task> "message" [--image <path>]…  send safely; active tasks steer or queue without stopping
@@ -327,8 +327,8 @@ function printTurn(
 }
 
 async function logCommand(positional: string[], flags: Flags): Promise<void> {
-  const id = positional[0];
-  const turnQuery = positional[1] ? `turn=${positional[1]}&` : "";
+  const [id, turn] = positional, turnQuery = turn ? `turn=${turn}&` : "";
+  if (flags.diagnostic) return exportDiagnosticLog(id, turnQuery, Boolean(flags.follow || flags.f));
   const adapters = flags.raw ? null : loadAdapters();
   if (!flags.follow && !flags.f) {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}`);

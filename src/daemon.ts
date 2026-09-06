@@ -5,6 +5,7 @@ import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
 import { startOutboxLoop } from "./outbox";
 import { TaskProbeCache, type TaskProbeCacheOptions } from "./probes";
 import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests";
+import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { route } from "./routes";
@@ -219,6 +220,7 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   // P5b loud fallback: only here does the merged adapter set exist to check
   // harnessDefaults against — warn at every boot, never crash
   checkHarnessDefaults(cfg, adapters);
+  maintainDiagnosticArchives(cfg);
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)

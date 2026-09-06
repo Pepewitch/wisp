@@ -49,6 +49,12 @@ describe("Conversation top fade", () => {
           omitted_records: 12,
           capture_categories: null,
           capture_detail: "primary transcript budget reached",
+          diagnostic_state: "complete",
+          diagnostic_bytes: 10_240,
+          diagnostic_first_seq: 1,
+          diagnostic_last_seq: 20,
+          diagnostic_detail: null,
+          diagnostic_evicted_at: null,
           attachments: [],
           log_file: "/tmp/turn.log",
           started_at: "2026-09-03T00:00:00Z",
@@ -66,6 +72,7 @@ describe("Conversation top fade", () => {
     expect(viewport.querySelector("[data-turn='1']")).not.toHaveClass("pt-2")
     expect(screen.getByText("Activity history incomplete")).toBeInTheDocument()
     expect(screen.getByText(/12 records \(2 KB\) were not retained/)).toBeInTheDocument()
+    expect(screen.getByText(/wisp log tspace 1 --diagnostic/)).toBeInTheDocument()
   })
 
   it("places steered messages inside their turn and keeps fallback messages visibly queued", () => {
