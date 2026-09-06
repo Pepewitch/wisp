@@ -49,7 +49,7 @@ function Consumer() {
   return (
     <>
       <span>{updater.status?.phase ?? "loading"}</span>
-      <button onClick={() => void updater.installAndRelaunch("0.4.0-alpha.10")}>
+      <button onClick={() => void updater.install("0.4.0-alpha.10")}>
         update
       </button>
     </>
@@ -107,7 +107,7 @@ describe("DesktopUpdaterProvider", () => {
     expect(screen.getByText("downloading")).toBeInTheDocument()
   })
 
-  it("installs the confirmed version before asking native code to relaunch", async () => {
+  it("installs the confirmed version without owning relaunch arbitration", async () => {
     const bridge = updateBridge()
     render(
       <DesktopUpdaterProvider bridge={bridge}>
@@ -115,12 +115,9 @@ describe("DesktopUpdaterProvider", () => {
       </DesktopUpdaterProvider>
     )
     fireEvent.click(screen.getByRole("button", { name: "update" }))
-    await waitFor(() => expect(bridge.relaunchDesktop).toHaveBeenCalledTimes(1))
-    expect(bridge.installDesktopUpdate).toHaveBeenCalledWith("0.4.0-alpha.10")
-    expect(
-      vi.mocked(bridge.installDesktopUpdate).mock.invocationCallOrder[0]
-    ).toBeLessThan(
-      vi.mocked(bridge.relaunchDesktop).mock.invocationCallOrder[0]!
+    await waitFor(() =>
+      expect(bridge.installDesktopUpdate).toHaveBeenCalledWith("0.4.0-alpha.10")
     )
+    expect(bridge.relaunchDesktop).not.toHaveBeenCalled()
   })
 })

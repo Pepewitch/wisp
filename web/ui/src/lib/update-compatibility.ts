@@ -7,7 +7,7 @@ export function daemonUpdateIsCompatible(
   if (!status || !supportedApiProtocols) return true
   return (
     supportedApiProtocols.includes(status.currentApiProtocolVersion) &&
-    (status.latestApiProtocolVersion === null ||
-      supportedApiProtocols.includes(status.latestApiProtocolVersion))
+    status.latestApiProtocolVersion !== null &&
+    supportedApiProtocols.includes(status.latestApiProtocolVersion)
   )
 }

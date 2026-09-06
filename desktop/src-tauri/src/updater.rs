@@ -204,6 +204,10 @@ impl DesktopUpdater {
             .operation
             .try_lock()
             .map_err(|_| DesktopUpdateError::Busy)?;
+        let status = self.status();
+        if check_preserves_status(status.phase) {
+            return Ok(status);
+        }
         let key = embedded_public_key().ok_or(DesktopUpdateError::Unconfigured)?;
         self.change(app, |inner| {
             inner.pending = None;
@@ -407,6 +411,10 @@ impl DesktopUpdater {
         let _ = app.emit(STATUS_EVENT, status.clone());
         status
     }
+}
+
+fn check_preserves_status(phase: DesktopUpdatePhase) -> bool {
+    phase == DesktopUpdatePhase::ReadyToRelaunch
 }
 
 fn updater_error(error: impl std::fmt::Display) -> DesktopUpdateError {
@@ -691,5 +699,11 @@ mod tests {
         assert_eq!(configured_public_key("  UNCONFIGURED\n"), None);
         assert_eq!(configured_public_key(""), None);
         assert_eq!(configured_public_key("public-key"), Some("public-key"));
+    }
+
+    #[test]
+    fn an_installed_update_keeps_its_relaunch_recovery_state() {
+        assert!(check_preserves_status(DesktopUpdatePhase::ReadyToRelaunch));
+        assert!(!check_preserves_status(DesktopUpdatePhase::Available));
     }
 }

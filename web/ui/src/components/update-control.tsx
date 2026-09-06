@@ -3,7 +3,10 @@ import { Popover } from "@base-ui/react/popover"
 import { Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
-import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
+import {
+  desktopUpdateBlocksDaemon,
+  type DesktopUpdaterContextValue,
+} from "@/lib/desktop-updater"
 import type { UpdateStatus } from "@/lib/types"
 import { daemonUpdateIsCompatible } from "@/lib/update-compatibility"
 import { cn } from "@/lib/utils"
@@ -88,6 +91,7 @@ export function UpdateCenter({
   connectionId,
   connectionName,
   supportedApiProtocols,
+  onUpdateDesktop,
   onUpdateDaemon,
   mobile = false,
   defaultOpen = false,
@@ -99,6 +103,7 @@ export function UpdateCenter({
   connectionId: string
   connectionName: string
   supportedApiProtocols: readonly number[]
+  onUpdateDesktop: (version: string) => void
   onUpdateDaemon: (version: string) => void
   mobile?: boolean
   /** Gallery/test seam. Production leaves the surface closed initially. */
@@ -125,6 +130,10 @@ export function UpdateCenter({
     daemonError !== null ||
     daemonStatus?.state === "failed"
   const activeDaemonBusy = daemonOperation?.connectionId === connectionId
+  const desktopBlocksDaemon = desktopUpdateBlocksDaemon(
+    desktop.status,
+    desktop.pending
+  )
 
   return (
     <Popover.Root defaultOpen={defaultOpen}>
@@ -175,11 +184,7 @@ export function UpdateCenter({
                 pending={desktop.pending}
                 error={desktop.error}
                 daemonOperation={daemonOperation}
-                onInstall={(version) =>
-                  void desktop
-                    .installAndRelaunch(version)
-                    .catch(() => undefined)
-                }
+                onInstall={onUpdateDesktop}
                 onRelaunch={() =>
                   void desktop.relaunch().catch(() => undefined)
                 }
@@ -191,6 +196,7 @@ export function UpdateCenter({
                 activeOperation={activeDaemonBusy}
                 connectionName={connectionName}
                 compatible={compatible}
+                desktopBlocksDaemon={desktopBlocksDaemon}
                 supportedApiProtocols={supportedApiProtocols}
                 onUpdate={onUpdateDaemon}
               />
@@ -216,7 +222,10 @@ export function UpdateCenter({
               </label>
               <Button
                 size="sm"
-                disabled={desktop.pending}
+                disabled={
+                  desktop.pending ||
+                  desktop.status?.phase === "ready-to-relaunch"
+                }
                 onClick={() => void desktop.check().catch(() => undefined)}
               >
                 <Refresh />
@@ -391,6 +400,7 @@ function DaemonUpdateRow({
   activeOperation,
   connectionName,
   compatible,
+  desktopBlocksDaemon,
   supportedApiProtocols,
   onUpdate,
 }: {
@@ -400,10 +410,15 @@ function DaemonUpdateRow({
   activeOperation: boolean
   connectionName: string
   compatible: boolean
+  desktopBlocksDaemon: boolean
   supportedApiProtocols: readonly number[]
   onUpdate: (version: string) => void
 }) {
   const target = status?.latestVersion
+  const actionBlock = daemonUpdateActionBlock(
+    operation !== null,
+    desktopBlocksDaemon
+  )
   const available =
     target !== null &&
     target !== undefined &&
@@ -445,7 +460,8 @@ function DaemonUpdateRow({
           <Button
             size="sm"
             tone="outline"
-            disabled={operation !== null}
+            disabled={actionBlock.disabled}
+            title={actionBlock.title}
             onClick={() => onUpdate(target)}
           >
             {status.state === "failed" || error
@@ -456,6 +472,19 @@ function DaemonUpdateRow({
       </div>
     </section>
   )
+}
+
+function daemonUpdateActionBlock(
+  daemonBusy: boolean,
+  desktopBusy: boolean
+): { disabled: boolean; title: string | undefined } {
+  if (desktopBusy) {
+    return {
+      disabled: true,
+      title: "Wait for the Wisp Desktop update to finish",
+    }
+  }
+  return { disabled: daemonBusy, title: undefined }
 }
 
 function VersionLine({

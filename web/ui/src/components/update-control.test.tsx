@@ -42,7 +42,7 @@ function desktopUpdater(
     error: null,
     checkAfterLaunch: true,
     check: vi.fn(async () => undefined),
-    installAndRelaunch: vi.fn(async () => undefined),
+    install: vi.fn(async () => undefined),
     relaunch: vi.fn(async () => undefined),
     setCheckAfterLaunch: vi.fn(),
     ...overrides,
@@ -77,6 +77,7 @@ function renderCenter({
       connectionId={connectionId}
       connectionName={connectionName}
       supportedApiProtocols={[1]}
+      onUpdateDesktop={() => undefined}
       onUpdateDaemon={() => undefined}
     />
   )
@@ -130,13 +131,21 @@ describe("browser daemon update control", () => {
 describe("Desktop update center", () => {
   it("renders separately scoped Desktop and selected-daemon rows", () => {
     renderCenter()
-    expect(screen.getByRole("button", { name: /Updates.*2/ })).toBeInTheDocument()
-    expect(screen.getByRole("region", { name: "Wisp Desktop update" })).toHaveTextContent(
-      "0.4.0-alpha.8 → 0.4.0-alpha.9"
-    )
-    expect(screen.getByRole("button", { name: "Update Desktop and relaunch" })).toBeInTheDocument()
-    expect(screen.getByRole("region", { name: "Local daemon update" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Update Local daemon" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /Updates.*2/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("region", { name: "Wisp Desktop update" })
+    ).toHaveTextContent("0.4.0-alpha.8 → 0.4.0-alpha.9")
+    expect(
+      screen.getByRole("button", { name: "Update Desktop and relaunch" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("region", { name: "Local daemon update" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeInTheDocument()
   })
 
   it("does not count or offer an incompatible daemon update", () => {
@@ -147,9 +156,29 @@ describe("Desktop update center", () => {
         latestApiProtocolVersion: 2,
       },
     })
-    expect(screen.getByRole("button", { name: /Updates.*1/ })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Update Local daemon" })).toBeNull()
+    expect(
+      screen.getByRole("button", { name: /Updates.*1/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
     expect(screen.getByText(/Update Desktop first/)).toBeInTheDocument()
+  })
+
+  it("does not offer a daemon update with unknown candidate protocol", () => {
+    renderCenter({
+      daemonStatus: {
+        ...DAEMON_STATUS,
+        latestApiProtocolVersion: null,
+      },
+    })
+    expect(
+      screen.getByRole("button", { name: /Updates.*1/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
+    expect(screen.getByText(/protocol unknown/)).toBeInTheDocument()
   })
 
   it("keeps an operation on another tab named and does not paint the active daemon busy", () => {
@@ -163,8 +192,12 @@ describe("Desktop update center", () => {
       connectionName: "Local",
     })
     expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
-    expect(screen.getByText(/Build host daemon is restarting/)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Update Local daemon" })).toBeDisabled()
+    expect(
+      screen.getByText(/Build host daemon is restarting/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
     expect(
       screen.getByRole("button", { name: "Update Desktop and relaunch" })
     ).toBeDisabled()
@@ -181,20 +214,20 @@ describe("Desktop update center", () => {
             downloadedBytes: 25,
           },
         })}
-        daemonStatus={{ ...DAEMON_STATUS, latestVersion: null, state: "up-to-date" }}
+        daemonStatus={DAEMON_STATUS}
         daemonError={null}
         daemonOperation={null}
         connectionId="local"
         connectionName="Local"
         supportedApiProtocols={[1]}
+        onUpdateDesktop={() => undefined}
         onUpdateDaemon={() => undefined}
       />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Updates" }))
-    expect(screen.getByRole("progressbar", { name: "Desktop update download" })).toHaveAttribute(
-      "aria-valuenow",
-      "25"
-    )
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    expect(
+      screen.getByRole("progressbar", { name: "Desktop update download" })
+    ).toHaveAttribute("aria-valuenow", "25")
 
     rerender(
       <UpdateCenter
@@ -202,15 +235,34 @@ describe("Desktop update center", () => {
           error: "Relaunch was interrupted",
           status: { ...DESKTOP_STATUS, phase: "ready-to-relaunch" },
         })}
-        daemonStatus={{ ...DAEMON_STATUS, latestVersion: null, state: "up-to-date" }}
+        daemonStatus={DAEMON_STATUS}
         daemonError={null}
         daemonOperation={null}
         connectionId="local"
         connectionName="Local"
         supportedApiProtocols={[1]}
+        onUpdateDesktop={() => undefined}
         onUpdateDaemon={() => undefined}
       />
     )
-    expect(screen.getByRole("button", { name: "Relaunch Desktop" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Relaunch Desktop" })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
+  })
+
+  it("blocks daemon updates while a Desktop install is in flight", () => {
+    renderCenter({
+      desktop: desktopUpdater({
+        pending: true,
+        status: { ...DESKTOP_STATUS, phase: "downloading" },
+      }),
+    })
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
   })
 })

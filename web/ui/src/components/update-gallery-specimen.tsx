@@ -10,7 +10,8 @@ const DESKTOP: DesktopUpdaterContextValue = {
     currentVersion: "0.4.0-alpha.8",
     latestVersion: "0.4.0-alpha.9",
     phase: "available",
-    releaseNotes: "Signed, notarized application update with updater verification.",
+    releaseNotes:
+      "Signed, notarized application update with updater verification.",
     publishedAt: "2026-09-06T12:00:00Z",
     checkedAt: "2026-09-06T12:01:00Z",
     downloadedBytes: 0,
@@ -21,7 +22,7 @@ const DESKTOP: DesktopUpdaterContextValue = {
   error: null,
   checkAfterLaunch: true,
   check: async () => undefined,
-  installAndRelaunch: async () => undefined,
+  install: async () => undefined,
   relaunch: async () => undefined,
   setCheckAfterLaunch: () => undefined,
 }
@@ -42,13 +43,14 @@ export function UpdateGallerySpecimen() {
           connectionId="local"
           connectionName="Local"
           supportedApiProtocols={[1]}
+          onUpdateDesktop={() => undefined}
           onUpdateDaemon={() => undefined}
           defaultOpen
         />
       </div>
       <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-        Desktop is global; the daemon row follows the selected connection.
-        Their actions, progress, failures, and versions never collapse into one
+        Desktop is global; the daemon row follows the selected connection. Their
+        actions, progress, failures, and versions never collapse into one
         ambiguous update button.
       </p>
     </section>

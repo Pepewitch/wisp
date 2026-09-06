@@ -9,7 +9,10 @@ import { useInstallUpdate } from "@/hooks/mutations"
 import { useUpdateStatus } from "@/hooks/queries"
 import { SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS } from "@/lib/desktop-bridge"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { useDesktopUpdater } from "@/lib/desktop-updater"
+import {
+  desktopUpdateBlocksDaemon,
+  useDesktopUpdater,
+} from "@/lib/desktop-updater"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { waitForUpdatedDaemon } from "@/lib/update"
@@ -27,9 +30,18 @@ export function useWispUpdateControl() {
   } | null>(null)
   const [operation, setOperation] = useState<DaemonUpdateOperation | null>(null)
   const operationRef = useRef<DaemonUpdateOperation | null>(null)
+  const desktopOperationRef = useRef(false)
+  const desktopBlocksDaemon = desktopUpdater
+    ? desktopUpdateBlocksDaemon(desktopUpdater.status, desktopUpdater.pending)
+    : false
 
   const updateWisp = async (version: string) => {
-    if (operationRef.current) return
+    if (
+      operationRef.current ||
+      desktopOperationRef.current ||
+      desktopBlocksDaemon
+    )
+      return
     const initiatingRuntime = runtime
     const connectionName = desktop?.active.metadata.name ?? "Wisp"
     const installing: DaemonUpdateOperation = {
@@ -65,6 +77,18 @@ export function useWispUpdateControl() {
     }
   }
 
+  const updateDesktop = async (version: string) => {
+    if (!desktopUpdater || operationRef.current || desktopOperationRef.current)
+      return
+    desktopOperationRef.current = true
+    try {
+      await desktopUpdater.install(version)
+      if (!operationRef.current) await desktopUpdater.relaunch()
+    } finally {
+      desktopOperationRef.current = false
+    }
+  }
+
   const activeError =
     updateError?.connectionId === runtime.connectionId
       ? updateError.message
@@ -79,6 +103,9 @@ export function useWispUpdateControl() {
         connectionId={runtime.connectionId}
         connectionName={desktop.active.metadata.name}
         supportedApiProtocols={SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS}
+        onUpdateDesktop={(version) =>
+          void updateDesktop(version).catch(() => undefined)
+        }
         onUpdateDaemon={(version) => void updateWisp(version)}
         mobile={mobile}
       />

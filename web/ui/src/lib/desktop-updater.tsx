@@ -37,13 +37,27 @@ export interface DesktopUpdaterContextValue {
   readonly error: string | null
   readonly checkAfterLaunch: boolean
   check(): Promise<void>
-  installAndRelaunch(confirmedVersion: string): Promise<void>
+  install(confirmedVersion: string): Promise<void>
   relaunch(): Promise<void>
   setCheckAfterLaunch(enabled: boolean): void
 }
 
-const DesktopUpdaterContext =
-  createContext<DesktopUpdaterContextValue | null>(null)
+export function desktopUpdateBlocksDaemon(
+  status: DesktopUpdateStatus | null,
+  pending: boolean
+): boolean {
+  return (
+    pending ||
+    status?.phase === "checking" ||
+    status?.phase === "downloading" ||
+    status?.phase === "installing" ||
+    status?.phase === "ready-to-relaunch"
+  )
+}
+
+const DesktopUpdaterContext = createContext<DesktopUpdaterContextValue | null>(
+  null
+)
 
 export function useDesktopUpdater(): DesktopUpdaterContextValue | null {
   return useContext(DesktopUpdaterContext)
@@ -95,13 +109,12 @@ export function DesktopUpdaterProvider({
     }
   }, [bridge])
 
-  const installAndRelaunch = useCallback(
+  const install = useCallback(
     async (confirmedVersion: string) => {
       setPending(true)
       setError(null)
       try {
         setStatus(await bridge.installDesktopUpdate(confirmedVersion))
-        await bridge.relaunchDesktop()
       } catch (cause) {
         setError(message(cause))
         throw cause
@@ -168,7 +181,7 @@ export function DesktopUpdaterProvider({
       error,
       checkAfterLaunch,
       check,
-      installAndRelaunch,
+      install,
       relaunch,
       setCheckAfterLaunch,
     }),
@@ -178,7 +191,7 @@ export function DesktopUpdaterProvider({
       error,
       checkAfterLaunch,
       check,
-      installAndRelaunch,
+      install,
       relaunch,
       setCheckAfterLaunch,
     ]

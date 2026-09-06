@@ -8,10 +8,11 @@ lifecycles. The Desktop **Updates** popover therefore has two named rows:
 - **<connection> daemon** belongs to the selected connection and asks that
   daemon to update itself through its existing install method.
 
-There is no unqualified **Update** action. A Desktop relaunch is disabled while
-a daemon update started by this UI is still installing or restarting. Changing
-connection tabs cannot retarget that operation or paint its progress onto a
-different daemon.
+There is no unqualified **Update** action. Desktop and daemon update operations
+are mutually exclusive: a Desktop relaunch cannot interrupt a daemon update,
+and a daemon update cannot start while Desktop is checking, installing, or
+waiting to relaunch. Changing connection tabs cannot retarget an operation or
+paint its progress onto a different daemon.
 
 ## Discovery and installation
 
@@ -46,8 +47,10 @@ request and Tauri's signed request. A confirmation is stale as soon as the
 pending candidate changes.
 
 Checks are opt-out and occur once, two to six seconds after launch. There is no
-periodic background polling. **Check now** is always available. Download and
-installation begin only after the person clicks **Update Desktop and relaunch**.
+periodic background polling. **Check now** is available except while an update
+operation is active or an installed update is waiting for relaunch. Download
+and installation begin only after the person clicks **Update Desktop and
+relaunch**.
 
 ## Signing and release channel
 
