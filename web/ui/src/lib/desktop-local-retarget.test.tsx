@@ -76,6 +76,7 @@ function bridge(overrides: Partial<DesktopBridge>): DesktopBridge {
       nextStep: "ready",
       message: "Local Wisp is ready.",
     }),
+    openExternalUrl: async () => undefined,
     ...overrides,
   }
 }
@@ -218,7 +219,9 @@ describe("Local native target revisions", () => {
 
     await waitFor(() => expect(callbacks.onSettled).toHaveBeenCalledOnce())
     expect(screen.getByLabelText("local route revision")).toHaveTextContent("1")
-    expect(callbacks.onMount).toHaveBeenCalledTimes(2)
+    // The remount is an effect of the new revision, not of settling, so it can
+    // land a flush later. Waiting still requires exactly one, on a new tree.
+    await waitFor(() => expect(callbacks.onMount).toHaveBeenCalledTimes(2))
     expect(callbacks.onUnmount).toHaveBeenCalledTimes(1)
     expect(readDraft("local", "synthetic-task")).toBe("")
     expect(localStorage.getItem(scopedKey)).toBeNull()

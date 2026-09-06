@@ -149,3 +149,13 @@ pub async fn apply_local_wisp_setup(
 ) -> Result<LocalSetupReport, CoreError> {
     core.apply_local_setup(expected_step).await
 }
+
+/// Open a web link in the machine's browser.
+///
+/// Connection-independent: a link in a task's prose belongs to the internet,
+/// not to the daemon that reported it, so this takes no connection ID and
+/// reads no native connection state. `external` decides what may open.
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), CoreError> {
+    Ok(crate::external::open(&url)?)
+}

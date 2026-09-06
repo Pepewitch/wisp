@@ -31,6 +31,12 @@ Every UI change must classify its impact on both clients:
 - Browser-only auth and native-only connection/folder-picker/setup behavior
   stay behind their runtime boundaries. Any intentional difference is named in
   the change and covered without regressing the other client.
+- Styling is only runtime-neutral when it ships **in the bundle**. The daemon
+  serves the page with no CSP; the packaged app has one, so anything that
+  reaches the DOM as a `<style>` element created after load — the terminal
+  pane, and xterm's own renderer — depends on the desktop policy keeping
+  inline stylesheets allowed. See `desktop/README.md`; a blocked stylesheet
+  renders wrong rather than failing, so it is invisible to the browser gate.
 
 Every shared UI change gets the root/UI source gate and an explicit impact
 review for both runtimes. Run `bun run desktop:check` when native code or an

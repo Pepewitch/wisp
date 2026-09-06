@@ -422,7 +422,15 @@ function ShellView({
   )
 }
 
-/** Inject xterm's CSS once for the whole app. */
+/**
+ * Inject xterm's CSS once for the whole app.
+ *
+ * Load-bearing on the desktop's content policy, and so is xterm itself: its
+ * DOM renderer delivers the terminal's font, cell metrics and every ANSI
+ * color class through <style> elements it creates the same way. The daemon
+ * serves this page with no CSP, so the browser can never catch a policy that
+ * refuses them — see the webview content policy in desktop/README.md.
+ */
 function useXtermStyles() {
   const id = useId()
   useEffect(() => {
