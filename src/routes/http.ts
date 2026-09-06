@@ -1,6 +1,6 @@
 import { formatUsage, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
-import type { ApiTask, Task, TaskMessage, Turn } from "../types";
+import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
 
 /** SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit). */
 export function apiTask(t: Task): ApiTask {
@@ -40,13 +40,14 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
  * adapter; undefined (a harness the daemon no longer knows) serves usage null
  * rather than guessing at a shape.
  */
-export type ApiTurn = Omit<Turn, "attachments_json" | "usage_json"> & {
+export type ApiTurn = Omit<Turn, "attachments_json" | "usage_json" | "outcome_json" | "capture_categories_json"> & {
   attachments: AttachmentRecord[];
   usage: UsageSummary | null;
+  capture_categories: Record<string, { records: number; bytes: number }> | null;
 };
 
 export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
-  const { attachments_json, usage_json, ...rest } = t;
+  const { attachments_json, usage_json, outcome_json: _outcome, capture_categories_json, ...rest } = t;
   let rawUsage: unknown = null;
   if (usage_json !== null) {
     try {
@@ -55,10 +56,24 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
       rawUsage = null; // a corrupt blob is no usage report, not a 500
     }
   }
+  let captureCategories: Record<string, { records: number; bytes: number }> | null = null;
+  if (capture_categories_json !== null) {
+    try {
+      const parsed: unknown = JSON.parse(capture_categories_json);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        captureCategories = parsed as Record<string, { records: number; bytes: number }>;
+      }
+    } catch {
+      captureCategories = null;
+    }
+  }
   return {
     ...rest,
+    capture_state: turnCaptureState(t),
+    diagnostic_state: turnDiagnosticState(t),
     attachments: parseAttachmentManifest(attachments_json),
     usage: def ? formatUsage(def, rawUsage) : null,
+    capture_categories: captureCategories,
   };
 }
 
