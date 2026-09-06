@@ -57,6 +57,7 @@ struct DaemonState {
     label: String,
     token: String,
     instance_id: Mutex<String>,
+    protocol_version: Mutex<u32>,
     seen: Mutex<Vec<SeenRequest>>,
     /// Where `/api/redirect` points. A hit on that server is a test failure.
     redirect_to: Mutex<String>,
@@ -77,6 +78,7 @@ impl MockDaemon {
             label: label.to_string(),
             token: token.to_string(),
             instance_id: Mutex::new(instance_id.to_string()),
+            protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
         });
@@ -139,6 +141,10 @@ impl MockDaemon {
         *self.state.instance_id.lock().expect("instance") = instance_id.to_string();
     }
 
+    pub fn use_protocol(&self, version: u32) {
+        *self.state.protocol_version.lock().expect("protocol") = version;
+    }
+
     pub fn point_redirect_at(&self, url: &str) {
         *self.state.redirect_to.lock().expect("redirect") = url.to_string();
     }
@@ -196,7 +202,7 @@ async fn health() -> impl IntoResponse {
 
 async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
     Json(json!({
-        "apiProtocolVersion": 3,
+        "apiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
         "instanceId": *state.instance_id.lock().expect("instance"),
         "version": "0.0.0-synthetic",
         "commit": "0000000",

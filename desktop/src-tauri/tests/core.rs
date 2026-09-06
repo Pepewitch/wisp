@@ -138,6 +138,23 @@ async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
 }
 
 #[tokio::test]
+async fn an_incompatible_daemon_is_not_saved() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    remote.use_protocol(2);
+    let app = app(Some(&local)).await;
+
+    let error = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect_err("incompatible protocol");
+    assert!(error.to_string().contains("protocol 2"));
+    assert_eq!(app.core.bootstrap().connections.len(), 1);
+    assert!(app.secrets.accounts().is_empty());
+}
+
+#[tokio::test]
 async fn an_address_this_app_will_not_talk_to_is_refused_before_any_request() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
     let app = app(Some(&local)).await;
@@ -324,4 +341,63 @@ async fn a_machine_with_no_profile_is_told_what_is_missing() {
         wisp_desktop::setup::NextStep::InstallCli | wisp_desktop::setup::NextStep::RunInit
     ));
     assert!(!report.message.is_empty());
+}
+
+#[tokio::test]
+async fn local_reconnect_reloads_the_standard_profile_and_checks_its_identity() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let app = app(Some(&local)).await;
+    local.become_a_different_daemon("wisp-instance-replacement");
+
+    let error = app
+        .core
+        .reconnect("local", None, None)
+        .await
+        .expect_err("the stale profile must not verify a replacement daemon");
+    assert!(error.to_string().contains("different instance identities"));
+
+    std::fs::write(
+        app.core.wisp_home().join("config.json"),
+        serde_json::json!({
+            "instanceId": "wisp-instance-replacement",
+            "port": local.port,
+            "host": "127.0.0.1",
+            "token": LOCAL_TOKEN,
+        })
+        .to_string(),
+    )
+    .expect("updated profile");
+    let reconnected = app
+        .core
+        .reconnect("local", None, None)
+        .await
+        .expect("updated profile reconnects");
+    assert_eq!(reconnected.instance_id, "wisp-instance-replacement");
+    assert!(reconnected.ready);
+}
+
+#[tokio::test]
+async fn local_reconnect_can_adopt_a_profile_created_after_launch() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let app = app(None).await;
+    assert!(!app.core.bootstrap().connections[0].ready);
+
+    std::fs::write(
+        app.core.wisp_home().join("config.json"),
+        serde_json::json!({
+            "instanceId": local.instance_id(),
+            "port": local.port,
+            "host": "127.0.0.1",
+            "token": LOCAL_TOKEN,
+        })
+        .to_string(),
+    )
+    .expect("new profile");
+    let reconnected = app
+        .core
+        .reconnect("local", None, None)
+        .await
+        .expect("new profile reconnects");
+    assert!(reconnected.ready);
+    assert_eq!(app.core.bootstrap().connections[0].id, "local");
 }

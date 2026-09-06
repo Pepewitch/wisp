@@ -146,7 +146,7 @@ Errors are relayed with the daemon's own status and body, so the existing
 
 ```sh
 cd desktop/src-tauri
-cargo test                                # 80 unit + integration tests
+cargo test                                # native unit + integration tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check
 ```

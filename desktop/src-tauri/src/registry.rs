@@ -82,6 +82,20 @@ pub enum RegistryError {
         #[source]
         source: std::io::Error,
     },
+    #[error("could not read {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not decode {path}: {source}")]
+    Decode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("invalid connection registry at {path}: {reason}")]
+    InvalidFile { path: PathBuf, reason: &'static str },
 }
 
 /// One saved remote connection, exactly as it is written to disk.
@@ -158,6 +172,8 @@ pub enum Identity {
 
 #[derive(Clone)]
 struct State {
+    local: Option<LocalProfile>,
+    local_error: Option<String>,
     local_label: String,
     connections: BTreeMap<String, StoredConnection>,
     pending_removals: BTreeSet<String>,
@@ -171,9 +187,9 @@ struct State {
 pub struct Registry {
     path: PathBuf,
     secrets: Arc<dyn SecretStore>,
-    local: Option<LocalProfile>,
     local_home: PathBuf,
-    local_error: Option<String>,
+    /// Serializes metadata/Keychain transactions without blocking proxy reads.
+    mutations: Mutex<()>,
     state: Mutex<State>,
 }
 
@@ -186,37 +202,27 @@ impl Registry {
         local_home: PathBuf,
         local: Result<LocalProfile, LocalError>,
     ) -> Result<Self, RegistryError> {
-        let file = read_file(&path);
+        let file = read_file(&path)?;
+        validate_file(&path, &file)?;
         let (local_profile, local_error) = match local {
             Ok(profile) => (Some(profile), None),
             Err(error) => (None, Some(error.to_string())),
         };
 
-        let local_label = clean_label(&file.local_label).unwrap_or_else(|_| default_local_label());
-        let mut names = BTreeSet::from([label_key(&local_label)]);
+        let local_label = clean_label(&file.local_label)?;
         let mut connections = BTreeMap::new();
         for entry in file.connections {
-            // A record that fails today's rules is dropped rather than trusted:
-            // it can only have come from a downgrade, an edit, or corruption.
-            if !is_valid_connection_id(&entry.id)
-                || entry.id == LOCAL_CONNECTION_ID
-                || normalize_daemon_url(&entry.url).is_err()
-                || clean_label(&entry.label).is_err()
-                || !names.insert(label_key(&entry.label))
-                || connections.len() >= MAX_CONNECTIONS - 1
-            {
-                continue;
-            }
             connections.insert(entry.id.clone(), entry);
         }
 
         let registry = Self {
             path,
             secrets,
-            local: local_profile,
             local_home,
-            local_error,
+            mutations: Mutex::new(()),
             state: Mutex::new(State {
+                local: local_profile,
+                local_error,
                 local_label,
                 connections,
                 pending_removals: file.pending_removals.into_iter().collect(),
@@ -270,6 +276,10 @@ impl Registry {
         self.state.lock().expect("registry mutex")
     }
 
+    fn mutation_lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.mutations.lock().expect("registry mutation mutex")
+    }
+
     fn persist(&self, state: &State) -> Result<(), RegistryError> {
         let file = RegistryFile {
             version: FILE_VERSION,
@@ -284,7 +294,7 @@ impl Registry {
     pub fn list(&self) -> Vec<ConnectionInfo> {
         let state = self.lock();
         let mut out = Vec::with_capacity(state.connections.len() + 1);
-        out.push(match &self.local {
+        out.push(match &state.local {
             Some(profile) => ConnectionInfo {
                 id: LOCAL_CONNECTION_ID.to_string(),
                 label: state.local_label.clone(),
@@ -319,7 +329,8 @@ impl Registry {
     }
 
     pub fn local_status(&self) -> LocalStatus {
-        match &self.local {
+        let state = self.lock();
+        match &state.local {
             Some(profile) => LocalStatus {
                 available: true,
                 config_path: profile.config_path().display().to_string(),
@@ -334,9 +345,31 @@ impl Registry {
                 base_url: None,
                 instance_id: None,
                 has_token: false,
-                reason: self.local_error.clone(),
+                reason: state.local_error.clone(),
             },
         }
+    }
+
+    /// Replace the in-memory Local profile after an authenticated reconnect.
+    /// The source of truth remains `~/.wisp/config.json`; only the mutable
+    /// launch snapshot and identity state change here.
+    pub fn refresh_local(&self, profile: LocalProfile) -> ConnectionInfo {
+        let _mutation = self.mutation_lock();
+        let mut state = self.lock();
+        let info = ConnectionInfo {
+            id: LOCAL_CONNECTION_ID.to_string(),
+            label: state.local_label.clone(),
+            kind: ConnectionKind::Local,
+            url: profile.base().to_string(),
+            instance_id: profile.instance_id().to_string(),
+            ready: true,
+        };
+        state.local = Some(profile);
+        state.local_error = None;
+        state
+            .identity
+            .insert(LOCAL_CONNECTION_ID.to_string(), Identity::Verified);
+        info
     }
 
     /// Resolve a route's connection ID to an upstream target.
@@ -344,8 +377,9 @@ impl Registry {
     /// Returns `None` for an unknown ID and for one whose tombstone is written,
     /// which is what makes removal a revocation rather than a cleanup.
     pub fn resolve(&self, id: &str) -> Option<Target> {
+        let state = self.lock();
         if id == LOCAL_CONNECTION_ID {
-            let profile = self.local.as_ref()?;
+            let profile = state.local.as_ref()?;
             return Some(Target {
                 id: LOCAL_CONNECTION_ID.to_string(),
                 kind: ConnectionKind::Local,
@@ -353,13 +387,12 @@ impl Registry {
                 instance_id: profile.instance_id().to_string(),
             });
         }
-        let state = self.lock();
         if state.pending_removals.contains(id) {
             return None;
         }
         let entry = state.connections.get(id)?;
-        // Stored URLs pass the same rule they passed when saved; a record that
-        // no longer does was already dropped at open().
+        // Stored URLs pass the same rule they passed when saved; invalid
+        // metadata makes the registry fail closed at open().
         let base = normalize_daemon_url(&entry.url).ok()?;
         Some(Target {
             id: entry.id.clone(),
@@ -372,14 +405,14 @@ impl Registry {
     /// The bearer token for a resolved target. Never returned to the webview:
     /// the only caller is the proxy's upstream request builder.
     pub fn credential(&self, target: &Target) -> Result<String, RegistryError> {
+        let state = self.lock();
         match target.kind {
-            ConnectionKind::Local => self
+            ConnectionKind::Local => state
                 .local
                 .as_ref()
                 .map(|profile| profile.token().to_string())
                 .ok_or(RegistryError::MissingCredential),
-            ConnectionKind::Remote => self
-                .lock()
+            ConnectionKind::Remote => state
                 .credentials
                 .get(&target.id)
                 .cloned()
@@ -409,15 +442,18 @@ impl Registry {
         instance_id: &str,
     ) -> Result<ConnectionInfo, RegistryError> {
         let label = clean_label(label)?;
-        let mut state = self.lock();
-        if state.connections.len() + 2 > MAX_CONNECTIONS {
-            return Err(RegistryError::TooManyConnections);
-        }
-        ensure_label_available(&state, &label, None)?;
-        let id = mint_id(&state);
-        // Credential first: a saved connection with no credential is a broken
-        // one. Keep the registry lock across this short operation so two
-        // concurrent commands cannot race the name or count invariants.
+        let _mutation = self.mutation_lock();
+        let id = {
+            let state = self.lock();
+            if state.connections.len() + 2 > MAX_CONNECTIONS {
+                return Err(RegistryError::TooManyConnections);
+            }
+            ensure_label_available(&state, &label, None)?;
+            mint_id(&state)
+        };
+        // Credential first: a saved connection with no credential is broken.
+        // The mutation lock prevents another command racing this transaction,
+        // while proxy reads remain free to use the independent state lock.
         self.secrets.set(&id, token)?;
         let entry = StoredConnection {
             id: id.clone(),
@@ -426,6 +462,7 @@ impl Registry {
             instance_id: instance_id.to_string(),
             created_at: now_seconds(),
         };
+        let mut state = self.lock();
         state.credentials.insert(id.clone(), token.to_string());
         state.identity.insert(id.clone(), Identity::Verified);
         state.connections.insert(id.clone(), entry.clone());
@@ -451,11 +488,16 @@ impl Registry {
     /// are all untouched.
     pub fn rename(&self, id: &str, label: &str) -> Result<ConnectionInfo, RegistryError> {
         let label = clean_label(label)?;
+        let _mutation = self.mutation_lock();
         let mut state = self.lock();
         ensure_label_available(&state, &label, Some(id))?;
+        let before = state.clone();
         if id == LOCAL_CONNECTION_ID {
             state.local_label = label;
-            self.persist(&state)?;
+            if let Err(error) = self.persist(&state) {
+                *state = before;
+                return Err(error);
+            }
             drop(state);
             return self
                 .list()
@@ -479,7 +521,10 @@ impl Registry {
             instance_id: entry.instance_id.clone(),
             ready: state.credentials.contains_key(id),
         };
-        self.persist(&state)?;
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            return Err(error);
+        }
         Ok(info)
     }
 
@@ -497,17 +542,26 @@ impl Registry {
         if id == LOCAL_CONNECTION_ID {
             return Err(RegistryError::LocalIsBuiltIn("re-credentialed"));
         }
+        let _mutation = self.mutation_lock();
+        let previous_credential = {
+            let state = self.lock();
+            if state.pending_removals.contains(id) {
+                return Err(RegistryError::PendingRemoval);
+            }
+            if !state.connections.contains_key(id) {
+                return Err(RegistryError::UnknownConnection(id.to_string()));
+            }
+            state.credentials.get(id).cloned()
+        };
         if let Some(token) = token {
             self.secrets.set(id, token)?;
         }
         let mut state = self.lock();
-        if state.pending_removals.contains(id) {
-            return Err(RegistryError::PendingRemoval);
-        }
+        let before = state.clone();
         let entry = state
             .connections
             .get_mut(id)
-            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?;
+            .expect("the mutation lock keeps the validated connection present");
         entry.instance_id = instance_id.to_string();
         let info = ConnectionInfo {
             id: entry.id.clone(),
@@ -521,7 +575,17 @@ impl Registry {
             state.credentials.insert(id.to_string(), token.to_string());
         }
         state.identity.insert(id.to_string(), Identity::Verified);
-        self.persist(&state)?;
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            drop(state);
+            if token.is_some() {
+                match previous_credential {
+                    Some(previous) => self.secrets.set(id, &previous)?,
+                    None => self.secrets.delete(id)?,
+                }
+            }
+            return Err(error);
+        }
         Ok(info)
     }
 
@@ -539,19 +603,23 @@ impl Registry {
         if id == LOCAL_CONNECTION_ID {
             return Err(RegistryError::LocalIsBuiltIn("retargeted"));
         }
-        let mut state = self.lock();
-        if state.pending_removals.contains(id) {
-            return Err(RegistryError::PendingRemoval);
-        }
-        let label = state
-            .connections
-            .get(id)
-            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?
-            .label
-            .clone();
-        let replacement_id = mint_id(&state);
+        let _mutation = self.mutation_lock();
+        let (label, replacement_id) = {
+            let state = self.lock();
+            if state.pending_removals.contains(id) {
+                return Err(RegistryError::PendingRemoval);
+            }
+            let label = state
+                .connections
+                .get(id)
+                .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?
+                .label
+                .clone();
+            (label, mint_id(&state))
+        };
         self.secrets.set(&replacement_id, token)?;
 
+        let mut state = self.lock();
         let before = state.clone();
         state.connections.remove(id);
         state.credentials.remove(id);
@@ -602,16 +670,21 @@ impl Registry {
         if id == LOCAL_CONNECTION_ID {
             return Err(RegistryError::LocalIsBuiltIn("removed"));
         }
+        let _mutation = self.mutation_lock();
         {
             let mut state = self.lock();
             if !state.connections.contains_key(id) && !state.pending_removals.contains(id) {
                 return Err(RegistryError::UnknownConnection(id.to_string()));
             }
+            let before = state.clone();
             state.connections.remove(id);
             state.credentials.remove(id);
             state.identity.remove(id);
             state.pending_removals.insert(id.to_string());
-            self.persist(&state)?;
+            if let Err(error) = self.persist(&state) {
+                *state = before;
+                return Err(error);
+            }
         }
         self.secrets.delete(id)?;
         let mut state = self.lock();
@@ -667,20 +740,70 @@ fn now_seconds() -> u64 {
         .unwrap_or_default()
 }
 
-/// A missing or unreadable file is an empty registry, never a crash: a desktop
-/// app that will not start because one JSON file is damaged is worse than one
-/// that starts with the built-in local connection and lets the user re-add.
-fn read_file(path: &Path) -> RegistryFile {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return RegistryFile {
-            version: FILE_VERSION,
-            ..RegistryFile::default()
-        };
+/// A genuinely absent file is a fresh registry. Existing metadata fails closed
+/// if it cannot be read or decoded, so corruption never silently orphans the
+/// corresponding Keychain credentials.
+fn read_file(path: &Path) -> Result<RegistryFile, RegistryError> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(RegistryFile::default());
+        }
+        Err(source) => {
+            return Err(RegistryError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     };
-    serde_json::from_str(&raw).unwrap_or(RegistryFile {
-        version: FILE_VERSION,
-        ..RegistryFile::default()
+    serde_json::from_str(&raw).map_err(|source| RegistryError::Decode {
+        path: path.to_path_buf(),
+        source,
     })
+}
+
+fn validate_file(path: &Path, file: &RegistryFile) -> Result<(), RegistryError> {
+    let invalid = |reason| RegistryError::InvalidFile {
+        path: path.to_path_buf(),
+        reason,
+    };
+    if file.version != FILE_VERSION {
+        return Err(invalid("unsupported schema version"));
+    }
+    if !clean_label(&file.local_label).is_ok_and(|label| label == file.local_label) {
+        return Err(invalid("the Local label is invalid"));
+    }
+    if file.connections.len() >= MAX_CONNECTIONS {
+        return Err(invalid("the connection limit is exceeded"));
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut names = BTreeSet::from([label_key(&file.local_label)]);
+    for entry in &file.connections {
+        if !is_valid_connection_id(&entry.id) || entry.id == LOCAL_CONNECTION_ID {
+            return Err(invalid("a connection ID is invalid"));
+        }
+        if !ids.insert(entry.id.as_str()) {
+            return Err(invalid("a connection ID is duplicated"));
+        }
+        if normalize_daemon_url(&entry.url).is_err() {
+            return Err(invalid("a connection URL is invalid"));
+        }
+        if !clean_label(&entry.label).is_ok_and(|label| label == entry.label)
+            || !names.insert(label_key(&entry.label))
+        {
+            return Err(invalid("a connection label is invalid or duplicated"));
+        }
+        if entry.instance_id.trim().is_empty() {
+            return Err(invalid("a daemon identity is missing"));
+        }
+    }
+    for id in &file.pending_removals {
+        if !is_valid_connection_id(id) || id == LOCAL_CONNECTION_ID {
+            return Err(invalid("a removal tombstone is invalid"));
+        }
+    }
+    Ok(())
 }
 
 /// Write through a temporary file and rename, so a crash mid-write leaves the
@@ -1041,6 +1164,28 @@ mod tests {
     }
 
     #[test]
+    fn a_late_refresh_cannot_recreate_a_removed_credential() {
+        let h = harness(true);
+        let info = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://wisp.example.com"),
+                "synthetic-old-token",
+                "wisp-instance-old",
+            )
+            .expect("add");
+        h.registry.remove(&info.id).expect("remove");
+
+        assert!(matches!(
+            h.registry
+                .refresh(&info.id, Some("synthetic-new-token"), "wisp-instance-new"),
+            Err(RegistryError::UnknownConnection(_))
+        ));
+        assert!(h.secrets.accounts().is_empty());
+    }
+
+    #[test]
     fn an_interrupted_removal_is_finished_at_the_next_launch() {
         let h = harness(true);
         let info = h
@@ -1101,7 +1246,7 @@ mod tests {
     }
 
     #[test]
-    fn records_that_fail_todays_rules_are_dropped_rather_than_trusted() {
+    fn invalid_existing_metadata_fails_closed_instead_of_orphaning_credentials() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("connections.json");
         let poisoned = serde_json::json!({
@@ -1116,17 +1261,28 @@ mod tests {
             "pendingRemovals": []
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&poisoned).expect("json")).expect("write");
-        let registry = open(&path, Arc::new(MemorySecretStore::new()), true);
+        let result = Registry::open(
+            path,
+            Arc::new(MemorySecretStore::new()),
+            PathBuf::from("/synthetic/.wisp"),
+            Ok(local_profile()),
+        );
+        assert!(matches!(result, Err(RegistryError::InvalidFile { .. })));
+    }
 
-        // `local` still resolves to the built-in profile, not the impostor.
-        let local = registry.resolve(LOCAL_CONNECTION_ID).expect("local");
-        assert_eq!(local.kind, ConnectionKind::Local);
-        assert_eq!(local.base.host_str(), Some("127.0.0.1"));
+    #[test]
+    fn malformed_existing_metadata_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("connections.json");
+        std::fs::write(&path, b"{not-json").expect("write");
 
-        assert!(registry.resolve("bad id").is_none());
-        assert!(registry.resolve("c-plainhttp").is_none());
-        assert!(registry.resolve("c-file").is_none());
-        assert!(registry.resolve("c-good").is_some());
+        let result = Registry::open(
+            path,
+            Arc::new(MemorySecretStore::new()),
+            PathBuf::from("/synthetic/.wisp"),
+            Ok(local_profile()),
+        );
+        assert!(matches!(result, Err(RegistryError::Decode { .. })));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //!    base. The frontend never supplies a target, only a suffix, and this
 //!    function is what keeps that true.
 
+use percent_encoding::percent_decode_str;
 use url::{Host, Url};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -29,6 +30,8 @@ pub enum UrlError {
     EmptyHost,
     #[error("the path may not contain '.' or '..' segments")]
     RelativeSegment,
+    #[error("the path contains invalid percent-encoded text")]
+    InvalidEncoding,
 }
 
 /// Exactly the two literal loopback addresses. `localhost` deliberately does
@@ -97,17 +100,37 @@ pub fn normalize_daemon_url(raw: &str) -> Result<Url, UrlError> {
 /// `..` segment is the one way a suffix could reach outside the daemon path
 /// prefix the user approved.
 pub fn join_upstream(base: &Url, rest: &str, query: Option<&str>) -> Result<Url, UrlError> {
-    if rest
-        .split('/')
-        .any(|segment| segment == "." || segment == "..")
-    {
-        return Err(UrlError::RelativeSegment);
-    }
+    reject_relative_segments(rest)?;
     let mut url = base.clone();
     let base_path = base.path().trim_end_matches('/');
     url.set_path(&format!("{base_path}/{}", rest.trim_start_matches('/')));
     url.set_query(query);
     Ok(url)
+}
+
+/// URL parsers recognize percent-encoded dot segments during normalization.
+/// Check the decoded spelling before calling `Url::set_path`, including an
+/// encoded slash that reveals a segment boundary. Decode until stable so no
+/// number of nested `%25` spellings can become traversal in a later hop. Each
+/// successful pass shortens the string, so the loop is intrinsically bounded.
+fn reject_relative_segments(rest: &str) -> Result<(), UrlError> {
+    let mut decoded = rest.to_string();
+    loop {
+        if decoded
+            .split(['/', '\\'])
+            .any(|segment| segment == "." || segment == "..")
+        {
+            return Err(UrlError::RelativeSegment);
+        }
+        let next = percent_decode_str(&decoded)
+            .decode_utf8()
+            .map_err(|_| UrlError::InvalidEncoding)?
+            .into_owned();
+        if next == decoded {
+            return Ok(());
+        }
+        decoded = next;
+    }
 }
 
 /// The `wss://`/`ws://` twin of an already-approved `https://`/`http://` URL.
@@ -244,6 +267,25 @@ mod tests {
         assert_eq!(
             join_upstream(&base, "..", None),
             Err(UrlError::RelativeSegment)
+        );
+        for encoded in [
+            "api/%2e%2e/admin",
+            "api/.%2E/admin",
+            "api/%2e%2e%2fadmin",
+            "api/%252e%252e/admin",
+            "api/%252525252e%252525252e/admin",
+        ] {
+            assert_eq!(
+                join_upstream(&base, encoded, None),
+                Err(UrlError::RelativeSegment),
+                "{encoded} must not escape the saved /wisp prefix"
+            );
+        }
+        assert_eq!(
+            join_upstream(&base, "api/tasks", None)
+                .expect("ordinary path")
+                .path(),
+            "/wisp/api/tasks"
         );
     }
 

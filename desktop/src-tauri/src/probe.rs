@@ -9,6 +9,9 @@ use url::Url;
 
 use crate::urls::join_upstream;
 
+/// Native shell/daemon contract understood by this desktop build.
+pub const API_PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProbeError {
     #[error("could not reach that daemon: {0}")]
@@ -19,6 +22,10 @@ pub enum ProbeError {
     Refused(u16),
     #[error("that address answered, but not with a Wisp daemon identity")]
     Malformed,
+    #[error(
+        "that daemon uses API protocol {0}, but this desktop supports protocol {API_PROTOCOL_VERSION}"
+    )]
+    IncompatibleProtocol(u32),
 }
 
 /// The subset of `/api/capabilities` the desktop shell acts on. Extra fields
@@ -60,6 +67,11 @@ pub async fn probe(
     if identity.instance_id.is_empty() {
         return Err(ProbeError::Malformed);
     }
+    if identity.api_protocol_version != API_PROTOCOL_VERSION {
+        return Err(ProbeError::IncompatibleProtocol(
+            identity.api_protocol_version,
+        ));
+    }
     Ok(identity)
 }
 
@@ -70,11 +82,11 @@ mod tests {
     #[test]
     fn identity_parses_a_daemon_payload_and_tolerates_new_fields() {
         let identity: DaemonIdentity = serde_json::from_str(
-            r#"{"apiProtocolVersion":3,"instanceId":"wisp-instance-aaaa","version":"0.4.0","commit":"abc","dirty":false,"capabilities":{"terminal":true},"somethingNew":1}"#,
+            r#"{"apiProtocolVersion":1,"instanceId":"wisp-instance-aaaa","version":"0.4.0","commit":"abc","dirty":false,"capabilities":{"terminal":true},"somethingNew":1}"#,
         )
         .expect("parses");
         assert_eq!(identity.instance_id, "wisp-instance-aaaa");
-        assert_eq!(identity.api_protocol_version, 3);
+        assert_eq!(identity.api_protocol_version, 1);
         assert_eq!(identity.version, "0.4.0");
     }
 

@@ -590,6 +590,27 @@ async fn a_write_is_refused_when_a_different_daemon_answers_the_saved_address() 
         .await
         .expect("request");
     assert!(read.status().is_success());
+
+    let terminal = harness.websocket_route(
+        &remote,
+        &format!("api/tasks/{SHARED_TASK_ID}/terminal?shell=1"),
+    );
+    match tokio_tungstenite::connect_async(terminal).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status().as_u16(), 409);
+        }
+        Err(other) => panic!("expected identity refusal, got {other}"),
+        Ok(_) => panic!("a terminal must not open on a different daemon"),
+    }
+    assert_eq!(
+        bravo
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/terminal"))
+            .count(),
+        0,
+        "the terminal upgrade must not reach a daemon whose identity changed"
+    );
 }
 
 #[tokio::test]

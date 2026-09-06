@@ -214,9 +214,9 @@ The desktop native core lives in `desktop/`. It exposes seven Tauri invoke
 commands and nothing else; `desktop/README.md` documents the payloads.
 
 ```text
-desktop_bootstrap        proxy base + non-secret connection metadata
+desktop_bootstrap        proxyBaseUrl + activeConnectionId + non-secret connection metadata
 add_remote_connection    capability check, then save
-rename_connection        label only
+rename_connection        connectionId + display name only
 reconnect_connection     re-prove; a changed URL returns a REPLACEMENT id
 remove_connection        revoke route, delete credential, clear tombstone
 pick_local_project       native folder picker

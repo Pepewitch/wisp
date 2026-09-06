@@ -9,7 +9,7 @@ use serde::Serialize;
 use url::Url;
 
 use crate::capability::Capability;
-use crate::local::{self, LocalStatus};
+use crate::local::{self, LocalError, LocalStatus};
 use crate::probe::{self, ProbeError};
 use crate::proxy::{self, ProxyHandle, ProxyStartError, ProxyState};
 use crate::registry::{ConnectionInfo, Registry, RegistryError};
@@ -42,6 +42,10 @@ pub enum CoreError {
     Probe(#[from] ProbeError),
     #[error(transparent)]
     Registry(#[from] RegistryError),
+    #[error(transparent)]
+    Local(#[from] LocalError),
+    #[error("the Local profile and daemon report different instance identities")]
+    LocalIdentityMismatch,
     #[error("a token is required")]
     EmptyToken,
     #[error(transparent)]
@@ -138,32 +142,22 @@ impl DesktopCore {
         url: Option<&str>,
         token: Option<&str>,
     ) -> Result<ConnectionInfo, CoreError> {
+        // Re-read the standard profile: `wisp init`, token rotation, or a
+        // daemon replacement may all have happened since app launch.
+        if connection_id == local::LOCAL_CONNECTION_ID {
+            let profile = local::load(&self.wisp_home)?;
+            let identity =
+                probe::probe(self.state.client(), profile.base(), profile.token()).await?;
+            if identity.instance_id != profile.instance_id() {
+                return Err(CoreError::LocalIdentityMismatch);
+            }
+            return Ok(self.registry.refresh_local(profile));
+        }
+
         let target = self
             .registry
             .resolve(connection_id)
             .ok_or_else(|| RegistryError::UnknownConnection(connection_id.to_string()))?;
-
-        // The built-in local connection has no saved metadata to rewrite: its
-        // address and credential come from the Wisp profile. Reconnecting it
-        // means re-proving that the daemon there still answers.
-        if connection_id == local::LOCAL_CONNECTION_ID {
-            let credential = self.registry.credential(&target)?;
-            probe::probe(self.state.client(), &target.base, &credential).await?;
-            self.registry.set_identity(
-                local::LOCAL_CONNECTION_ID,
-                crate::registry::Identity::Verified,
-            );
-            return self
-                .registry
-                .list()
-                .into_iter()
-                .find(|c| c.id == local::LOCAL_CONNECTION_ID)
-                .ok_or_else(|| {
-                    CoreError::Registry(RegistryError::UnknownConnection(
-                        local::LOCAL_CONNECTION_ID.to_string(),
-                    ))
-                });
-        }
 
         let next_url = match url {
             Some(raw) => normalize_daemon_url(raw)?,

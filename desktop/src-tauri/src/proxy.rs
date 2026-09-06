@@ -310,14 +310,17 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
         Err(error) => return refuse(StatusCode::BAD_REQUEST, "path", error.to_string()),
     };
 
-    if is_websocket_upgrade(&parts.headers) {
-        return proxy_websocket(credential, upstream, &mut parts).await;
-    }
-
-    if is_write(&parts.method) {
+    let websocket = is_websocket_upgrade(&parts.headers);
+    // A terminal upgrade is command execution even though its handshake is a
+    // GET. It must prove the pinned daemon identity just like an HTTP write.
+    if websocket || is_write(&parts.method) {
         if let Err(response) = ensure_pinned_identity(&state, &target, &credential).await {
             return *response;
         }
+    }
+
+    if websocket {
+        return proxy_websocket(credential, upstream, &mut parts).await;
     }
 
     proxy_http(&state, credential, upstream, parts, body).await
