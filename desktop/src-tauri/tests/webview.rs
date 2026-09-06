@@ -113,3 +113,17 @@ fn the_webview_has_no_direct_native_update_or_system_authority() {
         );
     }
 }
+
+/// Tauri deserializes plugin configuration before the updater builder can
+/// replace this inert value with the key compiled from updater-public.key.
+/// Keep every endpoint and dangerous transport option out of the mutable JSON
+/// configuration; the bespoke native updater owns those policy decisions.
+#[test]
+fn updater_configuration_is_parseable_but_carries_no_network_policy() {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+    assert_eq!(
+        config["plugins"]["updater"],
+        serde_json::json!({ "pubkey": "UNCONFIGURED" })
+    );
+}

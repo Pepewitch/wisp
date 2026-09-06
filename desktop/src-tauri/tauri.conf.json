@@ -32,6 +32,11 @@
       "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "UNCONFIGURED"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [

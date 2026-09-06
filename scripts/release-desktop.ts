@@ -281,8 +281,8 @@ function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
   if (!/^\s*minos\s+12\.3(?:\.0)?\s*$/m.test(buildVersion)) {
     throw new Error(`desktop Mach-O minimum macOS version mismatch: ${buildVersion}`);
   }
-  if (machOHasUuid(run(["/usr/bin/otool", "-l", binary]))) {
-    throw new Error("desktop Mach-O contains a non-reproducible LC_UUID load command");
+  if (!machOHasUuid(run(["/usr/bin/otool", "-l", binary]))) {
+    throw new Error("desktop Mach-O has no LC_UUID and will not launch on current macOS");
   }
   if (plist(app, "CFBundleIdentifier") !== DESKTOP_BUNDLE_ID) throw new Error("desktop bundle identifier mismatch");
   if (plist(app, "CFBundleShortVersionString") !== VERSION) throw new Error("desktop bundle version mismatch");

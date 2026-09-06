@@ -23,12 +23,10 @@ case "$cargo_target_dir" in
   *) cargo_target_dir="$root/$cargo_target_dir" ;;
 esac
 export CARGO_TARGET_DIR="$cargo_target_dir"
-# Older Apple linkers generate a fresh LC_UUID for every link. This alpha
-# strips symbols and does not ship dSYMs, so omit the unstable identifier to
-# keep clean release builds byte-identical across supported Xcode versions.
-# A future symbol-distribution pipeline must restore deterministic UUIDs so
-# macOS crash reports can be correlated with their matching dSYM bundles.
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target -C link-arg=-Wl,-no_uuid"
+# Current macOS requires a Mach-O LC_UUID to launch the application. The
+# release workflow's isolated double build proves that the selected Apple
+# linker derives it reproducibly; never trade launchability for a checksum.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target"
 
 bun run build:ui
 bash scripts/desktop/icons.sh
