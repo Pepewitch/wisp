@@ -1,31 +1,28 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react"
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
-import { ArrowUp, Check, Copy, Stop } from "@/components/icons"
-import { AttachButton, PendingAttachmentRows } from "@/components/pending-attachments"
-import { Meta, StateDot } from "@/components/primitives"
-import { ProbePanel } from "@/components/probe-panel"
-import { SlashPalette } from "@/components/slash-palette"
+import { ArrowUp, Stop } from "@/components/icons"
+import {
+  AttachButton,
+  PendingAttachmentRows,
+} from "@/components/pending-attachments"
+import { TaskIdentity, SteerOverlays } from "@/components/steer-box-overlays"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
-import { TokensPanel } from "@/components/tokens-panel"
 import {
   useSteerCommands,
   type ReportState,
   type SteerNote,
 } from "@/hooks/useSteerCommands"
 import { useSteerSubmit } from "@/hooks/useSteerSubmit"
-import { useTick } from "@/hooks/useTick"
-import { usePendingAttachments, type AttachmentPayload, type PendingAttachments } from "@/lib/attachments"
-import { useDesktopConnections } from "@/lib/desktop-connections"
-import { readDraft, writeDraft } from "@/lib/drafts"
+import {
+  useDesktopPendingAttachments,
+  useRememberedDraft,
+} from "@/hooks/useRememberedDesktopInput"
+import {
+  type AttachmentPayload,
+  type PendingAttachments,
+} from "@/lib/attachments"
 import { handleComposerPaste } from "@/lib/paste-links"
-import { useDaemonRuntime } from "@/lib/runtime"
 import {
   compactEntry,
   isTier1Command,
@@ -37,7 +34,6 @@ import {
   type SlashGroup,
   type SlashToken,
 } from "@/lib/slash"
-import { elapsed } from "@/lib/state"
 import type {
   ApiTask,
   HarnessCompact,
@@ -47,21 +43,6 @@ import type {
   Turn,
 } from "@/lib/types"
 import { cn } from "@/lib/utils"
-
-function useRememberedDraft(taskId: string | null) {
-  const runtime = useDaemonRuntime()
-  const remember = useDesktopConnections() !== null
-  const [value, setValue] = useState(() =>
-    remember ? readDraft(runtime.connectionId, taskId) : "",
-  )
-  useEffect(
-    () => () => {
-      if (remember) writeDraft(runtime.connectionId, taskId, value)
-    },
-    [remember, runtime.connectionId, taskId, value],
-  )
-  return [value, setValue] as const
-}
 
 /**
  * The centre column's footer. Grows with the text, caps at 40% of the pane, and
@@ -129,7 +110,11 @@ export function SteerBox({
    * `useSendMessage` itself, which is what lets a refusal land in its own note
    * instead of nowhere.
    */
-  onSend?: (message: string, attachments?: AttachmentPayload[], suffixPromptId?: string) => Promise<void> | void
+  onSend?: (
+    message: string,
+    attachments?: AttachmentPayload[],
+    suffixPromptId?: string
+  ) => Promise<void> | void
   /** Injectable interrupt for tests and the gallery; production posts through useInterruptTask. */
   onInterrupt?: () => Promise<void> | void
   /** started_at of the turn running right now; null when nothing is running */
@@ -146,13 +131,14 @@ export function SteerBox({
     taskId: initialTaskId,
     value: null,
   })
-  const { taskId, suffixPromptId, disabled, blocked, canSend, canStop, shown } = steerState({
-    task,
-    value,
-    sending,
-    note,
-    suffixSelection,
-  })
+  const { taskId, suffixPromptId, disabled, blocked, canSend, canStop, shown } =
+    steerState({
+      task,
+      value,
+      sending,
+      note,
+      suffixSelection,
+    })
   // A draft may survive a task switch, but a reusable instruction must be
   // chosen deliberately for the task that will receive it.
   if (suffixSelection.taskId !== taskId) {
@@ -175,7 +161,12 @@ export function SteerBox({
    */
   const suppressed = useRef<number | null>(null)
 
-  const attachments = usePendingAttachments({ harness: task?.harness ?? null, hasImage, imageNote })
+  const attachments = useDesktopPendingAttachments({
+    taskId,
+    harness: task?.harness ?? null,
+    hasImage,
+    imageNote,
+  })
   const commands = useSteerCommands({ task, status, setNote, setReport })
   const archive = commands.archive
 
@@ -253,50 +244,34 @@ export function SteerBox({
   }
 
   const groups = slashGroups(task, probeCommands, skills, compact)
-  const shownReport = report && task && report.taskId === task.id ? report : null
+  const shownReport =
+    report && task && report.taskId === task.id ? report : null
 
   return (
     <div
       className={cn(
         "relative shrink-0 bg-gradient-to-t from-background from-60% to-transparent",
-        touch ? "px-3 pt-2 pb-2.5" : "px-4.5 pt-2.5 pb-3.5",
+        touch ? "px-3 pt-2 pb-2.5" : "px-4.5 pt-2.5 pb-3.5"
       )}
     >
       {/* Palette and reports share the composer's content width, not the
           wider footer outside its responsive padding. */}
       <div className="relative">
-        {shownReport?.kind === "probe" && task && (
-          <ProbePanel
-            harness={task.harness}
-            command={shownReport.command}
-            answer={shownReport.answer}
-            onClose={dismissReport}
-            className="absolute inset-x-0 bottom-full z-(--z-menu) mb-1.5"
-          />
-        )}
-
-        {shownReport?.kind === "tokens" && task && (
-          <TokensPanel
-            harness={task.harness}
-            turns={turns}
-            onClose={dismissReport}
-            className="absolute inset-x-0 bottom-full z-(--z-menu) mb-1.5"
-          />
-        )}
-
-        {palette && task && (
-          <SlashPalette
-            groups={groups}
-            query={palette.query}
-            onPick={pick}
-            commandRef={command}
-            touch={touch}
-          />
-        )}
-
-        {runningSince && <RunningFor startedAt={runningSince} />}
-
-        {shown && <SteerNoteRow note={shown} copied={copied} onCopied={setCopied} />}
+        <SteerOverlays
+          shownReport={shownReport}
+          task={task}
+          turns={turns}
+          onDismissReport={dismissReport}
+          palette={palette}
+          groups={groups}
+          onPick={pick}
+          commandRef={command}
+          touch={touch}
+          runningSince={runningSince}
+          note={shown}
+          copied={copied}
+          onCopied={setCopied}
+        />
 
         <SteerComposer
           task={task}
@@ -319,7 +294,9 @@ export function SteerBox({
           onTrack={track}
           onDismissPalette={dismiss}
           onDismissReport={dismissReport}
-          onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
+          onSuffixPromptChange={(value) =>
+            setSuffixSelection({ taskId, value })
+          }
           onSend={send}
           onStop={stop}
         />
@@ -357,7 +334,8 @@ function steerState({
   suffixSelection: SuffixSelection
 }) {
   const taskId = task?.id ?? null
-  const suffixPromptId = suffixSelection.taskId === taskId ? suffixSelection.value : null
+  const suffixPromptId =
+    suffixSelection.taskId === taskId ? suffixSelection.value : null
   const disabled = !task || task.archived || task.state === "creating"
   // A stuck task still owns a live turn; it must stop/steer like running,
   // rather than offering a send the daemon will reject.
@@ -373,7 +351,7 @@ function slashGroups(
   task: ApiTask | null,
   probeCommands: ProbeCommandName[] | undefined,
   skills: TaskSkills | undefined,
-  compact: HarnessCompact | null | undefined,
+  compact: HarnessCompact | null | undefined
 ): SlashGroup[] {
   const groups: SlashGroup[] = [{ label: "Wisp", entries: TIER1_ENTRIES }]
   if (task) {
@@ -395,46 +373,6 @@ function slashGroups(
   }
   groups.push(skillGroup)
   return groups
-}
-
-function SteerNoteRow({
-  note,
-  copied,
-  onCopied,
-}: {
-  note: SteerNote
-  copied: boolean
-  onCopied: (copied: boolean) => void
-}) {
-  return (
-    <div className="mb-1.5 flex items-center gap-2 pl-1.5">
-      <span
-        data-testid="steer-note"
-        title={note.title ?? note.text}
-        className={cn(
-          "min-w-0 flex-1 truncate text-[11.5px]",
-          note.tone === "muted" ? "text-muted-foreground" : "text-destructive",
-          note.copyable && "font-mono",
-        )}
-      >
-        {note.text}
-      </span>
-      {note.copyable && (
-        <button
-          type="button"
-          aria-label="Copy"
-          onClick={() => {
-            void navigator.clipboard?.writeText(note.copyable!)
-            onCopied(true)
-            setTimeout(() => onCopied(false), 1_200)
-          }}
-          className="shrink-0 rounded-sm p-0.5 text-faint transition-colors hover:text-foreground"
-        >
-          {copied ? <Check className="size-3" aria-label="Copied" /> : <Copy className="size-3" />}
-        </button>
-      )}
-    </div>
-  )
 }
 
 function SteerComposer({
@@ -491,7 +429,9 @@ function SteerComposer({
     <div
       className={cn(
         "rounded-xl border bg-surface px-3 pt-2.5 pb-2 transition-colors",
-        focused ? "border-accent-dim ring-2 ring-ring/15" : "border-border-strong",
+        focused
+          ? "border-accent-dim ring-2 ring-ring/15"
+          : "border-border-strong"
       )}
     >
       <textarea
@@ -503,8 +443,12 @@ function SteerComposer({
           onValueChange(event.target.value)
           onTrack(event.target.value, event.target.selectionStart)
         }}
-        onKeyUp={(event) => onTrack(event.currentTarget.value, event.currentTarget.selectionStart)}
-        onClick={(event) => onTrack(event.currentTarget.value, event.currentTarget.selectionStart)}
+        onKeyUp={(event) =>
+          onTrack(event.currentTarget.value, event.currentTarget.selectionStart)
+        }
+        onClick={(event) =>
+          onTrack(event.currentTarget.value, event.currentTarget.selectionStart)
+        }
         onPaste={(event) =>
           handleComposerPaste(event, {
             onImagePaste: attachments.onPaste,
@@ -527,7 +471,9 @@ function SteerComposer({
             }
             if (PALETTE_KEYS.has(event.key) && !event.shiftKey) {
               event.preventDefault()
-              commandRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, bubbles: true }))
+              commandRef.current?.dispatchEvent(
+                new KeyboardEvent("keydown", { key: event.key, bubbles: true })
+              )
               return
             }
           }
@@ -537,15 +483,23 @@ function SteerComposer({
             return
           }
           if (event.key !== "Enter" || event.shiftKey) return
-          if (event.nativeEvent.isComposing && !(event.metaKey || event.ctrlKey)) return
+          if (
+            event.nativeEvent.isComposing &&
+            !(event.metaKey || event.ctrlKey)
+          )
+            return
           event.preventDefault()
           onSend()
         }}
-        placeholder={disabled ? "This task is read-only" : "Ask for changes, or / for commands"}
+        placeholder={
+          disabled
+            ? "This task is read-only"
+            : "Ask for changes, or / for commands"
+        }
         className={cn(
-          "scroll-slim max-h-[40vh] w-full resize-none bg-transparent leading-relaxed",
+          "max-h-[40vh] w-full resize-none scroll-slim bg-transparent leading-relaxed",
           "text-foreground placeholder:text-faint focus:outline-none",
-          touch ? "min-h-[60px] text-[15px]" : "min-h-[52px] text-[12.5px]",
+          touch ? "min-h-[60px] text-[15px]" : "min-h-[52px] text-[12.5px]"
         )}
       />
       <ComposerControls
@@ -611,9 +565,14 @@ function ComposerControls({
       />
       <span className="flex-1" />
       {blocked ? (
-        <span className="text-[10.5px] text-faint">running · send won&apos;t interrupt</span>
+        <span className="text-[10.5px] text-faint">
+          running · send won&apos;t interrupt
+        </span>
       ) : (
-        <span className="font-mono text-[10.5px] text-faint" title="Enter sends · Shift+Enter for a new line">
+        <span
+          className="font-mono text-[10.5px] text-faint"
+          title="Enter sends · Shift+Enter for a new line"
+        >
           ↵
         </span>
       )}
@@ -637,7 +596,7 @@ function ComposerControls({
             ? "bg-primary text-primary-foreground hover:brightness-110"
             : canStop
               ? "border border-border-strong bg-card text-foreground hover:bg-hover"
-              : "bg-border-strong text-muted-foreground",
+              : "bg-border-strong text-muted-foreground"
         )}
       >
         {canStop ? (
@@ -650,40 +609,5 @@ function ComposerControls({
   )
 }
 
-function TaskIdentity({ task }: { task: ApiTask }) {
-  return (
-    <Meta
-      className="gap-1.5"
-      items={[
-        task.harness,
-        task.model ? <span key="model" className="min-w-0 truncate font-mono">{task.model}</span> : null,
-        task.effort ? `${task.effort} effort` : null,
-      ]}
-    />
-  )
-}
-
 /** Forwarded to cmdk while the palette is open; Enter must not send. */
 const PALETTE_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End", "Enter"])
-
-/**
- * The live turn, immediately above the box you would type into — which is the
- * one place you look when wondering whether to wait or to steer, and which is
- * disabled while a turn runs.
- *
- * A breathing violet dot and a gray count, and nothing else: the dot is the
- * `running` state marker the whole app already uses for "this is alive", so it
- * needs no label. Mono with tabular figures because a proportional timer
- * reflows on every tick, which is far more distracting than the motion.
- */
-function RunningFor({ startedAt }: { startedAt: string }) {
-  const now = useTick(true)
-  const text = elapsed(startedAt, now)
-  if (!text) return null
-  return (
-    <div className="mb-1.5 flex items-center gap-2 pl-1.5" aria-live="off">
-      <StateDot state="running" className="animate-breathe" />
-      <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{text}</span>
-    </div>
-  )
-}

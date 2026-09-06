@@ -31,8 +31,10 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use futures_util::{SinkExt, StreamExt};
 use http::header::{
+    ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_REQUEST_HEADERS, ACCESS_CONTROL_REQUEST_METHOD,
     AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, ORIGIN, SEC_WEBSOCKET_PROTOCOL, TRANSFER_ENCODING,
-    UPGRADE,
+    UPGRADE, VARY,
 };
 use http::{HeaderMap, HeaderValue, StatusCode};
 use tokio::net::TcpListener;
@@ -108,6 +110,12 @@ const PROXY_REDIRECT_HEADER: &str = "x-wisp-proxy-redirect";
 /// timeout: `/api/events` and the task log stream are long-lived by design.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// Budget for receiving ordinary HTTP response headers or completing an
+/// upstream WebSocket handshake. This wraps only the future that establishes
+/// the response/socket: once headers arrive, response bodies and WebSocket
+/// frames may stream for as long as their callers keep them open.
+const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyStartError {
     #[error("could not build the upstream HTTP client: {0}")]
@@ -121,6 +129,7 @@ pub struct ProxyState {
     registry: Arc<Registry>,
     client: reqwest::Client,
     allowed_origins: Vec<String>,
+    upstream_handshake_timeout: std::time::Duration,
 }
 
 impl ProxyState {
@@ -142,7 +151,20 @@ impl ProxyState {
             registry,
             client,
             allowed_origins,
+            upstream_handshake_timeout: UPSTREAM_HANDSHAKE_TIMEOUT,
         })
+    }
+
+    /// Override the response-header/WebSocket-handshake budget.
+    ///
+    /// Production callers use the default. Keeping the budget in proxy state
+    /// lets integration tests cover a stalled peer without sleeping for the
+    /// full production interval.
+    #[doc(hidden)]
+    pub fn with_upstream_handshake_timeout(mut self, timeout: std::time::Duration) -> Self {
+        assert!(!timeout.is_zero(), "the upstream timeout must be positive");
+        self.upstream_handshake_timeout = timeout;
+        self
     }
 
     pub fn registry(&self) -> &Arc<Registry> {
@@ -156,14 +178,19 @@ impl ProxyState {
         &self.client
     }
 
-    fn origin_allowed(&self, headers: &HeaderMap) -> bool {
+    fn cors_origin(&self, headers: &HeaderMap) -> Result<Option<HeaderValue>, ()> {
         match headers.get(ORIGIN) {
             // Absent is normal: `<img>` and same-document subresource loads
             // send no Origin at all.
-            None => true,
-            Some(value) => value
-                .to_str()
-                .is_ok_and(|origin| self.allowed_origins.iter().any(|allowed| allowed == origin)),
+            None => Ok(None),
+            Some(value)
+                if value.to_str().is_ok_and(|origin| {
+                    self.allowed_origins.iter().any(|allowed| allowed == origin)
+                }) =>
+            {
+                Ok(Some(value.clone()))
+            }
+            Some(_) => Err(()),
         }
     }
 }
@@ -257,15 +284,100 @@ fn refuse(status: StatusCode, code: &'static str, message: impl Into<String>) ->
 }
 
 async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Response {
-    let (mut parts, body) = request.into_parts();
+    let origin = match state.cors_origin(request.headers()) {
+        Ok(origin) => origin,
+        Err(()) => {
+            return refuse(
+                StatusCode::FORBIDDEN,
+                "origin",
+                "this proxy only serves the packaged Wisp application",
+            )
+        }
+    };
+    let response = handle_trusted(state, request).await;
+    with_cors(response, origin.as_ref())
+}
 
-    if !state.origin_allowed(&parts.headers) {
-        return refuse(
-            StatusCode::FORBIDDEN,
-            "origin",
-            "this proxy only serves the packaged Wisp application",
+fn with_cors(mut response: Response, origin: Option<&HeaderValue>) -> Response {
+    if let Some(origin) = origin {
+        response
+            .headers_mut()
+            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone());
+        response
+            .headers_mut()
+            .append(VARY, HeaderValue::from_static("Origin"));
+        response.headers_mut().insert(
+            ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("x-wisp-proxy-error, x-wisp-proxy-redirect"),
         );
     }
+    response
+}
+
+fn preflight(headers: &HeaderMap, method: &http::Method) -> Option<Response> {
+    if method != http::Method::OPTIONS || !headers.contains_key(ACCESS_CONTROL_REQUEST_METHOD) {
+        return None;
+    }
+    let requested_method = match headers
+        .get(ACCESS_CONTROL_REQUEST_METHOD)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(method) => method,
+        None => {
+            return Some(refuse(
+                StatusCode::FORBIDDEN,
+                "cors-method",
+                "the requested method is not valid",
+            ))
+        }
+    };
+    if !matches!(
+        requested_method,
+        "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS"
+    ) {
+        return Some(refuse(
+            StatusCode::FORBIDDEN,
+            "cors-method",
+            "that method is not allowed by the desktop proxy",
+        ));
+    }
+    if let Some(requested) = headers.get(ACCESS_CONTROL_REQUEST_HEADERS) {
+        let valid = requested.to_str().is_ok_and(|headers| {
+            headers
+                .split(',')
+                .all(|header| header.trim().eq_ignore_ascii_case("content-type"))
+        });
+        if !valid {
+            return Some(refuse(
+                StatusCode::FORBIDDEN,
+                "cors-headers",
+                "only Content-Type may be requested from the webview",
+            ));
+        }
+    }
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"),
+    );
+    response.headers_mut().insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Content-Type"),
+    );
+    if headers
+        .get("access-control-request-private-network")
+        .is_some_and(|value| value == "true")
+    {
+        response.headers_mut().insert(
+            "access-control-allow-private-network",
+            HeaderValue::from_static("true"),
+        );
+    }
+    Some(response)
+}
+
+async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
+    let (mut parts, body) = request.into_parts();
 
     let path = parts.uri.path().to_string();
     let Some(route) = ProxyRoute::parse(&path) else {
@@ -286,6 +398,13 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
             "that connection is not available",
         );
     };
+
+    // Webview JSON writes cross from the Tauri document origin to loopback.
+    // Answer their browser preflight locally: it carries no daemon credential
+    // and must never consume an upstream route or stream slot.
+    if let Some(response) = preflight(&parts.headers, &parts.method) {
+        return response;
+    }
 
     let credential = match state.registry.credential(&target) {
         Ok(credential) => credential,
@@ -320,7 +439,13 @@ async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Respo
     }
 
     if websocket {
-        return proxy_websocket(credential, upstream, &mut parts).await;
+        return proxy_websocket(
+            credential,
+            upstream,
+            &mut parts,
+            state.upstream_handshake_timeout,
+        )
+        .await;
     }
 
     proxy_http(&state, credential, upstream, parts, body).await
@@ -361,6 +486,7 @@ async fn ensure_pinned_identity(
         .client
         .get(url)
         .header(AUTHORIZATION, bearer(credential))
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| {
@@ -438,16 +564,24 @@ async fn proxy_http(
         builder = builder.body(reqwest::Body::wrap_stream(body.into_data_stream()));
     }
 
-    let upstream_response = match builder.send().await {
-        Ok(response) => response,
-        Err(error) => {
-            return refuse(
-                StatusCode::BAD_GATEWAY,
-                "upstream",
-                describe_upstream_failure(&error),
-            )
-        }
-    };
+    let upstream_response =
+        match tokio::time::timeout(state.upstream_handshake_timeout, builder.send()).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => {
+                return refuse(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream",
+                    describe_upstream_failure(&error),
+                )
+            }
+            Err(_) => {
+                return refuse(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "upstream-timeout",
+                    "the daemon did not send response headers in time",
+                )
+            }
+        };
 
     let status = upstream_response.status();
     let mut response = Response::builder().status(status);
@@ -509,6 +643,7 @@ async fn proxy_websocket(
     credential: String,
     upstream: Url,
     parts: &mut http::request::Parts,
+    handshake_timeout: std::time::Duration,
 ) -> Response {
     use tungstenite::client::IntoClientRequest;
 
@@ -535,8 +670,21 @@ async fn proxy_websocket(
         .headers_mut()
         .insert(AUTHORIZATION, bearer(&credential));
 
-    let connected =
-        tokio_tungstenite::connect_async_tls_with_config(request, None, false, None).await;
+    let connected = match tokio::time::timeout(
+        handshake_timeout,
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, None),
+    )
+    .await
+    {
+        Ok(connected) => connected,
+        Err(_) => {
+            return refuse(
+                StatusCode::GATEWAY_TIMEOUT,
+                "upstream-timeout",
+                "the daemon did not complete the terminal handshake in time",
+            )
+        }
+    };
     let (upstream_socket, handshake) = match connected {
         Ok(pair) => pair,
         // The daemon's refusal is the answer; do not turn it into a generic

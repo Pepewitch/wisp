@@ -15,11 +15,28 @@ const BOOTSTRAP: DesktopBootstrap = {
       kind: "remote",
       name: "Remote one",
       url: "https://wisp.example.test/",
+      instanceId: "wisp-instance-remote-one",
+      ready: true,
     },
-    { id: "local", kind: "local", name: "Local", url: null },
+    {
+      id: "local",
+      kind: "local",
+      name: "Local",
+      url: null,
+      instanceId: "wisp-instance-local",
+      ready: true,
+    },
   ],
   activeConnectionId: "remote-one",
-  proxyBaseUrl: "http://127.0.0.1:45123/connections/",
+  proxyBaseUrl: "http://127.0.0.1:45123/per-launch-capability/",
+  local: {
+    available: true,
+    configPath: "/synthetic/.wisp/config.json",
+    baseUrl: "http://127.0.0.1:18710",
+    instanceId: "wisp-instance-local",
+    hasToken: true,
+    reason: null,
+  },
 }
 
 describe("desktop native bridge", () => {
@@ -32,33 +49,71 @@ describe("desktop native bridge", () => {
       calls.push({ command, args })
       if (command === "desktop_bootstrap") return BOOTSTRAP as T
       if (command === "pick_local_project") return "/synthetic/project" as T
-      return undefined as T
+      if (
+        command === "probe_remote_connection" ||
+        command === "probe_saved_connection"
+      )
+        return {
+          instanceId: "wisp-instance-remote-two",
+          apiProtocolVersion: 1,
+          version: "0.4.0-synthetic",
+        } as T
+      if (
+        command === "setup_local_wisp" ||
+        command === "apply_local_wisp_setup"
+      )
+        return {
+          status: BOOTSTRAP.local,
+          cliPath: "/synthetic/bin/wisp",
+          daemonReachable: true,
+          nextStep: "ready",
+          message: "Local Wisp is ready.",
+        } as T
+      if (command === "remove_connection") return undefined as T
+      return BOOTSTRAP.connections[0] as T
     }
     const bridge = createDesktopBridge(nativeInvoke)
 
     await bridge.bootstrap()
+    await bridge.probeRemoteConnection({
+      url: "https://two.example.test",
+      token: "test-token",
+    })
     await bridge.addRemoteConnection({
       name: "Remote two",
       url: "https://two.example.test",
       token: "test-token",
+      expectedInstanceId: "wisp-instance-remote-two",
     })
     await bridge.renameConnection("remote-one", "Renamed")
     await bridge.reconnectConnection({
       connectionId: "remote-one",
       url: "https://new.example.test",
+      expectedInstanceId: "wisp-instance-remote-two",
     })
+    await bridge.probeSavedConnection({ connectionId: "remote-one" })
     await bridge.removeConnection("remote-one")
+    await bridge.resetDesktopData()
     await bridge.pickLocalProject()
     await bridge.setupLocalWisp()
+    await bridge.applyLocalWispSetup("start-daemon")
 
     expect(calls).toEqual([
       { command: "desktop_bootstrap", args: undefined },
+      {
+        command: "probe_remote_connection",
+        args: {
+          url: "https://two.example.test",
+          token: "test-token",
+        },
+      },
       {
         command: "add_remote_connection",
         args: {
           name: "Remote two",
           url: "https://two.example.test",
           token: "test-token",
+          expectedInstanceId: "wisp-instance-remote-two",
         },
       },
       {
@@ -67,11 +122,27 @@ describe("desktop native bridge", () => {
       },
       {
         command: "reconnect_connection",
-        args: { connectionId: "remote-one", url: "https://new.example.test" },
+        args: {
+          connectionId: "remote-one",
+          url: "https://new.example.test",
+          expectedInstanceId: "wisp-instance-remote-two",
+        },
+      },
+      {
+        command: "probe_saved_connection",
+        args: { connectionId: "remote-one" },
       },
       { command: "remove_connection", args: { connectionId: "remote-one" } },
-      { command: "pick_local_project", args: undefined },
+      { command: "reset_desktop_data", args: undefined },
+      {
+        command: "pick_local_project",
+        args: { connectionId: "local" },
+      },
       { command: "setup_local_wisp", args: undefined },
+      {
+        command: "apply_local_wisp_setup",
+        args: { expectedStep: "start-daemon" },
+      },
     ])
   })
 
@@ -92,6 +163,7 @@ describe("desktop native bridge", () => {
       "remote-one",
     ])
     expect(bootstrap.connections[1]).not.toHaveProperty("token")
+    expect(bootstrap.local).not.toHaveProperty("token")
     expect(Object.isFrozen(bootstrap)).toBe(true)
     expect(Object.isFrozen(bootstrap.connections)).toBe(true)
     expect(Object.isFrozen(bootstrap.connections[0])).toBe(true)
@@ -106,7 +178,14 @@ describe("desktop native bridge", () => {
         ...BOOTSTRAP,
         connections: [
           ...BOOTSTRAP.connections,
-          { id: "other", kind: "remote", name: "LOCAL", url: "https://x.test" },
+          {
+            id: "other",
+            kind: "remote",
+            name: "LOCAL",
+            url: "https://x.test",
+            instanceId: "wisp-instance-other",
+            ready: true,
+          },
         ],
       })
     ).toThrow("Duplicate desktop connection name")
@@ -126,6 +205,8 @@ describe("desktop native bridge", () => {
             kind: "remote" as const,
             name: `Remote ${index}`,
             url: `https://remote-${index}.example.test`,
+            instanceId: `wisp-instance-${index}`,
+            ready: true,
           })),
         ],
         activeConnectionId: "local",

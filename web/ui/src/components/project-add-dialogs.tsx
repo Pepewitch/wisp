@@ -26,6 +26,9 @@ export function AddProjectDialog({
     if (open) setPath("")
   }
   const cleaned = path.trim()
+  const validation = cleaned && !cleaned.startsWith("/")
+    ? "Enter an absolute path beginning with /"
+    : null
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
@@ -39,7 +42,7 @@ export function AddProjectDialog({
           <form
             onSubmit={(event) => {
               event.preventDefault()
-              if (cleaned && !pending) void onSubmit(cleaned)
+              if (cleaned && !validation && !pending) void onSubmit(cleaned)
             }}
           >
             <div className="border-b border-border px-4 py-3">
@@ -68,12 +71,13 @@ export function AddProjectDialog({
                 </span>
               </label>
             </div>
-            {Boolean(error) && (
+            {Boolean(validation ?? error) && (
               <p
                 role="alert"
                 className="px-4 pb-2 text-[11.5px] text-destructive"
               >
-                {error instanceof Error ? error.message : String(error)}
+                {validation ??
+                  (error instanceof Error ? error.message : String(error))}
               </p>
             )}
             <div className="flex justify-end gap-2 border-t border-border px-4 py-2.5">
@@ -84,7 +88,7 @@ export function AddProjectDialog({
                 type="submit"
                 size="lg"
                 tone="primary"
-                disabled={!cleaned || pending}
+                disabled={!cleaned || Boolean(validation) || pending}
               >
                 {pending ? "Adding…" : "Add project"}
               </Button>

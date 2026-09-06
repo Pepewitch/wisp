@@ -36,7 +36,7 @@ export function createDesktopTransport(
   const base = proxyBaseUrl.replace(/\/+$/, "")
   const qualify = (path: string): string => {
     daemonPath(path)
-    return `${base}/${connectionId}${path}`
+    return `${base}/connections/${connectionId}${path}`
   }
 
   const request = async <T>(
@@ -66,7 +66,8 @@ export function createDesktopTransport(
         typeof data.error === "string"
           ? data.error
           : `${response.status} ${response.statusText}`,
-        response.status
+        response.status,
+        response.headers.get("x-wisp-proxy-error")
       )
     }
     return data as T

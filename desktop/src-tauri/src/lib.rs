@@ -56,12 +56,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::desktop_bootstrap,
+            commands::probe_remote_connection,
             commands::add_remote_connection,
             commands::rename_connection,
+            commands::probe_saved_connection,
             commands::reconnect_connection,
             commands::remove_connection,
+            commands::reset_desktop_data,
             commands::pick_local_project,
             commands::setup_local_wisp,
+            commands::apply_local_wisp_setup,
         ])
         .run(tauri::generate_context!())
         .expect("failed to start the Wisp desktop shell");

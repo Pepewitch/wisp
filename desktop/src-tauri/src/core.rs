@@ -14,7 +14,7 @@ use crate::probe::{self, ProbeError};
 use crate::proxy::{self, ProxyHandle, ProxyStartError, ProxyState};
 use crate::registry::{ConnectionInfo, Registry, RegistryError};
 use crate::secrets::SecretStore;
-use crate::setup::{self, LocalSetupReport};
+use crate::setup::{self, LocalSetupReport, SetupError};
 use crate::urls::{normalize_daemon_url, UrlError};
 
 /// Everything `desktop_bootstrap` hands the webview.
@@ -48,8 +48,20 @@ pub enum CoreError {
     LocalIdentityMismatch,
     #[error("a token is required")]
     EmptyToken,
+    #[error("that daemon changed after the connection check; check it again before saving")]
+    RemoteIdentityChanged,
+    #[error(
+        "a different Wisp daemon answers this connection; review its identity before reconnecting"
+    )]
+    RemoteIdentityConfirmationRequired,
     #[error(transparent)]
     Start(#[from] ProxyStartError),
+    #[error(transparent)]
+    Setup(#[from] SetupError),
+    #[error("the local Wisp service did not become ready within 30 seconds")]
+    SetupTimeout,
+    #[error("local Wisp changed after it was diagnosed; review the new status before confirming")]
+    SetupPlanChanged,
 }
 
 /// Commands cross into JavaScript, so the error becomes a string there. This is
@@ -124,8 +136,30 @@ impl DesktopCore {
         url: &str,
         token: &str,
     ) -> Result<ConnectionInfo, CoreError> {
+        self.add_remote_checked(label, url, token, None).await
+    }
+
+    pub async fn probe_remote(
+        &self,
+        url: &str,
+        token: &str,
+    ) -> Result<probe::DaemonIdentity, CoreError> {
+        let (url, token) = check(url, token)?;
+        Ok(probe::probe(self.state.client(), &url, &token).await?)
+    }
+
+    pub async fn add_remote_checked(
+        &self,
+        label: &str,
+        url: &str,
+        token: &str,
+        expected_instance_id: Option<&str>,
+    ) -> Result<ConnectionInfo, CoreError> {
         let (url, token) = check(url, token)?;
         let identity = probe::probe(self.state.client(), &url, &token).await?;
+        if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
+            return Err(CoreError::RemoteIdentityChanged);
+        }
         Ok(self
             .registry
             .add_remote(label, &url, &token, &identity.instance_id)?)
@@ -141,6 +175,39 @@ impl DesktopCore {
         connection_id: &str,
         url: Option<&str>,
         token: Option<&str>,
+    ) -> Result<ConnectionInfo, CoreError> {
+        self.reconnect_checked(connection_id, url, token, None)
+            .await
+    }
+
+    pub async fn probe_reconnect(
+        &self,
+        connection_id: &str,
+        url: Option<&str>,
+        token: Option<&str>,
+    ) -> Result<probe::DaemonIdentity, CoreError> {
+        let target = self
+            .registry
+            .resolve(connection_id)
+            .ok_or_else(|| RegistryError::UnknownConnection(connection_id.to_string()))?;
+        let next_url = match url {
+            Some(raw) => normalize_daemon_url(raw)?,
+            None => target.base.clone(),
+        };
+        let next_token = match token {
+            Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+            Some(_) => return Err(CoreError::EmptyToken),
+            None => self.registry.credential(&target)?,
+        };
+        Ok(probe::probe(self.state.client(), &next_url, &next_token).await?)
+    }
+
+    pub async fn reconnect_checked(
+        &self,
+        connection_id: &str,
+        url: Option<&str>,
+        token: Option<&str>,
+        expected_instance_id: Option<&str>,
     ) -> Result<ConnectionInfo, CoreError> {
         // Re-read the standard profile: `wisp init`, token rotation, or a
         // daemon replacement may all have happened since app launch.
@@ -170,6 +237,14 @@ impl DesktopCore {
         };
 
         let identity = probe::probe(self.state.client(), &next_url, &next_token).await?;
+        if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
+            return Err(CoreError::RemoteIdentityChanged);
+        }
+        if identity.instance_id != target.instance_id
+            && expected_instance_id != Some(identity.instance_id.as_str())
+        {
+            return Err(CoreError::RemoteIdentityConfirmationRequired);
+        }
         if next_url == target.base {
             Ok(self.registry.refresh(
                 connection_id,
@@ -194,15 +269,69 @@ impl DesktopCore {
         Ok(self.registry.remove(connection_id)?)
     }
 
+    pub fn reset_desktop_data(&self) -> Result<(), CoreError> {
+        Ok(self.registry.reset_desktop_data()?)
+    }
+
     /// Report on the local install without changing it.
-    pub async fn local_setup(&self) -> LocalSetupReport {
-        let status = self.registry.local_status();
+    pub async fn local_setup(&self) -> Result<LocalSetupReport, CoreError> {
+        let profile = local::load(&self.wisp_home);
+        let status = LocalStatus::from_result(&self.wisp_home, &profile);
         let cli = setup::find_wisp_cli(std::env::var_os("HOME").map(PathBuf::from).as_deref());
-        let reachable = match self.registry.resolve(local::LOCAL_CONNECTION_ID) {
-            Some(target) => setup::daemon_reachable(self.state.client(), &target.base).await,
-            None => false,
+        let reachable = match &profile {
+            Ok(profile) => {
+                match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                    Ok(identity) if identity.instance_id == profile.instance_id() => {
+                        self.registry.refresh_local(profile.clone());
+                        true
+                    }
+                    Ok(_) => return Err(CoreError::LocalIdentityMismatch),
+                    Err(ProbeError::Unreachable(_)) => false,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(_) => false,
         };
-        setup::decide(&status, cli.as_deref(), reachable)
+        Ok(setup::decide(&status, cli.as_deref(), reachable))
+    }
+
+    /// Apply a diagnosis only after the webview displayed it and the user
+    /// explicitly confirmed. Then prove the authenticated daemon and refresh
+    /// the built-in Local route without restarting the desktop process.
+    pub async fn apply_local_setup(
+        &self,
+        expected_step: setup::NextStep,
+    ) -> Result<LocalSetupReport, CoreError> {
+        let report = self.local_setup().await?;
+        if report.next_step != expected_step {
+            return Err(CoreError::SetupPlanChanged);
+        }
+        let planned = report.clone();
+        tokio::task::spawn_blocking(move || setup::apply(&planned))
+            .await
+            .map_err(|_| SetupError::Failed("local setup worker"))??;
+
+        for _ in 0..120 {
+            match local::load(&self.wisp_home) {
+                Ok(profile) => {
+                    match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                        Ok(identity) => {
+                            if identity.instance_id != profile.instance_id() {
+                                return Err(CoreError::LocalIdentityMismatch);
+                            }
+                            self.registry.refresh_local(profile);
+                            return self.local_setup().await;
+                        }
+                        Err(ProbeError::Unreachable(_)) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                Err(LocalError::NoProfile(_)) => {}
+                Err(error) => return Err(error.into()),
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        Err(CoreError::SetupTimeout)
     }
 
     pub fn wisp_home(&self) -> &PathBuf {

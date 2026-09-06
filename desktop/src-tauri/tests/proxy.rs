@@ -7,10 +7,13 @@
 
 mod support;
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use support::{attachment_bytes, Harness, MockDaemon, Tripwire, SHARED_TASK_ID};
+use wisp_desktop::capability::Capability;
+use wisp_desktop::proxy::{self, ProxyHandle, ProxyState};
 use wisp_desktop::secrets::SecretStore;
 
 const TOKEN_ONE: &str = "synthetic-token-alpha-0000000000";
@@ -21,6 +24,47 @@ async fn two_daemons() -> (MockDaemon, MockDaemon) {
         MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await,
         MockDaemon::start("bravo", TOKEN_TWO, "wisp-instance-bravo").await,
     )
+}
+
+/// Accept TCP connections without ever writing response bytes.
+async fn stalled_origin() -> (url::Url, tokio::sync::oneshot::Sender<()>) {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("bind stalled origin");
+    let port = listener
+        .local_addr()
+        .expect("stalled origin address")
+        .port();
+    let (shutdown, mut wait) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let Ok((socket, _peer)) = accepted else { break };
+                    tokio::spawn(async move {
+                        let _socket = socket;
+                        std::future::pending::<()>().await;
+                    });
+                }
+                _ = &mut wait => break,
+            }
+        }
+    });
+    (
+        url::Url::parse(&format!("http://127.0.0.1:{port}/")).expect("stalled origin URL"),
+        shutdown,
+    )
+}
+
+async fn short_timeout_proxy(harness: &Harness) -> ProxyHandle {
+    let state = ProxyState::new(
+        Capability::generate(),
+        harness.registry.clone(),
+        proxy::packaged_app_origins(),
+    )
+    .expect("proxy state")
+    .with_upstream_handshake_timeout(Duration::from_millis(100));
+    proxy::start(Arc::new(state)).await.expect("proxy binds")
 }
 
 /* ── routing ─────────────────────────────────────────────────────────────── */
@@ -174,6 +218,65 @@ async fn a_request_from_outside_the_packaged_app_is_refused() {
         .await
         .expect("request");
     assert!(allowed.status().is_success());
+    assert_eq!(
+        allowed
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("tauri://localhost")
+    );
+}
+
+#[tokio::test]
+async fn webview_preflights_are_answered_locally_and_actual_responses_enable_cors() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let route = harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action"));
+    let before = alpha.seen().len();
+
+    let preflight = harness
+        .client
+        .request(reqwest::Method::OPTIONS, &route)
+        .header("origin", "tauri://localhost")
+        .header("access-control-request-method", "POST")
+        .header("access-control-request-headers", "content-type")
+        .header("access-control-request-private-network", "true")
+        .send()
+        .await
+        .expect("preflight");
+    assert_eq!(preflight.status().as_u16(), 204);
+    assert_eq!(alpha.seen().len(), before, "preflight stayed in the proxy");
+    assert_eq!(
+        preflight
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|value| value.to_str().ok()),
+        Some("tauri://localhost")
+    );
+    assert_eq!(
+        preflight
+            .headers()
+            .get("access-control-allow-private-network")
+            .and_then(|value| value.to_str().ok()),
+        Some("true")
+    );
+
+    let actual = harness
+        .client
+        .post(route)
+        .header("origin", "tauri://localhost")
+        .json(&serde_json::json!({ "action": "synthetic" }))
+        .send()
+        .await
+        .expect("actual request");
+    assert!(actual.status().is_success());
+    assert_eq!(
+        actual
+            .headers()
+            .get("access-control-expose-headers")
+            .and_then(|value| value.to_str().ok()),
+        Some("x-wisp-proxy-error, x-wisp-proxy-redirect")
+    );
 }
 
 /* ── credentials in and out ──────────────────────────────────────────────── */
@@ -395,6 +498,44 @@ async fn nothing_but_the_daemon_api_is_reachable_through_the_proxy() {
 /* ── streaming ───────────────────────────────────────────────────────────── */
 
 #[tokio::test]
+async fn an_upstream_that_never_sends_http_headers_times_out() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let (url, shutdown) = stalled_origin().await;
+    let connection = harness
+        .registry
+        .add_remote(
+            "Stalled HTTP",
+            &url,
+            "synthetic-stalled-token",
+            "00000000-0000-4000-8000-000000000042",
+        )
+        .expect("save stalled connection");
+    let proxy = short_timeout_proxy(&harness).await;
+
+    let response = harness
+        .client
+        .get(format!(
+            "{}/connections/{}/api/whoami",
+            proxy.base(),
+            connection.id
+        ))
+        .send()
+        .await
+        .expect("the proxy answers the timed-out request");
+
+    assert_eq!(response.status().as_u16(), 504);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("upstream-timeout")
+    );
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn server_sent_events_arrive_as_they_are_produced() {
     let (alpha, bravo) = two_daemons().await;
     let (harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
@@ -471,6 +612,44 @@ async fn attachment_bytes_pass_through_verbatim_from_the_right_daemon() {
 }
 
 /* ── terminal WebSocket ──────────────────────────────────────────────────── */
+
+#[tokio::test]
+async fn an_upstream_that_never_completes_a_websocket_handshake_times_out() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let (url, shutdown) = stalled_origin().await;
+    let connection = harness
+        .registry
+        .add_remote(
+            "Stalled WebSocket",
+            &url,
+            "synthetic-stalled-token",
+            "00000000-0000-4000-8000-000000000043",
+        )
+        .expect("save stalled connection");
+    let proxy = short_timeout_proxy(&harness).await;
+    let route = format!(
+        "{}/connections/{}/api/tasks/{SHARED_TASK_ID}/terminal?shell=1",
+        proxy.base().replacen("http://", "ws://", 1),
+        connection.id,
+    );
+
+    match tokio_tungstenite::connect_async(route).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status().as_u16(), 504);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-wisp-proxy-error")
+                    .and_then(|value| value.to_str().ok()),
+                Some("upstream-timeout")
+            );
+        }
+        Err(other) => panic!("expected the proxy timeout response, got {other}"),
+        Ok(_) => panic!("a stalled upstream handshake must not open a terminal"),
+    }
+    let _ = shutdown.send(());
+}
 
 #[tokio::test]
 async fn a_terminal_socket_carries_traffic_to_the_daemon_that_opened_it() {

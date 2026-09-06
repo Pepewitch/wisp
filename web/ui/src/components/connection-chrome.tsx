@@ -9,6 +9,7 @@ import {
 import {
   Local,
   More,
+  Offline,
   Pencil,
   Plus,
   Refresh,
@@ -27,6 +28,9 @@ import {
   MAX_DESKTOP_CONNECTIONS,
   type DesktopConnectionMetadata,
 } from "@/lib/desktop-bridge"
+import {
+  type ConnectionReachability,
+} from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
 import { STATE_LABEL } from "@/lib/state"
 import type { TaskState } from "@/lib/types"
@@ -65,17 +69,36 @@ function ConnectionGlyph({
   return kind === "local" ? <Local aria-hidden /> : <Remote aria-hidden />
 }
 
+function connectionIssue(
+  connection: DesktopConnectionMetadata,
+  reachability: ConnectionReachability = "unknown"
+): string | null {
+  if (!connection.ready)
+    return connection.kind === "local"
+      ? "Local Wisp needs setup"
+      : "Connection needs attention"
+  if (reachability === "offline") return "Daemon unavailable"
+  if (reachability === "unauthorized") return "Authentication required"
+  if (reachability === "identity-changed") return "Daemon identity changed"
+  if (reachability === "error") return "Daemon returned an error"
+  return null
+}
+
 export function ConnectionTab({
   connection,
   active,
   attention,
+  reachability = "unknown",
   onSelect,
 }: {
   connection: DesktopConnectionMetadata
   active: boolean
   attention?: Exclude<TaskState, "done"> | null
+  reachability?: ConnectionReachability
   onSelect: () => void
 }) {
+  const issue = connectionIssue(connection, reachability)
+  const unavailable = issue !== null
   return (
     <Tab
       role="tab"
@@ -83,7 +106,7 @@ export function ConnectionTab({
       tabIndex={active ? 0 : -1}
       active={active}
       onClick={onSelect}
-      title={connection.name}
+      title={`${connection.name} · ${connection.kind === "local" ? "This Mac" : "Remote"}${issue ? ` · ${issue}` : ""}`}
       className="max-w-40"
     >
       <span className="[&>svg]:size-3.5 [&>svg]:text-muted-foreground">
@@ -92,6 +115,15 @@ export function ConnectionTab({
       <span className="truncate">{connection.name}</span>
       {attention && <StateDot state={attention} className="ml-0.5" />}
       {attention && <span className="sr-only">{STATE_LABEL[attention]}</span>}
+      {unavailable && (
+        <span
+          title={issue ?? undefined}
+          className="ml-0.5 text-destructive [&>svg]:size-3"
+        >
+          <Offline aria-hidden />
+          <span className="sr-only">{issue}</span>
+        </span>
+      )}
     </Tab>
   )
 }
@@ -99,18 +131,29 @@ export function ConnectionTab({
 /** The gallery's static rendering of the production tab and action components. */
 export function ConnectionChromeSpecimen() {
   const connections: readonly DesktopConnectionMetadata[] = [
-    { id: "local", kind: "local", name: "Local", url: null },
+    {
+      id: "local",
+      kind: "local",
+      name: "Local",
+      url: null,
+      instanceId: "wisp-instance-local",
+      ready: true,
+    },
     {
       id: "remote-alpha",
       kind: "remote",
       name: "Build host",
       url: "https://build.example.test",
+      instanceId: "wisp-instance-build",
+      ready: true,
     },
     {
       id: "remote-beta",
       kind: "remote",
       name: "Lab",
       url: "https://lab.example.test",
+      instanceId: "wisp-instance-lab",
+      ready: true,
     },
   ]
   return (
@@ -208,6 +251,7 @@ function DesktopConnections() {
                 connection={entry.metadata}
                 active={active}
                 attention={attention}
+                reachability={desktop.reachability.get(entry.metadata.id)}
                 onSelect={() => desktop.select(entry.metadata.id)}
               />
             )
@@ -225,9 +269,13 @@ function DesktopConnections() {
                   key={entry.metadata.id}
                   value={entry.metadata.id}
                   hint={
-                    desktop.attention.get(entry.metadata.id)
+                    connectionIssue(
+                      entry.metadata,
+                      desktop.reachability.get(entry.metadata.id)
+                    ) ??
+                    (desktop.attention.get(entry.metadata.id)
                       ? STATE_LABEL[desktop.attention.get(entry.metadata.id)!]
-                      : undefined
+                      : undefined)
                   }
                 >
                   <span className="flex items-center gap-2 [&>svg]:size-3.5 [&>svg]:text-muted-foreground">
@@ -264,10 +312,17 @@ function DesktopConnections() {
           disabled={desktop.pendingAction !== null}
         />
       </div>
-      <ConnectionDialogs dialog={dialog} onDialog={setDialog} />
+      <ConnectionDialogs
+        dialog={dialog}
+        onDialog={setDialog}
+        onError={setActionError}
+      />
       <ConnectionErrorDialog
-        error={actionError}
-        onClose={() => setActionError(null)}
+        error={actionError ?? desktop.actionError}
+        onClose={() => {
+          setActionError(null)
+          desktop.clearActionError()
+        }}
       />
     </>
   )
@@ -298,9 +353,13 @@ function MobileConnections() {
                 key={entry.metadata.id}
                 value={entry.metadata.id}
                 hint={
-                  desktop.attention.get(entry.metadata.id)
+                  connectionIssue(
+                    entry.metadata,
+                    desktop.reachability.get(entry.metadata.id)
+                  ) ??
+                  (desktop.attention.get(entry.metadata.id)
                     ? STATE_LABEL[desktop.attention.get(entry.metadata.id)!]
-                    : undefined
+                    : undefined)
                 }
               >
                 <span className="flex items-center gap-2 [&>svg]:size-3.5 [&>svg]:text-muted-foreground">
@@ -323,10 +382,17 @@ function MobileConnections() {
           mobile
         />
       </div>
-      <ConnectionDialogs dialog={dialog} onDialog={setDialog} />
+      <ConnectionDialogs
+        dialog={dialog}
+        onDialog={setDialog}
+        onError={setActionError}
+      />
       <ConnectionErrorDialog
-        error={actionError}
-        onClose={() => setActionError(null)}
+        error={actionError ?? desktop.actionError}
+        onClose={() => {
+          setActionError(null)
+          desktop.clearActionError()
+        }}
       />
     </>
   )
@@ -345,7 +411,7 @@ function ActiveConnectionActions({
 }) {
   const desktop = useDesktopConnections()!
   const active = desktop.active.metadata
-  const run = (action: () => Promise<void>) => {
+  const run = (action: () => Promise<unknown>) => {
     void action().catch((error: unknown) => onError(errorMessage(error)))
   }
   return (
@@ -371,11 +437,7 @@ function ActiveConnectionActions({
               Edit connection
             </span>
           </MenuItem>
-          <MenuItem
-            onClick={() =>
-              run(() => desktop.reconnect({ connectionId: active.id }))
-            }
-          >
+          <MenuItem onClick={() => onDialog("edit")}>
             <span className="flex items-center gap-2 [&>svg]:size-3.5">
               <Refresh />
               Reconnect
@@ -389,13 +451,31 @@ function ActiveConnectionActions({
           </MenuItem>
         </>
       ) : (
-        <MenuItem onClick={() => run(desktop.setupLocalWisp)}>
-          <span className="flex items-center gap-2 [&>svg]:size-3.5">
-            <Refresh />
-            Set up local Wisp
-          </span>
-        </MenuItem>
+        <>
+          <MenuItem
+            onClick={() =>
+              run(() => desktop.reconnect({ connectionId: active.id }))
+            }
+          >
+            <span className="flex items-center gap-2 [&>svg]:size-3.5">
+              <Refresh />
+              Reconnect
+            </span>
+          </MenuItem>
+          <MenuItem onClick={() => onDialog("local-setup")}>
+            <span className="flex items-center gap-2 [&>svg]:size-3.5">
+              <Local />
+              Diagnose local Wisp
+            </span>
+          </MenuItem>
+        </>
       )}
+      <MenuItem onClick={() => onDialog("reset")}>
+        <span className="flex items-center gap-2 text-destructive [&>svg]:size-3.5">
+          <Trash />
+          Reset desktop data
+        </span>
+      </MenuItem>
     </Menu>
   )
 }

@@ -32,6 +32,19 @@ use wisp_desktop::registry::Registry;
 use wisp_desktop::secrets::MemorySecretStore;
 use wisp_desktop::urls::normalize_daemon_url;
 
+fn synthetic_instance_id(value: &str) -> String {
+    if wisp_desktop::probe::is_instance_id(value) {
+        return value.to_string();
+    }
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hash = DefaultHasher::new();
+    value.hash(&mut hash);
+    format!(
+        "00000000-0000-4000-8000-{:012x}",
+        hash.finish() & 0xffffffffffff
+    )
+}
+
 /// The one task ID both daemons are seeded with, so a routing mistake shows up
 /// as the wrong *content* rather than a 404.
 pub const SHARED_TASK_ID: &str = "t-000000000001";
@@ -77,7 +90,7 @@ impl MockDaemon {
         let state = Arc::new(DaemonState {
             label: label.to_string(),
             token: token.to_string(),
-            instance_id: Mutex::new(instance_id.to_string()),
+            instance_id: Mutex::new(synthetic_instance_id(instance_id)),
             protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
@@ -138,6 +151,10 @@ impl MockDaemon {
 
     /// Stand a different daemon up behind the same address.
     pub fn become_a_different_daemon(&self, instance_id: &str) {
+        *self.state.instance_id.lock().expect("instance") = synthetic_instance_id(instance_id);
+    }
+
+    pub fn use_raw_instance_id(&self, instance_id: &str) {
         *self.state.instance_id.lock().expect("instance") = instance_id.to_string();
     }
 

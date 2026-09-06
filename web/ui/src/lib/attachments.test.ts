@@ -1,15 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachmentPayloads,
+  clearRememberedAttachments,
   formatBytes,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
   noImageReason,
   readAttachment,
   sniffImageType,
+  usePendingAttachments,
   type PendingAttachment,
 } from "./attachments";
+
+afterEach(() => {
+  clearRememberedAttachments("synthetic-connection");
+  vi.unstubAllGlobals();
+});
 
 /**
  * The client mirror of the daemon's attachment rules (S3): caps and the
@@ -101,5 +109,33 @@ describe("attachmentPayloads", () => {
   it("the caps constants mirror the daemon's", () => {
     expect(MAX_ATTACHMENT_BYTES).toBe(5 * 1024 * 1024);
     expect(MAX_ATTACHMENTS).toBe(10);
+  });
+});
+
+describe("remembered desktop attachments", () => {
+  it("keeps pending bytes across a task view unmount until explicitly cleared", async () => {
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:synthetic"),
+      revokeObjectURL: vi.fn(),
+    });
+    const options = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000synthetic-task",
+    };
+    const first = renderHook(() => usePendingAttachments(options));
+    act(() => first.result.current.addFiles([file(PNG)]));
+    await waitFor(() => expect(first.result.current.list).toHaveLength(1));
+    first.unmount();
+
+    const second = renderHook(() => usePendingAttachments(options));
+    expect(second.result.current.list).toHaveLength(1);
+    expect(second.result.current.payloads()).toEqual([
+      expect.objectContaining({ name: "shot.png" }),
+    ]);
+    act(() => second.result.current.clear());
+    expect(second.result.current.list).toHaveLength(0);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic");
   });
 });

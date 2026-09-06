@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, isAbsolute, resolve } from "node:path";
 import { CONFIG_PATH, type RepoConfig, type WispConfig } from "../config";
 import { emit } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
@@ -171,6 +171,7 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
     // projectUpdateError narrowed the runtime value; bind that fact for the
     // async filesystem checks and merge helpers below.
     const path = body.path as string;
+    if (!isAbsolute(path)) return err(`path must be absolute: ${path}`, 400);
     if (!(await directoryExists(path))) return err(`path is not an existing directory: ${path}`, 400);
 
     const resolved = resolve(path);

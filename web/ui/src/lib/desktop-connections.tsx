@@ -7,16 +7,19 @@ import {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from "react"
 
-import { WispMark } from "@/components/icons"
-import { Button } from "@/components/primitives"
-import { clearConnectionStorage } from "@/lib/connection-storage"
 import {
   connectionAttention,
   type ConnectionAttention,
 } from "@/lib/connection-attention"
+import {
+  classifyConnectionError,
+  type ConnectionReachability,
+} from "@/lib/connection-reachability"
 import {
   MAX_DESKTOP_CONNECTIONS,
   desktopBridge,
@@ -24,10 +27,18 @@ import {
   type DesktopBootstrap,
   type DesktopBridge,
   type DesktopConnectionMetadata,
+  type LocalSetupReport,
+  type LocalSetupStep,
+  type RemoteConnectionProbeInput,
+  type RemoteDaemonPreview,
   type ReconnectConnectionInput,
 } from "@/lib/desktop-bridge"
 import { createDesktopTransport } from "@/lib/desktop-transport"
-import { clearConnectionDrafts } from "@/lib/drafts"
+import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
+import {
+  clearForgottenConnection,
+  resetDesktopApplication,
+} from "@/lib/desktop-reset"
 import { queryClient } from "@/lib/query"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import type { DaemonTransport } from "@/lib/transport"
@@ -42,15 +53,23 @@ export interface DesktopConnectionContextValue {
   readonly connections: readonly DesktopConnectionEntry[]
   readonly active: DesktopConnectionEntry
   readonly attention: ReadonlyMap<string, ConnectionAttention>
+  readonly reachability: ReadonlyMap<string, ConnectionReachability>
   readonly pendingAction: string | null
+  readonly actionError: string | null
   select(connectionId: string): void
+  probeRemote(input: RemoteConnectionProbeInput): Promise<RemoteDaemonPreview>
+  probeReconnect(input: ReconnectConnectionInput): Promise<RemoteDaemonPreview>
   addRemote(input: AddRemoteConnectionInput): Promise<void>
   rename(connectionId: string, name: string): Promise<void>
   reconnect(input: ReconnectConnectionInput): Promise<void>
   remove(connectionId: string): Promise<void>
+  resetDesktopData(): Promise<void>
   pickLocalProject(): Promise<string | null>
-  setupLocalWisp(): Promise<void>
+  setupLocalWisp(): Promise<LocalSetupReport>
+  applyLocalWispSetup(expectedStep: LocalSetupStep): Promise<LocalSetupReport>
   reportAttention(connectionId: string, attention: ConnectionAttention): void
+  reportReachability(connectionId: string, value: ConnectionReachability): void
+  clearActionError(): void
 }
 
 const DesktopConnectionContext =
@@ -93,6 +112,212 @@ export function useDesktopConnections(): DesktopConnectionContextValue | null {
   return useContext(DesktopConnectionContext)
 }
 
+type ApplyBootstrap = (
+  bootstrap: DesktopBootstrap,
+  preferredActiveId?: string
+) => void
+
+function useConnectionActions({
+  bridge,
+  stateRef,
+  setState,
+  apply,
+  forgetAttention,
+  onBackgroundError,
+}: {
+  bridge: DesktopBridge
+  stateRef: React.RefObject<ConnectionState>
+  setState: Dispatch<SetStateAction<ConnectionState>>
+  apply: ApplyBootstrap
+  forgetAttention: (connectionId: string) => void
+  onBackgroundError: (message: string) => void
+}) {
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const pendingActionRef = useRef<string | null>(null)
+  const transact = useCallback(
+    async <T,>(label: string, action: () => Promise<T>): Promise<T> => {
+      if (pendingActionRef.current !== null)
+        throw new Error("Another connection action is still running")
+      pendingActionRef.current = label
+      setPendingAction(label)
+      try {
+        return await action()
+      } finally {
+        pendingActionRef.current = null
+        setPendingAction(null)
+      }
+    },
+    []
+  )
+  const addRemote = useCallback(
+    (input: AddRemoteConnectionInput) =>
+      transact("add", async () => {
+        if (stateRef.current.connections.length >= MAX_DESKTOP_CONNECTIONS) {
+          throw new Error(
+            `Desktop supports at most ${MAX_DESKTOP_CONNECTIONS} connections`
+          )
+        }
+        const added = await bridge.addRemoteConnection(input)
+        apply(await bridge.bootstrap(), added.id)
+      }),
+    [apply, bridge, stateRef, transact]
+  )
+  const probeRemote = useCallback(
+    (input: RemoteConnectionProbeInput) =>
+      transact("probe", () => bridge.probeRemoteConnection(input)),
+    [bridge, transact]
+  )
+  const rename = useCallback(
+    (connectionId: string, name: string) =>
+      transact(`rename:${connectionId}`, async () => {
+        await bridge.renameConnection(connectionId, name)
+        apply(await bridge.bootstrap(), stateRef.current.activeId)
+      }),
+    [apply, bridge, stateRef, transact]
+  )
+  const probeReconnect = useCallback(
+    (input: ReconnectConnectionInput) =>
+      transact(`probe-reconnect:${input.connectionId}`, () =>
+        bridge.probeSavedConnection(input)
+      ),
+    [bridge, transact]
+  )
+  const reconnect = useCallback(
+    (input: ReconnectConnectionInput) =>
+      transact(`reconnect:${input.connectionId}`, async () => {
+        const before = stateRef.current
+        const activeBefore = before.activeId
+        const targetName = before.connections.find(
+          (entry) => entry.metadata.id === input.connectionId
+        )?.metadata.name
+        try {
+          const reconnected = await bridge.reconnectConnection(input)
+          apply(
+            await bridge.bootstrap(),
+            activeBefore === input.connectionId ? reconnected.id : activeBefore
+          )
+          if (reconnected.id !== input.connectionId) {
+            await clearForgottenConnection(input.connectionId, forgetAttention)
+          }
+          void queryClient.invalidateQueries({ queryKey: [reconnected.id] })
+        } catch (error) {
+          // Native replacement can commit before a deferred Keychain cleanup
+          // reports failure. Reconcile the authoritative registry on every
+          // refusal so the UI never keeps routing a revoked ID.
+          const bootstrap = await bridge.bootstrap()
+          const oldStillExists = bootstrap.connections.some(
+            (connection) => connection.id === input.connectionId
+          )
+          const replacement = bootstrap.connections.find(
+            (connection) =>
+              connection.id !== input.connectionId &&
+              connection.name === targetName
+          )
+          apply(
+            bootstrap,
+            activeBefore === input.connectionId && !oldStillExists
+              ? replacement?.id
+              : activeBefore
+          )
+          if (!oldStillExists) {
+            await clearForgottenConnection(input.connectionId, forgetAttention)
+          }
+          throw error
+        }
+      }),
+    [apply, bridge, forgetAttention, stateRef, transact]
+  )
+  const remove = useCallback(
+    (connectionId: string) =>
+      transact(`remove:${connectionId}`, async () => {
+        const before = stateRef.current
+        const target = before.connections.find(
+          (entry) => entry.metadata.id === connectionId
+        )
+        if (!target) throw new Error("Unknown desktop connection")
+        if (target.metadata.kind === "local")
+          throw new Error("The built-in Local connection cannot be removed")
+        const local = before.connections.find(
+          (entry) => entry.metadata.kind === "local"
+        )!
+        const withoutTarget = Object.freeze({
+          ...before,
+          connections: Object.freeze(
+            before.connections.filter(
+              (entry) => entry.metadata.id !== connectionId
+            )
+          ),
+          activeId:
+            before.activeId === connectionId
+              ? local.metadata.id
+              : before.activeId,
+        })
+        stateRef.current = withoutTarget
+        setState(withoutTarget)
+        await queryClient.cancelQueries({ queryKey: [connectionId] })
+        let removalError: unknown = null
+        try {
+          await bridge.removeConnection(connectionId)
+        } catch (error) {
+          removalError = error
+        }
+        const bootstrap = await bridge.bootstrap()
+        apply(bootstrap, stateRef.current.activeId)
+        if (
+          !bootstrap.connections.some(
+            (connection) => connection.id === connectionId
+          )
+        ) {
+          await clearForgottenConnection(connectionId, forgetAttention)
+        }
+        if (removalError) {
+          onBackgroundError(
+            removalError instanceof Error
+              ? removalError.message
+              : String(removalError)
+          )
+          throw removalError
+        }
+      }),
+    [
+      apply,
+      bridge,
+      forgetAttention,
+      onBackgroundError,
+      setState,
+      stateRef,
+      transact,
+    ]
+  )
+  const resetDesktopData = useCallback(
+    () =>
+      transact("reset-desktop-data", () =>
+        resetDesktopApplication({
+          bridge,
+          connections: stateRef.current.connections,
+          apply,
+          forgetAttention,
+        })
+      ),
+    [apply, bridge, forgetAttention, stateRef, transact]
+  )
+  const { pickLocalProject, setupLocalWisp, applyLocalWispSetup } =
+    useLocalConnectionActions({ bridge, stateRef, apply, transact })
+  return {
+    pendingAction,
+    probeRemote,
+    probeReconnect,
+    addRemote,
+    rename,
+    reconnect,
+    remove,
+    resetDesktopData,
+    pickLocalProject,
+    setupLocalWisp,
+    applyLocalWispSetup,
+  }
+}
+
 export function DesktopApplicationProvider({
   initial,
   bridge = desktopBridge,
@@ -109,9 +334,18 @@ export function DesktopApplicationProvider({
   const [attention, setAttention] = useState<
     ReadonlyMap<string, ConnectionAttention>
   >(() => new Map())
-  const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const pendingActionRef = useRef<string | null>(null)
-
+  const [reachability, setReachability] = useState<
+    ReadonlyMap<string, ConnectionReachability>
+  >(
+    () =>
+      new Map(
+        initial.connections.map((connection) => [
+          connection.id,
+          connection.ready ? "unknown" : "offline",
+        ])
+      )
+  )
+  const [actionError, setActionError] = useState<string | null>(null)
   useEffect(() => {
     stateRef.current = state
   }, [state])
@@ -127,22 +361,18 @@ export function DesktopApplicationProvider({
         stateRef.current = next
         return next
       })
-    },
-    []
-  )
-
-  const transact = useCallback(
-    async <T,>(label: string, action: () => Promise<T>): Promise<T> => {
-      if (pendingActionRef.current !== null)
-        throw new Error("Another connection action is still running")
-      pendingActionRef.current = label
-      setPendingAction(label)
-      try {
-        return await action()
-      } finally {
-        pendingActionRef.current = null
-        setPendingAction(null)
-      }
+      setReachability((previous) => {
+        const next = new Map<string, ConnectionReachability>()
+        for (const connection of bootstrap.connections) {
+          next.set(
+            connection.id,
+            connection.ready
+              ? (previous.get(connection.id) ?? "unknown")
+              : "offline"
+          )
+        }
+        return next
+      })
     },
     []
   )
@@ -161,92 +391,6 @@ export function DesktopApplicationProvider({
     })
   }, [])
 
-  const addRemote = useCallback(
-    (input: AddRemoteConnectionInput) =>
-      transact("add", async () => {
-        if (stateRef.current.connections.length >= MAX_DESKTOP_CONNECTIONS) {
-          throw new Error(
-            `Desktop supports at most ${MAX_DESKTOP_CONNECTIONS} connections`
-          )
-        }
-        const previousIds = new Set(
-          stateRef.current.connections.map((entry) => entry.metadata.id)
-        )
-        await bridge.addRemoteConnection(input)
-        const bootstrap = await bridge.bootstrap()
-        const added = bootstrap.connections.find(
-          (connection) => !previousIds.has(connection.id)
-        )
-        apply(bootstrap, added?.id ?? stateRef.current.activeId)
-      }),
-    [apply, bridge, transact]
-  )
-
-  const rename = useCallback(
-    (connectionId: string, name: string) =>
-      transact(`rename:${connectionId}`, async () => {
-        await bridge.renameConnection(connectionId, name)
-        apply(await bridge.bootstrap(), stateRef.current.activeId)
-      }),
-    [apply, bridge, transact]
-  )
-
-  const reconnect = useCallback(
-    (input: ReconnectConnectionInput) =>
-      transact(`reconnect:${input.connectionId}`, async () => {
-        await bridge.reconnectConnection(input)
-        apply(await bridge.bootstrap(), stateRef.current.activeId)
-        void queryClient.invalidateQueries({ queryKey: [input.connectionId] })
-      }),
-    [apply, bridge, transact]
-  )
-
-  const remove = useCallback(
-    (connectionId: string) =>
-      transact(`remove:${connectionId}`, async () => {
-        const target = stateRef.current.connections.find(
-          (entry) => entry.metadata.id === connectionId
-        )
-        if (!target) throw new Error("Unknown desktop connection")
-        if (target.metadata.kind === "local") {
-          throw new Error("The built-in Local connection cannot be removed")
-        }
-        const removedActive = stateRef.current.activeId === connectionId
-        await bridge.removeConnection(connectionId)
-        const bootstrap = await bridge.bootstrap()
-        apply(
-          bootstrap,
-          removedActive
-            ? bootstrap.activeConnectionId
-            : stateRef.current.activeId
-        )
-        queryClient.removeQueries({ queryKey: [connectionId] })
-        clearConnectionStorage(connectionId)
-        clearConnectionDrafts(connectionId)
-        setAttention((previous) => {
-          const next = new Map(previous)
-          next.delete(connectionId)
-          return next
-        })
-      }),
-    [apply, bridge, transact]
-  )
-
-  const pickLocalProject = useCallback(
-    () => bridge.pickLocalProject(),
-    [bridge]
-  )
-
-  const setupLocalWisp = useCallback(
-    () =>
-      transact("setup:local", async () => {
-        await bridge.setupLocalWisp()
-        apply(await bridge.bootstrap(), stateRef.current.activeId)
-        void queryClient.invalidateQueries({ queryKey: ["local"] })
-      }),
-    [apply, bridge, transact]
-  )
-
   const reportAttention = useCallback(
     (connectionId: string, value: ConnectionAttention) => {
       setAttention((previous) => {
@@ -259,6 +403,44 @@ export function DesktopApplicationProvider({
     },
     []
   )
+  const reportReachability = useCallback(
+    (connectionId: string, value: ConnectionReachability) => {
+      setReachability((previous) => {
+        if (previous.get(connectionId) === value) return previous
+        const next = new Map(previous)
+        next.set(connectionId, value)
+        return next
+      })
+    },
+    []
+  )
+  const forgetAttention = useCallback((connectionId: string) => {
+    setAttention((previous) => {
+      const next = new Map(previous)
+      next.delete(connectionId)
+      return next
+    })
+  }, [])
+  const {
+    pendingAction,
+    probeRemote,
+    probeReconnect,
+    addRemote,
+    rename,
+    reconnect,
+    remove,
+    resetDesktopData,
+    pickLocalProject,
+    setupLocalWisp,
+    applyLocalWispSetup,
+  } = useConnectionActions({
+    bridge,
+    stateRef,
+    setState,
+    apply,
+    forgetAttention,
+    onBackgroundError: setActionError,
+  })
 
   const active =
     state.connections.find((entry) => entry.metadata.id === state.activeId) ??
@@ -268,29 +450,44 @@ export function DesktopApplicationProvider({
       connections: state.connections,
       active,
       attention,
+      reachability,
       pendingAction,
+      actionError,
+      probeRemote,
+      probeReconnect,
       select,
       addRemote,
       rename,
       reconnect,
       remove,
+      resetDesktopData,
       pickLocalProject,
       setupLocalWisp,
+      applyLocalWispSetup,
       reportAttention,
+      reportReachability,
+      clearActionError: () => setActionError(null),
     }),
     [
       state.connections,
       active,
       attention,
+      reachability,
       pendingAction,
+      actionError,
+      probeRemote,
+      probeReconnect,
       select,
       addRemote,
       rename,
       reconnect,
       remove,
+      resetDesktopData,
       pickLocalProject,
       setupLocalWisp,
+      applyLocalWispSetup,
       reportAttention,
+      reportReachability,
     ]
   )
 
@@ -300,6 +497,7 @@ export function DesktopApplicationProvider({
         connections={state.connections}
         active={active}
         onAttention={reportAttention}
+        onReachability={reportReachability}
       >
         {children}
       </DesktopConnectionRuntime>
@@ -311,11 +509,13 @@ function DesktopConnectionRuntime({
   connections,
   active,
   onAttention,
+  onReachability,
   children,
 }: {
   connections: readonly DesktopConnectionEntry[]
   active: DesktopConnectionEntry
   onAttention: (connectionId: string, attention: ConnectionAttention) => void
+  onReachability: (connectionId: string, value: ConnectionReachability) => void
   children: ReactNode
 }) {
   return (
@@ -327,6 +527,7 @@ function DesktopConnectionRuntime({
               key={entry.metadata.id}
               entry={entry}
               onAttention={onAttention}
+              onReachability={onReachability}
             />
           )
       )}
@@ -346,21 +547,33 @@ function DesktopConnectionRuntime({
 function InactiveConnectionMonitor({
   entry,
   onAttention,
+  onReachability,
 }: {
   entry: DesktopConnectionEntry
   onAttention: (connectionId: string, attention: ConnectionAttention) => void
+  onReachability: (connectionId: string, value: ConnectionReachability) => void
 }) {
   useEffect(() => {
+    if (!entry.metadata.ready) {
+      onAttention(entry.metadata.id, null)
+      onReachability(entry.metadata.id, "offline")
+      return
+    }
     let closed = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
     const refresh = () => {
       void entry.transport.request<ApiTask[]>("/api/tasks").then(
         (tasks) => {
-          if (!closed)
+          if (!closed) {
             onAttention(entry.metadata.id, connectionAttention(tasks))
+            onReachability(entry.metadata.id, "online")
+          }
         },
-        () => undefined
+        (error: unknown) => {
+          if (!closed)
+            onReachability(entry.metadata.id, classifyConnectionError(error))
+        }
       )
     }
     const schedule = () => {
@@ -372,8 +585,14 @@ function InactiveConnectionMonitor({
     let events: EventSource | null = null
     try {
       events = entry.transport.openEventStream("/api/events")
-      events.onopen = refresh
+      events.onopen = () => {
+        onReachability(entry.metadata.id, "online")
+        refresh()
+      }
       events.onmessage = schedule
+      // EventSource does not expose its HTTP refusal. Re-run the JSON probe so
+      // authentication and identity failures are not mislabeled as offline.
+      events.onerror = refresh
     } catch {
       // The next time this connection becomes active, the normal bridge owns recovery.
     }
@@ -382,65 +601,6 @@ function InactiveConnectionMonitor({
       if (timer !== null) clearTimeout(timer)
       events?.close()
     }
-  }, [entry, onAttention])
+  }, [entry, onAttention, onReachability])
   return null
-}
-
-export function DesktopBootstrapScreen({
-  promise,
-  children,
-}: {
-  promise: Promise<DesktopBootstrap>
-  children: (bootstrap: DesktopBootstrap) => ReactNode
-}) {
-  const [result, setResult] = useState<{
-    bootstrap?: DesktopBootstrap
-    error?: string
-  }>({})
-  useEffect(() => {
-    let live = true
-    void promise.then(
-      (bootstrap) => live && setResult({ bootstrap }),
-      (error: unknown) =>
-        live &&
-        setResult({
-          error: error instanceof Error ? error.message : String(error),
-        })
-    )
-    return () => {
-      live = false
-    }
-  }, [promise])
-
-  if (result.bootstrap) return children(result.bootstrap)
-  return (
-    <div className="flex h-dvh items-center justify-center bg-background text-foreground">
-      <div className="flex max-w-sm flex-col items-center px-6 text-center">
-        <span role="img" aria-label="Wisp">
-          <WispMark className="size-7" />
-        </span>
-        {result.error ? (
-          <>
-            <h1 className="mt-4 text-[14.5px] font-semibold">
-              Could not start Wisp Desktop
-            </h1>
-            <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
-              {result.error}
-            </p>
-            <Button
-              size="lg"
-              className="mt-4"
-              onClick={() => window.location.reload()}
-            >
-              Retry
-            </Button>
-          </>
-        ) : (
-          <p className="mt-3 text-[12px] text-muted-foreground">
-            Starting desktop connections…
-          </p>
-        )}
-      </div>
-    </div>
-  )
 }

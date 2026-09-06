@@ -32,6 +32,8 @@ pub enum LocalError {
     Malformed(PathBuf),
     #[error("{path} has no {field}")]
     MissingField { path: PathBuf, field: &'static str },
+    #[error("{path} has an invalid {field}")]
+    InvalidField { path: PathBuf, field: &'static str },
     #[error("{path} names an address this app will not talk to: {source}")]
     BadAddress {
         path: PathBuf,
@@ -137,6 +139,12 @@ pub fn load(home: &Path) -> Result<LocalProfile, LocalError> {
 
     let token = field("token")?;
     let instance_id = field("instanceId")?;
+    if !crate::probe::is_instance_id(&instance_id) {
+        return Err(LocalError::InvalidField {
+            path: config_path.clone(),
+            field: "instanceId",
+        });
+    }
     let port = parsed
         .get("port")
         .and_then(serde_json::Value::as_u64)
@@ -220,13 +228,16 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         write_profile(
             home.path(),
-            r#"{"instanceId":"wisp-instance-aaaa","port":18710,"host":"127.0.0.1","token":"synthetic-local-token"}"#,
+            r#"{"instanceId":"00000000-0000-4000-8000-000000000001","port":18710,"host":"127.0.0.1","token":"synthetic-local-token"}"#,
         );
         let profile = load(home.path()).expect("profile loads");
         assert_eq!(profile.base().host_str(), Some("127.0.0.1"));
         assert_eq!(profile.base().port(), Some(18710));
         assert_eq!(profile.base().scheme(), "http");
-        assert_eq!(profile.instance_id(), "wisp-instance-aaaa");
+        assert_eq!(
+            profile.instance_id(),
+            "00000000-0000-4000-8000-000000000001"
+        );
         assert_eq!(profile.token(), "synthetic-local-token");
     }
 
@@ -248,7 +259,7 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         write_profile(
             home.path(),
-            r#"{"instanceId":"wisp-instance-aaaa","port":18710,"token":"synthetic-local-token"}"#,
+            r#"{"instanceId":"00000000-0000-4000-8000-000000000001","port":18710,"token":"synthetic-local-token"}"#,
         );
         let result = load(home.path());
         let status = LocalStatus::from_result(home.path(), &result);

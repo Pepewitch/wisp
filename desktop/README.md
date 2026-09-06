@@ -5,10 +5,9 @@ webview runs the **same** React bundle the daemon serves in a browser
 (`web/ui-dist/index.html`), plus a native core that lets that one bundle talk to
 several independent Wisp daemons at once.
 
-Status: native-core slice of the alpha. The native transport, connection
-registry, credential storage, and command surface are implemented and tested.
-The React shell does not yet select the desktop runtime; see
-[the frontend contract](#frontend-contract) for what it needs.
+Status: working alpha. The shared React application selects the desktop runtime
+when launched by Tauri, shows connection tabs, and binds every daemon-owned
+operation and client record to an immutable connection ID.
 
 The web build is unchanged by any of this. Desktop support is a second runtime
 behind the `DaemonTransport` interface, not a change to how the browser build
@@ -33,7 +32,7 @@ transport all live in Rust.
 | `src-tauri/src/local.rs` | The built-in Local connection, read from the standard Wisp profile |
 | `src-tauri/src/urls.rs` | Which addresses are allowed, and how a client path joins one |
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
-| `src-tauri/src/setup.rs` | Local install/status reporting (reports; does not install) |
+| `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
 | `src-tauri/src/core.rs` | The command surface, free of `tauri` types so it is testable |
 | `src-tauri/src/commands.rs` | One-line Tauri adapters over `core.rs` |
 
@@ -71,6 +70,10 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
    a mutation onto a different machine.
 8. TLS verification is never relaxed. There is no `danger_accept_invalid_certs`
    in this crate.
+9. Packaged-app CORS preflights are answered locally; other origins are
+   refused, and proxy error headers are exposed to the webview.
+10. Response-header and WebSocket-handshake waits have finite budgets, while
+    established SSE, download, log, and terminal streams remain unbounded.
 
 ## Credentials
 
@@ -121,12 +124,16 @@ The other commands:
 
 | Command | Arguments | Returns |
 | --- | --- | --- |
-| `add_remote_connection` | `name`, `url`, `token` | `ConnectionInfo` |
+| `probe_remote_connection` | `url`, `token` | authenticated daemon identity |
+| `add_remote_connection` | `name`, `url`, `token`, `expectedInstanceId` | `ConnectionInfo` |
 | `rename_connection` | `connectionId`, `name` | `ConnectionInfo` |
-| `reconnect_connection` | `connectionId`, `url?`, `token?` | `ConnectionInfo` |
+| `probe_saved_connection` | `connectionId`, `url?`, `token?` | authenticated daemon identity |
+| `reconnect_connection` | `connectionId`, `url?`, `token?`, `expectedInstanceId?` | `ConnectionInfo` |
 | `remove_connection` | `connectionId` | `void` |
-| `pick_local_project` | — | `string \| null` |
+| `reset_desktop_data` | — | `void` |
+| `pick_local_project` | `connectionId: "local"` | `string \| null` |
 | `setup_local_wisp` | — | `LocalSetupReport` |
+| `apply_local_wisp_setup` | `expectedStep` | `LocalSetupReport` |
 
 Two adjustments the React shell has to absorb:
 
@@ -158,9 +165,10 @@ bash scripts/desktop/build-macos.sh --app-only  # .app only
 
 The build refreshes `web/ui-dist`, derives `icons/icon.icns` from the committed
 `icons/icon.png` (a generated brand asset — run `bun run brand` to change it),
-and bundles for `aarch64-apple-darwin`. The output is **unsigned**: no signing
-identity or notarization is configured, and nothing in this tree changes
-Gatekeeper. Right-click → Open, or sign it yourself, to run a local build.
+and bundles for `aarch64-apple-darwin`. The complete `.app` receives an ad-hoc
+signature, but it is **not Developer ID signed or Apple-notarized**. Nothing in
+this tree disables Gatekeeper; the experimental build may require the normal
+Finder Open confirmation until release credentials are available.
 
 ## Dependency notes
 

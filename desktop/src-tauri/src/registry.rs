@@ -691,6 +691,37 @@ impl Registry {
         state.pending_removals.remove(id);
         self.persist(&state)
     }
+
+    /// Revoke and remove every desktop-owned remote connection in one
+    /// transaction. The built-in Local target and the daemon's own profile are
+    /// deliberately untouched; only its desktop-local display label resets.
+    pub fn reset_desktop_data(&self) -> Result<(), RegistryError> {
+        let _mutation = self.mutation_lock();
+        let ids = {
+            let mut state = self.lock();
+            let before = state.clone();
+            let ids = state.connections.keys().cloned().collect::<Vec<_>>();
+            state.connections.clear();
+            state.credentials.clear();
+            state.identity.clear();
+            state.pending_removals.extend(ids.iter().cloned());
+            state.local_label = default_local_label();
+            if let Err(error) = self.persist(&state) {
+                *state = before;
+                return Err(error);
+            }
+            ids
+        };
+
+        for id in &ids {
+            self.secrets.delete(id)?;
+        }
+        let mut state = self.lock();
+        for id in &ids {
+            state.pending_removals.remove(id);
+        }
+        self.persist(&state)
+    }
 }
 
 fn clean_label(label: &str) -> Result<String, RegistryError> {
@@ -794,8 +825,8 @@ fn validate_file(path: &Path, file: &RegistryFile) -> Result<(), RegistryError> 
         {
             return Err(invalid("a connection label is invalid or duplicated"));
         }
-        if entry.instance_id.trim().is_empty() {
-            return Err(invalid("a daemon identity is missing"));
+        if !crate::probe::is_instance_id(&entry.instance_id) {
+            return Err(invalid("a daemon identity is invalid"));
         }
     }
     for id in &file.pending_removals {
@@ -841,12 +872,14 @@ mod tests {
         is_valid_connection_id, ConnectionKind, Identity, Registry, RegistryError,
         StoredConnection, MAX_CONNECTIONS,
     };
-    use crate::local::{LocalError, LocalProfile, LOCAL_CONNECTION_ID};
+    use crate::local::{LocalError, LocalProfile, LOCAL_CONNECTION_ID, LOCAL_CONNECTION_LABEL};
     use crate::secrets::{MemorySecretStore, SecretStore};
     use crate::urls::normalize_daemon_url;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use url::Url;
+
+    const REMOTE_INSTANCE: &str = "00000000-0000-4000-8000-000000000001";
 
     struct Harness {
         _dir: tempfile::TempDir,
@@ -943,6 +976,41 @@ mod tests {
     }
 
     #[test]
+    fn reset_revokes_all_remotes_and_restores_the_local_label() {
+        let h = harness(true);
+        h.registry
+            .rename(LOCAL_CONNECTION_ID, "This Mac")
+            .expect("rename local");
+        let first = h
+            .registry
+            .add_remote(
+                "One",
+                &remote("https://one.example.test"),
+                "synthetic-token-one",
+                "00000000-0000-4000-8000-000000000001",
+            )
+            .expect("first");
+        let second = h
+            .registry
+            .add_remote(
+                "Two",
+                &remote("https://two.example.test"),
+                "synthetic-token-two",
+                "00000000-0000-4000-8000-000000000002",
+            )
+            .expect("second");
+
+        h.registry.reset_desktop_data().expect("reset");
+
+        assert!(h.registry.resolve(&first.id).is_none());
+        assert!(h.registry.resolve(&second.id).is_none());
+        assert!(h.secrets.accounts().is_empty());
+        let listed = h.registry.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].label, LOCAL_CONNECTION_LABEL);
+    }
+
+    #[test]
     fn a_missing_local_profile_keeps_the_fixed_local_connection_visible() {
         let h = harness(false);
         assert!(h.registry.resolve(LOCAL_CONNECTION_ID).is_none());
@@ -965,7 +1033,7 @@ mod tests {
                 "  Studio  ",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         assert_eq!(info.label, "Studio");
@@ -995,7 +1063,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         let listed = serde_json::to_string(&h.registry.list()).expect("serializes");
@@ -1032,7 +1100,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         let renamed = h.registry.rename(&info.id, "Studio (EU)").expect("rename");
@@ -1057,7 +1125,7 @@ mod tests {
                 "Studio",
                 &remote("https://one.example.com"),
                 "synthetic-token-one",
-                "wisp-instance-one",
+                REMOTE_INSTANCE,
             )
             .expect("first");
         assert!(matches!(
@@ -1065,7 +1133,7 @@ mod tests {
                 "studio",
                 &remote("https://two.example.com"),
                 "synthetic-token-two",
-                "wisp-instance-two",
+                REMOTE_INSTANCE,
             ),
             Err(RegistryError::DuplicateLabel(_))
         ));
@@ -1088,7 +1156,7 @@ mod tests {
                     &format!("Remote {index}"),
                     &remote(&format!("https://remote-{index}.example.com")),
                     &format!("synthetic-token-{index}"),
-                    &format!("wisp-instance-{index}"),
+                    REMOTE_INSTANCE,
                 )
                 .expect("within limit");
         }
@@ -1098,7 +1166,7 @@ mod tests {
                 "One too many",
                 &remote("https://overflow.example.com"),
                 "synthetic-overflow-token",
-                "wisp-instance-overflow",
+                REMOTE_INSTANCE,
             ),
             Err(RegistryError::TooManyConnections)
         ));
@@ -1113,7 +1181,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         let replacement = h
@@ -1122,7 +1190,7 @@ mod tests {
                 &original.id,
                 &remote("https://wisp-2.example.com"),
                 "synthetic-replacement-token",
-                "wisp-instance-remote-2",
+                REMOTE_INSTANCE,
             )
             .expect("replace");
 
@@ -1148,7 +1216,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         h.registry.remove(&info.id).expect("remove");
@@ -1172,14 +1240,14 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-old-token",
-                "wisp-instance-old",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         h.registry.remove(&info.id).expect("remove");
 
         assert!(matches!(
             h.registry
-                .refresh(&info.id, Some("synthetic-new-token"), "wisp-instance-new"),
+                .refresh(&info.id, Some("synthetic-new-token"), REMOTE_INSTANCE),
             Err(RegistryError::UnknownConnection(_))
         ));
         assert!(h.secrets.accounts().is_empty());
@@ -1194,7 +1262,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
 
@@ -1224,7 +1292,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         // The record survives, but the tombstone is authoritative.
@@ -1286,6 +1354,38 @@ mod tests {
     }
 
     #[test]
+    fn unbounded_or_non_uuid_saved_identity_fails_closed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("connections.json");
+        let poisoned = serde_json::json!({
+            "version": 1,
+            "connections": [{
+                "id": "c-valid",
+                "label": "Studio",
+                "url": "https://wisp.example.com",
+                "instanceId": "synthetic-token-shaped-value",
+                "createdAt": 0
+            }],
+            "pendingRemovals": []
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&poisoned).expect("json")).expect("write");
+
+        let result = Registry::open(
+            path,
+            Arc::new(MemorySecretStore::new()),
+            PathBuf::from("/synthetic/.wisp"),
+            Ok(local_profile()),
+        );
+        assert!(matches!(
+            result,
+            Err(RegistryError::InvalidFile {
+                reason: "a daemon identity is invalid",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn a_connection_whose_credential_vanished_is_listed_but_not_ready() {
         let h = harness(true);
         let info = h
@@ -1294,7 +1394,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         h.secrets
@@ -1323,7 +1423,7 @@ mod tests {
                 "Studio",
                 &remote("https://wisp.example.com"),
                 "synthetic-remote-token",
-                "wisp-instance-remote",
+                REMOTE_INSTANCE,
             )
             .expect("add");
         assert_eq!(h.registry.identity(&info.id), Identity::Verified);
@@ -1343,7 +1443,7 @@ mod tests {
                 "One",
                 &remote("https://one.example.com"),
                 "synthetic-token-one",
-                "wisp-instance-one",
+                REMOTE_INSTANCE,
             )
             .expect("add one");
         let second = h
@@ -1352,7 +1452,7 @@ mod tests {
                 "Two",
                 &remote("https://two.example.com"),
                 "synthetic-token-two",
-                "wisp-instance-two",
+                REMOTE_INSTANCE,
             )
             .expect("add two");
         assert_ne!(first.id, second.id);

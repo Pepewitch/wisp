@@ -153,6 +153,26 @@ export interface PendingAttachments {
   clear: () => void;
 }
 
+interface RememberedAttachments {
+  list: PendingAttachment[];
+  note: string | null;
+  seq: number;
+}
+
+const rememberedAttachments = new Map<string, RememberedAttachments>();
+
+/** Revoke and forget all pending bytes owned by one removed connection. */
+export function clearRememberedAttachments(connectionId: string): void {
+  const prefix = `${connectionId}\u0000`;
+  for (const [rememberKey, value] of rememberedAttachments) {
+    if (!rememberKey.startsWith(prefix)) continue;
+    for (const attachment of value.list) {
+      if (attachment.url) URL.revokeObjectURL(attachment.url);
+    }
+    rememberedAttachments.delete(rememberKey);
+  }
+}
+
 /**
  * Pending-attachment state for one composer (create dialog / steer box).
  * `hasImage` is tri-state: true/false = known capability (false pastes get
@@ -164,6 +184,7 @@ export function usePendingAttachments({
   harness,
   hasImage,
   imageNote,
+  rememberKey,
 }: {
   harness: string | null;
   hasImage: boolean | undefined;
@@ -174,16 +195,35 @@ export function usePendingAttachments({
    * composes this sentence itself.
    */
   imageNote?: string;
+  /** Desktop-only in-memory scope. Omitted by the browser and create dialog. */
+  rememberKey?: string;
 }): PendingAttachments {
-  const [list, setList] = useState<PendingAttachment[]>([]);
-  const [note, setNote] = useState<string | null>(null);
-  const seq = useRef(0);
+  const remembered = rememberKey ? rememberedAttachments.get(rememberKey) : undefined;
+  const [list, setList] = useState<PendingAttachment[]>(remembered?.list ?? []);
+  const [note, setNote] = useState<string | null>(remembered?.note ?? null);
+  const seq = useRef(remembered?.seq ?? 0);
+  const noteRef = useRef(note);
   // the async paste loop reads the live list through this mirror, so the
   // setters stay pure (no URL revocation inside a state updater)
-  const listRef = useRef<PendingAttachment[]>([]);
+  const listRef = useRef<PendingAttachment[]>(remembered?.list ?? []);
+  const persist = (nextList: PendingAttachment[], nextNote = noteRef.current) => {
+    if (rememberKey) {
+      rememberedAttachments.set(rememberKey, {
+        list: nextList,
+        note: nextNote,
+        seq: seq.current,
+      });
+    }
+  };
   const commit = (next: PendingAttachment[]) => {
     listRef.current = next;
+    persist(next);
     setList(next);
+  };
+  const commitNote = (next: string | null) => {
+    noteRef.current = next;
+    persist(listRef.current, next);
+    setNote(next);
   };
 
   const remove = (id: string) => {
@@ -195,14 +235,15 @@ export function usePendingAttachments({
   const clear = () => {
     for (const a of listRef.current) if (a.url) URL.revokeObjectURL(a.url);
     commit([]);
-    setNote(null);
+    commitNote(null);
+    if (rememberKey) rememberedAttachments.delete(rememberKey);
   };
 
   /** One path for both pasting and picking: the two must never disagree. */
   const addFiles = (files: File[]) => {
     if (files.length === 0) return;
     if (harness && hasImage === false) {
-      setNote(noImageReason(harness));
+      commitNote(noImageReason(harness));
       return; // disabled-with-reason: nothing attaches
     }
     void (async () => {
@@ -222,7 +263,7 @@ export function usePendingAttachments({
         commit([...listRef.current, { id: `att-${seq.current}`, url, ...result.attachment }]);
       }
       // a fully-clean batch clears the previous note; the latest rejection wins otherwise
-      setNote(rejection);
+      commitNote(rejection);
     })();
   };
 

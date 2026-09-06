@@ -17,7 +17,10 @@ import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
-import { AddProjectDialog, ProjectPickerErrorDialog } from "@/components/project-add-dialogs"
+import {
+  AddProjectDialog,
+  ProjectPickerErrorDialog,
+} from "@/components/project-add-dialogs"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
@@ -48,6 +51,7 @@ import {
   removeConnectionStorage,
   writeConnectionStorage,
 } from "@/lib/connection-storage"
+import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
 import { addPickedLocalProject, groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
@@ -81,13 +85,27 @@ export default function App() {
 
 function useConnectionTaskSelection(connectionId: string) {
   const [selectedId, setSelectedId] = useState<string | null>(() =>
-    readConnectionStorage(connectionId, SELECTED_TASK_SETTING, SELECTED_TASK_KEY)
+    readConnectionStorage(
+      connectionId,
+      SELECTED_TASK_SETTING,
+      SELECTED_TASK_KEY
+    )
   )
   const selectTask = useCallback(
     (id: string | null) => {
       if (id === null)
-        removeConnectionStorage(connectionId, SELECTED_TASK_SETTING, SELECTED_TASK_KEY)
-      else writeConnectionStorage(connectionId, SELECTED_TASK_SETTING, SELECTED_TASK_KEY, id)
+        removeConnectionStorage(
+          connectionId,
+          SELECTED_TASK_SETTING,
+          SELECTED_TASK_KEY
+        )
+      else
+        writeConnectionStorage(
+          connectionId,
+          SELECTED_TASK_SETTING,
+          SELECTED_TASK_KEY,
+          id
+        )
       setSelectedId(id)
     },
     [connectionId]
@@ -107,8 +125,13 @@ function useProjectAddFlow() {
         // The mutation belongs to the initiating provider. A tab switch can
         // unmount it, but cannot retarget a picker completion to a remote.
         if (desktop.active.metadata.kind === "local") {
-          void addPickedLocalProject(desktop.pickLocalProject, addProject.mutateAsync).catch(
-            (error: unknown) => setPickerError(error instanceof Error ? error.message : String(error))
+          void addPickedLocalProject(
+            desktop.pickLocalProject,
+            addProject.mutateAsync
+          ).catch((error: unknown) =>
+            setPickerError(
+              error instanceof Error ? error.message : String(error)
+            )
           )
           return
         }
@@ -131,7 +154,10 @@ function useProjectAddFlow() {
           setRemoteOpen(false)
         }}
       />
-      <ProjectPickerErrorDialog error={pickerError} onClose={() => setPickerError(null)} />
+      <ProjectPickerErrorDialog
+        error={pickerError}
+        onClose={() => setPickerError(null)}
+      />
     </>
   )
   return { desktop, onAddProject, pending: addProject.isPending, dialogs }
@@ -165,12 +191,34 @@ function useWispUpdateControl() {
   )
 }
 
+function useDesktopConnectionHealth(
+  connectionId: string,
+  tasks: readonly ApiTask[],
+  loaded: boolean,
+  error: unknown
+) {
+  const desktop = useDesktopConnections()
+  const reportAttention = desktop?.reportAttention
+  useEffect(() => {
+    reportAttention?.(connectionId, connectionAttention(tasks))
+  }, [connectionId, reportAttention, tasks])
+  const reportReachability = desktop?.reportReachability
+  useEffect(() => {
+    if (!reportReachability) return
+    if (error)
+      reportReachability(connectionId, classifyConnectionError(error))
+    else if (loaded) reportReachability(connectionId, "online")
+  }, [connectionId, error, loaded, reportReachability])
+}
+
 function MainView() {
   const runtime = useDaemonRuntime()
   const projectAdd = useProjectAddFlow()
   const desktop = projectAdd.desktop
   const conn = connectionStore(runtime.connectionId)
-  const [selectedId, selectTask] = useConnectionTaskSelection(runtime.connectionId)
+  const [selectedId, selectTask] = useConnectionTaskSelection(
+    runtime.connectionId
+  )
   const selectedRef = useRef<string | null>(null)
   useLayoutEffect(() => {
     selectedRef.current = selectedId
@@ -219,6 +267,12 @@ function MainView() {
 
   // a fresh [] every render would re-run every memo below it
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
+  useDesktopConnectionHealth(
+    runtime.connectionId,
+    tasks,
+    tasksQuery.data !== undefined,
+    tasksQuery.error
+  )
 
   // keep a valid selection across refetches without fighting the user
   const [seen, setSeen] = useState<{
@@ -257,11 +311,6 @@ function MainView() {
     [tasks, reposQuery.data]
   )
   const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
-
-  const reportAttention = desktop?.reportAttention
-  useEffect(() => {
-    reportAttention?.(runtime.connectionId, connectionAttention(tasks))
-  }, [reportAttention, runtime.connectionId, tasks])
 
   const sideError = queryError(tasksQuery.error, statusQuery.error)
 
@@ -407,7 +456,10 @@ function AppShell({
   desktop: boolean
   task: ApiTask | null
   pullRequest?: PullRequestStatus
-  sidebar: (options?: { touch?: boolean; afterSelect?: () => void }) => ReactNode
+  sidebar: (options?: {
+    touch?: boolean
+    afterSelect?: () => void
+  }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
   terminal: ReactNode
@@ -429,7 +481,9 @@ function AppShell({
           changes={changes}
           terminal={terminal}
           composer={composer}
-          connectionSwitcher={desktop ? <DesktopConnectionChrome mobile /> : undefined}
+          connectionSwitcher={
+            desktop ? <DesktopConnectionChrome mobile /> : undefined
+          }
         />
         {dialogs}
       </>
@@ -438,14 +492,19 @@ function AppShell({
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header className="flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3">
+      <header
+        data-tauri-drag-region={desktop ? "" : undefined}
+        className={`flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface pr-3 ${desktop ? "pl-20" : "pl-3"}`}
+      >
         <span role="img" aria-label="Wisp" className="shrink-0">
           <WispMark className="size-[17px]" />
         </span>
         {desktop && <DesktopConnectionChrome />}
         {updateControl}
         <span className="flex-1" />
-        <span className="ml-1"><ConnIndicator /></span>
+        <span className="ml-1">
+          <ConnIndicator />
+        </span>
       </header>
 
       <Shell

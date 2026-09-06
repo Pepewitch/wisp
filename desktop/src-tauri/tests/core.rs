@@ -124,7 +124,7 @@ async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
         .await
         .expect("saved");
     assert_eq!(saved.label, "Studio");
-    assert_eq!(saved.instance_id, "wisp-instance-bravo");
+    assert_eq!(saved.instance_id, remote.instance_id());
     assert!(saved.ready);
     assert_eq!(app.secrets.accounts(), vec![saved.id.clone()]);
     assert_eq!(
@@ -135,6 +135,36 @@ async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
         .seen_paths()
         .iter()
         .any(|path| path == "/api/capabilities"));
+}
+
+#[tokio::test]
+async fn a_remote_that_changes_after_preview_is_not_saved() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let app = app(Some(&local)).await;
+
+    let preview = app
+        .core
+        .probe_remote(remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("preview");
+    remote.become_a_different_daemon("wisp-instance-replacement");
+    let error = app
+        .core
+        .add_remote_checked(
+            "Studio",
+            remote.url().as_str(),
+            REMOTE_TOKEN,
+            Some(&preview.instance_id),
+        )
+        .await
+        .expect_err("identity changed");
+
+    assert!(error
+        .to_string()
+        .contains("changed after the connection check"));
+    assert_eq!(app.core.bootstrap().connections.len(), 1);
+    assert!(app.secrets.accounts().is_empty());
 }
 
 #[tokio::test]
@@ -151,6 +181,26 @@ async fn an_incompatible_daemon_is_not_saved() {
         .expect_err("incompatible protocol");
     assert!(error.to_string().contains("protocol 2"));
     assert_eq!(app.core.bootstrap().connections.len(), 1);
+    assert!(app.secrets.accounts().is_empty());
+}
+
+#[tokio::test]
+async fn hostile_identity_text_cannot_cross_into_metadata() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    remote.use_raw_instance_id(REMOTE_TOKEN);
+    let app = app(Some(&local)).await;
+
+    let error = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect_err("non-UUID daemon identity must be refused");
+    assert!(error
+        .to_string()
+        .contains("not with a Wisp daemon identity"));
+    let bootstrap = serde_json::to_string(&app.core.bootstrap()).expect("bootstrap");
+    assert!(!bootstrap.contains(REMOTE_TOKEN));
     assert!(app.secrets.accounts().is_empty());
 }
 
@@ -248,15 +298,25 @@ async fn reconnecting_to_a_new_address_mints_a_replacement_rather_than_retargeti
         .await
         .expect("saved");
 
+    let preview = app
+        .core
+        .probe_reconnect(&saved.id, Some(second.url().as_str()), Some(REMOTE_TOKEN))
+        .await
+        .expect("preview");
     let replacement = app
         .core
-        .reconnect(&saved.id, Some(second.url().as_str()), Some(REMOTE_TOKEN))
+        .reconnect_checked(
+            &saved.id,
+            Some(second.url().as_str()),
+            Some(REMOTE_TOKEN),
+            Some(&preview.instance_id),
+        )
         .await
         .expect("reconnected");
 
     assert_ne!(replacement.id, saved.id);
     assert_eq!(replacement.label, "Studio");
-    assert_eq!(replacement.instance_id, "wisp-instance-charlie");
+    assert_eq!(replacement.instance_id, second.instance_id());
     // The old ID is revoked, so anything still in flight fails closed instead
     // of quietly addressing the new daemon.
     assert!(app.core.registry().resolve(&saved.id).is_none());
@@ -293,6 +353,64 @@ async fn a_failed_reconnect_leaves_the_saved_connection_exactly_as_it_was() {
 }
 
 #[tokio::test]
+async fn a_changed_remote_requires_confirmation_and_is_reproved_at_commit() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    let app = app(Some(&local)).await;
+    let saved = app
+        .core
+        .add_remote("Studio", remote.url().as_str(), REMOTE_TOKEN)
+        .await
+        .expect("saved");
+
+    remote.become_a_different_daemon("wisp-instance-replacement-one");
+    let error = app
+        .core
+        .reconnect(&saved.id, None, None)
+        .await
+        .expect_err("changed identity needs confirmation");
+    assert!(error.to_string().contains("review its identity"));
+    assert_eq!(
+        app.core
+            .bootstrap()
+            .connections
+            .iter()
+            .find(|connection| connection.id == saved.id)
+            .expect("saved connection")
+            .instance_id,
+        saved.instance_id
+    );
+
+    let preview = app
+        .core
+        .probe_reconnect(&saved.id, None, None)
+        .await
+        .expect("preview");
+    remote.become_a_different_daemon("wisp-instance-replacement-two");
+    let error = app
+        .core
+        .reconnect_checked(&saved.id, None, None, Some(&preview.instance_id))
+        .await
+        .expect_err("identity changed after preview");
+    assert!(error
+        .to_string()
+        .contains("changed after the connection check"));
+
+    let confirmed = app
+        .core
+        .probe_reconnect(&saved.id, None, None)
+        .await
+        .expect("second preview");
+    let reconnected = app
+        .core
+        .reconnect_checked(&saved.id, None, None, Some(&confirmed.instance_id))
+        .await
+        .expect("confirmed replacement");
+    assert_eq!(reconnected.id, saved.id);
+    assert_eq!(reconnected.instance_id, remote.instance_id());
+}
+
+#[tokio::test]
 async fn removing_a_connection_takes_its_credential_with_it() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
     let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
@@ -316,7 +434,7 @@ async fn the_local_setup_report_describes_the_machine_without_changing_it() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
     let app = app(Some(&local)).await;
 
-    let report = app.core.local_setup().await;
+    let report = app.core.local_setup().await.expect("setup report");
     assert!(report.status.available);
     assert!(report.daemon_reachable);
     assert_eq!(report.next_step, wisp_desktop::setup::NextStep::Ready);
@@ -333,7 +451,7 @@ async fn the_local_setup_report_describes_the_machine_without_changing_it() {
 #[tokio::test]
 async fn a_machine_with_no_profile_is_told_what_is_missing() {
     let app = app(None).await;
-    let report = app.core.local_setup().await;
+    let report = app.core.local_setup().await.expect("setup report");
     assert!(!report.status.available);
     assert!(!report.daemon_reachable);
     assert!(matches!(
@@ -359,7 +477,7 @@ async fn local_reconnect_reloads_the_standard_profile_and_checks_its_identity() 
     std::fs::write(
         app.core.wisp_home().join("config.json"),
         serde_json::json!({
-            "instanceId": "wisp-instance-replacement",
+            "instanceId": local.instance_id(),
             "port": local.port,
             "host": "127.0.0.1",
             "token": LOCAL_TOKEN,
@@ -372,7 +490,7 @@ async fn local_reconnect_reloads_the_standard_profile_and_checks_its_identity() 
         .reconnect("local", None, None)
         .await
         .expect("updated profile reconnects");
-    assert_eq!(reconnected.instance_id, "wisp-instance-replacement");
+    assert_eq!(reconnected.instance_id, local.instance_id());
     assert!(reconnected.ready);
 }
 
@@ -400,4 +518,39 @@ async fn local_reconnect_can_adopt_a_profile_created_after_launch() {
         .expect("new profile reconnects");
     assert!(reconnected.ready);
     assert_eq!(app.core.bootstrap().connections[0].id, "local");
+}
+
+#[tokio::test]
+async fn local_diagnosis_adopts_a_profile_created_after_launch() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let app = app(None).await;
+    assert!(!app.core.bootstrap().connections[0].ready);
+
+    std::fs::write(
+        app.core.wisp_home().join("config.json"),
+        serde_json::json!({
+            "instanceId": local.instance_id(),
+            "port": local.port,
+            "host": "127.0.0.1",
+            "token": LOCAL_TOKEN,
+        })
+        .to_string(),
+    )
+    .expect("new profile");
+
+    let report = app.core.local_setup().await.expect("diagnosis");
+    assert_eq!(report.next_step, wisp_desktop::setup::NextStep::Ready);
+    assert!(app.core.bootstrap().connections[0].ready);
+    assert!(app.core.registry().resolve("local").is_some());
+}
+
+#[tokio::test]
+async fn local_setup_refuses_when_the_confirmed_plan_is_stale() {
+    let app = app(None).await;
+    let error = app
+        .core
+        .apply_local_setup(wisp_desktop::setup::NextStep::Ready)
+        .await
+        .expect_err("the machine does not match the confirmed ready state");
+    assert!(error.to_string().contains("changed after it was diagnosed"));
 }

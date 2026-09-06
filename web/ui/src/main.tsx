@@ -5,12 +5,10 @@ import { isTauri } from "@tauri-apps/api/core"
 
 import "./index.css"
 import App from "./App.tsx"
+import { DesktopBootstrapScreen } from "@/components/desktop-bootstrap-screen"
 import { queryClient } from "@/lib/query"
 import { desktopBridge } from "@/lib/desktop-bridge"
-import {
-  DesktopApplicationProvider,
-  DesktopBootstrapScreen,
-} from "@/lib/desktop-connections"
+import { DesktopApplicationProvider } from "@/lib/desktop-connections"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 

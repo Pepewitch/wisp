@@ -1,14 +1,13 @@
-//! Foundations for the local-daemon setup flow.
+//! Local-daemon diagnosis and explicitly confirmed setup actions.
 //!
-//! This slice *reports*; it does not install. Discovering the CLI, reading the
-//! profile, and probing the daemon are the three facts the React shell needs to
-//! decide what to offer, and each of them is a native-side question. Actually
-//! running an installer is a separate decision with its own consent surface and
-//! is deliberately not smuggled in behind a status call.
+//! Diagnosis never mutates the machine. A separate command rechecks the exact
+//! reported plan before it runs `wisp init` or starts the Homebrew service.
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::local::LocalStatus;
@@ -16,7 +15,7 @@ use crate::urls::join_upstream;
 
 /// What the shell should offer next. A closed set, so the frontend branches on
 /// a value rather than on prose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NextStep {
     /// Profile present, daemon answering.
@@ -43,6 +42,24 @@ pub struct LocalSetupReport {
 /// Directories a Wisp install lands in, beyond whatever `PATH` says. The
 /// packaged app inherits a login `PATH` that often omits all of them.
 const EXTRA_BIN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+
+#[derive(Debug, thiserror::Error)]
+pub enum SetupError {
+    #[error("Wisp is not installed; install the Wisp Desktop Cask again so Homebrew can restore its required Wisp Formula")]
+    MissingCli,
+    #[error("Homebrew is not available; install the Wisp Formula and start its service manually")]
+    MissingHomebrew,
+    #[error("could not start the {step} setup step: {source}")]
+    Launch {
+        step: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("the {0} setup step did not complete successfully")]
+    Failed(&'static str),
+    #[error("the {0} setup step did not finish within 30 seconds")]
+    TimedOut(&'static str),
+}
 
 /// Find an executable by name. Pure in its inputs so the search order is
 /// testable without a real filesystem layout on `PATH`.
@@ -91,6 +108,62 @@ pub fn find_wisp_cli(home: Option<&Path>) -> Option<PathBuf> {
     find_executable("wisp", path_var.as_deref(), &extra, &is_executable_file)
 }
 
+fn find_homebrew() -> Option<PathBuf> {
+    let extra: Vec<PathBuf> = EXTRA_BIN_DIRS.iter().map(PathBuf::from).collect();
+    let path_var = std::env::var("PATH").ok();
+    find_executable("brew", path_var.as_deref(), &extra, &is_executable_file)
+}
+
+fn run_step(program: &Path, args: &[&str], step: &'static str) -> Result<(), SetupError> {
+    let mut child = Command::new(program)
+        .args(args)
+        .env_remove("WISP_HOME")
+        .env_remove("WISP_COMMAND_NAME")
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| SetupError::Launch { step, source })?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => return Err(SetupError::Failed(step)),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SetupError::TimedOut(step));
+            }
+            Err(source) => return Err(SetupError::Launch { step, source }),
+        }
+    }
+}
+
+/// Apply only the exact repair the report offered and the user confirmed.
+/// No shell is involved, output is discarded so credentials cannot become UI
+/// error text, and the app never downloads or embeds a second Wisp binary.
+pub fn apply(report: &LocalSetupReport) -> Result<(), SetupError> {
+    match report.next_step {
+        NextStep::Ready => return Ok(()),
+        NextStep::InstallCli => return Err(SetupError::MissingCli),
+        NextStep::RunInit => {
+            let cli = report
+                .cli_path
+                .as_deref()
+                .map(Path::new)
+                .ok_or(SetupError::MissingCli)?;
+            run_step(cli, &["init"], "wisp init")?;
+        }
+        NextStep::StartDaemon => {}
+    }
+    let brew = find_homebrew().ok_or(SetupError::MissingHomebrew)?;
+    run_step(&brew, &["services", "start", "wisp"], "Homebrew service")
+}
+
 /// Unauthenticated liveness probe. `/api/health` is one of the two routes that
 /// does not need the daemon token, which is what makes it usable before a
 /// credential is known to be good.
@@ -113,7 +186,11 @@ pub fn decide(status: &LocalStatus, cli_path: Option<&Path>, reachable: bool) ->
             NextStep::Ready,
             "The local Wisp daemon is running and this app can reach it.".to_string(),
         ),
-        (true, _, false) => (
+        (true, false, false) => (
+            NextStep::InstallCli,
+            "A local Wisp profile exists, but the `wisp` command is missing. Reinstall the Wisp Desktop Cask so Homebrew can restore it.".to_string(),
+        ),
+        (true, true, false) => (
             NextStep::StartDaemon,
             "A local Wisp profile exists but nothing is listening. Run `wisp serve` (or start the installed service) and try again.".to_string(),
         ),
@@ -192,6 +269,10 @@ mod tests {
         assert_eq!(
             decide(&status(true), Some(Path::new("/synthetic/bin/wisp")), false).next_step,
             NextStep::StartDaemon
+        );
+        assert_eq!(
+            decide(&status(true), None, false).next_step,
+            NextStep::InstallCli
         );
         assert_eq!(
             decide(

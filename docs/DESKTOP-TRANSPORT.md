@@ -1,7 +1,7 @@
 # Desktop transport contract
 
-Status: implementation boundary for the Wisp desktop alpha. This is not an
-end-user installation guide and does not claim that the desktop app ships yet.
+Status: implemented transport boundary for the Wisp desktop alpha. Installation
+and release mechanics are documented separately from this security contract.
 
 The desktop application manages several independent Wisp daemons from one UI.
 Each daemon remains the source of truth for its projects, tasks, worktrees,
@@ -187,7 +187,7 @@ covered by `desktop/src-tauri/tests/proxy.rs` against two synthetic daemons
 seeded with the same task ID. That suite tests the native hop; this one tests
 the daemons. Neither replaces the other.
 
-## Runtime interface for the next slice
+## Runtime interface
 
 The shared React application consumes one stable transport per connection:
 
@@ -202,25 +202,28 @@ interface DaemonTransport {
 }
 ```
 
-The first refactor supplies one implicit same-origin transport to the existing
-web build and scopes every daemon-owned query key by its reserved connection
-ID. No visible connection tabs are required for that refactor. The Tauri
-runtime can then provide additional transports without forking the UI or
-changing hooks back to global URLs.
+The browser build supplies one implicit same-origin transport. The Tauri build
+creates one immutable proxy transport per connection and the shared UI scopes
+daemon-owned queries, streams, drafts, attachments, and preferences by that
+connection without forking the interface.
 
 ## Native command surface
 
-The desktop native core lives in `desktop/`. It exposes seven Tauri invoke
-commands and nothing else; `desktop/README.md` documents the payloads.
+The desktop native core lives in `desktop/`. Its Tauri invoke commands are
+documented in `desktop/README.md`; none returns a credential.
 
 ```text
 desktop_bootstrap        proxyBaseUrl + activeConnectionId + non-secret connection metadata
-add_remote_connection    capability check, then save
+probe_remote_connection  authenticated identity preview; no persistence
+add_remote_connection    re-prove the confirmed identity, then save
 rename_connection        connectionId + display name only
-reconnect_connection     re-prove; a changed URL returns a REPLACEMENT id
+probe_saved_connection   authenticated reconnect identity preview
+reconnect_connection     re-prove confirmed identity; changed URL returns a replacement id
 remove_connection        revoke route, delete credential, clear tombstone
-pick_local_project       native folder picker
-setup_local_wisp         report on the local install; never installs
+reset_desktop_data       revoke all remotes and delete desktop-owned credentials
+pick_local_project       native folder picker, restricted to Local
+setup_local_wisp         diagnose the local install without changing it
+apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
 ```
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
