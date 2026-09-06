@@ -9,6 +9,9 @@ import type {
   TaskMode,
   TaskState,
   Turn,
+  TurnCaptureMode,
+  TurnCaptureState,
+  TurnDiagnosticState,
   TurnStatus,
 } from "./types";
 
@@ -48,7 +51,22 @@ CREATE TABLE IF NOT EXISTS turns (
   exit_code INTEGER,
   log_file TEXT NOT NULL,
   started_at TEXT NOT NULL,
-  ended_at TEXT
+  ended_at TEXT,
+  capture_mode TEXT,
+  capture_state TEXT,
+  captured_bytes INTEGER,
+  omitted_bytes INTEGER,
+  omitted_records INTEGER,
+  capture_categories_json TEXT,
+  capture_detail TEXT,
+  outcome_json TEXT,
+  kill_detail TEXT,
+  diagnostic_state TEXT,
+  diagnostic_bytes INTEGER,
+  diagnostic_first_seq INTEGER,
+  diagnostic_last_seq INTEGER,
+  diagnostic_detail TEXT,
+  diagnostic_evicted_at TEXT
 );
 CREATE TABLE IF NOT EXISTS outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,6 +132,30 @@ if (!turnCols.some((c) => c.name === "attachments_json")) {
 // counts are facts; a price table would be a product statement that rots.
 if (!turnCols.some((c) => c.name === "usage_json")) {
   db.exec(`ALTER TABLE turns ADD COLUMN usage_json TEXT`);
+}
+// Bounded-recorder foundation. NULL capture_mode is intentional authority:
+// the process was launched under legacy whole-log semantics and recovery must
+// never reinterpret it using whatever adapter happens to be installed later.
+for (const [name, sqlType] of [
+  ["capture_mode", "TEXT"],
+  ["capture_state", "TEXT"],
+  ["captured_bytes", "INTEGER"],
+  ["omitted_bytes", "INTEGER"],
+  ["omitted_records", "INTEGER"],
+  ["capture_categories_json", "TEXT"],
+  ["capture_detail", "TEXT"],
+  ["outcome_json", "TEXT"],
+  ["kill_detail", "TEXT"],
+  ["diagnostic_state", "TEXT"],
+  ["diagnostic_bytes", "INTEGER"],
+  ["diagnostic_first_seq", "INTEGER"],
+  ["diagnostic_last_seq", "INTEGER"],
+  ["diagnostic_detail", "TEXT"],
+  ["diagnostic_evicted_at", "TEXT"],
+] as const) {
+  if (!turnCols.some((column) => column.name === name)) {
+    db.exec(`ALTER TABLE turns ADD COLUMN ${name} ${sqlType}`);
+  }
 }
 
 // Migration (P5b): per-task reasoning effort, snapshotted from config
@@ -319,11 +361,15 @@ export function createTurn(
   pid_start_time: string | null = null,
   /** the turn's attachment manifest (A1a); null = no images, and stays null for turns that predate the column */
   attachments_json: string | null = null,
+  capture_mode: TurnCaptureMode | null = null,
 ): number {
+  const captureState: TurnCaptureState = capture_mode === null ? "legacy" : "complete";
   const res = db.run(
-    `INSERT INTO turns (task_id, n, prompt, status, pid, pid_start_time, log_file, started_at, attachments_json)
-     VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)`,
-    [task_id, n, prompt, pid, pid_start_time, log_file, now(), attachments_json],
+    `INSERT INTO turns
+       (task_id, n, prompt, status, pid, pid_start_time, log_file, started_at, attachments_json,
+        capture_mode, capture_state, captured_bytes, omitted_bytes, omitted_records, diagnostic_state)
+     VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
+    [task_id, n, prompt, pid, pid_start_time, log_file, now(), attachments_json, capture_mode, captureState],
   );
   emit({ type: "turn", taskId: task_id, n, status: "running" });
   return Number(res.lastInsertRowid);
@@ -363,6 +409,68 @@ export function setTurnModel(id: number, model: string): void {
  */
 export function setTurnUsage(id: number, usageJson: string): void {
   db.run(`UPDATE turns SET usage_json = ? WHERE id = ?`, [usageJson, id]);
+}
+
+export interface TurnCaptureCheckpoint {
+  state: TurnCaptureState;
+  capturedBytes: number;
+  omittedBytes: number;
+  omittedRecords: number;
+  categoriesJson: string | null;
+  detail: string | null;
+  outcomeJson: string | null;
+}
+
+/** Atomically replace the reducer/capture checkpoint for a recorder-owned turn. */
+export function setTurnCaptureCheckpoint(id: number, checkpoint: TurnCaptureCheckpoint): void {
+  db.run(
+    `UPDATE turns
+     SET capture_state = ?, captured_bytes = ?, omitted_bytes = ?, omitted_records = ?,
+         capture_categories_json = ?, capture_detail = ?, outcome_json = ?
+     WHERE id = ?`,
+    [
+      checkpoint.state,
+      checkpoint.capturedBytes,
+      checkpoint.omittedBytes,
+      checkpoint.omittedRecords,
+      checkpoint.categoriesJson,
+      checkpoint.detail,
+      checkpoint.outcomeJson,
+      id,
+    ],
+  );
+}
+
+/** Persist Wisp's own kill/transport reason instead of relying on daemon memory. */
+export function setTurnKillDetail(id: number, detail: string | null): void {
+  db.run(`UPDATE turns SET kill_detail = ? WHERE id = ?`, [detail, id]);
+}
+
+export interface TurnDiagnosticCheckpoint {
+  state: TurnDiagnosticState;
+  bytes: number;
+  firstSeq: number | null;
+  lastSeq: number | null;
+  detail: string | null;
+  evictedAt: string | null;
+}
+
+export function setTurnDiagnosticCheckpoint(id: number, checkpoint: TurnDiagnosticCheckpoint): void {
+  db.run(
+    `UPDATE turns
+     SET diagnostic_state = ?, diagnostic_bytes = ?, diagnostic_first_seq = ?, diagnostic_last_seq = ?,
+         diagnostic_detail = ?, diagnostic_evicted_at = ?
+     WHERE id = ?`,
+    [
+      checkpoint.state,
+      checkpoint.bytes,
+      checkpoint.firstSeq,
+      checkpoint.lastSeq,
+      checkpoint.detail,
+      checkpoint.evictedAt,
+      id,
+    ],
+  );
 }
 
 /**

@@ -63,6 +63,11 @@ export function taskMode(task: Pick<Task, "mode">): TaskMode {
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
 
+/** Durable selection of the turn-capture semantics used when a process starts. */
+export type TurnCaptureMode = "recorder-v1";
+export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy";
+export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
+
 /**
  * The honest failure word (Theme B, Q12). A turn that exits NONZERO after
  * delivering a terminal assistant message is not a failure of the work — the
@@ -117,10 +122,39 @@ export interface Turn {
    * `usageFormat` strategy into `usage`.
    */
   usage_json: string | null;
+  /** NULL means the turn predates, or did not opt into, the bounded recorder. */
+  capture_mode: TurnCaptureMode | null;
+  /** NULL on pre-migration rows; turnCaptureState() maps it to legacy. */
+  capture_state: TurnCaptureState | null;
+  captured_bytes: number | null;
+  omitted_bytes: number | null;
+  omitted_records: number | null;
+  capture_categories_json: string | null;
+  capture_detail: string | null;
+  /** Versioned reducer checkpoint; internal and never returned verbatim by the API. */
+  outcome_json: string | null;
+  /** Wisp-originated termination reason, persisted across daemon restarts. */
+  kill_detail: string | null;
+  diagnostic_state: TurnDiagnosticState | null;
+  diagnostic_bytes: number | null;
+  diagnostic_first_seq: number | null;
+  diagnostic_last_seq: number | null;
+  diagnostic_detail: string | null;
+  diagnostic_evicted_at: string | null;
   exit_code: number | null;
   log_file: string;
   started_at: string;
   ended_at: string | null;
+}
+
+/** Read old and new turn rows without reinterpreting their capture semantics. */
+export function turnCaptureState(turn: Pick<Turn, "capture_mode" | "capture_state">): TurnCaptureState {
+  if (turn.capture_mode === null) return "legacy";
+  return turn.capture_state ?? "complete";
+}
+
+export function turnDiagnosticState(turn: Pick<Turn, "diagnostic_state">): TurnDiagnosticState {
+  return turn.diagnostic_state ?? "unavailable";
 }
 
 export type TaskMessageStatus = "queued" | "delivered" | "cancelled";

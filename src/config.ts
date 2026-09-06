@@ -63,6 +63,13 @@ export interface WispConfig {
   /** repos offered in the web UI's new-task form (merged with the repo_paths of existing tasks by GET /api/repos) */
   repos: (string | RepoConfig)[];
   stuckMinutes: number;
+  /**
+   * Permanent primary-transcript budget for one turn. Reaching this budget is
+   * non-fatal for recorder-owned turns; legacy turns retain their old cap
+   * behavior until the recorder rollout is complete.
+   */
+  turnTranscriptBytes?: number;
+  /** @deprecated Config-file alias for turnTranscriptBytes. */
   logMaxBytes: number;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
@@ -101,6 +108,7 @@ const DEFAULTS: WispConfig = {
   webhooks: [],
   repos: [],
   stuckMinutes: 10,
+  turnTranscriptBytes: 5_000_000,
   logMaxBytes: 5_000_000,
   setupTimeoutMinutes: 10,
   envAllowlist: {},
@@ -115,6 +123,7 @@ const CONFIG_KEYS = [
   "webhooks",
   "repos",
   "stuckMinutes",
+  "turnTranscriptBytes",
   "logMaxBytes",
   "setupTimeoutMinutes",
   "envAllowlist",
@@ -189,7 +198,9 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     }
   }
   const out: Partial<WispConfig> = {};
-  const num = (key: "port" | "stuckMinutes" | "logMaxBytes" | "setupTimeoutMinutes"): void => {
+  const num = (
+    key: "port" | "stuckMinutes" | "turnTranscriptBytes" | "logMaxBytes" | "setupTimeoutMinutes",
+  ): void => {
     const v = raw[key];
     if (v === undefined) return;
     if (typeof v !== "number") throw new Error(`config.json: ${key} must be a number, got ${typeName(v)}`);
@@ -212,7 +223,17 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   if (raw.webhooks !== undefined) out.webhooks = stringArray(raw.webhooks, "config.json: webhooks");
   if (raw.repos !== undefined) out.repos = validateRepos(raw.repos);
   num("stuckMinutes");
+  num("turnTranscriptBytes");
   num("logMaxBytes");
+  if (
+    out.turnTranscriptBytes !== undefined &&
+    out.logMaxBytes !== undefined &&
+    out.turnTranscriptBytes !== out.logMaxBytes
+  ) {
+    throw new Error(
+      "config.json: turnTranscriptBytes and its legacy alias logMaxBytes must match when both are set",
+    );
+  }
   num("setupTimeoutMinutes");
   if (raw.envAllowlist !== undefined) {
     if (!isRecord(raw.envAllowlist)) {
@@ -414,6 +435,12 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     chmodSync(CONFIG_PATH, 0o600); // holds the bearer token; repair older installs
   }
   const cfg: WispConfig = { ...DEFAULTS, ...stored };
+  // The new name is canonical. Keep the old in-memory field synchronized for
+  // callers compiled against the transitional WispConfig shape; runtime code
+  // moves to transcriptBudgetBytes() as recorder support lands.
+  const transcriptBytes = stored.turnTranscriptBytes ?? stored.logMaxBytes ?? DEFAULTS.logMaxBytes;
+  cfg.turnTranscriptBytes = transcriptBytes;
+  cfg.logMaxBytes = transcriptBytes;
   let mustPersist = false;
   if (!configExists) {
     cfg.port = selectInitialPort(options.initialPort, options.portAvailable);
@@ -430,7 +457,23 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     mustPersist = true;
   }
   if (mustPersist) {
-    persistConfig({ ...storedRaw, ...cfg });
+    // New homes document only the canonical name. Existing files are not
+    // rewritten merely to rename a setting, so downgrades remain safe.
+    const { logMaxBytes: _legacyAlias, ...canonical } = cfg;
+    const persisted: Record<string, unknown> = { ...storedRaw, ...canonical };
+    if (storedRaw.logMaxBytes !== undefined && storedRaw.turnTranscriptBytes === undefined) {
+      delete persisted.turnTranscriptBytes;
+    } else {
+      delete persisted.logMaxBytes;
+    }
+    persistConfig(persisted);
   }
   return cfg;
+}
+
+/** Resolve the canonical per-turn transcript budget across the config rename. */
+export function transcriptBudgetBytes(
+  cfg: Pick<WispConfig, "turnTranscriptBytes" | "logMaxBytes">,
+): number {
+  return cfg.turnTranscriptBytes ?? cfg.logMaxBytes;
 }
