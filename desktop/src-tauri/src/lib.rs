@@ -12,12 +12,15 @@
 //! * [`secrets`] — remote tokens in the macOS Keychain, nowhere else.
 //! * [`local`] — the built-in Local connection, read from the standard Wisp
 //!   profile into native memory and never handed to JavaScript.
+//! * [`external`] — the one action that leaves the app: opening a web link in
+//!   the machine's browser, which the webview cannot do by itself.
 //!
 //! `docs/DESKTOP-TRANSPORT.md` states the contract these modules implement.
 
 pub mod capability;
 pub mod commands;
 pub mod core;
+pub mod external;
 pub mod local;
 pub mod probe;
 pub mod proxy;
@@ -79,6 +82,7 @@ pub fn run() {
             commands::pick_local_project,
             commands::setup_local_wisp,
             commands::apply_local_wisp_setup,
+            commands::open_external_url,
         ])
         .run(context())
         .expect("failed to start the Wisp desktop shell");
