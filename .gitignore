@@ -12,3 +12,9 @@ __pycache__/
 # local environment artifacts (owner call 2026-08-24: ignore, don't track)
 .agents/
 skills-lock.json
+
+# desktop shell: Rust build output, Tauri's generated ACL schemas, and the
+# .icns derived from the committed icons/icon.png by scripts/desktop/icons.sh
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/icons/icon.icns

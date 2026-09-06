@@ -22,6 +22,7 @@ import { GLYPHS, METRICS, UPEM } from "./wordmark-data";
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
+const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
 const INDEX_HTML = join(ROOT, "web/ui/index.html");
 const GEIST_WOFF2 = join(
   ROOT,
@@ -33,6 +34,8 @@ const OG = { width: 1280, height: 640, scale: 2 } as const;
 /** iOS home screen. Opaque plate — iOS masks the corners itself, and a
  *  transparent icon there comes out as a black square. */
 const TOUCH_ICON = 180;
+/** macOS app icon master. iconutil builds the whole .icns pyramid from this. */
+const APP_ICON = 1024;
 
 const checkOnly = process.argv.includes("--check");
 const stale: string[] = [];
@@ -146,8 +149,8 @@ if (!existsSync(CHROME)) {
   const woff2 = await readFile(GEIST_WOFF2);
   const fontFace = `@font-face{font-family:'Geist';src:url(data:font/woff2;base64,${woff2.toString("base64")}) format('woff2');font-weight:100 900;font-display:block}`;
 
-  /** Render an HTML string to a PNG with headless Chrome. */
-  async function shoot(html: string, out: string, width: number, height: number, scale: number) {
+  /** Render an HTML string to a PNG with headless Chrome, at an absolute path. */
+  async function shootTo(html: string, out: string, width: number, height: number, scale: number) {
     const tmp = join(BRAND, ".render.html");
     await writeFile(tmp, html);
     const png = join(BRAND, ".render.png");
@@ -171,19 +174,40 @@ if (!existsSync(CHROME)) {
     if (!existsSync(png)) throw new Error(`Chrome produced no PNG for ${out}`);
     const bytes = await readFile(png);
     await rm(png, { force: true });
-    await emit(join(BRAND, out), bytes);
+    await emit(out, bytes);
   }
 
-  // apple touch icon: the mark inset on an opaque plate
-  await shoot(
+  /** Render into brand/. */
+  const shoot = (html: string, out: string, width: number, height: number, scale: number) =>
+    shootTo(html, join(BRAND, out), width, height, scale);
+
+  /** The mark on its opaque plate, at any size. Shared by the two app icons. */
+  const plate = (size: number, bloom: number, id: string) =>
     `<!doctype html><meta charset="utf-8"><style>
-html,body{margin:0;width:${TOUCH_ICON}px;height:${TOUCH_ICON}px;background:${PALETTE.ink};overflow:hidden}
+html,body{margin:0;width:${size}px;height:${size}px;background:${PALETTE.ink};overflow:hidden}
 div{display:grid;place-items:center;width:100%;height:100%}
-svg{width:${Math.round(TOUCH_ICON * 0.8)}px;height:${Math.round(TOUCH_ICON * 0.8)}px;display:block}
-</style><div>${lanternSvg({ size: 128, bloom: 0.055, id: "ti" })}</div>`,
-    "apple-touch-icon.png",
-    TOUCH_ICON,
-    TOUCH_ICON,
+svg{width:${Math.round(size * 0.8)}px;height:${Math.round(size * 0.8)}px;display:block}
+</style><div>${lanternSvg({ size: Math.round(size * 0.71), bloom, id })}</div>`;
+
+  // apple touch icon: the mark inset on an opaque plate
+  await shoot(plate(TOUCH_ICON, 0.055, "ti"), "apple-touch-icon.png", TOUCH_ICON, TOUCH_ICON, 1);
+
+  // macOS desktop app icon. Not the same shape as the touch icon: macOS draws
+  // app icons on a rounded plate inset inside a transparent square (Apple's
+  // 1024pt grid puts an 824pt plate in the middle), and the transparent margin
+  // is also what makes the file RGBA — Tauri's icon pipeline rejects RGB.
+  const plateInset = Math.round(APP_ICON * 0.0977);
+  const plateSize = APP_ICON - plateInset * 2;
+  await shootTo(
+    `<!doctype html><meta charset="utf-8"><style>
+html,body{margin:0;width:${APP_ICON}px;height:${APP_ICON}px;background:transparent;overflow:hidden}
+.plate{position:absolute;inset:${plateInset}px;border-radius:${Math.round(plateSize * 0.2237)}px;
+  background:${PALETTE.ink};display:grid;place-items:center}
+svg{width:${Math.round(plateSize * 0.62)}px;height:${Math.round(plateSize * 0.62)}px;display:block}
+</style><div class="plate">${lanternSvg({ size: 512, bloom: 0.055, id: "ai" })}</div>`,
+    join(DESKTOP_ICONS, "icon.png"),
+    APP_ICON,
+    APP_ICON,
     1,
   );
 
