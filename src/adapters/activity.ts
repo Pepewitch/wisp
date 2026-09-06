@@ -78,10 +78,22 @@ function claudeSystem(event: Record<string, any>, context: NormalizeContext): Ac
   }];
 }
 
+/**
+ * The Agent call names no model unless the parent picked one, so the child's
+ * model is first learned from its forwarded messages (`--forward-subagent-text`
+ * carries `message.model`). Reported once per change, not per message.
+ */
+function claudeChildModel(event: Record<string, any>, parentId: string | null, context: NormalizeContext): ActivityEvent[] {
+  const model = string(event.message?.model);
+  if (!parentId || !model || !context.subagents.has(parentId) || context.models.get(parentId) === model) return [];
+  context.models.set(parentId, model);
+  return [{ kind: "subagent", id: parentId, parentId: null, timestamp: timestamp(event), phase: "updated", status: "running", model }];
+}
+
 function claudeAssistant(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const parentId = string(event.parent_tool_use_id);
   const at = timestamp(event);
-  const out: ActivityEvent[] = [];
+  const out: ActivityEvent[] = claudeChildModel(event, parentId, context);
   for (const content of event.message?.content ?? []) {
     const item = record(content);
     if (item.type === "text" && string(item.text)) {
@@ -146,6 +158,11 @@ function claudeUser(event: Record<string, any>, context: NormalizeContext): Acti
         timestamp: at,
         phase: background && !error ? "updated" : "completed",
         status: error ? "failed" : background ? "running" : "completed",
+        // The harness's own account of the child: `resolvedModel` is what it
+        // actually ran (e.g. the parent's model when the call named none).
+        agentId: string(outcome.agentId),
+        agentType: string(outcome.agentType),
+        model: string(outcome.resolvedModel),
         result: error || background ? null : result,
         error,
         durationMs: number(outcome.totalDurationMs) ?? number(record(outcome.usage).duration_ms),
@@ -439,6 +456,7 @@ export function createActivityFormatter(def?: AdapterDef): (line: string) => Act
     subagents: new Set(),
     background: new Map(),
     toolParents: new Map(),
+    models: new Map(),
   };
   const normalizer = def?.activity ? ACTIVITY_NORMALIZERS[def.activity] : undefined;
   if (def?.activity && !normalizer) {

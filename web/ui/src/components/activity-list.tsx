@@ -182,6 +182,7 @@ function SubagentRow({
   const node = useRef<HTMLDivElement>(null)
   const meta = subagentMeta(item)
   const elapsed = subagentDuration(item)
+  const result = resultBeyondTranscript(item)
   const qualifiers = [item.background ? "Background" : null, elapsed].filter(Boolean).join(" · ")
   const hasDetails = item.items.length > 0 || Boolean(item.prompt || item.result || item.error)
 
@@ -248,7 +249,7 @@ function SubagentRow({
           {item.status === "running" && item.items.length === 0 && (
             <p className="text-[11.5px] text-fg-secondary">This harness has not streamed child activity yet.</p>
           )}
-          {item.result && <Prose text={item.result} className="mt-2 text-[12px]" />}
+          {result && <Prose text={result} className="mt-2 text-[12px]" />}
           {item.error && (
             <div className="mt-2">
               <div className="mb-1 text-[10.5px] font-medium text-state-failed">Issue</div>
@@ -262,6 +263,18 @@ function SubagentRow({
       </CollapsibleContent>
     </Collapsible>
   )
+}
+
+/**
+ * Claude forwards the child's final message as transcript text and then hands
+ * the same text back as the Agent result. Showing both reads as a stutter, so
+ * the result is only rendered when it adds something the transcript lacks.
+ */
+function resultBeyondTranscript(item: SubagentActivityItem): string | null {
+  if (!item.result) return null
+  const last = item.items.at(-1)
+  if (last?.kind === "text" && last.text.trim() === item.result.trim()) return null
+  return item.result
 }
 
 function subagentMeta(item: SubagentActivityItem): React.ReactNode[] {

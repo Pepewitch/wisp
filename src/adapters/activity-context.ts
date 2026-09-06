@@ -9,6 +9,8 @@ export interface NormalizeContext {
   background: Map<string, boolean>;
   /** Monitoring call id → child id, used by Droid TaskOutput/TaskStop. */
   toolParents: Map<string, string>;
+  /** Subagent call id → the model its last forwarded message reported. */
+  models: Map<string, string>;
 }
 
 export function eventId(value: unknown, context: NormalizeContext, kind: string): string {

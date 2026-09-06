@@ -34,6 +34,10 @@ describe("structured activity normalization", () => {
         parentId: "call-claude-subagent",
         name: "Bash",
       }));
+      // The Agent call named no model; the child's first forwarded message did.
+      const modelReports = events.filter((event) => event.kind === "subagent" && event.model);
+      expect(modelReports[0]).toMatchObject({ id: "call-claude-subagent", phase: "updated", status: "running", model: "claude-sonnet-5" });
+      expect(modelReports.at(-1)).toMatchObject({ id: "call-claude-subagent", phase: "completed", model: "claude-sonnet-5" });
       expect(events).toContainEqual(expect.objectContaining({
         kind: "subagent",
         id: "call-claude-subagent",
