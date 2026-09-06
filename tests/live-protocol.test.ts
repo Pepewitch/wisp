@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BUILTIN_ADAPTERS, parseOutput } from "../src/adapters";
+import { BUILTIN_ADAPTERS, createActivityFormatter, parseOutput } from "../src/adapters";
 import { boundedOutput, MAX_INLINE_OUTPUT_CHARS } from "../src/adapters/live/bounded-output";
 import { CodexLiveDriver } from "../src/adapters/live/codex";
 import { DroidLiveDriver } from "../src/adapters/live/droid";
@@ -213,6 +213,49 @@ describe("Codex live terminal events", () => {
     // The tail survives: a command's error or exit banner is usually last.
     expect(bounded).toEndWith("TAIL");
     expect(bounded).toContain("characters elided");
+    await driver.close();
+  });
+
+  test("a child thread's markers reach the structured stream as one subagent, not raw tool calls", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new CodexLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.codex!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialInput: [{ type: "text", text: "hello", text_elements: [] }],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: {} });
+    const startThread = await requestAt(sink, 2);
+    driver.handle({ id: startThread.id, result: { thread: { id: "thread-1" } } });
+    const startTurn = await requestAt(sink, 3);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+
+    const spawn = { id: "call-1", type: "subAgentActivity", kind: "started", agentThreadId: "thread-2", agentPath: "/root/reviewer" };
+    const done = { id: "subagent-completed-1", type: "subAgentActivity", kind: "completed", agentThreadId: "thread-2", agentPath: "/root/reviewer" };
+    driver.handle({ method: "item/started", params: { item: spawn, startedAtMs: 1 } });
+    driver.handle({ method: "item/completed", params: { item: spawn, completedAtMs: 1 } });
+    driver.handle({ method: "item/completed", params: { item: done, completedAtMs: 2 } });
+
+    // The driver's wire dialect and the activity normalizer must agree: this
+    // pair is what once rendered a subagent as a raw `subagent_activity` tool.
+    const format = createActivityFormatter(BUILTIN_ADAPTERS.codex!);
+    const activity = events.flatMap((event) => format(JSON.stringify(event)));
+    expect(activity.filter((event) => event.kind === "tool")).toEqual([]);
+    expect(activity).toEqual([
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-2", phase: "started", status: "running", title: "reviewer", timestamp: 1 }),
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-2", phase: "updated", status: "running", timestamp: 1 }),
+      expect.objectContaining({ kind: "subagent", id: "thread-2", agentId: "thread-2", phase: "completed", status: "completed", timestamp: 2 }),
+    ]);
     await driver.close();
   });
 });

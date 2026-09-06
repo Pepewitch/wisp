@@ -432,3 +432,84 @@ describe("structured activity normalization", () => {
     expect(BUILTIN_ADAPTERS.claude!.exec).toContain("--forward-subagent-text");
   });
 });
+
+// The app-server driver (src/adapters/live/codex.ts) speaks a second Codex
+// dialect; these pin that its subagent markers land in the same lifecycle.
+describe("Codex app-server subagent dialect", () => {
+  test("Codex app-server marks a child thread with subagent_activity items, never a raw tool", () => {
+    const events = renderFixture(BUILTIN_ADAPTERS.codex!, "codex-live-subagent.jsonl");
+    // The regression: an unknown item type fell into the generic tool
+    // fallback and painted the wire JSON as a tool call.
+    expect(events.filter((event) => event.kind === "tool")).toEqual([]);
+    expect(events[0]).toMatchObject({
+      kind: "subagent",
+      id: "call-codex-live-spawn",
+      agentId: "agent-codex-live",
+      phase: "started",
+      status: "running",
+      title: "review_plan",
+      background: true,
+    });
+    expect(events.at(-1)).toMatchObject({
+      kind: "subagent",
+      id: "agent-codex-live",
+      agentId: "agent-codex-live",
+      phase: "completed",
+      status: "completed",
+    });
+  });
+
+  test("Codex subagent_activity kinds map onto the lifecycle through the thread id", () => {
+    const marker = (id: string, kind: string) => ({
+      type: "item.completed",
+      item: { type: "subagent_activity", id, kind, agent_thread_id: "thread-1", agent_path: "/root/worker" },
+    });
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      marker("call-1", "started"),
+      marker("marker-2", "interacted"),
+      marker("marker-3", "interrupted"),
+    ]);
+    expect(events).toEqual([
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-1", phase: "updated", status: "running", title: "worker" }),
+      expect.objectContaining({ kind: "subagent", id: "thread-1", agentId: "thread-1", phase: "updated", status: "running" }),
+      expect.objectContaining({ kind: "subagent", id: "thread-1", agentId: "thread-1", phase: "completed", status: "stopped" }),
+    ]);
+  });
+
+  test("Codex app-server collab calls speak camelCase and still drive the subagent lifecycle", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      {
+        type: "item.started",
+        item: { type: "collab_tool_call", id: "spawn-1", tool: "spawnAgent", status: "inProgress", prompt: "Review", model: "gpt-test", reasoning_effort: "high", receiver_thread_ids: [], agents_states: {} },
+      },
+      {
+        type: "item.completed",
+        item: {
+          type: "collab_tool_call",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          status: "completed",
+          prompt: "Review",
+          model: "gpt-test",
+          reasoning_effort: "high",
+          receiver_thread_ids: ["thread-1"],
+          agents_states: { "thread-1": { status: "pendingInit", message: null } },
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          type: "collab_tool_call",
+          id: "close-1",
+          tool: "closeAgent",
+          status: "completed",
+          receiver_thread_ids: ["thread-1"],
+          agents_states: { "thread-1": { status: "shutdown", message: null } },
+        },
+      },
+    ]);
+    expect(events[0]).toMatchObject({ kind: "subagent", id: "spawn-1", status: "running", model: "gpt-test", effort: "high" });
+    expect(events[1]).toMatchObject({ kind: "subagent", id: "spawn-1", agentId: "thread-1", phase: "updated", status: "running" });
+    expect(events[2]).toMatchObject({ kind: "subagent", id: "thread-1", phase: "completed", status: "stopped" });
+  });
+});

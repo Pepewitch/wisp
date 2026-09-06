@@ -24,6 +24,25 @@ paths were replaced with placeholders.
 The commands used the harness's structured streaming mode and unsafe
 permission flag, with a prompt restricting the child to that single read.
 
+## codex app-server subagent markers — codex-cli 0.153.4, 2026-09-06
+
+`codex-live-subagent.jsonl` is the Wisp-side log of a live app-server turn
+(the `codex-app-server` liveInput driver, model `gpt-5.6-sol`) in which the
+parent spawned one child and waited for it. Command output, reasoning and the
+surrounding agent messages were dropped; identifiers and the agent path were
+replaced consistently; the item shapes and their order are as observed.
+
+What this proves: on the app-server protocol the spawn does **not** arrive as
+a `spawn_agent` `collab_tool_call`. The child's lifecycle is reported by
+`subagent_activity` items (`kind` ∈ `started`, `interacted`, `interrupted`,
+`completed`) that carry the child `agent_thread_id` and its `agent_path`,
+each repeated on `item.started` and `item.completed` with an identical
+payload. The marker's own `id` is fresh per marker (the spawn reuses the
+function call id, the end is a `subagent-completed-…` id), so the thread id
+is the only correlation key. The parent's `wait` collab call does arrive, but
+with empty `receiver_thread_ids` and `agents_states`, and its `status` is
+camelCase (`inProgress`) where `codex exec --json` says `in_progress`.
+
 ## codex — codex-cli 0.149.0, model `gpt-5.6-luna`, 2026-08-22
 
 Run in a throwaway git repo, stdin from /dev/null (Wisp spawns turns with

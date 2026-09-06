@@ -27,6 +27,7 @@
         "files": [
           "codex-failed-turn.jsonl",
           "codex-first-turn.jsonl",
+          "codex-live-subagent.jsonl",
           "codex-resume-turn.jsonl",
           "codex-subagent.jsonl"
         ]
