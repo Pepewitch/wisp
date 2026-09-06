@@ -62,17 +62,20 @@ afterEach(() => {
 })
 
 describe("project settings remove", () => {
-  it("a history-only repo has no unregister control", () => {
+  it("explains why a history-only repo has no unregister control", () => {
     stubApi()
     mount(<ProjectSettingsSpecimen project={HISTORY_ONLY} />)
     expect(screen.queryByRole("button", { name: "Remove from Wisp" })).toBeNull()
+    expect(screen.getByText("Not tracked by Wisp. This project remains visible because it has task history.")).toBeInTheDocument()
   })
 
   it("unregisters behind a two-click confirm and never fires on the first click", async () => {
     const calls = stubApi()
     mount(<ProjectSettingsSpecimen project={CONFIGURED} />)
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove from Wisp" }))
+    const remove = screen.getByRole("button", { name: "Remove from Wisp" })
+    expect(remove).toHaveClass("bg-destructive", "text-destructive-foreground")
+    fireEvent.click(remove)
     expect(calls.some((call) => call.method === "DELETE")).toBe(false)
     expect(screen.getByText("Unregisters this project. Tasks stay; nothing on disk is deleted.")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
@@ -82,7 +85,9 @@ describe("project settings remove", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: "Remove from Wisp" }))
-    fireEvent.click(screen.getByRole("button", { name: "Confirm remove sample-app" }))
+    const confirm = screen.getByRole("button", { name: "Confirm remove sample-app" })
+    expect(confirm).toHaveClass("bg-destructive", "text-destructive-foreground")
+    fireEvent.click(confirm)
 
     await waitFor(() => expect(calls.some((call) => call.method === "DELETE")).toBe(true))
     expect(calls.find((call) => call.method === "DELETE")).toEqual({

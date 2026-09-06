@@ -22,7 +22,8 @@ import { cn } from "@/lib/utils"
  *
  * Remove from Wisp is the same verb as `wisp project rm`: it drops the config
  * entry, leaves task history, and never touches the directory on disk. A
- * history-only repo has no entry to drop, so the control is absent.
+ * history-only repo has no entry to drop, so the footer explains why the
+ * control is absent.
  */
 export function ProjectSettingsDialog({
   project,
@@ -164,11 +165,22 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
       {error && <div className="shrink-0 px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-        {project.configured && !confirmingRemove && (
-          <Button type="button" size="lg" className="mr-auto" onClick={() => setConfirmingRemove(true)}>
-            Remove from Wisp
-          </Button>
-        )}
+        {!confirmingRemove &&
+          (project.configured ? (
+            <Button
+              type="button"
+              size="lg"
+              tone="destructive"
+              className="mr-auto"
+              onClick={() => setConfirmingRemove(true)}
+            >
+              Remove from Wisp
+            </Button>
+          ) : (
+            <p className="mr-auto min-w-0 text-[11.5px] leading-relaxed text-muted-foreground">
+              Not tracked by Wisp. This project remains visible because it has task history.
+            </p>
+          ))}
         {confirmingRemove && (
           <p className="mr-auto min-w-0 text-[11.5px] leading-relaxed text-muted-foreground">
             Unregisters this project. Tasks stay; nothing on disk is deleted.
@@ -187,19 +199,16 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
             >
               Keep
             </Button>
-            <button
+            <Button
               type="button"
+              size="lg"
+              tone="destructive"
               aria-label={`Confirm remove ${label}`}
               disabled={removeProject.isPending}
               onClick={() => removeProject.mutate(project.path, { onSuccess: onClose })}
-              className={cn(
-                "h-8 rounded-md px-3 text-[13px] font-medium text-destructive",
-                "hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                "disabled:pointer-events-none disabled:opacity-45",
-              )}
             >
               {removeProject.isPending ? "Removing…" : "Remove?"}
-            </button>
+            </Button>
           </>
         ) : (
           <>
