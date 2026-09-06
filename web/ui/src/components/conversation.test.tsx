@@ -1,7 +1,8 @@
 import { QueryClient } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
+import { utcIso } from "@/lib/time"
 import type { ActivityEvent, TaskDetail, TaskMessage } from "@/lib/types"
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
@@ -309,5 +310,102 @@ describe("a steer that lands inside a running turn", () => {
     expect(screen.getByText("queued for the next turn")).toBeInTheDocument()
     expect(screen.queryByText("sent during this turn")).toBeNull()
     expect(screen.queryByTestId("conversation-viewport")!.querySelectorAll("[data-steered-message]")).toHaveLength(0)
+  })
+})
+
+describe("when a user bubble was sent", () => {
+  const MINUTE = 60_000
+  const DAY = 24 * 60 * MINUTE
+  // Half-units keep the assertions clear of a bucket boundary: a test that
+  // takes a second to run must not fall out of "5 min ago".
+  const first = new Date(Date.now() - (2 * DAY + 12 * 60 * MINUTE)).toISOString()
+  const second = new Date(Date.now() - 5.5 * MINUTE).toISOString()
+  const steered = new Date(Date.now() - 90.5 * MINUTE).toISOString()
+
+  const message: TaskMessage = {
+    id: "mfaketestid03",
+    task_id: "tclock",
+    text: "Use the safer approach",
+    status: "delivered",
+    delivery: "steered",
+    turn_n: 2,
+    delivery_uncertain: false,
+    attachments: [],
+    created_at: steered,
+    updated_at: steered,
+  }
+
+  const turn = (n: number, startedAt: string) => ({
+    id: n,
+    task_id: "tclock",
+    n,
+    prompt: `Prompt ${n}`,
+    result: null,
+    status: "running",
+    model: "fake-model",
+    usage: null,
+    attachments: [],
+    log_file: "/tmp/turn.log",
+    started_at: startedAt,
+    ended_at: null,
+  })
+
+  const task = {
+    id: "tclock",
+    title: "Say when each bubble was sent",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/tclock",
+    base_commit: "abc123",
+    harness: "claude-code",
+    model: "fake-model",
+    effort: null,
+    slot: 0,
+    state: "running",
+    state_detail: "turn 2",
+    session_id: "session-1",
+    seq: 2,
+    turn_count: 2,
+    archived: false,
+    mode: "worktree",
+    created_at: first,
+    updated_at: second,
+    diffstat: null,
+    worktreeReason: null,
+    turns: [turn(1, first), turn(2, second)],
+    messages: [message],
+  } as unknown as TaskDetail
+
+  const render1 = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    return render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
+  }
+
+  it("gives every prompt and steer bubble its own relative timestamp", () => {
+    render1()
+
+    expect(screen.getByText("2d ago")).toBeInTheDocument()
+    expect(screen.getByText("5 min ago")).toBeInTheDocument()
+    expect(screen.getByText("1h ago")).toBeInTheDocument()
+    const viewport = screen.getByTestId("conversation-viewport")
+    expect(viewport.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(3)
+  })
+
+  it("swaps the clicked bubble alone to a static UTC instant, and back", () => {
+    render1()
+
+    const relative = screen.getByText("5 min ago")
+    fireEvent.click(relative)
+
+    expect(relative).toHaveTextContent(utcIso(second))
+    expect(relative).toHaveClass("font-mono")
+    // its neighbours are untouched — this is a question, not a mode
+    expect(screen.getByText("2d ago")).toBeInTheDocument()
+    expect(screen.getByText("1h ago")).toBeInTheDocument()
+
+    fireEvent.click(relative)
+    expect(relative).toHaveTextContent("5 min ago")
   })
 })

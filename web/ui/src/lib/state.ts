@@ -95,13 +95,9 @@ export function elapsed(startedAt: string, now: number): string | null {
   return formatDuration(now - new Date(startedAt).getTime())
 }
 
-/** "4 min ago" — relative, because nobody cares about the wall clock here. */
-export function since(iso: string): string {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60_000)
-  if (!Number.isFinite(mins)) return ""
-  if (mins < 1) return "just now"
-  if (mins < 60) return `${mins} min ago`
-  const h = Math.floor(mins / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
+/**
+ * "4 min ago" — relative, because nobody cares about the wall clock here.
+ * One relative clock for the app: the vocabulary and the arithmetic both live
+ * in `lib/time.ts`, so a sidebar row and a prompt bubble never disagree.
+ */
+export { fromNow as since } from "./time"

@@ -18,6 +18,7 @@ import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
+import { useTick } from "@/hooks/useTick"
 import { formatBytes } from "@/lib/attachments"
 import {
   activityByTurn,
@@ -28,6 +29,7 @@ import {
   type TurnActivity,
 } from "@/lib/activity"
 import { duration } from "@/lib/state"
+import { fromNow, utcIso } from "@/lib/time"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
@@ -319,6 +321,7 @@ function TurnBlock({
               retried after an unconfirmed delivery; an earlier process may also have received it
             </div>
           )}
+          <BubbleTimestamp at={turn.started_at} className="mt-1.5 ml-auto block w-fit" />
         </div>
       </div>
 
@@ -389,6 +392,52 @@ function TurnBlock({
 }
 
 /**
+ * When the person sent this bubble.
+ *
+ * Relative by default, because "5 min ago" is the fact you actually want while
+ * a task is live and it stays readable at 10.5px. One click swaps THIS bubble
+ * to the exact instant in UTC — the form you paste into a log search — and the
+ * mono face says the string is machine-exact (§4). The toggle is per bubble on
+ * purpose: asking when one message was sent is a question, not a mode, so it
+ * neither persists nor drags every other bubble with it.
+ *
+ * The relative reading is only true for a second at a time, so it rides the
+ * app's one clock; the exact reading never changes and unsubscribes from it.
+ */
+export function BubbleTimestamp({
+  at,
+  className,
+  /** the gallery renders both readings side by side; the app always starts relative */
+  defaultExact = false,
+}: {
+  at: string
+  className?: string
+  defaultExact?: boolean
+}) {
+  const [exact, setExact] = useState(defaultExact)
+  const now = useTick(!exact)
+  const relative = fromNow(at, now)
+  const iso = utcIso(at)
+  if (!relative || !iso) return null
+
+  return (
+    <button
+      type="button"
+      data-bubble-timestamp
+      onClick={() => setExact((on) => !on)}
+      title={exact ? relative : iso}
+      className={cn(
+        "text-[10.5px] text-faint transition-colors hover:text-muted-foreground",
+        exact && "font-mono",
+        className,
+      )}
+    >
+      {exact ? iso : relative}
+    </button>
+  )
+}
+
+/**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —
  * only its position changes — so an anchored steer and an unanchored one are
  * never told apart by their styling, and neither is ever confused with the
@@ -413,7 +462,12 @@ function SteeredMessage({
           )}
         >
           {message.text}
-          <div className="mt-1 text-[10.5px] text-faint">sent during this turn</div>
+          {/* one metadata line: what this bubble is on the left, when it was
+              sent on the right, rather than stacking two muted rows (§4) */}
+          <div className="mt-1 flex items-baseline gap-2 text-[10.5px] text-faint">
+            <span>sent during this turn</span>
+            <BubbleTimestamp at={message.created_at} className="ml-auto" />
+          </div>
           {message.delivery_uncertain && (
             <div className="mt-1 text-[10.5px] text-faint">
               delivery retried after an unconfirmed native admission
