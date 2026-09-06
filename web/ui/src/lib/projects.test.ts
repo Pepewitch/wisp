@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { groupTasksByProject, pathBasename } from "./projects";
+import { addPickedLocalProject, groupTasksByProject, pathBasename } from "./projects";
 import type { ApiTask, RepoInfo } from "./types";
 
 function makeTask(id: string, repoPath: string, overrides: Partial<ApiTask> = {}): ApiTask {
@@ -82,5 +82,30 @@ describe("pathBasename", () => {
     expect(pathBasename("/a/b/c")).toBe("c");
     expect(pathBasename("/a/b/c/")).toBe("c");
     expect(pathBasename("/")).toBe("/");
+  });
+});
+
+describe("desktop local project picker", () => {
+  it("posts through the initiating connection even if active state changes while the picker is open", async () => {
+    let finishPicker!: (path: string | null) => void;
+    const pick = () => new Promise<string | null>((resolve) => (finishPicker = resolve));
+    const localAdd = vi.fn(async () => undefined);
+    const remoteAdd = vi.fn(async () => undefined);
+    let activeAdd = localAdd;
+
+    const completion = addPickedLocalProject(pick, activeAdd);
+    activeAdd = remoteAdd;
+    finishPicker("/synthetic/local-project");
+    await completion;
+
+    expect(localAdd).toHaveBeenCalledWith("/synthetic/local-project");
+    expect(remoteAdd).not.toHaveBeenCalled();
+    expect(activeAdd).toBe(remoteAdd);
+  });
+
+  it("does nothing when the native picker is cancelled", async () => {
+    const add = vi.fn();
+    await addPickedLocalProject(async () => null, add);
+    expect(add).not.toHaveBeenCalled();
   });
 });

@@ -28,6 +28,9 @@ interface SidebarProps {
   onShowArchivedChange: (value: boolean) => void
   onNewTask: (repoPath: string) => void
   onConfigureProject: (repoPath: string) => void
+  /** Desktop-only: native picker for Local, daemon path prompt for remotes. */
+  onAddProject?: () => void
+  addProjectPending?: boolean
   /** a tasks/status fetch failure, shown inline */
   error: string | null
   loading: boolean
@@ -50,6 +53,8 @@ export function Sidebar({
   onShowArchivedChange,
   onNewTask,
   onConfigureProject,
+  onAddProject,
+  addProjectPending = false,
   error,
   loading,
   touch = false,
@@ -63,8 +68,14 @@ export function Sidebar({
         <Eyebrow className="flex-1">Projects</Eyebrow>
         {/* the <span> carries the tooltip: a disabled button fires no mouse
             events, so a `title` on it would never show on hover */}
-        <span title={ADD_PROJECT_HINT}>
-          <Button size={touch ? "lg" : "sm"} icon disabled aria-label={ADD_PROJECT_HINT}>
+        <span title={onAddProject ? "Add project" : ADD_PROJECT_HINT}>
+          <Button
+            size={touch ? "lg" : "sm"}
+            icon
+            disabled={!onAddProject || addProjectPending}
+            aria-label={onAddProject ? "Add project" : ADD_PROJECT_HINT}
+            onClick={onAddProject}
+          >
             <FolderAdd />
           </Button>
         </span>
@@ -77,8 +88,12 @@ export function Sidebar({
           <div className="px-2.5 py-1 text-[11.5px] text-faint">Loading…</div>
         ) : groups.length === 0 && archivedTasks.length === 0 ? (
           <div className="px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
-            No projects yet. Run <code className="text-muted-foreground">wisp project add &lt;path&gt;</code> to register
-            one, then its <span className="text-muted-foreground">+</span> creates the first task.
+            {onAddProject ? (
+              <>No projects yet. Add a project, then its <span className="text-muted-foreground">+</span> creates the first task.</>
+            ) : (
+              <>No projects yet. Run <code className="text-muted-foreground">wisp project add &lt;path&gt;</code> to register
+                one, then its <span className="text-muted-foreground">+</span> creates the first task.</>
+            )}
           </div>
         ) : (
           <div className="flex flex-col">

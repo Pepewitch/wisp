@@ -106,15 +106,18 @@ export function Tab({
   count,
   onClick,
   size = "sm",
+  className,
   children,
+  ...rest
 }: {
   active?: boolean
   count?: number | string
   onClick?: () => void
   /** `lg` is the touch size — 44px, the floor for a thumb target */
   size?: "sm" | "lg"
+  className?: string
   children: ReactNode
-}) {
+} & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "children" | "onClick" | "className">) {
   return (
     <button
       type="button"
@@ -124,7 +127,9 @@ export function Tab({
         "flex shrink-0 items-center gap-1.5 rounded-md transition-colors",
         size === "sm" ? "h-[22px] px-2.5 text-[12px]" : "h-11 px-3.5 text-[13px]",
         active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
+        className,
       )}
+      {...rest}
     >
       {children}
       {count !== undefined && <span className="font-mono text-[10.5px] text-muted-foreground">{count}</span>}

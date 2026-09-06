@@ -1,14 +1,13 @@
-//! Foundations for the local-daemon setup flow.
+//! Local-daemon diagnosis and explicitly confirmed setup actions.
 //!
-//! This slice *reports*; it does not install. Discovering the CLI, reading the
-//! profile, and probing the daemon are the three facts the React shell needs to
-//! decide what to offer, and each of them is a native-side question. Actually
-//! running an installer is a separate decision with its own consent surface and
-//! is deliberately not smuggled in behind a status call.
+//! Diagnosis never mutates the machine. A separate command rechecks the exact
+//! reported plan before it runs `wisp init` or starts the Homebrew service.
 
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::local::LocalStatus;
@@ -16,7 +15,7 @@ use crate::urls::join_upstream;
 
 /// What the shell should offer next. A closed set, so the frontend branches on
 /// a value rather than on prose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NextStep {
     /// Profile present, daemon answering.
@@ -40,9 +39,28 @@ pub struct LocalSetupReport {
     pub message: String,
 }
 
-/// Directories a Wisp install lands in, beyond whatever `PATH` says. The
-/// packaged app inherits a login `PATH` that often omits all of them.
-const EXTRA_BIN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+/// Homebrew's supported macOS prefixes. Mutating setup actions deliberately do
+/// not trust inherited PATH: a GUI launched from a project shell must never run
+/// a shadow `wisp` or `brew` binary.
+const HOMEBREW_BINARIES: &[&str] = &["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+
+#[derive(Debug, thiserror::Error)]
+pub enum SetupError {
+    #[error("Wisp is not installed; install the Wisp Desktop Cask again so Homebrew can restore its required Wisp Formula")]
+    MissingCli,
+    #[error("Homebrew is not available; install the Wisp Formula and start its service manually")]
+    MissingHomebrew,
+    #[error("could not start the {step} setup step: {source}")]
+    Launch {
+        step: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("the {0} setup step did not complete successfully")]
+    Failed(&'static str),
+    #[error("the {0} setup step did not finish within 30 seconds")]
+    TimedOut(&'static str),
+}
 
 /// Find an executable by name. Pure in its inputs so the search order is
 /// testable without a real filesystem layout on `PATH`.
@@ -80,15 +98,72 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// Locate the `wisp` CLI the same way a login shell would, plus the two package
-/// manager prefixes a GUI process usually cannot see.
-pub fn find_wisp_cli(home: Option<&Path>) -> Option<PathBuf> {
-    let mut extra: Vec<PathBuf> = EXTRA_BIN_DIRS.iter().map(PathBuf::from).collect();
-    if let Some(home) = home {
-        extra.push(home.join(".local/bin"));
+fn formula_cli_for_brew(brew: &Path) -> Option<PathBuf> {
+    let prefix = brew.parent()?.parent()?;
+    Some(prefix.join("opt/wisp/bin/wisp"))
+}
+
+fn find_homebrew() -> Option<PathBuf> {
+    HOMEBREW_BINARIES
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| is_executable_file(path))
+}
+
+/// Locate the executable owned by the Homebrew Wisp Formula. `home` is kept in
+/// the signature for the diagnostic call site, but intentionally does not add
+/// user-controlled search paths.
+pub fn find_wisp_cli(_home: Option<&Path>) -> Option<PathBuf> {
+    let brew = find_homebrew()?;
+    formula_cli_for_brew(&brew).filter(|path| is_executable_file(path))
+}
+
+fn run_step(program: &Path, args: &[&str], step: &'static str) -> Result<(), SetupError> {
+    let mut child = Command::new(program)
+        .args(args)
+        .env_remove("WISP_HOME")
+        .env_remove("WISP_COMMAND_NAME")
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|source| SetupError::Launch { step, source })?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(_)) => return Err(SetupError::Failed(step)),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SetupError::TimedOut(step));
+            }
+            Err(source) => return Err(SetupError::Launch { step, source }),
+        }
     }
-    let path_var = std::env::var("PATH").ok();
-    find_executable("wisp", path_var.as_deref(), &extra, &is_executable_file)
+}
+
+/// Apply only the exact repair the report offered and the user confirmed.
+/// No shell is involved, output is discarded so credentials cannot become UI
+/// error text, and the app never downloads or embeds a second Wisp binary.
+pub fn apply(report: &LocalSetupReport) -> Result<(), SetupError> {
+    match report.next_step {
+        NextStep::Ready => return Ok(()),
+        NextStep::InstallCli => return Err(SetupError::MissingCli),
+        NextStep::RunInit => {
+            // Resolve again after confirmation; never execute a path supplied
+            // through report/UI state.
+            let cli = find_wisp_cli(None).ok_or(SetupError::MissingCli)?;
+            run_step(&cli, &["init"], "wisp init")?;
+        }
+        NextStep::StartDaemon => {}
+    }
+    let brew = find_homebrew().ok_or(SetupError::MissingHomebrew)?;
+    run_step(&brew, &["services", "start", "wisp"], "Homebrew service")
 }
 
 /// Unauthenticated liveness probe. `/api/health` is one of the two routes that
@@ -113,7 +188,11 @@ pub fn decide(status: &LocalStatus, cli_path: Option<&Path>, reachable: bool) ->
             NextStep::Ready,
             "The local Wisp daemon is running and this app can reach it.".to_string(),
         ),
-        (true, _, false) => (
+        (true, false, false) => (
+            NextStep::InstallCli,
+            "A local Wisp profile exists, but the `wisp` command is missing. Reinstall the Wisp Desktop Cask so Homebrew can restore it.".to_string(),
+        ),
+        (true, true, false) => (
             NextStep::StartDaemon,
             "A local Wisp profile exists but nothing is listening. Run `wisp serve` (or start the installed service) and try again.".to_string(),
         ),
@@ -137,7 +216,7 @@ pub fn decide(status: &LocalStatus, cli_path: Option<&Path>, reachable: bool) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{decide, find_executable, NextStep};
+    use super::{decide, find_executable, formula_cli_for_brew, NextStep};
     use crate::local::LocalStatus;
     use std::path::{Path, PathBuf};
 
@@ -153,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn path_entries_win_over_the_extra_directories() {
+    fn generic_executable_lookup_has_an_explicit_search_order() {
         let present: Vec<PathBuf> = vec![
             PathBuf::from("/synthetic/bin/wisp"),
             PathBuf::from("/opt/homebrew/bin/wisp"),
@@ -167,6 +246,18 @@ mod tests {
         )
         .expect("found");
         assert_eq!(found, PathBuf::from("/synthetic/bin/wisp"));
+    }
+
+    #[test]
+    fn formula_cli_is_derived_from_the_trusted_brew_prefix() {
+        assert_eq!(
+            formula_cli_for_brew(Path::new("/opt/homebrew/bin/brew")),
+            Some(PathBuf::from("/opt/homebrew/opt/wisp/bin/wisp"))
+        );
+        assert_eq!(
+            formula_cli_for_brew(Path::new("/usr/local/bin/brew")),
+            Some(PathBuf::from("/usr/local/opt/wisp/bin/wisp"))
+        );
     }
 
     #[test]
@@ -192,6 +283,10 @@ mod tests {
         assert_eq!(
             decide(&status(true), Some(Path::new("/synthetic/bin/wisp")), false).next_step,
             NextStep::StartDaemon
+        );
+        assert_eq!(
+            decide(&status(true), None, false).next_step,
+            NextStep::InstallCli
         );
         assert_eq!(
             decide(

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 
 import { ActivityList } from "@/components/activity-list"
+import { ConnectionGallerySpecimen } from "@/components/connection-gallery-specimen"
 import {
   PALETTE_GROUPS,
   PROBE_CONTEXT_ANSWER,
@@ -219,6 +220,8 @@ function FoundationSpecimens() {
             <Tab count={6}>Changes</Tab>
           </div>
       </Section>
+
+      <ConnectionGallerySpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">

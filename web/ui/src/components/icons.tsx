@@ -17,6 +17,8 @@ export {
   BranchRequestRegular as BranchRequest,
   BotRegular as Bot,
   CheckmarkRegular as Check,
+  CloudRegular as Remote,
+  CloudOffRegular as Offline,
   CopyRegular as Copy,
   DataBarVerticalRegular as Effort,
   DeleteRegular as Trash,

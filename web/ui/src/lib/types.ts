@@ -162,6 +162,8 @@ export type UpdateState = "up-to-date" | "available" | "installing" | "restartin
 export interface UpdateStatus {
   currentVersion: string
   latestVersion: string | null
+  currentApiProtocolVersion: number
+  latestApiProtocolVersion: number | null
   state: UpdateState
   installMethod: InstallMethod
   canAutoUpdate: boolean

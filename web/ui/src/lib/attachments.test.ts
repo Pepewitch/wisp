@@ -1,15 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachmentPayloads,
+  clearRememberedAttachments,
   formatBytes,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS,
   noImageReason,
   readAttachment,
   sniffImageType,
+  usePendingAttachments,
   type PendingAttachment,
 } from "./attachments";
+
+afterEach(() => {
+  clearRememberedAttachments("synthetic-connection");
+  clearRememberedAttachments("other-connection");
+  vi.unstubAllGlobals();
+});
 
 /**
  * The client mirror of the daemon's attachment rules (S3): caps and the
@@ -23,6 +32,33 @@ const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x4
 
 function file(bytes: Uint8Array<ArrayBuffer>, name = "shot.png"): File {
   return new File([bytes], name);
+}
+
+function delayedFile(name = "delayed.png") {
+  let resolve!: (value: ArrayBuffer) => void;
+  const bytes = new Promise<ArrayBuffer>((accept) => {
+    resolve = accept;
+  });
+  const selected = file(PNG, name);
+  vi.spyOn(selected, "arrayBuffer").mockReturnValue(bytes);
+  return {
+    selected,
+    resolve: () => resolve(Uint8Array.from(PNG).buffer),
+  };
+}
+
+function stubObjectUrls() {
+  const createObjectURL = vi.fn(() => "blob:synthetic");
+  const revokeObjectURL = vi.fn();
+  vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+  return { createObjectURL, revokeObjectURL };
+}
+
+async function settleDelayedRead(resolve: () => void): Promise<void> {
+  await act(async () => {
+    resolve();
+    await new Promise((accept) => setTimeout(accept, 0));
+  });
 }
 
 describe("sniffImageType (mirrors src/attachments.ts)", () => {
@@ -101,5 +137,132 @@ describe("attachmentPayloads", () => {
   it("the caps constants mirror the daemon's", () => {
     expect(MAX_ATTACHMENT_BYTES).toBe(5 * 1024 * 1024);
     expect(MAX_ATTACHMENTS).toBe(10);
+  });
+});
+
+describe("remembered desktop attachments", () => {
+  it("keeps pending bytes across a task view unmount until explicitly cleared", async () => {
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:synthetic"),
+      revokeObjectURL: vi.fn(),
+    });
+    const options = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000synthetic-task",
+    };
+    const first = renderHook(() => usePendingAttachments(options));
+    act(() => first.result.current.addFiles([file(PNG)]));
+    await waitFor(() => expect(first.result.current.list).toHaveLength(1));
+    first.unmount();
+
+    const second = renderHook(() => usePendingAttachments(options));
+    expect(second.result.current.list).toHaveLength(1);
+    expect(second.result.current.payloads()).toEqual([
+      expect.objectContaining({ name: "shot.png" }),
+    ]);
+    act(() => second.result.current.clear());
+    expect(second.result.current.list).toHaveLength(0);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic");
+  });
+
+  it("does not let delayed bytes reappear after the composer is cleared", async () => {
+    const urls = stubObjectUrls();
+    const delayed = delayedFile();
+    const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
+
+    act(() => hook.result.current.addFiles([delayed.selected]));
+    await waitFor(() => expect(delayed.selected.arrayBuffer).toHaveBeenCalledOnce());
+    act(() => hook.result.current.clear());
+    await settleDelayedRead(delayed.resolve);
+
+    expect(hook.result.current.list).toEqual([]);
+    expect(hook.result.current.note).toBeNull();
+    expect(urls.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("does not let a delayed read survive destructive connection removal", async () => {
+    const urls = stubObjectUrls();
+    const delayed = delayedFile();
+    const options = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000removed-task",
+    };
+    const hook = renderHook(() => usePendingAttachments(options));
+
+    act(() => hook.result.current.addFiles([delayed.selected]));
+    await waitFor(() => expect(delayed.selected.arrayBuffer).toHaveBeenCalledOnce());
+    act(() => clearRememberedAttachments("synthetic-connection"));
+    await settleDelayedRead(delayed.resolve);
+    hook.unmount();
+
+    const reopened = renderHook(() => usePendingAttachments(options));
+    expect(reopened.result.current.list).toEqual([]);
+    expect(reopened.result.current.payloads()).toBeUndefined();
+    expect(urls.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("invalidates every delayed composer in a reset-style connection clear", async () => {
+    const urls = stubObjectUrls();
+    const firstFile = delayedFile("first.png");
+    const secondFile = delayedFile("second.png");
+    const firstOptions = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000first-task",
+    };
+    const secondOptions = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000second-task",
+    };
+    const first = renderHook(() => usePendingAttachments(firstOptions));
+    const second = renderHook(() => usePendingAttachments(secondOptions));
+
+    act(() => {
+      first.result.current.addFiles([firstFile.selected]);
+      second.result.current.addFiles([secondFile.selected]);
+    });
+    await waitFor(() => {
+      expect(firstFile.selected.arrayBuffer).toHaveBeenCalledOnce();
+      expect(secondFile.selected.arrayBuffer).toHaveBeenCalledOnce();
+    });
+    act(() => clearRememberedAttachments("synthetic-connection"));
+    await settleDelayedRead(() => {
+      firstFile.resolve();
+      secondFile.resolve();
+    });
+    first.unmount();
+    second.unmount();
+
+    const reopenedFirst = renderHook(() => usePendingAttachments(firstOptions));
+    const reopenedSecond = renderHook(() => usePendingAttachments(secondOptions));
+    expect(reopenedFirst.result.current.list).toEqual([]);
+    expect(reopenedSecond.result.current.list).toEqual([]);
+    expect(urls.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("cancels an unfinished read on unmount without discarding completed rows", async () => {
+    const urls = stubObjectUrls();
+    const options = {
+      harness: "codex",
+      hasImage: true,
+      rememberKey: "synthetic-connection\u0000navigated-task",
+    };
+    const first = renderHook(() => usePendingAttachments(options));
+    act(() => first.result.current.addFiles([file(PNG, "complete.png")]));
+    await waitFor(() => expect(first.result.current.list).toHaveLength(1));
+
+    const delayed = delayedFile();
+    act(() => first.result.current.addFiles([delayed.selected]));
+    await waitFor(() => expect(delayed.selected.arrayBuffer).toHaveBeenCalledOnce());
+    first.unmount();
+    await settleDelayedRead(delayed.resolve);
+
+    const reopened = renderHook(() => usePendingAttachments(options));
+    expect(reopened.result.current.list.map((attachment) => attachment.name)).toEqual(["complete.png"]);
+    expect(urls.createObjectURL).toHaveBeenCalledOnce();
   });
 });

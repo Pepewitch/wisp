@@ -20,6 +20,8 @@ const fixtures = vi.hoisted(() => ({
 const UPDATE: UpdateStatus = {
   currentVersion: "0.4.0-alpha.6",
   latestVersion: "0.4.0-alpha.7",
+  currentApiProtocolVersion: 1,
+  latestApiProtocolVersion: 1,
   canAutoUpdate: true,
   state: "available",
   installMethod: "homebrew",
@@ -41,6 +43,7 @@ vi.mock("@/hooks/queries", () => ({
 
 vi.mock("@/hooks/mutations", () => ({
   useInstallUpdate: () => ({ mutateAsync: mocks.install, isPending: false }),
+  useAddProject: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
 }))
 
 vi.mock("@/hooks/useLogStream", () => ({
@@ -76,6 +79,18 @@ vi.mock("@/components/terminal-pane", () => ({ TerminalSection: () => null }))
 import App from "./App"
 
 describe("connection-bound update recovery", () => {
+  it("keeps browser mode single-daemon without a misleading Local tab", () => {
+    render(
+      <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
+        <App />
+      </DaemonRuntimeProvider>,
+    )
+
+    expect(screen.getByRole("img", { name: "Wisp" })).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: "Local" })).toBeNull()
+    expect(screen.queryByText("Wisp")).toBeNull()
+  })
+
   it("polls and recovers the initiating runtime after the active provider switches", async () => {
     let finishInstall!: (status: UpdateStatus) => void
     let finishWait!: () => void

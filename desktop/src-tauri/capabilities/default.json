@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Native core surface of the Wisp desktop shell: the packaged webview may invoke the desktop commands and open a native folder picker. It gets no filesystem, shell, or HTTP capability of its own — every daemon byte travels through the native loopback proxy.",
+  "description": "Native core surface of the Wisp desktop shell. The webview gets no direct filesystem, dialog, shell, or HTTP capability — every native action is mediated by a narrow Rust command and every daemon byte travels through the loopback proxy.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default"]
 }

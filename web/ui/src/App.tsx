@@ -1,12 +1,26 @@
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 
 import { AuthDialog } from "@/components/auth-dialog"
 import { ChangesPane } from "@/components/changes-pane"
 import { ConnIndicator } from "@/components/conn-indicator"
+import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
+import {
+  AddProjectDialog,
+  ProjectPickerErrorDialog,
+} from "@/components/project-add-dialogs"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
@@ -15,6 +29,7 @@ import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WispUpdateControl } from "@/components/update-control"
+import { DESKTOP_API_PROTOCOL_VERSION } from "@/lib/desktop-bridge"
 import {
   useHarnesses,
   usePullRequestOverview,
@@ -26,54 +41,132 @@ import {
   useTasks,
   useUpdateStatus,
 } from "@/hooks/queries"
-import { useInstallUpdate } from "@/hooks/mutations"
+import { useAddProject, useInstallUpdate } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
-import { readConnectionStorage, writeConnectionStorage } from "@/lib/connection-storage"
-import { groupTasksByProject } from "@/lib/projects"
+import { connectionAttention } from "@/lib/connection-attention"
+import {
+  readConnectionStorage,
+  removeConnectionStorage,
+  writeConnectionStorage,
+} from "@/lib/connection-storage"
+import { classifyConnectionError } from "@/lib/connection-reachability"
+import { useDesktopConnections } from "@/lib/desktop-connections"
+import { addPickedLocalProject, groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { connectEventsBridge } from "@/lib/sse"
-import type { ApiTask, HarnessInfo, RepoInfo, StatusEntry, TaskSkills, Turn } from "@/lib/types"
+import type {
+  ApiTask,
+  HarnessInfo,
+  PullRequestStatus,
+  RepoInfo,
+  StatusEntry,
+  TaskSkills,
+  Turn,
+} from "@/lib/types"
 import { waitForUpdatedDaemon } from "@/lib/update"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
+const SELECTED_TASK_KEY = "wisp_selected_task"
+const SELECTED_TASK_SETTING = "selected_task"
 
 export default function App() {
   const runtime = useDaemonRuntime()
   const route = useHashRoute()
-  return route === "/gallery" ? <Gallery /> : <MainView key={runtime.connectionId} />
+  return route === "/gallery" ? (
+    <Gallery />
+  ) : (
+    <MainView key={runtime.connectionId} />
+  )
 }
 
-function MainView() {
-  const runtime = useDaemonRuntime()
-  const conn = connectionStore(runtime.connectionId)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const selectedRef = useRef<string | null>(null)
-  useLayoutEffect(() => {
-    selectedRef.current = selectedId
-  }, [selectedId])
-
-  const [showArchived, setShowArchived] = useState(
-    () => readConnectionStorage(runtime.connectionId, SHOW_ARCHIVED_SETTING, SHOW_ARCHIVED_KEY) === "1",
+function useConnectionTaskSelection(connectionId: string) {
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    readConnectionStorage(
+      connectionId,
+      SELECTED_TASK_SETTING,
+      SELECTED_TASK_KEY
+    )
   )
-  // open state carries the project the sidebar's `+` preselected
-  const [createFor, setCreateFor] = useState<{ repoPath: string | null } | null>(null)
-  const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
-  // held as a PATH, not a row: the repos query refetches after a save, and a
-  // captured row would leave the modal showing what was just replaced
-  const [configuringPath, setConfiguringPath] = useState<string | null>(null)
+  const selectTask = useCallback(
+    (id: string | null) => {
+      if (id === null)
+        removeConnectionStorage(
+          connectionId,
+          SELECTED_TASK_SETTING,
+          SELECTED_TASK_KEY
+        )
+      else
+        writeConnectionStorage(
+          connectionId,
+          SELECTED_TASK_SETTING,
+          SELECTED_TASK_KEY,
+          id
+        )
+      setSelectedId(id)
+    },
+    [connectionId]
+  )
+  return [selectedId, selectTask] as const
+}
 
-  const tasksQuery = useTasks(showArchived)
-  const statusQuery = useStatus()
-  const reposQuery = useRepos()
-  const detailQuery = useTaskDetail(selectedId)
-  const pullRequestQuery = usePullRequestStatus(selectedId)
-  const pullRequestOverviewQuery = usePullRequestOverview()
-  const harnessesQuery = useHarnesses(true)
+function useProjectAddFlow() {
+  const desktop = useDesktopConnections()
+  const addProject = useAddProject()
+  const [remoteOpen, setRemoteOpen] = useState(false)
+  const [pickerError, setPickerError] = useState<string | null>(null)
+  const onAddProject = desktop
+    ? () => {
+        addProject.reset()
+        setPickerError(null)
+        // The mutation belongs to the initiating provider. A tab switch can
+        // unmount it, but cannot retarget a picker completion to a remote.
+        if (desktop.active.metadata.kind === "local") {
+          void addPickedLocalProject(
+            desktop.pickLocalProject,
+            addProject.mutateAsync
+          ).catch((error: unknown) =>
+            setPickerError(
+              error instanceof Error ? error.message : String(error)
+            )
+          )
+          return
+        }
+        setRemoteOpen(true)
+      }
+    : undefined
+  const dialogs = (
+    <>
+      <AddProjectDialog
+        open={remoteOpen}
+        connectionName={desktop?.active.metadata.name ?? ""}
+        pending={addProject.isPending}
+        error={addProject.error}
+        onClose={() => {
+          setRemoteOpen(false)
+          addProject.reset()
+        }}
+        onSubmit={async (path) => {
+          await addProject.mutateAsync(path)
+          setRemoteOpen(false)
+        }}
+      />
+      <ProjectPickerErrorDialog
+        error={pickerError}
+        onClose={() => setPickerError(null)}
+      />
+    </>
+  )
+  return { desktop, onAddProject, pending: addProject.isPending, dialogs }
+}
+
+function useWispUpdateControl() {
+  const runtime = useDaemonRuntime()
+  const desktop = useDesktopConnections()
   const updateQuery = useUpdateStatus()
   const installUpdate = useInstallUpdate()
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -90,6 +183,77 @@ function MainView() {
     }
   }
 
+  return (
+    <WispUpdateControl
+      status={updateQuery.data}
+      updating={installUpdate.isPending}
+      error={updateError}
+      onUpdate={(version) => void updateWisp(version)}
+      supportedApiProtocolVersion={desktop ? DESKTOP_API_PROTOCOL_VERSION : undefined}
+      connectionName={desktop?.active.metadata.name}
+    />
+  )
+}
+
+function useDesktopConnectionHealth(
+  connectionId: string,
+  tasks: readonly ApiTask[],
+  loaded: boolean,
+  error: unknown
+) {
+  const desktop = useDesktopConnections()
+  const reportAttention = desktop?.reportAttention
+  useEffect(() => {
+    reportAttention?.(connectionId, connectionAttention(tasks))
+  }, [connectionId, reportAttention, tasks])
+  const reportReachability = desktop?.reportReachability
+  useEffect(() => {
+    if (!reportReachability) return
+    if (error)
+      reportReachability(connectionId, classifyConnectionError(error))
+    else if (loaded) reportReachability(connectionId, "online")
+  }, [connectionId, error, loaded, reportReachability])
+}
+
+function MainView() {
+  const runtime = useDaemonRuntime()
+  const projectAdd = useProjectAddFlow()
+  const desktop = projectAdd.desktop
+  const conn = connectionStore(runtime.connectionId)
+  const [selectedId, selectTask] = useConnectionTaskSelection(
+    runtime.connectionId
+  )
+  const selectedRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    selectedRef.current = selectedId
+  }, [selectedId])
+
+  const [showArchived, setShowArchived] = useState(
+    () =>
+      readConnectionStorage(
+        runtime.connectionId,
+        SHOW_ARCHIVED_SETTING,
+        SHOW_ARCHIVED_KEY
+      ) === "1"
+  )
+  // open state carries the project the sidebar's `+` preselected
+  const [createFor, setCreateFor] = useState<{
+    repoPath: string | null
+  } | null>(null)
+  const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
+  // held as a PATH, not a row: the repos query refetches after a save, and a
+  // captured row would leave the modal showing what was just replaced
+  const [configuringPath, setConfiguringPath] = useState<string | null>(null)
+
+  const tasksQuery = useTasks(showArchived)
+  const statusQuery = useStatus()
+  const reposQuery = useRepos()
+  const detailQuery = useTaskDetail(selectedId)
+  const pullRequestQuery = usePullRequestStatus(selectedId)
+  const pullRequestOverviewQuery = usePullRequestOverview()
+  const harnessesQuery = useHarnesses(true)
+  const updateControl = useWispUpdateControl()
+
   // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
   // daemon-cached release status are the only polling exceptions.
   useEffect(
@@ -102,21 +266,32 @@ function MainView() {
         onConnectionChange: (live) => conn.set("events", live),
         onReconnect: bumpLogGeneration,
       }),
-    [runtime, conn],
+    [runtime, conn]
   )
 
   // a fresh [] every render would re-run every memo below it
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
+  useDesktopConnectionHealth(
+    runtime.connectionId,
+    tasks,
+    tasksQuery.data !== undefined,
+    tasksQuery.error
+  )
 
   // keep a valid selection across refetches without fighting the user
-  const [seen, setSeen] = useState<{ data: typeof tasksQuery.data; id: string | null }>({ data: undefined, id: null })
+  const [seen, setSeen] = useState<{
+    data: typeof tasksQuery.data
+    id: string | null
+  }>({ data: undefined, id: null })
   if (seen.data !== tasksQuery.data || seen.id !== selectedId) {
     setSeen({ data: tasksQuery.data, id: selectedId })
     if (tasksQuery.data) {
-      if (selectedId && !tasksQuery.data.some((t) => t.id === selectedId)) setSelectedId(null)
+      if (selectedId && !tasksQuery.data.some((t) => t.id === selectedId))
+        selectTask(null)
       else if (!selectedId) {
-        const first = tasksQuery.data.find((t) => !t.archived) ?? tasksQuery.data[0]
-        if (first) setSelectedId(first.id)
+        const first =
+          tasksQuery.data.find((t) => !t.archived) ?? tasksQuery.data[0]
+        if (first) selectTask(first.id)
       }
     }
   }
@@ -132,8 +307,12 @@ function MainView() {
   const skillsQuery = useTaskSkills(selectedId, archived)
 
   const groups = useMemo(
-    () => groupTasksByProject(tasks.filter((t) => !t.archived), reposQuery.data ?? []),
-    [tasks, reposQuery.data],
+    () =>
+      groupTasksByProject(
+        tasks.filter((t) => !t.archived),
+        reposQuery.data ?? []
+      ),
+    [tasks, reposQuery.data]
   )
   const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
 
@@ -142,7 +321,10 @@ function MainView() {
   const isMobile = useIsMobile()
 
   // composed once; only one shell mounts, so nothing double-renders
-  const sidebarNode = (opts?: { touch?: boolean; afterSelect?: () => void }) => (
+  const sidebarNode = (opts?: {
+    touch?: boolean
+    afterSelect?: () => void
+  }) => (
     <Sidebar
       groups={groups}
       archivedTasks={archivedTasks}
@@ -150,7 +332,7 @@ function MainView() {
       pullRequests={pullRequestOverviewQuery.data?.tasks ?? {}}
       selectedId={selectedId}
       onSelect={(id) => {
-        setSelectedId(id)
+        selectTask(id)
         opts?.afterSelect?.()
       }}
       showArchived={showArchived}
@@ -159,7 +341,7 @@ function MainView() {
           runtime.connectionId,
           SHOW_ARCHIVED_SETTING,
           SHOW_ARCHIVED_KEY,
-          v ? "1" : "0",
+          v ? "1" : "0"
         )
         setShowArchived(v)
       }}
@@ -171,14 +353,23 @@ function MainView() {
         setConfiguringPath(repoPath)
         opts?.afterSelect?.()
       }}
+      onAddProject={projectAdd.onAddProject}
+      addProjectPending={projectAdd.pending}
       error={sideError}
       loading={tasksQuery.isPending}
       touch={opts?.touch}
     />
   )
-  const conversationNode = <Conversation task={detailQuery.data ?? null} stream={stream} note={stream.note} />
+  const conversationNode = (
+    <Conversation
+      task={detailQuery.data ?? null}
+      stream={stream}
+      note={stream.note}
+    />
+  )
   const composerNode = (
     <TaskComposer
+      key={`${runtime.connectionId}:${header?.id ?? ""}`}
       task={header}
       harnesses={harnessesQuery.data}
       skills={skillsQuery.data}
@@ -195,7 +386,10 @@ function MainView() {
       // actually diffed from (it resolves GitHub's base), and a local task
       // diffs against the working tree with no base at all
       onRefresh={() =>
-        selectedId && void queryClient.invalidateQueries({ queryKey: runtime.qk.diff(selectedId) })
+        selectedId &&
+        void queryClient.invalidateQueries({
+          queryKey: runtime.qk.diff(selectedId),
+        })
       }
     />
   )
@@ -210,32 +404,90 @@ function MainView() {
     />
   )
   const dialogs = (
-    <AppDialogs
-      createFor={createFor}
-      configuringPath={configuringPath}
-      repos={reposQuery.data}
-      harnesses={harnessesQuery.data}
-      harnessesError={harnessesQuery.error}
-      onCloseCreate={() => setCreateFor(null)}
-      onCloseSettings={() => setConfiguringPath(null)}
-      onCreated={setSelectedId}
+    <>
+      <AppDialogs
+        createFor={createFor}
+        configuringPath={configuringPath}
+        repos={reposQuery.data}
+        harnesses={harnessesQuery.data}
+        harnessesError={harnessesQuery.error}
+        onCloseCreate={() => setCreateFor(null)}
+        onCloseSettings={() => setConfiguringPath(null)}
+        onCreated={selectTask}
+      />
+      {projectAdd.dialogs}
+    </>
+  )
+  return (
+    <AppShell
+      mobile={isMobile}
+      desktop={desktop !== null}
+      task={header}
+      pullRequest={pullRequestQuery.data}
+      sidebar={sidebarNode}
+      conversation={conversationNode}
+      changes={changesNode}
+      terminal={terminalNode}
+      composer={composerNode}
+      taskHeader={
+        <TaskHeader
+          task={header}
+          pullRequest={pullRequestQuery.data}
+          worktreeReason={detailQuery.data?.worktreeReason ?? null}
+        />
+      }
+      updateControl={updateControl}
+      dialogs={dialogs}
     />
   )
+}
 
-  // below `md` the three-pane grid is REPLACED, not squeezed. The resizable
-  // groups never mount there, so desktop geometry is neither applied nor
-  // overwritten by phone dimensions (useMediaQuery.ts).
-  if (isMobile) {
+function AppShell({
+  mobile,
+  desktop,
+  task,
+  pullRequest,
+  sidebar,
+  conversation,
+  changes,
+  terminal,
+  composer,
+  taskHeader,
+  updateControl,
+  dialogs,
+}: {
+  mobile: boolean
+  desktop: boolean
+  task: ApiTask | null
+  pullRequest?: PullRequestStatus
+  sidebar: (options?: {
+    touch?: boolean
+    afterSelect?: () => void
+  }) => ReactNode
+  conversation: ReactNode
+  changes: ReactNode
+  terminal: ReactNode
+  composer: ReactNode
+  taskHeader: ReactNode
+  updateControl: ReactNode
+  dialogs: ReactNode
+}) {
+  // Below `md`, the three-pane grid is replaced rather than squeezed, so no
+  // resizable group applies phone dimensions to desktop geometry.
+  if (mobile) {
     return (
       <>
         <MobileShell
-          task={header}
-          pullRequest={pullRequestQuery.data}
-          sidebar={(dismiss) => sidebarNode({ touch: true, afterSelect: dismiss })}
-          conversation={conversationNode}
-          changes={changesNode}
-          terminal={terminalNode}
-          composer={composerNode}
+          task={task}
+          pullRequest={pullRequest}
+          sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
+          conversation={conversation}
+          changes={changes}
+          terminal={terminal}
+          composer={composer}
+          connectionSwitcher={
+            desktop ? <DesktopConnectionChrome mobile /> : undefined
+          }
         />
         {dialogs}
       </>
@@ -244,15 +496,15 @@ function MainView() {
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header className="flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface px-3">
-        <WispMark className="size-[17px]" />
-        <span className="text-[13px] font-semibold tracking-[-0.005em]">Wisp</span>
-        <WispUpdateControl
-          status={updateQuery.data}
-          updating={installUpdate.isPending}
-          error={updateError}
-          onUpdate={(version) => void updateWisp(version)}
-        />
+      <header
+        data-tauri-drag-region={desktop ? "" : undefined}
+        className={`flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface pr-3 ${desktop ? "pl-20" : "pl-3"}`}
+      >
+        <span role="img" aria-label="Wisp" className="shrink-0">
+          <WispMark className="size-[17px]" />
+        </span>
+        {desktop && <DesktopConnectionChrome />}
+        {updateControl}
         <span className="flex-1" />
         <span className="ml-1">
           <ConnIndicator />
@@ -260,22 +512,16 @@ function MainView() {
       </header>
 
       <Shell
-        sidebar={sidebarNode()}
+        sidebar={sidebar()}
         centre={
           <main className="flex h-full min-w-0 flex-col bg-background">
-            <TaskHeader
-              task={header}
-              pullRequest={pullRequestQuery.data}
-              // only the detail route carries it; the list row does not
-              worktreeReason={detailQuery.data?.worktreeReason ?? null}
-            />
-            {conversationNode}
-            {composerNode}
+            {taskHeader}
+            {conversation}
+            {composer}
           </main>
         }
-        right={<RightColumn changes={changesNode} terminal={terminalNode} />}
+        right={<RightColumn changes={changes} terminal={terminal} />}
       />
-
       {dialogs}
     </div>
   )
@@ -302,7 +548,9 @@ function TaskComposer({
   turns: Turn[] | undefined
   touch: boolean
 }) {
-  const harness = task ? harnesses?.find((candidate) => candidate.name === task.harness) : undefined
+  const harness = task
+    ? harnesses?.find((candidate) => candidate.name === task.harness)
+    : undefined
   return (
     <SteerBox
       task={task}
@@ -313,7 +561,9 @@ function TaskComposer({
       compact={harness?.compact}
       status={status}
       turns={turns}
-      runningSince={turns?.find((turn) => turn.status === "running")?.started_at ?? null}
+      runningSince={
+        turns?.find((turn) => turn.status === "running")?.started_at ?? null
+      }
       touch={touch}
     />
   )
@@ -346,7 +596,9 @@ function AppDialogs({
         initialRepoPath={createFor?.repoPath ?? null}
         repos={repos}
         harnesses={harnesses}
-        harnessesError={harnessesError instanceof Error ? harnessesError.message : null}
+        harnessesError={
+          harnessesError instanceof Error ? harnessesError.message : null
+        }
         onCreated={onCreated}
       />
       <ProjectSettingsDialog

@@ -105,9 +105,14 @@ export function streamReducer(state: StreamState, action: StreamAction): StreamS
       return appendRaw(next, action.text)
     }
     case "turn-end": {
-      const start = state.blocks.findLastIndex(
-        (block) => block.kind === "separator" && block.turn === action.turn && block.end === null,
-      )
+      let start = -1
+      for (let index = state.blocks.length - 1; index >= 0; index--) {
+        const block = state.blocks[index]
+        if (block.kind === "separator" && block.turn === action.turn && block.end === null) {
+          start = index
+          break
+        }
+      }
       const segment = start >= 0 ? state.blocks.slice(start) : []
       // Structured activity is only the live turn cache. Once settled, the
       // task detail row owns its conclusion and history reloads on demand.
@@ -132,7 +137,7 @@ function openTurn(state: StreamState, turn: number, prompt: string | null): Stre
 function appendActivity(state: StreamState, events: ActivityEvent[]): StreamState {
   if (events.length === 0) return state
   const blocks = state.blocks.slice()
-  const last = blocks.at(-1)
+  const last = blocks[blocks.length - 1]
   if (last?.kind === "activity") {
     const items = reduceActivity(last.items, events)
     if (items === last.items) return state
@@ -146,7 +151,7 @@ function appendActivity(state: StreamState, events: ActivityEvent[]): StreamStat
 function appendRaw(state: StreamState, text: string): StreamState {
   if (!text) return state
   const blocks = state.blocks.slice()
-  const last = blocks.at(-1)
+  const last = blocks[blocks.length - 1]
   if (last?.kind === "raw") blocks[blocks.length - 1] = { kind: "raw", text: last.text + text }
   else blocks.push({ kind: "raw", text })
   return { blocks, currentTurn: state.currentTurn, note: null }
@@ -243,7 +248,7 @@ class ActivityDraft {
 
   private applyText(event: Extract<ActivityEvent, { kind: "text" }>): void {
     const target = this.target(event.parentId)
-    const last = target.at(-1)
+    const last = target[target.length - 1]
     if (last?.kind === "text") {
       const separator = last.text.endsWith("\n") ? "" : "\n"
       target[target.length - 1] = { ...last, text: last.text + separator + event.text }

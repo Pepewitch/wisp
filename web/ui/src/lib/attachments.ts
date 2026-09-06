@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ClipboardEvent } from "react";
 
 /**
@@ -153,6 +153,52 @@ export interface PendingAttachments {
   clear: () => void;
 }
 
+interface RememberedAttachments {
+  list: PendingAttachment[];
+  note: string | null;
+  seq: number;
+}
+
+const rememberedAttachments = new Map<string, RememberedAttachments>();
+
+interface PendingAttachmentRead {
+  cancelled: boolean;
+}
+
+/**
+ * Reads are registered before their first await so connection removal/reset
+ * can revoke their authority even when no remembered row exists yet.
+ */
+const pendingRememberedReads = new Map<string, Set<PendingAttachmentRead>>();
+
+function unregisterRememberedRead(rememberKey: string, read: PendingAttachmentRead): void {
+  const reads = pendingRememberedReads.get(rememberKey);
+  if (!reads) return;
+  reads.delete(read);
+  if (reads.size === 0) pendingRememberedReads.delete(rememberKey);
+}
+
+function cancelReads(reads: Iterable<PendingAttachmentRead>): void {
+  for (const read of reads) read.cancelled = true;
+}
+
+/** Revoke and forget all pending bytes owned by one removed connection. */
+export function clearRememberedAttachments(connectionId: string): void {
+  const prefix = `${connectionId}\u0000`;
+  for (const [rememberKey, reads] of pendingRememberedReads) {
+    if (!rememberKey.startsWith(prefix)) continue;
+    cancelReads(reads);
+    pendingRememberedReads.delete(rememberKey);
+  }
+  for (const [rememberKey, value] of rememberedAttachments) {
+    if (!rememberKey.startsWith(prefix)) continue;
+    for (const attachment of value.list) {
+      if (attachment.url) URL.revokeObjectURL(attachment.url);
+    }
+    rememberedAttachments.delete(rememberKey);
+  }
+}
+
 /**
  * Pending-attachment state for one composer (create dialog / steer box).
  * `hasImage` is tri-state: true/false = known capability (false pastes get
@@ -164,6 +210,7 @@ export function usePendingAttachments({
   harness,
   hasImage,
   imageNote,
+  rememberKey,
 }: {
   harness: string | null;
   hasImage: boolean | undefined;
@@ -174,16 +221,36 @@ export function usePendingAttachments({
    * composes this sentence itself.
    */
   imageNote?: string;
+  /** Desktop-only in-memory scope. Omitted by the browser and create dialog. */
+  rememberKey?: string;
 }): PendingAttachments {
-  const [list, setList] = useState<PendingAttachment[]>([]);
-  const [note, setNote] = useState<string | null>(null);
-  const seq = useRef(0);
+  const remembered = rememberKey ? rememberedAttachments.get(rememberKey) : undefined;
+  const [list, setList] = useState<PendingAttachment[]>(remembered?.list ?? []);
+  const [note, setNote] = useState<string | null>(remembered?.note ?? null);
+  const seq = useRef(remembered?.seq ?? 0);
+  const noteRef = useRef(note);
+  const pendingReads = useRef(new Set<PendingAttachmentRead>());
   // the async paste loop reads the live list through this mirror, so the
   // setters stay pure (no URL revocation inside a state updater)
-  const listRef = useRef<PendingAttachment[]>([]);
+  const listRef = useRef<PendingAttachment[]>(remembered?.list ?? []);
+  const persist = (nextList: PendingAttachment[], nextNote = noteRef.current) => {
+    if (rememberKey) {
+      rememberedAttachments.set(rememberKey, {
+        list: nextList,
+        note: nextNote,
+        seq: seq.current,
+      });
+    }
+  };
   const commit = (next: PendingAttachment[]) => {
     listRef.current = next;
+    persist(next);
     setList(next);
+  };
+  const commitNote = (next: string | null) => {
+    noteRef.current = next;
+    persist(listRef.current, next);
+    setNote(next);
   };
 
   const remove = (id: string) => {
@@ -192,37 +259,75 @@ export function usePendingAttachments({
     commit(listRef.current.filter((a) => a.id !== id));
   };
 
+  const cancelPendingReads = () => {
+    cancelReads(pendingReads.current);
+    if (rememberKey) {
+      for (const read of pendingReads.current) unregisterRememberedRead(rememberKey, read);
+    }
+    pendingReads.current.clear();
+  };
+
   const clear = () => {
+    cancelPendingReads();
     for (const a of listRef.current) if (a.url) URL.revokeObjectURL(a.url);
     commit([]);
-    setNote(null);
+    commitNote(null);
+    if (rememberKey) rememberedAttachments.delete(rememberKey);
   };
+
+  // A completed remembered row survives navigation, but a read that has not
+  // completed must not create an orphaned URL or write state after unmount.
+  useEffect(() => {
+    const reads = pendingReads.current;
+    const key = rememberKey;
+    return () => {
+      cancelReads(reads);
+      if (key) {
+        for (const read of reads) unregisterRememberedRead(key, read);
+      }
+      reads.clear();
+    };
+  }, [rememberKey]);
 
   /** One path for both pasting and picking: the two must never disagree. */
   const addFiles = (files: File[]) => {
     if (files.length === 0) return;
     if (harness && hasImage === false) {
-      setNote(noImageReason(harness));
+      commitNote(noImageReason(harness));
       return; // disabled-with-reason: nothing attaches
     }
+    const pendingRead: PendingAttachmentRead = { cancelled: false };
+    pendingReads.current.add(pendingRead);
+    if (rememberKey) {
+      const reads = pendingRememberedReads.get(rememberKey) ?? new Set<PendingAttachmentRead>();
+      reads.add(pendingRead);
+      pendingRememberedReads.set(rememberKey, reads);
+    }
     void (async () => {
-      let rejection: string | null = null;
-      for (const file of files) {
-        if (listRef.current.length >= MAX_ATTACHMENTS) {
-          rejection = `at most ${MAX_ATTACHMENTS} attachments per turn`;
-          break;
+      try {
+        let rejection: string | null = null;
+        for (const file of files) {
+          if (pendingRead.cancelled) return;
+          if (listRef.current.length >= MAX_ATTACHMENTS) {
+            rejection = `at most ${MAX_ATTACHMENTS} attachments per turn`;
+            break;
+          }
+          const result = await readAttachment(file);
+          if (pendingRead.cancelled) return;
+          if (!result.ok) {
+            rejection = result.reason;
+            continue;
+          }
+          seq.current += 1;
+          const url = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : "";
+          commit([...listRef.current, { id: `att-${seq.current}`, url, ...result.attachment }]);
         }
-        const result = await readAttachment(file);
-        if (!result.ok) {
-          rejection = result.reason;
-          continue;
-        }
-        seq.current += 1;
-        const url = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : "";
-        commit([...listRef.current, { id: `att-${seq.current}`, url, ...result.attachment }]);
+        // a fully-clean batch clears the previous note; the latest rejection wins otherwise
+        if (!pendingRead.cancelled) commitNote(rejection);
+      } finally {
+        pendingReads.current.delete(pendingRead);
+        if (rememberKey) unregisterRememberedRead(rememberKey, pendingRead);
       }
-      // a fully-clean batch clears the previous note; the latest rejection wins otherwise
-      setNote(rejection);
     })();
   };
 

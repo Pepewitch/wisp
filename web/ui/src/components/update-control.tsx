@@ -7,34 +7,65 @@ export function WispUpdateControl({
   updating,
   error,
   onUpdate,
+  supportedApiProtocolVersion,
+  connectionName,
 }: {
   status: UpdateStatus | undefined
   updating: boolean
   error: string | null
   onUpdate: (version: string) => void
+  /** Present only in Desktop, whose native proxy has a fixed daemon contract. */
+  supportedApiProtocolVersion?: number
+  /** Present only in Desktop, where updates must name their daemon scope. */
+  connectionName?: string
 }) {
   if (!status) return null
 
+  const scoped = (message: string) =>
+    connectionName ? `${message} — ${connectionName}` : message
   const target = status.latestVersion
+  const incompatible =
+    target !== null &&
+    supportedApiProtocolVersion !== undefined &&
+    (status.currentApiProtocolVersion !== supportedApiProtocolVersion ||
+      status.latestApiProtocolVersion !== supportedApiProtocolVersion)
   const busy = !error && (updating || status.state === "installing" || status.state === "restarting")
   if (target && busy) {
     return (
-      <Button size="sm" disabled title={`Installing Wisp ${target}`}>
+      <Button size="sm" disabled title={scoped(`Installing Wisp ${target}`)}>
         Updating…
       </Button>
     )
   }
 
-  if (target && status.canAutoUpdate && (status.state === "available" || status.state === "failed")) {
+  if (
+    target &&
+    !incompatible &&
+    status.canAutoUpdate &&
+    (status.state === "available" || status.state === "failed")
+  ) {
     return (
       <Button
         size="sm"
         tone="outline"
         onClick={() => onUpdate(target)}
-        title={error ?? status.message ?? `Install Wisp ${target} and restart`}
+        title={scoped(error ?? status.message ?? `Install Wisp ${target} and restart`)}
       >
         {status.state === "failed" || error ? "Retry update" : `Update ${target}`}
       </Button>
+    )
+  }
+
+  if (incompatible) {
+    return (
+      <span
+        className="text-[11.5px] text-warning"
+        title={scoped(
+          `Wisp ${target} uses API protocol ${status.latestApiProtocolVersion ?? "unknown"}; this Desktop supports protocol ${supportedApiProtocolVersion}`
+        )}
+      >
+        Update blocked
+      </span>
     )
   }
 
@@ -50,7 +81,7 @@ export function WispUpdateControl({
         error && "text-[11.5px] text-destructive",
         !error && "font-mono text-[10.5px] text-faint",
       )}
-      title={title}
+      title={scoped(title)}
     >
       {error ? "Update failed" : status.currentVersion}
     </span>

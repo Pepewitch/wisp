@@ -32,6 +32,19 @@ use wisp_desktop::registry::Registry;
 use wisp_desktop::secrets::MemorySecretStore;
 use wisp_desktop::urls::normalize_daemon_url;
 
+fn synthetic_instance_id(value: &str) -> String {
+    if wisp_desktop::probe::is_instance_id(value) {
+        return value.to_string();
+    }
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hash = DefaultHasher::new();
+    value.hash(&mut hash);
+    format!(
+        "00000000-0000-4000-8000-{:012x}",
+        hash.finish() & 0xffffffffffff
+    )
+}
+
 /// The one task ID both daemons are seeded with, so a routing mistake shows up
 /// as the wrong *content* rather than a 404.
 pub const SHARED_TASK_ID: &str = "t-000000000001";
@@ -55,12 +68,20 @@ pub struct SeenRequest {
 
 struct DaemonState {
     label: String,
-    token: String,
+    token: Mutex<String>,
+    token_after_capabilities: Mutex<Option<String>>,
     instance_id: Mutex<String>,
     protocol_version: Mutex<u32>,
+    capability_gate: Mutex<Option<CapabilityGate>>,
+    update_protocol_version: Mutex<u32>,
     seen: Mutex<Vec<SeenRequest>>,
     /// Where `/api/redirect` points. A hit on that server is a test failure.
     redirect_to: Mutex<String>,
+}
+
+struct CapabilityGate {
+    started: tokio::sync::oneshot::Sender<()>,
+    release: tokio::sync::oneshot::Receiver<()>,
 }
 
 /// A synthetic daemon on loopback.
@@ -76,9 +97,12 @@ impl MockDaemon {
     pub async fn start(label: &str, token: &str, instance_id: &str) -> Self {
         let state = Arc::new(DaemonState {
             label: label.to_string(),
-            token: token.to_string(),
-            instance_id: Mutex::new(instance_id.to_string()),
+            token: Mutex::new(token.to_string()),
+            token_after_capabilities: Mutex::new(None),
+            instance_id: Mutex::new(synthetic_instance_id(instance_id)),
             protocol_version: Mutex::new(1),
+            capability_gate: Mutex::new(None),
+            update_protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
         });
@@ -93,6 +117,7 @@ impl MockDaemon {
             .route("/api/events", get(events))
             .route("/api/redirect", get(redirect))
             .route("/api/cookie", get(cookie))
+            .route("/api/update", get(update_status).post(start_update))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 record_and_authenticate,
@@ -138,11 +163,59 @@ impl MockDaemon {
 
     /// Stand a different daemon up behind the same address.
     pub fn become_a_different_daemon(&self, instance_id: &str) {
+        *self.state.instance_id.lock().expect("instance") = synthetic_instance_id(instance_id);
+    }
+
+    pub fn use_raw_instance_id(&self, instance_id: &str) {
         *self.state.instance_id.lock().expect("instance") = instance_id.to_string();
     }
 
     pub fn use_protocol(&self, version: u32) {
         *self.state.protocol_version.lock().expect("protocol") = version;
+    }
+
+    pub fn use_update_protocol(&self, version: u32) {
+        *self
+            .state
+            .update_protocol_version
+            .lock()
+            .expect("update protocol") = version;
+    }
+
+    pub fn rotate_token(&self, token: &str) {
+        *self.state.token.lock().expect("token") = token.to_string();
+    }
+
+    pub fn rotate_token_after_next_capabilities(&self, token: &str) {
+        *self
+            .state
+            .token_after_capabilities
+            .lock()
+            .expect("deferred token") = Some(token.to_string());
+    }
+
+    /// Hold exactly the next capability response after its daemon identity has
+    /// been captured. Tests use the two one-shot ends to deterministically
+    /// reorder otherwise concurrent identity checks.
+    pub fn hold_next_capabilities(
+        &self,
+    ) -> (
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::sync::oneshot::Sender<()>,
+    ) {
+        let (started, wait_for_started) = tokio::sync::oneshot::channel();
+        let (release, wait_for_release) = tokio::sync::oneshot::channel();
+        let previous = self
+            .state
+            .capability_gate
+            .lock()
+            .expect("capability gate")
+            .replace(CapabilityGate {
+                started,
+                release: wait_for_release,
+            });
+        assert!(previous.is_none(), "only one capability gate may be armed");
+        (wait_for_started, release)
     }
 
     pub fn point_redirect_at(&self, url: &str) {
@@ -179,7 +252,8 @@ async fn record_and_authenticate(
     if path == "/api/health" {
         return next.run(request).await;
     }
-    if authorization.as_deref() != Some(format!("Bearer {}", state.token).as_str()) {
+    let expected = format!("Bearer {}", state.token.lock().expect("token"));
+    if authorization.as_deref() != Some(expected.as_str()) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "error": "unauthorized" })),
@@ -201,14 +275,54 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
-    Json(json!({
-        "apiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
-        "instanceId": *state.instance_id.lock().expect("instance"),
+    // Capture before waiting: a later request can observe a replacement daemon
+    // and complete first, precisely modeling reordered network responses.
+    let protocol_version = *state.protocol_version.lock().expect("protocol");
+    let instance_id = state.instance_id.lock().expect("instance").clone();
+    let gate = state
+        .capability_gate
+        .lock()
+        .expect("capability gate")
+        .take();
+    if let Some(gate) = gate {
+        let _ = gate.started.send(());
+        let _ = gate.release.await;
+    }
+    let response = Json(json!({
+        "apiProtocolVersion": protocol_version,
+        "instanceId": instance_id,
         "version": "0.0.0-synthetic",
         "commit": "0000000",
         "dirty": false,
         "capabilities": { "terminal": true, "attachments": true },
+    }));
+    if let Some(token) = state
+        .token_after_capabilities
+        .lock()
+        .expect("deferred token")
+        .take()
+    {
+        *state.token.lock().expect("token") = token;
+    }
+    response
+}
+
+async fn update_status(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
+    Json(json!({
+        "currentVersion": "0.0.0-synthetic",
+        "latestVersion": "0.0.1-synthetic",
+        "currentApiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
+        "latestApiProtocolVersion": *state.update_protocol_version.lock().expect("update protocol"),
+        "state": "available",
+        "installMethod": "homebrew",
+        "canAutoUpdate": true,
+        "message": null,
+        "checkedAt": null,
     }))
+}
+
+async fn start_update() -> impl IntoResponse {
+    Json(json!({ "ok": true }))
 }
 
 /// Echoes back exactly what arrived, so a test can assert on the *upstream*
@@ -305,6 +419,8 @@ async fn cookie() -> impl IntoResponse {
             http::header::SET_COOKIE,
             "wisp_token=synthetic-cookie-value; Path=/; HttpOnly",
         )
+        .header("x-wisp-proxy-error", "identity-changed")
+        .header("x-wisp-proxy-redirect", "blocked")
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"ok":true}"#))
         .expect("cookie response")
@@ -418,6 +534,21 @@ impl Harness {
         let secrets = Arc::new(MemorySecretStore::new());
         let local_parts =
             local.map(|daemon| (daemon.url(), daemon.token.clone(), daemon.instance_id()));
+        if let Some((url, token, instance_id)) = &local_parts {
+            let home = dir.path().join("wisp-home");
+            std::fs::create_dir_all(&home).expect("local home");
+            std::fs::write(
+                home.join("config.json"),
+                serde_json::to_vec(&json!({
+                    "host": url.host_str().expect("local host"),
+                    "port": url.port().expect("local port"),
+                    "token": token,
+                    "instanceId": instance_id,
+                }))
+                .expect("local config json"),
+            )
+            .expect("local config");
+        }
         let registry = Arc::new(
             Registry::open(
                 dir.path().join("connections.json"),
@@ -492,16 +623,39 @@ impl Harness {
         self.proxy.base()
     }
 
-    /// `<proxy base>/connections/<id>/<path>`.
+    /// `<proxy base>/connections/<id>/<revision>/<path>` using the current
+    /// native generation.
     pub fn route(&self, connection_id: &str, path: &str) -> String {
-        format!("{}/connections/{connection_id}/{path}", self.proxy.base())
+        let revision = self
+            .registry
+            .list()
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| connection.route_revision)
+            .unwrap_or(0);
+        self.route_at(connection_id, revision, path)
+    }
+
+    /// Build a route for an explicitly captured generation.
+    pub fn route_at(&self, connection_id: &str, revision: u32, path: &str) -> String {
+        format!(
+            "{}/connections/{connection_id}/{revision}/{path}",
+            self.proxy.base()
+        )
     }
 
     /// The same route under a capability the caller was never given.
     pub fn route_with_wrong_capability(&self, connection_id: &str, path: &str) -> String {
         let forged = "f".repeat(self.capability.len());
+        let revision = self
+            .registry
+            .list()
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| connection.route_revision)
+            .unwrap_or(0);
         format!(
-            "http://127.0.0.1:{}/{forged}/connections/{connection_id}/{path}",
+            "http://127.0.0.1:{}/{forged}/connections/{connection_id}/{revision}/{path}",
             self.proxy.port()
         )
     }
@@ -513,6 +667,19 @@ impl Harness {
 
     pub fn wisp_home(&self) -> PathBuf {
         self.dir.path().join("wisp-home")
+    }
+
+    pub fn set_local_profile_token(&self, token: &str) {
+        let path = self.wisp_home().join("config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read local config"))
+                .expect("local config json");
+        config["token"] = serde_json::Value::String(token.to_string());
+        std::fs::write(
+            path,
+            serde_json::to_vec(&config).expect("updated local config json"),
+        )
+        .expect("update local config");
     }
 }
 

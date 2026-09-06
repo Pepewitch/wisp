@@ -223,6 +223,12 @@ describe("S1 create-modal and project APIs", () => {
         body: JSON.stringify(body),
       });
 
+    const relative = await post({ path: "relative/project" });
+    expect(relative.status).toBe(400);
+    expect(((await relative.json()) as { error: string }).error).toBe(
+      "path must be absolute: relative/project",
+    );
+
     const add = await post({ path: `${first}/.`, name: "First" });
     expect(add.status).toBe(200); // the legacy string entry is updated in place
     expect(((await add.json()) as { name: string }).name).toBe("First");

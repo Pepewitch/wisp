@@ -45,7 +45,8 @@
     "shortDescription": "Every coding agent, one daemon.",
     "copyright": "MIT",
     "macOS": {
-      "minimumSystemVersion": "12.0"
+      "minimumSystemVersion": "12.3",
+      "signingIdentity": "-"
     }
   }
 }

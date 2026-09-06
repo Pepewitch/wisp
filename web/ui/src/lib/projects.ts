@@ -35,6 +35,19 @@ export function pathBasename(path: string): string {
   return segments[segments.length - 1] ?? path;
 }
 
+/**
+ * Complete one native Local picker against the mutation captured when it
+ * opened. Never look up whichever connection is active after it resolves.
+ */
+export async function addPickedLocalProject(
+  pick: () => Promise<string | null>,
+  addToInitiatingConnection: (path: string) => Promise<unknown>,
+): Promise<void> {
+  const path = await pick();
+  if (path === null) return;
+  await addToInitiatingConnection(path);
+}
+
 export function groupTasksByProject(tasks: ApiTask[], repos: RepoInfo[]): ProjectGroup[] {
   const groups: ProjectGroup[] = repos.map((repo) => ({
     path: repo.path,

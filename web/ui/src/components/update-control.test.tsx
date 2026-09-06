@@ -8,6 +8,8 @@ import { WispUpdateControl } from "./update-control"
 const STATUS: UpdateStatus = {
   currentVersion: "0.4.0-alpha.6",
   latestVersion: null,
+  currentApiProtocolVersion: 1,
+  latestApiProtocolVersion: null,
   state: "up-to-date",
   installMethod: "homebrew",
   canAutoUpdate: true,
@@ -53,6 +55,74 @@ describe("WispUpdateControl", () => {
     )
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
     expect(screen.getByText("0.4.0-alpha.6")).toHaveAttribute("title", "source builds update manually")
+  })
+
+  it("blocks a daemon update outside the native Desktop protocol", () => {
+    render(
+      <WispUpdateControl
+        status={{
+          ...STATUS,
+          state: "available",
+          latestVersion: "0.5.0",
+          latestApiProtocolVersion: 2,
+        }}
+        updating={false}
+        error={null}
+        onUpdate={() => {}}
+        supportedApiProtocolVersion={1}
+        connectionName="Local lab"
+      />,
+    )
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+    expect(screen.getByText("Update blocked")).toHaveAttribute(
+      "title",
+      "Wisp 0.5.0 uses API protocol 2; this Desktop supports protocol 1 — Local lab",
+    )
+  })
+
+  it("names the active Desktop connection throughout the update lifecycle", () => {
+    const available = { ...STATUS, state: "available" as const, latestVersion: "0.4.0-alpha.7" }
+    const { rerender } = render(
+      <WispUpdateControl
+        status={available}
+        updating={false}
+        error={null}
+        onUpdate={() => {}}
+        connectionName="Remote lab"
+      />,
+    )
+    expect(screen.getByRole("button", { name: "Update 0.4.0-alpha.7" })).toHaveAttribute(
+      "title",
+      "Install Wisp 0.4.0-alpha.7 and restart — Remote lab",
+    )
+
+    rerender(
+      <WispUpdateControl
+        status={{ ...available, state: "installing" }}
+        updating
+        error={null}
+        onUpdate={() => {}}
+        connectionName="Local lab"
+      />,
+    )
+    expect(screen.getByRole("button", { name: "Updating…" })).toHaveAttribute(
+      "title",
+      "Installing Wisp 0.4.0-alpha.7 — Local lab",
+    )
+
+    rerender(
+      <WispUpdateControl
+        status={{ ...available, state: "failed" }}
+        updating={false}
+        error="synthetic update failure"
+        onUpdate={() => {}}
+        connectionName="Remote lab"
+      />,
+    )
+    expect(screen.getByRole("button", { name: "Retry update" })).toHaveAttribute(
+      "title",
+      "synthetic update failure — Remote lab",
+    )
   })
 
   it("shows progress and offers a retry after failure", () => {

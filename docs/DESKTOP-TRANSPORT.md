@@ -1,7 +1,7 @@
 # Desktop transport contract
 
-Status: implementation boundary for the Wisp desktop alpha. This is not an
-end-user installation guide and does not claim that the desktop app ships yet.
+Status: implemented transport boundary for the Wisp desktop alpha. Installation
+and release mechanics are documented separately from this security contract.
 
 The desktop application manages several independent Wisp daemons from one UI.
 Each daemon remains the source of truth for its projects, tasks, worktrees,
@@ -95,16 +95,28 @@ opaque generated identifiers restricted to the ASCII path-segment pattern
 `[A-Za-z0-9_-]+`. Display labels are mutable and are never used in routes,
 cache keys, or credential lookup.
 
+The reserved Local ID remains stable, so its non-secret metadata also carries a
+persisted `routeRevision`. Native code increments it only when Local's URL or
+daemon identity changes, including changes observed between app launches. The
+shared UI treats `(connectionId, routeRevision)` as the runtime lifetime: it
+closes old streams and terminals, creates a fresh transport, and clears
+Local-owned cache, drafts, attachments, and preferences. Credential-only
+rotation keeps the revision and local work.
+
 The desktop loopback route is connection-qualified:
 
 ```text
-/connections/:connectionId/api/...
+/connections/:connectionId/:routeRevision/api/...
 ```
 
-The native process resolves `connectionId` through saved metadata. A frontend
-request cannot supply or override an upstream URL. Editing a saved URL creates
-a replacement transport after a successful capability check; it never mutates
-the target underneath in-flight work.
+The native process resolves the exact `(connectionId, routeRevision)` through
+saved metadata. A frontend request cannot supply or override an upstream URL,
+and a stale Local generation is rejected before reaching any daemon. Editing a
+saved remote URL creates a replacement transport after a successful capability
+check; it never mutates the target underneath in-flight work. Identity probe
+results are recorded atomically against that exact target generation. Once a
+mismatch is observed, a late matching response cannot clear it; only an
+explicit checked reconnect may restore the connection.
 
 Every completion path retains the initiating `connectionId`. Changing the
 selected tab cannot retarget a REST mutation, reconnect timer, update poll,
@@ -125,7 +137,9 @@ ready:
    capability; local clients can forge an `Origin` header.
 3. Resolve targets exclusively from native connection state. Reject unknown,
    removed, or cleanup-pending connection IDs before opening an upstream
-   request.
+   request. Recheck the exact target generation after client-controlled await
+   points such as request-body buffering and immediately before the first
+   upstream send, so removal or retargeting revokes work already in progress.
 4. Allow HTTPS remote URLs. Plain HTTP is accepted only when the URL host is
    the literal IPv4 `127.0.0.1` or IPv6 `::1` loopback address used by a
    user-managed tunnel. `localhost` and other hostnames do not qualify.
@@ -135,11 +149,15 @@ ready:
    use the daemon's browser-session exchange.
 7. Replace, rather than append, upstream `Authorization` with the credential
    selected by native connection state. Never log it.
-8. Apply the same authentication and routing rules to JSON, SSE, media, and
+8. When a saved remote URL changes, require a newly entered token before any
+   network probe. Never reuse or send the old origin's saved credential to the
+   new URL. A blank token may retain a credential only when the normalized URL
+   is unchanged.
+9. Apply the same authentication and routing rules to JSON, SSE, media, and
    WebSocket upgrades.
-9. Preserve TLS verification. Certificate failures are connection-scoped and
+10. Preserve TLS verification. Certificate failures are connection-scoped and
    are never bypassed silently.
-10. Revoke a connection's route before deleting its saved token and metadata.
+11. Revoke a connection's route before deleting its saved token and metadata.
     Crash recovery resumes removal from a non-secret tombstone.
 
 ## Client state that must be scoped
@@ -187,7 +205,7 @@ covered by `desktop/src-tauri/tests/proxy.rs` against two synthetic daemons
 seeded with the same task ID. That suite tests the native hop; this one tests
 the daemons. Neither replaces the other.
 
-## Runtime interface for the next slice
+## Runtime interface
 
 The shared React application consumes one stable transport per connection:
 
@@ -202,40 +220,56 @@ interface DaemonTransport {
 }
 ```
 
-The first refactor supplies one implicit same-origin transport to the existing
-web build and scopes every daemon-owned query key by its reserved connection
-ID. No visible connection tabs are required for that refactor. The Tauri
-runtime can then provide additional transports without forking the UI or
-changing hooks back to global URLs.
+The browser build supplies one implicit same-origin transport. The Tauri build
+creates one immutable proxy transport per connection and the shared UI scopes
+daemon-owned queries, streams, drafts, attachments, and preferences by that
+connection without forking the interface.
 
 ## Native command surface
 
-The desktop native core lives in `desktop/`. It exposes seven Tauri invoke
-commands and nothing else; `desktop/README.md` documents the payloads.
+The desktop native core lives in `desktop/`. Its Tauri invoke commands are
+documented in `desktop/README.md`; none returns a credential.
 
 ```text
 desktop_bootstrap        proxyBaseUrl + activeConnectionId + non-secret connection metadata
-add_remote_connection    capability check, then save
+select_desktop_connection mirror selection for native-only capability leases
+probe_remote_connection  authenticated identity preview; no persistence
+add_remote_connection    re-prove the confirmed identity, then save
 rename_connection        connectionId + display name only
-reconnect_connection     re-prove; a changed URL returns a REPLACEMENT id
+probe_saved_connection   authenticated reconnect preview; a changed URL requires a new token
+reconnect_connection     re-prove identity; changed URL/identity returns a replacement id
 remove_connection        revoke route, delete credential, clear tombstone
-pick_local_project       native folder picker
-setup_local_wisp         report on the local install; never installs
+reset_desktop_data       revoke all remotes and delete desktop-owned credentials
+pick_local_project       native folder picker, restricted to Local
+setup_local_wisp         diagnose the local install without changing it
+apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
 ```
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base
-plus `/connections/<connectionId>/api/...`. The capability travels in the path
+plus `/connections/<connectionId>/<routeRevision>/api/...`. The capability travels in the path
 because `EventSource`, `WebSocket`, and `<img>` cannot set headers; it
 authorizes talking to the proxy, never to a daemon, and it does not outlive the
 process. No command returns a daemon token, and no connection metadata has a
 field one could occupy.
 
+The folder picker captures a native selection generation before it opens and
+checks it again before returning a path. Switching tabs therefore invalidates
+the picker in native code as well as in React. This selection state never
+chooses proxy targets; daemon routes remain explicitly connection-qualified.
+
+Keychain failures are connection-scoped. A failed credential read leaves that
+remote visible but not ready, with a secret-free repair reason. A failed delete
+keeps a durable tombstone and a bootstrap cleanup issue; unrelated connections
+and Local continue to open, and Reset Desktop Data or a later launch retries it.
+New Keychain accounts are preceded by a persisted recovery marker so a metadata
+write plus cleanup failure cannot orphan an undiscoverable credential.
+
 Two consequences the shared React shell must handle:
 
-- `reconnect_connection` with a new URL returns a connection with a **new
-  immutable ID**. Editing an address is a connection swap, because retargeting
-  an ID in place would redirect in-flight work onto a different daemon.
+- `reconnect_connection` with a new URL or newly trusted daemon identity
+  returns a connection with a **new immutable ID**. The swap prevents local
+  state and in-flight work from crossing daemon scope.
 - A `409` carrying `x-wisp-proxy-error: identity-changed` means a different
   daemon now answers a saved address. It is connection state, not a task
   refusal, and `reconnect_connection` is the remedy.
