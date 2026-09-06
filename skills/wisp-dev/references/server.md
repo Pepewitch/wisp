@@ -46,9 +46,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 
 ### API and realtime
 
-- The daemon owns behavior shared by CLI and web. When a contract changes,
-  update route validation/serialization, both clients that consume it, tests,
-  and user-facing references together.
+- The daemon owns behavior shared by the CLI, browser runtime, and desktop
+  runtime. When a contract changes, update route validation/serialization,
+  every client that consumes it, capability/protocol declarations, tests, and
+  user-facing references together. Include the desktop native proxy when the
+  change touches auth, headers, SSE, WebSockets, media, redirects, identity, or
+  daemon update/restart behavior.
 - Expected refusals are named HTTP errors, not guessed client-side state.
 - SQLite is authoritative. `/api/events` drives query invalidation; the
   per-task log stream carries append-oriented transcript/activity data.
@@ -98,10 +101,10 @@ before initialization, run `wisp-dev init --port <port>` once. For a throwaway
 experiment rather than persistent dev state:
 
 ```sh
-export WISP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wisp-dev.XXXXXX")"
 WISP_DEV_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wisp-dev.XXXXXX")" \
 WISP_DEV_PORT=18711 \
 bun run dev
+```
 
 Root tests isolate `WISP_HOME` through `tests/setup.ts`; server and smoke tests
 use dynamically allocated ports so they can run while the installed daemon
@@ -122,7 +125,7 @@ remains active.
 | Realtime streams | `src/events.ts`, `src/routes/stream.ts` |
 | Webhook delivery | `src/outbox.ts` |
 | Terminal sessions | `src/terminal.ts`, `src/daemon.ts` |
-| Shared public shapes | `src/types.ts`, route serializers, `web/ui/src/lib/types.ts` |
+| Shared public shapes | `src/types.ts`, route serializers, `web/ui/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |
 
 ## Validation
 
@@ -135,10 +138,21 @@ For server changes, run the nearest tests while iterating, then run:
 bun run check
 ```
 
+Also run `bun run desktop:check` when a daemon route or public type consumed by
+Desktop changes, or when the change affects capabilities/protocol
+compatibility, authentication, headers, SSE, WebSockets, media, redirects,
+updates, or restart recovery. The root gate checks the TypeScript client side;
+the desktop gate checks the native proxy side. Neither substitutes for the
+other.
+
 Also run `bun run smoke` for lifecycle, worktree, process, recovery, webhook,
 or broad API changes. Run `bun run build` when the compiled binary or embedded
 UI boundary matters.
 
-Frontend changes have additional build and bundle gates in the
-[frontend conventions](frontend.md). Brand changes use
+Frontend changes have additional cross-client build and bundle gates in the
+[frontend conventions](frontend.md). Native desktop contract changes also run
+both `bun run check` and `bun run desktop:check`. Before releasing a
+user-visible shared flow, build the packaged client with
+`bash scripts/desktop/build-macos.sh --app-only` and exercise the same scenario
+in the browser and app. Brand changes use
 `bun run brand:check`.

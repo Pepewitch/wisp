@@ -16,7 +16,7 @@ An isolated Git worktree per task, and a state machine that cannot lie about it.
 Wisp is a harness-independent manager for coding-agent tasks. One daemon
 creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
-the same task through a CLI, API, and desktop/phone web app.
+the same task through a CLI, API, browser/phone UI, and native desktop app.
 
 **Current source version: `0.4.0-alpha.8`.** This is experimental software,
 not a production-ready release. Alpha.8 adds the first Apple Silicon Wisp
@@ -173,8 +173,10 @@ at least once, and the UI says so.
 Run `wisp token` and open the URL it prints. A new home prefers
 <http://127.0.0.1:8710>; `wisp init` persists the first available loopback port
 from `8711`–`8799` when the default is unavailable. A persisted port never
-moves silently. Paste the printed token into the app once; the daemon exchanges
-it for an HttpOnly, SameSite=Strict cookie. The app provides:
+moves silently. Paste the printed token into the app once; the browser keeps it
+in origin-scoped storage for API requests and the daemon also exchanges it for
+an HttpOnly, SameSite=Strict cookie used by browser-managed streams, terminals,
+and media. The app provides:
 
 - projects and task creation;
 - streamed turn history and steering;
@@ -230,9 +232,12 @@ one from its persisted log. Undelivered messages remain in their per-task FIFO;
 native RPC admissions have bounded acknowledgement waits and never hold turn
 finalization open forever.
 
-The daemon is the authority. CLI and web clients use its HTTP API. Browser
-updates use SSE and WebSockets; task history remains in SQLite when a realtime
-connection restarts.
+The daemon is the authority. The CLI, daemon-served browser runtime, and native
+desktop runtime use its HTTP API. Browser updates use SSE and WebSockets; Wisp
+Desktop relays those same protocols through a credential-holding native proxy.
+Task history remains in SQLite when a client or realtime connection restarts.
+See [Architecture](docs/ARCHITECTURE.md) for the ownership boundaries and
+shared-client contract.
 
 ## Safe removal
 
@@ -260,6 +265,7 @@ HTML file.
 ```sh
 bun install --frozen-lockfile
 bun run check
+bun run desktop:check # required for native desktop changes
 bash scripts/smoke.sh
 bun run build
 bun run release:linux
@@ -307,6 +313,7 @@ Release maintainers must follow the
 
 - [Install and activate](docs/INSTALL.md)
 - [Install on Apple Silicon](docs/INSTALL-MACOS.md)
+- [Architecture](docs/ARCHITECTURE.md)
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Security policy and trust model](SECURITY.md)

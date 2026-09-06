@@ -2,11 +2,15 @@
 
 Status: implemented transport boundary for the Wisp desktop alpha. Installation
 and release mechanics are documented separately from this security contract.
+See [Architecture](ARCHITECTURE.md) first for the system-wide ownership and
+shared-client model.
 
 The desktop application manages several independent Wisp daemons from one UI.
 Each daemon remains the source of truth for its projects, tasks, worktrees,
-harnesses, terminals, and update state. The desktop process owns only saved
-connection metadata, credentials, and connection-scoped UI state.
+harnesses, terminals, and update state. The native desktop process owns saved
+connection metadata, credentials, Local discovery, and proxy routing. The
+shared React app owns connection-scoped query and presentation state. Neither
+owns daemon data.
 
 ## Why a transport boundary is required
 

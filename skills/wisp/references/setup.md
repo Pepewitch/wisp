@@ -15,6 +15,41 @@ CLIs and their auth, git identity, config files, daemon reachability) and
 exits 1 naming what failed. Crash recovery (re-adopting running tasks) is the
 daemon's job; process restart is the supervisor's.
 
+## Browser and desktop clients
+
+`wisp token` prints the browser URL and access token for the daemon selected by
+the CLI profile. The browser runtime controls that one daemon. It keeps the
+token in origin-scoped storage for ordinary API requests and exchanges it for a
+same-origin session cookie used by browser-managed streams, terminals, and
+media. It remains independently usable without Wisp Desktop.
+
+On Apple Silicon, install the desktop interface and daemon together with:
+
+```sh
+brew install --cask Pepewitch/tap/wisp-desktop
+```
+
+The Cask depends on the separate `wisp` Formula, so Homebrew installs the
+CLI/daemon too when needed. The app does not bundle or own a child daemon;
+Local uses the standard `~/.wisp` profile and Homebrew service. Current alpha
+builds are ad-hoc signed and not notarized, so follow the documented macOS
+Privacy & Security approval instead of disabling Gatekeeper.
+
+The desktop header scopes the entire UI to one connection. Local is fixed but
+can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
+or removed even while offline. Removal immediately revokes its desktop route
+and hides it, then attempts Keychain cleanup. A failure remains visible and is
+retried by Reset Desktop Data or the next launch. It does not stop tasks or
+delete projects, worktrees, or history on the daemon.
+
+Local Add Project uses the native folder picker. Adding a remote connection
+requires a name, URL, and token. After it is saved, Add Project asks for a path
+exactly as it exists on the remote daemon's machine. URL and token are
+identity/authentication inputs, not networking: trusted HTTPS or an
+exact-loopback user-managed tunnel must already make the daemon reachable.
+See [`docs/INSTALL-MACOS.md`](../../../docs/INSTALL-MACOS.md) and
+[`docs/REMOTE-ACCESS.md`](../../../docs/REMOTE-ACCESS.md).
+
 The daemon URL comes from the `host` and `port` in the active
 `WISP_HOME/config.json`; `wisp token` prints the authority. Initializing a new
 production home prefers `127.0.0.1:8710` and persists the first free port
@@ -62,10 +97,10 @@ harmless preferences.
   `"harnessDefaults": { "claude": { "model": "claude-sonnet-5", "reasoningEffort": "medium" } }`
 - `adapters.json` — declare extra harnesses or override builtin fields (a
   harness is a headless one-shot command plus resume/model/effort templates).
-- `suffix-prompts.json` — reusable prompt suffixes, created/edited in the web
-  composers and appended to the prompt on submit. Web-only convenience: the
-  CLI has no flag for it (the API accepts `suffixPromptId` on create/send);
-  an agent just writes the full text into the prompt itself.
+- `suffix-prompts.json` — reusable prompt suffixes, created/edited in the
+  browser or desktop composers and appended to the prompt on submit. UI-only
+  convenience: the CLI has no flag for it (the API accepts `suffixPromptId` on
+  create/send); an agent just writes the full text into the prompt itself.
 - `tasks/<id>/attachments/turn-<n>/` — image bytes (see images.md);
   `worktrees/` — the task worktrees; `wisp.db` — all state (SQLite);
   `logs/` — bounded primary transcripts for recorder-capable live turns;

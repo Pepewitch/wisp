@@ -1,11 +1,41 @@
 # Wisp frontend conventions
 
-`web/ui/` is THE web app (vite + react + TS + tailwind v4 + shadcn on base-ui
-primitives). It is the only one: the classic `web/index.html`, the abandoned
-first rewrite in `web/app/`, and the vendored xterm in `web/vendor/` were all
-deleted at the v0.2 cutover (D12). The daemon serves this app's committed
-bundle at `/` and serves no other file, so `bun run build:ui` after a change
-that ships — and never hand-edit `web/ui-dist/`.
+`web/ui/` is the one shared React app (Vite + React + TypeScript + Tailwind v4
++ shadcn on base-ui primitives). The daemon serves it in a browser and Tauri
+packages it for Wisp Desktop. It is the only one: the classic `web/index.html`,
+the abandoned first rewrite in `web/app/`, and the vendored xterm in
+`web/vendor/` were all deleted at the v0.2 cutover (D12). The daemon serves
+this app's committed bundle at `/` and Tauri packages the same bytes, so
+`bun run build:ui` after a change that ships — and never hand-edit
+`web/ui-dist/`.
+
+## 0. Two shipped runtimes
+
+Every UI change must classify its impact on both clients:
+
+- The browser runtime represents one implicit same-origin daemon and owns its
+  token-to-cookie session flow.
+- The desktop runtime represents Local plus saved remotes. Native code owns
+  targets and credentials; React receives immutable, connection-qualified
+  `DaemonTransport` instances.
+- Shared components and hooks use `useDaemonRuntime()` and its pre-bound query
+  keys. They do not import the browser transport, derive daemon URLs from
+  `window.location`, or treat a task ID as globally unique.
+- Daemon-owned state, drafts, attachments, preferences, streams, terminals,
+  updates, and late async callbacks stay bound to their initiating
+  `connectionId`. Pure layout and theme state may remain global.
+- Browser-only auth and native-only connection/folder-picker/setup behavior
+  stay behind their runtime boundaries. Any intentional difference is named in
+  the change and covered without regressing the other client.
+
+For shared UI work, run the ordinary browser flow and a packaged Tauri flow in
+addition to the source gates. Run both `bun run check` and
+`bun run desktop:check` whenever the native bridge or Rust contract changes.
+Use `bash scripts/desktop/build-macos.sh --app-only` for the packaged-client
+gate. A pass in one client alone is incomplete for shared behavior. See
+[Architecture](../../../docs/ARCHITECTURE.md) for the ownership and
+change-impact matrix and `web/ui/README.md` for the exact generated-bundle
+sequence.
 
 This file is the law. `#/gallery` is the law rendered on real components — when
 you add a primitive, add its gallery entry in the same diff. An undocumented
@@ -215,12 +245,13 @@ Five contract rules the modal must keep:
   the harness did not declare stays offered, so a stale list cannot hide a
   value that works, and Custom remains for anything new. The control renders
   only when the harness has an effort template.
-- **The opening selection uses the browser's preferred model when available**,
+- **The opening selection uses the active connection's preferred model when available**,
   then prefers a harness that has a model list, so a daemon whose first harness
   has no installed binary does not open the composer already in the free-text
   fallback. Every model row has a star: setting or clearing it affects future
   create dialogs only, never the selection in the dialog already open. The
-  preference is browser-local; a missing or retired model falls back normally.
+  preference is client-local and connection-scoped; a missing or retired model
+  falls back normally.
 
 The **suffix prompt** picker is shared by create and steer. It starts at **No
 suffix prompt**, lists the daemon-wide records in
@@ -237,7 +268,7 @@ The trash is a two-click inline confirm — the first click only arms the row's
 red **Delete?**, the second removes the record — and deleting the SELECTED
 prompt drops the composer back to none rather than leaving a dangling id.
 
-Selection changes no draft text. The browser submits only `suffixPromptId`;
+Selection changes no draft text. The shared UI submits only `suffixPromptId`;
 the daemon resolves it at the write boundary and stores
 `user text + "\n\n\n" + suffix`, which is why the conversation shows the full
 prompt naturally. Task titles still come from the user text alone. A refused

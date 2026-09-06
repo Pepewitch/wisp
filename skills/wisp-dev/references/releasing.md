@@ -2,7 +2,7 @@
 
 Use this playbook for a versioned Linux/macOS release, GitHub publication, or
 Homebrew tap update. It records the v0.4 process that produced and qualified
-the public alpha.3 release. The scripts are authoritative when a command or
+the public alpha.8 release. The scripts are authoritative when a command or
 filename changes.
 
 Publishing a tag, GitHub release, or tap commit changes public state. Do it
@@ -560,7 +560,7 @@ vtool -show-build "$app/Contents/MacOS/wisp-desktop" | grep -Eq '^ *minos +12\.3
 codesign --verify --deep --strict "$app"
 open -a Wisp
 sleep 4
-pgrep -x wisp-desktop
+ps -axo comm= | awk -F/ '$NF == "wisp-desktop" { found=1 } END { exit !found }'
 ```
 
 ## 10. Close out without rewriting history
