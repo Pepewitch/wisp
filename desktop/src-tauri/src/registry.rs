@@ -523,7 +523,7 @@ impl Registry {
             .map(|(connection_id, error)| CleanupIssue {
                 connection_id: connection_id.clone(),
                 message: format!(
-                    "Credential cleanup for {connection_id} is incomplete: {error}. Retry Reset Desktop Data or relaunch Wisp Desktop."
+                    "Credential cleanup for {connection_id} is incomplete: {error}. Retry Reset desktop data or relaunch Wisp Desktop."
                 ),
             })
             .collect()

@@ -68,7 +68,7 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
 
     Uninstalling the Cask quits and removes the app but preserves desktop
     metadata and remote Keychain credentials. Remove remote connections or use
-    Reset Desktop Data before uninstalling if you want those credentials
+    Reset desktop data before uninstalling if you want those credentials
     removed.
   EOS
 end
