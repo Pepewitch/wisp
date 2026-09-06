@@ -10,11 +10,12 @@ import { queryClient } from "@/lib/query"
 
 export async function clearForgottenConnection(
   connectionId: string,
-  forgetAttention: (connectionId: string) => void
+  forgetAttention: (connectionId: string) => void,
+  includeBuiltInLocal = false
 ): Promise<void> {
   await queryClient.cancelQueries({ queryKey: [connectionId] })
   queryClient.removeQueries({ queryKey: [connectionId] })
-  clearConnectionStorage(connectionId)
+  clearConnectionStorage(connectionId, undefined, includeBuiltInLocal)
   clearConnectionDrafts(connectionId)
   clearRememberedAttachments(connectionId)
   forgetAttention(connectionId)

@@ -69,6 +69,7 @@ pub struct SeenRequest {
 struct DaemonState {
     label: String,
     token: Mutex<String>,
+    token_after_capabilities: Mutex<Option<String>>,
     instance_id: Mutex<String>,
     protocol_version: Mutex<u32>,
     update_protocol_version: Mutex<u32>,
@@ -91,6 +92,7 @@ impl MockDaemon {
         let state = Arc::new(DaemonState {
             label: label.to_string(),
             token: Mutex::new(token.to_string()),
+            token_after_capabilities: Mutex::new(None),
             instance_id: Mutex::new(synthetic_instance_id(instance_id)),
             protocol_version: Mutex::new(1),
             update_protocol_version: Mutex::new(1),
@@ -177,6 +179,14 @@ impl MockDaemon {
         *self.state.token.lock().expect("token") = token.to_string();
     }
 
+    pub fn rotate_token_after_next_capabilities(&self, token: &str) {
+        *self
+            .state
+            .token_after_capabilities
+            .lock()
+            .expect("deferred token") = Some(token.to_string());
+    }
+
     pub fn point_redirect_at(&self, url: &str) {
         *self.state.redirect_to.lock().expect("redirect") = url.to_string();
     }
@@ -234,14 +244,23 @@ async fn health() -> impl IntoResponse {
 }
 
 async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
-    Json(json!({
+    let response = Json(json!({
         "apiProtocolVersion": *state.protocol_version.lock().expect("protocol"),
         "instanceId": *state.instance_id.lock().expect("instance"),
         "version": "0.0.0-synthetic",
         "commit": "0000000",
         "dirty": false,
         "capabilities": { "terminal": true, "attachments": true },
-    }))
+    }));
+    if let Some(token) = state
+        .token_after_capabilities
+        .lock()
+        .expect("deferred token")
+        .take()
+    {
+        *state.token.lock().expect("token") = token;
+    }
+    response
 }
 
 async fn update_status(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
@@ -356,6 +375,8 @@ async fn cookie() -> impl IntoResponse {
             http::header::SET_COOKIE,
             "wisp_token=synthetic-cookie-value; Path=/; HttpOnly",
         )
+        .header("x-wisp-proxy-error", "identity-changed")
+        .header("x-wisp-proxy-redirect", "blocked")
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"ok":true}"#))
         .expect("cookie response")

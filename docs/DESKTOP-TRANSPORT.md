@@ -95,6 +95,13 @@ opaque generated identifiers restricted to the ASCII path-segment pattern
 `[A-Za-z0-9_-]+`. Display labels are mutable and are never used in routes,
 cache keys, or credential lookup.
 
+The reserved Local ID remains stable, so its non-secret metadata also carries a
+process-local `routeRevision`. Native code increments it only when Local's URL
+or daemon identity changes. The shared UI treats `(connectionId,
+routeRevision)` as the runtime lifetime: it closes old streams and terminals,
+creates a fresh transport, and clears Local-owned cache, drafts, attachments,
+and preferences. Credential-only rotation keeps the revision and local work.
+
 The desktop loopback route is connection-qualified:
 
 ```text

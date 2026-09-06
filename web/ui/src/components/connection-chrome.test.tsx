@@ -17,6 +17,7 @@ import { clearConnectionDrafts, writeDraft } from "@/lib/drafts"
 
 const LOCAL = {
   id: "local",
+  routeRevision: 0,
   kind: "local",
   name: "Local",
   url: null,

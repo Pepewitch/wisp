@@ -190,6 +190,7 @@ function useWispUpdateControl() {
       error={updateError}
       onUpdate={(version) => void updateWisp(version)}
       supportedApiProtocolVersion={desktop ? DESKTOP_API_PROTOCOL_VERSION : undefined}
+      connectionName={desktop?.active.metadata.name}
     />
   )
 }

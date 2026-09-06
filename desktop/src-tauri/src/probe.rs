@@ -2,7 +2,7 @@
 //!
 //! Nothing is saved, retargeted, or re-credentialed until this succeeds. It is
 //! also where a daemon's instance identity is pinned: the proxy re-checks that
-//! same value before the first write of every later launch.
+//! same value immediately before every later write or terminal handshake.
 
 use serde::{Deserialize, Serialize};
 use url::Url;

@@ -35,11 +35,9 @@ import {
 } from "@/lib/desktop-bridge"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
+import { reconnectDesktopConnection } from "@/lib/desktop-reconnect"
 import { removeDesktopConnection } from "@/lib/desktop-remove"
-import {
-  clearForgottenConnection,
-  resetDesktopApplication,
-} from "@/lib/desktop-reset"
+import { resetDesktopApplication } from "@/lib/desktop-reset"
 import { queryClient } from "@/lib/query"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import type { DaemonTransport } from "@/lib/transport"
@@ -93,7 +91,9 @@ function reconcileConnections(
   const connections = bootstrap.connections.map((metadata) => ({
     metadata,
     transport:
-      previous?.proxyBaseUrl === bootstrap.proxyBaseUrl
+      previous?.proxyBaseUrl === bootstrap.proxyBaseUrl &&
+      previous.connections.find((entry) => entry.metadata.id === metadata.id)
+        ?.metadata.routeRevision === metadata.routeRevision
         ? (prior.get(metadata.id) ??
           createDesktopTransport(bootstrap.proxyBaseUrl, metadata.id))
         : createDesktopTransport(bootstrap.proxyBaseUrl, metadata.id),
@@ -186,57 +186,16 @@ function useConnectionActions({
   )
   const reconnect = useCallback(
     (input: ReconnectConnectionInput) =>
-      transact(`reconnect:${input.connectionId}`, async () => {
-        const before = stateRef.current
-        const activeBefore = before.activeId
-        const targetName = before.connections.find(
-          (entry) => entry.metadata.id === input.connectionId
-        )?.metadata.name
-        try {
-          const reconnected = await bridge.reconnectConnection(input)
-          apply(
-            await bridge.bootstrap(),
-            activeBefore === input.connectionId ? reconnected.id : activeBefore
-          )
-          if (reconnected.id !== input.connectionId) {
-            await clearForgottenConnection(input.connectionId, forgetAttention)
-          }
-          void queryClient.invalidateQueries({ queryKey: [reconnected.id] })
-        } catch (error) {
-          // Native replacement can commit before a deferred Keychain cleanup
-          // reports failure. Reconcile the authoritative registry on every
-          // refusal so the UI never keeps routing a revoked ID.
-          const bootstrap = await bridge.bootstrap()
-          const oldStillExists = bootstrap.connections.some(
-            (connection) => connection.id === input.connectionId
-          )
-          const replacement = bootstrap.connections.find(
-            (connection) =>
-              connection.id !== input.connectionId &&
-              connection.name === targetName
-          )
-          if (
-            activeBefore === input.connectionId &&
-            !oldStillExists &&
-            replacement
-          ) {
-            await bridge.selectConnection(replacement.id)
-          }
-          apply(
-            bootstrap,
-            activeBefore === input.connectionId && !oldStillExists
-              ? replacement?.id
-              : activeBefore
-          )
-          if (!oldStillExists) {
-            await clearForgottenConnection(input.connectionId, forgetAttention)
-          }
-          onBackgroundError(
-            error instanceof Error ? error.message : String(error)
-          )
-          throw error
-        }
-      }),
+      transact(`reconnect:${input.connectionId}`, () =>
+        reconnectDesktopConnection({
+          input,
+          bridge,
+          stateRef,
+          apply,
+          forgetAttention,
+          onBackgroundError,
+        })
+      ),
     [
       apply,
       bridge,
@@ -296,7 +255,13 @@ function useConnectionActions({
     ]
   )
   const { pickLocalProject, setupLocalWisp, applyLocalWispSetup } =
-    useLocalConnectionActions({ bridge, stateRef, apply, transact })
+    useLocalConnectionActions({
+      bridge,
+      stateRef,
+      apply,
+      transact,
+      forgetAttention,
+    })
   return {
     pendingAction,
     probeRemote,
@@ -536,7 +501,7 @@ function DesktopConnectionRuntime({
         (entry) =>
           entry.metadata.id !== active.metadata.id && (
             <InactiveConnectionMonitor
-              key={entry.metadata.id}
+              key={`${entry.metadata.id}:${entry.metadata.routeRevision}`}
               entry={entry}
               onAttention={onAttention}
               onReachability={onReachability}
@@ -544,7 +509,7 @@ function DesktopConnectionRuntime({
           )
       )}
       <DaemonRuntimeProvider
-        key={active.metadata.id}
+        key={`${active.metadata.id}:${active.metadata.routeRevision}`}
         transport={active.transport}
         recoverAfterUpdate={() =>
           queryClient.invalidateQueries({ queryKey: [active.metadata.id] })

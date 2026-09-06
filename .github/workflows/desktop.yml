@@ -53,7 +53,7 @@ jobs:
       - name: unit and integration tests
         # Every test uses the in-memory credential store; nothing here reads or
         # writes a real login keychain.
-        run: cargo test
+        run: cargo test --locked
       - name: bundle the packaged application
         working-directory: .
         run: bash scripts/desktop/build-macos.sh --app-only
@@ -65,5 +65,23 @@ jobs:
           file "$app/Contents/MacOS/wisp-desktop" | grep -q 'Mach-O 64-bit executable arm64'
           if strings "$app/Contents/MacOS/wisp-desktop" | grep -Eq '/Users/|\.cargo/registry|\.rustup/toolchains'; then
             echo 'desktop binary contains a builder path' >&2
+            exit 1
+          fi
+      - name: launch the packaged application
+        working-directory: .
+        run: |
+          app=desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Wisp.app
+          launch_log="$(mktemp)"
+          "$app/Contents/MacOS/wisp-desktop" >"$launch_log" 2>&1 &
+          app_pid=$!
+          cleanup() {
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          sleep 4
+          if ! kill -0 "$app_pid" 2>/dev/null; then
+            sed -n '1,120p' "$launch_log"
+            echo 'packaged desktop application did not remain alive' >&2
             exit 1
           fi

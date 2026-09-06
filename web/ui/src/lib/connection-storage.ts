@@ -1,6 +1,13 @@
 import { LOCAL_CONNECTION_ID } from "./transport"
 
 const CONNECTION_STORAGE_PREFIX = "wisp_connection"
+const LOCAL_LEGACY_KEYS = [
+  "wisp_show_archived",
+  "wisp_selected_task",
+  "wisp_preferred_model",
+  "wisp_effort_recents",
+  "wisp_shell_tabs_v1",
+] as const
 
 export type ReadableStorage = Pick<Storage, "getItem">
 export type WritableStorage = Pick<Storage, "setItem" | "removeItem">
@@ -97,9 +104,10 @@ export function removeConnectionStorage(
 /** Drop every browser-side convenience value owned by one removed remote. */
 export function clearConnectionStorage(
   connectionId: string,
-  storage?: Storage
+  storage?: Storage,
+  includeBuiltInLocal = false
 ): void {
-  if (connectionId === LOCAL_CONNECTION_ID) return
+  if (connectionId === LOCAL_CONNECTION_ID && !includeBuiltInLocal) return
   let target: Storage
   try {
     target = storage ?? localStorage
@@ -114,6 +122,9 @@ export function clearConnectionStorage(
       if (key?.startsWith(prefix)) keys.push(key)
     }
     for (const key of keys) target.removeItem(key)
+    if (connectionId === LOCAL_CONNECTION_ID) {
+      for (const key of LOCAL_LEGACY_KEYS) target.removeItem(key)
+    }
   } catch {
     // A blocked store costs cleanup of conveniences, never the native removal.
   }

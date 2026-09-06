@@ -11,6 +11,8 @@ export type DesktopConnectionKind = "local" | "remote"
 /** Secret-free connection data returned by the native desktop process. */
 export interface DesktopConnectionMetadata {
   readonly id: string
+  /** Changes when the native target behind a stable ID changes. */
+  readonly routeRevision?: number
   readonly kind: DesktopConnectionKind
   readonly name: string
   /** The daemon base URL is editable metadata; credentials never cross bootstrap. */
@@ -168,6 +170,14 @@ function normalizeConnection(
     throw new Error(`Invalid desktop connection id: ${value.id}`)
   const name = value.name.trim()
   if (!name) throw new Error(`Desktop connection ${value.id} has no name`)
+  if (
+    typeof value.routeRevision !== "number" ||
+    !Number.isSafeInteger(value.routeRevision) ||
+    value.routeRevision < 0
+  )
+    throw new Error(
+      `Desktop connection ${value.id} has an invalid route revision`
+    )
   if (value.kind === "local") {
     if (value.id !== LOCAL_CONNECTION_ID)
       throw new Error(
@@ -184,6 +194,7 @@ function normalizeConnection(
       )
     return Object.freeze({
       id: value.id,
+      routeRevision: value.routeRevision,
       kind: value.kind,
       name,
       url: null,
@@ -208,6 +219,7 @@ function normalizeConnection(
   }
   return Object.freeze({
     id: value.id,
+    routeRevision: value.routeRevision,
     kind: value.kind,
     name,
     url: normalizeRemoteUrl(value.url),

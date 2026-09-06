@@ -12,6 +12,7 @@ const BOOTSTRAP: DesktopBootstrap = {
   connections: [
     {
       id: "remote-one",
+      routeRevision: 0,
       kind: "remote",
       name: "Remote one",
       url: "https://wisp.example.test/",
@@ -20,6 +21,7 @@ const BOOTSTRAP: DesktopBootstrap = {
     },
     {
       id: "local",
+      routeRevision: 0,
       kind: "local",
       name: "Local",
       url: null,
@@ -185,6 +187,7 @@ describe("desktop native bridge", () => {
           ...BOOTSTRAP.connections,
           {
             id: "other",
+            routeRevision: 0,
             kind: "remote",
             name: "LOCAL",
             url: "https://x.test",
@@ -207,6 +210,7 @@ describe("desktop native bridge", () => {
           BOOTSTRAP.connections[1]!,
           ...Array.from({ length: 8 }, (_, index) => ({
             id: `remote-${index}`,
+            routeRevision: 0,
             kind: "remote" as const,
             name: `Remote ${index}`,
             url: `https://remote-${index}.example.test`,

@@ -3,9 +3,11 @@ import { useCallback } from "react"
 import type {
   DesktopBootstrap,
   DesktopBridge,
+  DesktopConnectionMetadata,
   LocalSetupReport,
   LocalSetupStep,
 } from "@/lib/desktop-bridge"
+import { clearForgottenConnection } from "@/lib/desktop-reset"
 import { queryClient } from "@/lib/query"
 
 type Transaction = <T>(label: string, action: () => Promise<T>) => Promise<T>
@@ -15,20 +17,35 @@ export function useLocalConnectionActions({
   stateRef,
   apply,
   transact,
+  forgetAttention,
 }: {
   bridge: DesktopBridge
-  stateRef: React.RefObject<{ readonly activeId: string }>
+  stateRef: React.RefObject<{
+    readonly activeId: string
+    readonly connections: readonly { metadata: DesktopConnectionMetadata }[]
+  }>
   apply: (bootstrap: DesktopBootstrap, preferredActiveId?: string) => void
   transact: Transaction
+  forgetAttention: (connectionId: string) => void
 }) {
   const refreshLocal = useCallback(
     async (command: () => Promise<LocalSetupReport>) => {
+      const previousRevision = stateRef.current.connections.find(
+        (entry) => entry.metadata.id === "local"
+      )?.metadata.routeRevision
       const report = await command()
-      apply(await bridge.bootstrap(), stateRef.current.activeId)
+      const bootstrap = await bridge.bootstrap()
+      const nextRevision = bootstrap.connections.find(
+        (connection) => connection.id === "local"
+      )?.routeRevision
+      if (previousRevision !== nextRevision) {
+        await clearForgottenConnection("local", forgetAttention, true)
+      }
+      apply(bootstrap, stateRef.current.activeId)
       void queryClient.invalidateQueries({ queryKey: ["local"] })
       return report
     },
-    [apply, bridge, stateRef]
+    [apply, bridge, forgetAttention, stateRef]
   )
   const pickLocalProject = useCallback(async () => {
     if (stateRef.current.activeId !== "local")

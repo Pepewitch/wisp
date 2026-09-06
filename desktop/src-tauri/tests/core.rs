@@ -77,6 +77,7 @@ async fn bootstrap_returns_an_unguessable_base_and_only_non_secret_metadata() {
     assert_eq!(bootstrap.active_connection_id, "local");
     assert_eq!(bootstrap.connections.len(), 1);
     assert_eq!(bootstrap.connections[0].id, "local");
+    assert_eq!(bootstrap.connections[0].route_revision, 0);
     assert!(bootstrap.local.available);
     assert!(bootstrap.local.has_token);
     assert!(json.contains("\"proxyBaseUrl\""));
@@ -537,7 +538,34 @@ async fn local_reconnect_reloads_the_standard_profile_and_checks_its_identity() 
         .await
         .expect("updated profile reconnects");
     assert_eq!(reconnected.instance_id, local.instance_id());
+    assert_eq!(reconnected.route_revision, 1);
     assert!(reconnected.ready);
+}
+
+#[tokio::test]
+async fn local_token_rotation_does_not_change_the_route_revision() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let app = app(Some(&local)).await;
+    let rotated = "synthetic-local-token-rotated-2222";
+    local.rotate_token(rotated);
+    std::fs::write(
+        app.core.wisp_home().join("config.json"),
+        serde_json::json!({
+            "instanceId": local.instance_id(),
+            "port": local.port,
+            "host": "127.0.0.1",
+            "token": rotated,
+        })
+        .to_string(),
+    )
+    .expect("rotated profile");
+
+    let reconnected = app
+        .core
+        .reconnect("local", None, None)
+        .await
+        .expect("rotated credential reconnects");
+    assert_eq!(reconnected.route_revision, 0);
 }
 
 #[tokio::test]
@@ -563,6 +591,7 @@ async fn local_reconnect_can_adopt_a_profile_created_after_launch() {
         .await
         .expect("new profile reconnects");
     assert!(reconnected.ready);
+    assert_eq!(reconnected.route_revision, 1);
     assert_eq!(app.core.bootstrap().connections[0].id, "local");
 }
 
@@ -587,6 +616,7 @@ async fn local_diagnosis_adopts_a_profile_created_after_launch() {
     let report = app.core.local_setup().await.expect("diagnosis");
     assert_eq!(report.next_step, wisp_desktop::setup::NextStep::Ready);
     assert!(app.core.bootstrap().connections[0].ready);
+    assert_eq!(app.core.bootstrap().connections[0].route_revision, 1);
     assert!(app.core.registry().resolve("local").is_some());
 }
 

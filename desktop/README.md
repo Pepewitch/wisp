@@ -69,9 +69,9 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 5. Frontend-supplied targets are rejected — connection IDs resolve through
    native state only.
 6. A removed connection loses its route before its credential is deleted.
-7. Before the first write of a launch, the daemon's `instanceId` is re-proved
-   against `/api/capabilities`; a mismatch is a 409, not a silent redirection of
-   a mutation onto a different machine.
+7. Before every write and terminal handshake, the daemon's `instanceId` is
+   freshly re-proved against `/api/capabilities`; a mismatch is a 409, not a
+   silent redirection of a mutation onto a different machine.
 8. TLS verification is never relaxed. There is no `danger_accept_invalid_certs`
    in this crate.
 9. Packaged-app CORS preflights are answered locally; other origins are
@@ -106,6 +106,7 @@ interface Bootstrap {
 
 interface ConnectionInfo {
   id: string                 // immutable, [A-Za-z0-9_-]+
+  routeRevision: number      // changes if the target behind Local changes
   name: string               // mutable; never used in a route or cache key
   kind: "local" | "remote"
   url: string                // display only

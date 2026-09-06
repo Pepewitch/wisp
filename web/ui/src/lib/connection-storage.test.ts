@@ -110,4 +110,26 @@ describe("show-archived connection storage", () => {
     expect(storage.getItem(localTask)).toBe("local-task")
     expect(storage.getItem("unrelated")).toBe("keep")
   })
+
+  it("clears scoped and legacy Local values only for an explicit retarget", () => {
+    const localTask = connectionStorageKey(LOCAL_CONNECTION, "selected_task")
+    const remoteTask = connectionStorageKey(REMOTE_CONNECTION, "selected_task")
+    const storage = memoryStorage({
+      [localTask]: "old-local-task",
+      [remoteTask]: "remote-task",
+      wisp_selected_task: "old-legacy-task",
+      wisp_shell_tabs_v1: "old-legacy-shells",
+      unrelated: "keep",
+    })
+
+    clearConnectionStorage(LOCAL_CONNECTION, storage)
+    expect(storage.getItem(localTask)).toBe("old-local-task")
+
+    clearConnectionStorage(LOCAL_CONNECTION, storage, true)
+    expect(storage.getItem(localTask)).toBeNull()
+    expect(storage.getItem("wisp_selected_task")).toBeNull()
+    expect(storage.getItem("wisp_shell_tabs_v1")).toBeNull()
+    expect(storage.getItem(remoteTask)).toBe("remote-task")
+    expect(storage.getItem("unrelated")).toBe("keep")
+  })
 })

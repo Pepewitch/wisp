@@ -91,6 +91,8 @@ const REQUEST_HEADER_DENYLIST: &[&str] = &[
 const RESPONSE_HEADER_DENYLIST: &[&str] = &[
     "set-cookie",
     "location",
+    "x-wisp-proxy-error",
+    "x-wisp-proxy-redirect",
     "connection",
     "keep-alive",
     "proxy-authenticate",
@@ -435,7 +437,13 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
     let websocket = is_websocket_upgrade(&parts.headers);
     // A terminal upgrade is command execution even though its handshake is a
     // GET. It must prove the pinned daemon identity just like an HTTP write.
-    if websocket || is_write(&parts.method) {
+    // The first read after launch proves identity too, and a known mismatch
+    // blocks every later route so read-only data cannot cross daemon scope.
+    let identity = state.registry.identity(&target.id);
+    if identity == Identity::Mismatch {
+        return identity_mismatch();
+    }
+    if websocket || is_write(&parts.method) || identity == Identity::Unchecked {
         match ensure_pinned_identity(&state, &target, &credential).await {
             Ok(checked_credential) => credential = checked_credential,
             Err(response) => return *response,
@@ -450,13 +458,7 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
     }
 
     if websocket {
-        return proxy_websocket(
-            credential,
-            upstream,
-            &mut parts,
-            state.upstream_handshake_timeout,
-        )
-        .await;
+        return proxy_websocket(state, target, credential, upstream, &mut parts).await;
     }
 
     proxy_http(&state, &target, credential, upstream, parts, body).await
@@ -472,42 +474,31 @@ fn is_write(method: &http::Method) -> bool {
     )
 }
 
-/// Confirm, once per launch per connection, that the daemon behind a saved URL
-/// is still the daemon that URL was saved against.
+/// Confirm immediately before a consequential operation that the daemon behind
+/// a saved URL is still the daemon that URL was saved against.
 ///
 /// A hostname can be repointed and a tunnel can be re-terminated; without this,
 /// the first thing a user would notice is a mutation landing on the wrong
-/// machine. Two concurrent first writes may both probe — the probe is an
-/// idempotent authenticated GET, and paying for it twice is cheaper than
-/// serializing every write behind a lock.
+/// machine. Every write and terminal handshake pays for a fresh authenticated
+/// probe. A launch-wide success cache would reopen that race after the first
+/// mutation, and serializing probes would still leave later operations stale.
 async fn ensure_pinned_identity(
     state: &ProxyState,
     target: &Target,
     credential: &str,
 ) -> Result<String, Box<Response>> {
-    match state.registry.identity(&target.id) {
-        Identity::Verified => return Ok(credential.to_string()),
-        Identity::Mismatch => return Err(Box::new(identity_mismatch())),
-        Identity::Unchecked => {}
-    }
-
     let url = join_upstream(&target.base, "api/capabilities", None)
         .map_err(|error| Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string())))?;
     let mut checked_credential = credential.to_string();
-    let mut response = state
-        .client
-        .get(url)
-        .header(AUTHORIZATION, bearer(&checked_credential))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|error| {
-            Box::new(refuse(
-                StatusCode::BAD_GATEWAY,
-                "identity-unreachable",
-                format!("could not confirm the daemon's identity: {error}"),
-            ))
-        })?;
+    let mut response = send_upstream(
+        state,
+        state
+            .client
+            .get(url)
+            .header(AUTHORIZATION, bearer(&checked_credential)),
+    )
+    .await
+    .map_err(Box::new)?;
     if matches!(
         response.status(),
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
@@ -526,20 +517,15 @@ async fn ensure_pinned_identity(
         let retry_url = join_upstream(&target.base, "api/capabilities", None).map_err(|error| {
             Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string()))
         })?;
-        response = state
-            .client
-            .get(retry_url)
-            .header(AUTHORIZATION, bearer(&checked_credential))
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|error| {
-                Box::new(refuse(
-                    StatusCode::BAD_GATEWAY,
-                    "identity-unreachable",
-                    format!("could not confirm the daemon's identity: {error}"),
-                ))
-            })?;
+        response = send_upstream(
+            state,
+            state
+                .client
+                .get(retry_url)
+                .header(AUTHORIZATION, bearer(&checked_credential)),
+        )
+        .await
+        .map_err(Box::new)?;
     }
     if !response.status().is_success() {
         if matches!(
@@ -885,62 +871,98 @@ fn is_websocket_upgrade(headers: &HeaderMap) -> bool {
 }
 
 async fn proxy_websocket(
-    credential: String,
+    state: Arc<ProxyState>,
+    target: Target,
+    mut credential: String,
     upstream: Url,
     parts: &mut http::request::Parts,
-    handshake_timeout: std::time::Duration,
 ) -> Response {
     use tungstenite::client::IntoClientRequest;
 
     let socket_url = to_websocket_url(&upstream);
-    let mut request = match socket_url.as_str().into_client_request() {
-        Ok(request) => request,
-        Err(error) => {
-            return refuse(
-                StatusCode::BAD_REQUEST,
-                "path",
-                format!("that terminal address is not usable: {error}"),
-            )
-        }
-    };
     // Only the subprotocol crosses over. Everything else in a handshake is
     // connection-scoped and is generated fresh by the client library.
     let requested_protocol = parts.headers.get(SEC_WEBSOCKET_PROTOCOL).cloned();
-    if let Some(protocol) = requested_protocol {
+    let mut retried_local_credential = false;
+    let (upstream_socket, handshake) = loop {
+        let mut request = match socket_url.as_str().into_client_request() {
+            Ok(request) => request,
+            Err(error) => {
+                return refuse(
+                    StatusCode::BAD_REQUEST,
+                    "path",
+                    format!("that terminal address is not usable: {error}"),
+                )
+            }
+        };
+        if let Some(protocol) = &requested_protocol {
+            request
+                .headers_mut()
+                .insert(SEC_WEBSOCKET_PROTOCOL, protocol.clone());
+        }
         request
             .headers_mut()
-            .insert(SEC_WEBSOCKET_PROTOCOL, protocol);
-    }
-    request
-        .headers_mut()
-        .insert(AUTHORIZATION, bearer(&credential));
+            .insert(AUTHORIZATION, bearer(&credential));
 
-    let connected = match tokio::time::timeout(
-        handshake_timeout,
-        tokio_tungstenite::connect_async_tls_with_config(request, None, false, None),
-    )
-    .await
-    {
-        Ok(connected) => connected,
-        Err(_) => {
-            return refuse(
-                StatusCode::GATEWAY_TIMEOUT,
-                "upstream-timeout",
-                "the daemon did not complete the terminal handshake in time",
-            )
-        }
-    };
-    let (upstream_socket, handshake) = match connected {
-        Ok(pair) => pair,
-        // The daemon's refusal is the answer; do not turn it into a generic
-        // proxy failure.
-        Err(tungstenite::Error::Http(rejection)) => return forward_upgrade_rejection(*rejection),
-        Err(error) => {
-            return refuse(
-                StatusCode::BAD_GATEWAY,
-                "upstream",
-                format!("could not open the terminal socket: {error}"),
-            )
+        let connected = match tokio::time::timeout(
+            state.upstream_handshake_timeout,
+            tokio_tungstenite::connect_async_tls_with_config(request, None, false, None),
+        )
+        .await
+        {
+            Ok(connected) => connected,
+            Err(_) => {
+                return refuse(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "upstream-timeout",
+                    "the daemon did not complete the terminal handshake in time",
+                )
+            }
+        };
+        match connected {
+            Ok(pair) => break pair,
+            Err(tungstenite::Error::Http(rejection))
+                if target.kind == ConnectionKind::Local
+                    && !retried_local_credential
+                    && matches!(
+                        rejection.status(),
+                        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+                    ) =>
+            {
+                match state.registry.reload_local_credential(&target) {
+                    Ok(refreshed) if refreshed != credential => {
+                        credential = refreshed;
+                        retried_local_credential = true;
+                    }
+                    Ok(_) => return forward_upgrade_rejection(*rejection),
+                    Err(RegistryError::LocalProfileChanged) => {
+                        return refuse(
+                            StatusCode::CONFLICT,
+                            "local-profile-changed",
+                            RegistryError::LocalProfileChanged.to_string(),
+                        )
+                    }
+                    Err(error) => {
+                        return refuse(
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            "local-credential-unavailable",
+                            error.to_string(),
+                        )
+                    }
+                }
+            }
+            // The daemon's refusal is the answer; do not turn it into a
+            // generic proxy failure. A Local credential is retried only once.
+            Err(tungstenite::Error::Http(rejection)) => {
+                return forward_upgrade_rejection(*rejection)
+            }
+            Err(error) => {
+                return refuse(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream",
+                    format!("could not open the terminal socket: {error}"),
+                )
+            }
         }
     };
 
@@ -1144,5 +1166,7 @@ mod tests {
         assert!(super::REQUEST_HEADER_DENYLIST.contains(&"cookie"));
         assert!(super::RESPONSE_HEADER_DENYLIST.contains(&"set-cookie"));
         assert!(super::RESPONSE_HEADER_DENYLIST.contains(&"location"));
+        assert!(super::RESPONSE_HEADER_DENYLIST.contains(&"x-wisp-proxy-error"));
+        assert!(super::RESPONSE_HEADER_DENYLIST.contains(&"x-wisp-proxy-redirect"));
     }
 }

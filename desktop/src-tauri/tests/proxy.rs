@@ -14,6 +14,7 @@ use futures_util::{SinkExt, StreamExt};
 use support::{attachment_bytes, Harness, MockDaemon, Tripwire, SHARED_TASK_ID};
 use wisp_desktop::capability::Capability;
 use wisp_desktop::proxy::{self, ProxyHandle, ProxyState};
+use wisp_desktop::registry::Identity;
 use wisp_desktop::secrets::SecretStore;
 
 const TOKEN_ONE: &str = "synthetic-token-alpha-0000000000";
@@ -325,6 +326,8 @@ async fn an_upstream_set_cookie_never_reaches_the_webview() {
         .expect("request");
     assert!(response.status().is_success());
     assert!(response.headers().get("set-cookie").is_none());
+    assert!(response.headers().get("x-wisp-proxy-error").is_none());
+    assert!(response.headers().get("x-wisp-proxy-redirect").is_none());
     assert_eq!(response.text().await.expect("body"), r#"{"ok":true}"#);
 }
 
@@ -416,7 +419,11 @@ async fn local_get_reloads_a_rotated_profile_token_once_and_retries() {
         .expect("request");
     assert!(response.status().is_success());
     let seen = local.seen();
-    assert_eq!(seen.len(), 2, "one stale attempt and one retry");
+    assert_eq!(
+        seen.len(),
+        3,
+        "stale identity proof, retried proof, then the requested read"
+    );
     assert_eq!(
         seen[0].authorization.as_deref(),
         Some(format!("Bearer {TOKEN_ONE}").as_str())
@@ -425,6 +432,28 @@ async fn local_get_reloads_a_rotated_profile_token_once_and_retries() {
         seen[1].authorization.as_deref(),
         Some(format!("Bearer {rotated}").as_str())
     );
+    assert_eq!(
+        seen[2].authorization.as_deref(),
+        Some(format!("Bearer {rotated}").as_str())
+    );
+    assert_eq!(
+        harness.registry.identity("local"),
+        Identity::Verified,
+        "only the successful capabilities retry proves identity"
+    );
+
+    let mutation = harness
+        .client
+        .post(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action")))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("mutation after rotated read");
+    assert!(mutation.status().is_success());
+    let paths = local.seen_paths();
+    assert_eq!(paths[3], "/api/capabilities");
+    assert!(paths[4].ends_with("/action"));
 }
 
 #[tokio::test]
@@ -458,8 +487,8 @@ async fn local_mutation_replays_its_bounded_body_after_token_rotation() {
     assert!(response.status().is_success());
     assert_eq!(
         local.seen().len() - before,
-        2,
-        "one stale mutation and one replay"
+        3,
+        "stale identity proof, retried proof, then one mutation"
     );
 }
 
@@ -517,8 +546,7 @@ async fn desktop_update_refuses_an_incompatible_target_protocol() {
 async fn compatible_update_reloads_a_rotated_local_token_before_posting() {
     let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
     let (harness, _) = Harness::start(Some(&local), &[]).await;
-    // Prime the per-launch identity so the update compatibility preflight is
-    // the component responsible for recovering this rotation.
+    // Prime one successful write before rotating the Local credential.
     assert!(harness
         .client
         .post(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action")))
@@ -547,7 +575,7 @@ async fn compatible_update_reloads_a_rotated_local_token_before_posting() {
         .into_iter()
         .filter(|request| request.path == "/api/update")
         .collect();
-    assert_eq!(update_requests.len(), 3, "stale GET, retried GET, one POST");
+    assert_eq!(update_requests.len(), 2, "one compatibility GET, one POST");
     assert_eq!(update_requests.last().expect("POST").method, "POST");
     assert_eq!(
         update_requests
@@ -854,6 +882,107 @@ async fn a_terminal_socket_carries_traffic_to_the_daemon_that_opened_it() {
 }
 
 #[tokio::test]
+async fn local_terminal_reloads_a_token_rotated_after_the_identity_probe() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    let rotated = "synthetic-terminal-token-rotated-7777";
+    harness.set_local_profile_token(rotated);
+    local.rotate_token_after_next_capabilities(rotated);
+
+    let url = harness.websocket_route(
+        "local",
+        &format!("api/tasks/{SHARED_TASK_ID}/terminal?shell=1"),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(url)
+        .await
+        .expect("terminal retries with the rotated Local token");
+    assert_eq!(
+        socket
+            .next()
+            .await
+            .expect("hello")
+            .expect("frame")
+            .into_text()
+            .expect("text")
+            .as_str(),
+        "hello from alpha"
+    );
+    socket.close(None).await.expect("close");
+
+    let attempts: Vec<_> = local
+        .seen()
+        .into_iter()
+        .filter(|request| request.path.ends_with("/terminal"))
+        .collect();
+    assert_eq!(attempts.len(), 2, "the handshake retries exactly once");
+    assert_eq!(
+        attempts[0].authorization.as_deref(),
+        Some(format!("Bearer {TOKEN_ONE}").as_str())
+    );
+    assert_eq!(
+        attempts[1].authorization.as_deref(),
+        Some(format!("Bearer {rotated}").as_str())
+    );
+}
+
+#[tokio::test]
+async fn local_terminal_forwards_the_second_credential_rejection() {
+    let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
+    let (harness, _) = Harness::start(Some(&local), &[]).await;
+    local.rotate_token_after_next_capabilities("synthetic-daemon-terminal-token-8888");
+    harness.set_local_profile_token("synthetic-still-wrong-terminal-token-9999");
+
+    let url = harness.websocket_route(
+        "local",
+        &format!("api/tasks/{SHARED_TASK_ID}/terminal?shell=1"),
+    );
+    match tokio_tungstenite::connect_async(url).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        }
+        Err(other) => panic!("expected the daemon's second rejection, got {other}"),
+        Ok(_) => panic!("a terminal with a rejected rotated token must not open"),
+    }
+    assert_eq!(
+        local
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/terminal"))
+            .count(),
+        2,
+        "the handshake retry is bounded"
+    );
+}
+
+#[tokio::test]
+async fn a_remote_terminal_never_reloads_or_retries_its_saved_credential() {
+    let (alpha, remote) = two_daemons().await;
+    let (harness, ids) = Harness::start(Some(&alpha), &[&remote]).await;
+    remote.rotate_token_after_next_capabilities("synthetic-new-remote-terminal-token");
+
+    let url = harness.websocket_route(
+        &ids[0],
+        &format!("api/tasks/{SHARED_TASK_ID}/terminal?shell=1"),
+    );
+    match tokio_tungstenite::connect_async(url).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            assert_eq!(response.status(), reqwest::StatusCode::UNAUTHORIZED);
+        }
+        Err(other) => panic!("expected the remote daemon's rejection, got {other}"),
+        Ok(_) => panic!("a remote terminal with a stale saved token must not open"),
+    }
+    assert_eq!(
+        remote
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/terminal"))
+            .count(),
+        1,
+        "remote credentials are never reread or retried"
+    );
+}
+
+#[tokio::test]
 async fn an_upstream_upgrade_refusal_is_forwarded_rather_than_laundered() {
     let alpha = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
     let mismatched =
@@ -920,14 +1049,15 @@ async fn a_write_is_refused_when_a_different_daemon_answers_the_saved_address() 
         "the write must not reach a daemon whose identity did not match"
     );
 
-    // Reads still work: the user has to be able to see the state they are in.
+    // Once a mismatch is known, reads fail closed too: task or attachment data
+    // from the replacement daemon must not render under the saved connection.
     let read = harness
         .client
         .get(harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}")))
         .send()
         .await
         .expect("request");
-    assert!(read.status().is_success());
+    assert_eq!(read.status(), reqwest::StatusCode::CONFLICT);
 
     let terminal = harness.websocket_route(
         &remote,
@@ -952,7 +1082,7 @@ async fn a_write_is_refused_when_a_different_daemon_answers_the_saved_address() 
 }
 
 #[tokio::test]
-async fn a_write_proceeds_once_the_pinned_identity_is_confirmed() {
+async fn every_write_refreshes_the_pinned_identity_before_proceeding() {
     let (alpha, bravo) = two_daemons().await;
     let (mut harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
     let remote = ids[0].clone();
@@ -974,7 +1104,7 @@ async fn a_write_proceeds_once_the_pinned_identity_is_confirmed() {
     assert!(paths.iter().any(|path| path == "/api/capabilities"));
     assert!(paths.iter().any(|path| path.ends_with("/action")));
 
-    // The check is once per launch, not once per write.
+    // A later write cannot inherit a launch-wide proof that may now be stale.
     harness
         .client
         .post(harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}/action")))
@@ -988,7 +1118,46 @@ async fn a_write_proceeds_once_the_pinned_identity_is_confirmed() {
         .iter()
         .filter(|path| path.as_str() == "/api/capabilities")
         .count();
-    assert_eq!(capability_checks, 1);
+    assert_eq!(capability_checks, 2);
+}
+
+#[tokio::test]
+async fn a_later_write_refuses_an_endpoint_retargeted_after_a_successful_write() {
+    let (alpha, bravo) = two_daemons().await;
+    let (harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
+    let remote = ids[0].clone();
+    let route = harness.route(&remote, &format!("api/tasks/{SHARED_TASK_ID}/action"));
+
+    assert!(harness
+        .client
+        .post(&route)
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("first write")
+        .status()
+        .is_success());
+    bravo.become_a_different_daemon("wisp-instance-retargeted");
+
+    let response = harness
+        .client
+        .post(&route)
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .expect("write after retarget");
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(
+        bravo
+            .seen_paths()
+            .iter()
+            .filter(|path| path.ends_with("/action"))
+            .count(),
+        1,
+        "only the first write may reach the mutation endpoint"
+    );
 }
 
 /* ── removal is revocation ───────────────────────────────────────────────── */

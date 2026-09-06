@@ -148,6 +148,9 @@ impl Default for RegistryFile {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfo {
     pub id: String,
+    /// Process-local routing generation. The reserved Local ID stays stable,
+    /// so a target change increments this value to invalidate webview state.
+    pub route_revision: u32,
     #[serde(rename = "name")]
     pub label: String,
     pub kind: ConnectionKind,
@@ -177,7 +180,7 @@ pub struct Target {
     pub instance_id: String,
 }
 
-/// Result of the pinned-identity check performed before the first write.
+/// Result of the most recent pinned-identity check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Identity {
     Unchecked,
@@ -198,6 +201,7 @@ struct State {
     credential_errors: HashMap<String, String>,
     cleanup_errors: BTreeMap<String, String>,
     identity: HashMap<String, Identity>,
+    local_route_revision: u32,
 }
 
 /// The native connection registry.
@@ -249,6 +253,7 @@ impl Registry {
                 credential_errors: HashMap::new(),
                 cleanup_errors: BTreeMap::new(),
                 identity: HashMap::new(),
+                local_route_revision: 0,
             }),
             #[cfg(test)]
             persist_failure_countdown: Mutex::new(None),
@@ -417,6 +422,7 @@ impl Registry {
         out.push(match &state.local {
             Some(profile) => ConnectionInfo {
                 id: LOCAL_CONNECTION_ID.to_string(),
+                route_revision: state.local_route_revision,
                 label: state.local_label.clone(),
                 kind: ConnectionKind::Local,
                 url: profile.base().to_string(),
@@ -426,6 +432,7 @@ impl Registry {
             },
             None => ConnectionInfo {
                 id: LOCAL_CONNECTION_ID.to_string(),
+                route_revision: state.local_route_revision,
                 label: state.local_label.clone(),
                 kind: ConnectionKind::Local,
                 url: String::new(),
@@ -441,6 +448,7 @@ impl Registry {
             let ready = state.credentials.contains_key(&entry.id);
             out.push(ConnectionInfo {
                 id: entry.id.clone(),
+                route_revision: 0,
                 label: entry.label.clone(),
                 kind: ConnectionKind::Remote,
                 url: entry.url.clone(),
@@ -499,8 +507,15 @@ impl Registry {
     pub fn refresh_local(&self, profile: LocalProfile) -> ConnectionInfo {
         let _mutation = self.mutation_lock();
         let mut state = self.lock();
+        let target_changed = state.local.as_ref().is_none_or(|current| {
+            current.base() != profile.base() || current.instance_id() != profile.instance_id()
+        });
+        if target_changed {
+            state.local_route_revision = state.local_route_revision.saturating_add(1);
+        }
         let info = ConnectionInfo {
             id: LOCAL_CONNECTION_ID.to_string(),
+            route_revision: state.local_route_revision,
             label: state.local_label.clone(),
             kind: ConnectionKind::Local,
             url: profile.base().to_string(),
@@ -575,7 +590,13 @@ impl Registry {
             return Err(RegistryError::LocalProfileChanged);
         }
         let credential = profile.token().to_string();
-        self.refresh_local(profile);
+        // A credential reload is not an identity proof. Preserve the current
+        // state so a successful ordinary read cannot authorize a later write,
+        // and so concurrent probes cannot observe a premature `Verified`.
+        let _mutation = self.mutation_lock();
+        let mut state = self.lock();
+        state.local = Some(profile);
+        state.local_error = None;
         Ok(credential)
     }
 
@@ -640,6 +661,7 @@ impl Registry {
         }
         Ok(ConnectionInfo {
             id: entry.id,
+            route_revision: 0,
             label: entry.label,
             kind: ConnectionKind::Remote,
             url: entry.url,
@@ -689,6 +711,7 @@ impl Registry {
         entry.label = label;
         let info = ConnectionInfo {
             id: entry.id.clone(),
+            route_revision: 0,
             label: entry.label.clone(),
             kind: ConnectionKind::Remote,
             url: entry.url.clone(),
@@ -738,6 +761,7 @@ impl Registry {
         let mut state = self.lock();
         let info = ConnectionInfo {
             id: entry.id.clone(),
+            route_revision: 0,
             label: entry.label.clone(),
             kind: ConnectionKind::Remote,
             url: entry.url.clone(),
@@ -838,6 +862,7 @@ impl Registry {
         self.persist(&state)?;
         Ok(ConnectionInfo {
             id: entry.id,
+            route_revision: 0,
             label: entry.label,
             kind: ConnectionKind::Remote,
             url: entry.url,
