@@ -123,12 +123,12 @@ interface ConnectionInfo {
 A desktop `DaemonTransport` for connection `id` is then:
 
 ```ts
-const prefix = `${bootstrap.proxyBaseUrl}/connections/${id}`
+const prefix = `${bootstrap.proxyBaseUrl}/connections/${id}/${routeRevision}`
 request(path)        -> fetch(prefix + path)          // path starts with /api
 openEventStream(p)   -> new EventSource(prefix + p)
 openWebSocket(p)     -> new WebSocket((prefix + p).replace(/^http/, "ws"))
 assetUrl(p)          -> prefix + p
-ensureReady()        -> no-op: the native hop is already authenticated
+ensureReady()        -> request("/api/health")
 ```
 
 The other commands:
