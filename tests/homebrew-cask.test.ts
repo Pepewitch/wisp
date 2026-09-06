@@ -45,7 +45,7 @@ describe("Homebrew Cask rendering", () => {
     expect(cask).toContain('skip "Wisp Desktop is currently distributed as a prerelease"');
     expect(cask).toContain("macOS 12.3 or newer");
     expect(cask).toContain("not Developer ID signed or notarized");
-    expect(cask).toContain("Reset Desktop Data before uninstalling");
+    expect(cask).toContain("Reset desktop data before uninstalling");
     expect(cask).not.toMatch(/API_KEY|PASSWORD|access.token|bearer/i);
   });
 

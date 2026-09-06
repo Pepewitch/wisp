@@ -4,8 +4,8 @@ Wisp drives four coding-agent CLIs — droid, claude, codex, cursor — through
 one seam: the adapter. An adapter is **declarative config plus small named
 strategies** (D7): how to run one headless turn, how to resume the session,
 and how to read the machine output. No harness knowledge lives outside
-`src/adapters/` — the daemon, the routes, the CLI, and the web UI all render
-*through* the adapter, so a new harness is one entry in
+`src/adapters/` — the daemon, routes, CLI, and shared browser/desktop UI all
+render *through* the adapter, so a new harness is one entry in
 `src/adapters/builtins.ts` plus, at most, a few new named strategies.
 
 This doc is the distilled experience of adding all four. Follow the order —

@@ -1,8 +1,8 @@
 # Security
 
 Wisp runs coding-agent CLIs with access to your repositories. Treat the daemon,
-its web token, its task logs, and every configured harness credential as
-security-sensitive.
+its access token, desktop connection credentials, task logs, and every
+configured harness credential as security-sensitive.
 
 ## Supported versions
 
@@ -41,9 +41,9 @@ There is no production-supported release yet.
    scope and spend limit for automated or evaluation runs.
 6. Review task branches before merging or pushing them.
 7. For the experimental Apple Silicon alpha, install only through the
-   documented `Pepewitch/tap/wisp` Formula, verify the GitHub owner and
-   checksum, and do not disable Gatekeeper globally. Developer ID signing and
-   notarization remain mandatory before an Apple Silicon RC.
+   documented `Pepewitch/tap/wisp` Formula or `wisp-desktop` Cask, verify the
+   GitHub owner and checksum, and do not disable Gatekeeper globally. Developer
+   ID signing and notarization remain mandatory before an Apple Silicon RC.
 
 The update API accepts only a newer release returned by the fixed
 `Pepewitch/wisp` GitHub endpoint. Linux activation verifies the published
@@ -51,10 +51,25 @@ manifest, artifact hash, and embedded build identity. macOS delegates
 installation and checksum verification to Homebrew. Neither path accepts a
 caller-provided URL or uses `sudo`.
 
-The browser exchanges the bearer token once for an HttpOnly, SameSite=Strict
-cookie. Tokens in URL query parameters are not accepted. This protects browser
-storage and history, but it is not a substitute for a private, encrypted
-transport.
+The browser keeps the bearer token in its origin-scoped `localStorage` for
+ordinary API requests and exchanges it for an HttpOnly, SameSite=Strict cookie
+used by browser-managed streams, terminals, and media. Tokens in URL query
+parameters are not accepted. Treat any script running in the Wisp origin as
+able to read the bearer token; the self-contained bundle and private encrypted
+transport remain part of the security boundary.
+
+Wisp Desktop keeps remote tokens in the macOS Keychain and reads Local's token
+from the standard Wisp profile into native process memory. The webview receives
+neither. Its native proxy is bound to loopback, requires a per-launch
+capability, resolves immutable connection routes from native metadata, strips
+cookies, refuses redirects, verifies TLS, and overwrites upstream
+Authorization. Plain HTTP remotes are accepted only on an exact loopback
+address for a user-managed tunnel. Removing a remote revokes its route before
+removing it from the active registry, then attempts Keychain deletion. A
+failure is reported and retained as a cleanup tombstone for **Reset desktop
+data** or the next launch to retry. It never deletes daemon data.
+See [Desktop transport contract](docs/DESKTOP-TRANSPORT.md) for the complete
+boundary.
 
 See [Remote access](docs/REMOTE-ACCESS.md) for supported access patterns.
 

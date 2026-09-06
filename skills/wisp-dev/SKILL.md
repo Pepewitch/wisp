@@ -1,6 +1,6 @@
 ---
 name: wisp-dev
-description: Modify and validate the Wisp repository using its contributor architecture and conventions. Use for harness adapters, daemon/CLI/API behavior, task lifecycle, worktrees, streaming, or the React web UI. Not for operating Wisp to delegate work; use the wisp skill instead.
+description: Modify and validate the Wisp repository using its contributor architecture and conventions. Use for harness adapters, daemon/CLI/API behavior, task lifecycle, worktrees, streaming, the shared React UI, or the Tauri desktop app. Not for operating Wisp to delegate work; use the wisp skill instead.
 ---
 
 # Wisp development
@@ -8,28 +8,31 @@ description: Modify and validate the Wisp repository using its contributor archi
 This is a routing guide for changing Wisp itself. It is intentionally not a
 second copy of the implementation. Read only the reference that matches the
 task, then inspect the source and nearby tests. When documentation and source
-disagree, `src/` and `web/ui/src/` win.
+disagree, `src/`, `web/ui/src/`, and `desktop/src-tauri/src/` win for the
+surfaces they own.
 
 Use the separate `wisp` skill when the job is to create, steer, or integrate a
 Wisp-managed task. Use `wisp-dev` when the job changes this repository.
 
 ## Mental model
 
-Wisp is one Bun/TypeScript package with a daemon at the center:
+Wisp has one authoritative daemon and several clients:
 
-    CLI ──HTTP──┐
-                ├── daemon/routes ── store + worktrees + runner ── harness process
-    web ─HTTP───┘                         │              │
-         SSE/WS                           └── outbox     └── adapter
+    task/project CLI ───HTTP──────┐
+    browser ──HTTP + SSE/WS───────┼── daemon/routes ── store + worktrees + runner
+    desktop UI ──native proxy─────┘          │                       │
+       (same React bundle)                   └── outbox              └── adapter
 
-- The daemon owns business logic. The CLI and web app are clients of its API.
+- The daemon owns business logic. The CLI, browser, and desktop shell are
+  clients of its API.
 - A task is a checkout or isolated worktree plus an adapter, a harness session,
   and persisted turns. Each turn is one short-lived headless harness process.
 - SQLite and the webhook outbox are durable truth. The in-memory event bus and
   SSE streams are realtime delivery, never a ledger.
 - Harness-specific argv and wire knowledge stays under `src/adapters/`.
 - The React app uses Query for replaceable server state and a separate reducer
-  for append-oriented activity. It ships as one generated, committed HTML file.
+  for append-oriented activity. One generated, committed HTML file ships in
+  both the daemon and Tauri app; transport and state scope vary by runtime.
 
 ## Route the task before reading deeply
 
@@ -38,8 +41,8 @@ Wisp is one Bun/TypeScript package with a daemon at the center:
 | Add or change a harness or capability | [Adding a harness](../../docs/ADDING-A-HARNESS.md) | `src/adapters/`, captured fixtures, adapter/API tests |
 | Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `tests/harness-facts/`, fixtures, and narrow contract tests |
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
-| Change React UI, styling, responsive behavior, or frontend data flow | [Frontend conventions](references/frontend.md) | `web/ui/README.md`, the owning component/hook, and its tests |
-| Change the desktop shell's native core, proxy, connections, or credentials | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md) then `desktop/README.md` | `desktop/src-tauri/src/` and its `tests/`; gate with `bun run desktop:check` |
+| Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/ui/README.md`, both runtime paths, the owning component/hook, and its tests |
+| Change the desktop shell's native core, proxy, connections, or credentials | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md) then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
 | Prepare or publish a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
 | Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
@@ -83,11 +86,16 @@ publication surfaces.
    abstraction. Honest absence is better than guessed harness behavior.
 4. Run the narrowest relevant check while iterating, then the applicable gate
    from the server or frontend reference.
-5. A shipped web change includes a regenerated `web/ui-dist/index.html`.
-   Never edit that bundle by hand.
-6. Keep this entry point thin. Put durable workflow or rationale in the
+5. Treat browser and desktop as two shipped clients of one UI/API contract.
+   For every UI or daemon-contract change, identify both consumers, test the
+   affected paths, and document intentional divergence. Never accept a
+   browser-only pass for shared code or a desktop-only pass for code also
+   served by the daemon.
+6. A shipped UI change includes a regenerated `web/ui-dist/index.html`, which
+   both clients consume. Never edit that bundle by hand.
+7. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.
-7. Keep investigation notes and implementation plans in `.context/` by
+8. Keep investigation notes and implementation plans in `.context/` by
    default. Commit one only when it serves a durable repository-level purpose,
    and sanitize it to the standard required for any public artifact.

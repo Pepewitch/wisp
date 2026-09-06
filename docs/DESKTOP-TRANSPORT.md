@@ -2,11 +2,15 @@
 
 Status: implemented transport boundary for the Wisp desktop alpha. Installation
 and release mechanics are documented separately from this security contract.
+See [Architecture](ARCHITECTURE.md) first for the system-wide ownership and
+shared-client model.
 
 The desktop application manages several independent Wisp daemons from one UI.
 Each daemon remains the source of truth for its projects, tasks, worktrees,
-harnesses, terminals, and update state. The desktop process owns only saved
-connection metadata, credentials, and connection-scoped UI state.
+harnesses, terminals, and update state. The native desktop process owns saved
+connection metadata, credentials, Local discovery, and proxy routing. The
+shared React app owns connection-scoped query and presentation state. Neither
+owns daemon data.
 
 ## Why a transport boundary is required
 
@@ -261,7 +265,7 @@ chooses proxy targets; daemon routes remain explicitly connection-qualified.
 Keychain failures are connection-scoped. A failed credential read leaves that
 remote visible but not ready, with a secret-free repair reason. A failed delete
 keeps a durable tombstone and a bootstrap cleanup issue; unrelated connections
-and Local continue to open, and Reset Desktop Data or a later launch retries it.
+and Local continue to open, and **Reset desktop data** or a later launch retries it.
 New Keychain accounts are preceded by a persisted recovery marker so a metadata
 write plus cleanup failure cannot orphan an undiscoverable credential.
 

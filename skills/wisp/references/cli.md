@@ -1,7 +1,10 @@
 # Wisp CLI reference
 
-Every command the CLI owns. The CLI is a thin HTTP client of the daemon; task
-ids are short strings like `tq2szu`. `wisp --help` prints the same list.
+Every command the CLI owns. Task, project, and lifecycle operations are thin
+HTTP clients of the daemon. Setup and diagnostic commands such as `init`,
+`token`, `version`, and `doctor` also inspect the active local profile or
+installation. Task ids are short strings like `tq2szu`; `wisp --help` prints
+the same list.
 
 ## Tasks
 

@@ -18,7 +18,7 @@ credential in practice.
 - Give tailnet access only to devices and people trusted to run code on the
   Wisp host.
 
-## Phone path: Tailscale Serve
+## Private HTTPS path: Tailscale Serve
 
 Install Tailscale on the Wisp host and phone, put both in the same tailnet, and
 confirm the daemon is healthy locally. Run `wisp token` and note the port in
@@ -37,9 +37,16 @@ host, run:
 wisp token
 ```
 
-Paste that token into the Wisp authentication screen once. The browser trades
-it for an HttpOnly, SameSite=Strict cookie. Test a harmless follow-up on a
-disposable task before relying on the connection.
+Paste that token into the Wisp authentication screen once. The browser keeps
+it in origin-scoped storage for ordinary API requests and also trades it for an
+HttpOnly, SameSite=Strict cookie used by streams, terminals, and media. Test a
+harmless follow-up on a disposable task before relying on the connection.
+
+Wisp Desktop can use the same private HTTPS address. Click `+`, enter the Serve
+URL and the token printed on the daemon host, confirm the authenticated daemon
+identity, then enter remote project paths as they exist on that host. Saving a
+desktop connection does not configure Tailscale or keep an unavailable route
+alive.
 
 Tailscale ACLs and device approval remain the access boundary. Wisp does not
 interpret Tailscale identity headers and does not create separate Wisp users.
@@ -47,7 +54,7 @@ See the current
 [Tailscale Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
 before applying this to a shared tailnet.
 
-## Desktop path: SSH local forwarding
+## SSH local forwarding
 
 From the client machine:
 
@@ -59,10 +66,16 @@ WISP_LOCAL_PORT=18711
 ssh -N -L "${WISP_LOCAL_PORT}:127.0.0.1:${WISP_HOST_PORT}" user@wisp-host
 ```
 
-Keep that session open and browse to the chosen client URL, for example
-<http://127.0.0.1:18711>. Use `wisp token` on the host to authenticate. The
-Wisp port stays loopback-only on both ends; SSH provides transport encryption
-and host authentication.
+Keep that session open. For Wisp Desktop, click `+` and add the forwarded URL,
+for example `http://127.0.0.1:18711`, with the token printed by `wisp token` on
+the remote host. Exact-loopback HTTP is accepted because SSH supplies transport
+encryption and host authentication; another hostname over plain HTTP is
+refused. Enter project paths as they exist on the remote host.
+
+For the browser UI, open the same forwarded URL and paste the remote token into
+the authentication screen. The Wisp port stays loopback-only on both ends.
+Closing Wisp Desktop or the browser does not stop the remote daemon or agents;
+closing the SSH session only makes that connection temporarily unreachable.
 
 ## Direct bind is not the supported shortcut
 

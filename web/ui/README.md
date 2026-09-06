@@ -1,16 +1,19 @@
-# web/ui — the Wisp web app
+# web/ui — the shared Wisp React app
 
-The app Wisp serves at `/`. React 19 + vite + tailwind v4 + shadcn (on base-ui
-primitives), built to **one committed single-file bundle** at
-[`web/ui-dist/index.html`](../ui-dist/index.html) that the daemon text-imports.
+The React application used by both Wisp clients: the daemon serves it at `/` in
+a browser, and Wisp Desktop packages it in a Tauri webview. React 19 + Vite +
+Tailwind v4 + shadcn (on base-ui primitives) build to **one committed
+single-file bundle** at [`web/ui-dist/index.html`](../ui-dist/index.html).
 It is a Bun workspace managed by the repository root lockfile.
 
-Two files are binding law before you write any of it:
+Three sources are binding law before you write any of it:
 
 - [Frontend conventions](../../skills/wisp-dev/references/frontend.md) — the
   design language (graphite & violet).
   No new hues, no chips, sentence case, honest states. A new surface ships with
   its gallery entry in the same diff.
+- [Architecture](../../docs/ARCHITECTURE.md) — the browser/desktop runtime,
+  transport, ownership, and connection-scoping contract.
 - [../../brand/README.md](../../brand/README.md) — the mark. `wisp-mark.tsx`
   and the favicon in `index.html` are **generated**; edit the generator.
 
@@ -30,7 +33,8 @@ set process-local state under `~/.wisp-dev`; both processes read its
 once with `bun run dev:install-cli`, then use `wisp-dev` against this daemon.
 Bare `wisp` and `~/.wisp` remain the installed production service.
 
-For only one half, use `bun run dev:server` from the repo root or
+This previews the daemon-served browser runtime. For only one half, use
+`bun run dev:server` from the repo root or
 `bun run dev:ui` for Vite. With no daemon up, the token dialog is as far as you
 get; `#/gallery` is the one route that renders standalone, off
 `src/lib/fixtures.ts`.
@@ -44,9 +48,10 @@ asserts both halves (a 404 on `/vendor/*`, and no `src=`/`href=` in the built
 `<head>` except the `data:` favicon). That is what makes Wisp work over
 tailscale with nothing else reachable, and it is a hard invariant (D1, D12).
 
-`web/ui-dist/index.html` is **committed**, so a web change that ships needs
-`bun run build:ui` in the same commit. A test compares the served bytes to the
-committed artifact, which is what catches a stale bundle.
+`web/ui-dist/index.html` is **committed**, so a UI change that ships needs
+`bun run build:ui` in the same commit. A test compares the daemon-served bytes
+to the committed artifact, and the Tauri configuration packages that same
+directory. There is no second desktop bundle to update by hand.
 
 ## Layout
 
@@ -60,28 +65,62 @@ src/
   hooks/             useLogStream, useMediaQuery
 ```
 
-Data flow: TanStack Query for reads, a bridge from the daemon's `/api/events`
-SSE stream for invalidation, and `useLogStream` for the live turn. Provider PR
-state and the daemon-cached release status are the only polling exceptions.
+`main.tsx` selects one of two runtimes. The browser supplies one same-origin
+`DaemonTransport`; Tauri bootstraps native connection metadata and supplies one
+immutable proxy transport per connection. Components and hooks consume the
+runtime transport and connection-scoped query keys rather than reading an
+origin or globally unique task ID themselves.
+
+Data flow uses TanStack Query for reads, a bridge from the daemon's
+`/api/events` SSE stream for invalidation, and `useLogStream` for the live turn.
+Provider PR state and the daemon-cached release status are the only polling
+exceptions.
 
 Writes use the centralized TanStack mutation hooks in `hooks/mutations.ts`;
 feature hooks add only their local confirmation or refusal state. Keep that
 boundary when adding a write rather than calling `api()` directly from a
 component.
 
-## The gate
+## The cross-client gate
 
-Every one of these must pass before a web change lands:
+Every shared UI change must identify its effect on both the browser and Tauri
+runtimes. Preserve shared behavior by default; document and test any deliberate
+runtime-only behavior. In particular, review auth, cache/storage scope, late
+callbacks, SSE, WebSockets, media URLs, terminal ownership, and daemon update
+recovery whenever a change touches them.
+
+During iteration, run the root gate and regenerate the shared artifact:
 
 ```sh
 bun run check
+bun run build:ui
+```
+
+Review and include `web/ui-dist/index.html` with its source change. After the
+source and generated bundle are staged or committed, rebuild and require the
+artifact to remain clean:
+
+```sh
 bun run build
 git diff --exit-code -- web/ui-dist/index.html
 ```
 
 The root gate covers both workspaces: lint, typecheck, and unit tests. The
-build plus diff check proves that the committed single-file bundle matches its
-source.
+second build plus diff check proves that the committed single-file bundle
+matches its source.
+
+Run `bun run desktop:check` when native code changes or when a daemon/UI change
+affects rules the native core enforces: capability or identity negotiation,
+authentication and headers, redirects, HTTP/SSE/WebSocket/media proxying,
+connection metadata, credentials, folder picking, or Local setup. A generic
+JSON route/type change still needs root and focused client tests, but Cargo adds
+no coverage unless the native boundary changes.
+
+Build with `bash scripts/desktop/build-macos.sh --app-only` and exercise the
+same scenario in `bun run dev` and the app when work branches on Tauri, touches
+connection/runtime/native integration, or qualifies a material shared flow for
+release. A runtime-neutral style change does not need a Cargo or packaged-app
+build, but it still requires an explicit browser/Desktop impact review.
 
 For pixel checks, prefer `bun scripts/capture-app.ts [outdir]` (zero-dep, raw
 CDP against system Chrome) over eyeballing a browser pane: it emits

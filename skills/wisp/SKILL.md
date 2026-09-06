@@ -1,13 +1,15 @@
 ---
 name: wisp
-description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor) on this machine through the Wisp daemon — isolated worktree per task, honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline.
+description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor) through a Wisp daemon — isolated worktree per task, honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
 ---
 
 # Wisp — driving the task daemon
 
 Wisp runs coding agents in isolated git worktrees (one per task) behind a
-local daemon, wispd. Drive everything through the `wisp` CLI; the daemon owns
-all state. Never edit a task worktree yourself except to review and merge.
+daemon, wispd. Drive agent automation through the `wisp` CLI; the daemon owns
+all state. The browser and desktop app are operator interfaces over that same
+authority, not alternate task stores. Never edit a task worktree yourself
+except to review and merge.
 
 ## The core loop
 
@@ -24,6 +26,12 @@ wispd must be running. `wisp doctor` checks harness CLIs, auth, git, config,
 and daemon reachability, exiting nonzero and naming what failed. Daemon down →
 start it under the host's supervisor, never a bare `wisp serve &` (recipes:
 [references/setup.md](references/setup.md)).
+
+On Apple Silicon, `brew install --cask Pepewitch/tap/wisp-desktop` installs the
+optional Wisp Desktop app and pulls in the separate daemon Formula when it is
+absent. Desktop Local uses the standard Wisp profile; each saved remote tab is
+a separate reachable daemon. Installation, connections, native project
+picking, and removal behavior are in the setup reference.
 
 ## 2. Creating tasks
 
@@ -121,4 +129,4 @@ rebase task branches by sending a follow-up turn:
 - [references/cli.md](references/cli.md) — every command, flag, and output
 - [references/images.md](references/images.md) — image attachments in full
 - [references/setup.md](references/setup.md) — daemon ops, config files,
-  projects, models/effort, the HTTP API
+  browser/Desktop setup, connections, projects, models/effort, the HTTP API

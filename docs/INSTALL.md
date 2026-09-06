@@ -107,7 +107,7 @@ wisp new /absolute/path/to/repository \
 
 Use the returned task id with `wisp show`, `wisp log -f`, `wisp wait`, and
 `wisp send`. Or run `wisp token`, open the URL it prints, paste the token once,
-and use the built-in app.
+and use the daemon-served browser UI.
 
 ## Port selection and development isolation
 
