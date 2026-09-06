@@ -44,6 +44,10 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
   desc "Manage local and remote Wisp daemons from one native workspace"
   homepage "https://github.com/Pepewitch/wisp"
 
+  livecheck do
+    skip "Wisp Desktop is currently distributed as a prerelease"
+  end
+
   depends_on arch: :arm64
   depends_on macos: :monterey
   depends_on formula: "pepewitch/tap/wisp"

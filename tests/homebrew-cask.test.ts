@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import { renderHomebrewCask } from "../scripts/render-homebrew-cask";
 import { VERSION } from "../src/version";
@@ -41,6 +42,7 @@ describe("Homebrew Cask rendering", () => {
     expect(cask).toContain("depends_on macos: :monterey");
     expect(cask).toContain('app "Wisp.app"');
     expect(cask).toContain('uninstall quit: "dev.wisp.desktop"');
+    expect(cask).toContain('skip "Wisp Desktop is currently distributed as a prerelease"');
     expect(cask).toContain("macOS 12.3 or newer");
     expect(cask).toContain("not Developer ID signed or notarized");
     expect(cask).toContain("Reset Desktop Data before uninstalling");
@@ -57,5 +59,11 @@ describe("Homebrew Cask rendering", () => {
     expect(() => renderHomebrewCask(manifest({ target: { ...manifest().target, arch: "x86_64" as "arm64" } }))).toThrow(
       "not the approved ad-hoc Apple Silicon desktop alpha",
     );
+  });
+
+  test("authenticates online audits and records the ad-hoc signing exception", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    expect(workflow).toContain("HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}");
+    expect(workflow).toContain("--except signing,github_prerelease_version");
   });
 });
