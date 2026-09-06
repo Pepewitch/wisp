@@ -14,6 +14,7 @@ import type {
   TaskDetail,
   TaskSkills,
   UpdateStatus,
+  WorktreeFileResponse,
 } from "@/lib/types";
 
 /** GET /api/tasks — archived rows are only present when the sidebar toggle fetched ?archived=1. */
@@ -174,5 +175,25 @@ export function useDiff(id: string | null, archived: boolean) {
         throw e;
       }
     },
+  });
+}
+
+/**
+ * GET /api/tasks/:id/file — one worktree file, fetched when the viewer opens.
+ *
+ * A path arrives from a link an agent wrote, so a miss is ordinary: the query
+ * resolves on click rather than on render, and the daemon's refusal is what
+ * the viewer shows. Cached per (connection, task, path) because reopening the
+ * same plan while reading a turn should not re-read it.
+ */
+export function useWorktreeFile(taskId: string | null, path: string | null) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: qk.worktreeFile(taskId ?? "", path ?? ""),
+    enabled: taskId !== null && path !== null,
+    queryFn: () =>
+      transport.request<WorktreeFileResponse>(
+        `/api/tasks/${taskId}/file?path=${encodeURIComponent(path!)}`,
+      ),
   });
 }

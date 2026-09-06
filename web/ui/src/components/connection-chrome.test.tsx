@@ -108,6 +108,7 @@ function bridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
     },
     relaunchDesktop: async () => undefined,
     onDesktopUpdateStatus: async () => () => undefined,
+    revealWorktreeFile: async () => undefined,
     ...overrides,
   }
 }

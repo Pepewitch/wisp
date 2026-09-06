@@ -13,8 +13,10 @@ import {
 import { ActivityList } from "@/components/activity-list"
 import { ArrowUp, ChevronRight, Dismiss, Pencil } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
+import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
+import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { formatBytes } from "@/lib/attachments"
 import {
@@ -139,70 +141,81 @@ export function Conversation({
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 z-(--z-pane) h-6 bg-gradient-to-b from-background from-30% to-transparent"
-      />
+    /**
+     * The viewer for a path an agent linked in prose. It belongs here rather
+     * than to a turn: the same file is the same file whichever turn mentioned
+     * it, and `task` is exactly the scope that knows which worktree to read
+     * out of.
+     */
+    <FileViewerProvider
+      taskId={task?.id ?? null}
+      onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
+    >
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-(--z-pane) h-6 bg-gradient-to-b from-background from-30% to-transparent"
+        />
 
-      <div
-        ref={viewport}
-        onScroll={onScroll}
-        tabIndex={-1}
-        data-testid="conversation-viewport"
-        className="scroll-slim min-h-0 flex-1 overflow-y-auto px-4.5 outline-none [overflow-anchor:auto]"
-      >
-        {/* Bottom-aligned while the transcript is shorter than the pane: a
-            two-line conversation belongs just above the composer, not floating
-            at the top of 600px of nothing. Once it overflows, this is inert. */}
-        <div className="flex min-h-full flex-col justify-end pt-6">
-          {task.turns.length === 0 && note && <div className="pt-4 text-[12.5px] text-faint">{note}</div>}
-          {task.turns.map((turn, i) => (
-            <TurnBlock
-              key={`${runtime.connectionId}:${task.id}:${turn.n}`}
-              taskId={task.id}
-              turn={turn}
-              messages={steeredMessages.get(turn.n) ?? []}
-              deliveryUncertain={uncertainStarts.has(turn.n)}
-              live={live[turn.n]}
-              first={i === 0}
-              latest={i === task.turns.length - 1}
-              // Why the task failed, on the turn that failed it. The harness's
-              // own last words often are the conclusion — droid, for one,
-              // pattern-matches its final message and exits 1 on a hit, so the
-              // real result ends up here and nowhere else.
-              failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
-              archived={task.archived}
-              onBeforeToggle={compensate}
-            />
-          ))}
-          {queuedMessages.map((message) => (
-            <QueuedMessage
-              key={`${runtime.connectionId}:${message.id}`}
-              taskId={task.id}
-              message={message}
-              archived={task.archived}
-            />
-          ))}
-          <div className="h-4 shrink-0" />
-        </div>
-      </div>
-
-      {!pinned && (
-        <button
-          type="button"
-          onClick={() => setPinned(true)}
-          className={cn(
-            "absolute right-4 bottom-3 flex h-7 items-center gap-1.5 rounded-full",
-            "border border-border-strong bg-card px-3 text-[11.5px] text-fg-secondary",
-            "shadow-float transition-colors hover:text-foreground",
-          )}
+        <div
+          ref={viewport}
+          onScroll={onScroll}
+          tabIndex={-1}
+          data-testid="conversation-viewport"
+          className="scroll-slim min-h-0 flex-1 overflow-y-auto px-4.5 outline-none [overflow-anchor:auto]"
         >
-          <ArrowUp className="size-3 rotate-180" />
-          Jump to latest
-        </button>
-      )}
-    </div>
+          {/* Bottom-aligned while the transcript is shorter than the pane: a
+              two-line conversation belongs just above the composer, not floating
+              at the top of 600px of nothing. Once it overflows, this is inert. */}
+          <div className="flex min-h-full flex-col justify-end pt-6">
+            {task.turns.length === 0 && note && <div className="pt-4 text-[12.5px] text-faint">{note}</div>}
+            {task.turns.map((turn, i) => (
+              <TurnBlock
+                key={`${runtime.connectionId}:${task.id}:${turn.n}`}
+                taskId={task.id}
+                turn={turn}
+                messages={steeredMessages.get(turn.n) ?? []}
+                deliveryUncertain={uncertainStarts.has(turn.n)}
+                live={live[turn.n]}
+                first={i === 0}
+                latest={i === task.turns.length - 1}
+                // Why the task failed, on the turn that failed it. The harness's
+                // own last words often are the conclusion — droid, for one,
+                // pattern-matches its final message and exits 1 on a hit, so the
+                // real result ends up here and nowhere else.
+                failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
+                archived={task.archived}
+                onBeforeToggle={compensate}
+              />
+            ))}
+            {queuedMessages.map((message) => (
+              <QueuedMessage
+                key={`${runtime.connectionId}:${message.id}`}
+                taskId={task.id}
+                message={message}
+                archived={task.archived}
+              />
+            ))}
+            <div className="h-4 shrink-0" />
+          </div>
+        </div>
+
+        {!pinned && (
+          <button
+            type="button"
+            onClick={() => setPinned(true)}
+            className={cn(
+              "absolute right-4 bottom-3 flex h-7 items-center gap-1.5 rounded-full",
+              "border border-border-strong bg-card px-3 text-[11.5px] text-fg-secondary",
+              "shadow-float transition-colors hover:text-foreground",
+            )}
+          >
+            <ArrowUp className="size-3 rotate-180" />
+            Jump to latest
+          </button>
+        )}
+      </div>
+    </FileViewerProvider>
   )
 }
 

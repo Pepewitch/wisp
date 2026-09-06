@@ -216,3 +216,17 @@ pub fn relaunch_desktop(
 ) -> Result<(), DesktopUpdateError> {
     updater.relaunch(&app)
 }
+
+/// Reveal one file of a Local task's worktree in Finder.
+///
+/// Local only, like the folder picker: a remote daemon's paths are not on this
+/// machine. Reveal, never open — nothing here can run a file.
+#[tauri::command]
+pub fn reveal_worktree_file(
+    core: State<'_, DesktopCore>,
+    connection_id: String,
+    worktree_path: String,
+    path: String,
+) -> Result<(), CoreError> {
+    core.reveal_local_file(&connection_id, &worktree_path, &path)
+}

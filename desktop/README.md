@@ -47,7 +47,7 @@ transport all live in Rust.
 | `src-tauri/src/registry.rs` | Immutable connection IDs, non-secret metadata on disk, crash-safe removal |
 | `src-tauri/src/secrets.rs` | Remote tokens in the macOS Keychain |
 | `src-tauri/src/local.rs` | The built-in Local connection, read from the standard Wisp profile |
-| `src-tauri/src/external.rs` | The one action that leaves the app: opening a web link |
+| `src-tauri/src/external.rs` | The two actions that leave the app: opening a web link, revealing a file |
 | `src-tauri/src/urls.rs` | Which addresses are allowed, and how a client path joins one |
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
@@ -195,6 +195,7 @@ The other commands:
 | `check_desktop_update` | — | `DesktopUpdateStatus` |
 | `install_desktop_update` | `confirmedVersion` | `DesktopUpdateStatus` |
 | `relaunch_desktop` | — | `void` |
+| `reveal_worktree_file` | `connectionId`, `worktreePath`, `path` | `void` |
 
 Two adjustments the React shell has to absorb:
 
@@ -215,9 +216,17 @@ task's prose belongs to the internet, not to the daemon that reported it. It
 exists because the webview has no new-window handler, so `target="_blank"` is
 inert in the packaged app and every PR link did nothing. `src/external.rs`
 opens `http` and `https` only, and hands the launcher the reparsed URL rather
-than the string the webview sent. Opening a local path is deliberately absent:
-"open with the default application" is arbitrary execution when the path came
-from agent output, and a remote connection's paths are not on this machine.
+than the string the webview sent.
+
+`reveal_worktree_file` is the other half of that module, and the difference is
+the point: it *reveals* rather than opens, so Finder selects a file and nothing
+runs it. "Open with the default application" stays absent — the path came from
+a link an agent wrote, and that is not a thing to hand to LaunchServices. Local
+only, gated like the folder picker, because a remote daemon's worktree is on
+another machine; the join happens in Rust so `..` is declined rather than
+resolved. Reading a file is not here at all: the daemon that owns the worktree
+serves it, which is what gives the browser the same viewer.
+
 **Task notifications** run the other way around from every other command. The
 shared React app already holds every connection's task list (the active tab
 through its query cache, the inactive tabs through their attention monitors),

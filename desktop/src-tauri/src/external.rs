@@ -14,10 +14,17 @@
 //!    webview sent. A serialized `Url` always begins with its scheme, so no
 //!    input can arrive at the launcher looking like an option.
 //!
-//! Opening a local path is deliberately absent. "Open with the default
-//! application" is arbitrary execution when the path comes from agent output,
-//! and a remote connection's paths do not exist on this machine at all.
+//! Revealing a local path is the one other thing here, and it is deliberately
+//! *reveal* rather than open: `open -R` asks Finder to select a file, which
+//! cannot run it. "Open with the default application" would be arbitrary
+//! execution when the path came from agent output, so it is still absent.
+//!
+//! The path is not trusted and is not treated as if it were. What bounds the
+//! action is what the action can do — selecting something in Finder — plus the
+//! caller-side rule that only the Local connection may ask, because a remote
+//! daemon's paths are not on this machine at all.
 
+use std::path::Component;
 use std::process::{Command, Stdio};
 
 use url::Url;
@@ -35,6 +42,10 @@ pub enum ExternalError {
     UnsupportedScheme,
     #[error("could not hand the link to the system browser: {0}")]
     Launch(#[source] std::io::Error),
+    #[error("only an absolute path can be revealed")]
+    NotAbsolute,
+    #[error("could not reveal that file: {0}")]
+    Reveal(#[source] std::io::Error),
 }
 
 /// The exact string a launcher may receive for `href`, or an error naming why
@@ -62,6 +73,31 @@ pub fn open(href: &str) -> Result<(), ExternalError> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(ExternalError::Launch)?;
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// Ask Finder to select `path`, without opening it.
+///
+/// Absolute only, and `..` is refused rather than normalized: a path that
+/// needs resolving did not come from where it says it did, and the honest
+/// answer is to decline instead of guessing which file was meant.
+pub fn reveal(path: &str) -> Result<(), ExternalError> {
+    let path = std::path::Path::new(path);
+    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
+        return Err(ExternalError::NotAbsolute);
+    }
+    let child = Command::new(LAUNCHER)
+        .arg("-R")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(ExternalError::Reveal)?;
     std::thread::spawn(move || {
         let mut child = child;
         let _ = child.wait();
@@ -116,5 +152,23 @@ mod tests {
             openable("https://example.invalid/a b").unwrap(),
             "https://example.invalid/a%20b"
         );
+    }
+
+    /// Revealing does not resolve anything. A relative path or a `..` is a
+    /// declined request, not a path to work out.
+    #[test]
+    fn only_a_settled_absolute_path_is_revealable() {
+        for path in [
+            "relative/PLAN.md",
+            "",
+            "/task/../../etc/passwd",
+            "/task/./../secret",
+            "~/PLAN.md",
+        ] {
+            assert!(
+                matches!(super::reveal(path), Err(ExternalError::NotAbsolute)),
+                "{path} must not be revealable"
+            );
+        }
     }
 }

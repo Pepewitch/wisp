@@ -268,6 +268,25 @@ export interface DiffResponse {
   worktreeReason: WorktreeReason;
 }
 
+/**
+ * GET /api/tasks/:id/file?path=… — one file out of the task's worktree.
+ *
+ * "Exists but is not text" is a state rather than an error, so the viewer can
+ * offer to reveal it instead of reporting a failure. Everything the task does
+ * not own is one 404 with one sentence, whatever the reason.
+ */
+export type WorktreeFileResponse =
+  | {
+      kind: "text";
+      /** canonical, worktree-relative — what the daemon actually read */
+      path: string;
+      text: string;
+      /** the file's real size, which `text` may be a prefix of */
+      bytes: number;
+      truncated: boolean;
+    }
+  | { kind: "binary"; path: string; bytes: number };
+
 /** GET /api/events frames (one JSON WispEvent per SSE data frame). */
 export type WispEvent =
   | {

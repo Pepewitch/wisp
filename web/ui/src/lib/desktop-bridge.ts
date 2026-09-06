@@ -127,6 +127,14 @@ export interface TaskFocusRequest {
 /** Native event name a notification click arrives on (desktop/src-tauri/src/notifications.rs). */
 export const FOCUS_TASK_EVENT = "desktop://focus-task"
 
+export interface RevealWorktreeFileInput {
+  connectionId: string
+  /** the task's worktree, as the daemon reported it */
+  worktreePath: string
+  /** worktree-relative, as the file route canonicalized it */
+  path: string
+}
+
 export type NativeInvoke = <T>(
   command: string,
   args?: Record<string, unknown>
@@ -180,6 +188,12 @@ export interface DesktopBridge {
   onDesktopUpdateStatus(
     listener: (status: DesktopUpdateStatus) => void
   ): Promise<() => void>
+  /**
+   * Ask Finder to select one file of a Local task's worktree. Native code
+   * refuses anything but the selected Local connection, and reveals rather
+   * than opens — so nothing it is pointed at can run.
+   */
+  revealWorktreeFile(input: RevealWorktreeFileInput): Promise<void>
 }
 
 const CONNECTION_ID = /^[A-Za-z0-9_-]+$/
@@ -618,6 +632,12 @@ export function createDesktopBridge(
       nativeListen("desktop-update-status", ({ payload }) =>
         listener(normalizeDesktopUpdateStatus(payload as DesktopUpdateStatus))
       ),
+    revealWorktreeFile: (input) =>
+      nativeInvoke<void>("reveal_worktree_file", {
+        connectionId: input.connectionId,
+        worktreePath: input.worktreePath,
+        path: input.path,
+      }),
   }
   return Object.freeze(bridge)
 }
