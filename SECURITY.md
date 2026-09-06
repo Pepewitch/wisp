@@ -66,8 +66,8 @@ cookies, refuses redirects, verifies TLS, and overwrites upstream
 Authorization. Plain HTTP remotes are accepted only on an exact loopback
 address for a user-managed tunnel. Removing a remote revokes its route before
 removing it from the active registry, then attempts Keychain deletion. A
-failure is reported and retained as a cleanup tombstone for Reset Desktop Data
-or the next launch to retry. It never deletes daemon data.
+failure is reported and retained as a cleanup tombstone for **Reset desktop
+data** or the next launch to retry. It never deletes daemon data.
 See [Desktop transport contract](docs/DESKTOP-TRANSPORT.md) for the complete
 boundary.
 

@@ -39,7 +39,7 @@ The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
 or removed even while offline. Removal immediately revokes its desktop route
 and hides it, then attempts Keychain cleanup. A failure remains visible and is
-retried by Reset Desktop Data or the next launch. It does not stop tasks or
+retried by **Reset desktop data** or the next launch. It does not stop tasks or
 delete projects, worktrees, or history on the daemon.
 
 Local Add Project uses the native folder picker. Adding a remote connection
@@ -49,6 +49,17 @@ identity/authentication inputs, not networking: trusted HTTPS or an
 exact-loopback user-managed tunnel must already make the daemon reachable.
 See [`docs/INSTALL-MACOS.md`](../../../docs/INSTALL-MACOS.md) and
 [`docs/REMOTE-ACCESS.md`](../../../docs/REMOTE-ACCESS.md).
+
+After Homebrew installation, launch with `open -a Wisp`. Local diagnoses the
+standard profile and service and asks before running `wisp init` or starting
+the Formula service. If macOS blocks the ad-hoc alpha, use its per-app Privacy
+& Security **Open Anyway** flow; never disable Gatekeeper globally.
+
+Before uninstalling, remove each remote or use **Reset desktop data** if saved
+credentials should be deleted. `brew uninstall --cask wisp-desktop` removes
+the app but leaves the separate Formula and daemon state installed. Stop and
+uninstall `wisp` separately only when its tasks, worktrees, and preserved
+`~/.wisp` state have been reviewed.
 
 The daemon URL comes from the `host` and `port` in the active
 `WISP_HOME/config.json`; `wisp token` prints the authority. Initializing a new

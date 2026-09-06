@@ -72,6 +72,9 @@ Security, choose **Open Anyway** for Wisp, and confirm **Open**. Retry
 for this app; do not remove quarantine attributes or disable Gatekeeper. Apple
 documents this flow in
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+If an older macOS release uses different wording, open Applications in Finder,
+Control-click Wisp, choose **Open**, then confirm **Open**; use the same Apple
+guide rather than guessing from a newer dialog.
 
 On first launch, Local reports whether the standard Wisp profile and service
 are ready. Wisp Desktop asks for confirmation before it initializes the
@@ -112,7 +115,7 @@ Local and remote tab names are desktop-only labels and can be renamed. Remove
 connection works while the daemon is offline: it immediately revokes the
 desktop route and removes the active metadata, then attempts to delete the
 Keychain credential. If credential cleanup fails, Wisp reports it and retains
-a tombstone so Reset Desktop Data or the next launch can retry. Removal does
+a tombstone so **Reset desktop data** or the next launch can retry. Removal does
 not stop remote agents or delete daemon projects, tasks, worktrees, or history.
 
 Closing Wisp Desktop has the same non-destructive property: every daemon and
@@ -235,7 +238,7 @@ Do not copy the production token or database into the development home.
 ## Remove
 
 If you want saved remote credentials deleted, remove each remote connection or
-use **Reset Desktop Data** before uninstalling. Cask uninstall quits and
+use **Reset desktop data** before uninstalling. Cask uninstall quits and
 removes the application but intentionally has no destructive `zap`; desktop
 metadata and remote Keychain entries otherwise remain available for a later
 reinstall.

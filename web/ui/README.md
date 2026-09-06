@@ -6,7 +6,7 @@ Tailwind v4 + shadcn (on base-ui primitives) build to **one committed
 single-file bundle** at [`web/ui-dist/index.html`](../ui-dist/index.html).
 It is a Bun workspace managed by the repository root lockfile.
 
-Two files are binding law before you write any of it:
+Three sources are binding law before you write any of it:
 
 - [Frontend conventions](../../skills/wisp-dev/references/frontend.md) — the
   design language (graphite & violet).
@@ -109,14 +109,18 @@ The root gate covers both workspaces: lint, typecheck, and unit tests. The
 second build plus diff check proves that the committed single-file bundle
 matches its source.
 
-Also run both `bun run check` and `bun run desktop:check` when the
-TypeScript/native bridge, daemon contract consumed by Desktop, capabilities,
-auth, streams, terminals, media, updates, desktop commands, connection
-metadata, proxy behavior, credentials, folder picker, or Local setup changes.
-For a user-visible shared flow before release, build the packaged client with
-`bash scripts/desktop/build-macos.sh --app-only`, then exercise the same
-scenario in `bun run dev` and that app. Passing only one client is not
-sufficient evidence for a shared surface.
+Run `bun run desktop:check` when native code changes or when a daemon/UI change
+affects rules the native core enforces: capability or identity negotiation,
+authentication and headers, redirects, HTTP/SSE/WebSocket/media proxying,
+connection metadata, credentials, folder picking, or Local setup. A generic
+JSON route/type change still needs root and focused client tests, but Cargo adds
+no coverage unless the native boundary changes.
+
+Build with `bash scripts/desktop/build-macos.sh --app-only` and exercise the
+same scenario in `bun run dev` and the app when work branches on Tauri, touches
+connection/runtime/native integration, or qualifies a material shared flow for
+release. A runtime-neutral style change does not need a Cargo or packaged-app
+build, but it still requires an explicit browser/Desktop impact review.
 
 For pixel checks, prefer `bun scripts/capture-app.ts [outdir]` (zero-dep, raw
 CDP against system Chrome) over eyeballing a browser pane: it emits

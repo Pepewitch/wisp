@@ -232,11 +232,13 @@ one from its persisted log. Undelivered messages remain in their per-task FIFO;
 native RPC admissions have bounded acknowledgement waits and never hold turn
 finalization open forever.
 
-The daemon is the authority. The CLI, daemon-served browser runtime, and native
-desktop runtime use its HTTP API. Browser updates use SSE and WebSockets; Wisp
-Desktop relays those same protocols through a credential-holding native proxy.
-Task history remains in SQLite when a client or realtime connection restarts.
-See [Architecture](docs/ARCHITECTURE.md) for the ownership boundaries and
+The daemon is the authority. The CLI's task and project operations, the
+daemon-served browser runtime, and the native desktop runtime use its HTTP API;
+local setup and diagnostics also inspect the installation. Browser updates use
+SSE and WebSockets; Wisp Desktop relays those same protocols through a
+credential-holding native proxy. Task history remains in each daemon's SQLite
+store when a client or realtime connection restarts. See
+[Architecture](docs/ARCHITECTURE.md) for the ownership boundaries and
 shared-client contract.
 
 ## Safe removal
@@ -265,7 +267,7 @@ HTML file.
 ```sh
 bun install --frozen-lockfile
 bun run check
-bun run desktop:check # required for native desktop changes
+bun run desktop:check # when the native bridge/proxy contract is affected
 bash scripts/smoke.sh
 bun run build
 bun run release:linux

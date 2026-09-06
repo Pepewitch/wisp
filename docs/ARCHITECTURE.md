@@ -1,9 +1,9 @@
 # Wisp architecture
 
-Wisp has one daemon and several clients. The daemon owns every operational
-fact; clients choose how to present and transport those facts. The browser and
-Wisp Desktop deliberately run the same React application so a task behaves the
-same whichever interface is open.
+Each Wisp home defines an independent daemon and owns its own operational
+facts. Most clients address one daemon; Wisp Desktop can manage several. The
+browser and Wisp Desktop deliberately run the same React application so a task
+behaves the same whichever interface is open.
 
 ## Runtime topology
 
@@ -14,19 +14,21 @@ same whichever interface is open.
         daemon-served browser                     Wisp Desktop (Tauri)
         same-origin transport                     native loopback proxy
                   |                               /        |        \
-                  |                         Local daemon  Remote A  Remote B
-                  |                               |          |        |
-                  +-------------------------------+----------+--------+
-                                                  |
-                                          Wisp HTTP APIs
-                                                  |
-                          routes -> store + runner + worktrees -> harness
-                                      |        |         |
-                                    SQLite    logs      Git repos
+             one daemon                    Local daemon  Remote A  Remote B
+
+             CLI ──HTTP──> one daemon selected by its active profile
+
+Each daemon independently owns:
+
+    HTTP API -> routes -> store + runner + worktrees -> harness process
+                            |       |          |
+                          SQLite   logs      Git repos
 ```
 
-The command-line client also uses the daemon's HTTP API. Closing a browser or
-desktop window does not stop a daemon, task, or harness process.
+The command-line client's task and project operations use the daemon's HTTP
+API; setup and diagnostics also inspect the local profile and installation.
+Closing a browser or desktop window does not stop a daemon, task, or harness
+process.
 
 ## Ownership boundaries
 
@@ -36,12 +38,12 @@ desktop window does not stop a daemon, task, or harness process.
 | Shared React app | presentation, connection-scoped query state, navigation, drafts, attachments, stream and terminal clients | daemon credentials or task truth |
 | Browser runtime | one implicit same-origin daemon, browser session exchange and cookie | remote connection registry |
 | Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy | projects, tasks, or a child daemon |
-| CLI | command parsing and presentation over the API | alternate business logic |
+| CLI | task/project API client plus local profile, install, and diagnostic commands | alternate daemon business logic |
 
-SQLite is the durable task ledger. Persisted logs are the turn record, the
-event stream is only a realtime invalidation signal, and the webhook outbox is
-durable notification delivery. A client must refetch its baseline after an
-event-stream reconnect.
+For each daemon, SQLite is the durable task ledger. Persisted logs are that
+daemon's turn record, the event stream is only a realtime invalidation signal,
+and the webhook outbox is durable notification delivery. A client must refetch
+its connection's baseline after an event-stream reconnect.
 
 ## The shared client contract
 
@@ -126,16 +128,17 @@ any deliberate difference.
 
 | Change | Required compatibility review |
 | --- | --- |
-| `web/ui/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Exercise the daemon-served browser path and the Tauri runtime; keep state and late callbacks connection-scoped |
-| daemon route, public type, authentication, SSE, WebSocket, media, or update behavior | Check the CLI where applicable, browser same-origin transport, desktop native proxy, and capability/protocol compatibility |
-| `desktop/src-tauri/` command, metadata, credential, proxy, or Local setup behavior | Update the TypeScript bridge/runtime contract and preserve browser behavior |
+| `web/ui/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Run the root/UI gate and review both runtime semantics; build the app when Tauri, connection scope, transport, native integration, or release qualification is affected |
+| daemon route, public type, authentication, SSE, WebSocket, media, or update behavior | Run focused and root tests; check the CLI where applicable plus browser/Desktop consumers, and run transport/native gates only when those boundaries are affected |
+| `desktop/src-tauri/` command, metadata, credential, proxy, or Local setup behavior | Update the TypeScript bridge/runtime contract, run root and native gates, and preserve browser behavior |
 | generated UI bundle or packaging | Rebuild `web/ui-dist/index.html`; prove the daemon and desktop package consume the same bytes |
 | intentionally browser-only or native-only behavior | Keep the boundary explicit and test that the other runtime is unaffected |
 
-A browser-only verification is insufficient for a shared UI or daemon
-contract, and a desktop-only verification is insufficient when the changed
-code also ships in the daemon-served bundle. The exact contributor gates live
-in [the Wisp development skill](../skills/wisp-dev/SKILL.md).
+An impact review that ignores either shipped client is insufficient for a
+shared UI or daemon contract. The executions then follow the affected boundary:
+a runtime-neutral style change does not need Cargo, while native transport work
+does. The exact contributor gates live in
+[the Wisp development skill](../skills/wisp-dev/SKILL.md).
 
 ## Build and distribution
 

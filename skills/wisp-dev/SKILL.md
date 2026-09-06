@@ -18,7 +18,7 @@ Wisp-managed task. Use `wisp-dev` when the job changes this repository.
 
 Wisp has one authoritative daemon and several clients:
 
-    CLI ─────────────HTTP─────────┐
+    task/project CLI ───HTTP──────┐
     browser ──HTTP + SSE/WS───────┼── daemon/routes ── store + worktrees + runner
     desktop UI ──native proxy─────┘          │                       │
        (same React bundle)                   └── outbox              └── adapter

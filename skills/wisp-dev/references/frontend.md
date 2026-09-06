@@ -21,6 +21,10 @@ Every UI change must classify its impact on both clients:
 - Shared components and hooks use `useDaemonRuntime()` and its pre-bound query
   keys. They do not import the browser transport, derive daemon URLs from
   `window.location`, or treat a task ID as globally unique.
+- The exported `qk` in `lib/query.ts` is Local-only compatibility for legacy
+  tests. Product code never imports it; use `useDaemonRuntime().qk`, or
+  `createConnectionQueryKeys(connectionId)` in connection-explicit test
+  infrastructure.
 - Daemon-owned state, drafts, attachments, preferences, streams, terminals,
   updates, and late async callbacks stay bound to their initiating
   `connectionId`. Pure layout and theme state may remain global.
@@ -28,14 +32,15 @@ Every UI change must classify its impact on both clients:
   stay behind their runtime boundaries. Any intentional difference is named in
   the change and covered without regressing the other client.
 
-For shared UI work, run the ordinary browser flow and a packaged Tauri flow in
-addition to the source gates. Run both `bun run check` and
-`bun run desktop:check` whenever the native bridge or Rust contract changes.
-Use `bash scripts/desktop/build-macos.sh --app-only` for the packaged-client
-gate. A pass in one client alone is incomplete for shared behavior. See
-[Architecture](../../../docs/ARCHITECTURE.md) for the ownership and
-change-impact matrix and `web/ui/README.md` for the exact generated-bundle
-sequence.
+Every shared UI change gets the root/UI source gate and an explicit impact
+review for both runtimes. Run `bun run desktop:check` when native code or an
+enforced native transport/connection contract is affected. Build with
+`bash scripts/desktop/build-macos.sh --app-only` and exercise both clients when
+the change branches on Tauri, touches connection/runtime/native integration,
+or qualifies a material shared flow for release. Runtime-neutral styling does
+not need Cargo or a packaged-app build. See
+[Architecture](../../../docs/ARCHITECTURE.md) for the impact matrix and
+`web/ui/README.md` for the exact generated-bundle sequence.
 
 This file is the law. `#/gallery` is the law rendered on real components — when
 you add a primitive, add its gallery entry in the same diff. An undocumented

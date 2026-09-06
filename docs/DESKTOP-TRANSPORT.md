@@ -265,7 +265,7 @@ chooses proxy targets; daemon routes remain explicitly connection-qualified.
 Keychain failures are connection-scoped. A failed credential read leaves that
 remote visible but not ready, with a secret-free repair reason. A failed delete
 keeps a durable tombstone and a bootstrap cleanup issue; unrelated connections
-and Local continue to open, and Reset Desktop Data or a later launch retries it.
+and Local continue to open, and **Reset desktop data** or a later launch retries it.
 New Keychain accounts are preceded by a persisted recovery marker so a metadata
 write plus cleanup failure cannot orphan an undiscoverable credential.
 

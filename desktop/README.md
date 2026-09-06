@@ -168,8 +168,8 @@ Two adjustments the React shell has to absorb:
 
 Keychain read failures leave only that connection `ready: false` with a
 secret-free `problem`. Deferred deletion failures appear in `cleanupIssues`;
-the route is already revoked, and Reset Desktop Data or the next launch retries
-the persisted tombstone.
+the route is already revoked, and **Reset desktop data** or the next launch
+retries the persisted tombstone.
 
 Errors are relayed with the daemon's own status and body, so the existing
 `ApiError` handling works unchanged. Responses the *proxy* generated carry an
@@ -224,8 +224,8 @@ with a second isolated Cargo target and requires byte-identical output before
 publication.
 
 Uninstalling the Cask quits and removes the app but does not delete native
-metadata or Keychain entries. Remove remote connections or use **Reset Desktop
-Data** first when credentials should be removed. This is deliberate: the Cask
+metadata or Keychain entries. Remove remote connections or use **Reset desktop
+data** first when credentials should be removed. This is deliberate: the Cask
 does not guess that uninstall means destructive credential cleanup.
 
 ## Dependency notes

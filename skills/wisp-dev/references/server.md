@@ -138,21 +138,22 @@ For server changes, run the nearest tests while iterating, then run:
 bun run check
 ```
 
-Also run `bun run desktop:check` when a daemon route or public type consumed by
-Desktop changes, or when the change affects capabilities/protocol
-compatibility, authentication, headers, SSE, WebSockets, media, redirects,
-updates, or restart recovery. The root gate checks the TypeScript client side;
-the desktop gate checks the native proxy side. Neither substitutes for the
-other.
+When a route or public type consumed by Desktop changes, include its focused
+client/contract tests and run `bun test tests/desktop-transport.test.ts` if the
+change affects the two-daemon transport semantics. Run `bun run desktop:check`
+only when native code or a rule enforced by the native proxy is affected:
+capability or identity negotiation, authentication and headers, redirects,
+HTTP/SSE/WebSocket/media proxying, connection metadata, credentials, or Local
+setup. A generic JSON shape does not gain coverage from Cargo.
 
 Also run `bun run smoke` for lifecycle, worktree, process, recovery, webhook,
 or broad API changes. Run `bun run build` when the compiled binary or embedded
 UI boundary matters.
 
 Frontend changes have additional cross-client build and bundle gates in the
-[frontend conventions](frontend.md). Native desktop contract changes also run
-both `bun run check` and `bun run desktop:check`. Before releasing a
-user-visible shared flow, build the packaged client with
-`bash scripts/desktop/build-macos.sh --app-only` and exercise the same scenario
-in the browser and app. Brand changes use
+[frontend conventions](frontend.md). Native desktop contract changes run both
+`bun run check` and `bun run desktop:check`. When work changes Tauri branching,
+connection/runtime/native integration, or qualifies a material shared flow for
+release, build with `bash scripts/desktop/build-macos.sh --app-only` and
+exercise the same scenario in the browser and app. Brand changes use
 `bun run brand:check`.
