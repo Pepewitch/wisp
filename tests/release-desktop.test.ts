@@ -12,6 +12,7 @@ import {
   desktopPackageVersion,
   desktopTargetDir,
   deterministicAppTarGz,
+  machOHasUuid,
 } from "../scripts/release-desktop";
 import { VERSION } from "../src/version";
 
@@ -55,6 +56,11 @@ describe("Wisp Desktop release metadata", () => {
     expect(desktopTargetDir(root, undefined)).toBe(resolve(root, "desktop/src-tauri/target"));
     expect(desktopTargetDir(root, "dist/cargo-target")).toBe(resolve(root, "dist/cargo-target"));
     expect(desktopTargetDir(root, resolve(root, "outside-target"))).toBe(resolve(root, "outside-target"));
+  });
+
+  test("detects linker-generated Mach-O UUID load commands", () => {
+    expect(machOHasUuid("Load command 8\n      cmd LC_UUID\n  cmdsize 24\n")).toBe(true);
+    expect(machOHasUuid("Load command 8\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n")).toBe(false);
   });
 
   test("creates byte-identical normalized application archives", () => {

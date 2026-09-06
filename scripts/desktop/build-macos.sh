@@ -23,7 +23,10 @@ case "$cargo_target_dir" in
   *) cargo_target_dir="$root/$cargo_target_dir" ;;
 esac
 export CARGO_TARGET_DIR="$cargo_target_dir"
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target"
+# Older Apple linkers generate a fresh LC_UUID for every link. The app does
+# not ship dSYMs in this alpha, so omit that non-functional identifier and
+# keep clean release builds byte-identical across supported Xcode versions.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target -C link-arg=-Wl,-no_uuid"
 
 bun run build:ui
 bash scripts/desktop/icons.sh
