@@ -30,6 +30,7 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Connectivity | one global value combining event and log streams | reachability, auth, and selected-log health are separate per connection |
 | Daemon update | one global query and a full-page reload on success | update and recovery remain bound to the initiating connection |
 | UI bundle | one inlined HTML document served by `wispd` | Tauri loads the same built React application from packaged assets |
+| Content policy | none: the daemon serves the page without a CSP | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
 
 The web runtime remains intentionally single-daemon. It keeps same-origin
 requests, browser session cookies, and its current token migration behavior.

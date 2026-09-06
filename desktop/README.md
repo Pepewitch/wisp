@@ -88,6 +88,33 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
     launches. Old revisions receive a native 409, and an open terminal is
     revoked as soon as its revision stops being current.
 
+## The webview content policy
+
+`tauri.conf.json` carries the CSP, and the packaged app is the only client that
+has one — the daemon serves the identical bundle to a browser with no policy at
+all. So this file is where a shared-UI capability quietly becomes
+desktop-specific, and the terminal is the surface that proves it.
+
+`style-src` allows `'unsafe-inline'` because xterm.js has no other delivery
+mechanism: its DOM renderer sets the terminal's font family and size,
+`white-space: pre`, the cell metrics, and every ANSI colour class through
+`<style>` elements it creates *after* load, and the terminal pane injects
+xterm's own stylesheet the same way.
+
+That declaration is not self-enforcing. Tauri rewrites the packaged HTML at
+compile time, stamping a nonce onto every `<style>` element and appending it to
+`style-src` — and a source list carrying a nonce makes CSP **ignore**
+`'unsafe-inline'`. The declared policy then allows inline stylesheets while the
+effective one refuses them, so `dangerousDisableAssetCspModification` opts
+`style-src` out of that rewrite. `script-src` keeps its Tauri-managed nonces
+and hashes; only the style directive is ours to state.
+
+The failure mode is why `tests/desktop-webview.test.ts` guards the pair from
+the toolchain-free gate: a refused stylesheet does not throw or blank the pane.
+It renders a live, working shell in the proportional body font with no colours
+and the accessibility helper textarea showing through — wrong in a way only a
+packaged-app build reveals.
+
 ## Credentials
 
 Remote tokens live in the macOS Keychain (service `dev.wisp.desktop.connection`,

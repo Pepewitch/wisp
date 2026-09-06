@@ -137,7 +137,11 @@ any deliberate difference.
 An impact review that ignores either shipped client is insufficient for a
 shared UI or daemon contract. The executions then follow the affected boundary:
 a runtime-neutral style change does not need Cargo, while native transport work
-does. The exact contributor gates live in
+does. Styling is runtime-neutral only when it ships inside the bundle — the
+packaged app applies a content policy the daemon-served page does not, so a
+stylesheet created after load is a desktop concern (see
+[the desktop transport contract](DESKTOP-TRANSPORT.md)). The exact contributor
+gates live in
 [the Wisp development skill](../skills/wisp-dev/SKILL.md).
 
 ## Build and distribution
