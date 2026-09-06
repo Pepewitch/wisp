@@ -60,6 +60,29 @@ describe("ActivityList subagent UX", () => {
     expect(screen.getByText(/source/)).toBeInTheDocument()
   })
 
+  it("does not repeat a result the child's last message already delivered", () => {
+    const item = subagent({
+      status: "completed",
+      result: "wisp",
+      items: [{ kind: "text", id: "text-1", text: "wisp" }],
+    })
+    render(<ActivityList items={[item]} onBeforeToggle={vi.fn()} />)
+    fireEvent.click(screen.getByRole("button", { name: /Trace event flow/i }))
+    expect(screen.getAllByText("wisp")).toHaveLength(1)
+  })
+
+  it("still shows a result that says more than the transcript", () => {
+    const item = subagent({
+      status: "completed",
+      result: "The name is wisp.",
+      items: [{ kind: "text", id: "text-1", text: "Reading package.json now." }],
+    })
+    render(<ActivityList items={[item]} onBeforeToggle={vi.fn()} />)
+    fireEvent.click(screen.getByRole("button", { name: /Trace event flow/i }))
+    expect(screen.getByText("Reading package.json now.")).toBeInTheDocument()
+    expect(screen.getByText("The name is wisp.")).toBeInTheDocument()
+  })
+
   it("shows failure while collapsed and the exact issue on expansion", () => {
     render(
       <ActivityList

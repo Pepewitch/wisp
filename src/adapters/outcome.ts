@@ -283,6 +283,9 @@ export class IncrementalOutcomeReducer {
         if (event.usage !== undefined && event.usage !== null) this.usage = event.usage;
         break;
       case "item.completed":
+        // a spawned child's final message (the app-server driver tags it with
+        // the child's thread_id) is that child's result, not the turn's
+        if (typeof event.thread_id === "string" && this.earlySession && event.thread_id !== this.earlySession) break;
         if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
           this.candidateResult = event.item.text;
         }

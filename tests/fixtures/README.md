@@ -24,6 +24,53 @@ paths were replaced with placeholders.
 The commands used the harness's structured streaming mode and unsafe
 permission flag, with a prompt restricting the child to that single read.
 
+## codex app-server subagent markers — codex-cli 0.153.4, 2026-09-06
+
+`codex-live-subagent.jsonl` is the Wisp-side log of a live app-server turn
+(the `codex-app-server` liveInput driver, model `gpt-5.6-sol`) in which the
+parent spawned one child and waited for it. Command output, reasoning and the
+surrounding agent messages were dropped; identifiers and the agent path were
+replaced consistently; the item shapes and their order are as observed.
+
+What this proves: on the app-server protocol the spawn does **not** arrive as
+a `spawn_agent` `collab_tool_call`. The child's lifecycle is reported by
+`subagent_activity` items (`kind` ∈ `started`, `interacted`, `interrupted`,
+`completed`) that carry the child `agent_thread_id` and its `agent_path`,
+each repeated on `item.started` and `item.completed` with an identical
+payload. The marker's own `id` is fresh per marker (the spawn reuses the
+function call id, the end is a `subagent-completed-…` id), so the thread id
+is the only correlation key. The parent's `wait` collab call does arrive, but
+with empty `receiver_thread_ids` and `agents_states`, and its `status` is
+camelCase (`inProgress`) where `codex exec --json` says `in_progress`.
+
+This capture predates thread scoping in the driver. The app-server attaches
+the connection to every spawned child, so the child's own items arrive on it
+too; in this turn they were indistinguishable from the parent's and rendered
+at the top level.
+
+## codex app-server nested child — codex-cli 0.153.4, model `gpt-5.6-luna`, 2026-09-06
+
+`codex-live-nested-subagent.jsonl` is the Wisp-side log of a live app-server
+turn, run through the development instance after the driver learned to tag
+events with their `thread_id`, in a throwaway repo whose package.json is
+named `papaya-verify`. The prompt asked the parent to spawn exactly one child
+to read that name and to answer `child said: <its reply>`. Thread ids and
+item ids were replaced consistently; nothing else was altered.
+
+What this proves: every item now carries the thread that emitted it, so the
+child's command and final message are its own (`thread_id` of the receiver)
+while the parent's two messages stay at the top level. On this turn the spawn
+DID arrive as a `collab_tool_call` — `tool: "spawnAgent"`, camelCase
+`inProgress`/`pendingInit`, `model` empty on start and resolved on
+completion, `reasoning_effort` `medium` on start and `low` on completion —
+so both the marker path (previous capture) and the collab path are real on
+the same codex build. The child's own `turn/completed` reaches the log as
+`subagent.completed` with its final message and `duration_ms`, before the
+parent's `wait` returns with the same message in `agents_states`. No
+`subagent_activity` marker was emitted on this turn, so no `thread.child`
+metadata read happened; the card's model and effort came from the spawn
+call instead.
+
 ## codex — codex-cli 0.149.0, model `gpt-5.6-luna`, 2026-08-22
 
 Run in a throwaway git repo, stdin from /dev/null (Wisp spawns turns with

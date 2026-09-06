@@ -1,24 +1,13 @@
 import { trunc } from "../text";
 import { steerActivityEvent } from "../turn-notes";
+import { codex } from "./activity-codex";
+import { eventId, type NormalizeContext, status } from "./activity-context";
 import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
 import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
 import { createEventLineDecoder, cursorToolCall } from "./wire";
 
-interface NormalizeContext {
-  id(kind: string): string;
-  subagents: Set<string>;
-  /** Call id → whether Task returned before the background child settled. */
-  background: Map<string, boolean>;
-  /** Monitoring call id → child id, used by Droid TaskOutput/TaskStop. */
-  toolParents: Map<string, string>;
-}
-
 type ActivityNormalizer = (event: Record<string, any>, context: NormalizeContext) => ActivityEvent[];
-
-function eventId(value: unknown, context: NormalizeContext, kind: string): string {
-  return string(value) ?? context.id(kind);
-}
 
 function taskFields(inputValue: unknown): Pick<
   Extract<ActivityEvent, { kind: "subagent" }>,
@@ -40,16 +29,6 @@ function taskFields(inputValue: unknown): Pick<
     effort: effort ? trunc(effort, 100) : null,
     prompt: prompt ? trunc(prompt, 4_000) : null,
   };
-}
-
-function status(value: unknown, fallback: ActivityStatus = "unknown"): ActivityStatus {
-  const raw = string(value)?.toLowerCase();
-  if (!raw) return fallback;
-  if (["running", "in_progress", "pending", "started", "interacted", "working"].includes(raw)) return "running";
-  if (["completed", "complete", "done", "success", "succeeded", "finished"].includes(raw)) return "completed";
-  if (["failed", "failure", "error", "errored", "refused"].includes(raw)) return "failed";
-  if (["stopped", "cancelled", "canceled", "interrupted", "killed", "closed"].includes(raw)) return "stopped";
-  return fallback;
 }
 
 function isSubagentTool(name: string | null): boolean {
@@ -99,10 +78,22 @@ function claudeSystem(event: Record<string, any>, context: NormalizeContext): Ac
   }];
 }
 
+/**
+ * The Agent call names no model unless the parent picked one, so the child's
+ * model is first learned from its forwarded messages (`--forward-subagent-text`
+ * carries `message.model`). Reported once per change, not per message.
+ */
+function claudeChildModel(event: Record<string, any>, parentId: string | null, context: NormalizeContext): ActivityEvent[] {
+  const model = string(event.message?.model);
+  if (!parentId || !model || !context.subagents.has(parentId) || context.models.get(parentId) === model) return [];
+  context.models.set(parentId, model);
+  return [{ kind: "subagent", id: parentId, parentId: null, timestamp: timestamp(event), phase: "updated", status: "running", model }];
+}
+
 function claudeAssistant(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const parentId = string(event.parent_tool_use_id);
   const at = timestamp(event);
-  const out: ActivityEvent[] = [];
+  const out: ActivityEvent[] = claudeChildModel(event, parentId, context);
   for (const content of event.message?.content ?? []) {
     const item = record(content);
     if (item.type === "text" && string(item.text)) {
@@ -167,6 +158,11 @@ function claudeUser(event: Record<string, any>, context: NormalizeContext): Acti
         timestamp: at,
         phase: background && !error ? "updated" : "completed",
         status: error ? "failed" : background ? "running" : "completed",
+        // The harness's own account of the child: `resolvedModel` is what it
+        // actually ran (e.g. the parent's model when the call named none).
+        agentId: string(outcome.agentId),
+        agentType: string(outcome.agentType),
+        model: string(outcome.resolvedModel),
         result: error || background ? null : result,
         error,
         durationMs: number(outcome.totalDurationMs) ?? number(record(outcome.usage).duration_ms),
@@ -346,140 +342,6 @@ function droid(event: Record<string, any>, context: NormalizeContext): ActivityE
   return [];
 }
 
-function codexAgentStates(item: Record<string, any>): ActivityEvent[] {
-  const out: ActivityEvent[] = [];
-  for (const [agentId, rawState] of Object.entries(record(item.agents_states))) {
-    const state = record(rawState);
-    const next = status(state.status ?? state.state, "unknown");
-    out.push({
-      kind: "subagent",
-      id: agentId,
-      agentId,
-      parentId: null,
-      phase: next === "running" ? "updated" : "completed",
-      status: next,
-      result: next === "completed" ? text(state.message ?? state.output ?? state.result) : null,
-      error: next === "failed" ? text(state.error ?? state.message) ?? "Subagent failed" : null,
-    });
-  }
-  return out;
-}
-
-type CodexPhase = "started" | "updated" | "completed";
-
-function codexCollaboration(
-  item: Record<string, any>,
-  phase: CodexPhase,
-  at: string | number | null,
-  context: NormalizeContext,
-): ActivityEvent[] {
-  const tool = string(item.tool) ?? "collaboration";
-  const id = eventId(item.id, context, "subagent");
-  if (tool === "spawn_agent") {
-    if (phase === "started") context.subagents.add(id);
-    const next = status(item.status, "running");
-    const agentId = Array.isArray(item.receiver_thread_ids) ? string(item.receiver_thread_ids[0]) : null;
-    return [{
-      kind: "subagent",
-      id,
-      agentId,
-      parentId: null,
-      timestamp: at,
-      phase: phase === "started" ? "started" : next === "failed" ? "completed" : "updated",
-      status: next === "failed" ? "failed" : "running",
-      title: string(item.description) ?? null,
-      prompt: string(item.prompt) ?? null,
-      error: next === "failed" ? text(item.error) ?? "Subagent failed to start" : null,
-      background: true,
-    }];
-  }
-  const states = codexAgentStates(item);
-  if (states.length) return states.map((state) => ({ ...state, timestamp: at }));
-  const receivers = Array.isArray(item.receiver_thread_ids)
-    ? item.receiver_thread_ids.map(string).filter(Boolean) as string[]
-    : [];
-  const next =
-    tool === "interrupt_agent" || tool === "close_agent"
-      ? "stopped"
-      : status(item.status, tool === "resume_agent" || tool === "send_input" ? "running" : "unknown");
-  return receivers.map((agentId) => ({
-    kind: "subagent" as const,
-    id: agentId,
-    agentId,
-    parentId: null,
-    timestamp: at,
-    phase: next === "running" ? "updated" as const : "completed" as const,
-    status: next,
-  }));
-}
-
-function codexCommand(
-  item: Record<string, any>,
-  phase: CodexPhase,
-  at: string | number | null,
-  context: NormalizeContext,
-): ActivityEvent[] {
-  const id = eventId(item.id, context, "tool");
-  if (phase === "started") {
-    return [{
-      kind: "tool",
-      id,
-      parentId: null,
-      timestamp: at,
-      phase: "started",
-      name: "Run",
-      input: boundedInput({ command: item.command }),
-    }];
-  }
-  if (phase !== "completed") return [];
-  const code = typeof item.exit_code === "number" ? item.exit_code : null;
-  return [{
-    kind: "tool",
-    id,
-    parentId: null,
-    timestamp: at,
-    phase: "completed",
-    name: "Run",
-    output: text(item.aggregated_output),
-    error: code !== null && code !== 0 ? `Exited ${code}` : null,
-  }];
-}
-
-function codex(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
-  if (!["item.started", "item.updated", "item.completed"].includes(event.type)) return [];
-  const item = record(event.item);
-  const phase = event.type === "item.started" ? "started" : event.type === "item.completed" ? "completed" : "updated";
-  const at = timestamp(event);
-  if (item.type === "agent_message" && phase === "completed" && string(item.text)) {
-    return [{ kind: "text", id: eventId(item.id, context, "text"), parentId: null, timestamp: at, text: trunc(item.text.trim(), 4_000) }];
-  }
-  if (item.type === "reasoning" && phase === "completed") {
-    const value = string(item.text ?? item.summary);
-    return value ? [{ kind: "thinking", id: eventId(item.id, context, "thinking"), parentId: null, timestamp: at, text: trunc(value, 4_000) }] : [];
-  }
-  if (item.type === "collab_tool_call") {
-    return codexCollaboration(item, phase, at, context);
-  }
-  if (item.type === "command_execution") {
-    return codexCommand(item, phase, at, context);
-  }
-  if (item.type === "error" && phase === "completed") {
-    return [{ kind: "text", id: eventId(item.id, context, "error"), parentId: null, timestamp: at, text: `Error: ${text(item.message) ?? "Unknown error"}` }];
-  }
-  if (phase === "completed" && string(item.type)) {
-    return [{
-      kind: "tool",
-      id: eventId(item.id, context, "tool"),
-      parentId: null,
-      timestamp: at,
-      phase: "completed",
-      name: item.type,
-      output: text(item),
-    }];
-  }
-  return [];
-}
-
 function cursorTaskResult(value: unknown): {
   status: ActivityStatus;
   agentId: string | null;
@@ -594,6 +456,9 @@ export function createActivityFormatter(def?: AdapterDef): (line: string) => Act
     subagents: new Set(),
     background: new Map(),
     toolParents: new Map(),
+    models: new Map(),
+    rootThread: null,
+    settled: new Map(),
   };
   const normalizer = def?.activity ? ACTIVITY_NORMALIZERS[def.activity] : undefined;
   if (def?.activity && !normalizer) {

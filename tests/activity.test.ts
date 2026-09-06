@@ -34,6 +34,10 @@ describe("structured activity normalization", () => {
         parentId: "call-claude-subagent",
         name: "Bash",
       }));
+      // The Agent call named no model; the child's first forwarded message did.
+      const modelReports = events.filter((event) => event.kind === "subagent" && event.model);
+      expect(modelReports[0]).toMatchObject({ id: "call-claude-subagent", phase: "updated", status: "running", model: "claude-sonnet-5" });
+      expect(modelReports.at(-1)).toMatchObject({ id: "call-claude-subagent", phase: "completed", model: "claude-sonnet-5" });
       expect(events).toContainEqual(expect.objectContaining({
         kind: "subagent",
         id: "call-claude-subagent",
@@ -430,5 +434,159 @@ describe("structured activity normalization", () => {
 
   test("Claude builtin forwards nested child text", () => {
     expect(BUILTIN_ADAPTERS.claude!.exec).toContain("--forward-subagent-text");
+  });
+});
+
+// The app-server driver (src/adapters/live/codex.ts) speaks a second Codex
+// dialect; these pin that its subagent markers land in the same lifecycle.
+describe("Codex app-server subagent dialect", () => {
+  test("Codex app-server marks a child thread with subagent_activity items, never a raw tool", () => {
+    const events = renderFixture(BUILTIN_ADAPTERS.codex!, "codex-live-subagent.jsonl");
+    // The regression: an unknown item type fell into the generic tool
+    // fallback and painted the wire JSON as a tool call.
+    expect(events.filter((event) => event.kind === "tool")).toEqual([]);
+    expect(events[0]).toMatchObject({
+      kind: "subagent",
+      id: "call-codex-live-spawn",
+      agentId: "agent-codex-live",
+      phase: "started",
+      status: "running",
+      title: "review_plan",
+      background: true,
+    });
+    expect(events.at(-1)).toMatchObject({
+      kind: "subagent",
+      id: "agent-codex-live",
+      agentId: "agent-codex-live",
+      phase: "completed",
+      status: "completed",
+    });
+  });
+
+  test("Codex app-server nests a spawned child's work under one card and settles it from its own turn", () => {
+    const events = renderFixture(BUILTIN_ADAPTERS.codex!, "codex-live-nested-subagent.jsonl");
+    const cards = events.filter((event) => event.kind === "subagent");
+    // One card: the spawn call opens it, and the child's thread id is an alias, not a second card.
+    expect(cards.filter((event) => event.phase === "started")).toEqual([
+      expect.objectContaining({ id: "call-spawn", status: "running" }),
+    ]);
+    expect(cards).toContainEqual(expect.objectContaining({
+      id: "call-spawn",
+      agentId: "agent-codex-live",
+      title: "Read package.json in the workspace and reply with only its name field.",
+      model: "gpt-5.6-luna",
+      effort: "low",
+      prompt: "Read package.json in the workspace and reply with only its name field.",
+    }));
+    // The child's command and final message live under the child, not the parent.
+    expect(events).toContainEqual(expect.objectContaining({ kind: "tool", id: "exec-1", parentId: "agent-codex-live", name: "Run" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "text", parentId: "agent-codex-live", text: "papaya-verify" }));
+    expect(events.filter((event) => event.kind === "text" && event.parentId === null).map((event) => event.text)).toEqual([
+      "I’m spawning the single requested subagent now and will wait for its exact reply.",
+      "child said: papaya-verify",
+    ]);
+    // The child's own turn/completed carries the outcome and duration.
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "subagent",
+      id: "agent-codex-live",
+      phase: "completed",
+      status: "completed",
+      result: "papaya-verify",
+      durationMs: 7356,
+    }));
+  });
+
+  test("Codex subagent_activity kinds map onto the lifecycle through the thread id", () => {
+    const marker = (id: string, kind: string) => ({
+      type: "item.completed",
+      item: { type: "subagent_activity", id, kind, agent_thread_id: "thread-1", agent_path: "/root/worker" },
+    });
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      marker("call-1", "started"),
+      marker("marker-2", "interacted"),
+      marker("marker-3", "interrupted"),
+    ]);
+    expect(events).toEqual([
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "thread-1", phase: "updated", status: "running", title: "worker" }),
+      expect.objectContaining({ kind: "subagent", id: "thread-1", agentId: "thread-1", phase: "updated", status: "running" }),
+      expect.objectContaining({ kind: "subagent", id: "thread-1", agentId: "thread-1", phase: "completed", status: "stopped" }),
+    ]);
+  });
+
+  test("Codex child-thread items nest under the child's card, even when they outrun the spawn marker", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      { type: "thread.started", thread_id: "root" },
+      { type: "item.completed", thread_id: "root", item: { id: "msg-1", type: "agent_message", text: "Delegating." } },
+      // The child's first command lands before the parent's marker does.
+      { type: "item.started", thread_id: "child", item: { id: "exec-1", type: "command_execution", command: "ls" } },
+      {
+        type: "item.completed",
+        thread_id: "root",
+        item: { id: "call-1", type: "subagent_activity", kind: "started", agent_thread_id: "child", agent_path: "/root/reviewer" },
+      },
+      { type: "thread.child", thread_id: "child", parent_thread_id: "root", model: "gpt-test", reasoning_effort: "high", agent_role: "reviewer", agent_nickname: "quiet-otter" },
+      { type: "item.completed", thread_id: "child", item: { id: "msg-2", type: "agent_message", text: "No findings." } },
+      { type: "subagent.completed", thread_id: "child", status: "failed", error: "context window exceeded", result: null, duration_ms: 4200 },
+      // The trailing marker must not repaint the failed card as completed.
+      {
+        type: "item.completed",
+        thread_id: "child",
+        item: { id: "subagent-completed-1", type: "subagent_activity", kind: "completed", agent_thread_id: "child", agent_path: "/root/reviewer" },
+      },
+    ]);
+    expect(events).toEqual([
+      expect.objectContaining({ kind: "text", parentId: null, text: "Delegating." }),
+      expect.objectContaining({ kind: "subagent", id: "child", agentId: "child", phase: "started", status: "running" }),
+      expect.objectContaining({ kind: "tool", id: "exec-1", parentId: "child", name: "Run" }),
+      expect.objectContaining({ kind: "subagent", id: "call-1", agentId: "child", parentId: null, title: "reviewer", status: "running" }),
+      expect.objectContaining({ kind: "subagent", id: "child", phase: "updated", model: "gpt-test", effort: "high", agentType: "reviewer" }),
+      expect.objectContaining({ kind: "text", parentId: "child", text: "No findings." }),
+      expect.objectContaining({ kind: "subagent", id: "child", phase: "completed", status: "failed", error: "context window exceeded", durationMs: 4200 }),
+    ]);
+  });
+
+  test("Codex exec --json events carry no thread scope and stay at the top level", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      { type: "thread.started", thread_id: "root" },
+      { type: "item.completed", item: { id: "exec-1", type: "command_execution", command: "ls", exit_code: 0, aggregated_output: "" } },
+    ]);
+    expect(events).toEqual([expect.objectContaining({ kind: "tool", id: "exec-1", parentId: null })]);
+  });
+
+  test("Codex app-server collab calls speak camelCase and still drive the subagent lifecycle", () => {
+    const events = render(BUILTIN_ADAPTERS.codex!, [
+      {
+        type: "item.started",
+        item: { type: "collab_tool_call", id: "spawn-1", tool: "spawnAgent", status: "inProgress", prompt: "Review", model: "gpt-test", reasoning_effort: "high", receiver_thread_ids: [], agents_states: {} },
+      },
+      {
+        type: "item.completed",
+        item: {
+          type: "collab_tool_call",
+          id: "spawn-1",
+          tool: "spawnAgent",
+          status: "completed",
+          prompt: "Review",
+          model: "gpt-test",
+          reasoning_effort: "high",
+          receiver_thread_ids: ["thread-1"],
+          agents_states: { "thread-1": { status: "pendingInit", message: null } },
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          type: "collab_tool_call",
+          id: "close-1",
+          tool: "closeAgent",
+          status: "completed",
+          receiver_thread_ids: ["thread-1"],
+          agents_states: { "thread-1": { status: "shutdown", message: null } },
+        },
+      },
+    ]);
+    expect(events[0]).toMatchObject({ kind: "subagent", id: "spawn-1", status: "running", model: "gpt-test", effort: "high" });
+    expect(events[1]).toMatchObject({ kind: "subagent", id: "spawn-1", agentId: "thread-1", phase: "updated", status: "running" });
+    expect(events[2]).toMatchObject({ kind: "subagent", id: "thread-1", phase: "completed", status: "stopped" });
   });
 });
