@@ -1,26 +1,27 @@
 import type { UpdateStatus } from "@/lib/types"
+import type { DaemonTransport } from "@/lib/transport"
 
 const RESTART_TIMEOUT_MS = 5 * 60 * 1000
 const RESTART_POLL_MS = 500
 const STATUS_POLL_MS = 2_000
 
 export interface WaitForUpdatedDaemonOptions {
-  request?: typeof fetch
+  transport: Pick<DaemonTransport, "request">
   timeoutMs?: number
   pollMs?: number
 }
 
-async function requestBefore(
-  request: typeof fetch,
+async function requestBefore<T>(
+  transport: Pick<DaemonTransport, "request">,
   path: string,
   deadline: number,
-): Promise<Response> {
+): Promise<T> {
   const timeoutMs = Math.min(5_000, deadline - Date.now())
   if (timeoutMs <= 0) throw new DOMException("Update wait expired", "TimeoutError")
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await request(path, { cache: "no-store", signal: controller.signal })
+    return await transport.request<T>(path, { signal: controller.signal })
   } finally {
     clearTimeout(timer)
   }
@@ -32,9 +33,9 @@ async function requestBefore(
  */
 export async function waitForUpdatedDaemon(
   expectedVersion: string,
-  options: WaitForUpdatedDaemonOptions = {},
+  options: WaitForUpdatedDaemonOptions,
 ): Promise<void> {
-  const request = options.request ?? fetch
+  const transport = options.transport
   const timeoutMs = options.timeoutMs ?? RESTART_TIMEOUT_MS
   const pollMs = options.pollMs ?? RESTART_POLL_MS
   const deadline = Date.now() + timeoutMs
@@ -42,19 +43,13 @@ export async function waitForUpdatedDaemon(
 
   while (Date.now() <= deadline) {
     try {
-      const health = await requestBefore(request, "/api/health", deadline)
-      if (health.ok) {
-        const body = (await health.json()) as { version?: unknown }
-        if (body.version === expectedVersion) return
-      }
+      const health = await requestBefore<{ version?: unknown }>(transport, "/api/health", deadline)
+      if (health.version === expectedVersion) return
 
       if (Date.now() >= nextStatusCheck) {
         nextStatusCheck = Date.now() + STATUS_POLL_MS
-        const update = await requestBefore(request, "/api/update", deadline)
-        if (update.ok) {
-          const status = (await update.json()) as UpdateStatus
-          if (status.state === "failed") throw new Error(status.message ?? "update failed")
-        }
+        const status = await requestBefore<UpdateStatus>(transport, "/api/update", deadline)
+        if (status.state === "failed") throw new Error(status.message ?? "update failed")
       }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("update failed")) throw error

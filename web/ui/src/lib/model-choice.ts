@@ -1,4 +1,11 @@
 import type { HarnessInfo } from "@/lib/types"
+import {
+  readConnectionStorage,
+  removeConnectionStorage,
+  type ReadWriteStorage,
+  type WritableStorage,
+  writeConnectionStorage,
+} from "@/lib/connection-storage"
 
 /** Product order for the built-in harness picker; custom adapters follow in their configured order. */
 const HARNESS_ORDER = new Map([
@@ -11,7 +18,9 @@ const HARNESS_ORDER = new Map([
 export function orderHarnesses(harnesses: HarnessInfo[]): HarnessInfo[] {
   const fallback = HARNESS_ORDER.size
   return [...harnesses].sort(
-    (a, b) => (HARNESS_ORDER.get(a.name) ?? fallback) - (HARNESS_ORDER.get(b.name) ?? fallback),
+    (a, b) =>
+      (HARNESS_ORDER.get(a.name) ?? fallback) -
+      (HARNESS_ORDER.get(b.name) ?? fallback)
   )
 }
 
@@ -26,17 +35,24 @@ export interface ModelChoice {
 }
 
 const PREFERRED_MODEL_KEY = "wisp_preferred_model"
+const PREFERRED_MODEL_STORAGE_NAME = "preferred_model"
 
-type ReadableStorage = Pick<Storage, "getItem">
-type WritableStorage = Pick<Storage, "setItem" | "removeItem">
-
-/** The browser-local model used to seed future create dialogs. */
-export function loadPreferredModel(storage?: ReadableStorage): ModelChoice | null {
+/** The connection-local model used to seed future create dialogs. */
+export function loadPreferredModel(
+  connectionId: string,
+  storage?: ReadWriteStorage
+): ModelChoice | null {
   try {
-    const raw = (storage ?? localStorage).getItem(PREFERRED_MODEL_KEY)
+    const raw = readConnectionStorage(
+      connectionId,
+      PREFERRED_MODEL_STORAGE_NAME,
+      PREFERRED_MODEL_KEY,
+      storage
+    )
     if (!raw) return null
     const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return null
     const { harness, model } = parsed as Record<string, unknown>
     if (typeof harness !== "string" || harness.trim() === "") return null
     if (typeof model !== "string" || model.trim() === "") return null
@@ -47,13 +63,26 @@ export function loadPreferredModel(storage?: ReadableStorage): ModelChoice | nul
 }
 
 /** Persist one preferred model, or clear it. Storage failure costs only this convenience. */
-export function savePreferredModel(choice: ModelChoice | null, storage?: WritableStorage): void {
-  try {
-    const target = storage ?? localStorage
-    if (choice) target.setItem(PREFERRED_MODEL_KEY, JSON.stringify(choice))
-    else target.removeItem(PREFERRED_MODEL_KEY)
-  } catch {
-    // blocked or full storage must never prevent task creation
+export function savePreferredModel(
+  connectionId: string,
+  choice: ModelChoice | null,
+  storage?: WritableStorage
+): void {
+  if (choice) {
+    writeConnectionStorage(
+      connectionId,
+      PREFERRED_MODEL_STORAGE_NAME,
+      PREFERRED_MODEL_KEY,
+      JSON.stringify(choice),
+      storage
+    )
+  } else {
+    removeConnectionStorage(
+      connectionId,
+      PREFERRED_MODEL_STORAGE_NAME,
+      PREFERRED_MODEL_KEY,
+      storage
+    )
   }
 }
 
@@ -97,14 +126,21 @@ export function unusableReason(h: HarnessInfo): string {
 }
 
 /** The opening selection: an available preference, then the first harness this machine can actually run. */
-export function initialChoice(harnesses: HarnessInfo[], preferred: ModelChoice | null = null): ModelChoice | null {
+export function initialChoice(
+  harnesses: HarnessInfo[],
+  preferred: ModelChoice | null = null
+): ModelChoice | null {
   if (preferred) {
     const harness = harnesses.find((entry) => entry.name === preferred.harness)
-    if (harness && modelOptionsFor(harness).includes(preferred.model)) return preferred
+    if (harness && modelOptionsFor(harness).includes(preferred.model))
+      return preferred
   }
   const usable = harnesses.find(isUsable)
   if (!usable) return null
   const options = modelOptionsFor(usable)
   const dflt = defaultModelFor(usable)
-  return { harness: usable.name, model: dflt && options.includes(dflt) ? dflt : options[0]! }
+  return {
+    harness: usable.name,
+    model: dflt && options.includes(dflt) ? dflt : options[0]!,
+  }
 }

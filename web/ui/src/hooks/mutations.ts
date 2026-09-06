@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { api, completeAuth, mintSession } from "@/lib/api";
+import { completeAuth, mintSession } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
-import { qk } from "@/lib/query";
+import type { ConnectionQueryKeys } from "@/lib/query";
+import { useDaemonRuntime } from "@/lib/runtime";
 import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
 
 /**
@@ -23,9 +24,10 @@ import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, Task
 /** POST /api/update — accept the release currently shown in the header. */
 export function useInstallUpdate() {
   const client = useQueryClient()
+  const { transport, qk } = useDaemonRuntime()
   return useMutation({
     mutationFn: (version: string) =>
-      api<UpdateStatus>("/api/update", { method: "POST", body: { version } }),
+      transport.request<UpdateStatus>("/api/update", { method: "POST", body: { version } }),
     onSuccess: (status) => {
       client.setQueryData(qk.update, status)
     },
@@ -46,8 +48,9 @@ export interface CreateTaskBody {
 /** POST /api/tasks — the composer's submit. Resolves to the created row. */
 export function useCreateTask() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (body: CreateTaskBody) => api<ApiTask>("/api/tasks", { method: "POST", body }),
+    mutationFn: (body: CreateTaskBody) => transport.request<ApiTask>("/api/tasks", { method: "POST", body }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.tasks });
     },
@@ -57,9 +60,10 @@ export function useCreateTask() {
 /** PATCH /api/tasks/:id — replace the task's display name without changing its branch or session. */
 export function useRenameTask() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) =>
-      api<ApiTask>(`/api/tasks/${id}`, { method: "PATCH", body: { title } }),
+      transport.request<ApiTask>(`/api/tasks/${id}`, { method: "PATCH", body: { title } }),
     onSuccess: (saved) => {
       // The response is enough for an immediate rename. The daemon's matching
       // metadata event patches other connected tabs without broad refetches.
@@ -82,6 +86,7 @@ export function useRenameTask() {
  */
 export function useSendMessage() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: ({
       id,
@@ -99,7 +104,7 @@ export function useSendMessage() {
       // the field is OMITTED rather than sent empty: the daemon rejects
       // attachments on a harness without the capability, and an empty array
       // would make every plain steer of a droid task carry that question
-      api<SendResponse>(`/api/tasks/${id}/send`, {
+      transport.request<SendResponse>(`/api/tasks/${id}/send`, {
         method: "POST",
         body: {
           message,
@@ -116,9 +121,10 @@ export function useSendMessage() {
 
 export function useUpdateQueuedMessage() {
   const client = useQueryClient()
+  const { transport, qk } = useDaemonRuntime()
   return useMutation({
     mutationFn: ({ taskId, messageId, message }: { taskId: string; messageId: string; message: string }) =>
-      api<TaskMessage>(`/api/tasks/${taskId}/messages/${messageId}`, { method: "PATCH", body: { message } }),
+      transport.request<TaskMessage>(`/api/tasks/${taskId}/messages/${messageId}`, { method: "PATCH", body: { message } }),
     onSuccess: (_saved, { taskId }) => {
       void client.invalidateQueries({ queryKey: qk.task(taskId) })
     },
@@ -127,9 +133,10 @@ export function useUpdateQueuedMessage() {
 
 export function useCancelQueuedMessage() {
   const client = useQueryClient()
+  const { transport, qk } = useDaemonRuntime()
   return useMutation({
     mutationFn: ({ taskId, messageId }: { taskId: string; messageId: string }) =>
-      api<TaskMessage>(`/api/tasks/${taskId}/messages/${messageId}`, { method: "DELETE" }),
+      transport.request<TaskMessage>(`/api/tasks/${taskId}/messages/${messageId}`, { method: "DELETE" }),
     onSuccess: (_saved, { taskId }) => {
       void client.invalidateQueries({ queryKey: qk.task(taskId) })
     },
@@ -141,9 +148,10 @@ export function useCancelQueuedMessage() {
 /** POST /api/suffix-prompts — save one daemon-wide reusable suffix. */
 export function useCreateSuffixPrompt() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: (body: { name: string; prompt: string }) =>
-      api<SuffixPrompt>("/api/suffix-prompts", { method: "POST", body }),
+      transport.request<SuffixPrompt>("/api/suffix-prompts", { method: "POST", body }),
     onSuccess: (saved) => {
       client.setQueryData<{ suffixPrompts: SuffixPrompt[] }>(qk.suffixPrompts, (current) => ({
         suffixPrompts: [...(current?.suffixPrompts ?? []), saved],
@@ -155,9 +163,10 @@ export function useCreateSuffixPrompt() {
 /** PATCH /api/suffix-prompts/:id — rename or reword one, keeping its id. */
 export function useUpdateSuffixPrompt() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: ({ id, name, prompt }: { id: string; name: string; prompt: string }) =>
-      api<SuffixPrompt>(`/api/suffix-prompts/${id}`, { method: "PATCH", body: { name, prompt } }),
+      transport.request<SuffixPrompt>(`/api/suffix-prompts/${id}`, { method: "PATCH", body: { name, prompt } }),
     onSuccess: (saved) => {
       client.setQueryData<{ suffixPrompts: SuffixPrompt[] }>(qk.suffixPrompts, (current) => ({
         suffixPrompts: (current?.suffixPrompts ?? []).map((prompt) => (prompt.id === saved.id ? saved : prompt)),
@@ -169,8 +178,9 @@ export function useUpdateSuffixPrompt() {
 /** DELETE /api/suffix-prompts/:id — drop one. The call site resets a selection pointing at it. */
 export function useDeleteSuffixPrompt() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (id: string) => api(`/api/suffix-prompts/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) => transport.request(`/api/suffix-prompts/${id}`, { method: "DELETE" }),
     onSuccess: (_data, id) => {
       client.setQueryData<{ suffixPrompts: SuffixPrompt[] }>(qk.suffixPrompts, (current) => ({
         suffixPrompts: (current?.suffixPrompts ?? []).filter((prompt) => prompt.id !== id),
@@ -208,8 +218,9 @@ export function usePushTask() {
  */
 function useTaskVerb(verb: "interrupt" | "push") {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (id: string) => api<TaskVerbResult>(`/api/tasks/${id}/${verb}`, { method: "POST" }),
+    mutationFn: (id: string) => transport.request<TaskVerbResult>(`/api/tasks/${id}/${verb}`, { method: "POST" }),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: qk.tasks });
       void client.invalidateQueries({ queryKey: qk.status });
@@ -224,24 +235,26 @@ function useTaskVerb(verb: "interrupt" | "push") {
  */
 export function useArchiveTask() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: ({ id, force }: { id: string; force: boolean }) =>
-      api(`/api/tasks/${id}/archive`, { method: "POST", body: { force } }),
-    onSuccess: (_data, { id }) => settleTask(client, id),
+      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force } }),
+    onSuccess: (_data, { id }) => settleTask(client, qk, id),
   });
 }
 
 /** POST /api/tasks/:id/fresh-session — drop `session_id` so the next turn starts clean. */
 export function useFreshSession() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (id: string) => api(`/api/tasks/${id}/fresh-session`, { method: "POST" }),
-    onSuccess: (_data, id) => settleTask(client, id),
+    mutationFn: (id: string) => transport.request(`/api/tasks/${id}/fresh-session`, { method: "POST" }),
+    onSuccess: (_data, id) => settleTask(client, qk, id),
   });
 }
 
 /** A verb that changes the row itself: the list, its git badges and its detail. */
-function settleTask(client: ReturnType<typeof useQueryClient>, id: string): void {
+function settleTask(client: ReturnType<typeof useQueryClient>, qk: Readonly<ConnectionQueryKeys>, id: string): void {
   void client.invalidateQueries({ queryKey: qk.tasks });
   void client.invalidateQueries({ queryKey: qk.status });
   void client.invalidateQueries({ queryKey: qk.task(id) });
@@ -263,8 +276,9 @@ export interface SaveProjectBody {
  */
 export function useSaveProject() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (body: SaveProjectBody) => api("/api/projects", { method: "POST", body }),
+    mutationFn: (body: SaveProjectBody) => transport.request("/api/projects", { method: "POST", body }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
     },
@@ -277,8 +291,9 @@ export function useSaveProject() {
  */
 export function useRemoveProject() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (path: string) => api("/api/projects", { method: "DELETE", body: { path } }),
+    mutationFn: (path: string) => transport.request("/api/projects", { method: "DELETE", body: { path } }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
     },
@@ -302,9 +317,10 @@ export interface CopyPreview {
  * on screen, so a superseded answer is never shown as the current match.
  */
 export function useCopyPreview() {
+  const { transport } = useDaemonRuntime();
   return useMutation({
     mutationFn: ({ path, patterns }: { path: string; patterns: string[] }) =>
-      api<CopyPreview>("/api/projects/copy-preview", { method: "POST", body: { path, patterns } }),
+      transport.request<CopyPreview>("/api/projects/copy-preview", { method: "POST", body: { path, patterns } }),
   });
 }
 
@@ -322,9 +338,10 @@ const REPROBE_SETTLE_MS = 1_800;
  */
 export function useReprobeHarnesses() {
   const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: async () => {
-      await api("/api/harnesses?refresh=1").catch(() => undefined);
+      await transport.request("/api/harnesses?refresh=1").catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, REPROBE_SETTLE_MS));
     },
     onSuccess: () => {

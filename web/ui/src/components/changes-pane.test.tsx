@@ -1,7 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
+
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({ api: vi.fn() }))
 
@@ -29,8 +30,9 @@ new file mode 100644
 `
 
 function withClient(node: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>)
+  return render(node, {
+    wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: mocks.api })),
+  })
 }
 
 function okDiff(over: { diff?: string; untracked?: string[]; truncated?: boolean } = {}) {

@@ -12,6 +12,7 @@ import { failureReason } from "@/lib/api"
 import { usePendingAttachments } from "@/lib/attachments"
 import { effortOptions, rememberEffort } from "@/lib/effort"
 import { handleComposerPaste } from "@/lib/paste-links"
+import { useDaemonRuntime } from "@/lib/runtime"
 import {
   defaultModelFor,
   initialChoice,
@@ -123,9 +124,12 @@ function Form({
   onCreated: (id: string) => void
   onClose: () => void
 }) {
+  const { connectionId } = useDaemonRuntime()
   const [repoPath, setRepoPath] = useState(initialRepoPath ?? repos[0]?.path ?? "")
   const [prompt, setPrompt] = useState("")
-  const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel())
+  const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() =>
+    loadPreferredModel(connectionId),
+  )
   const [choice, setChoice] = useState<ModelChoice | null>(() => initialChoice(harnesses, preferredChoice))
   const [effort, setEffort] = useState(() => {
     return harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? ""
@@ -165,7 +169,7 @@ function Form({
 
   const togglePreferredChoice = (next: ModelChoice) => {
     const preferred = sameChoice(preferredChoice, next) ? null : next
-    savePreferredModel(preferred)
+    savePreferredModel(connectionId, preferred)
     setPreferredChoice(preferred)
   }
 
@@ -189,7 +193,9 @@ function Form({
       {
         onSuccess: (task) => {
           // a level that actually ran is a level worth offering next time
-          if (harness?.hasEffort && effort.trim()) rememberEffort(choice.harness, effort.trim())
+          if (harness?.hasEffort && effort.trim()) {
+            rememberEffort(connectionId, choice.harness, effort.trim())
+          }
           attachments.clear()
           onCreated(task.id)
           onClose()
@@ -533,6 +539,7 @@ function EffortPicker({
   onCustomChange: (custom: boolean) => void
   onRestoreComposer: () => void
 }) {
+  const { connectionId } = useDaemonRuntime()
   if (custom) {
     return (
       <input
@@ -555,7 +562,7 @@ function EffortPicker({
     )
   }
 
-  const options = effortOptions(harness)
+  const options = effortOptions(connectionId, harness)
   return (
     <Menu icon={<Effort />} label={effort || <span className="text-muted-foreground">Effort</span>}>
       <MenuRadioGroup

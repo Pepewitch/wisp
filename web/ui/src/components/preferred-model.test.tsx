@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
 
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { CreateTaskDialog } from "./create-task-dialog"
 
@@ -32,19 +32,17 @@ const harness = (name: string, models: string[]): HarnessInfo => ({
 const harnesses = [harness("claude", ["claude-a"]), harness("codex", ["codex-a", "codex-b"])]
 
 function mountDialog() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={client}>
-      <CreateTaskDialog
-        open
-        onOpenChange={() => {}}
-        initialRepoPath="/repo"
-        repos={[repo]}
-        harnesses={harnesses}
-        harnessesError={null}
-        onCreated={() => {}}
-      />
-    </QueryClientProvider>,
+    <CreateTaskDialog
+      open
+      onOpenChange={() => {}}
+      initialRepoPath="/repo"
+      repos={[repo]}
+      harnesses={harnesses}
+      harnessesError={null}
+      onCreated={() => {}}
+    />,
+    { wrapper: runtimeWrapper(fakeDaemonTransport()) },
   )
 }
 

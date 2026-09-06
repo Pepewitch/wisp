@@ -1,4 +1,5 @@
-import { defaultSseFactory, SSE_CLOSED, type SseFactory } from "@/lib/sse"
+import { SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse"
+import type { DaemonTransport } from "@/lib/transport"
 import type { ActivityLogStreamFrames, Turn } from "@/lib/types"
 import {
   initialStreamState,
@@ -105,15 +106,28 @@ export function fetchTurnActivity(
   taskId: string,
   n: number,
   {
-    factory = defaultSseFactory,
+    transport,
+    factory,
     timeoutMs = 30_000,
     signal,
-  }: { factory?: SseFactory; timeoutMs?: number; signal?: AbortSignal } = {},
+  }: {
+    transport?: Pick<DaemonTransport, "openEventStream">
+    factory?: SseFactory
+    timeoutMs?: number
+    signal?: AbortSignal
+  } = {},
 ): Promise<TurnActivity> {
   return new Promise((resolve, reject) => {
     let state: StreamState = initialStreamState
     let settled = false
-    const source = factory(`/api/tasks/${taskId}/log/stream?format=activity&turn=${n}`)
+    const path = `/api/tasks/${taskId}/log/stream?format=activity&turn=${n}`
+    const source: SseLike = factory
+      ? factory(path)
+      : transport
+        ? (transport.openEventStream(path) as unknown as SseLike)
+        : (() => {
+            throw new Error("activity stream requires a daemon transport")
+          })()
 
     const cleanup = () => {
       clearTimeout(timer)

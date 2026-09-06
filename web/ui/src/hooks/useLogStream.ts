@@ -1,8 +1,8 @@
 import { useEffect, useReducer } from "react";
 
-import { connStore } from "@/lib/conn";
-import { defaultSseFactory, SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse";
-import { ensureSession } from "@/lib/api";
+import { connectionStore } from "@/lib/conn";
+import { useDaemonRuntime } from "@/lib/runtime";
+import { SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse";
 import type { ActivityLogStreamFrames, LogStreamFrames } from "@/lib/types";
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer";
 
@@ -23,14 +23,16 @@ export function useLogStream(
   taskId: string | null,
   format: "activity" | "raw",
   generation: number,
-  factory: SseFactory = defaultSseFactory,
+  factory?: SseFactory,
 ): StreamState {
+  const runtime = useDaemonRuntime();
+  const conn = connectionStore(runtime.connectionId);
   const [state, dispatch] = useReducer(streamReducer, initialStreamState);
 
   useEffect(() => {
     if (!taskId) {
       dispatch({ type: "reset", note: "select a task" });
-      connStore.set("log", true); // nothing to stream is not an outage
+      conn.set("log", true); // nothing to stream is not an outage
       return;
     }
 
@@ -42,8 +44,14 @@ export function useLogStream(
     const open = (note: string) => {
       source?.close();
       dispatch({ type: "reset", note });
-      const next = factory(`/api/tasks/${taskId}/log/stream?format=${format}`);
+      const next = factory
+        ? factory(`/api/tasks/${taskId}/log/stream?format=${format}`)
+        : (runtime.transport.openEventStream(
+            `/api/tasks/${taskId}/log/stream?format=${format}`,
+          ) as unknown as SseLike);
+      const isCurrent = () => !closed && source === next;
       next.addEventListener("backlog", (ev) => {
+        if (!isCurrent()) return;
         if (format === "activity") {
           const d = JSON.parse(ev.data) as ActivityLogStreamFrames["backlog"]
           dispatch({ type: "backlog", turn: d.turn, prompt: d.prompt, activity: d.activity })
@@ -53,6 +61,7 @@ export function useLogStream(
         }
       });
       next.addEventListener("append", (ev) => {
+        if (!isCurrent()) return;
         if (format === "activity") {
           const d = JSON.parse(ev.data) as ActivityLogStreamFrames["append"]
           dispatch({ type: "append", turn: d.turn, activity: d.activity })
@@ -62,25 +71,28 @@ export function useLogStream(
         }
       });
       next.addEventListener("turn-end", (ev) => {
+        if (!isCurrent()) return;
         const d = JSON.parse(ev.data) as LogStreamFrames["turn-end"];
         dispatch({ type: "turn-end", turn: d.turn, status: d.status });
       });
       next.onopen = () => {
+        if (!isCurrent()) return;
         // EventSource auto-reconnected: the daemon resends the current turn's
         // backlog from scratch, so reset the pane instead of duplicating it
         if (errored) dispatch({ type: "reset", note: "reconnected — waiting for output…" });
         errored = false;
-        connStore.set("log", true);
+        conn.set("log", true);
       };
       next.onerror = () => {
+        if (!isCurrent()) return;
         errored = true;
-        connStore.set("log", false);
+        conn.set("log", false);
         // a hard failure (e.g. 401) never reconnects on its own — re-mint the
         // cookie and rebuild once, not on a loop
         if (next.readyState === SSE_CLOSED && reconnectTimer === null) {
           reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-            void ensureSession().then(() => {
+            void runtime.transport.ensureReady().then(() => {
               if (!closed) open("connecting…");
             });
           }, 3_000);
@@ -95,9 +107,9 @@ export function useLogStream(
       closed = true;
       if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       source?.close();
-      connStore.set("log", true);
+      conn.set("log", true);
     };
-  }, [taskId, format, generation, factory]);
+  }, [taskId, format, generation, factory, runtime, conn]);
 
   return state;
 }

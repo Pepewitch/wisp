@@ -1,0 +1,46 @@
+name: desktop
+# The desktop shell is a macOS-only Rust crate, so it needs its own runner. It
+# is path-filtered because a macOS runner costs ten times a Linux one and most
+# changes in this repository do not touch it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "scripts/desktop/**"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "scripts/desktop/**"
+      - ".github/workflows/desktop.yml"
+
+jobs:
+  native-core:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: formatting
+        run: cargo fmt --all --check
+      - name: lint
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: unit and integration tests
+        # Every test uses the in-memory credential store; nothing here reads or
+        # writes a real login keychain.
+        run: cargo test
+      - name: the app still builds
+        working-directory: .
+        run: |
+          bash scripts/desktop/icons.sh
+          cd desktop/src-tauri
+          cargo build --release --target aarch64-apple-darwin

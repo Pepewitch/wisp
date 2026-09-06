@@ -53,7 +53,8 @@ brew services restart wisp
 - exposes daemon identity and protocol capabilities to clients;
 - makes live steering safer by bounding oversized protocol frames and tool
   results, and by placing mid-turn steering only where the harness accepts it;
-  and
+- gives prose code blocks their own recessed surface so prompt bubbles remain
+  easier to find while scanning a conversation; and
 - improves nested harness activity rendering and preserves structured activity
   across realtime stream recovery.
 

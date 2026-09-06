@@ -39,6 +39,7 @@ Wisp is one Bun/TypeScript package with a daemon at the center:
 | Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `tests/harness-facts/`, fixtures, and narrow contract tests |
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
 | Change React UI, styling, responsive behavior, or frontend data flow | [Frontend conventions](references/frontend.md) | `web/ui/README.md`, the owning component/hook, and its tests |
+| Change the desktop shell's native core, proxy, connections, or credentials | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md) then `desktop/README.md` | `desktop/src-tauri/src/` and its `tests/`; gate with `bun run desktop:check` |
 | Prepare or publish a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
 | Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
@@ -87,3 +88,6 @@ publication surfaces.
 6. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.
+7. Keep investigation notes and implementation plans in `.context/` by
+   default. Commit one only when it serves a durable repository-level purpose,
+   and sanitize it to the standard required for any public artifact.

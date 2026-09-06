@@ -117,7 +117,7 @@ function FoundationSpecimens() {
               <div key={sf.token} className="h-16 flex-1" style={{ background: sf.hex }} />
             ))}
           </div>
-          <div className="mt-4 grid grid-flow-col grid-cols-2 grid-rows-4 gap-x-10 gap-y-2">
+          <div className="mt-4 grid grid-flow-col grid-cols-2 grid-rows-5 gap-x-10 gap-y-2">
             {SURFACES.map((sf) => (
               <div key={sf.token} className="flex items-baseline gap-2.5">
                 <span

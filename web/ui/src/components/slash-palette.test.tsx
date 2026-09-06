@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { ApiError } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import type { ApiTask, StatusEntry, TaskSkills, Turn } from "@/lib/types"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { SteerBox } from "./steer-box"
 
@@ -71,10 +71,9 @@ const GIT: StatusEntry = {
 }
 
 function mount(node: ReactNode) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const wrap = (n: ReactNode) => <QueryClientProvider client={client}>{n}</QueryClientProvider>
-  const result = render(wrap(node))
-  return { ...result, rerender: (n: ReactNode) => result.rerender(wrap(n)) }
+  return render(node, {
+    wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: api })),
+  })
 }
 
 function box(): HTMLTextAreaElement {

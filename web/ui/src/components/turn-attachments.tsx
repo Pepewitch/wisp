@@ -2,6 +2,7 @@ import { useState } from "react"
 
 import { ImageViewer } from "@/components/image-viewer"
 import { attachmentUrl, formatBytes } from "@/lib/attachments"
+import { useDaemonTransport } from "@/lib/runtime"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
@@ -89,11 +90,12 @@ export function TurnAttachments({
   attachments: TurnAttachment[]
   archived: boolean
 }) {
+  const transport = useDaemonTransport()
   return (
     <AttachmentGallery
       attachments={attachments}
       archived={archived}
-      urlFor={(name) => attachmentUrl(taskId, turn, name)}
+      urlFor={(name) => transport.assetUrl(attachmentUrl(taskId, turn, name))}
       testId="turn-attachments"
     />
   )

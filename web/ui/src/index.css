@@ -59,6 +59,7 @@
 
   /* surfaces shadcn has no name for */
   --color-surface: var(--surface);
+  --color-code: var(--code);
   --color-hover: var(--hover);
   --color-border-strong: var(--border-strong);
 
@@ -117,7 +118,8 @@
   /* surfaces */
   --background: #0d0d10;        /* reading column — brighter, still below the sidebar */
   --surface: #0f0f12;           /* sidebar, right pane, top bar, inputs */
-  --card: #15151a;              /* prompt bubbles, code blocks, raised chrome */
+  --code: #101014;              /* code blocks in prose — a step BELOW the bubble */
+  --card: #15151a;              /* prompt bubbles, raised chrome */
   --popover: #131317;           /* hover cards, menus, the command palette */
   --hover: #1a1a20;             /* row hover — never a resting state */
   --accent: #1f1f26;            /* SELECTED. background only, no rail, no hue */

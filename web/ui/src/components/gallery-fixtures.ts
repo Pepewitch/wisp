@@ -171,8 +171,9 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
 export const SURFACES = [
   { name: "Void", token: "--background", hex: "#0D0D10", note: "Reading column, stream, diff body" },
   { name: "Surface", token: "--surface", hex: "#0F0F12", note: "Sidebar, right pane, top bar, inputs" },
+  { name: "Code", token: "--code", hex: "#101014", note: "Code blocks — a step below the bubble" },
   { name: "Popover", token: "--popover", hex: "#131317", note: "Hover cards, menus, palette" },
-  { name: "Card", token: "--card", hex: "#15151A", note: "Prompt bubbles, code blocks" },
+  { name: "Card", token: "--card", hex: "#15151A", note: "Prompt bubbles, raised chrome" },
   { name: "Hover", token: "--hover", hex: "#1A1A20", note: "Row hover — never a resting state" },
   { name: "Selected", token: "--accent", hex: "#1F1F26", note: "Background alone. No rail, no hue" },
   { name: "Border", token: "--border", hex: "#212128", note: "Pane dividers, hairlines" },

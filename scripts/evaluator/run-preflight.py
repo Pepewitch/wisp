@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 import urllib.request
@@ -150,4 +151,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     finally:
+        logs = HOME / ".wisp/logs"
+        if logs.is_dir():
+            shutil.copytree(logs, EVIDENCE / "wisp-logs", dirs_exist_ok=True)
         subprocess.run(["/opt/evaluator/redact-evidence.py"], check=False)

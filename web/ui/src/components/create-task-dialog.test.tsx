@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { CreateTaskDialog } from "./create-task-dialog"
 
@@ -31,19 +31,17 @@ const harness: HarnessInfo = {
 
 describe("create task dialog layout", () => {
   it("stacks the bar into columns on a narrow modal and one line on a wide one", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
-      <QueryClientProvider client={client}>
-        <CreateTaskDialog
-          open
-          onOpenChange={() => {}}
-          initialRepoPath="/repo"
-          repos={[repo]}
-          harnesses={[harness]}
-          harnessesError={null}
-          onCreated={() => {}}
-        />
-      </QueryClientProvider>,
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={[harness]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport()) },
     )
 
     // The switch keys off the modal's own width (@container). Narrow: the

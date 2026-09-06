@@ -3,17 +3,19 @@ import { act, renderHook, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi, type MockInstance } from "vitest"
 
-import { qk } from "@/lib/query"
+import { createConnectionQueryKeys, qk } from "@/lib/query"
+import { DaemonRuntimeProvider } from "@/lib/runtime"
+import type { DaemonTransport } from "@/lib/transport"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({
-  api: vi.fn(),
+  request: vi.fn(),
   mintSession: vi.fn(),
   completeAuth: vi.fn(),
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  api: mocks.api,
   mintSession: mocks.mintSession,
   completeAuth: mocks.completeAuth,
 }))
@@ -42,12 +44,13 @@ import {
  * re-probing waits out the daemon's async probes before refetching.
  */
 
-function harness() {
+function harness(connectionId = "local") {
   const client = new QueryClient()
   const spy = vi.spyOn(client, "invalidateQueries")
-  const wrapper = ({ children }: { children: ReactNode }) => (
-    <QueryClientProvider client={client}>{children}</QueryClientProvider>
-  )
+  const transport = fakeDaemonTransport(connectionId, {
+    request: mocks.request as DaemonTransport["request"],
+  })
+  const wrapper = runtimeWrapper(transport, client)
   return { client, spy, wrapper }
 }
 
@@ -64,8 +67,8 @@ function invalidated(spy: MockInstance): unknown[] {
 const settles = (assert: () => void) => waitFor(assert)
 
 beforeEach(() => {
-  mocks.api.mockReset()
-  mocks.api.mockResolvedValue({})
+  mocks.request.mockReset()
+  mocks.request.mockResolvedValue({})
   mocks.mintSession.mockReset()
   mocks.mintSession.mockResolvedValue(undefined)
   mocks.completeAuth.mockReset()
@@ -78,7 +81,7 @@ describe("task writes", () => {
       latestVersion: "0.4.0-alpha.7",
       state: "installing",
     }
-    mocks.api.mockResolvedValue(status)
+    mocks.request.mockResolvedValue(status)
     const { client, wrapper } = harness()
     const { result } = renderHook(() => useInstallUpdate(), { wrapper })
 
@@ -86,7 +89,7 @@ describe("task writes", () => {
       await result.current.mutateAsync("0.4.0-alpha.7")
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/update", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/update", {
       method: "POST",
       body: { version: "0.4.0-alpha.7" },
     })
@@ -94,7 +97,7 @@ describe("task writes", () => {
   })
 
   it("creating a task posts the composer's body and stales the task list", async () => {
-    mocks.api.mockResolvedValue({ id: "t5qmha" })
+    mocks.request.mockResolvedValue({ id: "t5qmha" })
     const { spy, wrapper } = harness()
     const { result } = renderHook(() => useCreateTask(), { wrapper })
 
@@ -109,7 +112,7 @@ describe("task writes", () => {
       })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/tasks", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/tasks", {
       method: "POST",
       body: { repoPath: "/repo", prompt: "fix it", harness: "droid", model: "kimi-k3", mode: "worktree" },
     })
@@ -117,9 +120,54 @@ describe("task writes", () => {
     expect(invalidated(spy)).toEqual([qk.tasks])
   })
 
+  it("a late mutation stays bound to its initiating connection after the provider switches", async () => {
+    let finish!: (value: { id: string }) => void
+    const firstRequest = vi.fn(
+      () => new Promise<{ id: string }>((resolve) => (finish = resolve)),
+    ) as DaemonTransport["request"]
+    const secondRequest = vi.fn() as DaemonTransport["request"]
+    const first = fakeDaemonTransport("connection-one", { request: firstRequest })
+    const second = fakeDaemonTransport("connection-two", { request: secondRequest })
+    const firstKeys = createConnectionQueryKeys(first.connectionId)
+    const secondKeys = createConnectionQueryKeys(second.connectionId)
+    const client = new QueryClient()
+    const spy = vi.spyOn(client, "invalidateQueries")
+    let activeTransport = first
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>
+        <DaemonRuntimeProvider transport={activeTransport}>{children}</DaemonRuntimeProvider>
+      </QueryClientProvider>
+    )
+    const { result, rerender } = renderHook(() => useCreateTask(), {
+      wrapper,
+    })
+
+    let pending!: Promise<unknown>
+    act(() => {
+      pending = result.current.mutateAsync({
+        repoPath: "/repo",
+        prompt: "fix it",
+        harness: "codex",
+        model: "model-one",
+        mode: "worktree",
+      })
+    })
+    await waitFor(() => expect(firstRequest).toHaveBeenCalledOnce())
+
+    activeTransport = second
+    rerender()
+    finish({ id: "duplicate-task" })
+    await act(async () => pending)
+
+    expect(firstRequest).toHaveBeenCalledOnce()
+    expect(secondRequest).not.toHaveBeenCalled()
+    expect(invalidated(spy)).toEqual([firstKeys.tasks])
+    expect(invalidated(spy)).not.toContainEqual(secondKeys.tasks)
+  })
+
   it("renaming updates loaded task names without refetching unrelated task data", async () => {
     const saved = { id: "t5qmha", title: "Clear task name", updated_at: "2026-09-03T12:00:00Z" }
-    mocks.api.mockResolvedValue(saved)
+    mocks.request.mockResolvedValue(saved)
     const { client, spy, wrapper } = harness()
     client.setQueryData(qk.tasksList(false), [
       { id: saved.id, title: "The first prompt", updated_at: "2026-09-01T12:00:00Z" },
@@ -135,7 +183,7 @@ describe("task writes", () => {
       await result.current.mutateAsync({ id: saved.id, title: saved.title })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith(`/api/tasks/${saved.id}`, {
+    expect(mocks.request).toHaveBeenCalledWith(`/api/tasks/${saved.id}`, {
       method: "PATCH",
       body: { title: saved.title },
     })
@@ -152,7 +200,7 @@ describe("task writes", () => {
       await result.current.mutateAsync({ id: "t5qmha", message: "and again", clientMessageId: "client-message-1" })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/tasks/t5qmha/send", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/tasks/t5qmha/send", {
       method: "POST",
       body: { message: "and again", clientMessageId: "client-message-1" },
     })
@@ -160,7 +208,7 @@ describe("task writes", () => {
   })
 
   it("passes a selected suffix id on create and steer writes", async () => {
-    mocks.api.mockResolvedValue({ id: "t5qmha" })
+    mocks.request.mockResolvedValue({ id: "t5qmha" })
     const createHarness = harness()
     const create = renderHook(() => useCreateTask(), { wrapper: createHarness.wrapper })
     await act(async () => {
@@ -173,7 +221,7 @@ describe("task writes", () => {
         suffixPromptId: "suffix-review",
       })
     })
-    expect(mocks.api).toHaveBeenLastCalledWith("/api/tasks", {
+    expect(mocks.request).toHaveBeenLastCalledWith("/api/tasks", {
       method: "POST",
       body: {
         repoPath: "/repo",
@@ -195,7 +243,7 @@ describe("task writes", () => {
         suffixPromptId: "suffix-review",
       })
     })
-    expect(mocks.api).toHaveBeenLastCalledWith("/api/tasks/t5qmha/send", {
+    expect(mocks.request).toHaveBeenLastCalledWith("/api/tasks/t5qmha/send", {
       method: "POST",
       body: { message: "again", clientMessageId: "client-message-2", suffixPromptId: "suffix-review" },
     })
@@ -206,7 +254,7 @@ describe("task writes", () => {
       [useInterruptTask, "interrupt"],
       [usePushTask, "push"],
     ] as const) {
-      mocks.api.mockClear()
+      mocks.request.mockClear()
       const { spy, wrapper } = harness()
       const { result } = renderHook(hook, { wrapper })
 
@@ -214,13 +262,13 @@ describe("task writes", () => {
         await result.current.mutateAsync("t5qmha")
       })
 
-      expect(mocks.api).toHaveBeenCalledWith(`/api/tasks/t5qmha/${verb}`, { method: "POST" })
+      expect(mocks.request).toHaveBeenCalledWith(`/api/tasks/t5qmha/${verb}`, { method: "POST" })
       expect(invalidated(spy)).toEqual([qk.tasks, qk.status])
     }
   })
 
   it("a REFUSED push still stales the list — a failed push can have moved the branch", async () => {
-    mocks.api.mockRejectedValue(new Error("no upstream"))
+    mocks.request.mockRejectedValue(new Error("no upstream"))
     const { spy, wrapper } = harness()
     const { result } = renderHook(() => usePushTask(), { wrapper })
 
@@ -240,12 +288,15 @@ describe("task writes", () => {
       await result.current.mutateAsync({ id: "t5qmha", force: true })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/tasks/t5qmha/archive", { method: "POST", body: { force: true } })
+    expect(mocks.request).toHaveBeenCalledWith("/api/tasks/t5qmha/archive", {
+      method: "POST",
+      body: { force: true },
+    })
     expect(invalidated(spy)).toEqual([qk.tasks, qk.status, qk.task("t5qmha")])
   })
 
   it("a REFUSED archive stales nothing — the 409 means the task is untouched", async () => {
-    mocks.api.mockRejectedValue(new Error("push first"))
+    mocks.request.mockRejectedValue(new Error("push first"))
     const { spy, wrapper } = harness()
     const { result } = renderHook(() => useArchiveTask(), { wrapper })
 
@@ -264,7 +315,7 @@ describe("task writes", () => {
       await result.current.mutateAsync("t5qmha")
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/tasks/t5qmha/fresh-session", { method: "POST" })
+    expect(mocks.request).toHaveBeenCalledWith("/api/tasks/t5qmha/fresh-session", { method: "POST" })
     expect(invalidated(spy)).toEqual([qk.tasks, qk.status, qk.task("t5qmha")])
   })
 })
@@ -277,7 +328,7 @@ describe("suffix prompt writes", () => {
       prompt: "Review everything.",
       createdAt: "2026-09-01T00:00:00.000Z",
     }
-    mocks.api.mockResolvedValue(saved)
+    mocks.request.mockResolvedValue(saved)
     const { client, wrapper } = harness()
     client.setQueryData(qk.suffixPrompts, { suffixPrompts: [] })
     const { result } = renderHook(() => useCreateSuffixPrompt(), { wrapper })
@@ -286,7 +337,7 @@ describe("suffix prompt writes", () => {
       await result.current.mutateAsync({ name: saved.name, prompt: saved.prompt })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/suffix-prompts", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/suffix-prompts", {
       method: "POST",
       body: { name: saved.name, prompt: saved.prompt },
     })
@@ -308,7 +359,7 @@ describe("project writes", () => {
       })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/projects", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/projects", {
       method: "POST",
       body: { path: "/repo", setupScript: "bun install", archiveScript: "", copyFiles: [".env*"] },
     })
@@ -323,7 +374,7 @@ describe("project writes", () => {
       await result.current.mutateAsync("/repo")
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/projects", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/projects", {
       method: "DELETE",
       body: { path: "/repo" },
     })
@@ -331,7 +382,7 @@ describe("project writes", () => {
   })
 
   it("a copy preview stales nothing — the POST is a read", async () => {
-    mocks.api.mockResolvedValue({ files: ["backend/.env"], truncated: false })
+    mocks.request.mockResolvedValue({ files: ["backend/.env"], truncated: false })
     const { spy, wrapper } = harness()
     const { result } = renderHook(() => useCopyPreview(), { wrapper })
 
@@ -339,7 +390,7 @@ describe("project writes", () => {
       await result.current.mutateAsync({ path: "/repo", patterns: [".env*"] })
     })
 
-    expect(mocks.api).toHaveBeenCalledWith("/api/projects/copy-preview", {
+    expect(mocks.request).toHaveBeenCalledWith("/api/projects/copy-preview", {
       method: "POST",
       body: { path: "/repo", patterns: [".env*"] },
     })
@@ -364,7 +415,7 @@ describe("re-probing harnesses", () => {
         await vi.advanceTimersByTimeAsync(1)
       })
 
-      expect(mocks.api).toHaveBeenCalledWith("/api/harnesses?refresh=1")
+      expect(mocks.request).toHaveBeenCalledWith("/api/harnesses?refresh=1")
       // ?refresh=1 returns the CACHED list, so the fresh answer is not there yet
       expect(result.current.isPending).toBe(true)
       expect(invalidated(spy)).toEqual([])
@@ -386,7 +437,7 @@ describe("re-probing harnesses", () => {
   it("swallows a failed kick and still refetches — the menu's own reasons say more than a banner", async () => {
     vi.useFakeTimers()
     try {
-      mocks.api.mockRejectedValue(new Error("offline"))
+      mocks.request.mockRejectedValue(new Error("offline"))
       const { spy, wrapper } = harness()
       const { result } = renderHook(() => useReprobeHarnesses(), { wrapper })
 

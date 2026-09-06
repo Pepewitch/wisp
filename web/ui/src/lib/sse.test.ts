@@ -1,7 +1,8 @@
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
-import { qk } from "./query";
+import { connectionStore } from "./conn";
+import { createConnectionQueryKeys, qk, type ConnectionQueryKeys } from "./query";
 import { connectEventsBridge, SSE_CLOSED, type SseLike } from "./sse";
 import type { TaskDetail, WispEvent } from "./types";
 
@@ -55,6 +56,7 @@ class FakeSse implements SseLike {
 
 interface Harness {
   client: QueryClient;
+  qk: Readonly<ConnectionQueryKeys>;
   sources: FakeSse[];
   ensureSession: ReturnType<typeof vi.fn<() => Promise<void>>>;
   connectionLog: boolean[];
@@ -62,21 +64,28 @@ interface Harness {
   close: () => void;
 }
 
-function bridge(selectedId: string | null = "t1"): Harness {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function bridge(
+  selectedId: string | null = "t1",
+  connectionId = "local",
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+): Harness {
   const sources: FakeSse[] = [];
   const ensureSession = vi.fn<() => Promise<void>>(() => Promise.resolve());
   const connectionLog: boolean[] = [];
   let reconnects = 0;
+  const keys = createConnectionQueryKeys(connectionId);
   const close = connectEventsBridge({
     client,
-    getSelectedId: () => selectedId,
-    ensureSession,
-    factory: (url) => {
-      const src = new FakeSse(url);
-      sources.push(src);
-      return src;
+    qk: keys,
+    transport: {
+      ensureReady: ensureSession,
+      openEventStream: (url) => {
+        const src = new FakeSse(url);
+        sources.push(src);
+        return src as unknown as EventSource;
+      },
     },
+    getSelectedId: () => selectedId,
     onConnectionChange: (live) => connectionLog.push(live),
     onReconnect: () => reconnects++,
     tasksDebounceMs: 0,
@@ -84,7 +93,7 @@ function bridge(selectedId: string | null = "t1"): Harness {
     detailDebounceMs: 0,
     reconnectDelayMs: 0,
   });
-  return { client, sources, ensureSession, connectionLog, reconnectCount: () => reconnects, close };
+  return { client, qk: keys, sources, ensureSession, connectionLog, reconnectCount: () => reconnects, close };
 }
 
 function seed(client: QueryClient): void {
@@ -97,6 +106,31 @@ function seed(client: QueryClient): void {
 const invalidated = (client: QueryClient, key: QueryKey): boolean => client.getQueryState(key)?.isInvalidated === true;
 
 describe("the /api/events → queryClient bridge", () => {
+  it("invalidates only the initiating connection when task IDs overlap", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = bridge("duplicate-task", "connection-one", client);
+    const second = bridge("duplicate-task", "connection-two", client);
+    client.setQueryData(first.qk.tasksList(false), []);
+    client.setQueryData(second.qk.tasksList(false), []);
+    client.setQueryData(first.qk.status, { tasks: {} });
+    client.setQueryData(second.qk.status, { tasks: {} });
+
+    first.sources[0]!.emit({
+      type: "task",
+      taskId: "duplicate-task",
+      state: "running",
+      stateDetail: null,
+      seq: 1,
+    });
+
+    expect(invalidated(client, first.qk.tasksList(false))).toBe(true);
+    expect(invalidated(client, first.qk.status)).toBe(true);
+    expect(invalidated(client, second.qk.tasksList(false))).toBe(false);
+    expect(invalidated(client, second.qk.status)).toBe(false);
+    first.close();
+    second.close();
+  });
+
   it("a task event invalidates the list and status, and echoes the selected task's state", () => {
     const h = bridge("t1");
     seed(h.client);
@@ -228,15 +262,15 @@ describe("the /api/events → queryClient bridge", () => {
     const h = bridge("t1");
     seed(h.client);
     const src = h.sources[0]!;
-    src.openUp(); // initial open, not a reconnect
-    expect(h.connectionLog).toEqual([]); // fresh open reports nothing
+    src.openUp(); // initial open establishes this mounted connection as healthy
+    expect(h.connectionLog).toEqual([true]);
     expect(invalidated(h.client, qk.tasksList(false))).toBe(false);
 
     src.transientError();
-    expect(h.connectionLog).toEqual([false]);
+    expect(h.connectionLog).toEqual([true, false]);
 
     src.openUp(); // the browser's own auto-reconnect succeeded
-    expect(h.connectionLog).toEqual([false, true]);
+    expect(h.connectionLog).toEqual([true, false, true]);
     expect(invalidated(h.client, qk.tasksList(false))).toBe(true);
     expect(invalidated(h.client, qk.status)).toBe(true);
     expect(invalidated(h.client, qk.task("t1"))).toBe(true);
@@ -270,5 +304,60 @@ describe("the /api/events → queryClient bridge", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(h.sources.length).toBe(1);
     expect(h.ensureSession).not.toHaveBeenCalled();
+  });
+
+  it("a fresh bridge heals persisted connection health on its initial open", () => {
+    const connectionId = "connection-returned";
+    const store = connectionStore(connectionId);
+    store.set("events", false);
+    expect(store.isLive()).toBe(false);
+
+    const source = new FakeSse("/api/events");
+    const close = connectEventsBridge({
+      client: new QueryClient(),
+      qk: createConnectionQueryKeys(connectionId),
+      transport: {
+        ensureReady: () => Promise.resolve(),
+        openEventStream: () => source as unknown as EventSource,
+      },
+      getSelectedId: () => null,
+      onConnectionChange: (live) => store.set("events", live),
+    });
+    source.openUp();
+
+    expect(store.isLive()).toBe(true);
+    close();
+  });
+
+  it("cancels queued invalidations when the bridge closes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    seed(client);
+    const source = new FakeSse("/api/events");
+    const close = connectEventsBridge({
+      client,
+      qk,
+      transport: {
+        ensureReady: () => Promise.resolve(),
+        openEventStream: () => source as unknown as EventSource,
+      },
+      getSelectedId: () => "t1",
+      tasksDebounceMs: 10,
+      statusDebounceMs: 10,
+      detailDebounceMs: 10,
+    });
+
+    source.emit({
+      type: "task",
+      taskId: "t1",
+      state: "running",
+      stateDetail: null,
+      seq: 10,
+    });
+    close();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(invalidated(client, qk.tasksList(false))).toBe(false);
+    expect(invalidated(client, qk.status)).toBe(false);
+    expect(invalidated(client, qk.task("t1"))).toBe(false);
   });
 });

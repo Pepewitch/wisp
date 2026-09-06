@@ -25,8 +25,9 @@ import {
   type TurnActivity,
 } from "@/lib/activity"
 import { duration } from "@/lib/state"
+import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
-import { uiIntents } from "@/lib/ui-intents"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import type { StreamState } from "@/stream/reducer"
 
@@ -64,6 +65,8 @@ export function Conversation({
   /** "connecting…" / "select a task" — the stream's own placeholder */
   note?: string | null
 }) {
+  const runtime = useDaemonRuntime()
+  const uiIntents = uiIntentsFor(runtime.connectionId)
   const viewport = useRef<HTMLDivElement>(null)
   const [pinned, setPinned] = useState(true)
 
@@ -93,15 +96,16 @@ export function Conversation({
   useLayoutEffect(() => {
     const el = viewport.current
     if (pinned && el) el.scrollTop = el.scrollHeight
-  }, [task?.id, task?.turns.length, task?.messages?.length, stream.blocks, pinned, focusRequests])
+  }, [runtime.connectionId, task?.id, task?.turns.length, task?.messages?.length, stream.blocks, pinned, focusRequests])
 
   // a task switch is a fresh read: pin to the tail again (adjusted during
   // render so the first paint of the new task is already pinned). A `/log`
   // request is the same move, asked for out loud.
-  const [seenTask, setSeenTask] = useState(task?.id)
+  const taskIdentity = `${runtime.connectionId}:${task?.id ?? ""}`
+  const [seenTask, setSeenTask] = useState(taskIdentity)
   const [seenFocus, setSeenFocus] = useState(focusRequests)
-  if (seenTask !== task?.id) {
-    setSeenTask(task?.id)
+  if (seenTask !== taskIdentity) {
+    setSeenTask(taskIdentity)
     setPinned(true)
   }
   if (seenFocus !== focusRequests) {
@@ -154,7 +158,7 @@ export function Conversation({
           {task.turns.length === 0 && note && <div className="pt-4 text-[12.5px] text-faint">{note}</div>}
           {task.turns.map((turn, i) => (
             <TurnBlock
-              key={`${task.id}:${turn.n}`}
+              key={`${runtime.connectionId}:${task.id}:${turn.n}`}
               taskId={task.id}
               turn={turn}
               messages={steeredMessages.get(turn.n) ?? []}
@@ -172,7 +176,12 @@ export function Conversation({
             />
           ))}
           {queuedMessages.map((message) => (
-            <QueuedMessage key={message.id} taskId={task.id} message={message} archived={task.archived} />
+            <QueuedMessage
+              key={`${runtime.connectionId}:${message.id}`}
+              taskId={task.id}
+              message={message}
+              archived={task.archived}
+            />
           ))}
           <div className="h-4 shrink-0" />
         </div>
@@ -514,6 +523,7 @@ function Activity({
   /** rule 5: what to draw at a message anchor, resolved against the task's rows */
   renderMessage: (messageId: string) => ReactNode
 }) {
+  const transport = useDaemonTransport()
   const [loading, setLoading] = useState(false)
   const node = useRef<HTMLDivElement>(null)
   const request = useRef<AbortController | null>(null)
@@ -529,7 +539,7 @@ function Activity({
     request.current = controller
     setLoading(true)
     const before = node.current?.closest("[data-testid=conversation-viewport]")?.scrollHeight ?? 0
-    void fetchTurnActivity(taskId, turn.n, { signal: controller.signal })
+    void fetchTurnActivity(taskId, turn.n, { transport, signal: controller.signal })
       .then((a) => {
         if (controller.signal.aborted) return
         request.current = null
@@ -552,7 +562,7 @@ function Activity({
     if (!autoLoad || live) return
     const controller = new AbortController()
     request.current = controller
-    void fetchTurnActivity(taskId, turn.n, { signal: controller.signal })
+    void fetchTurnActivity(taskId, turn.n, { transport, signal: controller.signal })
       .then((a) => {
         if (!controller.signal.aborted) onLoaded(a)
       })
@@ -561,7 +571,7 @@ function Activity({
       controller.abort()
       if (request.current === controller) request.current = null
     }
-  }, [autoLoad, live, taskId, turn.n, onLoaded])
+  }, [autoLoad, live, taskId, turn.n, onLoaded, transport])
 
   if (!activity) {
     // nothing rendered for a turn with no tool calls to show yet — one quiet

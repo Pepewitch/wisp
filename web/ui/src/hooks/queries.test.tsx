@@ -1,13 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient } from "@tanstack/react-query"
 import { renderHook, waitFor } from "@testing-library/react"
-import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
+import type { DaemonTransport } from "@/lib/transport"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }))
-
-vi.mock("@/lib/api", () => ({ api: mocks.api }))
+const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
 import {
   PULL_REQUEST_OVERVIEW_POLL_MS,
@@ -29,31 +28,33 @@ const PR: PullRequestInfo = {
   updatedAt: "2026-09-04T12:00:00Z",
 }
 
-function harness() {
+function harness(connectionId = "local") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const transport = fakeDaemonTransport(connectionId, {
+    request: mocks.request as DaemonTransport["request"],
+  })
   return {
-    wrapper: ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
-    ),
+    client,
+    wrapper: runtimeWrapper(transport, client),
   }
 }
 
 describe("usePullRequestStatus", () => {
   beforeEach(() => {
-    mocks.api.mockReset()
-    mocks.api.mockResolvedValue({ kind: "none", provider: "github" })
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({ kind: "none", provider: "github" })
   })
 
   it("reads only the selected task endpoint", async () => {
     const { wrapper } = harness()
     renderHook(() => usePullRequestStatus("tpr01"), { wrapper })
-    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/api/tasks/tpr01/pull-request"))
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/tasks/tpr01/pull-request"))
   })
 
   it("does not read when no task is selected", () => {
     const { wrapper } = harness()
     renderHook(() => usePullRequestStatus(null), { wrapper })
-    expect(mocks.api).not.toHaveBeenCalled()
+    expect(mocks.request).not.toHaveBeenCalled()
   })
 })
 
@@ -78,14 +79,14 @@ describe("pullRequestPollInterval", () => {
 
 describe("usePullRequestOverview", () => {
   beforeEach(() => {
-    mocks.api.mockReset()
-    mocks.api.mockResolvedValue({ tasks: {} })
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({ tasks: {} })
   })
 
   it("reads one batched endpoint for all live sidebar rows", async () => {
     const { wrapper } = harness()
     renderHook(() => usePullRequestOverview(), { wrapper })
-    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/api/pull-requests"))
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/pull-requests"))
   })
 
   it("refreshes at the bounded one-minute overview interval", () => {
@@ -95,14 +96,24 @@ describe("usePullRequestOverview", () => {
 
 describe("useUpdateStatus", () => {
   it("reads the daemon-cached update endpoint", async () => {
-    mocks.api.mockReset()
-    mocks.api.mockResolvedValue({
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({
       currentVersion: "0.4.0-alpha.6",
       latestVersion: null,
       state: "up-to-date",
     })
     const { wrapper } = harness()
     renderHook(() => useUpdateStatus(), { wrapper })
-    await waitFor(() => expect(mocks.api).toHaveBeenCalledWith("/api/update"))
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/update"))
+  })
+
+  it("keeps duplicate task IDs under different connection cache keys", async () => {
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({ id: "duplicate-task", title: "Remote task" })
+    const { client, wrapper } = harness("connection-two")
+    renderHook(() => usePullRequestStatus("duplicate-task"), { wrapper })
+    await waitFor(() => expect(mocks.request).toHaveBeenCalled())
+
+    expect(client.getQueryCache().getAll()[0]?.queryKey[0]).toBe("connection-two")
   })
 })
