@@ -36,6 +36,15 @@ function snakeCase(value: string): string {
   return value.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`);
 }
 
+/**
+ * A spawn collab call names no task, only the assignment; its first line is a
+ * better card title than the generic fallback, and it is the child's own words.
+ */
+function promptTitle(value: unknown): string | null {
+  const line = string(value)?.split("\n").map((part) => part.trim()).find(Boolean);
+  return line ? trunc(line, 80) : null;
+}
+
 /** The last segment of a Codex agent path (`/root/review_plan` → `review_plan`). */
 function codexAgentName(value: unknown): string | null {
   const path = string(value)?.trim().replace(/\/+$/, "");
@@ -95,6 +104,8 @@ function codexCollaboration(
     if (phase === "started") context.subagents.add(id);
     const next = status(item.status, "running");
     const agentId = Array.isArray(item.receiver_thread_ids) ? string(item.receiver_thread_ids[0]) : null;
+    // The child's items arrive tagged with this thread id; know it before they do.
+    if (agentId) context.subagents.add(agentId);
     return [{
       kind: "subagent",
       id,
@@ -103,7 +114,7 @@ function codexCollaboration(
       timestamp: at,
       phase: phase === "started" ? "started" : next === "failed" ? "completed" : "updated",
       status: next === "failed" ? "failed" : "running",
-      title: string(item.description) ?? null,
+      title: string(item.description) ?? promptTitle(item.prompt),
       model: string(item.model) ?? null,
       effort: string(item.reasoning_effort) ?? null,
       prompt: string(item.prompt) ?? null,

@@ -463,6 +463,39 @@ describe("Codex app-server subagent dialect", () => {
     });
   });
 
+  test("Codex app-server nests a spawned child's work under one card and settles it from its own turn", () => {
+    const events = renderFixture(BUILTIN_ADAPTERS.codex!, "codex-live-nested-subagent.jsonl");
+    const cards = events.filter((event) => event.kind === "subagent");
+    // One card: the spawn call opens it, and the child's thread id is an alias, not a second card.
+    expect(cards.filter((event) => event.phase === "started")).toEqual([
+      expect.objectContaining({ id: "call-spawn", status: "running" }),
+    ]);
+    expect(cards).toContainEqual(expect.objectContaining({
+      id: "call-spawn",
+      agentId: "agent-codex-live",
+      title: "Read package.json in the workspace and reply with only its name field.",
+      model: "gpt-5.6-luna",
+      effort: "low",
+      prompt: "Read package.json in the workspace and reply with only its name field.",
+    }));
+    // The child's command and final message live under the child, not the parent.
+    expect(events).toContainEqual(expect.objectContaining({ kind: "tool", id: "exec-1", parentId: "agent-codex-live", name: "Run" }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: "text", parentId: "agent-codex-live", text: "papaya-verify" }));
+    expect(events.filter((event) => event.kind === "text" && event.parentId === null).map((event) => event.text)).toEqual([
+      "I’m spawning the single requested subagent now and will wait for its exact reply.",
+      "child said: papaya-verify",
+    ]);
+    // The child's own turn/completed carries the outcome and duration.
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "subagent",
+      id: "agent-codex-live",
+      phase: "completed",
+      status: "completed",
+      result: "papaya-verify",
+      durationMs: 7356,
+    }));
+  });
+
   test("Codex subagent_activity kinds map onto the lifecycle through the thread id", () => {
     const marker = (id: string, kind: string) => ({
       type: "item.completed",

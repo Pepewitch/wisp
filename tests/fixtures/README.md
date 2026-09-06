@@ -46,11 +46,30 @@ camelCase (`inProgress`) where `codex exec --json` says `in_progress`.
 This capture predates thread scoping in the driver. The app-server attaches
 the connection to every spawned child, so the child's own items arrive on it
 too; in this turn they were indistinguishable from the parent's and rendered
-at the top level. The driver now tags every item with its `thread_id`, emits
-`thread.child` from a metadata-only `thread/read` of each spawned thread, and
-turns a child's `turn/completed` into `subagent.completed`. Those projected
-shapes are pinned by driver tests in tests/live-protocol.test.ts; a fresh
-sanitized capture that shows them is the next re-capture to make.
+at the top level.
+
+## codex app-server nested child — codex-cli 0.153.4, model `gpt-5.6-luna`, 2026-09-06
+
+`codex-live-nested-subagent.jsonl` is the Wisp-side log of a live app-server
+turn, run through the development instance after the driver learned to tag
+events with their `thread_id`, in a throwaway repo whose package.json is
+named `papaya-verify`. The prompt asked the parent to spawn exactly one child
+to read that name and to answer `child said: <its reply>`. Thread ids and
+item ids were replaced consistently; nothing else was altered.
+
+What this proves: every item now carries the thread that emitted it, so the
+child's command and final message are its own (`thread_id` of the receiver)
+while the parent's two messages stay at the top level. On this turn the spawn
+DID arrive as a `collab_tool_call` — `tool: "spawnAgent"`, camelCase
+`inProgress`/`pendingInit`, `model` empty on start and resolved on
+completion, `reasoning_effort` `medium` on start and `low` on completion —
+so both the marker path (previous capture) and the collab path are real on
+the same codex build. The child's own `turn/completed` reaches the log as
+`subagent.completed` with its final message and `duration_ms`, before the
+parent's `wait` returns with the same message in `agents_states`. No
+`subagent_activity` marker was emitted on this turn, so no `thread.child`
+metadata read happened; the card's model and effort came from the spawn
+call instead.
 
 ## codex — codex-cli 0.149.0, model `gpt-5.6-luna`, 2026-08-22
 
