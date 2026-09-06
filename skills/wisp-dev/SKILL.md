@@ -88,3 +88,6 @@ publication surfaces.
 6. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.
+7. Keep investigation notes and implementation plans in `.context/` by
+   default. Commit one only when it serves a durable repository-level purpose,
+   and sanitize it to the standard required for any public artifact.
