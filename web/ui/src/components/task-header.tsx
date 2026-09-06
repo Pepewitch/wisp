@@ -15,8 +15,7 @@ import { oneLine } from "@/lib/utils"
  * the task branch: lifecycle, CI and review. No PR, unsupported origin, or a
  * provider failure renders nothing. Push remains available through `/push`.
  *
- * Stop/steer lives in the composer. Archive, Fresh session and Copy branch
- * live behind the overflow.
+ * Stop/steer lives in the composer. Rename and Archive live behind the overflow.
  */
 export function TaskHeader({
   task,
