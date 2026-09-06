@@ -6,6 +6,7 @@ import { CONFIG_PATH } from "../src/config";
 import { serve } from "../src/daemon";
 import {
   darwinPtyArgv,
+  DISPLACED_MESSAGE,
   killAll,
   killForTask,
   linuxPtyArgv,
@@ -307,6 +308,104 @@ describe("embedded web terminal", () => {
       // a DIFFERENT tab is a different shell — it must not inherit that output
       const otherTab = await waitFor(attach(1), 15_000);
       expect(otherTab).not.toContain("scrollback-marker");
+    },
+  );
+
+  /**
+   * Opening one task in a browser and in the desktop app at the same time.
+   * The daemon keeps ONE attachment per shell, so the second arrival takes it
+   * — and used to take it in silence: the displaced socket stayed open, kept
+   * its screen, and had every keystroke dropped with the explaining error
+   * suppressed on the way out. A terminal that ignores you has to say so.
+   */
+  test(
+    "a second client takes the shell and the first is told, not silenced",
+    { timeout: 30_000 },
+    async () => {
+      writeFileSync(
+        CONFIG_PATH,
+        JSON.stringify({
+          port: 18710,
+          host: "127.0.0.1",
+          token,
+          webhooks: [],
+          stuckMinutes: 10,
+          logMaxBytes: 5_000_000,
+          setupTimeoutMinutes: 10,
+          envAllowlist: {},
+          harnessDefaults: {},
+        }),
+      );
+
+      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-displace-test-"));
+      const repo = join(root, "repo");
+      const worktree = join(root, "worktree");
+      mkdirSync(repo);
+      git(repo, ["init", "-q"]);
+      git(repo, ["config", "user.email", "terminal-test@wisp"]);
+      git(repo, ["config", "user.name", "terminal-test"]);
+      writeFileSync(join(repo, "README"), "terminal displacement test\n");
+      git(repo, ["add", "README"]);
+      git(repo, ["commit", "-q", "-m", "init"]);
+
+      const taskId = newTaskId();
+      const branch = `wisp/${taskId}-terminal-displace`;
+      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
+      const task = createTask({
+        id: taskId,
+        title: "terminal displacement test",
+        repo_path: repo,
+        harness: "fake",
+        model: null,
+        slot: freeSlot(),
+      });
+      setTaskFields(task.id, {
+        worktree_path: worktree,
+        branch,
+        base_commit: git(repo, ["rev-parse", "HEAD"]),
+      });
+
+      server = await serve({ port: 0 });
+      const url = `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0`;
+
+      const errors: string[] = [];
+      const first = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+      const firstHello = new Promise<void>((resolve, reject) => {
+        first.onerror = () => reject(new Error("first terminal websocket error"));
+        first.onmessage = (event) => {
+          const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (message.type === "hello") resolve();
+          if (message.type === "error") errors.push(String(message.message));
+        };
+      });
+      await waitFor(firstHello, 10_000);
+
+      const displaced = new Promise<void>((resolve) => {
+        const poll = setInterval(() => {
+          if (errors.length > 0) {
+            clearInterval(poll);
+            resolve();
+          }
+        }, 25);
+      });
+
+      const second = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+      const secondHello = new Promise<void>((resolve, reject) => {
+        second.onerror = () => reject(new Error("second terminal websocket error"));
+        second.onmessage = (event) => {
+          const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+          if (message.type === "hello") resolve();
+        };
+      });
+      await waitFor(secondHello, 10_000);
+      await waitFor(displaced, 10_000);
+
+      expect(errors).toEqual([DISPLACED_MESSAGE]);
+      // and the first socket is still open, so its `retry` can take it back
+      expect(first.readyState).toBe(WebSocket.OPEN);
+
+      first.close();
+      second.close();
     },
   );
 

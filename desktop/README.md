@@ -39,6 +39,7 @@ transport all live in Rust.
 | `src-tauri/src/registry.rs` | Immutable connection IDs, non-secret metadata on disk, crash-safe removal |
 | `src-tauri/src/secrets.rs` | Remote tokens in the macOS Keychain |
 | `src-tauri/src/local.rs` | The built-in Local connection, read from the standard Wisp profile |
+| `src-tauri/src/external.rs` | The one action that leaves the app: opening a web link |
 | `src-tauri/src/urls.rs` | Which addresses are allowed, and how a client path joins one |
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
@@ -87,6 +88,33 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 11. Local's non-secret target identity and monotonic revision survive app
     launches. Old revisions receive a native 409, and an open terminal is
     revoked as soon as its revision stops being current.
+
+## The webview content policy
+
+`tauri.conf.json` carries the CSP, and the packaged app is the only client that
+has one — the daemon serves the identical bundle to a browser with no policy at
+all. So this file is where a shared-UI capability quietly becomes
+desktop-specific, and the terminal is the surface that proves it.
+
+`style-src` allows `'unsafe-inline'` because xterm.js has no other delivery
+mechanism: its DOM renderer sets the terminal's font family and size,
+`white-space: pre`, the cell metrics, and every ANSI colour class through
+`<style>` elements it creates *after* load, and the terminal pane injects
+xterm's own stylesheet the same way.
+
+That declaration is not self-enforcing. Tauri rewrites the packaged HTML at
+compile time, stamping a nonce onto every `<style>` element and appending it to
+`style-src` — and a source list carrying a nonce makes CSP **ignore**
+`'unsafe-inline'`. The declared policy then allows inline stylesheets while the
+effective one refuses them, so `dangerousDisableAssetCspModification` opts
+`style-src` out of that rewrite. `script-src` keeps its Tauri-managed nonces
+and hashes; only the style directive is ours to state.
+
+The failure mode is why `src-tauri/tests/webview.rs` asserts the document and
+CSP hashes Tauri actually produces, rather than the config we wrote: a refused
+stylesheet does not throw or blank the pane. It renders a live, working shell
+in the proportional body font with no colours and the accessibility helper
+textarea showing through — wrong in a way only a packaged-app build reveals.
 
 ## Credentials
 
@@ -151,6 +179,7 @@ The other commands:
 | `pick_local_project` | `connectionId: "local"` | `string \| null` |
 | `setup_local_wisp` | — | `LocalSetupReport` |
 | `apply_local_wisp_setup` | `expectedStep` | `LocalSetupReport` |
+| `open_external_url` | `url` | `void` |
 
 Two adjustments the React shell has to absorb:
 
@@ -165,6 +194,15 @@ Two adjustments the React shell has to absorb:
 * **Native project picking uses a selection generation lease.** The webview
   mirrors tab selection with `select_desktop_connection`; if selection changes
   before the folder dialog resolves, native code refuses the path.
+
+`open_external_url` is the only command that takes no connection: a link in a
+task's prose belongs to the internet, not to the daemon that reported it. It
+exists because the webview has no new-window handler, so `target="_blank"` is
+inert in the packaged app and every PR link did nothing. `src/external.rs`
+opens `http` and `https` only, and hands the launcher the reparsed URL rather
+than the string the webview sent. Opening a local path is deliberately absent:
+"open with the default application" is arbitrary execution when the path came
+from agent output, and a remote connection's paths are not on this machine.
 
 Keychain read failures leave only that connection `ready: false` with a
 secret-free `problem`. Deferred deletion failures appear in `cleanupIssues`;

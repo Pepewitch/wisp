@@ -113,6 +113,13 @@ export interface DesktopBridge {
   pickLocalProject(): Promise<string | null>
   setupLocalWisp(): Promise<LocalSetupReport>
   applyLocalWispSetup(expectedStep: LocalSetupStep): Promise<LocalSetupReport>
+  /**
+   * Hand a web link to the machine's browser. Connection-independent: the
+   * webview has no new-window handler, so `target="_blank"` is inert here no
+   * matter which daemon reported the link. Native code re-applies the http(s)
+   * rule and refuses anything else.
+   */
+  openExternalUrl(url: string): Promise<void>
 }
 
 const CONNECTION_ID = /^[A-Za-z0-9_-]+$/
@@ -429,6 +436,7 @@ export function createDesktopBridge(
           expectedStep,
         })
       ),
+    openExternalUrl: (url) => nativeInvoke<void>("open_external_url", { url }),
   }
   return Object.freeze(bridge)
 }

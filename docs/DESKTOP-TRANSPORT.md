@@ -30,6 +30,7 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Connectivity | one global value combining event and log streams | reachability, auth, and selected-log health are separate per connection |
 | Daemon update | one global query and a full-page reload on success | update and recovery remain bound to the initiating connection |
 | UI bundle | one inlined HTML document served by `wispd` | Tauri loads the same built React application from packaged assets |
+| Content policy | none: the daemon serves the page without a CSP | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
 
 The web runtime remains intentionally single-daemon. It keeps same-origin
 requests, browser session cookies, and its current token migration behavior.
@@ -247,7 +248,15 @@ reset_desktop_data       revoke all remotes and delete desktop-owned credentials
 pick_local_project       native folder picker, restricted to Local
 setup_local_wisp         diagnose the local install without changing it
 apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
+open_external_url        hand an http(s) link to the machine's browser
 ```
+
+`open_external_url` is the one command with no connection in it. A link in a
+task's prose belongs to the internet, not to the daemon that reported it. It
+exists because the packaged webview has no new-window handler, so
+`target="_blank"` is inert there and every link simply did nothing; `http` and
+`https` are the only schemes that open, and the shared UI applies the same rule
+before it renders an anchor at all.
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base

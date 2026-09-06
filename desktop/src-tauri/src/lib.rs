@@ -12,12 +12,15 @@
 //! * [`secrets`] — remote tokens in the macOS Keychain, nowhere else.
 //! * [`local`] — the built-in Local connection, read from the standard Wisp
 //!   profile into native memory and never handed to JavaScript.
+//! * [`external`] — the one action that leaves the app: opening a web link in
+//!   the machine's browser, which the webview cannot do by itself.
 //!
 //! `docs/DESKTOP-TRANSPORT.md` states the contract these modules implement.
 
 pub mod capability;
 pub mod commands;
 pub mod core;
+pub mod external;
 pub mod local;
 pub mod probe;
 pub mod proxy;
@@ -33,6 +36,18 @@ use tauri::Manager;
 
 use crate::core::DesktopCore;
 use crate::secrets::KeychainSecretStore;
+
+/// The resolved configuration plus the exact documents the packaged webview
+/// loads, after Tauri's compile-time rewrite of the shared React bundle.
+///
+/// Named rather than inlined into [`run`] because that rewrite is a silent
+/// behavior change to a bundle the daemon also serves unmodified: it stamps a
+/// CSP nonce onto stylesheets, and a nonce is what makes `'unsafe-inline'`
+/// stop applying. `tests/webview.rs` asserts what the shell will actually be
+/// served; see the webview content policy in `desktop/README.md`.
+pub fn context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
 
 /// Boot the shell: open native state, bind the proxy, then show the window.
 ///
@@ -67,7 +82,8 @@ pub fn run() {
             commands::pick_local_project,
             commands::setup_local_wisp,
             commands::apply_local_wisp_setup,
+            commands::open_external_url,
         ])
-        .run(tauri::generate_context!())
+        .run(context())
         .expect("failed to start the Wisp desktop shell");
 }
