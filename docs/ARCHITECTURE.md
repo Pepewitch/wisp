@@ -37,7 +37,7 @@ process.
 | Daemon | projects, tasks, turns, messages, worktrees, harness execution, logs, terminals, lifecycle, update state | desktop tabs or client layout |
 | Shared React app | presentation, connection-scoped query state, navigation, drafts, attachments, stream and terminal clients | daemon credentials or task truth |
 | Browser runtime | one implicit same-origin daemon, browser session exchange and cookie | remote connection registry |
-| Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy | projects, tasks, or a child daemon |
+| Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy, macOS task notifications and their click | projects, tasks, or a child daemon |
 | CLI | task/project API client plus local profile, install, and diagnostic commands | alternate daemon business logic |
 
 For each daemon, SQLite is the durable task ledger. Persisted logs are that

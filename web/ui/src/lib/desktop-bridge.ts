@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen } from "@tauri-apps/api/event"
 
 import { LOCAL_CONNECTION_ID } from "./transport"
 
@@ -83,10 +84,32 @@ export interface ReconnectConnectionInput {
   expectedInstanceId?: string
 }
 
+/** One finished task, worded by the UI, for native code to post as a notification. */
+export interface TaskNotificationInput {
+  readonly connectionId: string
+  readonly taskId: string
+  readonly title: string
+  readonly body: string
+}
+
+/** What a clicked notification asks the shell to show. */
+export interface TaskFocusRequest {
+  readonly connectionId: string
+  readonly taskId: string
+}
+
+/** Native event name a notification click arrives on (desktop/src-tauri/src/notifications.rs). */
+export const FOCUS_TASK_EVENT = "desktop://focus-task"
+
 export type NativeInvoke = <T>(
   command: string,
   args?: Record<string, unknown>
 ) => Promise<T>
+
+export type NativeListen = (
+  event: string,
+  handler: (event: { payload: unknown }) => void
+) => Promise<() => void>
 
 /** The complete TypeScript/native boundary. No React component calls invoke. */
 export interface DesktopBridge {
@@ -120,9 +143,15 @@ export interface DesktopBridge {
    * rule and refuses anything else.
    */
   openExternalUrl(url: string): Promise<void>
+  /** Rejects outside the packaged Wisp.app; callers treat that as "no banner". */
+  notifyTaskTransition(input: TaskNotificationInput): Promise<void>
+  /** Resolves to the unsubscribe function; malformed native payloads are dropped. */
+  onFocusTask(handler: (request: TaskFocusRequest) => void): Promise<() => void>
 }
 
 const CONNECTION_ID = /^[A-Za-z0-9_-]+$/
+/** Daemon task IDs are short ASCII tokens; the bound only rejects garbage, never a real ID. */
+const TASK_ID = /^[A-Za-z0-9_-]{1,128}$/
 
 function loopbackHostname(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
@@ -367,8 +396,21 @@ export function normalizeDesktopBootstrap(
   })
 }
 
+/** A focus request is routing input, so it is validated like bootstrap metadata. */
+export function normalizeTaskFocusRequest(value: unknown): TaskFocusRequest {
+  if (!value || typeof value !== "object")
+    throw new Error("Desktop sent an invalid task focus request")
+  const { connectionId, taskId } = value as Record<string, unknown>
+  if (typeof connectionId !== "string" || !CONNECTION_ID.test(connectionId))
+    throw new Error("Desktop task focus request has an invalid connection id")
+  if (typeof taskId !== "string" || !TASK_ID.test(taskId))
+    throw new Error("Desktop task focus request has an invalid task id")
+  return Object.freeze({ connectionId, taskId })
+}
+
 export function createDesktopBridge(
-  nativeInvoke: NativeInvoke = invoke
+  nativeInvoke: NativeInvoke = invoke,
+  nativeListen: NativeListen = listen
 ): Readonly<DesktopBridge> {
   const bridge: DesktopBridge = {
     bootstrap: async () =>
@@ -437,6 +479,30 @@ export function createDesktopBridge(
         })
       ),
     openExternalUrl: (url) => nativeInvoke<void>("open_external_url", { url }),
+    notifyTaskTransition: (input) => {
+      if (!CONNECTION_ID.test(input.connectionId) || !TASK_ID.test(input.taskId))
+        return Promise.reject(
+          new Error("A task notification needs valid connection and task ids")
+        )
+      return nativeInvoke<void>("notify_task_transition", {
+        notification: {
+          connectionId: input.connectionId,
+          taskId: input.taskId,
+          title: input.title,
+          body: input.body,
+        },
+      })
+    },
+    onFocusTask: (handler) =>
+      nativeListen(FOCUS_TASK_EVENT, (event) => {
+        let request: TaskFocusRequest
+        try {
+          request = normalizeTaskFocusRequest(event.payload)
+        } catch {
+          return
+        }
+        handler(request)
+      }),
   }
   return Object.freeze(bridge)
 }

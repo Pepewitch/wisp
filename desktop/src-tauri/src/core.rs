@@ -164,15 +164,18 @@ impl DesktopCore {
         }
     }
 
-    /// Mirror only UI selection for native-only actions such as the folder
-    /// picker. Proxy routing never consults this mutable state.
-    pub fn select_connection(&self, connection_id: &str) -> Result<(), CoreError> {
-        if !self
-            .registry
+    /// Whether a connection ID names a saved connection right now.
+    pub fn knows_connection(&self, connection_id: &str) -> bool {
+        self.registry
             .list()
             .iter()
             .any(|connection| connection.id == connection_id)
-        {
+    }
+
+    /// Mirror only UI selection for native-only actions such as the folder
+    /// picker. Proxy routing never consults this mutable state.
+    pub fn select_connection(&self, connection_id: &str) -> Result<(), CoreError> {
+        if !self.knows_connection(connection_id) {
             return Err(RegistryError::UnknownConnection(connection_id.to_string()).into());
         }
         let mut selection = self.selection.lock().expect("selection mutex");

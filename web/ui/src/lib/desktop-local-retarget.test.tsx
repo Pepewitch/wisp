@@ -69,6 +69,8 @@ function bridge(overrides: Partial<DesktopBridge>): DesktopBridge {
       nextStep: "ready",
       message: "Local Wisp is ready.",
     }),
+    notifyTaskTransition: async () => undefined,
+    onFocusTask: async () => () => undefined,
     applyLocalWispSetup: async () => ({
       status: bootstrap().local,
       cliPath: "/synthetic/bin/wisp",

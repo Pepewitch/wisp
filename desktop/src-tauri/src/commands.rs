@@ -8,6 +8,7 @@ use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
 use crate::core::{Bootstrap, CoreError, DesktopCore};
+use crate::notifications::{self, TaskNotification};
 use crate::probe::DaemonIdentity;
 use crate::registry::ConnectionInfo;
 use crate::setup::{LocalSetupReport, NextStep};
@@ -158,4 +159,23 @@ pub async fn apply_local_wisp_setup(
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), CoreError> {
     Ok(crate::external::open(&url)?)
+}
+
+/// Post one macOS notification for a task the shared UI watched stop running.
+///
+/// The UI owns the decision and the words; native code checks that the
+/// connection is a saved one (its ID travels back on a click and becomes
+/// routing input), bounds the text, and refuses outside a packaged bundle.
+#[tauri::command]
+pub async fn notify_task_transition(
+    core: State<'_, DesktopCore>,
+    notification: TaskNotification,
+) -> Result<(), String> {
+    let notification = notification
+        .validated()
+        .map_err(|error| error.to_string())?;
+    if !core.knows_connection(&notification.connection_id) {
+        return Err(format!("unknown connection {}", notification.connection_id));
+    }
+    notifications::deliver(&notification).map_err(|error| error.to_string())
 }

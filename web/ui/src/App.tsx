@@ -6,6 +6,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react"
 
@@ -49,7 +50,6 @@ import { connectionStore } from "@/lib/conn"
 import { connectionAttention } from "@/lib/connection-attention"
 import {
   readConnectionStorage,
-  removeConnectionStorage,
   writeConnectionStorage,
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
@@ -58,6 +58,11 @@ import { addPickedLocalProject, groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { connectEventsBridge } from "@/lib/sse"
+import {
+  clearSelectedTask,
+  readSelectedTask,
+  writeSelectedTask,
+} from "@/lib/task-selection"
 import type {
   ApiTask,
   HarnessInfo,
@@ -67,12 +72,11 @@ import type {
   TaskSkills,
   Turn,
 } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { waitForUpdatedDaemon } from "@/lib/update"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
-const SELECTED_TASK_KEY = "wisp_selected_task"
-const SELECTED_TASK_SETTING = "selected_task"
 
 export default function App() {
   const runtime = useDaemonRuntime()
@@ -86,31 +90,30 @@ export default function App() {
 
 function useConnectionTaskSelection(connectionId: string) {
   const [selectedId, setSelectedId] = useState<string | null>(() =>
-    readConnectionStorage(
-      connectionId,
-      SELECTED_TASK_SETTING,
-      SELECTED_TASK_KEY
-    )
+    readSelectedTask(connectionId)
   )
   const selectTask = useCallback(
     (id: string | null) => {
-      if (id === null)
-        removeConnectionStorage(
-          connectionId,
-          SELECTED_TASK_SETTING,
-          SELECTED_TASK_KEY
-        )
-      else
-        writeConnectionStorage(
-          connectionId,
-          SELECTED_TASK_SETTING,
-          SELECTED_TASK_KEY,
-          id
-        )
+      if (id === null) clearSelectedTask(connectionId)
+      else writeSelectedTask(connectionId, id)
       setSelectedId(id)
     },
     [connectionId]
   )
+  // A clicked desktop notification for THIS connection arrives while the view
+  // is mounted, so storage alone would not move it. Requests older than the
+  // mount are history: the seed captures the current sequence number.
+  const intents = uiIntentsFor(connectionId)
+  const focusRequest = useSyncExternalStore(
+    intents.subscribe,
+    intents.taskFocusRequest
+  )
+  const answeredSeq = useRef(focusRequest?.seq ?? 0)
+  useEffect(() => {
+    if (!focusRequest || focusRequest.seq === answeredSeq.current) return
+    answeredSeq.current = focusRequest.seq
+    selectTask(focusRequest.taskId)
+  }, [focusRequest, selectTask])
   return [selectedId, selectTask] as const
 }
 
@@ -206,6 +209,11 @@ function useDesktopConnectionHealth(
   useEffect(() => {
     reportAttention?.(connectionId, connectionAttention(tasks))
   }, [connectionId, reportAttention, tasks])
+  const observeTaskStates = desktop?.observeTaskStates
+  useEffect(() => {
+    // the empty list before the first answer is not an observation
+    if (loaded) observeTaskStates?.(connectionId, tasks)
+  }, [connectionId, loaded, observeTaskStates, tasks])
   const reportReachability = desktop?.reportReachability
   useEffect(() => {
     if (!reportReachability) return

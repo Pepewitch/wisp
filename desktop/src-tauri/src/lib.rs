@@ -14,6 +14,8 @@
 //!   profile into native memory and never handed to JavaScript.
 //! * [`external`] — the one action that leaves the app: opening a web link in
 //!   the machine's browser, which the webview cannot do by itself.
+//! * [`notifications`] — macOS task notifications and the click that brings
+//!   the window back to the task that finished.
 //!
 //! `docs/DESKTOP-TRANSPORT.md` states the contract these modules implement.
 
@@ -22,6 +24,7 @@ pub mod commands;
 pub mod core;
 pub mod external;
 pub mod local;
+pub mod notifications;
 pub mod probe;
 pub mod proxy;
 pub mod random;
@@ -67,6 +70,13 @@ pub fn run() {
                 proxy::packaged_app_origins(),
             ))?;
             app.manage(core);
+            // Must run on the main thread before any notification is posted;
+            // `setup` is the one place Tauri guarantees both.
+            if !notifications::install(app.handle().clone()) {
+                eprintln!(
+                    "[wisp-desktop] task notifications are off: this process is not a bundled Wisp.app"
+                );
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -83,6 +93,7 @@ pub fn run() {
             commands::setup_local_wisp,
             commands::apply_local_wisp_setup,
             commands::open_external_url,
+            commands::notify_task_transition,
         ])
         .run(context())
         .expect("failed to start the Wisp desktop shell");

@@ -39,4 +39,20 @@ describe("connection-scoped external stores", () => {
     stopFirst()
     stopSecond()
   })
+
+  it("numbers task focus requests per connection so a view can skip stale ones", () => {
+    const first = uiIntentsFor("connection-intents-focus-one")
+    const second = uiIntentsFor("connection-intents-focus-two")
+    const listener = vi.fn()
+    const stop = first.subscribe(listener)
+
+    expect(first.taskFocusRequest()).toBeNull()
+    first.focusTask("t1")
+    first.focusTask("t1")
+
+    expect(first.taskFocusRequest()).toEqual({ taskId: "t1", seq: 2 })
+    expect(second.taskFocusRequest()).toBeNull()
+    expect(listener).toHaveBeenCalledTimes(2)
+    stop()
+  })
 })

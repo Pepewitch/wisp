@@ -43,6 +43,7 @@ transport all live in Rust.
 | `src-tauri/src/urls.rs` | Which addresses are allowed, and how a client path joins one |
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
+| `src-tauri/src/notifications.rs` | macOS task notifications and the click that reopens the task |
 | `src-tauri/src/core.rs` | The command surface, free of `tauri` types so it is testable |
 | `src-tauri/src/commands.rs` | One-line Tauri adapters over `core.rs` |
 
@@ -180,6 +181,7 @@ The other commands:
 | `setup_local_wisp` | — | `LocalSetupReport` |
 | `apply_local_wisp_setup` | `expectedStep` | `LocalSetupReport` |
 | `open_external_url` | `url` | `void` |
+| `notify_task_transition` | `notification: { connectionId, taskId, title, body }` | `void` |
 
 Two adjustments the React shell has to absorb:
 
@@ -203,6 +205,20 @@ opens `http` and `https` only, and hands the launcher the reparsed URL rather
 than the string the webview sent. Opening a local path is deliberately absent:
 "open with the default application" is arbitrary execution when the path came
 from agent output, and a remote connection's paths are not on this machine.
+**Task notifications** run the other way around from every other command. The
+shared React app already holds every connection's task list (the active tab
+through its query cache, the inactive tabs through their attention monitors),
+so it decides when a running turn has ended in `done`, `needs-input`, `failed`,
+or `stuck` and calls `notify_task_transition` with the words to show. Native
+code validates the IDs, posts through Apple's `UNUserNotificationCenter`, and
+stays the center's delegate for the life of the process. A click on the banner
+emits the `desktop://focus-task` event with `{ connectionId, taskId }` and
+brings the main window forward; the React shell persists that selection,
+switches tabs if needed, and selects the task. The one suppressed case is the
+task already on screen in a focused window. `tauri dev` runs an unbundled
+binary with no bundle identifier, so notifications are off there and the
+command answers with an error the UI ignores; only `Wisp.app` can post. The
+first banner triggers the standard macOS permission prompt.
 
 Keychain read failures leave only that connection `ready: false` with a
 secret-free `problem`. Deferred deletion failures appear in `cleanupIssues`;
@@ -271,6 +287,11 @@ does not guess that uninstall means destructive credential cleanup.
 * `reqwest` and `tokio-tungstenite` are both pinned to `rustls-tls-native-roots`
   so REST/SSE and the terminal upgrade share one TLS stack that trusts the macOS
   system roots.
+* `objc2-user-notifications` (with `objc2`, `objc2-foundation`, and `block2`,
+  which Tauri already builds) binds `UNUserNotificationCenter` directly. The
+  official `tauri-plugin-notification` posts through `notify-rust` on desktop
+  and cannot report a click, and a task banner that cannot open its task is
+  not worth showing.
 * `security-framework` is used directly instead of the cross-platform `keyring`
   crate: `keyring` 4.x moved its platform stores behind a separate
   `keyring-core` registration step, and this crate only targets macOS.

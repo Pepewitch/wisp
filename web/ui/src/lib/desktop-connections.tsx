@@ -33,6 +33,7 @@ import {
   type RemoteDaemonPreview,
   type ReconnectConnectionInput,
 } from "@/lib/desktop-bridge"
+import { useDesktopTaskNotifications } from "@/lib/desktop-task-notifications"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
 import { prepareLocalScope } from "@/lib/desktop-local-scope"
@@ -41,6 +42,7 @@ import { removeDesktopConnection } from "@/lib/desktop-remove"
 import { resetDesktopApplication } from "@/lib/desktop-reset"
 import { queryClient } from "@/lib/query"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
+import { taskTransitions } from "@/lib/task-transitions"
 import type { DaemonTransport } from "@/lib/transport"
 import type { ApiTask } from "@/lib/types"
 
@@ -69,6 +71,8 @@ export interface DesktopConnectionContextValue {
   applyLocalWispSetup(expectedStep: LocalSetupStep): Promise<LocalSetupReport>
   reportAttention(connectionId: string, attention: ConnectionAttention): void
   reportReachability(connectionId: string, value: ConnectionReachability): void
+  /** Every fresh task list, active or not: a running turn that ended becomes a notification. */
+  observeTaskStates(connectionId: string, tasks: readonly ApiTask[]): void
   clearActionError(): void
 }
 
@@ -410,12 +414,15 @@ export function DesktopApplicationProvider({
     []
   )
   const forgetAttention = useCallback((connectionId: string) => {
+    // a removed or retargeted connection never diffs against a gone daemon
+    taskTransitions.forget(connectionId)
     setAttention((previous) => {
       const next = new Map(previous)
       next.delete(connectionId)
       return next
     })
   }, [])
+  const observeTasks = useDesktopTaskNotifications(bridge, stateRef, select)
   const {
     pendingAction,
     probeRemote,
@@ -461,6 +468,7 @@ export function DesktopApplicationProvider({
       applyLocalWispSetup,
       reportAttention,
       reportReachability,
+      observeTaskStates: observeTasks,
       clearActionError: () => setActionError(null),
     }),
     [
@@ -483,6 +491,7 @@ export function DesktopApplicationProvider({
       applyLocalWispSetup,
       reportAttention,
       reportReachability,
+      observeTasks,
     ]
   )
 
@@ -493,6 +502,7 @@ export function DesktopApplicationProvider({
         active={active}
         onAttention={reportAttention}
         onReachability={reportReachability}
+        onTasks={observeTasks}
       >
         {children}
       </DesktopConnectionRuntime>
@@ -505,12 +515,14 @@ function DesktopConnectionRuntime({
   active,
   onAttention,
   onReachability,
+  onTasks,
   children,
 }: {
   connections: readonly DesktopConnectionEntry[]
   active: DesktopConnectionEntry
   onAttention: (connectionId: string, attention: ConnectionAttention) => void
   onReachability: (connectionId: string, value: ConnectionReachability) => void
+  onTasks: (connectionId: string, tasks: readonly ApiTask[]) => void
   children: ReactNode
 }) {
   return (
@@ -523,6 +535,7 @@ function DesktopConnectionRuntime({
               entry={entry}
               onAttention={onAttention}
               onReachability={onReachability}
+              onTasks={onTasks}
             />
           )
       )}
@@ -543,10 +556,12 @@ function InactiveConnectionMonitor({
   entry,
   onAttention,
   onReachability,
+  onTasks,
 }: {
   entry: DesktopConnectionEntry
   onAttention: (connectionId: string, attention: ConnectionAttention) => void
   onReachability: (connectionId: string, value: ConnectionReachability) => void
+  onTasks: (connectionId: string, tasks: readonly ApiTask[]) => void
 }) {
   useEffect(() => {
     if (!entry.metadata.ready) {
@@ -563,6 +578,7 @@ function InactiveConnectionMonitor({
           if (!closed) {
             onAttention(entry.metadata.id, connectionAttention(tasks))
             onReachability(entry.metadata.id, "online")
+            onTasks(entry.metadata.id, tasks)
           }
         },
         (error: unknown) => {
@@ -596,6 +612,6 @@ function InactiveConnectionMonitor({
       if (timer !== null) clearTimeout(timer)
       events?.close()
     }
-  }, [entry, onAttention, onReachability])
+  }, [entry, onAttention, onReachability, onTasks])
   return null
 }

@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import {
+  FOCUS_TASK_EVENT,
   createDesktopBridge,
   normalizeDesktopBootstrap,
   normalizeRemoteUrl,
   type DesktopBootstrap,
   type NativeInvoke,
+  type NativeListen,
+  type TaskFocusRequest,
 } from "./desktop-bridge"
 
 const BOOTSTRAP: DesktopBootstrap = {
@@ -247,5 +250,85 @@ describe("remote daemon URL policy", () => {
     "https://wisp.example.test?token=secret",
   ])("rejects %s", (input) => {
     expect(() => normalizeRemoteUrl(input)).toThrow()
+  })
+})
+
+describe("desktop task notifications", () => {
+  it("posts one validated notification per finished task", async () => {
+    const calls: Array<{ command: string; args?: Record<string, unknown> }> = []
+    const nativeInvoke: NativeInvoke = async <T>(
+      command: string,
+      args?: Record<string, unknown>
+    ) => {
+      calls.push({ command, args })
+      return undefined as T
+    }
+    const bridge = createDesktopBridge(nativeInvoke, async () => () => undefined)
+
+    await bridge.notifyTaskTransition({
+      connectionId: "remote-one",
+      taskId: "t2345",
+      title: "Fix the flaky test",
+      body: "Needs input · Remote one",
+    })
+    expect(calls).toEqual([
+      {
+        command: "notify_task_transition",
+        args: {
+          notification: {
+            connectionId: "remote-one",
+            taskId: "t2345",
+            title: "Fix the flaky test",
+            body: "Needs input · Remote one",
+          },
+        },
+      },
+    ])
+
+    await expect(
+      bridge.notifyTaskTransition({
+        connectionId: "../local",
+        taskId: "t2345",
+        title: "x",
+        body: "y",
+      })
+    ).rejects.toThrow(/valid connection and task ids/)
+    await expect(
+      bridge.notifyTaskTransition({
+        connectionId: "local",
+        taskId: "t 1",
+        title: "x",
+        body: "y",
+      })
+    ).rejects.toThrow(/valid connection and task ids/)
+    expect(calls).toHaveLength(1)
+  })
+
+  it("relays only well-formed focus requests from the native click event", async () => {
+    let deliver: ((event: { payload: unknown }) => void) | null = null
+    const events: string[] = []
+    const unlisten = vi.fn()
+    const nativeListen: NativeListen = async (event, handler) => {
+      events.push(event)
+      deliver = handler
+      return unlisten
+    }
+    const bridge = createDesktopBridge(
+      async <T>() => undefined as T,
+      nativeListen
+    )
+    const seen: TaskFocusRequest[] = []
+    const stop = await bridge.onFocusTask((request) => seen.push(request))
+
+    expect(events).toEqual([FOCUS_TASK_EVENT])
+    deliver!({ payload: { connectionId: "local", taskId: "t2345" } })
+    deliver!({ payload: { connectionId: "../local", taskId: "t2345" } })
+    deliver!({ payload: { connectionId: "local", taskId: "t 1" } })
+    deliver!({ payload: null })
+    deliver!({ payload: "local:t2345" })
+    expect(seen).toEqual([{ connectionId: "local", taskId: "t2345" }])
+
+    stop()
+    expect(unlisten).toHaveBeenCalledTimes(1)
   })
 })
