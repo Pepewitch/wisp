@@ -2,7 +2,7 @@ import { wispCommand } from "./command";
 import { loadConfig } from "./config";
 import { readSseFrames } from "./sse";
 
-async function apiStream(path: string): Promise<Response> {
+export async function apiStream(path: string): Promise<Response> {
   const cfg = loadConfig();
   const command = wispCommand();
   const url = `http://${cfg.host}:${cfg.port}${path}`;
@@ -19,6 +19,34 @@ async function apiStream(path: string): Promise<Response> {
     process.exit(1);
   }
   return res;
+}
+
+/** Export the diagnostic archive verbatim so timestamps, sources, and sequence numbers survive. */
+export async function exportDiagnosticLog(taskId: string | undefined, turnQuery: string, following: boolean): Promise<void> {
+  if (following) {
+    console.error("--diagnostic exports a retained snapshot and cannot be combined with --follow");
+    process.exit(1);
+  }
+  const res = await apiStream(`/api/tasks/${taskId}/log/diagnostic?${turnQuery}`);
+  const state = res.headers.get("x-wisp-diagnostic-state");
+  const detail = res.headers.get("x-wisp-diagnostic-detail");
+  if (state === "partial") {
+    const decoded = detail ? decodeURIComponent(detail) : "only part of this turn was retained";
+    console.error(`warning: diagnostic history is partial — ${decoded}`);
+  }
+  if (!res.body) throw new Error("diagnostic export returned no body");
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      if (!process.stdout.write(value)) {
+        await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /** Follow the daemon's human SSE projection, including post-capture live activity. */

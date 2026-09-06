@@ -143,6 +143,17 @@ outgrows the retained transcript budget. Wisp keeps draining the harness,
 checkpoints the outcome independently, and marks incomplete retained history;
 `wisp log -f` continues to show current activity.
 
+For incident analysis, Wisp also keeps a private JSONL diagnostic flight
+recorder under its home directory. Export it with
+`wisp log <task> [turn] --diagnostic`. The archive is intentionally bounded:
+by default, settled turn archives expire after 7 days and share a hard 512 MiB
+quota, with oldest whole turns evicted first. Set `diagnosticEnabled`,
+`diagnosticRetentionDays`, or `diagnosticMaxBytes` in `config.json` to change
+that policy. A turn reports whether its archive is complete, partial, evicted,
+disabled, or unavailable; diagnostic loss never stops the agent process.
+The export is the full retained sequence of bounded records, not a byte-for-byte
+pipe dump: an individually oversized protocol record still carries an omission marker.
+
 `wisp send <task> "correction"` is non-destructive. Wisp persists the message
 before delivery. During a running turn it uses the verified native steering
 channel for Claude, Droid, and Codex; other harnesses keep the message visibly

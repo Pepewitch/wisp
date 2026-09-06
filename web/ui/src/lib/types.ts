@@ -8,6 +8,7 @@ export type TaskState = (typeof TASK_STATES)[number];
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
 export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy";
+export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
 
 export type ActivityStatus = "running" | "completed" | "failed" | "stopped" | "unknown"
 
@@ -122,6 +123,12 @@ export interface Turn {
   omitted_records?: number;
   capture_categories?: Record<string, { records: number; bytes: number }> | null;
   capture_detail?: string | null;
+  diagnostic_state?: TurnDiagnosticState;
+  diagnostic_bytes?: number | null;
+  diagnostic_first_seq?: number | null;
+  diagnostic_last_seq?: number | null;
+  diagnostic_detail?: string | null;
+  diagnostic_evicted_at?: string | null;
   /**
    * The images this turn carried (A1a). Always present, `[]` for a turn that
    * carried none. It survives archive, which deletes the bytes — so a non-empty

@@ -119,6 +119,14 @@ range is exhausted, initialization stops with an explicit
 `wisp init --port <port>` recovery action. A later restart never silently
 changes a persisted port.
 
+The same file controls the short-lived diagnostic flight recorder used when a
+primary turn transcript is incomplete. It defaults to
+`diagnosticEnabled: true`, `diagnosticRetentionDays: 7`, and a shared
+`diagnosticMaxBytes: 536870912` (512 MiB). Diagnostic files and their directory
+are private to the current user. Export a retained turn as JSONL with
+`wisp log <task> [turn] --diagnostic`; treat that export as potentially
+sensitive because it contains harness output from the turn.
+
 If a configured port is occupied, Wisp must fail rather than kill the existing
 listener. Inspect it with:
 

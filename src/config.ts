@@ -71,6 +71,12 @@ export interface WispConfig {
   turnTranscriptBytes?: number;
   /** @deprecated Config-file alias for turnTranscriptBytes. */
   logMaxBytes: number;
+  /** Retain the bounded per-turn diagnostic flight recorder. Defaults to true. */
+  diagnosticEnabled?: boolean;
+  /** Global byte ceiling shared by all diagnostic turn archives. Defaults to 512 MiB. */
+  diagnosticMaxBytes?: number;
+  /** Age ceiling for settled diagnostic turn archives. Defaults to 7 days. */
+  diagnosticRetentionDays?: number;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
   /** repo path or repo basename -> untracked files to copy into new worktrees (e.g. [".env"]) */
@@ -85,6 +91,8 @@ export interface WispConfig {
 
 export const WISP_HOME = process.env.WISP_HOME ?? join(homedir(), ".wisp");
 export const LOG_DIR = join(WISP_HOME, "logs");
+/** Short-lived, quota-managed raw event archives for incident diagnosis. */
+export const DIAGNOSTIC_DIR = join(WISP_HOME, "diagnostics");
 export const WORKTREE_ROOT = join(WISP_HOME, "worktrees");
 /** per-turn image attachments live at tasks/<id>/attachments/turn-<n>/ (S3; dirs are created at write time) */
 export const TASKS_DIR = join(WISP_HOME, "tasks");
@@ -110,6 +118,9 @@ const DEFAULTS: WispConfig = {
   stuckMinutes: 10,
   turnTranscriptBytes: 5_000_000,
   logMaxBytes: 5_000_000,
+  diagnosticEnabled: true,
+  diagnosticMaxBytes: 512 * 1024 * 1024,
+  diagnosticRetentionDays: 7,
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
@@ -125,6 +136,9 @@ const CONFIG_KEYS = [
   "stuckMinutes",
   "turnTranscriptBytes",
   "logMaxBytes",
+  "diagnosticEnabled",
+  "diagnosticMaxBytes",
+  "diagnosticRetentionDays",
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
@@ -199,7 +213,14 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   }
   const out: Partial<WispConfig> = {};
   const num = (
-    key: "port" | "stuckMinutes" | "turnTranscriptBytes" | "logMaxBytes" | "setupTimeoutMinutes",
+    key:
+      | "port"
+      | "stuckMinutes"
+      | "turnTranscriptBytes"
+      | "logMaxBytes"
+      | "diagnosticMaxBytes"
+      | "diagnosticRetentionDays"
+      | "setupTimeoutMinutes",
   ): void => {
     const v = raw[key];
     if (v === undefined) return;
@@ -233,6 +254,20 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     throw new Error(
       "config.json: turnTranscriptBytes and its legacy alias logMaxBytes must match when both are set",
     );
+  }
+  if (raw.diagnosticEnabled !== undefined) {
+    if (typeof raw.diagnosticEnabled !== "boolean") {
+      throw new Error(`config.json: diagnosticEnabled must be a boolean, got ${typeName(raw.diagnosticEnabled)}`);
+    }
+    out.diagnosticEnabled = raw.diagnosticEnabled;
+  }
+  num("diagnosticMaxBytes");
+  num("diagnosticRetentionDays");
+  for (const key of ["diagnosticMaxBytes", "diagnosticRetentionDays"] as const) {
+    const value = out[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+      throw new Error(`config.json: ${key} must be a positive integer, got ${JSON.stringify(value)}`);
+    }
   }
   num("setupTimeoutMinutes");
   if (raw.envAllowlist !== undefined) {
@@ -476,4 +511,17 @@ export function transcriptBudgetBytes(
   cfg: Pick<WispConfig, "turnTranscriptBytes" | "logMaxBytes">,
 ): number {
   return cfg.turnTranscriptBytes ?? cfg.logMaxBytes;
+}
+
+export const DEFAULT_DIAGNOSTIC_MAX_BYTES = 512 * 1024 * 1024;
+export const DEFAULT_DIAGNOSTIC_RETENTION_DAYS = 7;
+
+export function diagnosticSettings(
+  cfg: Pick<WispConfig, "diagnosticEnabled" | "diagnosticMaxBytes" | "diagnosticRetentionDays">,
+): { enabled: boolean; maxBytes: number; retentionMs: number } {
+  return {
+    enabled: cfg.diagnosticEnabled ?? true,
+    maxBytes: cfg.diagnosticMaxBytes ?? DEFAULT_DIAGNOSTIC_MAX_BYTES,
+    retentionMs: (cfg.diagnosticRetentionDays ?? DEFAULT_DIAGNOSTIC_RETENTION_DAYS) * 24 * 60 * 60 * 1_000,
+  };
 }

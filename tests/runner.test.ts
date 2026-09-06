@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, type AdapterDef } fr
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
+import { acquireDiagnosticExport } from "../src/recording/diagnostic";
 import { FACTORY_PROTOCOL_VERSION } from "../src/probes";
 import {
   failStaleCreatingTasks,
@@ -24,6 +25,7 @@ import {
   createTask,
   createTurn,
   freeSlot,
+  getTurn,
   getTask,
   messagesFor,
   newTaskId,
@@ -72,6 +74,26 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
   while (!pred()) {
     if (Date.now() > deadline) throw new Error("timed out waiting for condition");
     await Bun.sleep(50);
+  }
+}
+
+function expectCompleteDiagnostic(
+  taskId: string,
+  turnId: number,
+  cfg: WispConfig,
+  minimumBytes: number,
+  needles: string[],
+): void {
+  expect(getTask(taskId)).toMatchObject({ state: "done", session_id: "session-bounded" });
+  const turn = turnsFor(getTurn(turnId)!.task_id).find((candidate) => candidate.id === turnId)!;
+  expect(turn).toMatchObject({ diagnostic_state: "complete" });
+  expect(turn.diagnostic_bytes).toBeGreaterThan(minimumBytes);
+  const lease = acquireDiagnosticExport(cfg, turnId);
+  try {
+    const diagnostic = lease.paths.map((path) => readFileSync(path, "utf8")).join("");
+    for (const needle of needles) expect(diagnostic).toContain(needle);
+  } finally {
+    lease.release();
   }
 }
 
@@ -579,7 +601,7 @@ describe("non-destructive active messages", () => {
     expect(turn!.omitted_records).toBeGreaterThan(0);
     expect(turn!.omitted_bytes).toBeGreaterThan(0);
     expect(statSync(turn!.log_file).size + statSync(errPath).size).toBeLessThanOrEqual(4 * 1024);
-    expect(getTask(task.id)).toMatchObject({ state: "done", session_id: "session-bounded" });
+    expectCompleteDiagnostic(task.id, turn!.id, boundedCfg, 4 * 1024, ["stderr-0500", "settled beyond capture"]);
   });
 
   test("a mid-turn steer is recorded in the log where the harness accepted it", async () => {

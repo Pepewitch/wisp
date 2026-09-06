@@ -4,7 +4,7 @@
  * context (cfg, adapters, models) explicitly, because a daemon is constructed
  * per serve() call and nothing about it may become a module-level singleton.
  *
- * The if-chain's ORDER is behaviour: the log-stream regex must be tested
+ * The if-chain's ORDER is behaviour: the nested log regexes must be tested
  * before the generic /api/tasks/:id pattern, and the task block falls through
  * (returns null) so a non-task path reaches the routes below it.
  */
@@ -31,6 +31,7 @@ import { attachmentRoute, taskMessageRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
+import { diagnosticLog } from "./diagnostic";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -100,6 +101,12 @@ function taskRoutes(
   pullRequests: PullRequestCache,
 ): Response | Promise<Response> | null {
   if (path === "/api/events" && method === "GET") return eventStream();
+  const diagnosticLogMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/log\/diagnostic$/);
+  if (diagnosticLogMatch && method === "GET") {
+    const task = getTask(diagnosticLogMatch[1]!);
+    if (!task) return err(`no such task: ${diagnosticLogMatch[1]}`, 404);
+    return diagnosticLog(task, url, cfg);
+  }
   const logStreamMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/log\/stream$/);
   if (logStreamMatch && method === "GET") {
     const task = getTask(logStreamMatch[1]!);

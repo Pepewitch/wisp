@@ -58,6 +58,9 @@ describe("validateConfig (a prior audit)", () => {
       stuckMinutes: 5,
       turnTranscriptBytes: 123,
       logMaxBytes: 123,
+      diagnosticEnabled: true,
+      diagnosticMaxBytes: 456,
+      diagnosticRetentionDays: 3,
       setupTimeoutMinutes: 2,
       envAllowlist: { myrepo: [".env"] },
       harnessDefaults: { claude: { model: "claude-opus-5" }, droid: { model: "kimi-k3", reasoningEffort: "medium" } },
@@ -88,6 +91,12 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ token: 42 }))).toBe("config.json: token must be a string, got number");
     expect(thrownMessage(() => validateConfig({ instanceId: 42 }))).toBe(
       "config.json: instanceId must be a string, got number",
+    );
+    expect(thrownMessage(() => validateConfig({ diagnosticEnabled: "yes" }))).toBe(
+      "config.json: diagnosticEnabled must be a boolean, got string",
+    );
+    expect(thrownMessage(() => validateConfig({ diagnosticMaxBytes: 0 }))).toBe(
+      "config.json: diagnosticMaxBytes must be a positive integer, got 0",
     );
     expect(thrownMessage(() => validateConfig({ instanceId: "not-a-uuid" }))).toBe(
       "config.json: instanceId must be a UUID",
@@ -154,7 +163,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, turnTranscriptBytes, logMaxBytes, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
@@ -293,6 +302,9 @@ describe("loadConfig", () => {
       expect(cfg.stuckMinutes).toBe(10); // default
       expect(cfg.turnTranscriptBytes).toBe(5_000_000);
       expect(cfg.logMaxBytes).toBe(5_000_000); // synchronized legacy alias
+      expect(cfg.diagnosticEnabled).toBe(true);
+      expect(cfg.diagnosticMaxBytes).toBe(512 * 1024 * 1024);
+      expect(cfg.diagnosticRetentionDays).toBe(7);
       expect(cfg.repos).toEqual([]); // default
       expect(cfg.envAllowlist).toEqual({}); // default
       expect(cfg.harnessDefaults).toEqual({}); // default
