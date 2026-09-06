@@ -20,6 +20,14 @@ jobs:
         with:
           fetch-depth: 0 # full history for Gitleaks and --require-tag
           fetch-tags: true
+      # checkout resolves a tag event to github.sha and can leave the local
+      # tag ref lightweight. Restore the actual remote tag object so the
+      # release scripts can prove that the maintainer pushed an annotated tag.
+      - name: restore and verify the annotated release tag
+        run: |
+          git fetch --force origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -94,6 +102,11 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+      - name: restore and verify the annotated release tag
+        run: |
+          git fetch --force origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
