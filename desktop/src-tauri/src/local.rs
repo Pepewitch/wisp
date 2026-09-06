@@ -1,7 +1,7 @@
 //! The built-in Local connection.
 //!
-//! Its credential is read from the standard Wisp profile (`$WISP_HOME` or
-//! `~/.wisp`) straight into native process memory. It is never copied into the
+//! Its credential is read from the standard Wisp profile (`~/.wisp`) straight
+//! into native process memory. It is never copied into the
 //! Keychain — the daemon already owns that file at mode 0600 and a second copy
 //! is a second thing to revoke — and it is never returned to JavaScript.
 
@@ -94,21 +94,20 @@ impl std::fmt::Debug for LocalProfile {
     }
 }
 
-/// `$WISP_HOME`, else `~/.wisp` — the same resolution order `src/config.ts` uses.
+/// The desktop app always represents the machine's standard Wisp install.
+///
+/// Deliberately ignore `WISP_HOME`: a GUI launched from a development shell
+/// must not silently turn its built-in Local tab into a development or test
+/// daemon. Tests inject an explicit home into [`crate::core::DesktopCore`]
+/// instead.
 pub fn wisp_home() -> PathBuf {
-    resolve_wisp_home(
-        std::env::var_os("WISP_HOME").map(PathBuf::from),
-        std::env::var_os("HOME").map(PathBuf::from),
-    )
+    resolve_wisp_home(std::env::var_os("HOME").map(PathBuf::from))
 }
 
 /// The pure half of [`wisp_home`], so the precedence rule is testable without
 /// mutating this process's environment.
-fn resolve_wisp_home(explicit: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
-    match explicit {
-        Some(path) if !path.as_os_str().is_empty() => path,
-        _ => home.unwrap_or_else(|| PathBuf::from("/")).join(".wisp"),
-    }
+fn resolve_wisp_home(home: Option<PathBuf>) -> PathBuf {
+    home.unwrap_or_else(|| PathBuf::from("/")).join(".wisp")
 }
 
 /// Read `config.json` out of a Wisp home.
@@ -274,21 +273,11 @@ mod tests {
     }
 
     #[test]
-    fn wisp_home_prefers_the_explicit_override_then_the_home_default() {
+    fn wisp_home_always_uses_the_standard_profile() {
         assert_eq!(
-            resolve_wisp_home(
-                Some("/synthetic/explicit".into()),
-                Some("/synthetic/home".into())
-            ),
-            PathBuf::from("/synthetic/explicit")
-        );
-        assert_eq!(
-            resolve_wisp_home(Some(PathBuf::new()), Some("/synthetic/home".into())),
+            resolve_wisp_home(Some("/synthetic/home".into())),
             PathBuf::from("/synthetic/home/.wisp")
         );
-        assert_eq!(
-            resolve_wisp_home(None, Some("/synthetic/home".into())),
-            PathBuf::from("/synthetic/home/.wisp")
-        );
+        assert_eq!(resolve_wisp_home(None), PathBuf::from("/.wisp"));
     }
 }

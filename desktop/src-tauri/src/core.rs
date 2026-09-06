@@ -26,9 +26,9 @@ use crate::urls::{normalize_daemon_url, UrlError};
 #[serde(rename_all = "camelCase")]
 pub struct Bootstrap {
     /// `http://127.0.0.1:<port>/<capability>` — prefix for every daemon call.
-    pub proxy_base: String,
-    /// Reserved ID of the built-in local connection.
-    pub local_connection_id: &'static str,
+    pub proxy_base_url: String,
+    /// The desktop opens on Local. Selection after bootstrap is webview state.
+    pub active_connection_id: &'static str,
     pub connections: Vec<ConnectionInfo>,
     pub local: LocalStatus,
 }
@@ -106,8 +106,8 @@ impl DesktopCore {
 
     pub fn bootstrap(&self) -> Bootstrap {
         Bootstrap {
-            proxy_base: self.proxy.base().to_string(),
-            local_connection_id: local::LOCAL_CONNECTION_ID,
+            proxy_base_url: self.proxy.base().to_string(),
+            active_connection_id: local::LOCAL_CONNECTION_ID,
             connections: self.registry.list(),
             local: self.registry.local_status(),
         }

@@ -65,20 +65,24 @@ async fn bootstrap_returns_an_unguessable_base_and_only_non_secret_metadata() {
     let json = serde_json::to_string(&bootstrap).expect("serializes");
 
     // The base is loopback, on an ephemeral port, with a per-launch secret in it.
-    assert!(bootstrap.proxy_base.starts_with("http://127.0.0.1:"));
+    assert!(bootstrap.proxy_base_url.starts_with("http://127.0.0.1:"));
     let capability = bootstrap
-        .proxy_base
+        .proxy_base_url
         .rsplit('/')
         .next()
         .expect("capability segment");
     assert_eq!(capability.len(), 64);
     assert!(capability.chars().all(|c| c.is_ascii_hexdigit()));
 
-    assert_eq!(bootstrap.local_connection_id, "local");
+    assert_eq!(bootstrap.active_connection_id, "local");
     assert_eq!(bootstrap.connections.len(), 1);
     assert_eq!(bootstrap.connections[0].id, "local");
     assert!(bootstrap.local.available);
     assert!(bootstrap.local.has_token);
+    assert!(json.contains("\"proxyBaseUrl\""));
+    assert!(json.contains("\"activeConnectionId\":\"local\""));
+    assert!(json.contains("\"name\":\"Local\""));
+    assert!(!json.contains("\"label\""));
 
     // The daemon token is not in the payload under any name.
     assert!(!json.contains(LOCAL_TOKEN));
@@ -89,11 +93,13 @@ async fn bootstrap_returns_an_unguessable_base_and_only_non_secret_metadata() {
 async fn a_missing_local_profile_is_reported_rather_than_fatal() {
     let app = app(None).await;
     let bootstrap = app.core.bootstrap();
-    assert!(bootstrap.connections.is_empty());
+    assert_eq!(bootstrap.connections.len(), 1);
+    assert_eq!(bootstrap.connections[0].id, "local");
+    assert!(!bootstrap.connections[0].ready);
     assert!(!bootstrap.local.available);
     assert!(bootstrap.local.reason.is_some());
     // The proxy is still up; a remote-only user is a supported user.
-    assert!(bootstrap.proxy_base.starts_with("http://127.0.0.1:"));
+    assert!(bootstrap.proxy_base_url.starts_with("http://127.0.0.1:"));
 }
 
 #[tokio::test]
@@ -187,7 +193,9 @@ async fn renaming_changes_the_label_and_nothing_else() {
     assert_eq!(renamed.url, saved.url);
     assert_eq!(renamed.label, "Studio (EU)");
     assert_eq!(app.secrets.accounts(), vec![saved.id.clone()]);
-    assert!(app.core.rename("local", "Nope").is_err());
+    let local = app.core.rename("local", "This Mac").expect("local rename");
+    assert_eq!(local.label, "This Mac");
+    assert_eq!(local.id, "local");
 }
 
 #[tokio::test]

@@ -77,7 +77,7 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 Remote tokens live in the macOS Keychain (service `dev.wisp.desktop.connection`,
 account = the immutable connection ID) and are read into process memory once at
 launch so the proxy hot path never blocks on Security.framework. The Local
-connection's token is read from `$WISP_HOME/config.json` (default `~/.wisp`)
+connection's token is read from the machine's standard `~/.wisp/config.json`
 into native memory and is deliberately *not* copied into the Keychain — the
 daemon already owns that file, and a second copy is a second thing to revoke.
 
@@ -90,15 +90,15 @@ No command returns a token, `LocalProfile` and `Capability` have redacting
 
 ```ts
 interface Bootstrap {
-  proxyBase: string          // http://127.0.0.1:<port>/<capability>
-  localConnectionId: "local"
+  proxyBaseUrl: string       // http://127.0.0.1:<port>/<capability>
+  activeConnectionId: "local"
   connections: ConnectionInfo[]
   local: LocalStatus
 }
 
 interface ConnectionInfo {
   id: string                 // immutable, [A-Za-z0-9_-]+
-  label: string              // mutable; never used in a route or cache key
+  name: string               // mutable; never used in a route or cache key
   kind: "local" | "remote"
   url: string                // display only
   instanceId: string
@@ -109,7 +109,7 @@ interface ConnectionInfo {
 A desktop `DaemonTransport` for connection `id` is then:
 
 ```ts
-const prefix = `${bootstrap.proxyBase}/connections/${id}`
+const prefix = `${bootstrap.proxyBaseUrl}/connections/${id}`
 request(path)        -> fetch(prefix + path)          // path starts with /api
 openEventStream(p)   -> new EventSource(prefix + p)
 openWebSocket(p)     -> new WebSocket((prefix + p).replace(/^http/, "ws"))
@@ -121,8 +121,8 @@ The other commands:
 
 | Command | Arguments | Returns |
 | --- | --- | --- |
-| `add_remote_connection` | `label`, `url`, `token` | `ConnectionInfo` |
-| `rename_connection` | `connectionId`, `label` | `ConnectionInfo` |
+| `add_remote_connection` | `name`, `url`, `token` | `ConnectionInfo` |
+| `rename_connection` | `connectionId`, `name` | `ConnectionInfo` |
 | `reconnect_connection` | `connectionId`, `url?`, `token?` | `ConnectionInfo` |
 | `remove_connection` | `connectionId` | `void` |
 | `pick_local_project` | — | `string \| null` |

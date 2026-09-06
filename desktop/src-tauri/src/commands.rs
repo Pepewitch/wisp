@@ -24,11 +24,11 @@ pub fn desktop_bootstrap(core: State<'_, DesktopCore>) -> Bootstrap {
 #[tauri::command]
 pub async fn add_remote_connection(
     core: State<'_, DesktopCore>,
-    label: String,
+    name: String,
     url: String,
     token: String,
 ) -> Result<ConnectionInfo, CoreError> {
-    core.add_remote(&label, &url, &token).await
+    core.add_remote(&name, &url, &token).await
 }
 
 /// Change a display label. IDs, routes, cache scopes, and Keychain accounts are
@@ -37,9 +37,9 @@ pub async fn add_remote_connection(
 pub fn rename_connection(
     core: State<'_, DesktopCore>,
     connection_id: String,
-    label: String,
+    name: String,
 ) -> Result<ConnectionInfo, CoreError> {
-    core.rename(&connection_id, &label)
+    core.rename(&connection_id, &name)
 }
 
 /// Re-prove a connection. A changed URL returns a connection with a *new* ID;

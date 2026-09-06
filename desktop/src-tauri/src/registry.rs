@@ -27,6 +27,12 @@ use crate::urls::normalize_daemon_url;
 
 /// Current on-disk schema version of `connections.json`.
 const FILE_VERSION: u32 = 1;
+/// Product limit, including the built-in Local connection.
+pub const MAX_CONNECTIONS: usize = 8;
+
+fn default_local_label() -> String {
+    LOCAL_CONNECTION_LABEL.to_string()
+}
 
 /// Connection IDs are ASCII path segments — they appear literally in proxy
 /// routes and in query-cache keys, so anything needing encoding is out.
@@ -60,6 +66,10 @@ pub enum RegistryError {
     LocalIsBuiltIn(&'static str),
     #[error("a label is required")]
     EmptyLabel,
+    #[error("a connection named {0} already exists")]
+    DuplicateLabel(String),
+    #[error("Wisp Desktop supports at most {MAX_CONNECTIONS} connections")]
+    TooManyConnections,
     #[error("no credential is stored for this connection — reconnect to enter its token")]
     MissingCredential,
     #[error("could not read the local Wisp profile: {0}")]
@@ -89,10 +99,12 @@ pub struct StoredConnection {
     pub created_at: u64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RegistryFile {
     version: u32,
+    #[serde(default = "default_local_label")]
+    local_label: String,
     #[serde(default)]
     connections: Vec<StoredConnection>,
     /// Non-secret removal tombstones. An ID here has already lost its route.
@@ -100,11 +112,23 @@ struct RegistryFile {
     pending_removals: Vec<String>,
 }
 
+impl Default for RegistryFile {
+    fn default() -> Self {
+        Self {
+            version: FILE_VERSION,
+            local_label: default_local_label(),
+            connections: Vec::new(),
+            pending_removals: Vec::new(),
+        }
+    }
+}
+
 /// What the webview is allowed to know about a connection.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionInfo {
     pub id: String,
+    #[serde(rename = "name")]
     pub label: String,
     pub kind: ConnectionKind,
     /// Display address. Non-secret: the user typed it, or it is loopback.
@@ -132,7 +156,9 @@ pub enum Identity {
     Mismatch,
 }
 
+#[derive(Clone)]
 struct State {
+    local_label: String,
     connections: BTreeMap<String, StoredConnection>,
     pending_removals: BTreeSet<String>,
     /// Remote credentials, read from the Keychain once per launch so the proxy
@@ -166,6 +192,8 @@ impl Registry {
             Err(error) => (None, Some(error.to_string())),
         };
 
+        let local_label = clean_label(&file.local_label).unwrap_or_else(|_| default_local_label());
+        let mut names = BTreeSet::from([label_key(&local_label)]);
         let mut connections = BTreeMap::new();
         for entry in file.connections {
             // A record that fails today's rules is dropped rather than trusted:
@@ -173,6 +201,9 @@ impl Registry {
             if !is_valid_connection_id(&entry.id)
                 || entry.id == LOCAL_CONNECTION_ID
                 || normalize_daemon_url(&entry.url).is_err()
+                || clean_label(&entry.label).is_err()
+                || !names.insert(label_key(&entry.label))
+                || connections.len() >= MAX_CONNECTIONS - 1
             {
                 continue;
             }
@@ -186,6 +217,7 @@ impl Registry {
             local_home,
             local_error,
             state: Mutex::new(State {
+                local_label,
                 connections,
                 pending_removals: file.pending_removals.into_iter().collect(),
                 credentials: HashMap::new(),
@@ -241,6 +273,7 @@ impl Registry {
     fn persist(&self, state: &State) -> Result<(), RegistryError> {
         let file = RegistryFile {
             version: FILE_VERSION,
+            local_label: state.local_label.clone(),
             connections: state.connections.values().cloned().collect(),
             pending_removals: state.pending_removals.iter().cloned().collect(),
         };
@@ -251,16 +284,24 @@ impl Registry {
     pub fn list(&self) -> Vec<ConnectionInfo> {
         let state = self.lock();
         let mut out = Vec::with_capacity(state.connections.len() + 1);
-        if let Some(profile) = &self.local {
-            out.push(ConnectionInfo {
+        out.push(match &self.local {
+            Some(profile) => ConnectionInfo {
                 id: LOCAL_CONNECTION_ID.to_string(),
-                label: LOCAL_CONNECTION_LABEL.to_string(),
+                label: state.local_label.clone(),
                 kind: ConnectionKind::Local,
                 url: profile.base().to_string(),
                 instance_id: profile.instance_id().to_string(),
                 ready: true,
-            });
-        }
+            },
+            None => ConnectionInfo {
+                id: LOCAL_CONNECTION_ID.to_string(),
+                label: state.local_label.clone(),
+                kind: ConnectionKind::Local,
+                url: String::new(),
+                instance_id: String::new(),
+                ready: false,
+            },
+        });
         for entry in state.connections.values() {
             if state.pending_removals.contains(&entry.id) {
                 continue;
@@ -368,10 +409,15 @@ impl Registry {
         instance_id: &str,
     ) -> Result<ConnectionInfo, RegistryError> {
         let label = clean_label(label)?;
-        let id = self.mint_id();
+        let mut state = self.lock();
+        if state.connections.len() + 2 > MAX_CONNECTIONS {
+            return Err(RegistryError::TooManyConnections);
+        }
+        ensure_label_available(&state, &label, None)?;
+        let id = mint_id(&state);
         // Credential first: a saved connection with no credential is a broken
-        // one, while an orphaned credential is collected by the same delete the
-        // tombstone protocol already performs.
+        // one. Keep the registry lock across this short operation so two
+        // concurrent commands cannot race the name or count invariants.
         self.secrets.set(&id, token)?;
         let entry = StoredConnection {
             id: id.clone(),
@@ -380,11 +426,17 @@ impl Registry {
             instance_id: instance_id.to_string(),
             created_at: now_seconds(),
         };
-        let mut state = self.lock();
         state.credentials.insert(id.clone(), token.to_string());
         state.identity.insert(id.clone(), Identity::Verified);
         state.connections.insert(id.clone(), entry.clone());
-        self.persist(&state)?;
+        if let Err(error) = self.persist(&state) {
+            state.credentials.remove(&id);
+            state.identity.remove(&id);
+            state.connections.remove(&id);
+            drop(state);
+            let _ = self.secrets.delete(&id);
+            return Err(error);
+        }
         Ok(ConnectionInfo {
             id: entry.id,
             label: entry.label,
@@ -395,24 +447,22 @@ impl Registry {
         })
     }
 
-    fn mint_id(&self) -> String {
-        let state = self.lock();
-        loop {
-            let id = new_connection_id();
-            if !state.connections.contains_key(&id) && !state.pending_removals.contains(&id) {
-                return id;
-            }
-        }
-    }
-
     /// Change a display label. The ID, route, cache scope, and Keychain account
     /// are all untouched.
     pub fn rename(&self, id: &str, label: &str) -> Result<ConnectionInfo, RegistryError> {
-        if id == LOCAL_CONNECTION_ID {
-            return Err(RegistryError::LocalIsBuiltIn("renamed"));
-        }
         let label = clean_label(label)?;
         let mut state = self.lock();
+        ensure_label_available(&state, &label, Some(id))?;
+        if id == LOCAL_CONNECTION_ID {
+            state.local_label = label;
+            self.persist(&state)?;
+            drop(state);
+            return self
+                .list()
+                .into_iter()
+                .find(|connection| connection.id == LOCAL_CONNECTION_ID)
+                .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()));
+        }
         if state.pending_removals.contains(id) {
             return Err(RegistryError::PendingRemoval);
         }
@@ -489,18 +539,60 @@ impl Registry {
         if id == LOCAL_CONNECTION_ID {
             return Err(RegistryError::LocalIsBuiltIn("retargeted"));
         }
-        let label = {
-            let state = self.lock();
-            state
-                .connections
-                .get(id)
-                .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?
-                .label
-                .clone()
+        let mut state = self.lock();
+        if state.pending_removals.contains(id) {
+            return Err(RegistryError::PendingRemoval);
+        }
+        let label = state
+            .connections
+            .get(id)
+            .ok_or_else(|| RegistryError::UnknownConnection(id.to_string()))?
+            .label
+            .clone();
+        let replacement_id = mint_id(&state);
+        self.secrets.set(&replacement_id, token)?;
+
+        let before = state.clone();
+        state.connections.remove(id);
+        state.credentials.remove(id);
+        state.identity.remove(id);
+        state.pending_removals.insert(id.to_string());
+        let entry = StoredConnection {
+            id: replacement_id.clone(),
+            label,
+            url: url.to_string(),
+            instance_id: instance_id.to_string(),
+            created_at: now_seconds(),
         };
-        let replacement = self.add_remote(&label, url, token, instance_id)?;
-        self.remove(id)?;
-        Ok(replacement)
+        state
+            .credentials
+            .insert(replacement_id.clone(), token.to_string());
+        state
+            .identity
+            .insert(replacement_id.clone(), Identity::Verified);
+        state
+            .connections
+            .insert(replacement_id.clone(), entry.clone());
+        if let Err(error) = self.persist(&state) {
+            *state = before;
+            drop(state);
+            let _ = self.secrets.delete(&replacement_id);
+            return Err(error);
+        }
+
+        drop(state);
+        self.secrets.delete(id)?;
+        let mut state = self.lock();
+        state.pending_removals.remove(id);
+        self.persist(&state)?;
+        Ok(ConnectionInfo {
+            id: entry.id,
+            label: entry.label,
+            kind: ConnectionKind::Remote,
+            url: entry.url,
+            instance_id: entry.instance_id,
+            ready: true,
+        })
     }
 
     /// Revoke, then delete. Step one drops the route and records a non-secret
@@ -534,6 +626,38 @@ fn clean_label(label: &str) -> Result<String, RegistryError> {
         return Err(RegistryError::EmptyLabel);
     }
     Ok(trimmed.chars().take(120).collect())
+}
+
+fn mint_id(state: &State) -> String {
+    loop {
+        let id = new_connection_id();
+        if !state.connections.contains_key(&id) && !state.pending_removals.contains(&id) {
+            return id;
+        }
+    }
+}
+
+fn label_key(label: &str) -> String {
+    label.trim().to_lowercase()
+}
+
+fn ensure_label_available(
+    state: &State,
+    label: &str,
+    except_id: Option<&str>,
+) -> Result<(), RegistryError> {
+    let key = label_key(label);
+    if except_id != Some(LOCAL_CONNECTION_ID) && label_key(&state.local_label) == key {
+        return Err(RegistryError::DuplicateLabel(label.to_string()));
+    }
+    if state
+        .connections
+        .values()
+        .any(|entry| except_id != Some(entry.id.as_str()) && label_key(&entry.label) == key)
+    {
+        return Err(RegistryError::DuplicateLabel(label.to_string()));
+    }
+    Ok(())
 }
 
 fn now_seconds() -> u64 {
@@ -591,7 +715,8 @@ fn set_owner_only(_path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_valid_connection_id, ConnectionKind, Identity, Registry, RegistryError, StoredConnection,
+        is_valid_connection_id, ConnectionKind, Identity, Registry, RegistryError,
+        StoredConnection, MAX_CONNECTIONS,
     };
     use crate::local::{LocalError, LocalProfile, LOCAL_CONNECTION_ID};
     use crate::secrets::{MemorySecretStore, SecretStore};
@@ -663,7 +788,7 @@ mod tests {
     }
 
     #[test]
-    fn the_local_connection_is_built_in_and_unmanaged() {
+    fn the_local_connection_is_built_in_renameable_and_not_removable() {
         let h = harness(true);
         let target = h
             .registry
@@ -674,20 +799,34 @@ mod tests {
             h.registry.credential(&target).expect("local credential"),
             "synthetic-local-token"
         );
-        assert!(matches!(
-            h.registry.rename(LOCAL_CONNECTION_ID, "Nope"),
-            Err(RegistryError::LocalIsBuiltIn(_))
-        ));
+        let renamed = h
+            .registry
+            .rename(LOCAL_CONNECTION_ID, "This Mac")
+            .expect("local rename");
+        assert_eq!(renamed.label, "This Mac");
+        assert_eq!(renamed.id, LOCAL_CONNECTION_ID);
         assert!(matches!(
             h.registry.remove(LOCAL_CONNECTION_ID),
             Err(RegistryError::LocalIsBuiltIn(_))
         ));
+
+        let reopened = open(&h.path, h.secrets.clone(), true);
+        let local = reopened
+            .list()
+            .into_iter()
+            .find(|connection| connection.id == LOCAL_CONNECTION_ID)
+            .expect("local stays present");
+        assert_eq!(local.label, "This Mac");
     }
 
     #[test]
-    fn a_missing_local_profile_leaves_only_saved_remotes() {
+    fn a_missing_local_profile_keeps_the_fixed_local_connection_visible() {
         let h = harness(false);
         assert!(h.registry.resolve(LOCAL_CONNECTION_ID).is_none());
+        let listed = h.registry.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, LOCAL_CONNECTION_ID);
+        assert!(!listed[0].ready);
         let status = h.registry.local_status();
         assert!(!status.available);
         assert!(!status.has_token);
@@ -783,6 +922,62 @@ mod tests {
         assert!(matches!(
             h.registry.rename(&info.id, "   "),
             Err(RegistryError::EmptyLabel)
+        ));
+    }
+
+    #[test]
+    fn names_are_unique_case_insensitively_including_local() {
+        let h = harness(true);
+        let first = h
+            .registry
+            .add_remote(
+                "Studio",
+                &remote("https://one.example.com"),
+                "synthetic-token-one",
+                "wisp-instance-one",
+            )
+            .expect("first");
+        assert!(matches!(
+            h.registry.add_remote(
+                "studio",
+                &remote("https://two.example.com"),
+                "synthetic-token-two",
+                "wisp-instance-two",
+            ),
+            Err(RegistryError::DuplicateLabel(_))
+        ));
+        assert!(matches!(
+            h.registry.rename(&first.id, "LOCAL"),
+            Err(RegistryError::DuplicateLabel(_))
+        ));
+        assert!(matches!(
+            h.registry.rename(LOCAL_CONNECTION_ID, "studio"),
+            Err(RegistryError::DuplicateLabel(_))
+        ));
+    }
+
+    #[test]
+    fn the_eight_connection_limit_includes_local() {
+        let h = harness(true);
+        for index in 0..(MAX_CONNECTIONS - 1) {
+            h.registry
+                .add_remote(
+                    &format!("Remote {index}"),
+                    &remote(&format!("https://remote-{index}.example.com")),
+                    &format!("synthetic-token-{index}"),
+                    &format!("wisp-instance-{index}"),
+                )
+                .expect("within limit");
+        }
+        assert_eq!(h.registry.list().len(), MAX_CONNECTIONS);
+        assert!(matches!(
+            h.registry.add_remote(
+                "One too many",
+                &remote("https://overflow.example.com"),
+                "synthetic-overflow-token",
+                "wisp-instance-overflow",
+            ),
+            Err(RegistryError::TooManyConnections)
         ));
     }
 
