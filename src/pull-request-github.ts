@@ -16,29 +16,17 @@ export async function githubPullRequest(
   run: ProbeSpawnFn,
   signal: AbortSignal,
 ): Promise<PullRequestStatus> {
-  const result = await run(
-    [
-      "gh",
-      "pr",
-      "list",
-      "--repo",
-      repository,
-      "--head",
-      task.branch!,
-      "--state",
-      "all",
-      "--limit",
-      "10",
-      "--json",
-      "number,url,title,state,isDraft,isCrossRepository,mergedAt,updatedAt,reviewDecision,statusCheckRollup,mergeStateStatus",
-    ],
-    { cwd: task.repo_path, signal },
+  const statuses = await githubPullRequestBatch(
+    repository,
+    [task.branch!],
+    task.repo_path,
+    run,
+    signal,
   );
-  if (result.exitCode !== 0) return { kind: "unavailable", provider: "github" };
-  const parsed = parsePullRequests(result.stdout, repository);
-  if (parsed === null) return { kind: "unavailable", provider: "github" };
-  if (parsed.length === 0) return { kind: "none", provider: "github" };
-  return { kind: "found", provider: "github", pullRequest: preferredPullRequest(parsed) };
+  return statuses.get(task.branch!) ?? {
+    kind: "unavailable",
+    provider: "github",
+  };
 }
 
 export async function githubPullRequestBatch(
@@ -50,28 +38,25 @@ export async function githubPullRequestBatch(
 ): Promise<Map<string, PullRequestStatus>> {
   const [owner, name] = repository.split("/");
   if (!owner || !name) return unavailableBranches(branches);
+  const nodeSelection = "nodes { ...PullRequestFields }";
   const selections = branches
     .map(
       (branch, index) => `
         b${index}: pullRequests(
-          first: 10
+          first: 1
           headRefName: ${JSON.stringify(branch)}
-          states: [OPEN, CLOSED, MERGED]
-          orderBy: { field: UPDATED_AT, direction: DESC }
+          states: [OPEN]
+          orderBy: { field: CREATED_AT, direction: DESC }
         ) {
-          nodes {
-            number
-            url
-            title
-            state
-            isDraft
-            isCrossRepository
-            mergedAt
-            updatedAt
-            reviewDecision
-            mergeStateStatus
-            statusCheckRollup { state }
-          }
+          ${nodeSelection}
+        }
+        t${index}: pullRequests(
+          first: 1
+          headRefName: ${JSON.stringify(branch)}
+          states: [CLOSED, MERGED]
+          orderBy: { field: CREATED_AT, direction: DESC }
+        ) {
+          ${nodeSelection}
         }`,
     )
     .join("\n");
@@ -80,6 +65,19 @@ export async function githubPullRequestBatch(
       repository(owner: $owner, name: $name) {
         ${selections}
       }
+    }
+    fragment PullRequestFields on PullRequest {
+      number
+      url
+      title
+      state
+      isDraft
+      isCrossRepository
+      mergedAt
+      updatedAt
+      reviewDecision
+      mergeStateStatus
+      statusCheckRollup { state }
     }`;
   const result = await run(
     [
@@ -128,16 +126,6 @@ function repositorySlug(owner: string, rawName: string): string | null {
   return /^[a-z0-9-]+$/i.test(owner) && /^[a-z0-9_.-]+$/i.test(name) ? `${owner}/${name}` : null;
 }
 
-function parsePullRequests(stdout: string, repository: string): PullRequestInfo[] | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
-  return parsePullRequestRows(raw, repository);
-}
-
 function parsePullRequestBatch(
   stdout: string,
   repository: string,
@@ -154,12 +142,21 @@ function parsePullRequestBatch(
   if (!isRecord(repositoryData)) return null;
   const statuses = new Map<string, PullRequestStatus>();
   for (const [index, branch] of branches.entries()) {
-    const connection = repositoryData[`b${index}`];
-    if (!isRecord(connection) || !Array.isArray(connection.nodes)) {
+    const openConnection = repositoryData[`b${index}`];
+    const terminalConnection = repositoryData[`t${index}`];
+    if (
+      !isRecord(openConnection) ||
+      !Array.isArray(openConnection.nodes) ||
+      !isRecord(terminalConnection) ||
+      !Array.isArray(terminalConnection.nodes)
+    ) {
       statuses.set(branch, { kind: "unavailable", provider: "github" });
       continue;
     }
-    const rows = parsePullRequestRows(connection.nodes, repository);
+    const rows = parsePullRequestRows(
+      [...openConnection.nodes, ...terminalConnection.nodes],
+      repository,
+    );
     if (rows === null) {
       statuses.set(branch, { kind: "unavailable", provider: "github" });
     } else if (rows.length === 0) {
@@ -215,7 +212,7 @@ function preferredPullRequest(rows: PullRequestInfo[]): PullRequestInfo {
   return [...rows].sort((a, b) => {
     const active = Number(b.lifecycle === "open" || b.lifecycle === "draft") -
       Number(a.lifecycle === "open" || a.lifecycle === "draft");
-    return active || b.updatedAt.localeCompare(a.updatedAt) || b.number - a.number;
+    return active || b.number - a.number || b.updatedAt.localeCompare(a.updatedAt);
   })[0]!;
 }
 

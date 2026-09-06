@@ -64,16 +64,14 @@ describe("pullRequestPollInterval", () => {
     { kind: "none", provider: "github" },
     { kind: "unavailable", provider: "github" },
     { kind: "found", provider: "github", pullRequest: PR },
+    { kind: "found", provider: "github", pullRequest: { ...PR, lifecycle: "merged" } },
+    { kind: "found", provider: "github", pullRequest: { ...PR, lifecycle: "closed" } },
   ])("keeps watching a status that can still change", (status) => {
     expect(pullRequestPollInterval(status)).toBe(PULL_REQUEST_POLL_MS)
   })
 
-  it.each<PullRequestStatus>([
-    { kind: "unsupported", provider: null },
-    { kind: "found", provider: "github", pullRequest: { ...PR, lifecycle: "merged" } },
-    { kind: "found", provider: "github", pullRequest: { ...PR, lifecycle: "closed" } },
-  ])("stops for unsupported origins and terminal PRs", (status) => {
-    expect(pullRequestPollInterval(status)).toBe(false)
+  it("stops for unsupported origins", () => {
+    expect(pullRequestPollInterval({ kind: "unsupported", provider: null })).toBe(false)
   })
 })
 

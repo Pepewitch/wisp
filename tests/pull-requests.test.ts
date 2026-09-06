@@ -47,7 +47,22 @@ function githubRun(
       return Promise.resolve(
         cmd[0] === "git"
           ? ok(origin)
-          : ok(JSON.stringify(rows)),
+          : graphQlResponse(
+              [rows.filter((candidate) =>
+                typeof candidate === "object" &&
+                candidate !== null &&
+                "state" in candidate &&
+                String(candidate.state).toUpperCase() === "OPEN"
+              )],
+              [rows.filter((candidate) =>
+                !(
+                  typeof candidate === "object" &&
+                  candidate !== null &&
+                  "state" in candidate &&
+                  String(candidate.state).toUpperCase() === "OPEN"
+                )
+              )],
+            ),
       );
     },
   };
@@ -70,12 +85,18 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
-function graphQlResponse(rows: unknown[][]): SpawnResult {
+function graphQlResponse(
+  openRows: unknown[][],
+  terminalRows: unknown[][] = openRows.map(() => []),
+): SpawnResult {
   return ok(
     JSON.stringify({
       data: {
         repository: Object.fromEntries(
-          rows.map((nodes, index) => [`b${index}`, { nodes }]),
+          openRows.flatMap((nodes, index) => [
+            [`b${index}`, { nodes }],
+            [`t${index}`, { nodes: terminalRows[index] ?? [] }],
+          ]),
         ),
       },
     }),
@@ -100,10 +121,10 @@ describe("PullRequestCache", () => {
     const result = await new PullRequestCache({ run }).status(task());
 
     expect(calls[0]).toEqual(["git", "remote", "get-url", "origin"]);
-    expect(calls[1]).toContain("acme/widgets");
+    expect(calls[1]).toContain("name=widgets");
     expect(calls[1]!.join(" ")).not.toContain("credential");
     expect(calls[1]!.join(" ")).toContain("mergeStateStatus");
-    expect(calls[1]![calls[1]!.indexOf("--head") + 1]).toBe("wisp/tpr01-show-pr-status");
+    expect(calls[1]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
     expect(result).toEqual({
       kind: "found",
       provider: "github",
@@ -120,7 +141,7 @@ describe("PullRequestCache", () => {
     });
   });
 
-  test("prefers an active PR over a newer closed one, then reports legacy status contexts", async () => {
+  test("prefers the latest active PR over an older active PR and a newer closed one", async () => {
     const { run } = githubRun([
       row({
         number: 43,
@@ -129,7 +150,13 @@ describe("PullRequestCache", () => {
         updatedAt: "2026-09-04T13:00:00Z",
       }),
       row({
+        number: 5,
+        url: "https://github.com/acme/widgets/pull/5",
+        updatedAt: "2026-09-04T14:00:00Z",
+      }),
+      row({
         number: 42,
+        updatedAt: "2026-09-04T12:00:00Z",
         reviewDecision: "APPROVED",
         statusCheckRollup: [{ __typename: "StatusContext", state: "FAILURE" }],
         mergeStateStatus: "UNSTABLE",
@@ -284,9 +311,12 @@ describe("PullRequestCache", () => {
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets");
       ghCalls += 1;
       await Bun.sleep(20);
-      return ok(
-        JSON.stringify([row({ number: ghCalls, url: `https://github.com/acme/widgets/pull/${ghCalls}` })]),
-      );
+      return graphQlResponse([[
+        row({
+          number: ghCalls,
+          url: `https://github.com/acme/widgets/pull/${ghCalls}`,
+        }),
+      ]]);
     };
     const cache = new PullRequestCache({ run, ttlMs: 1_000, now: () => new Date(now) });
 
@@ -297,6 +327,35 @@ describe("PullRequestCache", () => {
 
     now += 1_001;
     expect(await cache.status(task())).toMatchObject({ pullRequest: { number: 2 } });
+    expect(ghCalls).toBe(2);
+  });
+
+  test("refreshes a merged PR so a later open PR on the task branch can replace it", async () => {
+    let now = 1_000;
+    let ghCalls = 0;
+    const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[0] === "git") return ok("https://github.com/acme/widgets");
+      ghCalls += 1;
+      return ghCalls === 1
+        ? graphQlResponse([[]], [[row({
+            state: "MERGED",
+            mergedAt: "2026-09-04T12:30:00Z",
+          })]])
+        : graphQlResponse([[row({
+            number: 43,
+            url: "https://github.com/acme/widgets/pull/43",
+            updatedAt: "2026-09-04T13:00:00Z",
+          })]]);
+    };
+    const cache = new PullRequestCache({ run, ttlMs: 1_000, now: () => new Date(now) });
+
+    expect(await cache.status(task())).toMatchObject({
+      pullRequest: { number: 42, lifecycle: "merged" },
+    });
+    now += 1_001;
+    expect(await cache.status(task())).toMatchObject({
+      pullRequest: { number: 43, lifecycle: "open" },
+    });
     expect(ghCalls).toBe(2);
   });
 
@@ -360,6 +419,11 @@ describe("PullRequestCache overview", () => {
     expect(providerCalls[0]!.slice(0, 3)).toEqual(["gh", "api", "graphql"]);
     expect(providerCalls[0]!.join("\n")).toContain('headRefName: "wisp/first"');
     expect(providerCalls[0]!.join("\n")).toContain('headRefName: "wisp/second"');
+    expect(providerCalls[0]!.join("\n")).toContain("states: [OPEN]");
+    expect(providerCalls[0]!.join("\n")).toContain("states: [CLOSED, MERGED]");
+    expect(providerCalls[0]!.join("\n")).toContain(
+      "orderBy: { field: CREATED_AT, direction: DESC }",
+    );
     expect(result).toEqual({
       tasks: {
         first: {
@@ -422,7 +486,7 @@ describe("PullRequestCache overview", () => {
     const selected = cache.status(target);
     await Bun.sleep(0);
     const overview = cache.overview([target]);
-    finish!(ok(JSON.stringify([row()])));
+    finish!(graphQlResponse([[row()]]));
 
     await expect(selected).resolves.toMatchObject({ kind: "found" });
     await expect(overview).resolves.toMatchObject({
@@ -648,28 +712,32 @@ describe("PullRequestCache overview", () => {
     });
   });
 
-  test("keeps the last good overview stale, backs off failures, and stops refreshing merged PRs", async () => {
+  test("keeps the last good overview stale, backs off failures, and finds a PR opened after a merge", async () => {
     let now = Date.parse("2026-09-05T08:00:00Z");
     let providerCalls = 0;
     let fail = false;
-    let merged = false;
+    let providerState: "open" | "merged" | "new-open" = "open";
     const run: ProbeSpawnFn = (cmd) => {
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       providerCalls += 1;
       if (fail) return { exitCode: 1, stdout: "", stderr: "provider unavailable" };
-      return graphQlResponse([
-        [
-          row(
-            merged
-              ? {
-                  state: "MERGED",
-                  mergedAt: "2026-09-05T08:01:00Z",
-                  mergeStateStatus: "UNKNOWN",
-                }
-              : {},
-          ),
-        ],
-      ]);
+      const merged = row({
+        state: "MERGED",
+        mergedAt: "2026-09-05T08:01:00Z",
+        mergeStateStatus: "UNKNOWN",
+      });
+      if (providerState === "merged") return graphQlResponse([[]], [[merged]]);
+      if (providerState === "new-open") {
+        return graphQlResponse(
+          [[row({
+            number: 43,
+            url: "https://github.com/acme/widgets/pull/43",
+            updatedAt: "2026-09-05T08:02:00Z",
+          })]],
+          [[merged]],
+        );
+      }
+      return graphQlResponse([[row()]]);
     };
     const cache = new PullRequestCache({
       run,
@@ -708,7 +776,7 @@ describe("PullRequestCache overview", () => {
 
     now += 100;
     fail = false;
-    merged = true;
+    providerState = "merged";
     const recovered = await cache.overview([target]);
     expect(recovered.tasks[target.id]).toMatchObject({
       status: { kind: "found", pullRequest: { lifecycle: "merged" } },
@@ -718,14 +786,23 @@ describe("PullRequestCache overview", () => {
     expect(providerCalls).toBe(3);
 
     now += 11;
-    await cache.overview([target]);
-    expect(providerCalls).toBe(3);
+    providerState = "new-open";
+    const latest = await cache.overview([target]);
+    expect(latest.tasks[target.id]).toMatchObject({
+      status: {
+        kind: "found",
+        pullRequest: { number: 43, lifecycle: "open" },
+      },
+      checkedAt: new Date(now).toISOString(),
+      stale: false,
+    });
+    expect(providerCalls).toBe(4);
 
     expect(await cache.status(target)).toMatchObject({
       kind: "found",
-      pullRequest: { lifecycle: "merged" },
+      pullRequest: { number: 43, lifecycle: "open" },
     });
-    expect(providerCalls).toBe(3);
+    expect(providerCalls).toBe(4);
   });
 });
 

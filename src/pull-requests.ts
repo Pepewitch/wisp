@@ -153,8 +153,6 @@ export class PullRequestCache {
     if (task.mode === "local" || !task.branch) {
       return Promise.resolve({ kind: "unsupported", provider: null });
     }
-    const known = this.known.get(task.id)?.status;
-    if (isTerminalPullRequest(known)) return Promise.resolve(known);
     if (this.overviewInFlight) {
       return this.overviewInFlight.then(() => {
         const overview = this.overviewEntries.get(task.id);
@@ -302,11 +300,6 @@ export class PullRequestCache {
         if (task.mode === "local" || !task.branch) {
           const status: PullRequestStatus = { kind: "unsupported", provider: null };
           entries.set(task.id, { status, checkedAt, stale: false });
-          return;
-        }
-        const known = this.known.get(task.id);
-        if (known && isTerminalPullRequest(known.status)) {
-          entries.set(task.id, { ...known, stale: false });
           return;
         }
         const running = this.inFlight.get(task.id);
@@ -573,14 +566,6 @@ function unavailableRepository(
     ),
     failed: true,
   };
-}
-
-function isTerminalPullRequest(
-  status: PullRequestStatus | undefined,
-): status is Extract<PullRequestStatus, { kind: "found" }> {
-  return status?.kind === "found" &&
-    (status.pullRequest.lifecycle === "merged" ||
-      status.pullRequest.lifecycle === "closed");
 }
 
 function chunks<T>(values: T[], size: number): T[][] {
