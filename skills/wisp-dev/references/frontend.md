@@ -191,6 +191,21 @@ There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
 turn.
 
+Every bubble the person actually SENT says **when**, on its own last muted
+line: a prompt bubble from the turn's `started_at`, a steer from the message's
+`created_at`. Relative by default, because "5 min ago" is the fact you want
+while a task is live, and **one click swaps that bubble alone** to the exact
+UTC instant in mono — the form you paste into a log search. The toggle is per
+bubble and never persists: asking when one message was sent is a question, not
+a mode. A queued bubble gets no timestamp — it has not been sent, and its line
+already says the truer thing.
+
+`lib/time.ts` is the app's ONE relative clock — dayjs for the arithmetic,
+Wisp's own terse vocabulary for the words (`just now`, `5 min ago`, `3h ago`,
+`2d ago`), and thresholds that FLOOR so 90 minutes is never read back as
+"2h ago". `since()` in `lib/state.ts` is that same function, so a sidebar row
+and a prompt bubble can never disagree. Never hand-roll a second one.
+
 The stream starts at byte zero. Its first read is budgeted to 1 MB so opening a
 large turn does not block the first frame; subsequent 256 KB reads continue
 progressively with one offset, no gaps and no overlap.

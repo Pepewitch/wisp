@@ -16,6 +16,7 @@ import { Button, DiffStat, Eyebrow, Meta, PaneHeader, POPOVER_SURFACE, Rule, Sta
 import { Prose } from "@/components/prose"
 import { ProbePanel } from "@/components/probe-panel"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
+import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
@@ -26,15 +27,11 @@ import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { TASK_STATES } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
-/** A stand-in for a real thumbnail: the gallery has no daemon to fetch bytes from. */
-function SpecimenThumb({ label }: { label: string }) {
-  return (
-    <div className="flex size-14 items-center justify-center rounded-sm bg-border-strong font-mono text-[10.5px] text-muted-foreground">
-      {label}
-    </div>
-  )
-}
-
+/**
+ * The living rulebook. The wisp-dev frontend reference is the law; this route is the law
+ * rendered on real components. Add a primitive, add its entry here in the same
+ * diff — an undocumented primitive is an incomplete change.
+ */
 export function Gallery() {
   return (
     <div className="scroll-slim h-dvh overflow-y-auto bg-background">
@@ -419,50 +416,7 @@ function InteractionSpecimens() {
           </div>
       </Section>
 
-      <Section title="Attachments — content, not status">
-          <div className="grid grid-cols-2 gap-10">
-            <div>
-              <Eyebrow className="text-state-done">Keep — bare thumbnails</Eyebrow>
-              <div className="mt-2.5 rounded-lg border border-border bg-surface p-3">
-                <div className="flex justify-end">
-                  <div className="max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-foreground/90">
-                    why is the sidebar row cramped here?
-                  </div>
-                </div>
-                <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
-                  <SpecimenThumb label="1" />
-                  <SpecimenThumb label="2" />
-                </div>
-              </div>
-              <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-                A turn's images hang off its prompt bubble, because they are part of what the person sent. No frame, no
-                count badge, no "2 attachments" label — the thumbnails are the content and they say their own number.
-                Clicking one opens the presentation view at 80vw, which is a look rather than a mode: the app stays
-                visible behind it.
-              </p>
-            </div>
-            <div>
-              <Eyebrow>Archived — the manifest outlives the bytes</Eyebrow>
-              <div className="mt-2.5 rounded-lg border border-border bg-surface p-3">
-                <div className="flex justify-end">
-                  <div className="max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-foreground/90">
-                    why is the sidebar row cramped here?
-                  </div>
-                </div>
-                <div className="mt-1.5 flex justify-end">
-                  <span className="max-w-[76%] truncate text-[11.5px] text-faint">
-                    cramped.png, spacing.png — removed when this task was archived
-                  </span>
-                </div>
-              </div>
-              <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-                Archive deletes the image bytes, so the turn keeps a record of what it carried and says the files are
-                gone. A thumbnail that 410s and an empty space are the same lie in two costumes; this is the register
-                the removed-worktree placeholders already use.
-              </p>
-            </div>
-          </div>
-      </Section>
+      <PromptBubbleSpecimens />
     </>
   )
 }
