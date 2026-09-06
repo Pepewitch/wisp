@@ -426,8 +426,17 @@ bun run scripts/render-homebrew-cask.ts \
   --output "$tap/Casks/wisp-desktop.rb"
 bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts
 brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
-brew audit --strict --online Pepewitch/tap/wisp
-HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)" \
+homebrew_api_token="$(gh auth token)" || {
+  echo "GitHub authentication is required for Homebrew's online audits" >&2
+  exit 1
+}
+test -n "$homebrew_api_token" || {
+  echo "GitHub authentication returned an empty token" >&2
+  exit 1
+}
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online Pepewitch/tap/wisp
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online --cask \
     --except signing,github_prerelease_version \
     Pepewitch/tap/wisp-desktop
@@ -468,8 +477,17 @@ Then verify the public tap:
 
 ```sh
 brew update
-brew audit --strict --online Pepewitch/tap/wisp
-HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)" \
+homebrew_api_token="$(gh auth token)" || {
+  echo "GitHub authentication is required for Homebrew's online audits" >&2
+  exit 1
+}
+test -n "$homebrew_api_token" || {
+  echo "GitHub authentication returned an empty token" >&2
+  exit 1
+}
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
+  brew audit --strict --online Pepewitch/tap/wisp
+HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online --cask \
     --except signing,github_prerelease_version \
     Pepewitch/tap/wisp-desktop
