@@ -40,6 +40,20 @@ describe("Prose", () => {
     expect(link?.getAttribute("rel")).toBe("noopener noreferrer")
   })
 
+  /**
+   * A repository path is the other thing agents link, and it is not a web
+   * address: opening one would resolve against the app's own origin and take
+   * the shell somewhere it cannot come back from. Asserted on the rendering
+   * rather than on which layer refuses it, because both do.
+   */
+  it("never turns a non-web link into something openable", () => {
+    const { container } = render(
+      <Prose text="see [terminal.ts](web/ui/src/lib/terminal.ts) and [this](file:///etc/passwd)" />
+    )
+    expect(container.querySelector("a")).toBeNull()
+    expect(container.textContent).toContain("terminal.ts")
+  })
+
   it("autolinks a bare URL, which is how agents usually paste one", () => {
     const { container } = render(<Prose text="Posted: https://github.com/example-org/sample-app/pull/42" />)
     expect(container.querySelector("a")?.getAttribute("href")).toContain("/pull/42")

@@ -4,6 +4,7 @@ import {
   pullRequestIconTone,
 } from "@/lib/pull-request-tone"
 import type { PullRequestInfo } from "@/lib/types"
+import { externalLinkProps } from "@/lib/external-links"
 import { cn } from "@/lib/utils"
 
 const LIFECYCLE = {
@@ -56,13 +57,14 @@ export function PullRequestStatusLink({
   const label = `PR #${pullRequest.number} · ${lifecycle} · ${checks} · ${review}`
   const mergeState = MERGE_STATE[pullRequest.mergeState]
   const iconTone = pullRequestIconTone(pullRequest)
+  // No href when the daemon reported something that is not a web address: the
+  // card still states the PR's condition, it just is not a link.
+  const link = externalLinkProps(pullRequest.url)
 
   return (
     <a
       data-testid="pull-request-status"
-      href={pullRequest.url}
-      target="_blank"
-      rel="noreferrer"
+      {...link}
       aria-label={`${label} · ${mergeState}: ${pullRequest.title}`}
       title={`${label} · ${mergeState} — ${pullRequest.title}`}
       className={cn(

@@ -2,6 +2,7 @@ import type { ComponentProps } from "react"
 import remarkBreaks from "remark-breaks"
 import { defaultRemarkPlugins, Streamdown } from "streamdown"
 
+import { externalLinkProps } from "@/lib/external-links"
 import { cn } from "@/lib/utils"
 
 /** Agent prose, rendered safely while markdown is still streaming. */
@@ -27,16 +28,21 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
 
-  a: ({ children, href }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-accent-soft underline decoration-accent-dim underline-offset-2 hover:text-primary hover:decoration-primary"
-    >
-      {children}
-    </a>
-  ),
+  a: ({ children, href }) => {
+    // Agent prose is the least trusted href in the app, and Streamdown already
+    // refuses a non-web one before it reaches here — this is the second line,
+    // not the first, and it exists so the rule holds if that default moves.
+    const link = externalLinkProps(href)
+    if (!link) return <>{children}</>
+    return (
+      <a
+        {...link}
+        className="text-accent-soft underline decoration-accent-dim underline-offset-2 hover:text-primary hover:decoration-primary"
+      >
+        {children}
+      </a>
+    )
+  },
 
   ul: ({ children }) => <ul className="mt-2.5 ml-4 list-outside list-disc space-y-1 marker:text-faint">{children}</ul>,
   ol: ({ children }) => (

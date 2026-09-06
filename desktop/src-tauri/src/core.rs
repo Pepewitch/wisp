@@ -70,6 +70,8 @@ pub enum CoreError {
     LocalPickerUnavailable,
     #[error("project selection was cancelled after changing connections")]
     LocalPickerExpired,
+    #[error(transparent)]
+    External(#[from] crate::external::ExternalError),
 }
 
 /// Commands cross into JavaScript, so the error becomes a string there. This is

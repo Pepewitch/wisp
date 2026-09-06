@@ -100,6 +100,7 @@ describe("desktop native bridge", () => {
     await bridge.pickLocalProject()
     await bridge.setupLocalWisp()
     await bridge.applyLocalWispSetup("start-daemon")
+    await bridge.openExternalUrl("https://example.test/pull/1")
 
     expect(calls).toEqual([
       { command: "desktop_bootstrap", args: undefined },
@@ -149,6 +150,10 @@ describe("desktop native bridge", () => {
       {
         command: "apply_local_wisp_setup",
         args: { expectedStep: "start-daemon" },
+      },
+      {
+        command: "open_external_url",
+        args: { url: "https://example.test/pull/1" },
       },
     ])
   })

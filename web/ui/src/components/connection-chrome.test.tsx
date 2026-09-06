@@ -84,6 +84,7 @@ function bridge(overrides: Partial<DesktopBridge> = {}): DesktopBridge {
       nextStep: "ready",
       message: "Local Wisp is ready.",
     }),
+    openExternalUrl: async () => undefined,
     ...overrides,
   }
 }
