@@ -45,6 +45,7 @@ export {
   IncrementalOutcomeReducer,
   type OutcomeCheckpointV1,
   type OutcomePolicy,
+  type OutcomeReducerOptions,
 } from "./outcome";
 export { USAGE_FORMATTERS, formatUsage } from "./usage";
 export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";

@@ -120,8 +120,9 @@ result — not a raw stream pane stacked on a chat pane. Five rules:
    only its current turn. A settled turn's structured activity is fetched when
    someone chooses **Show activity**, its SSE closes at `turn-end`, and the
    body is dropped on **Hide activity** or task switch. Logs cap at
-   `logMaxBytes` (5 MB default) **per turn** — eagerly retaining every settled
-   body does not slow the tab down, it kills it.
+   `turnTranscriptBytes` (5 MB default) **per turn**, and the live reducer also
+   keeps a bounded visible tail with an explicit omission marker. Eagerly
+   retaining every settled body does not slow the tab down, it kills it.
 3. **The live turn appends into the same list.** `overflow-anchor: auto` plus a
    60px pin threshold; a group expanding above the viewport compensates
    `scrollTop` by the height delta so the reader's line stays put.

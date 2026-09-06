@@ -1,8 +1,14 @@
 import type { AdapterDef, ParsedTurn } from "./types";
 import { isRecord } from "../validate";
+import { boundJsonRecord, truncateUtf8 } from "../recording/bounds";
 
 export type OutcomePolicy = "legacy" | "recorder-v1";
 type ReducerKind = "codex-jsonl" | "cursor-stream-json" | "mapped-json";
+
+export interface OutcomeReducerOptions {
+  /** Omitted for exact legacy folds; recorder checkpoints always set it. */
+  maxFactStringBytes?: number;
+}
 
 export interface OutcomeCheckpointV1 {
   version: 1;
@@ -84,6 +90,7 @@ export class IncrementalOutcomeReducer {
   constructor(
     private readonly def: AdapterDef,
     checkpoint?: OutcomeCheckpointV1,
+    private readonly options: OutcomeReducerOptions = {},
   ) {
     const kind = reducerKind(def);
     if (!kind) throw new Error("adapter has no incremental outcome reducer");
@@ -105,22 +112,24 @@ export class IncrementalOutcomeReducer {
     if (ordinal < 10) {
       const sessionField = this.def.parse.session;
       if (this.earlySession === null && sessionField && typeof event[sessionField] === "string") {
-        this.earlySession = event[sessionField];
+        this.earlySession = this.factString(event[sessionField]);
       }
       const modelField = this.def.parse.model;
       if (this.earlyModel === null && modelField && typeof event[modelField] === "string") {
-        this.earlyModel = event[modelField];
+        this.earlyModel = this.factString(event[modelField]);
       }
       const skillsField = this.def.parse.skills;
       const skills = skillsField ? event[skillsField] : undefined;
       if (this.earlySkills === null && Array.isArray(skills) && skills.every((skill) => typeof skill === "string")) {
-        this.earlySkills = skills;
+        this.earlySkills = this.factSkills(skills);
       }
       // Cursor's named strategy owns these fields, so they are intentionally
       // absent from the declarative parse mapping.
       if (this.kind === "cursor-stream-json") {
-        if (this.earlySession === null && typeof event.session_id === "string") this.earlySession = event.session_id;
-        if (this.earlyModel === null && typeof event.model === "string") this.earlyModel = event.model;
+        if (this.earlySession === null && typeof event.session_id === "string") {
+          this.earlySession = this.factString(event.session_id);
+        }
+        if (this.earlyModel === null && typeof event.model === "string") this.earlyModel = this.factString(event.model);
       }
     }
 
@@ -271,8 +280,8 @@ export class IncrementalOutcomeReducer {
   private pushCodex(event: Record<string, any>): void {
     switch (event.type) {
       case "thread.started":
-        if (typeof event.thread_id === "string") this.earlySession ??= event.thread_id;
-        if (typeof event.model === "string") this.earlyModel ??= event.model;
+        if (typeof event.thread_id === "string") this.earlySession ??= this.factString(event.thread_id);
+        if (typeof event.model === "string") this.earlyModel ??= this.factString(event.model);
         break;
       case "turn.started":
         this.failed = false;
@@ -280,36 +289,44 @@ export class IncrementalOutcomeReducer {
         break;
       case "turn.failed":
         this.failed = true;
-        if (event.usage !== undefined && event.usage !== null) this.usage = event.usage;
+        if (event.usage !== undefined && event.usage !== null) this.usage = this.factValue(event.usage);
         break;
       case "item.completed":
         // a spawned child's final message (the app-server driver tags it with
         // the child's thread_id) is that child's result, not the turn's
         if (typeof event.thread_id === "string" && this.earlySession && event.thread_id !== this.earlySession) break;
         if (event.item?.type === "agent_message" && typeof event.item.text === "string") {
-          this.candidateResult = event.item.text;
+          this.candidateResult = this.factString(event.item.text);
         }
         break;
       case "turn.completed":
         this.settled = true;
-        if (event.usage !== undefined && event.usage !== null) this.usage = event.usage;
+        if (event.usage !== undefined && event.usage !== null) this.usage = this.factValue(event.usage);
         break;
     }
   }
 
   private pushCursor(event: Record<string, any>): void {
     if (event.type === "result") {
-      this.resultEvent = event;
+      this.resultEvent = this.resultFields(event, ["result", "session_id", "is_error", "usage"]);
       this.settled = true;
     } else if (event.type === "assistant") {
       const text = textParts(event);
-      if (text) this.candidateResult = text;
+      if (text) this.candidateResult = this.factString(text);
     }
   }
 
   private pushMapped(event: Record<string, any>): void {
     if (!this.def.parse.resultType || event.type === this.def.parse.resultType) {
-      this.resultEvent = event;
+      this.resultEvent = this.resultFields(event, [
+        this.def.parse.result,
+        this.def.parse.session,
+        this.def.parse.model,
+        this.def.parse.needsInput,
+        this.def.parse.usage,
+        "isError",
+        "is_error",
+      ]);
       this.settled = true;
     }
   }
@@ -327,33 +344,64 @@ export class IncrementalOutcomeReducer {
       typeof event.result === "string" &&
       event.result.trim()
     ) {
-      this.claudeError = event.result.trim();
+      this.claudeError = this.factString(event.result.trim());
     } else if (event.type === "assistant" && typeof event.error === "string") {
-      this.claudeError = textParts(event) ?? this.claudeError ?? event.error;
+      this.claudeError = this.factString(textParts(event) ?? this.claudeError ?? event.error);
     }
   }
 
   private pushCodexError(event: Record<string, any>): void {
     if (event.type === "turn.failed" && typeof event.error?.message === "string" && event.error.message.trim()) {
-      this.codexTerminalError = nestedErrorMessage(event.error.message);
+      this.codexTerminalError = this.factString(nestedErrorMessage(event.error.message));
     } else if (event.type === "error" && typeof event.message === "string" && event.message.trim()) {
-      this.codexEventError = nestedErrorMessage(event.message);
+      this.codexEventError = this.factString(nestedErrorMessage(event.message));
     } else if (
       event.type === "item.completed" &&
       event.item?.type === "error" &&
       typeof event.item.message === "string"
     ) {
-      this.codexWarningError ??= event.item.message.trim();
+      this.codexWarningError ??= this.factString(event.item.message.trim());
     }
   }
 
   private pushDroidError(event: Record<string, any>): void {
     if (event.type === "error" && typeof event.message === "string" && event.message.trim()) {
-      if (event.source === "agent_loop") this.droidAgentLoopError = event.message.trim();
-      else this.droidOtherError = event.message.trim();
+      if (event.source === "agent_loop") this.droidAgentLoopError = this.factString(event.message.trim());
+      else this.droidOtherError = this.factString(event.message.trim());
     } else if (event.type === "completion" && event.isError === true && typeof event.finalText === "string") {
-      if (event.finalText.trim()) this.droidCompletionError = event.finalText.trim();
+      if (event.finalText.trim()) this.droidCompletionError = this.factString(event.finalText.trim());
     }
+  }
+
+  private factString(value: string): string {
+    const max = this.options.maxFactStringBytes;
+    if (max === undefined) return value;
+    const truncated = truncateUtf8(value, max);
+    return truncated.omittedBytes > 0
+      ? `${truncated.value}[wisp: ${truncated.omittedBytes} bytes omitted]`
+      : truncated.value;
+  }
+
+  private factValue(value: unknown): unknown {
+    if (this.options.maxFactStringBytes === undefined) return value;
+    return boundJsonRecord(value, {
+      maxRecordBytes: this.options.maxFactStringBytes,
+      maxStringBytes: Math.floor(this.options.maxFactStringBytes / 2),
+      maxTotalStringBytes: Math.floor(this.options.maxFactStringBytes * 0.75),
+    }).value;
+  }
+
+  private factSkills(skills: string[]): string[] {
+    if (this.options.maxFactStringBytes === undefined) return skills;
+    return skills.slice(0, 256).map((skill) => this.factString(skill));
+  }
+
+  private resultFields(event: Record<string, unknown>, fields: Array<string | undefined>): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const field of new Set(fields.filter((value): value is string => Boolean(value)))) {
+      if (event[field] !== undefined) result[field] = this.factValue(event[field]);
+    }
+    return result;
   }
 }
 
@@ -364,8 +412,9 @@ export function hasIncrementalOutcomeReducer(def: AdapterDef): boolean {
 export function createIncrementalOutcomeReducer(
   def: AdapterDef,
   checkpoint?: OutcomeCheckpointV1,
+  options?: OutcomeReducerOptions,
 ): IncrementalOutcomeReducer | null {
-  return hasIncrementalOutcomeReducer(def) ? new IncrementalOutcomeReducer(def, checkpoint) : null;
+  return hasIncrementalOutcomeReducer(def) ? new IncrementalOutcomeReducer(def, checkpoint, options) : null;
 }
 
 export function foldIncrementalOutcome(

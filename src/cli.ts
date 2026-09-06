@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
 import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
 import { sendCommand, taskMessageSummary } from "./cli-send";
+import { followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
 import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
 import { bunSpawn, runDoctor } from "./doctor";
@@ -341,6 +342,10 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
       : null;
     console.log(pretty ? pretty.join("\n") : data.out);
     if (data.err) console.error(data.err);
+    return;
+  }
+  if (!flags.raw) {
+    await followHumanLog(id, turnQuery);
     return;
   }
   let offset = 0;

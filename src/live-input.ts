@@ -1,4 +1,4 @@
-import { readFileSync, writeSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type { AdapterDef, ImageInputStrategy } from "./adapters";
 import { CodexLiveDriver, type CodexLiveInput } from "./adapters/live/codex";
 import { liveCommand } from "./adapters/live/command";
@@ -13,6 +13,13 @@ import {
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage } from "./types";
 
+export interface LiveOutputSink {
+  recordEvent(event: Record<string, unknown>): void;
+  recordStdoutLine(line: string): void;
+  recordNote(note: string): void;
+  recordFrameDrop(source: "stdout" | "stderr", chars: number): void;
+}
+
 export interface ActiveLiveInput {
   turnId: number;
   turn: number;
@@ -26,7 +33,7 @@ interface ConfigureLiveTurnOptions {
   def: AdapterDef;
   turnId: number;
   turn: number;
-  outFd: number;
+  recorder: LiveOutputSink;
   prompt: string;
   attachments: StoredAttachment[];
   initialMessageId: string;
@@ -88,7 +95,7 @@ export function configureLiveTurn(options: ConfigureLiveTurnOptions): Promise<vo
       if (!options.claudeStrategy) throw new Error("Claude live input strategy is unavailable");
       return Promise.all([
         staged("live input setup", configureClaude(options, options.claudeStrategy)),
-        staged("live output pump", pumpClaude(options.child, options.task.id, options.turnId, options.outFd)),
+        staged("live output pump", pumpClaude(options.child, options.task.id, options.turnId, options.recorder)),
       ]).then(() => {});
     case "droid-jsonrpc":
       return configureDroid(options);
@@ -155,7 +162,7 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await write(envelopeFor(strategy, message.text, files));
-      noteDelivery(options.outFd, message, files);
+      noteDelivery(options.recorder, message, files);
     },
     close,
   });
@@ -166,14 +173,15 @@ async function pumpClaude(
   child: ReturnType<typeof Bun.spawn>,
   taskId: string,
   turnId: number,
-  outFd: number,
+  recorder: LiveOutputSink,
 ): Promise<void> {
   const stdout = child.stdout;
   if (!stdout || typeof stdout === "number") return;
   const reader = (stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
-  const frames = new JsonLineBuffer({ onDrop: frameDropNote(outFd) });
+  const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
   const consume = (line: string): void => {
+    recorder.recordStdoutLine(line);
     try {
       if ((JSON.parse(line) as { type?: unknown }).type === "result") {
         void closeLiveInput(taskId, turnId);
@@ -186,7 +194,6 @@ async function pumpClaude(
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      writeSync(outFd, value);
       for (const line of frames.push(decoder.decode(value, { stream: true }))) consume(line);
     }
     for (const line of frames.finish(decoder.decode())) consume(line);
@@ -199,10 +206,8 @@ async function pumpClaude(
  * An unreadable frame is visible in the turn log rather than fatal to the turn:
  * the harness keeps running and only that one notification is lost.
  */
-function frameDropNote(outFd: number): (chars: number) => void {
-  return (chars) => {
-    writeSync(outFd, `· dropped an oversized live protocol frame (${chars} characters); the turn continues\n`);
-  };
+function frameDropNote(recorder: LiveOutputSink): (chars: number) => void {
+  return (chars) => recorder.recordFrameDrop("stdout", chars);
 }
 
 function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
@@ -215,9 +220,9 @@ function messageAttachments(taskId: string, message: TaskMessage): StoredAttachm
  * the conversation replays, so the message lands between what the harness had
  * already said and whatever it does next — never beside the turn's prompt.
  */
-function noteDelivery(outFd: number, message: TaskMessage, files: StoredAttachment[]): void {
-  writeSync(outFd, `${formatSteerNote(message.id, message.text)}\n`);
-  if (files.length > 0) writeSync(outFd, `${formatAttachNote(files)}\n`);
+function noteDelivery(recorder: LiveOutputSink, message: TaskMessage, files: StoredAttachment[]): void {
+  recorder.recordNote(formatSteerNote(message.id, message.text));
+  if (files.length > 0) recorder.recordNote(formatAttachNote(files));
 }
 
 function droidImages(attachments: StoredAttachment[]): DroidLiveImage[] {
@@ -232,7 +237,7 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("Droid live process did not expose stdin");
   const emit = (event: Record<string, unknown>): void => {
-    writeSync(options.outFd, `${JSON.stringify(event)}\n`);
+    options.recorder.recordEvent(event);
   };
   const driver = new DroidLiveDriver({
     sink,
@@ -253,13 +258,13 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await driver.send(message.id, message.text, droidImages(files));
-      noteDelivery(options.outFd, message, files);
+      noteDelivery(options.recorder, message, files);
     },
     close: () => driver.close(),
   });
   return Promise.all([
     staged("live input setup", driver.ready),
-    staged("live output pump", pumpJsonLines(options.child, options.outFd, driver, "Droid closed the JSON-RPC channel")),
+    staged("live output pump", pumpJsonLines(options.child, options.recorder, driver, "Droid closed the JSON-RPC channel")),
   ]).then(() => {});
 }
 
@@ -274,7 +279,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("Codex live process did not expose stdin");
   const emit = (event: Record<string, unknown>): void => {
-    writeSync(options.outFd, `${JSON.stringify(event)}\n`);
+    options.recorder.recordEvent(event);
   };
   const driver = new CodexLiveDriver({
     sink,
@@ -294,13 +299,13 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     async send(message) {
       const files = messageAttachments(options.task.id, message);
       await driver.send(message.id, codexInput(message.text, files));
-      noteDelivery(options.outFd, message, files);
+      noteDelivery(options.recorder, message, files);
     },
     close: () => driver.close(),
   });
   return Promise.all([
     staged("live input setup", driver.ready),
-    staged("live output pump", pumpJsonLines(options.child, options.outFd, driver, "Codex closed the app-server channel")),
+    staged("live output pump", pumpJsonLines(options.child, options.recorder, driver, "Codex closed the app-server channel")),
   ]).then(() => {});
 }
 
@@ -317,7 +322,7 @@ interface JsonLineDriver {
 
 async function pumpJsonLines(
   child: ReturnType<typeof Bun.spawn>,
-  outFd: number,
+  recorder: LiveOutputSink,
   driver: JsonLineDriver,
   closedMessage: string,
 ): Promise<void> {
@@ -325,14 +330,14 @@ async function pumpJsonLines(
   if (!stdout || typeof stdout === "number") return;
   const reader = (stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
-  const frames = new JsonLineBuffer({ onDrop: frameDropNote(outFd) });
+  const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
   const consume = (line: string): void => {
     if (!line.trim()) return;
     try {
       driver.handle(JSON.parse(line));
     } catch {
       // Malformed stdout is evidence of protocol drift and stays in the log.
-      writeSync(outFd, `${line}\n`);
+      recorder.recordStdoutLine(line);
     }
   };
   try {

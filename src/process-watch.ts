@@ -48,7 +48,8 @@ interface ReAdoptionPollOptions {
   pid: number;
   pidStartTime: string | null;
   paths: string[];
-  maxBytes: number;
+  /** null for a turn whose bounded recorder already owns primary storage. */
+  maxBytes: number | null;
   killGraceMs: number;
   onEnded: () => Promise<void>;
   onKillReason: (reason: string) => void;
@@ -72,14 +73,14 @@ export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
         await options.onEnded();
         return;
       }
-      const hit = await fileOverCap(options.paths, options.maxBytes);
+      const hit = options.maxBytes === null ? null : await fileOverCap(options.paths, options.maxBytes);
       if (!hit) return;
       const sig = capTermAt !== null && Date.now() - capTermAt >= options.killGraceMs ? "SIGKILL" : "SIGTERM";
       capTermAt ??= Date.now();
       options.onKillReason(
         sig === "SIGKILL"
-          ? `log cap exceeded (${options.maxBytes} bytes); escalated to SIGKILL after SIGTERM was trapped`
-          : `log cap exceeded (${options.maxBytes} bytes)`,
+          ? `log cap exceeded (${options.maxBytes!} bytes); escalated to SIGKILL after SIGTERM was trapped`
+          : `log cap exceeded (${options.maxBytes!} bytes)`,
       );
       // stat() yielded after the first identity check. Revalidate immediately
       // before signaling so a process that exited meanwhile cannot hand its

@@ -51,7 +51,8 @@ harmless preferences.
   Wisp-home identity), `port` (8710), `host` (127.0.0.1), `token`,
   `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
   at-least-once, dedup on task_id+seq), `repos`, `stuckMinutes` (10),
-  `logMaxBytes`, `setupTimeoutMinutes` (10), `envAllowlist`,
+  `turnTranscriptBytes` (5 MB; `logMaxBytes` is its legacy alias),
+  `setupTimeoutMinutes` (10), `envAllowlist`,
   `harnessDefaults`.
 - `instance-id` — the create-exclusive authority mirrored by
   `config.json.instanceId`; it prevents simultaneous legacy migrations from
@@ -67,7 +68,8 @@ harmless preferences.
   an agent just writes the full text into the prompt itself.
 - `tasks/<id>/attachments/turn-<n>/` — image bytes (see images.md);
   `worktrees/` — the task worktrees; `wisp.db` — all state (SQLite);
-  `logs/` — per-turn output logs, size-capped.
+  `logs/` — bounded primary transcripts for recorder-capable live turns;
+  unsupported legacy turns retain the fatal size cap.
 
 ## Models and effort
 

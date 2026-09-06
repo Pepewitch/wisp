@@ -1,8 +1,8 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, type AdapterDef } from "../src/adapters";
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
@@ -28,6 +28,7 @@ import {
   messagesFor,
   newTaskId,
   setTaskFields,
+  setTurnCaptureCheckpoint,
   transition,
   turnsFor,
   undeliveredOutbox,
@@ -215,6 +216,32 @@ describe("finalizeTurn matrix (a prior audit + test gap #1)", () => {
     const { task, turn } = await finalize({ exit: null, out: `${RESULT_LINE}\n` });
     expect(turn.status).toBe("done");
     expect(task.state).toBe("done");
+  });
+
+  test("recorder recovery finalizes from its durable outcome checkpoint without replaying the bounded log", async () => {
+    const task = makeTask();
+    transition(task.id, "running", "turn 1");
+    const dir = mkdtempSync(join(tmpdir(), "wisp-recorder-recovery-"));
+    const outPath = join(dir, "turn.out.log");
+    const errPath = join(dir, "turn.err.log");
+    writeFileSync(outPath, "· primary transcript ended before the result\n");
+    writeFileSync(errPath, "");
+    const turnId = createTurn(task.id, 1, "prompt", null, outPath, null, null, "recorder-v1");
+    const reducer = createIncrementalOutcomeReducer(jsonAdapter, undefined, { maxFactStringBytes: 64 * 1024 })!;
+    reducer.pushStdoutLine(RESULT_LINE);
+    setTurnCaptureCheckpoint(turnId, {
+      state: "degraded",
+      capturedBytes: 48,
+      omittedBytes: 80,
+      omittedRecords: 1,
+      categoriesJson: JSON.stringify({ result: { records: 1, bytes: 80 } }),
+      detail: "primary transcript budget reached",
+      outcomeJson: JSON.stringify(reducer.checkpoint()),
+    });
+
+    await finalizeTurn(task.id, turnId, jsonAdapter, 0, outPath, errPath);
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", result: "all done" });
+    expect(getTask(task.id)).toMatchObject({ state: "done", session_id: "sess-live" });
   });
 
   // P5e: a failed turn names its actual cause (from the harness's own error
@@ -481,6 +508,7 @@ describe("non-destructive active messages", () => {
       [2, "second", "done"],
       [3, "third", "done"],
     ]);
+    expect(turnsFor(task.id).map((turn) => turn.capture_mode)).toEqual([null, null, null]);
     expect(messagesFor(task.id).map((message) => [message.text, message.delivery, message.turn_n])).toEqual([
       ["second", "started", 2],
       ["third", "started", 3],
@@ -519,6 +547,39 @@ describe("non-destructive active messages", () => {
     expect(admitted.value.message.content.at(-1).text).toBe("correction");
     expect(lines).toContain(`· steer ${result.message.id}: correction`);
     expect(getTask(task.id)!.session_id).toBe("session-live");
+  });
+
+  test("a recorder-capable live turn settles after stdout and stderr exceed the transcript budget", async () => {
+    const script = [
+      "IFS= read -r first",
+      `for i in $(seq 1 500); do printf 'stderr-%04d-%0300d\\n' "$i" 0 >&2; done`,
+      `for i in $(seq 1 500); do printf '{"type":"assistant","message":{"content":[{"type":"text","text":"activity-%04d-%0300d"}]}}\\n' "$i" 0; done`,
+      `printf '%s\\n' '{"type":"result","result":"settled beyond capture","session_id":"session-bounded"}'`,
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const boundedCfg: WispConfig = { ...cfg, turnTranscriptBytes: 4 * 1024, logMaxBytes: 4 * 1024 };
+    const task = makeTask();
+    startTurn(task, "original", def, boundedCfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done", 20_000);
+
+    const [turn] = turnsFor(task.id);
+    const errPath = turn!.log_file.replace(/\.out\.log$/, ".err.log");
+    expect(turn).toMatchObject({
+      status: "done",
+      result: "settled beyond capture",
+      capture_mode: "recorder-v1",
+      capture_state: "degraded",
+    });
+    expect(turn!.omitted_records).toBeGreaterThan(0);
+    expect(turn!.omitted_bytes).toBeGreaterThan(0);
+    expect(statSync(turn!.log_file).size + statSync(errPath).size).toBeLessThanOrEqual(4 * 1024);
+    expect(getTask(task.id)).toMatchObject({ state: "done", session_id: "session-bounded" });
   });
 
   test("a mid-turn steer is recorded in the log where the harness accepted it", async () => {
@@ -765,7 +826,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     const [turn] = turnsFor(task.id);
     expect(turn?.result).toBe("SURVIVED");
     expect(getTask(task.id)?.state).not.toBe("failed");
-    expect(readFileSync(turn!.log_file, "utf8")).toContain("dropped an oversized live protocol frame");
+    expect(readFileSync(turn!.log_file, "utf8")).toContain("dropped an oversized stdout protocol frame");
   });
 
   test("Codex app-server steers the active turn with its expected turn id", async () => {

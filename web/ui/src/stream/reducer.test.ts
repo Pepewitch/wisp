@@ -91,6 +91,51 @@ describe("structured stream reducer", () => {
 })
 
 describe("activity tree", () => {
+  it("keeps a bounded visible tail and reports activity evicted from a long-running viewer", () => {
+    const events: ActivityEvent[] = Array.from({ length: 1_100 }, (_, index) => ({
+      kind: "tool" as const,
+      id: `tool-${index}`,
+      parentId: null,
+      phase: "started" as const,
+      name: "Read",
+      input: { index },
+    }))
+    const items = reduceActivity([], events)
+    expect(items).toHaveLength(1_000)
+    expect(items[0]).toEqual({
+      kind: "text",
+      id: "wisp-live-window",
+      omittedItems: 101,
+      text: "· 101 earlier live activity items omitted from this viewer",
+    })
+    expect(items[1]).toMatchObject({ id: "tool-101" })
+    expect(items.at(-1)).toMatchObject({ id: "tool-1099" })
+
+    const withLateCompletion = reduceActivity(items, [{
+      kind: "tool",
+      id: "tool-0",
+      parentId: null,
+      phase: "completed",
+      name: "tool",
+      output: "late result",
+    }])
+    expect(withLateCompletion).toHaveLength(1_000)
+    expect(withLateCompletion[0]).toMatchObject({ id: "wisp-live-window", omittedItems: 102 })
+    expect(withLateCompletion.at(-1)).toMatchObject({ id: "tool-0", output: "late result" })
+  })
+
+  it("bounds merged prose so repeated text activity cannot grow one item forever", () => {
+    const items = reduceActivity([], Array.from({ length: 100 }, (_, index) => ({
+      kind: "text" as const,
+      id: `text-${index}`,
+      parentId: null,
+      text: "x".repeat(1_000),
+    })))
+    expect(items).toHaveLength(1)
+    expect((items[0] as { text: string }).text.length).toBeLessThanOrEqual(32_768)
+    expect((items[0] as { text: string }).text).toContain("earlier text in this activity item omitted")
+  })
+
   it("correlates parallel tool results by id instead of adjacency", () => {
     const items = reduceActivity([], [
       { kind: "tool", id: "a", parentId: null, phase: "started", name: "Read", input: { file_path: "a.ts" } },

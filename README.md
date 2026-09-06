@@ -138,6 +138,11 @@ the turn has settled. Use `wisp show`, `wisp log -f`, `wisp send`, `wisp
 interrupt`, `wisp push`, and `wisp archive` for the rest of the lifecycle.
 Run `wisp help` for the complete CLI.
 
+Recorder-capable live turns do not fail merely because their activity stream
+outgrows the retained transcript budget. Wisp keeps draining the harness,
+checkpoints the outcome independently, and marks incomplete retained history;
+`wisp log -f` continues to show current activity.
+
 `wisp send <task> "correction"` is non-destructive. Wisp persists the message
 before delivery. During a running turn it uses the verified native steering
 channel for Claude, Droid, and Codex; other harnesses keep the message visibly

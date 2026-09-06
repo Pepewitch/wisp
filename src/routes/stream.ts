@@ -1,6 +1,7 @@
 import { createActivityFormatter, createEventFormatter, type ActivityEvent, type AdapterDef } from "../adapters";
 import { subscribe } from "../events";
 import { readSlice } from "../fsutil";
+import { subscribeTurnBroker, type BrokerGap, type TurnBrokerSubscription } from "../recording/broker";
 import { latestTurnForTask, turnForTask } from "../store";
 import type { Task, Turn } from "../types";
 import { err, integerQueryParam } from "./http";
@@ -82,6 +83,94 @@ const LOG_STREAM_POLL_MS = 500;
 /** Per-poll read cap — same tail -f semantics as the polling log endpoint. */
 const LOG_STREAM_SLICE = 262_144;
 
+type LogFormat = "activity" | "human" | "raw";
+type RenderedChunk =
+  | { kind: "text"; text: string }
+  | { kind: "activity"; activity: ActivityEvent[] };
+
+class TurnStreamRenderer {
+  private leftover = "";
+  private formatLine: ReturnType<typeof createEventFormatter>;
+  private activityLine: ReturnType<typeof createActivityFormatter>;
+
+  constructor(readonly format: LogFormat, private readonly def?: AdapterDef) {
+    this.formatLine = createEventFormatter(def);
+    this.activityLine = createActivityFormatter(def);
+  }
+
+  reset(): void {
+    this.leftover = "";
+    this.formatLine = createEventFormatter(this.def);
+    this.activityLine = createActivityFormatter(this.def);
+  }
+
+  chunk(chunk: string): RenderedChunk {
+    if (this.format === "raw") return { kind: "text", text: chunk };
+    const lines = (this.leftover + chunk).split("\n");
+    this.leftover = lines.pop() ?? "";
+    if (this.format === "activity") {
+      return { kind: "activity", activity: lines.flatMap((line) => this.activityLine(line)) };
+    }
+    return { kind: "text", text: lines.map((line) => this.formatLine(line)).filter((line) => line !== null).join("\n") };
+  }
+
+  record(line: string, sequence: number): RenderedChunk {
+    if (this.format === "activity") {
+      return { kind: "activity", activity: this.activityLine(line, sequence) };
+    }
+    return { kind: "text", text: this.formatLine(line) ?? "" };
+  }
+
+  gap(gap: BrokerGap): RenderedChunk {
+    const text = `· live display skipped ${gap.records} activity records (${gap.bytes} bytes) while the viewer was behind`;
+    return this.format === "activity"
+      ? { kind: "activity", activity: [{ kind: "text", id: `capture-gap-${gap.firstSequence}-${gap.lastSequence}`, parentId: null, text }] }
+      : { kind: "text", text };
+  }
+
+  flush(): RenderedChunk | null {
+    const line = this.leftover;
+    this.leftover = "";
+    if (!line || this.format === "raw") return null;
+    return this.record(line, 0);
+  }
+}
+
+async function pumpTurnBroker(
+  turn: number,
+  subscription: TurnBrokerSubscription,
+  renderer: TurnStreamRenderer,
+  active: () => boolean,
+  waitForCapacity: () => Promise<void>,
+  sendRendered: (event: "append", turn: number, rendered: RenderedChunk) => void,
+): Promise<void> {
+  for (;;) {
+    const delivery = await subscription.next();
+    if (!delivery || !active()) return;
+    await waitForCapacity();
+    if (!active()) return;
+    const rendered = delivery.kind === "gap"
+      ? renderer.gap(delivery)
+      : renderer.record(delivery.record.line, delivery.record.sequence);
+    sendRendered("append", turn, rendered);
+  }
+}
+
+function emitRendered(
+  send: (event: string, data: unknown) => void,
+  event: "backlog" | "append",
+  turn: number,
+  rendered: RenderedChunk,
+  prompt?: string,
+): void {
+  if (event === "append") {
+    const empty = rendered.kind === "activity" ? rendered.activity.length === 0 : rendered.text.length === 0;
+    if (empty) return;
+  }
+  const head = event === "backlog" ? { turn, prompt: prompt ?? "" } : { turn };
+  send(event, rendered.kind === "activity" ? { ...head, activity: rendered.activity } : { ...head, text: rendered.text });
+}
+
 /**
  * GET /api/tasks/:id/log/stream?turn=n&format=activity|human|raw — the streaming
  * replacement for tail polling: a progressive backlog from byte zero, append
@@ -99,12 +188,9 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   if (format !== "activity" && format !== "human" && format !== "raw") {
     return err(`format must be activity, human or raw, got '${format}'`, 400);
   }
-  // same validation the polling route has: turn=abc used to be coerced to
-  // "follow latest" — a client bug answered as if it were a choice
   const turn = integerQueryParam(url, "turn", 1);
   if (turn instanceof Response) return turn;
-  // a refused request must not consume a slot — the count moves only once
-  // the stream is certain to exist (and cleanup() hands it back)
+  // A refused request must not consume a subscriber slot.
   if (activeLogStreams >= MAX_LOG_STREAMS) return err("too many log stream subscribers", 503);
   activeLogStreams++;
   const requested = turn;
@@ -121,12 +207,12 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   let currentN: number | null = null;
   let logFile = "";
   let offset = 0;
-  let leftover = ""; // the CLI `log -f` idiom: a trailing partial line rides into the next chunk
   let lastOpened = 0;
   let ticking = false;
   let resumeDrain: (() => void) | null = null;
-  let formatLine = createEventFormatter(def);
-  let activityLine = createActivityFormatter(def);
+  let brokerSubscription: TurnBrokerSubscription | null = null;
+  let brokerPump: Promise<void> | null = null;
+  const renderer = new TurnStreamRenderer(format, def);
 
   const cleanup = (): void => {
     if (closed) return;
@@ -134,6 +220,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     unsubscribe?.();
     if (poll !== null) clearInterval(poll);
     if (hb !== null) clearInterval(hb);
+    brokerSubscription?.close();
+    brokerSubscription = null;
     resumeDrain?.();
     resumeDrain = null;
     activeLogStreams--;
@@ -155,88 +243,81 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     }
   };
 
-  type RenderedChunk =
-    | { kind: "text"; text: string }
-    | { kind: "activity"; activity: ActivityEvent[] };
+  const sendRendered = (event: "backlog" | "append", n: number, rendered: RenderedChunk, prompt?: string): void =>
+    emitRendered(send, event, n, rendered, prompt);
 
-  /**
-   * Human/activity formats consume complete JSONL records; raw keeps byte
-   * exact chunks. Structured activity is the web contract, while human stays
-   * stable for `wisp log` and existing API clients.
-   */
-  const renderChunk = (chunk: string): RenderedChunk => {
-    if (format === "raw") return { kind: "text", text: chunk };
-    const lines = (leftover + chunk).split("\n");
-    leftover = lines.pop() ?? "";
-    if (format === "activity") {
-      const out: ActivityEvent[] = [];
-      for (const line of lines) out.push(...activityLine(line));
-      return { kind: "activity", activity: out };
+  const drainPrimaryTo = async (turn: number, target: number): Promise<void> => {
+    while (offset < target) {
+      const slice = await readSlice(logFile, offset, Math.min(LOG_STREAM_SLICE, target - offset));
+      if (slice.size === offset) return;
+      offset = slice.size;
+      await waitForCapacity();
+      if (closed) return;
+      sendRendered("append", turn, renderer.chunk(slice.text));
     }
-    const out: string[] = [];
-    for (const line of lines) {
-      const rendered = formatLine(line);
-      if (rendered !== null) out.push(rendered);
-    }
-    return { kind: "text", text: out.join("\n") };
-  };
-
-  const sendRendered = (
-    event: "backlog" | "append",
-    turn: number,
-    rendered: RenderedChunk,
-    prompt?: string,
-  ): void => {
-    if (event === "append") {
-      const empty = rendered.kind === "activity" ? rendered.activity.length === 0 : rendered.text.length === 0;
-      if (empty) return;
-    }
-    const head = event === "backlog" ? { turn, prompt: prompt ?? "" } : { turn };
-    send(event, rendered.kind === "activity" ? { ...head, activity: rendered.activity } : { ...head, text: rendered.text });
   };
 
   const openTurn = async (turn: Turn): Promise<void> => {
     currentN = turn.n;
     lastOpened = turn.n;
     logFile = turn.log_file;
-    leftover = "";
-    formatLine = createEventFormatter(def); // dedupe state belongs to exactly one turn
-    activityLine = createActivityFormatter(def); // ids and lifecycle correlation belong to exactly one turn
+    brokerSubscription?.close();
+    brokerSubscription = format === "raw" ? null : subscribeTurnBroker(turn.id);
+    brokerPump = null;
+    renderer.reset(); // formatter state and lifecycle correlation belong to exactly one turn
     // From the START of the turn, offset-tracked so the append stream continues
     // exactly where the backlog stopped (no gap, no overlap). Anything past the
     // first-read budget is picked up by the ordinary append loop.
-    const backlog = await readSlice(turn.log_file, 0, LOG_BACKLOG_BYTES);
+    const snapshotEnd = brokerSubscription?.primaryOffset;
+    const firstReadBytes = snapshotEnd === undefined
+      ? LOG_BACKLOG_BYTES
+      : Math.min(LOG_BACKLOG_BYTES, snapshotEnd);
+    const backlog = await readSlice(turn.log_file, 0, firstReadBytes);
     offset = backlog.size;
     // the turn row stores the user's actual message (the wisp preamble lives
     // only in the spawned argv), so the stream pane can show each turn's prompt
-    const rendered = renderChunk(backlog.text);
+    const rendered = renderer.chunk(backlog.text);
     await waitForCapacity();
     if (closed) return;
     sendRendered("backlog", turn.n, rendered, turn.prompt);
+    if (snapshotEnd !== undefined) {
+      await drainPrimaryTo(turn.n, snapshotEnd);
+      if (closed) return;
+      brokerPump = pumpTurnBroker(
+        turn.n,
+        brokerSubscription!,
+        renderer,
+        () => !closed && currentN === turn.n,
+        waitForCapacity,
+        sendRendered,
+      );
+    }
   };
 
   /** The turn settled: drain every remaining byte (turn-end never precedes output), flush, report. */
   const endTurn = async (status: string): Promise<void> => {
     const n = currentN!;
-    for (;;) {
-      const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
-      if (slice.size === offset) break; // no new bytes
-      offset = slice.size;
-      await waitForCapacity();
-      if (closed) return;
-      sendRendered("append", n, renderChunk(slice.text));
-    }
-    if (format !== "raw" && leftover) {
-      await waitForCapacity();
-      if (closed) return;
-      if (format === "activity") {
-        sendRendered("append", n, { kind: "activity", activity: activityLine(leftover) });
-      } else {
-        const rendered = formatLine(leftover);
-        if (rendered !== null) sendRendered("append", n, { kind: "text", text: rendered });
+    if (brokerPump) {
+      await brokerPump;
+      brokerPump = null;
+      brokerSubscription?.close();
+      brokerSubscription = null;
+    } else {
+      for (;;) {
+        const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
+        if (slice.size === offset) break; // no new bytes
+        offset = slice.size;
+        await waitForCapacity();
+        if (closed) return;
+        sendRendered("append", n, renderer.chunk(slice.text));
       }
     }
-    leftover = "";
+    const final = renderer.flush();
+    if (final) {
+      await waitForCapacity();
+      if (closed) return;
+      sendRendered("append", n, final);
+    }
     await waitForCapacity();
     if (closed) return;
     send("turn-end", { turn: n, status });
@@ -261,12 +342,14 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
           }
           return;
         }
-        const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
-        if (slice.size !== offset) {
-          offset = slice.size;
-          await waitForCapacity();
-          if (closed) return;
-          sendRendered("append", currentN, renderChunk(slice.text));
+        if (!brokerPump) {
+          const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
+          if (slice.size !== offset) {
+            offset = slice.size;
+            await waitForCapacity();
+            if (closed) return;
+            sendRendered("append", currentN, renderer.chunk(slice.text));
+          }
         }
         const row = turnForTask(task.id, currentN);
         if (row && row.status !== "running") {

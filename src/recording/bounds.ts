@@ -247,10 +247,11 @@ export class SequencedRecordBudget {
     }
   }
 
-  offer(json: string, category = "event"): RecordAdmission {
+  offer(json: string, category = "event", allowRetention = true): RecordAdmission {
     const sequence = ++this.sequence;
     const bytes = utf8Bytes(json) + 1; // persisted JSONL includes the newline
-    const retained = this.retainedRecords < this.maxRecords && this.retainedBytes + bytes <= this.maxBytes;
+    const retained =
+      allowRetention && this.retainedRecords < this.maxRecords && this.retainedBytes + bytes <= this.maxBytes;
     if (retained) {
       this.retainedRecords++;
       this.retainedBytes += bytes;

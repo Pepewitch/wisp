@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { authorized, postSession, route } from "../src/daemon";
+import { closeTurnBroker, openTurnBroker, TurnBroker } from "../src/recording/broker";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
 import { formatSteerNote } from "../src/turn-notes";
 
@@ -480,6 +481,44 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
     }
   });
 
+  test("a recorder stream switches atomically from its file snapshot to direct live activity", async () => {
+    const log = join(dir, "broker-snapshot.out.log");
+    const initial = `${JSON.stringify({ type: "message", role: "assistant", text: "retained" })}\n`;
+    writeFileSync(log, initial);
+    const task = makeTask();
+    const turnId = createTurn(task.id, 1, "watch it", null, log, null, null, "recorder-v1");
+    const broker = openTurnBroker(turnId);
+    broker.setPrimaryOffset(Buffer.byteLength(initial));
+
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=activity&turn=1`);
+    const reader = res.body!.getReader();
+    const sse = sseReader(reader);
+    try {
+      const backlog = await sse.nextFrame();
+      expect(JSON.parse(backlog.data)).toMatchObject({
+        turn: 1,
+        prompt: "watch it",
+        activity: [{ kind: "text", text: "retained" }],
+      });
+
+      const direct = JSON.stringify({ type: "message", role: "assistant", text: "not retained" });
+      broker.publish({ sequence: 42, source: "stdout", line: direct });
+      const append = await sse.nextFrame();
+      expect(JSON.parse(append.data)).toEqual({
+        turn: 1,
+        activity: [{ kind: "text", id: "text-42-1", parentId: null, timestamp: null, text: "not retained" }],
+      });
+      expect(await Bun.file(log).text()).not.toContain("not retained");
+
+      closeTurnBroker(turnId);
+      finishTurn(turnId, "done", 0, "done");
+      expect((await sse.nextFrame()).event).toBe("turn-end");
+    } finally {
+      closeTurnBroker(turnId);
+      await reader.cancel();
+    }
+  });
+
   test(
     "human format: formatted backlog, appended bytes, partial-line buffering, turn-end, cross-turn switch, state events",
     // poll cadence is 500ms and the partial-line absence check costs 1.5s — this needs room over bun's 5s default
@@ -632,5 +671,33 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
     } finally {
       await reader.cancel();
     }
+  });
+});
+
+describe("bounded live activity broker", () => {
+  test("a slow subscriber gets an explicit gap followed by the retained tail", async () => {
+    const broker = new TurnBroker();
+    const subscriber = broker.subscribe(2, 1_000);
+    broker.publish({ sequence: 1, source: "stdout", line: "one" });
+    broker.publish({ sequence: 2, source: "stdout", line: "two" });
+    broker.publish({ sequence: 3, source: "stdout", line: "three" });
+    broker.close();
+
+    expect(await subscriber.next()).toEqual({
+      kind: "gap",
+      firstSequence: 1,
+      lastSequence: 1,
+      records: 1,
+      bytes: 4,
+    });
+    expect(await subscriber.next()).toEqual({
+      kind: "record",
+      record: { sequence: 2, source: "stdout", line: "two" },
+    });
+    expect(await subscriber.next()).toEqual({
+      kind: "record",
+      record: { sequence: 3, source: "stdout", line: "three" },
+    });
+    expect(await subscriber.next()).toBeNull();
   });
 });
