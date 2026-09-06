@@ -57,6 +57,10 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   per-task log stream carries append-oriented transcript/activity data.
 - Browser SSE and WebSockets authenticate with the daemon-minted cookie.
   Bearer tokens do not belong in URLs.
+- A shell outlives its socket and holds exactly ONE attachment, so the latest
+  client to connect owns it and the previous one is told it was displaced. Two
+  clients on one task — a browser and the desktop app — is therefore normal
+  and visible, never a terminal that silently ignores what you type.
 
 ### Adapters
 

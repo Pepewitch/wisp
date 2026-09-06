@@ -76,6 +76,14 @@ export class ReplayBuffer {
   }
 }
 
+/**
+ * What a client is told when another one takes its shell. The wording names
+ * the remedy, because reconnecting is exactly how the taking is undone — the
+ * pane's `retry` reattaches and the shell comes back with its scrollback.
+ */
+export const DISPLACED_MESSAGE =
+  "another window attached to this shell — retry to take it back";
+
 /** The sessions map key: one shell per (task, tab), so tabs are real shells. */
 export function sessionKey(taskId: string, shellId: number): string {
   return `${taskId}:${shellId}`;
@@ -382,10 +390,24 @@ class TerminalSession {
     return this.client === null && now - this.detachedAt > IDLE_MS;
   }
 
+  /**
+   * One shell, one attachment: the arriving client owns the process from here.
+   *
+   * The displaced client is TOLD, because nothing else would tell it. Its
+   * socket stays open and its screen keeps the output it already had, so the
+   * terminal looks live — while `accepts` drops every keystroke it sends and
+   * the daemon suppresses even that error to avoid spamming a stale client.
+   * Opening the same task in a browser and in the desktop app therefore left
+   * one of them a shell you could type into and get nothing from.
+   */
   attach(client: TerminalClient): void {
     if (this.finished) throw new Error(`terminal task ${this.taskId}: shell has already exited`);
+    const displaced = this.client;
     this.client = client;
     this.detachedAt = 0;
+    if (displaced && displaced !== client && displaced.isOpen()) {
+      displaced.sendError(DISPLACED_MESSAGE);
+    }
   }
 
   detach(client: TerminalClient): void {
