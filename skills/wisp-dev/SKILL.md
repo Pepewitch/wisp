@@ -42,7 +42,7 @@ Wisp has one authoritative daemon and several clients:
 | Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `tests/harness-facts/`, fixtures, and narrow contract tests |
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
 | Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/ui/README.md`, both runtime paths, the owning component/hook, and its tests |
-| Change the desktop shell's native core, proxy, connections, or credentials | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md) then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
+| Change the desktop shell's native core, proxy, connections, credentials, or updater | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md), [Desktop updates](../../docs/DESKTOP-UPDATES.md), then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
 | Prepare or publish a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
 | Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
@@ -91,6 +91,8 @@ publication surfaces.
    affected paths, and document intentional divergence. Never accept a
    browser-only pass for shared code or a desktop-only pass for code also
    served by the daemon.
+   Application-global Desktop state and connection-scoped daemon state must
+   remain visibly distinct; a tab change must never retarget delayed work.
 6. A shipped UI change includes a regenerated `web/ui-dist/index.html`, which
    both clients consume. Never edit that bundle by hand.
 7. Keep this entry point thin. Put durable workflow or rationale in the

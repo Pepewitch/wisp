@@ -9,9 +9,10 @@ Start with the repository-wide [architecture](../docs/ARCHITECTURE.md), then
 use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
-The alpha requires macOS 12.3 or newer on Apple Silicon. Release builds are
-ad-hoc signed and are not notarized yet; the installation guide must keep that
-limitation visible until Developer ID signing is part of the release pipeline.
+The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
+builds are ad-hoc signed. The tag release pipeline requires Developer ID
+signing, notarization, stapling, and updater signing before publication. The
+published alpha.8 predates that pipeline and remains ad-hoc signed.
 
 Status: working alpha. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned
@@ -21,6 +22,13 @@ Desktop support is a second runtime behind the `DaemonTransport` interface,
 not a change to how the browser build authenticates. Shared React changes must
 still be checked in both runtimes because the exact same generated bundle ships
 in each product.
+
+Desktop updates are a native capability, not a daemon route. The Update Center
+shows one global application row and one selected-daemon row with explicit
+labels. Native code owns the channel endpoint, updater key, candidate, download,
+installation path, and relaunch. The webview can only request a check and
+confirm the exact version it was shown. See
+[`docs/DESKTOP-UPDATES.md`](../docs/DESKTOP-UPDATES.md).
 
 ## Why there is a native core at all
 
@@ -44,6 +52,7 @@ transport all live in Rust.
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
 | `src-tauri/src/notifications.rs` | macOS task notifications and the click that reopens the task |
+| `src-tauri/src/updater.rs` | Fixed-channel discovery, signed app installation, status events, relaunch |
 | `src-tauri/src/core.rs` | The command surface, free of `tauri` types so it is testable |
 | `src-tauri/src/commands.rs` | One-line Tauri adapters over `core.rs` |
 
@@ -182,6 +191,10 @@ The other commands:
 | `apply_local_wisp_setup` | `expectedStep` | `LocalSetupReport` |
 | `open_external_url` | `url` | `void` |
 | `notify_task_transition` | `notification: { connectionId, taskId, title, body }` | `void` |
+| `desktop_update_status` | — | `DesktopUpdateStatus` |
+| `check_desktop_update` | — | `DesktopUpdateStatus` |
+| `install_desktop_update` | `confirmedVersion` | `DesktopUpdateStatus` |
+| `relaunch_desktop` | — | `void` |
 
 Two adjustments the React shell has to absorb:
 
@@ -251,10 +264,11 @@ bash scripts/desktop/build-macos.sh --app-only  # .app only
 
 The build refreshes `web/ui-dist`, derives `icons/icon.icns` from the committed
 `icons/icon.png` (a generated brand asset — run `bun run brand` to change it),
-and bundles for `aarch64-apple-darwin`. The complete `.app` receives an ad-hoc
-signature, but it is **not Developer ID signed or Apple-notarized**. Nothing in
-this tree disables Gatekeeper; the experimental build may require the normal
-Finder Open confirmation until release credentials are available.
+and bundles for `aarch64-apple-darwin`. A local build receives an ad-hoc
+signature and is **not** a distributable release. The tag workflow replaces
+that posture with a timestamped Developer ID signature, hardened runtime,
+notarization, and a stapled ticket. Nothing in this tree disables Gatekeeper;
+an ad-hoc development build may require the normal Finder Open confirmation.
 
 ## Install and release
 
@@ -273,9 +287,12 @@ uses the standard Formula service and asks before initializing or starting it.
 the Cargo, Tauri, plist, and compiled user-agent versions agree, verifies the
 arm64-only Mach-O deployment minimum and complete signature, rejects an
 unexpected bundle member or builder path, and produces a deterministic
-`Wisp.app` archive plus manifest and checksums. The tag workflow rebuilds it
-with a second isolated Cargo target and requires byte-identical output before
-publication.
+`Wisp.app` archive plus manifest and checksums. The tag workflow first rebuilds
+the ad-hoc payload with a second isolated Cargo target and requires byte-identical
+output. It then creates one timestamped, Developer ID signed and notarized
+archive, updater-signs those exact bytes, independently verifies both trust
+chains, and publishes the update channel only after anonymous verification.
+The full contract is in [Desktop updates](../docs/DESKTOP-UPDATES.md).
 
 Uninstalling the Cask quits and removes the app but does not delete native
 metadata or Keychain entries. Remove remote connections or use **Reset desktop

@@ -8,7 +8,7 @@ configured harness credential as security-sensitive.
 
 | Version | Security fixes |
 |---|---|
-| Current `0.4.0-alpha.x` | Best effort while the alpha is current; experimental Apple Silicon builds are not Developer ID signed or notarized |
+| Current `0.4.0-alpha.x` | Best effort while the alpha is current; public Desktop alpha.8 is not Developer ID signed or notarized, while future tag releases are gated on both |
 | Earlier development versions | No |
 
 There is no production-supported release yet.
@@ -42,8 +42,9 @@ There is no production-supported release yet.
 6. Review task branches before merging or pushing them.
 7. For the experimental Apple Silicon alpha, install only through the
    documented `Pepewitch/tap/wisp` Formula or `wisp-desktop` Cask, verify the
-   GitHub owner and checksum, and do not disable Gatekeeper globally. Developer
-   ID signing and notarization remain mandatory before an Apple Silicon RC.
+   GitHub owner and checksum, and do not disable Gatekeeper globally. Future
+   Desktop tag releases require Developer ID signing, notarization, stapling,
+   and updater-signature verification before publication.
 
 The update API accepts only a newer release returned by the fixed
 `Pepewitch/wisp` GitHub endpoint. Linux activation verifies the published
@@ -70,6 +71,14 @@ failure is reported and retained as a cleanup tombstone for **Reset desktop
 data** or the next launch to retry. It never deletes daemon data.
 See [Desktop transport contract](docs/DESKTOP-TRANSPORT.md) for the complete
 boundary.
+
+Desktop application updates use a native-owned fixed channel and embedded
+public key. The webview cannot choose the endpoint, artifact URL, signature,
+key, download path, or installation path. Release automation verifies the
+updater signature independently, rechecks Developer ID and notarization after
+archiving, and advances the channel only after the public bytes pass anonymous
+verification. Homebrew remains the bootstrap and recovery installer. See
+[Desktop updates](docs/DESKTOP-UPDATES.md).
 
 See [Remote access](docs/REMOTE-ACCESS.md) for supported access patterns.
 

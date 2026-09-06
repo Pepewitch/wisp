@@ -58,7 +58,7 @@ describe("Wisp Desktop release metadata", () => {
     expect(desktopTargetDir(root, resolve(root, "outside-target"))).toBe(resolve(root, "outside-target"));
   });
 
-  test("detects linker-generated Mach-O UUID load commands", () => {
+  test("detects the Mach-O UUID required by current macOS", () => {
     expect(machOHasUuid("Load command 8\n      cmd LC_UUID\n  cmdsize 24\n")).toBe(true);
     expect(machOHasUuid("Load command 8\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n")).toBe(false);
   });

@@ -1,169 +1,268 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
+import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
+import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
 import type { UpdateStatus } from "@/lib/types"
 
-import { WispUpdateControl } from "./update-control"
+import { UpdateCenter, WispUpdateControl } from "./update-control"
 
-const STATUS: UpdateStatus = {
-  currentVersion: "0.4.0-alpha.6",
-  latestVersion: null,
+const DAEMON_STATUS: UpdateStatus = {
+  currentVersion: "0.4.0-alpha.8",
+  latestVersion: "0.4.0-alpha.9",
   currentApiProtocolVersion: 1,
-  latestApiProtocolVersion: null,
-  state: "up-to-date",
+  latestApiProtocolVersion: 1,
+  state: "available",
   installMethod: "homebrew",
   canAutoUpdate: true,
   message: null,
-  checkedAt: "2026-09-05T12:00:00.000Z",
+  checkedAt: "2026-09-06T12:00:00Z",
 }
 
-describe("WispUpdateControl", () => {
-  it("shows the daemon version when Wisp is current", () => {
-    render(<WispUpdateControl status={STATUS} updating={false} error={null} onUpdate={() => {}} />)
-    expect(screen.getByText("0.4.0-alpha.6")).toHaveAttribute("title", "Wisp 0.4.0-alpha.6")
-  })
+const DESKTOP_STATUS: DesktopUpdateStatus = {
+  channel: "alpha",
+  configured: true,
+  currentVersion: "0.4.0-alpha.8",
+  latestVersion: "0.4.0-alpha.9",
+  phase: "available",
+  releaseNotes: "Signed updater support.",
+  publishedAt: "2026-09-06T12:00:00Z",
+  checkedAt: "2026-09-06T12:01:00Z",
+  downloadedBytes: 0,
+  totalBytes: 100,
+  message: null,
+}
 
-  it("becomes an update button for an automatic update", () => {
+function desktopUpdater(
+  overrides: Partial<DesktopUpdaterContextValue> = {}
+): DesktopUpdaterContextValue {
+  return {
+    status: DESKTOP_STATUS,
+    pending: false,
+    error: null,
+    checkAfterLaunch: true,
+    check: vi.fn(async () => undefined),
+    install: vi.fn(async () => undefined),
+    relaunch: vi.fn(async () => undefined),
+    setCheckAfterLaunch: vi.fn(),
+    ...overrides,
+  }
+}
+
+function renderCenter({
+  desktop = desktopUpdater(),
+  daemonStatus = DAEMON_STATUS,
+  daemonError = null,
+  daemonOperation = null,
+  connectionId = "local",
+  connectionName = "Local",
+}: {
+  desktop?: DesktopUpdaterContextValue
+  daemonStatus?: UpdateStatus
+  daemonError?: string | null
+  daemonOperation?: {
+    connectionId: string
+    connectionName: string
+    phase: "installing" | "restarting"
+  } | null
+  connectionId?: string
+  connectionName?: string
+} = {}) {
+  render(
+    <UpdateCenter
+      desktop={desktop}
+      daemonStatus={daemonStatus}
+      daemonError={daemonError}
+      daemonOperation={daemonOperation}
+      connectionId={connectionId}
+      connectionName={connectionName}
+      supportedApiProtocols={[1]}
+      onUpdateDesktop={() => undefined}
+      onUpdateDaemon={() => undefined}
+    />
+  )
+  fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+}
+
+describe("browser daemon update control", () => {
+  it("uses an explicitly daemon-scoped action", () => {
     const onUpdate = vi.fn()
     render(
       <WispUpdateControl
-        status={{ ...STATUS, state: "available", latestVersion: "0.4.0-alpha.8" }}
+        status={DAEMON_STATUS}
         updating={false}
         error={null}
         onUpdate={onUpdate}
-      />,
+      />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Update 0.4.0-alpha.8" }))
-    expect(onUpdate).toHaveBeenCalledWith("0.4.0-alpha.8")
+    fireEvent.click(
+      screen.getByRole("button", { name: "Update daemon 0.4.0-alpha.9" })
+    )
+    expect(onUpdate).toHaveBeenCalledWith("0.4.0-alpha.9")
   })
 
-  it("keeps an unsupported update informational", () => {
-    render(
-      <WispUpdateControl
-        status={{
-          ...STATUS,
-          state: "available",
-          latestVersion: "0.4.0-alpha.8",
-          installMethod: "unsupported",
-          canAutoUpdate: false,
-          message: "source builds update manually",
-        }}
-        updating={false}
-        error={null}
-        onUpdate={() => {}}
-      />,
-    )
-    expect(screen.queryByRole("button")).not.toBeInTheDocument()
-    expect(screen.getByText("0.4.0-alpha.6")).toHaveAttribute("title", "source builds update manually")
-  })
-
-  it("blocks a daemon update outside the native Desktop protocol", () => {
-    render(
-      <WispUpdateControl
-        status={{
-          ...STATUS,
-          state: "available",
-          latestVersion: "0.5.0",
-          latestApiProtocolVersion: 2,
-        }}
-        updating={false}
-        error={null}
-        onUpdate={() => {}}
-        supportedApiProtocolVersion={1}
-        connectionName="Local lab"
-      />,
-    )
-    expect(screen.queryByRole("button")).not.toBeInTheDocument()
-    expect(screen.getByText("Update blocked")).toHaveAttribute(
-      "title",
-      "Wisp 0.5.0 uses API protocol 2; this Desktop supports protocol 1 — Local lab",
-    )
-  })
-
-  it("names the active Desktop connection throughout the update lifecycle", () => {
-    const available = { ...STATUS, state: "available" as const, latestVersion: "0.4.0-alpha.8" }
+  it("names daemon progress and failures", () => {
     const { rerender } = render(
       <WispUpdateControl
-        status={available}
-        updating={false}
-        error={null}
-        onUpdate={() => {}}
-        connectionName="Remote lab"
-      />,
-    )
-    expect(screen.getByRole("button", { name: "Update 0.4.0-alpha.8" })).toHaveAttribute(
-      "title",
-      "Install Wisp 0.4.0-alpha.8 and restart — Remote lab",
-    )
-
-    rerender(
-      <WispUpdateControl
-        status={{ ...available, state: "installing" }}
+        status={{ ...DAEMON_STATUS, state: "installing" }}
         updating
         error={null}
-        onUpdate={() => {}}
-        connectionName="Local lab"
-      />,
+        onUpdate={() => undefined}
+      />
     )
-    expect(screen.getByRole("button", { name: "Updating…" })).toHaveAttribute(
-      "title",
-      "Installing Wisp 0.4.0-alpha.8 — Local lab",
-    )
+    expect(
+      screen.getByRole("button", { name: "Updating daemon…" })
+    ).toBeDisabled()
 
     rerender(
       <WispUpdateControl
-        status={{ ...available, state: "failed" }}
+        status={{ ...DAEMON_STATUS, state: "failed" }}
         updating={false}
-        error="synthetic update failure"
-        onUpdate={() => {}}
-        connectionName="Remote lab"
-      />,
+        error="Synthetic failure"
+        onUpdate={() => undefined}
+      />
     )
-    expect(screen.getByRole("button", { name: "Retry update" })).toHaveAttribute(
-      "title",
-      "synthetic update failure — Remote lab",
-    )
+    expect(
+      screen.getByRole("button", { name: "Retry daemon update" })
+    ).toHaveAttribute("title", "Synthetic failure")
+  })
+})
+
+describe("Desktop update center", () => {
+  it("renders separately scoped Desktop and selected-daemon rows", () => {
+    renderCenter()
+    expect(
+      screen.getByRole("button", { name: /Updates.*2/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("region", { name: "Wisp Desktop update" })
+    ).toHaveTextContent("0.4.0-alpha.8 → 0.4.0-alpha.9")
+    expect(
+      screen.getByRole("button", { name: "Update Desktop and relaunch" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("region", { name: "Local daemon update" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeInTheDocument()
   })
 
-  it("shows progress and offers a retry after failure", () => {
-    const available = { ...STATUS, latestVersion: "0.4.0-alpha.8" }
+  it("does not count or offer an incompatible daemon update", () => {
+    renderCenter({
+      daemonStatus: {
+        ...DAEMON_STATUS,
+        latestVersion: "0.5.0",
+        latestApiProtocolVersion: 2,
+      },
+    })
+    expect(
+      screen.getByRole("button", { name: /Updates.*1/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
+    expect(screen.getByText(/Update Desktop first/)).toBeInTheDocument()
+  })
+
+  it("does not offer a daemon update with unknown candidate protocol", () => {
+    renderCenter({
+      daemonStatus: {
+        ...DAEMON_STATUS,
+        latestApiProtocolVersion: null,
+      },
+    })
+    expect(
+      screen.getByRole("button", { name: /Updates.*1/ })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
+    expect(screen.getByText(/protocol unknown/)).toBeInTheDocument()
+  })
+
+  it("keeps an operation on another tab named and does not paint the active daemon busy", () => {
+    renderCenter({
+      daemonOperation: {
+        connectionId: "build",
+        connectionName: "Build host",
+        phase: "restarting",
+      },
+      connectionId: "local",
+      connectionName: "Local",
+    })
+    expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
+    expect(
+      screen.getByText(/Build host daemon is restarting/)
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
+    expect(
+      screen.getByRole("button", { name: "Update Desktop and relaunch" })
+    ).toBeDisabled()
+  })
+
+  it("shows bounded download progress and the relaunch recovery action", () => {
     const { rerender } = render(
-      <WispUpdateControl
-        status={{ ...available, state: "installing" }}
-        updating
-        error={null}
-        onUpdate={() => {}}
-      />,
+      <UpdateCenter
+        desktop={desktopUpdater({
+          pending: true,
+          status: {
+            ...DESKTOP_STATUS,
+            phase: "downloading",
+            downloadedBytes: 25,
+          },
+        })}
+        daemonStatus={DAEMON_STATUS}
+        daemonError={null}
+        daemonOperation={null}
+        connectionId="local"
+        connectionName="Local"
+        supportedApiProtocols={[1]}
+        onUpdateDesktop={() => undefined}
+        onUpdateDaemon={() => undefined}
+      />
     )
-    expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled()
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    expect(
+      screen.getByRole("progressbar", { name: "Desktop update download" })
+    ).toHaveAttribute("aria-valuenow", "25")
 
     rerender(
-      <WispUpdateControl
-        status={{ ...available, state: "failed", message: "update failed: tap unavailable" }}
-        updating={false}
-        error={null}
-        onUpdate={() => {}}
-      />,
+      <UpdateCenter
+        desktop={desktopUpdater({
+          error: "Relaunch was interrupted",
+          status: { ...DESKTOP_STATUS, phase: "ready-to-relaunch" },
+        })}
+        daemonStatus={DAEMON_STATUS}
+        daemonError={null}
+        daemonOperation={null}
+        connectionId="local"
+        connectionName="Local"
+        supportedApiProtocols={[1]}
+        onUpdateDesktop={() => undefined}
+        onUpdateDaemon={() => undefined}
+      />
     )
-    expect(screen.getByRole("button", { name: "Retry update" })).toHaveAttribute(
-      "title",
-      "update failed: tap unavailable",
-    )
+    expect(
+      screen.getByRole("button", { name: "Relaunch Desktop" })
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
   })
 
-  it("does not stay disabled after restart polling times out", () => {
-    render(
-      <WispUpdateControl
-        status={{ ...STATUS, state: "restarting", latestVersion: "0.4.0-alpha.8" }}
-        updating={false}
-        error="Wisp 0.4.0-alpha.8 did not start within 300 seconds"
-        onUpdate={() => {}}
-      />,
-    )
-    expect(screen.queryByRole("button")).not.toBeInTheDocument()
-    expect(screen.getByText("Update failed")).toHaveAttribute(
-      "title",
-      "Wisp 0.4.0-alpha.8 did not start within 300 seconds",
-    )
+  it("blocks daemon updates while a Desktop install is in flight", () => {
+    renderCenter({
+      desktop: desktopUpdater({
+        pending: true,
+        status: { ...DESKTOP_STATUS, phase: "downloading" },
+      }),
+    })
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toBeDisabled()
   })
 })

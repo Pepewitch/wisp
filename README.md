@@ -43,12 +43,14 @@ lifecycle state, and phone-capable steering.
 | Platform | Current v0.4 claim |
 |---|---|
 | Ubuntu 24.04 LTS, x86_64, glibc | Experimental alpha |
-| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; ad-hoc signed and not notarized |
+| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; public alpha.8 is ad-hoc signed and not notarized |
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
-is machine qualification only. Apple Silicon support is not Developer ID
-signed or notarized.
+is machine qualification only. The published alpha.8 is not Developer ID
+signed or notarized. Source now requires future Desktop tag releases to pass
+Developer ID signing, notarization, stapling, and updater-signature verification
+before publication.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -94,6 +96,12 @@ brew install --cask Pepewitch/tap/wisp-desktop
 The Cask declares `Pepewitch/tap/wisp` as a required Formula dependency, so a
 fresh machine gets the CLI/daemon too. Install only the Formula with
 `brew install Pepewitch/tap/wisp` when the desktop app is not wanted.
+
+Homebrew bootstraps and repairs Wisp Desktop. Starting with the first future
+signed release, the app's **Updates** popover can install later signed Desktop
+versions itself; the selected daemon has a separate, explicitly named update
+row. Alpha.8 predates the updater, so moving from it to that first signed
+release requires `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
 
 See [Apple Silicon installation](docs/INSTALL-MACOS.md) for the current
 platform limits and activation steps.
@@ -207,9 +215,11 @@ remote daemon must already be reachable through trusted HTTPS or a
 user-managed exact-loopback tunnel.
 
 The first alpha requires Apple Silicon and is configured for macOS 12.3 or
-newer, but that oldest version has not been broadly qualified. It is ad-hoc
-signed and not notarized, so first launch may require Finder's Open command or
-Privacy & Security approval. Do not disable Gatekeeper globally.
+newer, but that oldest version has not been broadly qualified. Published
+alpha.8 is ad-hoc signed and not notarized, so first launch may require Finder's
+Open command or Privacy & Security approval. Future Desktop tag releases fail
+closed unless Developer ID signing and notarization succeed. Do not disable
+Gatekeeper globally. See [Desktop updates](docs/DESKTOP-UPDATES.md).
 
 For another device, keep Wisp bound to loopback and use Tailscale Serve or an
 SSH tunnel. Never publish the configured Wisp port directly to the internet.

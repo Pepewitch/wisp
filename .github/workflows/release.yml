@@ -118,6 +118,31 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+      - name: require Desktop release credentials
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for name in \
+            APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+            APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY \
+            TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          do
+            test -n "${!name}" || {
+              echo "missing required Desktop release secret: $name" >&2
+              exit 1
+            }
+          done
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          install -m 600 /dev/null "$key_path"
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
       - name: build web bundle
         run: bun run build:ui
       - name: committed web bundle is current
@@ -145,6 +170,24 @@ jobs:
             shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
             shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 
+      # Timestamped Apple signatures are intentionally not byte-reproducible.
+      # The two builds above prove the unsigned/ad-hoc payload; this final pass
+      # signs, notarizes, staples, archives once, and updater-signs those exact
+      # bytes. release-desktop re-extracts the archive and runs every Apple
+      # trust check again before returning.
+      - name: build the trusted Desktop release archive
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
+            bun run scripts/release-desktop.ts --require-tag --signed
+
       - name: resolve version and require release notes
         id: version
         run: |
@@ -158,7 +201,7 @@ jobs:
           name: linux-release-assets
           path: dist/release/${{ github.ref_name }}
 
-      - name: verify all nine checksums
+      - name: verify all ten assets through their checksum sets
         run: |
           cd "dist/release/$GITHUB_REF_NAME"
           shasum -a 256 -c SHA256SUMS
@@ -206,7 +249,11 @@ jobs:
           bun run scripts/render-homebrew-cask.ts \
             --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
             --output "$tap/Casks/wisp-desktop.rb"
-          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb)"
+          bun run scripts/render-desktop-update-channel.ts \
+            --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
+            --notes "${{ steps.version.outputs.notes }}" \
+            --output "$tap/updates/wisp-desktop-alpha.json"
+          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb updates/wisp-desktop-alpha.json)"
           actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
           test "$actual" = "$expected"
           brew tap-new --no-git Pepewitch/tap
@@ -219,7 +266,7 @@ jobs:
           brew audit --strict --cask Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
-      # releasing.md step 6: one prerelease, the exact nine assets, and the
+      # releasing.md step 6: one prerelease, the exact ten assets, and the
       # release notes as the body. Never clobber or mutate after publishing.
       - name: publish the GitHub prerelease
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
@@ -238,6 +285,7 @@ jobs:
             dist/release/${{ github.ref_name }}/release-manifest-darwin-arm64.json
             dist/release/${{ github.ref_name }}/SHA256SUMS-darwin-arm64
             dist/release/${{ github.ref_name }}/wisp-desktop-${{ github.ref_name }}-darwin-arm64.tar.gz
+            dist/release/${{ github.ref_name }}/wisp-desktop-${{ github.ref_name }}-darwin-arm64.tar.gz.sig
             dist/release/${{ github.ref_name }}/release-manifest-desktop-darwin-arm64.json
             dist/release/${{ github.ref_name }}/SHA256SUMS-desktop-darwin-arm64
 
@@ -254,6 +302,7 @@ jobs:
             release-manifest-darwin-arm64.json \
             SHA256SUMS-darwin-arm64 \
             "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
             release-manifest-desktop-darwin-arm64.json \
             SHA256SUMS-desktop-darwin-arm64
           do
@@ -274,20 +323,45 @@ jobs:
             shasum -a 256 -c SHA256SUMS &&
             shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
             shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
+          cargo run --quiet --locked \
+            --manifest-path desktop/src-tauri/Cargo.toml \
+            --bin verify-update-signature \
+            --features release-verifier -- \
+            "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
+            desktop/src-tauri/updater-public.key
+          tampered="$(mktemp)"
+          cp "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" "$tampered"
+          printf 'tampered' >> "$tampered"
+          if cargo run --quiet --locked \
+            --manifest-path desktop/src-tauri/Cargo.toml \
+            --bin verify-update-signature \
+            --features release-verifier -- \
+            "$tampered" \
+            "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
+            desktop/src-tauri/updater-public.key
+          then
+            echo "updater signature accepted a changed artifact" >&2
+            exit 1
+          fi
+          extracted="$(mktemp -d)"
+          tar -xzf "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" -C "$extracted"
+          codesign --verify --deep --strict --verbose=2 "$extracted/Wisp.app"
+          xcrun stapler validate "$extracted/Wisp.app"
+          spctl --assess --type execute --verbose=4 "$extracted/Wisp.app"
 
       # releasing.md step 8: now that URLs exist, run online audits and update
-      # exactly the two prepared tap files in one commit.
+      # exactly the three prepared tap files in one commit.
       - name: audit the published Homebrew Formula and Cask
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           brew audit --strict --online Pepewitch/tap/wisp
-          # This custom-tap alpha is both prerelease and explicitly ad-hoc
-          # signed. Keep strict online checks, excluding only the inapplicable
-          # stable-release and Gatekeeper policies disclosed by the Cask.
+          # This custom-tap channel intentionally carries prereleases. Signing
+          # and Gatekeeper checks remain enabled for the Developer ID build.
           brew audit --strict --online --cask \
-            --except signing,github_prerelease_version \
+            --except github_prerelease_version \
             Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
@@ -296,12 +370,12 @@ jobs:
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           git -C "$tap" fetch origin main
           test "$(git -C "$tap" rev-parse HEAD)" = "$(git -C "$tap" rev-parse origin/main)"
-          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb)"
+          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb updates/wisp-desktop-alpha.json)"
           actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
           test "$actual" = "$expected"
           git -C "$tap" config user.name "github-actions[bot]"
           git -C "$tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb
+          git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb updates/wisp-desktop-alpha.json
           staged="$(git -C "$tap" diff --cached --name-only | LC_ALL=C sort)"
           test "$staged" = "$expected"
           git -C "$tap" diff --quiet
@@ -309,3 +383,8 @@ jobs:
           git -C "$tap" commit -m "release: update Wisp to ${GITHUB_REF_NAME#v}"
           git -C "$tap" push origin HEAD:main
           git -C "$tap" log -1 --stat
+          public_channel="$(mktemp)"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json" \
+            -o "$public_channel"
+          cmp -s "$tap/updates/wisp-desktop-alpha.json" "$public_channel"

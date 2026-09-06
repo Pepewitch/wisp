@@ -33,6 +33,12 @@ absent. Desktop Local uses the standard Wisp profile; each saved remote tab is
 a separate reachable daemon. Installation, connections, native project
 picking, and removal behavior are in the setup reference.
 
+Desktop and daemon releases are independent. In Desktop, use the **Updates**
+popover: **Wisp Desktop** is the global signed application update and the named
+daemon row applies only to the selected connection. Public alpha.8 predates
+self-update; bootstrap the first signed updater release through Homebrew with
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
+
 ## 2. Creating tasks
 
     wisp new <repo> "prompt" --harness <droid|claude|codex|cursor>

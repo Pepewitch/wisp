@@ -6,14 +6,29 @@ import { VERSION } from "../src/version";
 
 function manifest(overrides: Partial<DesktopReleaseManifest> = {}): DesktopReleaseManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "wisp-desktop",
     version: VERSION,
     commit: "a".repeat(40),
     dirty: false,
     target: { os: "darwin", arch: "arm64", minimumVersion: "12.3" },
     minimumSystemVersion: "macOS 12.3 (Apple Silicon arm64)",
-    signing: { kind: "ad-hoc", developerId: false, notarized: false, timestamp: false },
+    signing: {
+      kind: "developer-id",
+      developerId: true,
+      notarized: true,
+      timestamp: true,
+      hardenedRuntime: true,
+      identity: "Developer ID Application: Example (ABCDEFGHIJ)",
+      teamIdentifier: "ABCDEFGHIJ",
+    },
+    publishedAt: "2026-09-06T12:00:00.000Z",
+    updater: {
+      algorithm: "minisign-ed25519",
+      signatureFile: `wisp-desktop-v${VERSION}-darwin-arm64.tar.gz.sig`,
+      signature: "synthetic-signature",
+      publicKeySha256: "d".repeat(64),
+    },
     bundle: { directory: "Wisp.app", identifier: "dev.wisp.desktop" },
     artifact: {
       file: `wisp-desktop-v${VERSION}-darwin-arm64.tar.gz`,
@@ -42,9 +57,10 @@ describe("Homebrew Cask rendering", () => {
     expect(cask).toContain("depends_on macos: :monterey");
     expect(cask).toContain('app "Wisp.app"');
     expect(cask).toContain('uninstall quit: "dev.wisp.desktop"');
-    expect(cask).toContain('skip "Wisp Desktop is currently distributed as a prerelease"');
+    expect(cask).toContain('json["version"]');
+    expect(cask).toContain("auto_updates true");
     expect(cask).toContain("macOS 12.3 or newer");
-    expect(cask).toContain("not Developer ID signed or notarized");
+    expect(cask).toContain("Developer ID signed and notarized");
     expect(cask).toContain("Reset desktop data before uninstalling");
     expect(cask).not.toMatch(/API_KEY|PASSWORD|access.token|bearer/i);
   });
@@ -56,14 +72,20 @@ describe("Homebrew Cask rendering", () => {
     expect(() =>
       renderHomebrewCask(manifest({ artifact: { ...manifest().artifact, sha256: "bad" } })),
     ).toThrow("invalid desktop artifact SHA-256");
+    expect(() =>
+      renderHomebrewCask(manifest({
+        updater: { ...manifest().updater!, signatureFile: "another.sig" },
+      })),
+    ).toThrow("not the approved signed Apple Silicon desktop release");
     expect(() => renderHomebrewCask(manifest({ target: { ...manifest().target, arch: "x86_64" as "arm64" } }))).toThrow(
-      "not the approved ad-hoc Apple Silicon desktop alpha",
+      "not the approved signed Apple Silicon desktop release",
     );
   });
 
-  test("authenticates online audits and records the ad-hoc signing exception", () => {
+  test("authenticates online audits without a signing exception", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
     expect(workflow).toContain("HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}");
-    expect(workflow).toContain("--except signing,github_prerelease_version");
+    expect(workflow).not.toContain("--except signing,github_prerelease_version");
+    expect(workflow).toContain("--except github_prerelease_version");
   });
 });

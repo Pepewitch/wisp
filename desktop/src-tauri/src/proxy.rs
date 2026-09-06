@@ -591,13 +591,19 @@ async fn ensure_pinned_identity(
     let seen_protocol = body
         .get("apiProtocolVersion")
         .and_then(serde_json::Value::as_u64);
-    if seen_protocol != Some(crate::probe::API_PROTOCOL_VERSION.into()) {
+    if !seen_protocol.is_some_and(|version| {
+        u32::try_from(version).is_ok_and(crate::probe::supports_api_protocol)
+    }) {
         return Err(Box::new(refuse(
             StatusCode::CONFLICT,
             "incompatible-protocol",
             format!(
-                "this Wisp Desktop supports daemon API protocol {}, but the daemon reported {}",
-                crate::probe::API_PROTOCOL_VERSION,
+                "this Wisp Desktop supports daemon API protocol(s) {}, but the daemon reported {}; update Desktop for a newer daemon, or update the daemon out of band for an older one",
+                crate::probe::SUPPORTED_API_PROTOCOL_VERSIONS
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 seen_protocol.map_or_else(|| "unknown".to_string(), |value| value.to_string())
             ),
         )));
@@ -714,15 +720,21 @@ async fn ensure_compatible_daemon_update(
             format!("could not read update compatibility: {error}"),
         ))
     })?;
-    let supported = crate::probe::API_PROTOCOL_VERSION;
-    if compatibility.current_api_protocol_version != supported
-        || compatibility.latest_api_protocol_version != Some(supported)
+    if !crate::probe::supports_api_protocol(compatibility.current_api_protocol_version)
+        || !compatibility
+            .latest_api_protocol_version
+            .is_some_and(crate::probe::supports_api_protocol)
     {
         return Err(Box::new(refuse(
             StatusCode::CONFLICT,
             "incompatible-update",
             format!(
-                "this Desktop supports daemon API protocol {supported}; the requested update targets protocol {}",
+                "this Desktop supports daemon API protocol(s) {}; the requested update targets protocol {}",
+                crate::probe::SUPPORTED_API_PROTOCOL_VERSIONS
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 compatibility
                     .latest_api_protocol_version
                     .map_or_else(|| "unknown".to_string(), |value| value.to_string())

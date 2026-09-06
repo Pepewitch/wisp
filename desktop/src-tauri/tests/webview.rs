@@ -99,3 +99,31 @@ fn script_src_keeps_its_tauri_managed_hashes() {
         "the inline bundle script must be authorized by a hash"
     );
 }
+
+/// Updater and relaunch authority stays behind bespoke Rust commands. Merely
+/// installing the official plugin must never grant its generic commands to
+/// the shared webview.
+#[test]
+fn the_webview_has_no_direct_native_update_or_system_authority() {
+    let capability = include_str!("../capabilities/default.json");
+    for forbidden in ["updater:", "process:", "shell:", "fs:", "http:", "dialog:"] {
+        assert!(
+            !capability.contains(forbidden),
+            "default capability unexpectedly grants {forbidden}"
+        );
+    }
+}
+
+/// Tauri deserializes plugin configuration before the updater builder can
+/// replace this inert value with the key compiled from updater-public.key.
+/// Keep every endpoint and dangerous transport option out of the mutable JSON
+/// configuration; the bespoke native updater owns those policy decisions.
+#[test]
+fn updater_configuration_is_parseable_but_carries_no_network_policy() {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+    assert_eq!(
+        config["plugins"]["updater"],
+        serde_json::json!({ "pubkey": "UNCONFIGURED" })
+    );
+}

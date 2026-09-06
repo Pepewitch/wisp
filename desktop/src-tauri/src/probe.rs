@@ -11,8 +11,24 @@ use crate::urls::join_upstream;
 
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Native shell/daemon contract understood by this desktop build.
-pub const API_PROTOCOL_VERSION: u32 = 1;
+/// Native shell/daemon contracts this Desktop build actually implements.
+///
+/// Keep this as a set even while it contains one value: a protocol transition
+/// must first ship a Desktop that genuinely implements both versions. Adding a
+/// number here without matching request/response behavior is not compatibility.
+pub const SUPPORTED_API_PROTOCOL_VERSIONS: &[u32] = &[1];
+
+pub fn supports_api_protocol(version: u32) -> bool {
+    SUPPORTED_API_PROTOCOL_VERSIONS.contains(&version)
+}
+
+fn supported_api_protocols() -> String {
+    SUPPORTED_API_PROTOCOL_VERSIONS
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 pub fn is_instance_id(value: &str) -> bool {
     let bytes = value.as_bytes();
@@ -61,10 +77,8 @@ pub enum ProbeError {
     Refused(u16),
     #[error("that address answered, but not with a Wisp daemon identity")]
     Malformed,
-    #[error(
-        "that daemon uses API protocol {0}, but this desktop supports protocol {API_PROTOCOL_VERSION}"
-    )]
-    IncompatibleProtocol(u32),
+    #[error("that daemon uses API protocol {seen}, but this Desktop supports {supported}; update Desktop when the daemon is newer, or update the daemon out of band when it is older", supported = supported_api_protocols())]
+    IncompatibleProtocol { seen: u32 },
 }
 
 /// The subset of `/api/capabilities` the desktop shell acts on. Extra fields
@@ -107,10 +121,10 @@ pub async fn probe(
     if !is_instance_id(&identity.instance_id) || !is_version(&identity.version) {
         return Err(ProbeError::Malformed);
     }
-    if identity.api_protocol_version != API_PROTOCOL_VERSION {
-        return Err(ProbeError::IncompatibleProtocol(
-            identity.api_protocol_version,
-        ));
+    if !supports_api_protocol(identity.api_protocol_version) {
+        return Err(ProbeError::IncompatibleProtocol {
+            seen: identity.api_protocol_version,
+        });
     }
     Ok(identity)
 }

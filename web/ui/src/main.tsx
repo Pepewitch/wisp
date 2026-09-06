@@ -9,6 +9,7 @@ import { DesktopBootstrapScreen } from "@/components/desktop-bootstrap-screen"
 import { queryClient } from "@/lib/query"
 import { desktopBridge } from "@/lib/desktop-bridge"
 import { DesktopApplicationProvider } from "@/lib/desktop-connections"
+import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 
@@ -22,7 +23,9 @@ createRoot(document.getElementById("root")!).render(
         <DesktopBootstrapScreen promise={desktopBootstrap}>
           {(bootstrap) => (
             <DesktopApplicationProvider initial={bootstrap}>
-              <App />
+              <DesktopUpdaterProvider>
+                <App />
+              </DesktopUpdaterProvider>
             </DesktopApplicationProvider>
           )}
         </DesktopBootstrapScreen>

@@ -32,6 +32,11 @@
       "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "UNCONFIGURED"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [
@@ -47,7 +52,8 @@
     "copyright": "MIT",
     "macOS": {
       "minimumSystemVersion": "12.3",
-      "signingIdentity": "-"
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist"
     }
   }
 }

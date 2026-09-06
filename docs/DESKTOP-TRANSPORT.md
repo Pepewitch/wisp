@@ -249,9 +249,13 @@ pick_local_project       native folder picker, restricted to Local
 setup_local_wisp         diagnose the local install without changing it
 apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
 open_external_url        hand an http(s) link to the machine's browser
+desktop_update_status    read global application-update state; no network
+check_desktop_update     check the one native-owned release channel
+install_desktop_update   install only the exact pending confirmed version
+relaunch_desktop         relaunch only after native installation completes
 ```
 
-`open_external_url` is the one command with no connection in it. A link in a
+`open_external_url` and the Desktop updater commands carry no connection. A link in a
 task's prose belongs to the internet, not to the daemon that reported it. It
 exists because the packaged webview has no new-window handler, so
 `target="_blank"` is inert there and every link simply did nothing; `http` and
@@ -264,6 +268,11 @@ One native event flows the other way: `desktop://focus-task` carries
 `{ connectionId, taskId }` when a task notification is clicked. The React shell
 treats it as routing input — it validates both IDs like bootstrap metadata and
 ignores a connection it does not have — and never as a credential or a target.
+
+The updater is application-global by design; it never selects or mutates a
+daemon. Its endpoint, public key, candidate, URL, signature, installation path,
+and relaunch gate are native-owned rather than webview arguments. See
+[Desktop updates](DESKTOP-UPDATES.md) for that separate trust boundary.
 
 `desktop_bootstrap` returns a per-launch unguessable proxy base of the form
 `http://127.0.0.1:<ephemeral>/<capability>`. Every daemon route is that base
