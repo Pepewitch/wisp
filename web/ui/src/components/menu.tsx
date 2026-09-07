@@ -21,6 +21,7 @@ export function Menu({
   side = "bottom",
   disabled = false,
   iconOnly = false,
+  "aria-label": ariaLabel,
   className,
   open,
   onOpenChange,
@@ -35,17 +36,24 @@ export function Menu({
   disabled?: boolean
   /** square glyph trigger, no text and no chevron — for an overflow menu */
   iconOnly?: boolean
+  /**
+   * The trigger's accessible name when its own text is the VALUE rather than
+   * the field — a settings row's `Dark` needs to announce itself as `Theme`.
+   * `iconOnly` keeps naming itself from `label`.
+   */
+  "aria-label"?: string
   className?: string
   /** Controls the menu when a caller must coordinate it with another overlay. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }) {
+  const name = ariaLabel ?? (iconOnly && typeof label === "string" ? label : undefined)
   return (
     <Base.Root open={open} onOpenChange={(nextOpen) => onOpenChange?.(nextOpen)}>
       <Base.Trigger
         disabled={disabled}
-        aria-label={iconOnly && typeof label === "string" ? label : undefined}
-        title={iconOnly && typeof label === "string" ? label : undefined}
+        aria-label={name}
+        title={name}
         className={cn(
           "flex h-[26px] shrink-0 items-center gap-1.5 rounded-md text-[12px] transition-colors",
           iconOnly ? "w-[26px] justify-center px-0" : "px-2",

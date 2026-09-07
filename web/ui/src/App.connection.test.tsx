@@ -132,3 +132,19 @@ describe("connection-bound update recovery", () => {
     expect(recoverSecond).not.toHaveBeenCalled()
   })
 })
+
+describe("the top bar's settings gear", () => {
+  it("opens Wisp settings, with the appearance section inside", async () => {
+    render(
+      <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
+        <App />
+      </DaemonRuntimeProvider>,
+    )
+
+    expect(screen.queryByRole("heading", { name: "Settings" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }))
+
+    expect(await screen.findByRole("heading", { name: "Settings" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Theme" })).toBeInTheDocument()
+  })
+})

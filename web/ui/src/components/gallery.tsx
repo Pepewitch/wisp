@@ -17,13 +17,13 @@ import { Button, DiffStat, Eyebrow, Meta, PaneHeader, POPOVER_SURFACE, Rule, Sta
 import { Prose } from "@/components/prose"
 import { ProbePanel } from "@/components/probe-panel"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
+import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
 import { UpdateGallerySpecimen } from "@/components/update-gallery-specimen"
-import { ThemeControl } from "@/components/theme-control"
 import { STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { useTheme } from "@/lib/theme"
@@ -110,21 +110,20 @@ function ThemeSpecimen() {
   const theme = useTheme()
   return (
     <Section title="Theme — two, and every token paired">
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
-          <ThemeControl />
-          <span className="text-[12px] text-fg-secondary">
-            System · Light · Dark, from the sidebar footer. Now showing <span className="font-mono">{theme}</span>.
-          </span>
+        <div className="flex flex-wrap items-start gap-8">
+          <SettingsSpecimen />
+          <p className="min-w-[280px] flex-1 text-[11.5px] leading-relaxed text-muted-foreground">
+            The live control, from the top bar's gear — this page follows it, and it is showing{" "}
+            <span className="font-mono">{theme}</span> now. Dark is Wisp's own and stays the default, so an
+            update repaints nobody's window. Light is the same meanings at the other end of the scale, not an
+            inversion: page surfaces recede DOWN from the reading column, while menus and hover cards stay
+            white and earn their depth from a shadow. Every token below is paired, and{" "}
+            <span className="font-mono">color-scheme</span> rides along so the platform's own scrollbar, caret
+            and controls follow — a dark app on a light Mac used to flash a white scrollbar over this page on
+            hover. No <span className="font-mono">dark:</span> utilities anywhere; a colour that needs both
+            themes is a token, or it is a bug.
+          </p>
         </div>
-        <p className="mt-4 text-[11.5px] leading-relaxed text-muted-foreground">
-          Dark is Wisp's own and stays the default — an update repaints nobody's window. Light is the same
-          meanings at the other end of the scale, not an inversion: page surfaces recede DOWN from the reading
-          column, while menus and hover cards stay white and earn their depth from a shadow. Every token below
-          is paired, and <span className="font-mono">color-scheme</span> rides along so the platform's own
-          scrollbar, caret and controls follow — a dark app on a light Mac used to flash a white scrollbar over
-          this page on hover. No <span className="font-mono">dark:</span> utilities anywhere; a colour that
-          needs both themes is a token, or it is a bug.
-        </p>
     </Section>
   )
 }

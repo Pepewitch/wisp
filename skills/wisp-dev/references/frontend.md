@@ -106,8 +106,7 @@ it never meets or passes `--card`.
 ### Two themes, and every token paired
 
 Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
-`Dark` in the sidebar footer (`components/theme-control.tsx`) — one control,
-reached on touch through the drawer that carries the same footer.
+`Dark` in **Wisp settings** (§5g), under `Appearance`.
 
 - **Dark is the default**, not the OS's answer. It is what `:root` paints and
   what `index.html` already carries, so an update repaints nobody's window and
@@ -527,6 +526,36 @@ query. Keep polling `none` so a newly opened PR appears; stop asking for each
 terminal merged/closed PR. On provider failure, keep the last successful answer
 with an explicit stale bit and back that repository off exponentially, capped
 at 15 minutes. One unavailable repository must not throttle the others.
+
+### 5g. Wisp settings — the gear that is not a project's
+
+`components/settings-dialog.tsx` is the app's own settings modal, opened by the
+**gear at the right end of the top bar** and, on touch, by the gear in the
+drawer footer — the drawer has no top bar, and the modal opens only after the
+drawer closes, because a dialog under an open drawer cannot be reached. Exactly
+one gear per shell: a second one on the pointer footer would be two doors to
+one room.
+
+Two gears exist in this app and they are not the same door. A **project row's**
+gear opens that project's settings — daemon state about one repo (§5d). The
+**top bar's** gear opens Wisp's, which is client-local preference state for
+this app on this device, and the modal's header says exactly that rather than
+leaving someone to wonder whether a remote just changed.
+
+- **Nothing is saved and nothing is cancelled.** A preference applies the
+  moment it is picked, so the footer holds `Done` and no `Save`. A modal that
+  can be abandoned needs draft state; a preference does not have any.
+- **A section per family, one labelled row per setting.** `Appearance` owns
+  `Theme` today. The section's eyebrow is the group and the row carries the
+  field's name, so a second appearance setting is a row rather than a rewrite.
+- **A pick from a set is the app's one dropdown** (`Menu` + `MenuRadioGroup`),
+  the same control the composer uses for the decisions you make rarely. Its
+  trigger text is the VALUE, so the trigger takes an explicit `aria-label` for
+  the field — `Dark` alone announces nothing.
+- Preferences that already live in their own surface stay there while that
+  surface is where the decision belongs (the updater's *Check after launch*
+  sits with the update it governs). This modal is not a junk drawer for
+  everything client-local.
 
 ## 6. Panes and dividers
 

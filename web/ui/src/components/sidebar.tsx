@@ -3,7 +3,6 @@ import { useState } from "react"
 import { ChevronDown, FolderAdd, Gear, Plus } from "@/components/icons"
 import { Button, Eyebrow } from "@/components/primitives"
 import { TaskRow, TaskRowTouch } from "@/components/task-row"
-import { ThemeControl } from "@/components/theme-control"
 import type { ProjectGroup } from "@/lib/projects"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -29,6 +28,11 @@ interface SidebarProps {
   onShowArchivedChange: (value: boolean) => void
   onNewTask: (repoPath: string) => void
   onConfigureProject: (repoPath: string) => void
+  /**
+   * Opens Wisp's settings. Only the TOUCH footer offers it: the pointer shell
+   * has the top bar's gear, and two gears for one modal is one too many.
+   */
+  onOpenSettings?: () => void
   /** Desktop-only: native picker for Local, daemon path prompt for remotes. */
   onAddProject?: () => void
   addProjectPending?: boolean
@@ -54,6 +58,7 @@ export function Sidebar({
   onShowArchivedChange,
   onNewTask,
   onConfigureProject,
+  onOpenSettings,
   onAddProject,
   addProjectPending = false,
   error,
@@ -135,7 +140,7 @@ export function Sidebar({
       <div
         className={cn(
           "flex shrink-0 items-center border-t border-border",
-          touch ? "h-14 px-2" : "h-10 pr-1.5 pl-3.5",
+          touch ? "h-14 px-2" : "h-10 pl-3.5",
         )}
         style={touch ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}
       >
@@ -166,13 +171,11 @@ export function Sidebar({
           </span>
           <span className={cn("text-muted-foreground", touch ? "text-[13px]" : "text-[11.5px]")}>Show archived</span>
         </button>
-        {/* the archived switch is flex-1 on touch, so only the pointer footer
-            needs a spacer to push the theme menu to the far edge */}
-        {!touch && <span className="flex-1" />}
-        {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}
-        <span className={cn("flex shrink-0 items-center justify-center", touch && "size-11")}>
-          <ThemeControl />
-        </span>
+        {touch && onOpenSettings && (
+          <Button size="lg" icon aria-label="Settings" onClick={onOpenSettings}>
+            <Gear />
+          </Button>
+        )}
       </div>
     </aside>
   )
