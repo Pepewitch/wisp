@@ -1,8 +1,4 @@
-# Wisp 0.4.0-alpha.9
-
-**Release outcome:** this candidate stopped at the Desktop reproducibility
-gate before signing or publication. No alpha.9 GitHub release or Homebrew
-update was created; the corrected release candidate is alpha.10.
+# Wisp 0.4.0-alpha.11
 
 This is an **experimental feature prerelease**, not a production-ready
 release. It is the first Wisp Desktop build prepared for Developer ID signing,
@@ -11,6 +7,12 @@ Apple notarization, and cryptographically signed in-app updates.
 The desktop app targets Apple Silicon macOS 12.3 or newer. Intel macOS remains
 unsupported, and the configured deployment minimum is not evidence that every
 macOS version in that range has been qualified.
+
+Alpha.9 failed its Desktop reproducibility gate before signing, and alpha.10
+passed that gate before exposing a Bash 3.2 incompatibility on the credentialed
+build path. Neither candidate published a GitHub release or Homebrew update.
+Alpha.11 retains the fail-closed release gates, the corrected clean-rebuild
+path, and signing arguments that work with the macOS runner's system Bash.
 
 At release preparation time, Developer ID signing, notarization, stapling,
 public-download verification, and installed-app qualification are pending. The
@@ -28,7 +30,7 @@ open -a Wisp
 ```
 
 The public alpha.8 app predates the Desktop updater. Existing users must
-bootstrap alpha.9 through Homebrew, including `--greedy` because the new Cask
+bootstrap alpha.11 through Homebrew, including `--greedy` because the new Cask
 declares that the application can update itself:
 
 ```sh
@@ -43,7 +45,7 @@ Linux installation remains:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.4.0-alpha.9/scripts/install.sh |
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.4.0-alpha.11/scripts/install.sh |
   sh
 ```
 
@@ -60,6 +62,11 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   Developer ID signature, hardened runtime, trusted timestamp, notarization,
   stapled ticket, independent updater-signature verification, anonymous
   public-byte verification, and strict Homebrew audits.
+- Made the Desktop clean-rebuild proof use one stable Cargo target path while
+  still deleting every cached artifact between passes. This keeps Apple's
+  required Mach-O UUID deterministic instead of weakening the launch contract.
+- Made credentialed Desktop build arguments compatible with the system Bash on
+  GitHub's macOS runner without changing the unsigned local-build behavior.
 - Added macOS task notifications for tasks that finish, need input, fail, or
   become stuck. Activating a notification focuses the relevant connection and
   task.
@@ -74,9 +81,9 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 ## Known limits
 
-- Alpha.9 is the updater bootstrap release. Alpha.8 cannot discover it, and a
-  single alpha.9 installation does not prove self-update. The first complete
-  updater qualification requires leaving alpha.9 installed, publishing a
+- Alpha.11 is the updater bootstrap release. Alpha.8 cannot discover it, and a
+  single alpha.11 installation does not prove self-update. The first complete
+  updater qualification requires leaving alpha.11 installed, publishing a
   second signed version, and updating to it through **Updates**.
 - Apple Silicon support has limited single-machine qualification; Intel Macs
   are unsupported.
@@ -93,14 +100,14 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 The tag workflow must publish exactly these ten immutable assets:
 
-- `wisp-v0.4.0-alpha.9-linux-x86_64`
+- `wisp-v0.4.0-alpha.11-linux-x86_64`
 - `release-manifest.json`
 - `SHA256SUMS`
-- `wisp-v0.4.0-alpha.9-darwin-arm64.tar.gz`
+- `wisp-v0.4.0-alpha.11-darwin-arm64.tar.gz`
 - `release-manifest-darwin-arm64.json`
 - `SHA256SUMS-darwin-arm64`
-- `wisp-desktop-v0.4.0-alpha.9-darwin-arm64.tar.gz`
-- `wisp-desktop-v0.4.0-alpha.9-darwin-arm64.tar.gz.sig`
+- `wisp-desktop-v0.4.0-alpha.11-darwin-arm64.tar.gz`
+- `wisp-desktop-v0.4.0-alpha.11-darwin-arm64.tar.gz.sig`
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
