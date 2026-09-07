@@ -9,12 +9,9 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { TaskActions } from "./task-actions"
 
 /**
- * The regression this file guards: one `confirm` state used to do two jobs, so
- * a failed FRESH SESSION fell into the archive flow and opened the ARCHIVE
- * dialog — the daemon's "turn 2 is still running" under an "Archive anyway"
- * button that would have archived the task. Two states, two dialogs: a refused
- * fresh session renders its own close-only dialog with the server's sentence,
- * and only a refused archive ever shows "Archive anyway".
+ * The overflow is rename and archive. Copy branch and Fresh session used to
+ * live here; they must not reappear. Archive still uses the shared confirm so
+ * a refusal shows "Archive anyway" and never a different verb's dialog.
  */
 
 const TASK: ApiTask = {
@@ -78,7 +75,15 @@ async function pick(itemName: string) {
   fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(itemName) }))
 }
 
-describe("the overflow menu's two dialogs", () => {
+describe("the overflow menu", () => {
+  it("offers rename and archive only", async () => {
+    mount(<TaskActions task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+
+    const items = await screen.findAllByRole("menuitem")
+    expect(items.map((el) => el.textContent)).toEqual(["Rename", "Archive"])
+  })
+
   it("renames the task from the triple-dot menu", async () => {
     const calls = stubApi(() => ({ status: 200, body: { ...TASK, title: "Clear task name" } }))
     mount(<TaskActions task={TASK} />)
@@ -98,25 +103,6 @@ describe("the overflow menu's two dialogs", () => {
         body: { title: "Clear task name" },
       }),
     )
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
-  })
-
-  it("a failed fresh session shows ITS error and never the archive dialog", async () => {
-    const reason = "turn 2 is still running — interrupt it first"
-    stubApi(() => ({ status: 409, body: { error: reason } }))
-    mount(<TaskActions task={TASK} />)
-
-    await pick("Fresh session")
-
-    // the daemon's own sentence, verbatim, under the verb's own title
-    expect(await screen.findByText(reason)).toBeInTheDocument()
-    expect(screen.getByRole("dialog")).toHaveTextContent("Fresh session")
-    // the failure mode that shipped: this same refusal opening the archive confirm
-    expect(screen.queryByRole("button", { name: "Archive anyway" })).toBeNull()
-    expect(screen.queryByText(/Archive .*\?/)).toBeNull()
-
-    // nothing to confirm — the dialog offers only to be closed
-    fireEvent.click(screen.getByRole("button", { name: "Close" }))
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   })
 
