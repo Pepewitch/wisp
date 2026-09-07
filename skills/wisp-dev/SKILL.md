@@ -31,7 +31,7 @@ Wisp has one authoritative daemon and several clients:
   SSE streams are realtime delivery, never a ledger.
 - Harness-specific argv and wire knowledge stays under `src/adapters/`.
 - The React app uses Query for replaceable server state and a separate reducer
-  for append-oriented activity. One generated, committed HTML file ships in
+  for append-oriented activity. One generated, Git-ignored HTML file ships in
   both the daemon and Tauri app; transport and state scope vary by runtime.
 
 ## Route the task before reading deeply
@@ -93,8 +93,9 @@ publication surfaces.
    served by the daemon.
    Application-global Desktop state and connection-scoped daemon state must
    remain visibly distinct; a tab change must never retarget delayed work.
-6. A shipped UI change includes a regenerated `web/ui-dist/index.html`, which
-   both clients consume. Never edit that bundle by hand.
+6. `web/ui-dist/index.html` is derived and Git-ignored. Never edit, stage, or
+   commit it. Supported test/build commands generate the bundle they exercise;
+   tag CI owns the canonical release copy consumed by both clients.
 7. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.

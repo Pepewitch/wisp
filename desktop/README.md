@@ -267,20 +267,23 @@ the daemon-served browser path and this desktop path; native-only verification
 does not cover code embedded in both clients.
 
 ```sh
-cd desktop/src-tauri
-cargo test                                # native unit + integration tests
-cargo clippy --all-targets -- -D warnings
-cargo fmt --all --check
+bun run desktop:check # builds the shared UI, then formats, lints, and tests Rust
 ```
+
+Tauri embeds the generated UI during Rust compilation. If you run Cargo
+commands directly from `desktop/src-tauri`, run `bun run build:ui` from the
+repository root first.
 
 ```sh
 bash scripts/desktop/build-macos.sh             # .app + .dmg
 bash scripts/desktop/build-macos.sh --app-only  # .app only
 ```
 
-The build refreshes `web/ui-dist`, derives `icons/icon.icns` from the committed
-`icons/icon.png` (a generated brand asset — run `bun run brand` to change it),
-and bundles for `aarch64-apple-darwin`. A local build receives an ad-hoc
+Ordinary builds refresh the ignored `web/ui-dist`; release CI instead supplies
+the checksum-verified canonical bundle used by every artifact. The build
+derives `icons/icon.icns` from the committed `icons/icon.png` (a generated
+brand asset — run `bun run brand` to change it), and bundles for
+`aarch64-apple-darwin`. A local build receives an ad-hoc
 signature and is **not** a distributable release. The tag workflow replaces
 that posture with a timestamped Developer ID signature, hardened runtime,
 notarization, and a stapled ticket. Nothing in this tree disables Gatekeeper;

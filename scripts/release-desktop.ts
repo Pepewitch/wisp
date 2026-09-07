@@ -374,7 +374,6 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
     ...process.env,
     CARGO_TARGET_DIR: targetDir,
   });
-  run(["git", "-C", root, "diff", "--exit-code", "--", "web/ui-dist"]);
   const afterBuild = sourceIdentity(root);
   if (afterBuild.dirty || afterBuild.commit !== identity.commit) {
     throw new Error("desktop build changed the clean release source");

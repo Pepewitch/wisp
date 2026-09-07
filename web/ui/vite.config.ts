@@ -29,8 +29,8 @@ export default defineConfig({
   // singlefile honest even for anything that cannot be inlined
   base: "./",
   build: {
-    // committed bundle: the daemon text-imports web/ui-dist/index.html and
-    // serves exactly that one file, with no asset routes behind it
+    // Derived bundle: PR and release jobs generate web/ui-dist/index.html,
+    // which the daemon embeds and Tauri packages with no asset routes behind it.
     outDir: "../ui-dist",
     emptyOutDir: true,
   },

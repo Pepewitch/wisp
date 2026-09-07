@@ -2,8 +2,8 @@
 
 The React application used by both Wisp clients: the daemon serves it at `/` in
 a browser, and Wisp Desktop packages it in a Tauri webview. React 19 + Vite +
-Tailwind v4 + shadcn (on base-ui primitives) build to **one committed
-single-file bundle** at [`web/ui-dist/index.html`](../ui-dist/index.html).
+Tailwind v4 + shadcn (on base-ui primitives) build to **one Git-ignored,
+derived single-file bundle** at `web/ui-dist/index.html`.
 It is a Bun workspace managed by the repository root lockfile.
 
 Three sources are binding law before you write any of it:
@@ -48,10 +48,13 @@ asserts both halves (a 404 on `/vendor/*`, and no `src=`/`href=` in the built
 `<head>` except the `data:` favicon). That is what makes Wisp work over
 tailscale with nothing else reachable, and it is a hard invariant (D1, D12).
 
-`web/ui-dist/index.html` is **committed**, so a UI change that ships needs
-`bun run build:ui` in the same commit. A test compares the daemon-served bytes
-to the committed artifact, and the Tauri configuration packages that same
-directory. There is no second desktop bundle to update by hand.
+`web/ui-dist/index.html` is deliberately **not committed**. Supported test,
+development, Desktop, and release commands generate it before anything consumes
+it. Tests compare the daemon-served bytes with that generated artifact, and the
+Tauri configuration packages the same directory. There is no second desktop
+bundle to update by hand. Tag CI builds one canonical copy, verifies its
+checksum after transfer to the macOS runner, and packages those exact bytes in
+both release products.
 
 ## Layout
 
@@ -89,25 +92,25 @@ runtime-only behavior. In particular, review auth, cache/storage scope, late
 callbacks, SSE, WebSockets, media URLs, terminal ownership, and daemon update
 recovery whenever a change touches them.
 
-During iteration, run the root gate and regenerate the shared artifact:
+During iteration, run the root gate; it generates the shared artifact before
+the tests that exercise it:
 
 ```sh
 bun run check
-bun run build:ui
 ```
 
-Review and include `web/ui-dist/index.html` with its source change. After the
-source and generated bundle are staged or committed, rebuild and require the
-artifact to remain clean:
+Do not review or stage `web/ui-dist/index.html`. When the compiled boundary is
+affected, build the binary from the generated artifact as a separate check:
 
 ```sh
 bun run build
-git diff --exit-code -- web/ui-dist/index.html
 ```
 
-The root gate covers both workspaces: lint, typecheck, and unit tests. The
-second build plus diff check proves that the committed single-file bundle
-matches its source.
+The root gate covers both workspaces: bundle generation, lint, typecheck, and
+unit tests. The build proves the generated single-file application embeds in
+the daemon. Release CI separately proves reproducibility and exact sharing
+between daemon and Desktop artifacts; Git cleanliness is no longer a proxy for
+either property.
 
 Run `bun run desktop:check` when native code changes or when a daemon/UI change
 affects rules the native core enforces: capability or identity negotiation,

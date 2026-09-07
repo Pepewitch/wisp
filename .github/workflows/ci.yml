@@ -20,10 +20,9 @@ jobs:
         # build.ts skips them (rather than failing) when there is no browser
         run: bun run brand:check
       - name: end-to-end smoke (fake harness)
-        run: bash scripts/smoke.sh
-      - name: build (the compiled binary must not break silently)
-        run: bun run build
-      - name: committed web bundle is current
-        run: git diff --exit-code -- web/ui-dist/index.html
+        run: bun run smoke
+      - name: build (the compiled binary must embed the generated UI)
+        # `bun run check` already built and exercised the ignored bundle.
+        run: bun run build:binary
       - name: build linux-x64 deploy artifact
         run: bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/wisp-linux-x64
