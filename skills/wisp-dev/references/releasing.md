@@ -204,7 +204,9 @@ Desktop artifact:
 bun run build:ui
 bun run scripts/release-linux.ts --require-tag
 bun run scripts/release-macos.ts --require-tag
-CARGO_TARGET_DIR="$(mktemp -d)" bun run scripts/release-desktop.ts --require-tag
+desktop_repro_target="$(mktemp -d)"
+CARGO_TARGET_DIR="$desktop_repro_target" \
+  bun run scripts/release-desktop.ts --require-tag
 ```
 
 After the final signed pass, the release directory must contain exactly:
@@ -231,7 +233,10 @@ first="$(mktemp -d)"
 cp "$release_dir"/* "$first/"
 bun run scripts/release-linux.ts --require-tag
 bun run scripts/release-macos.ts --require-tag
-CARGO_TARGET_DIR="$(mktemp -d)" bun run scripts/release-desktop.ts --require-tag
+CARGO_TARGET_DIR="$desktop_repro_target" \
+  cargo clean --manifest-path desktop/src-tauri/Cargo.toml
+CARGO_TARGET_DIR="$desktop_repro_target" \
+  bun run scripts/release-desktop.ts --require-tag
 for file in "$first"/*; do
   cmp -s "$file" "$release_dir/$(basename "$file")" || {
     echo "non-reproducible asset: $(basename "$file")" >&2
@@ -265,9 +270,10 @@ mismatch. The Mac builder also verifies arm64 architecture, ad-hoc signature,
 archive contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
-and a clean committed web bundle after packaging. Use different
-`CARGO_TARGET_DIR` values for the two desktop builds so Cargo cannot turn the
-reproducibility check into a cache hit.
+and a clean committed web bundle after packaging. Apple's linker changes the
+required Mach-O UUID when Cargo's absolute target path changes. Use the same
+`CARGO_TARGET_DIR` for both reproducibility builds, but run `cargo clean` in
+that exact target between them so the second pass cannot be a cache hit.
 
 Exercise the Linux artifact through the public installer contract and the
 fake-model evaluator before spending model quota:

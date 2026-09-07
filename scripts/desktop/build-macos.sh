@@ -23,9 +23,10 @@ case "$cargo_target_dir" in
   *) cargo_target_dir="$root/$cargo_target_dir" ;;
 esac
 export CARGO_TARGET_DIR="$cargo_target_dir"
-# Current macOS requires a Mach-O LC_UUID to launch the application. The
-# release workflow's isolated double build proves that the selected Apple
-# linker derives it reproducibly; never trade launchability for a checksum.
+# Current macOS requires a Mach-O LC_UUID to launch the application. The Apple
+# linker changes that UUID when Cargo's absolute target path changes even after
+# debug paths are remapped. The release workflow therefore clean-rebuilds at
+# one stable target path; never trade launchability for a checksum.
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$root=/wisp --remap-path-prefix=$cargo_cache=/cargo --remap-path-prefix=$rust_sysroot=/rust-toolchain --remap-path-prefix=$cargo_target_dir=/cargo-target"
 
 bun run build:ui
