@@ -125,7 +125,6 @@ export function SteerBox({
   const [value, setValue] = useRememberedDraft(task?.id ?? null)
   const [sending, setSending] = useState(false)
   const [note, setNote] = useState<SteerNote | null>(null)
-  const [copied, setCopied] = useState(false)
   const initialTaskId = task?.id ?? null
   const [suffixSelection, setSuffixSelection] = useState<SuffixSelection>({
     taskId: initialTaskId,
@@ -269,8 +268,6 @@ export function SteerBox({
           touch={touch}
           runningSince={runningSince}
           note={shown}
-          copied={copied}
-          onCopied={setCopied}
         />
 
         <SteerComposer
