@@ -10,6 +10,7 @@ import { queryClient } from "@/lib/query"
 import { desktopBridge } from "@/lib/desktop-bridge"
 import { DesktopApplicationProvider } from "@/lib/desktop-connections"
 import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
+import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 
@@ -20,15 +21,17 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       {desktopBootstrap ? (
-        <DesktopBootstrapScreen promise={desktopBootstrap}>
-          {(bootstrap) => (
-            <DesktopApplicationProvider initial={bootstrap}>
-              <DesktopUpdaterProvider>
-                <App />
-              </DesktopUpdaterProvider>
-            </DesktopApplicationProvider>
-          )}
-        </DesktopBootstrapScreen>
+        <DesktopZoomProvider>
+          <DesktopBootstrapScreen promise={desktopBootstrap}>
+            {(bootstrap) => (
+              <DesktopApplicationProvider initial={bootstrap}>
+                <DesktopUpdaterProvider>
+                  <App />
+                </DesktopUpdaterProvider>
+              </DesktopApplicationProvider>
+            )}
+          </DesktopBootstrapScreen>
+        </DesktopZoomProvider>
       ) : (
         <DaemonRuntimeProvider
           transport={sameOriginWebTransport}

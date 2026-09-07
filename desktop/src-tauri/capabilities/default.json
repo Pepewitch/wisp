@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Native core surface of the Wisp desktop shell. The webview gets no direct filesystem, dialog, shell, or HTTP capability — every native action is mediated by a narrow Rust command and every daemon byte travels through the loopback proxy.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:webview:allow-set-webview-zoom"]
 }

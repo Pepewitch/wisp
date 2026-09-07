@@ -17,6 +17,7 @@ import { ConnIndicator } from "@/components/conn-indicator"
 import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
+import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import {
@@ -483,6 +484,7 @@ function AppShell({
             desktop ? <DesktopConnectionChrome mobile /> : undefined
           }
           updateControl={mobileUpdateControl}
+          zoomControl={desktop ? <DesktopZoomControl mobile /> : undefined}
         />
         {dialogs}
       </>
@@ -504,6 +506,7 @@ function AppShell({
         <span className="ml-1">
           <ConnIndicator />
         </span>
+        {desktop && <DesktopZoomControl />}
       </header>
 
       <Shell

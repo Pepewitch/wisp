@@ -88,6 +88,7 @@ describe("connection-bound update recovery", () => {
 
     expect(screen.getByRole("img", { name: "Wisp" })).toBeInTheDocument()
     expect(screen.queryByRole("tab", { name: "Local" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /Zoom/ })).toBeNull()
     expect(screen.queryByText("Wisp")).toBeNull()
   })
 

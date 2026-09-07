@@ -39,7 +39,9 @@ export {
   SettingsRegular as Gear,
   DesktopRegular as Local,
   MoreHorizontalRegular as More,
+  SubtractRegular as Minus,
   StopRegular as Stop,
+  ZoomInRegular as ZoomIn,
 } from "@fluentui/react-icons"
 
 export { WispMark } from "./wisp-mark"
