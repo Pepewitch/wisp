@@ -59,13 +59,14 @@ transport from its runtime instead of constructing daemon URLs itself:
 - delayed callbacks retain the connection that initiated them and may never
   retarget themselves to whichever tab is active later.
 
-The committed `web/ui-dist/index.html` is both the daemon's browser UI and the
-desktop app's packaged frontend. There is no separate desktop fork of the
-React application.
+The generated `web/ui-dist/index.html` is both the daemon's browser UI and the
+desktop app's packaged frontend. It is ignored by Git: PRs review and validate
+the source, while release CI builds one canonical copy for both products. There
+is no separate desktop fork of the React application.
 
 ## Browser request path
 
-The daemon serves the committed UI bundle. The browser keeps the token in
+The daemon serves the generated UI bundle. The browser keeps the token in
 origin-scoped `localStorage` for ordinary same-origin API requests and exchanges
 it for an HttpOnly, SameSite=Strict cookie so browser-managed EventSource,
 WebSocket, and media requests can authenticate. Tokens never belong in URLs.
@@ -133,7 +134,7 @@ any deliberate difference.
 | `web/ui/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Run the root/UI gate and review both runtime semantics; build the app when Tauri, connection scope, transport, native integration, or release qualification is affected |
 | daemon route, public type, authentication, SSE, WebSocket, media, or update behavior | Run focused and root tests; check the CLI where applicable plus browser/Desktop consumers, and run transport/native gates only when those boundaries are affected |
 | `desktop/src-tauri/` command, metadata, credential, proxy, or Local setup behavior | Update the TypeScript bridge/runtime contract, run root and native gates, and preserve browser behavior |
-| generated UI bundle or packaging | Rebuild `web/ui-dist/index.html`; prove the daemon and desktop package consume the same bytes |
+| generated UI bundle or packaging | Build `web/ui-dist/index.html` without committing it; prove the daemon and desktop package consume the same release bytes |
 | intentionally browser-only or native-only behavior | Keep the boundary explicit and test that the other runtime is unaffected |
 
 An impact review that ignores either shipped client is insufficient for a
@@ -149,8 +150,11 @@ gates live in
 ## Build and distribution
 
 The source workspace is a Bun package with a React workspace and a Rust/Tauri
-desktop crate. `bun run build:ui` creates the committed single-file UI bundle;
+desktop crate. `bun run build:ui` creates the ignored single-file UI bundle;
 the daemon binary embeds it and the desktop build packages the same output.
+Pull-request CI generates and exercises this artifact but never compares it to
+Git. Tag CI reproduces it once, transfers it by checksum between runners, and
+uses those exact bytes for every release artifact.
 
 The public macOS distribution keeps the service and interface composable:
 

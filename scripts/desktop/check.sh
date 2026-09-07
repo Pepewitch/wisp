@@ -6,7 +6,12 @@
 # crate cannot build.
 set -euo pipefail
 
-cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/desktop/src-tauri"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+cd "$root"
+bun run build:ui
+
+cd desktop/src-tauri
 
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings

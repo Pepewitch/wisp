@@ -271,14 +271,14 @@ worktrees, and refuses unmarked install directories.
 ## Build and contribute
 
 The release binary has no runtime package dependency. The source workspace uses
-Bun 1.3.14; the React/Vite/Tailwind/shadcn frontend builds into one committed
-HTML file.
+Bun 1.3.14; the React/Vite/Tailwind/shadcn frontend builds into one ignored,
+derived HTML file that CI embeds in the daemon and Desktop artifacts.
 
 ```sh
 bun install --frozen-lockfile
 bun run check
 bun run desktop:check # when the native bridge/proxy contract is affected
-bash scripts/smoke.sh
+bun run smoke
 bun run build
 bun run release:linux
 bun run release:macos

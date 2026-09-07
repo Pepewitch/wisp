@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# Derived from web/ui at build time. PRs review source; CI and release jobs
+# generate the bundle they exercise and package.
+web/ui-dist/
 .DS_Store
 *.log
 

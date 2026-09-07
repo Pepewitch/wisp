@@ -11,7 +11,7 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - `src/cli.ts` is primarily a bearer-authenticated HTTP client. Business logic
   belongs behind the API, not in a CLI-only path.
 - `src/daemon.ts` loads config and adapters, performs recovery, starts
-  background loops, serves the committed web bundle, owns browser auth and
+  background loops, serves the generated web bundle, owns browser auth and
   terminal WebSocket upgrades, then delegates ordinary API requests.
 - `src/routes/index.ts` dispatches route families. Its order is behavior:
   specific stream and attachment paths must precede generic task paths.
@@ -139,7 +139,8 @@ remains active.
 ## Validation
 
 `package.json` is authoritative. `bun run check` is the aggregate gate for
-backend and UI lint, typecheck, and unit tests.
+generating the ignored UI bundle plus backend and UI lint, typecheck, and unit
+tests. Generated `web/ui-dist` bytes are never staged in a PR.
 
 For server changes, run the nearest tests while iterating, then run:
 

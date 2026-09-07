@@ -15,11 +15,15 @@ import { getTask } from "./store";
 import { MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
-// The web app's committed single-file bundle (skills/wisp-dev/references/frontend.md: never
-// hand-edit ui-dist; regenerate with `bun run build:ui`) — committed so this
-// import never breaks `bun test` on a fresh checkout. Everything it needs,
-// xterm included, is inlined: the daemon serves ONE file and no assets.
-import appHtml from "../web/ui-dist/index.html" with { type: "text" };
+// The generated single-file app is loaded only when the daemon starts. That
+// keeps source-only CLI commands usable before a checkout has built ui-dist;
+// supported serve/test/build entry points generate it first. Bun embeds this
+// literal import in compiled release binaries, so production needs no sibling
+// asset directory. Everything the page needs, xterm included, is inlined.
+async function bundledAppHtml(): Promise<string> {
+  const bundle = await import("../web/ui-dist/index.html", { with: { type: "text" } });
+  return bundle.default as unknown as string;
+}
 
 // The route handlers live in ./routes now, but tests and the CLI import these
 // names from "./daemon" — the entrypoint's public surface is unchanged.
@@ -179,6 +183,7 @@ function bindFailure(host: string, port: number): unknown | undefined {
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
+  const appHtml = await bundledAppHtml();
   const cfg = loadConfig();
   const hostname = process.env.WISP_HOST ?? cfg.host;
   const port = options.port ?? cfg.port;

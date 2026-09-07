@@ -7,7 +7,7 @@ terminal-ish data.
 
 Both fonts ship as woff2 via the bundler-importable fontsource variable
 packages (`@fontsource-variable/geist`, `@fontsource-variable/geist-mono`) —
-vite inlines them into the committed single-file bundle
+vite inlines them into the generated single-file bundle
 (`web/ui-dist/index.html`), preserving the zero-CDN invariant. Their
 `@font-face` rules use `font-display: swap`.
 
@@ -19,7 +19,7 @@ modulo the font filename in the copyright line).
 ## Terminal emulator (S3.5)
 
 The terminal tab bundles `@xterm/xterm` and `@xterm/addon-fit` from npm —
-vite inlines them into the committed single-file bundle, so the zero-CDN
+vite inlines them into the generated single-file bundle, so the zero-CDN
 invariant holds. Both packages are published by the xterm.js authors under
 the MIT license; the full license text rides along in `xterm.MIT.txt` (copied
 verbatim from the packages' `LICENSE` files).

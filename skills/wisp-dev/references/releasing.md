@@ -172,13 +172,13 @@ bun run test:evaluator
 git diff --check
 ```
 
-Review the full diff, including any regenerated
-`web/ui-dist/index.html`. Commit the release preparation and land it on
-`main`. Re-run `bun run build` after the commit and require a clean bundle:
+Review the full source diff. `web/ui-dist/index.html` is ignored build output;
+never stage it in the release-preparation PR. Commit the release preparation
+and land it on `main`. Re-run `bun run build` after the commit and require a
+clean source tree:
 
 ```sh
 bun run build
-git diff --exit-code -- web/ui-dist/index.html
 git fetch origin
 test -z "$(git status --porcelain=v1 --untracked-files=normal)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
@@ -196,16 +196,18 @@ test "$(git describe --tags --exact-match HEAD)" = "$tag"
 ## 4. Reproduce the payload, then build all ten assets
 
 Build on Apple Silicon macOS so the same checkout can cross-compile Linux and
-produce and verify the native Mac artifacts. First build the Desktop app without
-release credentials; this is the reproducible payload proof, not the public
-Desktop artifact:
+produce and verify the native Mac artifacts. Generate the ignored UI bundle
+once and retain its checksum; every builder in this release must consume those
+exact bytes rather than silently regenerate them. First build the Desktop app
+without release credentials; this is the reproducible payload proof, not the
+public Desktop artifact:
 
 ```sh
 bun run build:ui
 bun run scripts/release-linux.ts --require-tag
 bun run scripts/release-macos.ts --require-tag
 desktop_repro_target="$(mktemp -d)"
-CARGO_TARGET_DIR="$desktop_repro_target" \
+WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$desktop_repro_target" \
   bun run scripts/release-desktop.ts --require-tag
 ```
 
@@ -253,7 +255,7 @@ After that comparison passes, provide the release credentials listed above and
 build the one public Desktop archive:
 
 ```sh
-CARGO_TARGET_DIR="$(mktemp -d)" \
+WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$(mktemp -d)" \
   bun run scripts/release-desktop.ts --require-tag --signed
 ```
 
@@ -270,7 +272,10 @@ mismatch. The Mac builder also verifies arm64 architecture, ad-hoc signature,
 archive contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
-and a clean committed web bundle after packaging. Apple's linker changes the
+and a clean source tree after packaging. Tag CI builds and reproduces the UI on
+Linux, transfers it with a checksum, and sets `WISP_PREBUILT_UI=1` for every
+Desktop pass so the daemon and application package one canonical bundle.
+Apple's linker changes the
 required Mach-O UUID when Cargo's absolute target path changes. Use the same
 `CARGO_TARGET_DIR` for both reproducibility builds, but run `cargo clean` in
 that exact target between them so the second pass cannot be a cache hit.

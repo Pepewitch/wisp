@@ -66,12 +66,42 @@ describe("Wisp Desktop release metadata", () => {
     expect(workflow).toContain("cargo clean --manifest-path desktop/src-tauri/Cargo.toml");
   });
 
+  test("hands one reproducible UI bundle from Linux to every macOS release pass", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    expect(workflow.match(/name: release-ui-bundle/g)).toHaveLength(2);
+    expect(workflow).toContain("sha256sum index.html > SHA256SUMS");
+    expect(workflow).toContain("shasum -a 256 -c SHA256SUMS");
+    expect(workflow.match(/WISP_PREBUILT_UI=1/g)).toHaveLength(3);
+    expect(workflow).not.toContain("committed web bundle is current");
+
+    const pullRequestWorkflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+    expect(pullRequestWorkflow).not.toContain("git diff --exit-code -- web/ui-dist");
+  });
+
   test("does not expand an empty Bash array on the credentialed signing path", () => {
     const buildScript = readFileSync(new URL("../scripts/desktop/build-macos.sh", import.meta.url), "utf8");
     expect(buildScript).not.toContain("signing_config[@]");
     expect(buildScript).toContain('tauri_args=(\n  build');
     expect(buildScript).toContain('tauri_args+=(--config');
     expect(buildScript).toContain('"${tauri[@]}" "${tauri_args[@]}" -- --locked');
+  });
+
+  test("only skips UI generation when a canonical bundle is present", () => {
+    const buildScript = readFileSync(new URL("../scripts/desktop/build-macos.sh", import.meta.url), "utf8");
+    expect(buildScript).toContain('case "${WISP_PREBUILT_UI:-0}" in');
+    expect(buildScript).toContain("0) bun run build:ui");
+    expect(buildScript).toContain("test -f web/ui-dist/index.html");
+    expect(buildScript).toContain("WISP_PREBUILT_UI must be 0 or 1");
+  });
+
+  test("generates the ignored UI before native checks compile Tauri", () => {
+    const checkScript = readFileSync(new URL("../scripts/desktop/check.sh", import.meta.url), "utf8");
+    expect(checkScript.indexOf("bun run build:ui")).toBeGreaterThan(-1);
+    expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
+
+    const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
+    expect(workflow.indexOf("name: build shared UI bundle")).toBeGreaterThan(-1);
+    expect(workflow.indexOf("name: build shared UI bundle")).toBeLessThan(workflow.indexOf("name: formatting"));
   });
 
   test("detects the Mach-O UUID required by current macOS", () => {

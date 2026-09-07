@@ -50,10 +50,29 @@ jobs:
             --gitleaks-ignore-path "$PWD/.gitleaksignore" \
             --redact
 
-      - name: build web bundle
-        run: bun run build:ui
-      - name: committed web bundle is current
-        run: git diff --exit-code -- web/ui-dist
+      # Build the ignored UI once from the exact tag. The macOS job downloads
+      # these bytes rather than generating an independent Desktop frontend.
+      - name: build and reproduce the shared UI bundle
+        run: |
+          stage="$RUNNER_TEMP/release-ui"
+          mkdir -p "$stage"
+          bun run build:ui
+          cp web/ui-dist/index.html "$stage/index.html"
+          bun run build:ui
+          cmp -s "$stage/index.html" web/ui-dist/index.html || {
+            echo "non-reproducible UI bundle" >&2
+            exit 1
+          }
+          (cd "$stage" && sha256sum index.html > SHA256SUMS)
+      - name: stage the shared UI bundle for macOS packaging
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ui-bundle
+          path: |
+            ${{ runner.temp }}/release-ui/index.html
+            ${{ runner.temp }}/release-ui/SHA256SUMS
+          retention-days: 7
+          if-no-files-found: error
 
       # releasing.md step 4: build under the strict gates, then prove the
       # three files reproduce byte for byte on a clean rebuild.
@@ -143,14 +162,21 @@ jobs:
           install -m 600 /dev/null "$key_path"
           printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
-      - name: build web bundle
-        run: bun run build:ui
-      - name: committed web bundle is current
-        run: git diff --exit-code -- web/ui-dist
+      - name: collect and verify the shared UI bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-ui-bundle
+          path: ${{ runner.temp }}/release-ui
+      - name: install the shared UI bundle for macOS packaging
+        run: |
+          (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
+          mkdir -p web/ui-dist
+          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
       - name: build macOS release artifacts
         run: |
           bun run scripts/release-macos.ts --require-tag
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
+          WISP_PREBUILT_UI=1 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             bun run scripts/release-desktop.ts --require-tag
       - name: rebuild and require byte-identical assets
         run: |
@@ -164,7 +190,8 @@ jobs:
           # path so this remains a genuine from-scratch reproducibility proof.
           CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             cargo clean --manifest-path desktop/src-tauri/Cargo.toml
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
+          WISP_PREBUILT_UI=1 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             bun run scripts/release-desktop.ts --require-tag
           for file in "$first"/*; do
             cmp -s "$file" "$dir/$(basename "$file")" || {
@@ -191,7 +218,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
+          WISP_PREBUILT_UI=1 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
             bun run scripts/release-desktop.ts --require-tag --signed
 
       - name: resolve version and require release notes
