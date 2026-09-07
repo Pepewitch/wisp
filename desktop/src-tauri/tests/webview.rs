@@ -123,10 +123,7 @@ fn the_webview_only_gets_direct_zoom_authority() {
             .expect("valid capability");
     assert_eq!(
         capability["permissions"],
-        serde_json::json!([
-            "core:default",
-            "core:webview:allow-set-webview-zoom"
-        ])
+        serde_json::json!(["core:default", "core:webview:allow-set-webview-zoom"])
     );
 }
 
