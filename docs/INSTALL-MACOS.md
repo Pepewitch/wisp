@@ -1,6 +1,6 @@
 # Install Wisp Desktop and the daemon on Apple Silicon
 
-Alpha.10 is the first Wisp Desktop prerelease prepared for
+Alpha.11 is the first Wisp Desktop prerelease prepared for
 Developer ID signing, Apple notarization, and signed in-app updates. Apple
 Silicon support remains experimental and has only limited single-machine
 qualification.
@@ -12,15 +12,15 @@ The experimental v0.4 target is:
 - Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
 - qualified on a limited Apple Silicon test environment;
 - installed from the fully qualified custom Homebrew tap; and
-- for alpha.10, blocked from publication unless Developer ID signing,
+- for alpha.11, blocked from publication unless Developer ID signing,
   notarization, and stapling all succeed.
 
 Intel Macs are unsupported. The configured 12.3 deployment target is enforced
 by the app metadata and Mach-O loader command, but it is not evidence that
 12.3 or every later macOS version has been qualified. Alpha.8 was ad-hoc signed
-and may have required a per-app Gatekeeper exception. Alpha.10 is expected to
+and may have required a per-app Gatekeeper exception. Alpha.11 is expected to
 open normally only after its release workflow proves Developer ID signing,
-notarization, and stapling. Do not disable or bypass Gatekeeper for an alpha.10
+notarization, and stapling. Do not disable or bypass Gatekeeper for an alpha.11
 artifact that fails those checks. Verify the download URL is under
 `github.com/Pepewitch/wisp`, that Homebrew accepts the recipe checksum, and that
 `wisp version --json` reports the release version and commit.
@@ -68,12 +68,12 @@ Launch the desktop app:
 open -a Wisp
 ```
 
-The signed and notarized alpha.10 artifact should not require **Open Anyway**.
-If macOS says it cannot verify alpha.10 or offers to move it to Trash, stop and
+The signed and notarized alpha.11 artifact should not require **Open Anyway**.
+If macOS says it cannot verify alpha.11 or offers to move it to Trash, stop and
 check the installed version, Cask checksum, signature, and notarization ticket;
 do not remove quarantine attributes or disable Gatekeeper. The per-app Privacy
 & Security exception documented by Apple applies to the older ad-hoc alpha.8,
-not to the expected alpha.10 release posture. See
+not to the expected alpha.11 release posture. See
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
 
 On first launch, Local reports whether the standard Wisp profile and service
@@ -178,7 +178,7 @@ The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
 are reconciled by the new daemon.
 
-Alpha.8 predates the Desktop updater. Bootstrap alpha.10 through Homebrew;
+Alpha.8 predates the Desktop updater. Bootstrap alpha.11 through Homebrew;
 `--greedy` is required because the new Cask declares that the application can
 update itself:
 
@@ -194,7 +194,7 @@ wisp doctor --harness droid
 If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
-After alpha.10 is installed, later Desktop upgrades use the signed Tauri
+After alpha.11 is installed, later Desktop upgrades use the signed Tauri
 updater. Homebrew remains the recovery path:
 
 ```sh
