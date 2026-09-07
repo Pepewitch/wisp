@@ -150,7 +150,7 @@ jobs:
       - name: build macOS release artifacts
         run: |
           bun run scripts/release-macos.ts --require-tag
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-first" \
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             bun run scripts/release-desktop.ts --require-tag
       - name: rebuild and require byte-identical assets
         run: |
@@ -158,7 +158,13 @@ jobs:
           first="$(mktemp -d)"
           cp "$dir"/* "$first"/
           bun run scripts/release-macos.ts --require-tag
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-second" \
+          # Apple's LC_UUID is stable for a clean rebuild at the same target
+          # path, but changes when Cargo's absolute target path changes. Clear
+          # every cached artifact, then rebuild at the identical normalized
+          # path so this remains a genuine from-scratch reproducibility proof.
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
+            cargo clean --manifest-path desktop/src-tauri/Cargo.toml
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             bun run scripts/release-desktop.ts --require-tag
           for file in "$first"/*; do
             cmp -s "$file" "$dir/$(basename "$file")" || {

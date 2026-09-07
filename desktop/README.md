@@ -10,7 +10,7 @@ use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
 The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
-builds are ad-hoc signed. Starting with alpha.9, the tag release pipeline
+builds are ad-hoc signed. Starting with alpha.11, the tag release pipeline
 requires Developer ID signing, notarization, stapling, and updater signing
 before publication. The published alpha.8 predates that pipeline and remains
 ad-hoc signed.
