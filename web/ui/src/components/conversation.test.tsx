@@ -515,3 +515,106 @@ describe("copying user messages", () => {
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("Then add tests"))
   })
 })
+
+describe("the bubble's caption", () => {
+  const base = {
+    id: "tcap",
+    title: "Captions",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/tcap",
+    base_commit: "abc123",
+    harness: "droid",
+    model: "fake",
+    effort: null,
+    slot: 0,
+    state: "running",
+    state_detail: "turn 1",
+    session_id: "session-1",
+    seq: 1,
+    turn_count: 1,
+    archived: false,
+    mode: "worktree",
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:02Z",
+    diffstat: null,
+    worktreeReason: null,
+    turns: [
+      {
+        id: 1,
+        task_id: "tcap",
+        n: 1,
+        prompt: "Original request",
+        result: null,
+        status: "running",
+        model: "fake",
+        usage: null,
+        attachments: [],
+        log_file: "/tmp/turn.log",
+        started_at: "2026-09-03T00:00:00Z",
+        ended_at: null,
+      },
+    ],
+    messages: [
+      {
+        id: "m-queued",
+        task_id: "tcap",
+        text: "Then add tests",
+        status: "queued",
+        delivery: null,
+        turn_n: null,
+        delivery_uncertain: false,
+        attachments: [],
+        created_at: "2026-09-03T00:00:02Z",
+        updated_at: "2026-09-03T00:00:02Z",
+      },
+    ],
+  } as unknown as TaskDetail
+
+  const mount = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    return render(<Conversation task={base} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
+  }
+
+  /** The card carrying the bubble's own fill, for a given piece of its text. */
+  const cardFor = (text: string): HTMLElement => screen.getByText(text).closest(".bg-card") as HTMLElement
+
+  it("hangs a prompt's time and copy control outside the card", () => {
+    mount()
+
+    const card = cardFor("Original request")
+    const article = card.closest("article")!
+    expect(card).toHaveTextContent("Original request")
+    // both are in the turn, and neither is in the card
+    expect(article.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(1)
+    expect(card.querySelector("[data-bubble-timestamp]")).toBeNull()
+    expect(card.contains(screen.getAllByRole("button", { name: "Copy user message" })[0]!)).toBe(false)
+  })
+
+  it("hangs a queued message's edit and cancel there too, and gives it no time", () => {
+    mount()
+
+    const card = cardFor("Then add tests")
+    const edit = screen.getByRole("button", { name: "Edit queued message" })
+    const cancel = screen.getByRole("button", { name: "Cancel queued message" })
+    expect(card.contains(edit)).toBe(false)
+    expect(card.contains(cancel)).toBe(false)
+    // it has not been sent; the line inside already says the truer thing
+    expect(card).toHaveTextContent("queued for the next turn")
+    expect(card.closest("article")!.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(0)
+  })
+
+  it("brings Save and Cancel back inside while the bubble is a form", () => {
+    mount()
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit queued message" }))
+
+    const card = screen.getByRole("textbox").closest(".bg-card") as HTMLElement
+    expect(card).toContainElement(screen.getByRole("button", { name: "Save" }))
+    expect(card).toContainElement(screen.getByRole("button", { name: "Cancel" }))
+    // the caption empties: only the prompt bubble above still offers copy
+    expect(screen.getAllByRole("button", { name: "Copy user message" })).toHaveLength(1)
+  })
+})

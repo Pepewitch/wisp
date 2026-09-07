@@ -11,7 +11,11 @@ import {
 } from "react"
 
 import { ActivityList } from "@/components/activity-list"
-import { CopyButton } from "@/components/copy-button"
+import {
+  BubbleTimestamp,
+  PersonBubble,
+  UserMessageCopyButton,
+} from "@/components/person-bubble"
 import { ArrowUp, ChevronRight, Dismiss, Pencil } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { FileViewerProvider } from "@/components/file-viewer"
@@ -19,7 +23,6 @@ import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
-import { useTick } from "@/hooks/useTick"
 import { formatBytes } from "@/lib/attachments"
 import {
   activityByTurn,
@@ -30,7 +33,6 @@ import {
   type TurnActivity,
 } from "@/lib/activity"
 import { duration } from "@/lib/state"
-import { fromNow, utcIso } from "@/lib/time"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
@@ -308,26 +310,23 @@ function TurnBlock({
 
   return (
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
-      <div className="flex justify-end">
-        <div
-          data-turn-prompt
-          className={cn(
-            "max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card",
-            "px-3.5 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-foreground/90",
-          )}
-        >
-          {turn.prompt}
-          {deliveryUncertain && (
-            <div className="mt-1 text-[10.5px] text-faint">
-              retried after an unconfirmed delivery; an earlier process may also have received it
-            </div>
-          )}
-          <div className="mt-1.5 flex items-center justify-end gap-2">
+      <PersonBubble
+        caption={
+          <>
             <UserMessageCopyButton text={turn.prompt} />
             <BubbleTimestamp at={turn.started_at} />
-          </div>
+          </>
+        }
+      >
+        <div data-turn-prompt className="whitespace-pre-wrap">
+          {turn.prompt}
         </div>
-      </div>
+        {deliveryUncertain && (
+          <div className="mt-1 text-[10.5px] text-faint">
+            retried after an unconfirmed delivery; an earlier process may also have received it
+          </div>
+        )}
+      </PersonBubble>
 
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
       <TurnAttachments taskId={taskId} turn={turn.n} attachments={turn.attachments ?? []} archived={archived} />
@@ -396,62 +395,6 @@ function TurnBlock({
 }
 
 /**
- * When the person sent this bubble.
- *
- * Relative by default, because "5 min ago" is the fact you actually want while
- * a task is live and it stays readable at 10.5px. One click swaps THIS bubble
- * to the exact instant in UTC — the form you paste into a log search — and the
- * mono face says the string is machine-exact (§4). The toggle is per bubble on
- * purpose: asking when one message was sent is a question, not a mode, so it
- * neither persists nor drags every other bubble with it.
- *
- * The relative reading is only true for a second at a time, so it rides the
- * app's one clock; the exact reading never changes and unsubscribes from it.
- */
-export function BubbleTimestamp({
-  at,
-  className,
-  /** the gallery renders both readings side by side; the app always starts relative */
-  defaultExact = false,
-}: {
-  at: string
-  className?: string
-  defaultExact?: boolean
-}) {
-  const [exact, setExact] = useState(defaultExact)
-  const now = useTick(!exact)
-  const relative = fromNow(at, now)
-  const iso = utcIso(at)
-  if (!relative || !iso) return null
-
-  return (
-    <button
-      type="button"
-      data-bubble-timestamp
-      onClick={() => setExact((on) => !on)}
-      title={exact ? relative : iso}
-      className={cn(
-        "text-[10.5px] text-faint transition-colors hover:text-muted-foreground",
-        exact && "font-mono",
-        className,
-      )}
-    >
-      {exact ? iso : relative}
-    </button>
-  )
-}
-
-function UserMessageCopyButton({ text }: { text: string }) {
-  return (
-    <CopyButton
-      text={text}
-      label="Copy user message"
-      copiedLabel="Copied user message"
-    />
-  )
-}
-
-/**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —
  * only its position changes — so an anchored steer and an unanchored one are
  * never told apart by their styling, and neither is ever confused with the
@@ -468,29 +411,24 @@ function SteeredMessage({
 }) {
   return (
     <div data-steered-message={message.id} className="mt-3">
-      <div className="flex justify-end">
-        <div
-          className={cn(
-            "max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card",
-            "px-3.5 py-2.5 text-[12.5px] leading-relaxed whitespace-pre-wrap text-foreground/90",
-          )}
-        >
-          {message.text}
-          {/* one metadata line: what this bubble is on the left, when it was
-              sent on the right, rather than stacking two muted rows (§4) */}
-          <div className="mt-1 flex items-baseline gap-2 text-[10.5px] text-faint">
-            <span>sent during this turn</span>
-            <span className="flex-1" />
+      <PersonBubble
+        caption={
+          <>
             <UserMessageCopyButton text={message.text} />
             <BubbleTimestamp at={message.created_at} />
+          </>
+        }
+      >
+        <div className="whitespace-pre-wrap">{message.text}</div>
+        {/* what this bubble IS stays inside it and left-aligned, under the
+            words it describes; when it was sent hangs in the gutter (§5) */}
+        <div className="mt-1 text-[10.5px] text-faint">sent during this turn</div>
+        {message.delivery_uncertain && (
+          <div className="mt-1 text-[10.5px] text-faint">
+            delivery retried after an unconfirmed native admission
           </div>
-          {message.delivery_uncertain && (
-            <div className="mt-1 text-[10.5px] text-faint">
-              delivery retried after an unconfirmed native admission
-            </div>
-          )}
-        </div>
-      </div>
+        )}
+      </PersonBubble>
       <MessageAttachments
         taskId={taskId}
         messageId={message.id}
@@ -532,74 +470,85 @@ function QueuedMessage({
 
   return (
     <article data-message={message.id} data-status={message.status} className="pt-[30px]">
-      <div className="flex justify-end">
-        <div className="max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card px-3.5 py-2.5">
-          {editing ? (
-            <textarea
-              autoFocus
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              className="min-h-16 w-full resize-y bg-transparent text-[12.5px] leading-relaxed text-foreground/90 outline-none"
-            />
-          ) : (
-            <div className="text-[12.5px] leading-relaxed whitespace-pre-wrap text-foreground/90">{message.text}</div>
+      {/* No timestamp: this one has not been SENT, and the line inside already
+          says the truer thing (§5). Its controls ride the caption with the
+          copy control, so the bubble keeps the one shape every bubble has.
+          While editing they come back inside, because the bubble is a form
+          then and a form owns its own Save. */}
+      <PersonBubble
+        caption={
+          !editing && (
+            <>
+              <UserMessageCopyButton text={message.text} />
+              {!archived && !cancelled && (
+                <>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    aria-label="Edit queued message"
+                    title="Edit queued message"
+                    className="rounded-sm p-0.5 text-faint transition-colors hover:text-foreground disabled:opacity-50"
+                    onClick={() => setEditing(true)}
+                  >
+                    <Pencil className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    aria-label="Cancel queued message"
+                    title="Cancel queued message"
+                    className="rounded-sm p-0.5 text-faint transition-colors hover:text-foreground disabled:opacity-50"
+                    onClick={() => cancel.mutate({ taskId, messageId: message.id })}
+                  >
+                    <Dismiss className="size-3" />
+                  </button>
+                </>
+              )}
+            </>
+          )
+        }
+      >
+        {editing ? (
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            className="min-h-16 w-full resize-y bg-transparent text-[12.5px] leading-relaxed text-foreground/90 outline-none"
+          />
+        ) : (
+          <div className="whitespace-pre-wrap">{message.text}</div>
+        )}
+        <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-faint">
+          <span>
+            {archived
+              ? "not delivered; task is archived"
+              : cancelled
+                ? "retry cancelled; prior delivery may already have succeeded"
+              : message.delivery_uncertain
+                ? "queued for retry; prior delivery may already have succeeded"
+                : "queued for the next turn"}
+          </span>
+          {editing && (
+            <>
+              <span className="flex-1" />
+              <button type="button" disabled={busy} className="hover:text-foreground" onClick={save}>
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                className="hover:text-foreground"
+                onClick={() => {
+                  setEditing(false)
+                  setDraft(message.text)
+                }}
+              >
+                Cancel
+              </button>
+            </>
           )}
-          <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-faint">
-            <span>
-              {archived
-                ? "not delivered; task is archived"
-                : cancelled
-                  ? "retry cancelled; prior delivery may already have succeeded"
-                : message.delivery_uncertain
-                  ? "queued for retry; prior delivery may already have succeeded"
-                  : "queued for the next turn"}
-            </span>
-            <span className="flex-1" />
-            {!editing && <UserMessageCopyButton text={message.text} />}
-            {!archived && !cancelled && (editing ? (
-              <>
-                <button type="button" disabled={busy} className="hover:text-foreground" onClick={save}>
-                  Save
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="hover:text-foreground"
-                  onClick={() => {
-                    setEditing(false)
-                    setDraft(message.text)
-                  }}
-                >
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label="Edit queued message"
-                  title="Edit queued message"
-                  className="hover:text-foreground disabled:opacity-50"
-                  onClick={() => setEditing(true)}
-                >
-                  <Pencil className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  aria-label="Cancel queued message"
-                  title="Cancel queued message"
-                  className="hover:text-foreground disabled:opacity-50"
-                  onClick={() => cancel.mutate({ taskId, messageId: message.id })}
-                >
-                  <Dismiss className="size-3" />
-                </button>
-              </>
-            ))}
-          </div>
         </div>
-      </div>
+      </PersonBubble>
       <MessageAttachments
         taskId={taskId}
         messageId={message.id}

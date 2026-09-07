@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 
-import { BubbleTimestamp } from "@/components/conversation"
+import { CopyButton } from "@/components/copy-button"
+import { BubbleTimestamp, PersonBubble } from "@/components/person-bubble"
 import { Eyebrow, Rule } from "@/components/primitives"
 
 /**
@@ -21,14 +22,21 @@ function SpecimenThumb({ label }: { label: string }) {
   )
 }
 
-/** The prompt bubble's anatomy, rebuilt: the gallery has no turn to render. */
-function SpecimenBubble({ children }: { children: ReactNode }) {
+/**
+ * The production bubble, so the specimens cannot drift from the transcript.
+ * The gallery has no turn to render, only words and a caption.
+ */
+function SpecimenBubble({ caption, children }: { caption?: ReactNode; children: ReactNode }) {
+  return <PersonBubble caption={caption}>{children}</PersonBubble>
+}
+
+/** Copy then when, the same order and spacing the transcript uses. */
+function SpecimenCaption({ exact = false }: { exact?: boolean }) {
   return (
-    <div className="flex justify-end">
-      <div className="max-w-[76%] rounded-xl rounded-br-[4px] border border-border bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-foreground/90">
-        {children}
-      </div>
-    </div>
+    <>
+      <CopyButton text="specimen" label="Copy user message" copiedLabel="Copied user message" />
+      <BubbleTimestamp at={SENT_AT} defaultExact={exact} />
+    </>
   )
 }
 
@@ -84,38 +92,50 @@ export function PromptBubbleSpecimens() {
         </div>
       </Section>
 
-      <Section title="When a bubble was sent — a question, not a mode">
+      <Section title="The caption hangs in the gutter, never inside the bubble">
         <div className="grid grid-cols-2 gap-10">
           <div>
             <Eyebrow>Both readings · either one is a click away</Eyebrow>
             <div className="mt-2.5 rounded-lg border border-border bg-surface p-3">
-              <SpecimenBubble>
+              <SpecimenBubble caption={<SpecimenCaption />}>
                 can you make the timestamp readable at a glance?
-                <BubbleTimestamp at={SENT_AT} className="mt-1.5 ml-auto block w-fit" />
               </SpecimenBubble>
               <div className="mt-[30px]">
-                <SpecimenBubble>
+                <SpecimenBubble caption={<SpecimenCaption exact />}>
                   and exact when I need to grep for it
-                  <BubbleTimestamp at={SENT_AT} defaultExact className="mt-1.5 ml-auto block w-fit" />
+                </SpecimenBubble>
+              </div>
+              {/* held to a phone's width, because that is when the rule fires */}
+              <div className="mt-[30px] ml-auto max-w-[330px]">
+                <SpecimenBubble caption={<SpecimenCaption exact />}>
+                  and at a phone's width the caption drops below, still right-aligned
                 </SpecimenBubble>
               </div>
             </div>
           </div>
           <div>
             <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-              Every bubble the person SENT carries when, as its own last muted line — a prompt bubble from the turn's
-              start, a steer from the message. Relative by default, in the terse vocabulary the sidebar already
-              speaks (<span className="text-faint">just now</span>, <span className="text-faint">5 min ago</span>,{" "}
-              <span className="text-faint">3h ago</span>, <span className="text-faint">2d ago</span>), because that
-              is the fact you want while a task is live and it survives 10.5px. It rides the app's one clock, so a
-              live conversation runs one interval rather than one per bubble.
+              The bubble holds the person's WORDS. When it was sent, and the control that copies it, sit in the
+              gutter to its left — the bubble is capped at 76%, so that space was already empty and the caption
+              costs no height at all. Inside, they were a right-aligned row under left-aligned prose: two alignments
+              in one box, and a line of chrome plus its gap where a short message had only three lines of text.
             </p>
             <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-              Clicking swaps THAT bubble to the exact UTC instant, in mono — because a machine wrote the string and
-              you are about to paste it into a log search. The toggle is per bubble and never persists: asking when
-              one message was sent is a question, not a preference, so it neither drags its neighbours along nor
-              survives a reload. A queued bubble has no timestamp at all — it has not been sent, and its line already
-              says the truer thing.
+              Relative by default, in the terse vocabulary the sidebar already speaks (
+              <span className="text-faint">just now</span>, <span className="text-faint">5 min ago</span>,{" "}
+              <span className="text-faint">3h ago</span>, <span className="text-faint">2d ago</span>), because that
+              is the fact you want while a task is live and it survives 10.5px. It rides the app's one clock, so a
+              live conversation runs one interval rather than one per bubble. Clicking swaps THAT bubble to the
+              exact UTC instant, in mono — a machine wrote the string and you are about to paste it into a log
+              search. The toggle is per bubble and never persists: asking when one message was sent is a question,
+              not a preference.
+            </p>
+            <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+              One row reversed and allowed to wrap is the whole responsive story. A caption that no longer fits
+              beside its bubble — a phone, or the exact instant, which is twice as wide as{" "}
+              <span className="text-faint">5 min ago</span> — drops to its own line beneath rather than squeezing
+              the words. A queued bubble carries copy, edit and cancel there and no time at all: it has not been
+              sent, and the line inside it already says the truer thing.
             </p>
           </div>
         </div>

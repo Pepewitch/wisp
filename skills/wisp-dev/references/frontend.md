@@ -251,14 +251,41 @@ There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
 turn.
 
-Every bubble the person actually SENT says **when**, on its own last muted
-line: a prompt bubble from the turn's `started_at`, a steer from the message's
-`created_at`. Relative by default, because "5 min ago" is the fact you want
-while a task is live, and **one click swaps that bubble alone** to the exact
-UTC instant in mono — the form you paste into a log search. The toggle is per
-bubble and never persists: asking when one message was sent is a question, not
-a mode. A queued bubble gets no timestamp — it has not been sent, and its line
-already says the truer thing.
+### The bubble holds the words; its caption hangs in the gutter
+
+`PersonBubble` in `components/person-bubble.tsx` is the ONE shape for anything
+the person said — a turn's prompt, a steer, a queued message — and it holds
+their words plus, at most, one left-aligned muted line saying what Wisp must
+say about the delivery. Everything else lives in the **caption**: a row that
+sits in the gutter to the bubble's left, on its bottom edge, carrying when it
+was sent and the controls that act on it.
+
+Inside, that chrome was a right-aligned row under left-aligned prose — two
+alignments in one box, so the bubble read lopsided, and a line plus its gap
+turned the bottom third of a short bubble into padding. Outside, it costs
+**nothing**: the bubble is capped at 76%, so the 24% beside it was already
+empty.
+
+`flex-row-reverse` + `flex-wrap` is the whole responsive story, and there is no
+breakpoint to keep in sync. Reversed, the bubble is the first item and sits at
+the right edge with its caption to the left; when the two no longer fit — a
+phone, or the exact UTC instant, which is twice as wide as `5 min ago` — the
+caption wraps to its own line beneath, still right-aligned, rather than
+squeezing the words. Never add a second layout for the narrow case.
+
+What the caption carries, and nothing else:
+
+- **when it was sent**, for anything actually sent: a prompt bubble from the
+  turn's `started_at`, a steer from the message's `created_at`. Relative by
+  default, because "5 min ago" is the fact you want while a task is live, and
+  **one click swaps that bubble alone** to the exact UTC instant in mono — the
+  form you paste into a log search. The toggle is per bubble and never
+  persists: asking when one message was sent is a question, not a mode.
+- **copy**, on every bubble.
+- **edit and cancel**, on a queued one. A queued bubble gets no timestamp — it
+  has not been sent, and its line already says the truer thing. While it is
+  being EDITED the bubble is a form, so `Save` and `Cancel` come back inside
+  with the status line and the caption empties: a form owns its own commit.
 
 `lib/time.ts` is the app's ONE relative clock — dayjs for the arithmetic,
 Wisp's own terse vocabulary for the words (`just now`, `5 min ago`, `3h ago`,
