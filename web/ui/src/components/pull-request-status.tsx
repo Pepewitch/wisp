@@ -70,7 +70,9 @@ export function PullRequestStatusLink({
       className={cn(
         "flex shrink-0 items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground",
         "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-        compact ? "h-11 max-w-[46vw] gap-1.5 px-2" : "h-8 max-w-[420px] gap-1.5 px-2 text-[11.5px]",
+        // compact owns a full row in the mobile header, so it is bounded by that
+        // row rather than by a share of the viewport it split with the title
+        compact ? "h-11 max-w-full gap-1.5 px-2" : "h-8 max-w-[420px] gap-1.5 px-2 text-[11.5px]",
       )}
     >
       <BranchRequest

@@ -548,60 +548,67 @@ function ComposerControls({
   onSend: () => void
   onStop: () => void
 }) {
+  // Five things wanted one row, and on a phone the row is ~340px wide. Harness
+  // and model say again what the task header says two rows up, so on touch they
+  // yield the width; the running note takes its own line rather than wrapping
+  // four words deep between the suffix picker and the send button.
+  const note = blocked ? "running · send won't interrupt" : null
   return (
-    <div className="mt-2 flex items-center gap-2">
-      {task && <TaskIdentity task={task} />}
-      <span aria-hidden className="h-3 w-px bg-border-strong" />
-      <AttachButton pending={attachments} touch={touch} />
-      <SuffixPromptPicker
-        key={taskId ?? "no-task"}
-        value={suffixPromptId}
-        onValueChange={onSuffixPromptChange}
-        disabled={disabled || sending}
-        touch={touch}
-      />
-      <span className="flex-1" />
-      {blocked ? (
-        <span className="text-[10.5px] text-faint">
-          running · send won&apos;t interrupt
-        </span>
-      ) : (
-        <span
-          className="font-mono text-[10.5px] text-faint"
-          title="Enter sends · Shift+Enter for a new line"
+    <div className="mt-2 flex flex-col gap-1">
+      {touch && note && <span className="px-0.5 text-[11px] text-faint">{note}</span>}
+      <div className="flex items-center gap-2">
+        {!touch && task && <TaskIdentity task={task} />}
+        {!touch && <span aria-hidden className="h-3 w-px bg-border-strong" />}
+        <AttachButton pending={attachments} touch={touch} />
+        <SuffixPromptPicker
+          key={taskId ?? "no-task"}
+          value={suffixPromptId}
+          onValueChange={onSuffixPromptChange}
+          disabled={disabled || sending}
+          touch={touch}
+        />
+        <span className="flex-1" />
+        {!touch &&
+          (note ? (
+            <span className="shrink-0 text-[10.5px] text-faint">{note}</span>
+          ) : (
+            <span
+              className="font-mono text-[10.5px] text-faint"
+              title="Enter sends · Shift+Enter for a new line"
+            >
+              ↵
+            </span>
+          ))}
+        <button
+          type="button"
+          onClick={canStop ? onStop : onSend}
+          disabled={!canStop && !canSend}
+          aria-label={canStop ? "Stop turn" : blocked ? "Send safely" : "Send"}
+          title={
+            canStop
+              ? "Stop the running turn; the session is kept"
+              : blocked
+                ? "Send at a safe boundary, or queue for the next turn"
+                : "Send"
+          }
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-full transition-all",
+            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            touch ? "size-10" : "size-[26px]",
+            canSend
+              ? "bg-primary text-primary-foreground hover:bg-primary-hover"
+              : canStop
+                ? "border border-border-strong bg-card text-foreground hover:bg-hover"
+                : "bg-border-strong text-muted-foreground"
+          )}
         >
-          ↵
-        </span>
-      )}
-      <button
-        type="button"
-        onClick={canStop ? onStop : onSend}
-        disabled={!canStop && !canSend}
-        aria-label={canStop ? "Stop turn" : blocked ? "Send safely" : "Send"}
-        title={
-          canStop
-            ? "Stop the running turn; the session is kept"
-            : blocked
-              ? "Send at a safe boundary, or queue for the next turn"
-              : "Send"
-        }
-        className={cn(
-          "flex shrink-0 items-center justify-center rounded-full transition-all",
-          "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-          touch ? "size-10" : "size-[26px]",
-          canSend
-            ? "bg-primary text-primary-foreground hover:bg-primary-hover"
-            : canStop
-              ? "border border-border-strong bg-card text-foreground hover:bg-hover"
-              : "bg-border-strong text-muted-foreground"
-        )}
-      >
-        {canStop ? (
-          <Stop className={touch ? "size-5" : "size-3.5"} />
-        ) : (
-          <ArrowUp className={touch ? "size-5" : "size-3.5"} />
-        )}
-      </button>
+          {canStop ? (
+            <Stop className={touch ? "size-5" : "size-3.5"} />
+          ) : (
+            <ArrowUp className={touch ? "size-5" : "size-3.5"} />
+          )}
+        </button>
+      </div>
     </div>
   )
 }

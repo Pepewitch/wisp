@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 
 import { ChevronDown, FolderAdd, Gear, Plus } from "@/components/icons"
 import { Button, Eyebrow } from "@/components/primitives"
@@ -34,6 +34,13 @@ interface SidebarProps {
    * caller dismisses the drawer in the same commit.
    */
   onOpenSettings?: () => void
+  /**
+   * Wisp's update surface. Only the TOUCH footer takes it: below `md` there is
+   * no persistent top bar to carry app-level state, and the alternative — an
+   * idle daemon version in the task header — wrapped onto two lines and took
+   * that width from the one string on screen that says which task this is.
+   */
+  updateControl?: ReactNode
   /** Desktop-only: native picker for Local, daemon path prompt for remotes. */
   onAddProject?: () => void
   addProjectPending?: boolean
@@ -60,6 +67,7 @@ export function Sidebar({
   onNewTask,
   onConfigureProject,
   onOpenSettings,
+  updateControl,
   onAddProject,
   addProjectPending = false,
   error,
@@ -172,6 +180,7 @@ export function Sidebar({
           </span>
           <span className={cn("text-muted-foreground", touch ? "text-[13px]" : "text-[11.5px]")}>Show archived</span>
         </button>
+        {touch && updateControl && <span className="flex shrink-0 items-center px-1">{updateControl}</span>}
         {touch && onOpenSettings && (
           <Button size="lg" icon aria-label="Settings" onClick={onOpenSettings}>
             <Gear />

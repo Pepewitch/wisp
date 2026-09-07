@@ -356,6 +356,8 @@ function MainView({
         opts?.afterSelect?.()
         setSettingsOpen(true)
       }}
+      // below `md` the drawer footer is the only app-chrome surface there is
+      updateControl={opts?.touch ? updateControls.mobile : undefined}
       onAddProject={projectAdd.onAddProject}
       addProjectPending={projectAdd.pending}
       error={sideError}
@@ -441,7 +443,6 @@ function MainView({
         />
       }
       updateControl={updateControls.desktop}
-      mobileUpdateControl={updateControls.mobile}
       onOpenSettings={() => setSettingsOpen(true)}
       dialogs={dialogs}
     />
@@ -460,7 +461,6 @@ function AppShell({
   composer,
   taskHeader,
   updateControl,
-  mobileUpdateControl,
   onOpenSettings,
   dialogs,
 }: {
@@ -478,7 +478,6 @@ function AppShell({
   composer: ReactNode
   taskHeader: ReactNode
   updateControl: ReactNode
-  mobileUpdateControl: ReactNode
   /** The pointer shell's gear. Touch reaches the same modal from the drawer. */
   onOpenSettings: () => void
   dialogs: ReactNode
@@ -496,10 +495,10 @@ function AppShell({
           changes={changes}
           terminal={terminal}
           composer={composer}
+          desktop={desktop}
           connectionSwitcher={
             desktop ? <DesktopConnectionChrome mobile /> : undefined
           }
-          updateControl={mobileUpdateControl}
           zoomControl={desktop ? <DesktopZoomControl mobile /> : undefined}
         />
         {dialogs}

@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react"
 import { Drawer } from "@base-ui/react/drawer"
 
-import { Hamburger, WispMark } from "@/components/icons"
+import { Hamburger, Local, WispMark } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
-import { StateDot, Tab } from "@/components/primitives"
+import { Meta, StateDot, Tab } from "@/components/primitives"
 import { stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -20,6 +20,22 @@ type MobileTab = "chat" | "changes" | "terminal"
  *    for "which surface am I looking at"
  *  - no resizable groups mount at all, so saved desktop geometry is neither
  *    applied nor overwritten by phone dimensions
+ *
+ * The chrome is BANDED, and each band answers one question, because the range
+ * this shell covers is 320px to 767px — a phone AND a narrow Wisp Desktop
+ * window, whose `minWidth` is 720. One row carrying app chrome, task identity
+ * and task actions at once could not align at either end of that range: the
+ * hamburger and the overflow menu centre against a two-or-three line stack, so
+ * nothing in the header shares a line with anything else, and an idle daemon
+ * version wraps into the width the title needed.
+ *
+ *  1. the app band — Wisp Desktop only (see below)
+ *  2. the task band — one hamburger, the title over ONE metadata line, and the
+ *     task's overflow menu, all centred on the same axis
+ *  3. the pull request, when there is one, on its own full-width row rather
+ *     than splitting the header with the title
+ *  4. the tab strip — three equal thirds, a segmented control rather than
+ *     left-packed pills with a dead right half
  *
  * Two deliberate departures from the desktop language, because touch is not a
  * small mouse:
@@ -40,8 +56,8 @@ export function MobileShell({
   changes,
   terminal,
   composer,
+  desktop = false,
   connectionSwitcher,
-  updateControl,
   zoomControl,
 }: {
   task: ApiTask | null
@@ -51,10 +67,10 @@ export function MobileShell({
   changes: ReactNode
   terminal: ReactNode
   composer: ReactNode
+  /** Wisp Desktop, whose packaged window hides its title bar — see the app band. */
+  desktop?: boolean
   /** Desktop mode uses one compact menu here; browser mode leaves it absent. */
   connectionSwitcher?: ReactNode
-  /** Global application/daemon update surface. */
-  updateControl?: ReactNode
   /** Desktop-only application zoom surface. */
   zoomControl?: ReactNode
 }) {
@@ -70,72 +86,104 @@ export function MobileShell({
 
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header
-        className="flex shrink-0 items-center gap-2 border-b border-border bg-surface pr-2 pl-1"
-        style={{ paddingTop: "env(safe-area-inset-top)" }}
-      >
-        <button
-          type="button"
-          onClick={() => setDrawer(true)}
-          aria-label="Open tasks"
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-hover"
-        >
-          <Hamburger className="size-5" />
-        </button>
+      <header className="shrink-0 border-b border-border bg-surface" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+        {/* The app band is Wisp Desktop's alone, and it is not decoration: that
+            window is `titleBarStyle: Overlay`, so the traffic lights float over
+            whatever sits at the top left, and a hidden title bar leaves nothing
+            to drag the window by. `pl-20` reserves them the room the pointer
+            shell's top bar already gives them. The browser has neither problem
+            and neither control, so it gets no band at all — app-level state on
+            touch lives in the drawer footer, beside the gear. */}
+        {desktop && (
+          <div
+            data-tauri-drag-region=""
+            className="flex h-11 items-center gap-1 border-b border-border pr-1.5 pl-20"
+          >
+            <span role="img" aria-label="Wisp" className="shrink-0">
+              <WispMark className="size-[17px]" />
+            </span>
+            {connectionSwitcher}
+            <span className="flex-1" />
+            {zoomControl}
+          </div>
+        )}
 
-        <span role="img" aria-label="Wisp" className="shrink-0">
-          <WispMark className="size-[18px]" />
-        </span>
+        <div className="flex items-center gap-1 px-1">
+          <button
+            type="button"
+            onClick={() => setDrawer(true)}
+            aria-label="Open tasks"
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-hover"
+          >
+            <Hamburger className="size-5" />
+          </button>
 
-        <div className="min-w-0 flex-1 py-2">
-          {connectionSwitcher && <div className="mb-0.5 -ml-2">{connectionSwitcher}</div>}
-          {task ? (
-            <>
-              <div className="truncate text-[13.5px] font-semibold tracking-[-0.01em]">{task.title}</div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <StateDot state={task.state} />
-                <span>{stateWord(task)}</span>
-                {task.model && (
-                  <>
-                    <span className="text-faint">·</span>
-                    <span className="truncate font-mono">{task.model}</span>
-                  </>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="text-[13.5px] text-muted-foreground">No task selected</div>
+          {/* Exactly two lines, so the 44px control on either side of it centres
+              on the axis the title sits on. Nothing else joins this row. */}
+          <div className="min-w-0 flex-1 py-2">
+            {task ? (
+              <>
+                <h1 className="truncate text-[14.5px] font-semibold tracking-[-0.01em]" title={task.title}>
+                  {task.title}
+                </h1>
+                <Meta
+                  className="mt-1"
+                  items={[
+                    <span key="state" className="flex shrink-0 items-center gap-1.5">
+                      <StateDot state={task.state} />
+                      <span className="text-fg-secondary">{stateWord(task)}</span>
+                    </span>,
+                    // Worktree is the default and says so on its own branch;
+                    // LOCAL is the one worth the width (§5c), and the desktop
+                    // header marks it the same way.
+                    task.mode === "local" && (
+                      <span key="mode" className="flex shrink-0 items-center gap-1.5 text-fg-secondary">
+                        <Local className="size-3" />
+                        Local
+                      </span>
+                    ),
+                    // The composer used to carry these too, three rows down and
+                    // truncated to "claudeI…". One place, un-truncated.
+                    <span key="agent" className="flex min-w-0 items-center gap-1.5">
+                      <span className="shrink-0">{task.harness}</span>
+                      {task.model && (
+                        <>
+                          <span className="text-faint">·</span>
+                          <span className="min-w-0 truncate font-mono">{task.model}</span>
+                        </>
+                      )}
+                    </span>,
+                  ]}
+                />
+              </>
+            ) : (
+              <div className="text-[14.5px] text-muted-foreground">No task selected</div>
+            )}
+          </div>
+
+          {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}
+          {task && (
+            <span className="flex size-11 shrink-0 items-center justify-center">
+              <TaskActions task={task} />
+            </span>
           )}
         </div>
 
+        {/* Its own row, indented so its TEXT starts on the title's left edge. */}
         {pullRequest?.kind === "found" && (
-          <PullRequestStatusLink pullRequest={pullRequest.pullRequest} compact />
-        )}
-        {updateControl && (
-          <span className="flex size-11 shrink-0 items-center justify-center">
-            {updateControl}
-          </span>
-        )}
-        {zoomControl && (
-          <span className="flex size-11 shrink-0 items-center justify-center">
-            {zoomControl}
-          </span>
-        )}
-        {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}
-        {task && (
-          <span className="flex size-11 shrink-0 items-center justify-center">
-            <TaskActions task={task} />
-          </span>
+          <div className="flex pr-1 pb-1.5 pl-10">
+            <PullRequestStatusLink pullRequest={pullRequest.pullRequest} compact />
+          </div>
         )}
       </header>
 
       <div
         role="tablist"
         aria-label="Task surface"
-        className="flex h-12 shrink-0 items-center gap-1 border-b border-border bg-surface px-1.5"
+        className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-1.5"
       >
         {(["chat", "changes", "terminal"] as const).map((t) => (
-          <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)}>
+          <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 justify-center">
             {t === "chat" ? "Chat" : t === "changes" ? "Changes" : "Terminal"}
           </Tab>
         ))}
