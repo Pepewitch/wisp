@@ -39,13 +39,15 @@ cd desktop/src-tauri
 # Always use the pinned official npm distribution. A developer's unrelated
 # global cargo-tauri/tauri executable must not change release bundle behavior.
 tauri=(bun run tauri)
-signing_config=()
+tauri_args=(
+  build
+  --target aarch64-apple-darwin
+  --bundles "$(IFS=,; echo "${bundles[*]}")"
+)
 if [ -z "${APPLE_CERTIFICATE:-}" ]; then
   # With no distribution credential Tauri otherwise leaves only the linker's
   # executable signature, which is not a valid signed application bundle.
-  signing_config=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
+  tauri_args+=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')
 fi
 
-"${tauri[@]}" build --target aarch64-apple-darwin \
-  --bundles "$(IFS=,; echo "${bundles[*]}")" \
-  "${signing_config[@]}" -- --locked
+"${tauri[@]}" "${tauri_args[@]}" -- --locked
