@@ -114,6 +114,22 @@ fn the_webview_has_no_direct_native_update_or_system_authority() {
     }
 }
 
+/// Zoom changes presentation only. Keep it as the sole direct webview setter;
+/// every stateful or outward action still crosses a purpose-built Rust command.
+#[test]
+fn the_webview_only_gets_direct_zoom_authority() {
+    let capability: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json"))
+            .expect("valid capability");
+    assert_eq!(
+        capability["permissions"],
+        serde_json::json!([
+            "core:default",
+            "core:webview:allow-set-webview-zoom"
+        ])
+    );
+}
+
 /// Tauri deserializes plugin configuration before the updater builder can
 /// replace this inert value with the key compiled from updater-public.key.
 /// Keep every endpoint and dangerous transport option out of the mutable JSON

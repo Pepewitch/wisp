@@ -42,6 +42,7 @@ export function MobileShell({
   composer,
   connectionSwitcher,
   updateControl,
+  zoomControl,
 }: {
   task: ApiTask | null
   pullRequest?: PullRequestStatus
@@ -54,6 +55,8 @@ export function MobileShell({
   connectionSwitcher?: ReactNode
   /** Global application/daemon update surface. */
   updateControl?: ReactNode
+  /** Desktop-only application zoom surface. */
+  zoomControl?: ReactNode
 }) {
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
@@ -111,6 +114,11 @@ export function MobileShell({
         {updateControl && (
           <span className="flex size-11 shrink-0 items-center justify-center">
             {updateControl}
+          </span>
+        )}
+        {zoomControl && (
+          <span className="flex size-11 shrink-0 items-center justify-center">
+            {zoomControl}
           </span>
         )}
         {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}

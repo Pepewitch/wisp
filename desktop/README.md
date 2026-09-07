@@ -24,6 +24,12 @@ not a change to how the browser build authenticates. Shared React changes must
 still be checked in both runtimes because the exact same generated bundle ships
 in each product.
 
+Application zoom is the webview's one direct native UI capability. The desktop
+provider applies the persisted 50–200% level through Tauri's narrowly scoped
+`set_webview_zoom` permission and owns the standard Command + `+`, `-`, and `0`
+shortcuts. The browser runtime mounts no zoom provider and keeps the browser's
+own zoom behavior.
+
 Desktop updates are a native capability, not a daemon route. The Update Center
 shows one global application row and one selected-daemon row with explicit
 labels. Native code owns the channel endpoint, updater key, candidate, download,
