@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query"
-import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { utcIso } from "@/lib/time"
 import type { ActivityEvent, TaskDetail, TaskMessage } from "@/lib/types"
@@ -407,5 +407,111 @@ describe("when a user bubble was sent", () => {
 
     fireEvent.click(relative)
     expect(relative).toHaveTextContent("5 min ago")
+  })
+})
+
+describe("copying user messages", () => {
+  let restoreClipboard: (() => void) | undefined
+
+  afterEach(() => {
+    restoreClipboard?.()
+    restoreClipboard = undefined
+  })
+
+  it("copies prompt, steered, and queued message text from their bubbles", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard")
+    restoreClipboard = () => {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard)
+      else Reflect.deleteProperty(navigator, "clipboard")
+    }
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    })
+
+    const task = {
+      id: "tcopy",
+      title: "Copy messages",
+      repo_path: "/tmp/repo",
+      worktree_path: "/tmp/worktree",
+      branch: "wisp/tcopy",
+      base_commit: "abc123",
+      harness: "droid",
+      model: "fake",
+      effort: null,
+      slot: 0,
+      state: "running",
+      state_detail: "turn 1",
+      session_id: "session-1",
+      seq: 1,
+      turn_count: 1,
+      archived: false,
+      mode: "worktree",
+      created_at: "2026-09-03T00:00:00Z",
+      updated_at: "2026-09-03T00:00:02Z",
+      diffstat: null,
+      worktreeReason: null,
+      turns: [
+        {
+          id: 1,
+          task_id: "tcopy",
+          n: 1,
+          prompt: "Original request",
+          result: null,
+          status: "running",
+          model: "fake",
+          usage: null,
+          attachments: [],
+          log_file: "/tmp/turn.log",
+          started_at: "2026-09-03T00:00:00Z",
+          ended_at: null,
+        },
+      ],
+      messages: [
+        {
+          id: "m-steered",
+          task_id: "tcopy",
+          text: "Use the safer approach",
+          status: "delivered",
+          delivery: "steered",
+          turn_n: 1,
+          delivery_uncertain: false,
+          attachments: [],
+          created_at: "2026-09-03T00:00:01Z",
+          updated_at: "2026-09-03T00:00:01Z",
+        },
+        {
+          id: "m-queued",
+          task_id: "tcopy",
+          text: "Then add tests",
+          status: "queued",
+          delivery: null,
+          turn_n: null,
+          delivery_uncertain: false,
+          attachments: [],
+          created_at: "2026-09-03T00:00:02Z",
+          updated_at: "2026-09-03T00:00:02Z",
+        },
+      ],
+    } as TaskDetail
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
+
+    const buttons = screen.getAllByRole("button", { name: "Copy user message" })
+    expect(buttons).toHaveLength(3)
+
+    fireEvent.click(buttons[0]!)
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("Original request"))
+    expect(screen.getByRole("button", { name: "Copied user message" })).toBeInTheDocument()
+
+    fireEvent.click(buttons[1]!)
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("Use the safer approach"))
+
+    fireEvent.click(buttons[2]!)
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("Then add tests"))
   })
 })
