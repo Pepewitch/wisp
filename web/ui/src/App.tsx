@@ -250,8 +250,8 @@ function MainView({
   // held as a PATH, not a row: the repos query refetches after a save, and a
   // captured row would leave the modal showing what was just replaced
   const [configuringPath, setConfiguringPath] = useState<string | null>(null)
-  // Wisp's own preferences. Client-local, so it outlives no connection and
-  // belongs to the shell rather than to the selected daemon.
+  // Wisp's own preferences: client-local and global, so this belongs to the
+  // shell rather than to the selected connection.
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const tasksQuery = useTasks(showArchived)
@@ -351,7 +351,8 @@ function MainView({
         opts?.afterSelect?.()
       }}
       onOpenSettings={() => {
-        // the drawer closes first: a modal under an open drawer is unreachable
+        // dismiss and open in the same commit — the same pair a project's gear
+        // already makes on touch, so the drawer is never left over the modal
         opts?.afterSelect?.()
         setSettingsOpen(true)
       }}

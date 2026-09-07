@@ -30,7 +30,8 @@ interface SidebarProps {
   onConfigureProject: (repoPath: string) => void
   /**
    * Opens Wisp's settings. Only the TOUCH footer offers it: the pointer shell
-   * has the top bar's gear, and two gears for one modal is one too many.
+   * has the top bar's gear, and two gears for one modal is one too many. The
+   * caller dismisses the drawer in the same commit.
    */
   onOpenSettings?: () => void
   /** Desktop-only: native picker for Local, daemon path prompt for remotes. */

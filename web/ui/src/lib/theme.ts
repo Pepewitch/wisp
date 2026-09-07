@@ -60,22 +60,52 @@ export function resolveTheme(preference: ThemePreference, system: Theme): Theme 
 }
 
 /**
- * Writes the theme onto <html>, which is the ONE place either class is set.
+ * The window chrome a platform paints for itself, in the one form it accepts:
+ * a meta tag rather than a token.
  *
- * `color-scheme` rides along in the token blocks keyed by these classes, so
- * this is also what tells the platform to paint its own scrollbar, caret and
- * form controls in the right theme — the bug that started this: a dark app on
- * a light-appearance Mac showed a white native scrollbar on hover.
+ * `color-scheme` also rides in the CSS token blocks, and the CSS property wins
+ * once the stylesheet is parsed — the meta is what answers BEFORE that, which
+ * matters here because the bundle is one file and its <style> follows 1.8 MB
+ * of inlined module. Both are written from one place so they cannot disagree.
+ *
+ * `theme-color` tints a mobile browser's OWN toolbar above the app; the dark
+ * value is the one scripts/brand/build.ts writes into index.html, and light
+ * is the top bar's surface.
+ */
+const CHROME_COLOR: Record<Theme, string> = { dark: "#0b0b0d", light: "#f6f6f9" }
+
+function setMeta(name: string, content: string): void {
+  const existing = document.head.querySelector(`meta[name="${name}"]`)
+  if (existing) {
+    existing.setAttribute("content", content)
+    return
+  }
+  const meta = document.createElement("meta")
+  meta.name = name
+  meta.content = content
+  document.head.append(meta)
+}
+
+/**
+ * Writes the theme onto <html>, which is the ONE place either class is set,
+ * and tells the platform the same thing through its two metas.
+ *
+ * This is what makes the platform paint its own scrollbar, caret and form
+ * controls in the right theme — the bug that started this: a dark app on a
+ * light-appearance Mac showed a white native scrollbar on hover.
  */
 export function applyTheme(theme: Theme): void {
   const root = document.documentElement
   root.classList.toggle("dark", theme === "dark")
   root.classList.toggle("light", theme === "light")
+  setMeta("color-scheme", theme)
+  setMeta("theme-color", CHROME_COLOR[theme])
 }
 
 let preference = readThemePreference()
 let system = systemTheme()
 let watching = false
+let watchingStorage = false
 const listeners = new Set<() => void>()
 
 function announce(): void {
@@ -97,10 +127,31 @@ function watchSystem(): void {
   })
 }
 
+/**
+ * Two browser tabs on one daemon is a real surface, and the preference they
+ * share is one key. `storage` fires only in the OTHER tabs, which is exactly
+ * what this needs; a `clear()` (the desktop reset) reports a null key, so it
+ * lands here too and falls back to the default.
+ *
+ * Nothing is written back — the value already IS what storage holds.
+ */
+function watchStorage(): void {
+  if (watchingStorage || typeof window === "undefined") return
+  watchingStorage = true
+  window.addEventListener("storage", (event) => {
+    if (event.key !== null && event.key !== STORAGE_KEY) return
+    const next = readThemePreference()
+    if (next === preference) return
+    preference = next
+    announce()
+  })
+}
+
 /** A tiny external store: the theme lives above every tree that reads it. */
 export const themeStore = {
   subscribe(listener: () => void): () => void {
     watchSystem()
+    watchStorage()
     listeners.add(listener)
     return () => {
       listeners.delete(listener)
@@ -133,15 +184,24 @@ export const themeStore = {
  * light in a dark app.
  */
 export function initTheme(): void {
+  // re-read rather than trust the module's own import-time answer: nothing
+  // guarantees this runs in the same frame, or that matchMedia existed then
+  system = systemTheme()
   watchSystem()
+  watchStorage()
   applyTheme(themeStore.theme())
 }
 
+// no SSR (the app is a client-only SPA) — the default identity is the safe
+// answer for a snapshot that can never actually be taken
+const serverPreference = (): ThemePreference => DEFAULT_THEME_PREFERENCE
+const serverTheme = (): Theme => "dark"
+
 export function useThemePreference(): ThemePreference {
-  return useSyncExternalStore(themeStore.subscribe, themeStore.preference)
+  return useSyncExternalStore(themeStore.subscribe, themeStore.preference, serverPreference)
 }
 
 /** The resolved theme, for the rare surface that cannot read a CSS token. */
 export function useTheme(): Theme {
-  return useSyncExternalStore(themeStore.subscribe, themeStore.theme)
+  return useSyncExternalStore(themeStore.subscribe, themeStore.theme, serverTheme)
 }

@@ -15,7 +15,9 @@ const THEME_LABEL: Record<ThemePreference, string> = {
 
 /**
  * Wisp's own settings — the gear in the top bar, and the gear in the drawer
- * footer on touch, where there is no top bar to carry one.
+ * footer on touch, where there is no top bar to carry one. On touch the drawer
+ * is dismissed in the same commit that opens this, which is the pair a
+ * project's gear already makes there.
  *
  * Everything here is a CLIENT-LOCAL preference: it belongs to this app on this
  * device, never to the daemon and never to a connection, which is why the

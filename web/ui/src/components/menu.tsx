@@ -53,7 +53,9 @@ export function Menu({
       <Base.Trigger
         disabled={disabled}
         aria-label={name}
-        title={name}
+        // a tooltip earns its place on a glyph; a labelled trigger already
+        // shows its value, so `Theme` hovering over `Dark` is noise
+        title={iconOnly && typeof label === "string" ? label : undefined}
         className={cn(
           "flex h-[26px] shrink-0 items-center gap-1.5 rounded-md text-[12px] transition-colors",
           iconOnly ? "w-[26px] justify-center px-0" : "px-2",

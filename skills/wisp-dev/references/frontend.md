@@ -64,8 +64,9 @@ a hex in a component again.
 
 ## 1. Colour budget — the five places
 
-The theme is a neutral scale (never `#000` and never `#fff`, no cast on the
-grays), a four-level gray text hierarchy, and **one** violet at hue 300:
+The theme is a neutral scale (never `#000`, no cast on the grays — and never
+`#fff` for a *page* surface; light's floating ones are the one exception, see
+below), a four-level gray text hierarchy, and **one** violet at hue 300:
 `oklch(0.705 0.155 300)` = `#AF87F1` on graphite, `oklch(0.5 0.19 300)` on
 paper. Every accent shade is derived from that hue at fixed lightness and
 chroma *within its theme*, so moving the hue moves the family without touching
@@ -116,21 +117,33 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   connection-scoped — theme is not daemon state, and switching connection tabs
   must not switch the theme. `useTheme()` for what is on screen,
   `useThemePreference()` for what a person chose.
+- One key shared by two browser tabs means the store listens for `storage`
+  too, so a change in one tab lands in the other without a reload. `system` is
+  likewise a LIVE `matchMedia` query, not a value read once at startup — macOS
+  changes appearance at sunset and the packaged webview follows it.
 - `lib/theme.ts` writes `light` or `dark` on `<html>` and **nowhere else**.
   The light block is `:root.light`, not `.light`: `:root` and a bare class have
   equal specificity, so a plain class would leave the pairing to be settled by
   whichever block a later edit moved last.
-- **`color-scheme` is load-bearing.** The platform's own overlay scrollbar,
-  caret and default form controls take their colour from it, and the two
-  declarations in the token blocks are the only place the platform is told
-  which theme is on screen. Without it the packaged Mac app flashed a **white
-  scrollbar** over the reading column on hover whenever macOS was in light
-  appearance — a native control painting in a theme the app never declared.
-  `scroll-slim` still sets `scrollbar-color` from tokens; both are needed.
+- **`color-scheme` is load-bearing**, and it is told twice on purpose. The
+  platform's own overlay scrollbar, caret and default form controls take their
+  colour from it; without it the packaged Mac app flashed a **white scrollbar**
+  over the reading column on hover whenever macOS was in light appearance — a
+  native control painting in a theme the app never declared. The CSS property
+  in the token blocks is the authority, and the `<meta name="color-scheme">` in
+  `index.html` is what answers BEFORE it: the bundle is one file whose
+  `<style>` follows a 1.8 MB inlined module, so the meta covers the parse.
+  `applyTheme` rewrites both the meta and `theme-color` from one place, so they
+  can never disagree with the class. `scroll-slim` still sets
+  `scrollbar-color` from tokens; all of it is needed.
 - **Light is not an inversion.** Dark stacks every surface UP from the reading
   column; white is a ceiling, so light sends page surfaces DOWN into gray while
   the surfaces that FLOAT — menus, hover cards, the palette — stay `#fff` and
-  earn depth from a shadow. What is preserved is the ordering that carries
+  earn depth from a shadow. That `#fff` is the **only** licensed one, and it is
+  licensed *because* it floats: a page surface reaching white would leave
+  nothing above it, which is the same argument as never using `#000` on
+  graphite. `TERMINAL_THEME.light.background` is the same exception — a
+  terminal is a hole in the app, so it takes the extreme its theme allows. What is preserved is the ordering that carries
   meaning: the prompt bubble is still the surface furthest from the background
   inside a turn, code still sits between the two, row hover is still stronger
   than a resting card, selection is still the strongest neutral, and the four
@@ -531,10 +544,11 @@ at 15 minutes. One unavailable repository must not throttle the others.
 
 `components/settings-dialog.tsx` is the app's own settings modal, opened by the
 **gear at the right end of the top bar** and, on touch, by the gear in the
-drawer footer — the drawer has no top bar, and the modal opens only after the
-drawer closes, because a dialog under an open drawer cannot be reached. Exactly
-one gear per shell: a second one on the pointer footer would be two doors to
-one room.
+drawer footer — the drawer has no top bar to carry one. There the drawer's
+dismissal and the modal's opening are ONE commit, the same pair a project's
+gear already makes on touch; do not leave the drawer up over a dialog, and do
+not invent a timer to sequence them. Exactly one gear per shell: a second one
+on the pointer footer would be two doors to one room.
 
 Two gears exist in this app and they are not the same door. A **project row's**
 gear opens that project's settings — daemon state about one repo (§5d). The
