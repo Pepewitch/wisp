@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { ActivityList } from "@/components/activity-list"
 import { ConnectionGallerySpecimen } from "@/components/connection-gallery-specimen"
 import {
+  ACCENTS,
   PALETTE_GROUPS,
   PROBE_CONTEXT_ANSWER,
   PR_SPECIMEN,
@@ -22,8 +23,10 @@ import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
 import { UpdateGallerySpecimen } from "@/components/update-gallery-specimen"
+import { ThemeControl } from "@/components/theme-control"
 import { STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
+import { useTheme } from "@/lib/theme"
 import { TASK_STATES } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -41,7 +44,8 @@ export function Gallery() {
           <div className="flex-1">
             <h1 className="text-[22px] font-semibold tracking-[-0.018em]">Graphite &amp; violet</h1>
             <p className="mt-1.5 max-w-[640px] text-[13px] text-fg-secondary">
-              A neutral near-black scale, four levels of gray text, and one violet that only ever means{" "}
+              A neutral scale — near-black by default, near-white in light mode — four levels of gray text, and
+              one violet that only ever means{" "}
               <em className="text-foreground not-italic">this is live</em> or{" "}
               <em className="text-foreground not-italic">this is the one action</em>.
             </p>
@@ -102,13 +106,39 @@ export function Gallery() {
   )
 }
 
+function ThemeSpecimen() {
+  const theme = useTheme()
+  return (
+    <Section title="Theme — two, and every token paired">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
+          <ThemeControl />
+          <span className="text-[12px] text-fg-secondary">
+            System · Light · Dark, from the sidebar footer. Now showing <span className="font-mono">{theme}</span>.
+          </span>
+        </div>
+        <p className="mt-4 text-[11.5px] leading-relaxed text-muted-foreground">
+          Dark is Wisp's own and stays the default — an update repaints nobody's window. Light is the same
+          meanings at the other end of the scale, not an inversion: page surfaces recede DOWN from the reading
+          column, while menus and hover cards stay white and earn their depth from a shadow. Every token below
+          is paired, and <span className="font-mono">color-scheme</span> rides along so the platform's own
+          scrollbar, caret and controls follow — a dark app on a light Mac used to flash a white scrollbar over
+          this page on hover. No <span className="font-mono">dark:</span> utilities anywhere; a colour that
+          needs both themes is a token, or it is a bug.
+        </p>
+    </Section>
+  )
+}
+
 function FoundationSpecimens() {
+  const theme = useTheme()
   return (
     <>
+      <ThemeSpecimen />
+
       <Section title="Surfaces">
           <div className="flex overflow-hidden rounded-lg border border-border-strong">
             {SURFACES.map((sf) => (
-              <div key={sf.token} className="h-16 flex-1" style={{ background: sf.hex }} />
+              <div key={sf.token} className="h-16 flex-1" style={{ background: `var(${sf.token})` }} />
             ))}
           </div>
           <div className="mt-4 grid grid-flow-col grid-cols-2 grid-rows-5 gap-x-10 gap-y-2">
@@ -116,11 +146,11 @@ function FoundationSpecimens() {
               <div key={sf.token} className="flex items-baseline gap-2.5">
                 <span
                   className="size-2.5 shrink-0 translate-y-px rounded-[3px] border border-border-strong"
-                  style={{ background: sf.hex }}
+                  style={{ background: `var(${sf.token})` }}
                 />
                 <span className="shrink-0 text-[12px]">{sf.name}</span>
                 <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{sf.note}</span>
-                <span className="shrink-0 font-mono text-[11px] text-fg-secondary">{sf.hex}</span>
+                <span className="shrink-0 font-mono text-[11px] text-fg-secondary">{sf[theme]}</span>
                 <span className="shrink-0 font-mono text-[10.5px] text-faint">{sf.token}</span>
               </div>
             ))}
@@ -147,16 +177,11 @@ function FoundationSpecimens() {
 
       <Section title="The one accent">
           <div className="flex gap-2.5">
-            {[
-              ["Accent", "bg-primary", "oklch(.705 .155 300)"],
-              ["Soft", "bg-accent-soft", "oklch(.79 .125 300)"],
-              ["Dim", "bg-accent-dim", "oklch(.46 .105 300)"],
-              ["Wash", "bg-accent-wash", "15% α"],
-            ].map(([label, cls, val]) => (
-              <div key={label} className="flex-1">
-                <div className={`h-14 rounded-lg border border-border ${cls}`} />
-                <div className="mt-2 text-[12px]">{label}</div>
-                <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{val}</div>
+            {ACCENTS.map((accent) => (
+              <div key={accent.name} className="flex-1">
+                <div className={cn("h-14 rounded-lg border border-border", accent.cls)} />
+                <div className="mt-2 text-[12px]">{accent.name}</div>
+                <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{accent[theme]}</div>
               </div>
             ))}
           </div>

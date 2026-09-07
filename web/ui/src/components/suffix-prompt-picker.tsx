@@ -218,7 +218,7 @@ function SuffixPromptDialog({
         <Dialog.Backdrop
           forceRender
           data-testid="create-suffix-prompt-backdrop"
-          className="fixed inset-0 z-(--z-nested-backdrop) bg-black/60"
+          className="fixed inset-0 z-(--z-nested-backdrop) bg-scrim"
         />
         <Dialog.Popup
           data-testid="create-suffix-prompt-dialog"

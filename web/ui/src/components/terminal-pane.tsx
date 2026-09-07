@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react"
 import { FitAddon } from "@xterm/addon-fit"
-import { Terminal } from "@xterm/xterm"
+import { Terminal, type ITheme } from "@xterm/xterm"
 import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
 import { Dismiss, Plus } from "@/components/icons"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { loadShellTabs, saveShellTabs, TerminalConnection, type ShellTabs } from "@/lib/terminal"
+import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
 import { cn } from "@/lib/utils"
 
@@ -26,6 +27,52 @@ import { cn } from "@/lib/utils"
 
 /** Matches MAX_SHELLS_PER_TASK in src/terminal.ts — the daemon rejects a higher id. */
 const MAX_SHELLS_PER_TASK = 8
+
+/**
+ * The app's one licensed hex block outside index.css: xterm paints to a canvas
+ * and takes JS colours, so it cannot read a CSS token. Both scales live here
+ * together for exactly that reason — keep them in step with the theme blocks
+ * in `web/ui/src/index.css`.
+ *
+ * The grayscale ends are not mirrored blindly. A program that prints in bright
+ * white means EMPHASIS, so on paper bright white becomes the darkest ink
+ * rather than an invisible line, and ANSI yellow darkens to an amber that is
+ * still a word on white.
+ */
+const TERMINAL_THEME: Record<Theme, ITheme> = {
+  dark: {
+    background: "#0b0b0d",
+    foreground: "#a2a2ad",
+    cursor: "#af87f1",
+    selectionBackground: "#2b2b34",
+    black: "#0b0b0d",
+    brightBlack: "#55555f",
+    white: "#eaeaee",
+    brightWhite: "#ffffff",
+    green: "#6bc48d",
+    red: "#de6f6b",
+    yellow: "#ddb055",
+    blue: "#7c92b4",
+    magenta: "#af87f1",
+    cyan: "#7fc9c0",
+  },
+  light: {
+    background: "#ffffff",
+    foreground: "#4f4f5a",
+    cursor: "#6d3fd0",
+    selectionBackground: "#dcdce6",
+    black: "#1a1a1f",
+    brightBlack: "#8a8a96",
+    white: "#55555f",
+    brightWhite: "#1a1a1f",
+    green: "#157f4c",
+    red: "#b83a34",
+    yellow: "#8a600c",
+    blue: "#3a5b8f",
+    magenta: "#6d3fd0",
+    cyan: "#136f69",
+  },
+}
 
 function labelFor(id: number): string {
   return `Shell ${id + 1}`
@@ -240,6 +287,7 @@ function ShellView({
   // a successful hello can refill it without tearing the live socket back down
   const [attempt, setAttempt] = useState(0)
   const retries = useRef(0)
+  const theme = useTheme()
 
   // xterm's stylesheet is imported as a string and injected once, so the
   // zero-CDN invariant holds and nothing reaches outside the bundle
@@ -253,22 +301,9 @@ function ShellView({
       lineHeight: 1.45,
       cursorBlink: true,
       allowProposedApi: true,
-      theme: {
-        background: "#0b0b0d",
-        foreground: "#a2a2ad",
-        cursor: "#af87f1",
-        selectionBackground: "#2b2b34",
-        black: "#0b0b0d",
-        brightBlack: "#55555f",
-        white: "#eaeaee",
-        brightWhite: "#ffffff",
-        green: "#6bc48d",
-        red: "#de6f6b",
-        yellow: "#ddb055",
-        blue: "#7c92b4",
-        magenta: "#af87f1",
-        cyan: "#7fc9c0",
-      },
+      // read off the store, not the hook: the terminal is built once, and a
+      // theme in this effect's deps would tear down a live shell to repaint it
+      theme: TERMINAL_THEME[themeStore.theme()],
     })
     const f = new FitAddon()
     t.loadAddon(f)
@@ -281,6 +316,12 @@ function ShellView({
       fit.current = null
     }
   }, [])
+
+  // A theme switch repaints the live terminal in place — scrollback, the
+  // socket and the running process are all untouched.
+  useEffect(() => {
+    if (term.current) term.current.options.theme = TERMINAL_THEME[theme]
+  }, [theme])
 
   // connect only while active
   useEffect(() => {

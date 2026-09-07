@@ -41,6 +41,8 @@ export {
   MoreHorizontalRegular as More,
   SubtractRegular as Minus,
   StopRegular as Stop,
+  WeatherMoonRegular as Moon,
+  WeatherSunnyRegular as Sun,
   ZoomInRegular as ZoomIn,
 } from "@fluentui/react-icons"
 

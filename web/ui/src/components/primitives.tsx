@@ -53,9 +53,9 @@ const TONE: Record<ButtonTone, string> = {
   // a real edge, for an action with a consequence you can undo
   outline: "border-border-strong bg-card text-foreground hover:bg-hover",
   // the one action on the screen. Exactly one, or none.
-  primary: "bg-primary text-primary-foreground font-semibold hover:brightness-110",
+  primary: "bg-primary text-primary-foreground font-semibold hover:bg-primary-hover",
   // an irreversible action, filled so it cannot read as a low-risk text link
-  destructive: "bg-destructive text-destructive-foreground font-semibold hover:brightness-110",
+  destructive: "bg-destructive text-destructive-foreground font-semibold hover:bg-destructive-hover",
 }
 
 /**

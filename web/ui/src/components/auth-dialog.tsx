@@ -24,7 +24,7 @@ export function AuthDialog() {
   const error = mint.error instanceof Error ? mint.error.message : null
 
   return (
-    <div className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-black/65 p-6">
+    <div className="fixed inset-0 z-(--z-modal) flex items-center justify-center bg-scrim p-6">
       <div
         role="dialog"
         aria-label="Daemon token"
