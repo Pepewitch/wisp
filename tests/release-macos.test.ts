@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   assertMacReleaseSource,
   deterministicTarGz,
+  isAdHocCodeSignature,
   MACOS_CHECKSUMS,
   MACOS_MANIFEST,
   MACOS_SUPPORTED_BASELINE,
@@ -46,6 +47,20 @@ describe("Apple Silicon release metadata", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(readFileSync(join(extracted, "wisp"))).toEqual(Buffer.from(bytes));
+  });
+
+  test("recognizes both codesign representations of an ad-hoc signature", () => {
+    expect(isAdHocCodeSignature("Signature=adhoc\nInfo.plist=not bound")).toBe(true);
+    expect(
+      isAdHocCodeSignature(
+        "CodeDirectory v=20400 size=124070 flags=0x2(adhoc) hashes=3871+2 location=embedded",
+      ),
+    ).toBe(true);
+    expect(
+      isAdHocCodeSignature(
+        "Authority=Developer ID Application: Example Corp (ABCDE12345)\nCodeDirectory v=20500 flags=0x10000(runtime)",
+      ),
+    ).toBe(false);
   });
 
   test("refuses dirty Mac release sources on every build host", () => {
