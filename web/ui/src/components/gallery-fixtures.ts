@@ -170,14 +170,27 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
   },
 ]
 
+/**
+ * Both scales, side by side, because the gallery is where a missing pair shows
+ * up. The swatch itself is painted from the TOKEN, so it always tells the
+ * truth about the theme on screen; the hex beside it is that theme's value.
+ */
 export const SURFACES = [
-  { name: "Void", token: "--background", hex: "#0D0D10", note: "Reading column, stream, diff body" },
-  { name: "Surface", token: "--surface", hex: "#0F0F12", note: "Sidebar, right pane, top bar, inputs" },
-  { name: "Code", token: "--code", hex: "#101014", note: "Code blocks — a step below the bubble" },
-  { name: "Popover", token: "--popover", hex: "#131317", note: "Hover cards, menus, palette" },
-  { name: "Card", token: "--card", hex: "#15151A", note: "Prompt bubbles, raised chrome" },
-  { name: "Hover", token: "--hover", hex: "#1A1A20", note: "Row hover — never a resting state" },
-  { name: "Selected", token: "--accent", hex: "#1F1F26", note: "Background alone. No rail, no hue" },
-  { name: "Border", token: "--border", hex: "#212128", note: "Pane dividers, hairlines" },
-  { name: "Border strong", token: "--border-strong", hex: "#2B2B34", note: "Input edges, drag grips" },
+  { name: "Void", token: "--background", dark: "#0D0D10", light: "#FBFBFD", note: "Reading column, stream, diff body" },
+  { name: "Surface", token: "--surface", dark: "#0F0F12", light: "#F6F6F9", note: "Sidebar, right pane, top bar, inputs" },
+  { name: "Code", token: "--code", dark: "#101014", light: "#F1F1F5", note: "Code blocks — a step below the bubble" },
+  { name: "Popover", token: "--popover", dark: "#131317", light: "#FFFFFF", note: "Hover cards, menus, palette" },
+  { name: "Card", token: "--card", dark: "#15151A", light: "#EDEDF2", note: "Prompt bubbles, raised chrome" },
+  { name: "Hover", token: "--hover", dark: "#1A1A20", light: "#E9E9F0", note: "Row hover — never a resting state" },
+  { name: "Selected", token: "--accent", dark: "#1F1F26", light: "#E2E2EA", note: "Background alone. No rail, no hue" },
+  { name: "Border", token: "--border", dark: "#212128", light: "#E4E4EB", note: "Pane dividers, hairlines" },
+  { name: "Border strong", token: "--border-strong", dark: "#2B2B34", light: "#CDCDD8", note: "Input edges, drag grips" },
+] as const
+
+/** The one hue, at the lightness each theme needs to keep it a word. */
+export const ACCENTS = [
+  { name: "Accent", cls: "bg-primary", dark: "oklch(.705 .155 300)", light: "oklch(.5 .19 300)" },
+  { name: "Soft", cls: "bg-accent-soft", dark: "oklch(.79 .125 300)", light: "oklch(.55 .185 300)" },
+  { name: "Dim", cls: "bg-accent-dim", dark: "oklch(.46 .105 300)", light: "oklch(.72 .13 300)" },
+  { name: "Wash", cls: "bg-accent-wash", dark: "15% α", light: "14% α" },
 ] as const

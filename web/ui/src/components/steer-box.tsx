@@ -590,7 +590,7 @@ function ComposerControls({
           "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
           touch ? "size-10" : "size-[26px]",
           canSend
-            ? "bg-primary text-primary-foreground hover:brightness-110"
+            ? "bg-primary text-primary-foreground hover:bg-primary-hover"
             : canStop
               ? "border border-border-strong bg-card text-foreground hover:bg-hover"
               : "bg-border-strong text-muted-foreground"

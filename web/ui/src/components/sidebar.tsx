@@ -28,6 +28,12 @@ interface SidebarProps {
   onShowArchivedChange: (value: boolean) => void
   onNewTask: (repoPath: string) => void
   onConfigureProject: (repoPath: string) => void
+  /**
+   * Opens Wisp's settings. Only the TOUCH footer offers it: the pointer shell
+   * has the top bar's gear, and two gears for one modal is one too many. The
+   * caller dismisses the drawer in the same commit.
+   */
+  onOpenSettings?: () => void
   /** Desktop-only: native picker for Local, daemon path prompt for remotes. */
   onAddProject?: () => void
   addProjectPending?: boolean
@@ -53,6 +59,7 @@ export function Sidebar({
   onShowArchivedChange,
   onNewTask,
   onConfigureProject,
+  onOpenSettings,
   onAddProject,
   addProjectPending = false,
   error,
@@ -132,7 +139,10 @@ export function Sidebar({
       </div>
 
       <div
-        className={cn("flex shrink-0 items-center border-t border-border", touch ? "h-14 px-2" : "h-10 pl-3.5")}
+        className={cn(
+          "flex shrink-0 items-center border-t border-border",
+          touch ? "h-14 px-2" : "h-10 pl-3.5",
+        )}
         style={touch ? { paddingBottom: "env(safe-area-inset-bottom)" } : undefined}
       >
         <button
@@ -162,6 +172,11 @@ export function Sidebar({
           </span>
           <span className={cn("text-muted-foreground", touch ? "text-[13px]" : "text-[11.5px]")}>Show archived</span>
         </button>
+        {touch && onOpenSettings && (
+          <Button size="lg" icon aria-label="Settings" onClick={onOpenSettings}>
+            <Gear />
+          </Button>
+        )}
       </div>
     </aside>
   )

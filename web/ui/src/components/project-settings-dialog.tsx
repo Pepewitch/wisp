@@ -36,7 +36,7 @@ export function ProjectSettingsDialog({
   return (
     <Dialog.Root open={project !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <ProjectSettingsPopup project={project} onClose={() => onOpenChange(false)} />
       </Dialog.Portal>
     </Dialog.Root>

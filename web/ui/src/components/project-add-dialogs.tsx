@@ -32,7 +32,7 @@ export function AddProjectDialog({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           className={cn(
             "fixed top-[20vh] left-1/2 z-(--z-modal) w-[min(500px,calc(100vw-2rem))] -translate-x-1/2",
@@ -113,7 +113,7 @@ export function ProjectPickerErrorDialog({
       onOpenChange={(next) => !next && onClose()}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           className={cn(
             "fixed top-[24vh] left-1/2 z-(--z-modal) w-[min(460px,calc(100vw-2rem))] -translate-x-1/2",

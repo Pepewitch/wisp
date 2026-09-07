@@ -51,7 +51,7 @@ export function FileViewer({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/70" />
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           data-testid="file-viewer"
           className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"

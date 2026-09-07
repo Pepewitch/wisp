@@ -21,7 +21,7 @@ export function RenameTaskDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           className={cn(
             "fixed top-[24vh] left-1/2 z-(--z-modal) w-[min(460px,calc(100vw-3rem))] -translate-x-1/2",

@@ -25,8 +25,10 @@ import {
   ProjectPickerErrorDialog,
 } from "@/components/project-add-dialogs"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
-import { WispMark } from "@/components/icons"
+import { SettingsDialog } from "@/components/settings-dialog"
+import { Gear, WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
+import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
@@ -248,6 +250,9 @@ function MainView({
   // held as a PATH, not a row: the repos query refetches after a save, and a
   // captured row would leave the modal showing what was just replaced
   const [configuringPath, setConfiguringPath] = useState<string | null>(null)
+  // Wisp's own preferences: client-local and global, so this belongs to the
+  // shell rather than to the selected connection.
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const tasksQuery = useTasks(showArchived)
   const statusQuery = useStatus()
@@ -345,6 +350,12 @@ function MainView({
         setConfiguringPath(repoPath)
         opts?.afterSelect?.()
       }}
+      onOpenSettings={() => {
+        // dismiss and open in the same commit — the same pair a project's gear
+        // already makes on touch, so the drawer is never left over the modal
+        opts?.afterSelect?.()
+        setSettingsOpen(true)
+      }}
       onAddProject={projectAdd.onAddProject}
       addProjectPending={projectAdd.pending}
       error={sideError}
@@ -408,6 +419,7 @@ function MainView({
         onCreated={selectTask}
       />
       {projectAdd.dialogs}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   )
   return (
@@ -430,6 +442,7 @@ function MainView({
       }
       updateControl={updateControls.desktop}
       mobileUpdateControl={updateControls.mobile}
+      onOpenSettings={() => setSettingsOpen(true)}
       dialogs={dialogs}
     />
   )
@@ -448,6 +461,7 @@ function AppShell({
   taskHeader,
   updateControl,
   mobileUpdateControl,
+  onOpenSettings,
   dialogs,
 }: {
   mobile: boolean
@@ -465,6 +479,8 @@ function AppShell({
   taskHeader: ReactNode
   updateControl: ReactNode
   mobileUpdateControl: ReactNode
+  /** The pointer shell's gear. Touch reaches the same modal from the drawer. */
+  onOpenSettings: () => void
   dialogs: ReactNode
 }) {
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
@@ -507,6 +523,10 @@ function AppShell({
           <ConnIndicator />
         </span>
         {desktop && <DesktopZoomControl />}
+        {/* last, so the gear is the top-right corner it was asked for */}
+        <Button size="sm" icon aria-label="Settings" onClick={onOpenSettings}>
+          <Gear />
+        </Button>
       </header>
 
       <Shell

@@ -157,7 +157,7 @@ export function MobileShell({
 
       <Drawer.Root open={drawer} onOpenChange={setDrawer} swipeDirection="left">
         <Drawer.Portal>
-          <Drawer.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-black/60" />
+          <Drawer.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
           <Drawer.Popup
             className={cn(
               "fixed inset-y-0 left-0 z-(--z-modal) flex w-[86vw] max-w-[340px] flex-col",
