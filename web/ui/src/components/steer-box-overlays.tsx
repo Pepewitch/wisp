@@ -1,6 +1,6 @@
 import type { RefObject } from "react"
 
-import { Copy, Check } from "@/components/icons"
+import { CopyButton } from "@/components/copy-button"
 import { Meta, StateDot } from "@/components/primitives"
 import { ProbePanel } from "@/components/probe-panel"
 import { SlashPalette } from "@/components/slash-palette"
@@ -24,8 +24,6 @@ export function SteerOverlays({
   touch,
   runningSince,
   note,
-  copied,
-  onCopied,
 }: {
   shownReport: ReportState
   task: ApiTask | null
@@ -38,8 +36,6 @@ export function SteerOverlays({
   touch: boolean
   runningSince: string | null
   note: SteerNote | null
-  copied: boolean
-  onCopied: (copied: boolean) => void
 }) {
   return (
     <>
@@ -70,20 +66,12 @@ export function SteerOverlays({
         />
       )}
       {runningSince && <RunningFor startedAt={runningSince} />}
-      {note && <SteerNoteRow note={note} copied={copied} onCopied={onCopied} />}
+      {note && <SteerNoteRow note={note} />}
     </>
   )
 }
 
-function SteerNoteRow({
-  note,
-  copied,
-  onCopied,
-}: {
-  note: SteerNote
-  copied: boolean
-  onCopied: (copied: boolean) => void
-}) {
+function SteerNoteRow({ note }: { note: SteerNote }) {
   return (
     <div className="mb-1.5 flex items-center gap-2 pl-1.5">
       <span
@@ -98,22 +86,7 @@ function SteerNoteRow({
         {note.text}
       </span>
       {note.copyable && (
-        <button
-          type="button"
-          aria-label="Copy"
-          onClick={() => {
-            void navigator.clipboard?.writeText(note.copyable!)
-            onCopied(true)
-            setTimeout(() => onCopied(false), 1_200)
-          }}
-          className="shrink-0 rounded-sm p-0.5 text-faint transition-colors hover:text-foreground"
-        >
-          {copied ? (
-            <Check className="size-3" aria-label="Copied" />
-          ) : (
-            <Copy className="size-3" />
-          )}
-        </button>
+        <CopyButton text={note.copyable} className="shrink-0" />
       )}
     </div>
   )

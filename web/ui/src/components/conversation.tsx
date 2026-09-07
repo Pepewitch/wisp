@@ -11,6 +11,7 @@ import {
 } from "react"
 
 import { ActivityList } from "@/components/activity-list"
+import { CopyButton } from "@/components/copy-button"
 import { ArrowUp, ChevronRight, Dismiss, Pencil } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { FileViewerProvider } from "@/components/file-viewer"
@@ -321,7 +322,10 @@ function TurnBlock({
               retried after an unconfirmed delivery; an earlier process may also have received it
             </div>
           )}
-          <BubbleTimestamp at={turn.started_at} className="mt-1.5 ml-auto block w-fit" />
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            <UserMessageCopyButton text={turn.prompt} />
+            <BubbleTimestamp at={turn.started_at} />
+          </div>
         </div>
       </div>
 
@@ -437,6 +441,16 @@ export function BubbleTimestamp({
   )
 }
 
+function UserMessageCopyButton({ text }: { text: string }) {
+  return (
+    <CopyButton
+      text={text}
+      label="Copy user message"
+      copiedLabel="Copied user message"
+    />
+  )
+}
+
 /**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —
  * only its position changes — so an anchored steer and an unanchored one are
@@ -466,7 +480,9 @@ function SteeredMessage({
               sent on the right, rather than stacking two muted rows (§4) */}
           <div className="mt-1 flex items-baseline gap-2 text-[10.5px] text-faint">
             <span>sent during this turn</span>
-            <BubbleTimestamp at={message.created_at} className="ml-auto" />
+            <span className="flex-1" />
+            <UserMessageCopyButton text={message.text} />
+            <BubbleTimestamp at={message.created_at} />
           </div>
           {message.delivery_uncertain && (
             <div className="mt-1 text-[10.5px] text-faint">
@@ -539,6 +555,7 @@ function QueuedMessage({
                   : "queued for the next turn"}
             </span>
             <span className="flex-1" />
+            {!editing && <UserMessageCopyButton text={message.text} />}
             {!archived && !cancelled && (editing ? (
               <>
                 <button type="button" disabled={busy} className="hover:text-foreground" onClick={save}>
