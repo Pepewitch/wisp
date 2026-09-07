@@ -58,7 +58,7 @@ tauri_args=(
   --target aarch64-apple-darwin
   --bundles "$(IFS=,; echo "${bundles[*]}")"
 )
-if [ -z "${APPLE_CERTIFICATE:-}" ]; then
+if [ -z "${APPLE_CERTIFICATE:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
   # With no distribution credential Tauri otherwise leaves only the linker's
   # executable signature, which is not a valid signed application bundle.
   tauri_args+=(--config '{"bundle":{"macOS":{"signingIdentity":"-"}}}')

@@ -95,10 +95,13 @@ describe("Wisp Desktop release metadata", () => {
     expect(pullRequestWorkflow).not.toContain("git diff --exit-code -- web/ui-dist");
   });
 
-  test("does not expand an empty Bash array on the credentialed signing path", () => {
+  test("uses ad-hoc signing only when neither release credential source is present", () => {
     const buildScript = readFileSync(new URL("../scripts/desktop/build-macos.sh", import.meta.url), "utf8");
     expect(buildScript).not.toContain("signing_config[@]");
     expect(buildScript).toContain('tauri_args=(\n  build');
+    expect(buildScript).toContain(
+      'if [ -z "${APPLE_CERTIFICATE:-}" ] && [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then',
+    );
     expect(buildScript).toContain('tauri_args+=(--config');
     expect(buildScript).toContain('"${tauri[@]}" "${tauri_args[@]}" -- --locked');
   });
