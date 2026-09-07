@@ -10,9 +10,10 @@ use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
 The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
-builds are ad-hoc signed. The tag release pipeline requires Developer ID
-signing, notarization, stapling, and updater signing before publication. The
-published alpha.8 predates that pipeline and remains ad-hoc signed.
+builds are ad-hoc signed. Starting with alpha.9, the tag release pipeline
+requires Developer ID signing, notarization, stapling, and updater signing
+before publication. The published alpha.8 predates that pipeline and remains
+ad-hoc signed.
 
 Status: working alpha. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned

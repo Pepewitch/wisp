@@ -1,7 +1,9 @@
 # Install Wisp Desktop and the daemon on Apple Silicon
 
-Alpha.8 is the first Wisp Desktop prerelease. Apple Silicon support remains
-experimental and has only limited single-machine qualification.
+Alpha.9 is the second Wisp Desktop prerelease and the first prepared for
+Developer ID signing, Apple notarization, and signed in-app updates. Apple
+Silicon support remains experimental and has only limited single-machine
+qualification.
 
 ## Scope and security notice
 
@@ -10,18 +12,18 @@ The experimental v0.4 target is:
 - Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
 - qualified on a limited Apple Silicon test environment;
 - installed from the fully qualified custom Homebrew tap; and
-- for public alpha.8, ad-hoc signed rather than Developer ID signed or notarized.
+- for alpha.9, blocked from publication unless Developer ID signing,
+  notarization, and stapling all succeed.
 
 Intel Macs are unsupported. The configured 12.3 deployment target is enforced
 by the app metadata and Mach-O loader command, but it is not evidence that
-12.3 or every later macOS version has been qualified. Local release
-qualification used Apple Silicon macOS 26.6.2. Because alpha.8 is not notarized,
-Gatekeeper may require Finder's Open command or explicit approval in Privacy &
-Security. Future Desktop tag releases are blocked unless Developer ID signing,
-notarization, and stapling pass. Do not disable Gatekeeper globally. Verify the
-download URL is under `github.com/Pepewitch/wisp`, that Homebrew accepts the
-recipe checksum, and that `wisp version --json` reports the release version
-and commit.
+12.3 or every later macOS version has been qualified. Alpha.8 was ad-hoc signed
+and may have required a per-app Gatekeeper exception. Alpha.9 is expected to
+open normally only after its release workflow proves Developer ID signing,
+notarization, and stapling. Do not disable or bypass Gatekeeper for an alpha.9
+artifact that fails those checks. Verify the download URL is under
+`github.com/Pepewitch/wisp`, that Homebrew accepts the recipe checksum, and that
+`wisp version --json` reports the release version and commit.
 
 ## Before you start
 
@@ -66,16 +68,13 @@ Launch the desktop app:
 open -a Wisp
 ```
 
-If macOS shows **“Wisp.app” Not Opened** with **Move to Trash** and **Done**,
-choose **Done**, then open **System Settings → Privacy & Security**, scroll to
-Security, choose **Open Anyway** for Wisp, and confirm **Open**. Retry
-`open -a Wisp` if it does not launch automatically. This records an exception
-for this app; do not remove quarantine attributes or disable Gatekeeper. Apple
-documents this flow in
+The signed and notarized alpha.9 artifact should not require **Open Anyway**.
+If macOS says it cannot verify alpha.9 or offers to move it to Trash, stop and
+check the installed version, Cask checksum, signature, and notarization ticket;
+do not remove quarantine attributes or disable Gatekeeper. The per-app Privacy
+& Security exception documented by Apple applies to the older ad-hoc alpha.8,
+not to the expected alpha.9 release posture. See
 [Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
-If an older macOS release uses different wording, open Applications in Finder,
-Control-click Wisp, choose **Open**, then confirm **Open**; use the same Apple
-guide rather than guessing from a newer dialog.
 
 On first launch, Local reports whether the standard Wisp profile and service
 are ready. Wisp Desktop asks for confirmation before it initializes the
@@ -179,9 +178,9 @@ The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
 are reconciled by the new daemon.
 
-Alpha.8 predates the Desktop updater. Bootstrap the first future signed release
-through Homebrew; `--greedy` is required because the new Cask declares that the
-application can update itself:
+Alpha.8 predates the Desktop updater. Bootstrap alpha.9 through Homebrew;
+`--greedy` is required because the new Cask declares that the application can
+update itself:
 
 ```sh
 brew update
@@ -195,7 +194,7 @@ wisp doctor --harness droid
 If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
-After that bootstrap release, normal Desktop upgrades use the signed Tauri
+After alpha.9 is installed, later Desktop upgrades use the signed Tauri
 updater. Homebrew remains the recovery path:
 
 ```sh
