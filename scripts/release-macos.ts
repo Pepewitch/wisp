@@ -74,6 +74,13 @@ function run(cmd: string[], cwd?: string): string {
   return [output(result.stdout), output(result.stderr)].filter(Boolean).join("\n");
 }
 
+export function isAdHocCodeSignature(output: string): boolean {
+  return output.split("\n").some((line) => {
+    const trimmed = line.trim();
+    return trimmed === "Signature=adhoc" || /^CodeDirectory\b.*\bflags=\S*\([^)]*\badhoc\b[^)]*\)/.test(trimmed);
+  });
+}
+
 function git(root: string, args: string[]): string {
   return run(["git", "-C", root, ...args]);
 }
@@ -142,7 +149,7 @@ function verifyMacBinary(binary: string, identity: SourceIdentity): void {
   if (architectures.trim() !== "arm64") throw new Error(`artifact architectures must be exactly arm64, got ${architectures}`);
   run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", binary]);
   const signature = run(["/usr/bin/codesign", "--display", "--verbose=4", binary]);
-  if (!signature.includes("Signature=adhoc")) throw new Error(`artifact does not have an ad-hoc signature: ${signature}`);
+  if (!isAdHocCodeSignature(signature)) throw new Error(`artifact does not have an ad-hoc signature: ${signature}`);
   const reported = JSON.parse(run([binary, "version", "--json"])) as {
     version?: unknown;
     commit?: unknown;
