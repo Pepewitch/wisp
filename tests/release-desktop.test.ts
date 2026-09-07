@@ -13,6 +13,7 @@ import {
   desktopTargetDir,
   deterministicAppTarGz,
   machOHasUuid,
+  releaseCertificateSource,
 } from "../scripts/release-desktop";
 import { VERSION } from "../src/version";
 
@@ -49,6 +50,22 @@ describe("Wisp Desktop release metadata", () => {
       VERSION,
     );
     expect(() => cargoPackageVersion("[package]\nname = \"wisp-desktop\"\n")).toThrow("package.version");
+  });
+
+  test("uses an installed signing identity locally or a complete CI certificate pair", () => {
+    expect(releaseCertificateSource({})).toBe("keychain");
+    expect(
+      releaseCertificateSource({
+        APPLE_CERTIFICATE: "encoded-certificate",
+        APPLE_CERTIFICATE_PASSWORD: "secret",
+      }),
+    ).toBe("environment");
+    expect(() => releaseCertificateSource({ APPLE_CERTIFICATE: "encoded-certificate" })).toThrow(
+      "must be provided together",
+    );
+    expect(() => releaseCertificateSource({ APPLE_CERTIFICATE_PASSWORD: "secret" })).toThrow(
+      "must be provided together",
+    );
   });
 
   test("resolves isolated Cargo targets from the repository root", () => {

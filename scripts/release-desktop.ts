@@ -293,10 +293,19 @@ function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
   return signing;
 }
 
+export function releaseCertificateSource(
+  environment: Record<string, string | undefined>,
+): "environment" | "keychain" {
+  const hasCertificate = Boolean(environment.APPLE_CERTIFICATE);
+  const hasPassword = Boolean(environment.APPLE_CERTIFICATE_PASSWORD);
+  if (hasCertificate !== hasPassword) {
+    throw new Error("APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD must be provided together");
+  }
+  return hasCertificate ? "environment" : "keychain";
+}
+
 function requireReleaseEnvironment(root: string): string {
   for (const name of [
-    "APPLE_CERTIFICATE",
-    "APPLE_CERTIFICATE_PASSWORD",
     "APPLE_SIGNING_IDENTITY",
     "APPLE_API_ISSUER",
     "APPLE_API_KEY",
@@ -305,6 +314,12 @@ function requireReleaseEnvironment(root: string): string {
     "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
   ]) {
     if (!process.env[name]) throw new Error(`signed desktop release requires ${name}`);
+  }
+  if (releaseCertificateSource(process.env) === "keychain") {
+    const identities = run(["/usr/bin/security", "find-identity", "-v", "-p", "codesigning"]);
+    if (!identities.includes(process.env.APPLE_SIGNING_IDENTITY!)) {
+      throw new Error("signed desktop release requires APPLE_SIGNING_IDENTITY in the login Keychain");
+    }
   }
   const publicKey = readFileSync(resolve(root, "desktop/src-tauri/updater-public.key"), "utf8").trim();
   if (!publicKey || publicKey === "UNCONFIGURED") {

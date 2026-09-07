@@ -32,9 +32,9 @@ brew install --cask Pepewitch/tap/wisp-desktop
 The Cask depends on the separate `wisp` Formula, so Homebrew installs the
 CLI/daemon too when needed. The app does not bundle or own a child daemon;
 Local uses the standard `~/.wisp` profile and Homebrew service. Public alpha.8
-is ad-hoc signed and not notarized. Starting with alpha.11, tag releases fail
+is ad-hoc signed and not notarized. Starting with alpha.12, releases fail
 closed unless Developer ID signing and notarization pass; do not bypass
-Gatekeeper for an alpha.11 artifact that fails verification.
+Gatekeeper for an alpha.12 artifact that fails verification.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
@@ -54,13 +54,13 @@ See [`docs/INSTALL-MACOS.md`](../../../docs/INSTALL-MACOS.md) and
 After Homebrew installation, launch with `open -a Wisp`. Local diagnoses the
 standard profile and service and asks before running `wisp init` or starting
 the Formula service. A per-app Privacy & Security exception may be needed for
-the older ad-hoc alpha.8; alpha.11 must instead pass its Developer ID and
+the older ad-hoc alpha.8; alpha.12 must instead pass its Developer ID and
 notarization checks. Never disable Gatekeeper globally.
 
 The Desktop **Updates** popover separates the global **Wisp Desktop** release
 from the selected connection's daemon release. Checks do not install anything;
 Desktop replacement requires **Update Desktop and relaunch**. Alpha.8 cannot
-self-update, so bootstrap alpha.11 with:
+self-update, so bootstrap alpha.12 with:
 
 ```sh
 brew update

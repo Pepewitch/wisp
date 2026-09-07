@@ -259,6 +259,13 @@ WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$(mktemp -d)" \
   bun run scripts/release-desktop.ts --require-tag --signed
 ```
 
+On a maintainer Mac, `APPLE_CERTIFICATE` and
+`APPLE_CERTIFICATE_PASSWORD` may both be omitted when
+`APPLE_SIGNING_IDENTITY` is already available in the unlocked login Keychain.
+Provide the pair together when importing a PKCS#12 certificate, as CI does;
+the release script refuses a partial pair. The notarization API key and Tauri
+updater key remain required in both modes.
+
 Timestamped Apple signatures are intentionally not byte-reproducible. The
 signed pass must not be compared with the ad-hoc payload. Instead, the release
 script verifies Developer ID identity, timestamp, hardened runtime,
