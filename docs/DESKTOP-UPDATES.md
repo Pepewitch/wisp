@@ -85,7 +85,7 @@ PR, task prompt, test fixture, command argument captured in logs, or committed
 file.
 
 The public alpha.8 app predates this updater and is ad-hoc signed. It cannot
-self-update. Alpha.9 is the first Developer ID signed release containing the
+self-update. Alpha.10 is the first Developer ID signed release containing the
 embedded key and must be installed once through Homebrew with `--greedy`. The
 following release is the first end-to-end proof of Desktop self-update.
 

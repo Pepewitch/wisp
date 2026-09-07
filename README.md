@@ -18,8 +18,8 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current source version: `0.4.0-alpha.9`.** This is an experimental release
-candidate, not production-ready software. Alpha.9 adds signed Desktop updates,
+**Current source version: `0.4.0-alpha.10`.** This is an experimental release
+candidate, not production-ready software. Alpha.10 adds signed Desktop updates,
 task notifications, safer file viewing, and interaction fixes to the first
 Apple Silicon Wisp Desktop alpha.
 
@@ -44,12 +44,12 @@ lifecycle state, and phone-capable steering.
 | Platform | Current v0.4 claim |
 |---|---|
 | Ubuntu 24.04 LTS, x86_64, glibc | Experimental alpha |
-| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; alpha.9 publication is gated on Developer ID signing and notarization |
+| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; alpha.10 publication is gated on Developer ID signing and notarization |
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
 is machine qualification only. The published alpha.8 is not Developer ID
-signed or notarized. The alpha.9 candidate cannot publish unless Developer ID
+signed or notarized. The alpha.10 candidate cannot publish unless Developer ID
 signing, notarization, stapling, and updater-signature verification all pass.
 
 You bring Git, a repository, and at least one installed and authenticated
@@ -61,7 +61,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.9 # replace with the current published alpha
+version=0.4.0-alpha.10 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -71,7 +71,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.9/wisp-v0.4.0-alpha.9-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.10/wisp-v0.4.0-alpha.10-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -97,10 +97,10 @@ The Cask declares `Pepewitch/tap/wisp` as a required Formula dependency, so a
 fresh machine gets the CLI/daemon too. Install only the Formula with
 `brew install Pepewitch/tap/wisp` when the desktop app is not wanted.
 
-Homebrew bootstraps and repairs Wisp Desktop. Starting with alpha.9, the app's
+Homebrew bootstraps and repairs Wisp Desktop. Starting with alpha.10, the app's
 **Updates** popover can install later signed Desktop versions itself; the
 selected daemon has a separate, explicitly named update row. Alpha.8 predates
-the updater, so moving from it to alpha.9 requires
+the updater, so moving from it to alpha.10 requires
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
 
 See [Apple Silicon installation](docs/INSTALL-MACOS.md) for the current
@@ -217,7 +217,7 @@ user-managed exact-loopback tunnel.
 The first alpha requires Apple Silicon and is configured for macOS 12.3 or
 newer, but that oldest version has not been broadly qualified. Published
 alpha.8 is ad-hoc signed and not notarized, so first launch may require Finder's
-Open command or Privacy & Security approval. The alpha.9 tag workflow fails
+Open command or Privacy & Security approval. The alpha.10 tag workflow fails
 closed unless Developer ID signing and notarization succeed. Do not disable
 Gatekeeper globally. See [Desktop updates](docs/DESKTOP-UPDATES.md).
 
@@ -256,7 +256,7 @@ shared-client contract.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.9 # replace with the installed alpha
+version=0.4.0-alpha.10 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh

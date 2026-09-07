@@ -58,6 +58,14 @@ describe("Wisp Desktop release metadata", () => {
     expect(desktopTargetDir(root, resolve(root, "outside-target"))).toBe(resolve(root, "outside-target"));
   });
 
+  test("clean-rebuilds the reproducibility payload at one stable Cargo target path", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    expect(workflow).not.toContain("wisp-desktop-release-first");
+    expect(workflow).not.toContain("wisp-desktop-release-second");
+    expect(workflow.match(/wisp-desktop-release-repro/g)).toHaveLength(3);
+    expect(workflow).toContain("cargo clean --manifest-path desktop/src-tauri/Cargo.toml");
+  });
+
   test("detects the Mach-O UUID required by current macOS", () => {
     expect(machOHasUuid("Load command 8\n      cmd LC_UUID\n  cmdsize 24\n")).toBe(true);
     expect(machOHasUuid("Load command 8\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n")).toBe(false);
