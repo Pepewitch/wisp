@@ -207,7 +207,9 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
           {task.title}
         </span>
         <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
-          <span className={STATE_TEXT[task.state]}>{stateWord(task)}</span>
+          {/* two-word states ("Needs input") wrapped and took the branch's
+              baseline with them on a 340px drawer — the state never wraps */}
+          <span className={cn("shrink-0 whitespace-nowrap", STATE_TEXT[task.state])}>{stateWord(task)}</span>
           {task.branch && (
             <>
               <span className="text-faint">·</span>

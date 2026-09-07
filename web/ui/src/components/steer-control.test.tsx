@@ -122,3 +122,28 @@ describe("the running-turn composer control", () => {
     expect(bodies[1]!.clientMessageId).toBe(bodies[0]!.clientMessageId)
   })
 })
+
+describe("the composer control bar on touch", () => {
+  it("leaves harness and model to the task header, which already says them", () => {
+    mount(<SteerBox task={task("done")} touch />)
+
+    expect(screen.queryByText("codex")).toBeNull()
+    expect(screen.queryByText("gpt-5")).toBeNull()
+  })
+
+  it("keeps them on pointer, where the bar has the width", () => {
+    mount(<SteerBox task={task("done")} />)
+
+    expect(screen.getByText("codex")).toBeInTheDocument()
+    expect(screen.getByText("gpt-5")).toBeInTheDocument()
+  })
+
+  it("gives the running note its own line rather than wrapping it four deep", () => {
+    mount(<SteerBox task={task()} touch />)
+
+    // one line above the controls, not a flex sibling squeezed between the
+    // suffix picker and the send button
+    const note = screen.getByText("running · send won't interrupt")
+    expect(note.parentElement).toBe(note.closest(".flex-col"))
+  })
+})

@@ -55,7 +55,9 @@ export function SuffixPromptPicker({
         icon={<Prompt />}
         label={selected?.name ?? <span className="text-muted-foreground">Suffix prompt</span>}
         disabled={disabled}
-        className={cn("max-w-40", touch && "h-10 max-w-32")}
+        // the touch cap was 32 when harness and model shared this bar; they
+        // moved to the task header, so the label no longer has to truncate
+        className={cn("max-w-40", touch && "h-10 max-w-48")}
         open={menuOpen}
         onOpenChange={(open) => {
           setMenuOpen(open)

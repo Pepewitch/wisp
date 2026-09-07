@@ -593,6 +593,39 @@ not squeezed**: `MobileShell` renders a header, ONE tab strip (Chat · Changes �
 Terminal), and a pinned composer. No resizable group mounts there at all, so
 desktop pane geometry is neither applied nor overwritten by phone dimensions.
 
+### The header is BANDED, and each band answers one question
+
+This shell covers 320px to 767px — a phone AND a narrow Wisp Desktop window,
+whose `minWidth` is 720. One row carrying app chrome, task identity and task
+actions at once cannot align at either end of that range, and did not: the
+hamburger and the overflow menu centred against a two-or-three line stack, so
+nothing in the header shared a line with anything else, and an idle daemon
+version wrapped onto two lines inside the width the title needed.
+
+1. **The app band is Wisp Desktop's alone**, and it is not decoration. That
+   window is `titleBarStyle: Overlay` with `hiddenTitle`, so the traffic lights
+   float over whatever sits at the top left and a hidden title bar leaves the
+   window nothing to drag by. The band is `pl-20` — the room the pointer shell's
+   top bar already gives them — and `data-tauri-drag-region`, and it carries the
+   connection switcher and the zoom control. A browser has neither problem and
+   neither control, so it gets **no band at all**.
+2. **The task band is a title over ONE metadata line**, between two 44px
+   controls. Exactly two lines, so the hamburger and the overflow menu centre on
+   the axis the title sits on. The line is state, `Local` when the task is one,
+   then harness · model — the composer's control bar used to carry harness and
+   model as well, three rows down and truncated to `claudeI…`, and one place
+   un-truncated beats two places truncated.
+3. **A pull request gets its own full-width row**, not a share of the header.
+   The compact link is a 44px two-line thumb target; splitting the header with
+   the title left both unreadable.
+4. **The tab strip is three equal thirds** (`flex-1`), a segmented control
+   rather than left-packed pills with a dead right half.
+
+**App-level state lives in the drawer footer on touch**, beside the gear that is
+already there, because below `md` there is no persistent top bar to carry it.
+Wisp's update surface goes there in BOTH runtimes; the app band is for the
+window's own chrome, not for app news.
+
 The rules that differ from desktop, and why:
 
 - **44px is the floor for anything tappable.** Not the visual size — the hit
