@@ -127,7 +127,11 @@ describe("the same-origin web transport", () => {
       .mockResolvedValue(new Response("bytes", { status: 200 }))
 
     const path = "/api/tasks/duplicate-task/attachments/1/image.png"
-    await expect(sameOriginWebTransport.fetchAsset!(path)).resolves.toBeInstanceOf(Blob)
+    // Asserted by CONTENT, not by `instanceof Blob`: jsdom and Node each bring
+    // their own Blob class, so identity depends on which one the environment
+    // installed. This passed locally and failed on CI for exactly that reason.
+    const blob = await sameOriginWebTransport.fetchAsset!(path)
+    expect(await blob.text()).toBe("bytes")
 
     expect(fetchMock).toHaveBeenCalledWith(path, {
       headers: { authorization: "Bearer synthetic-browser-token" },
