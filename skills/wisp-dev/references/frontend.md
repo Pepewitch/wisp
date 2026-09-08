@@ -499,12 +499,14 @@ so once at the top rather than three times.
 - **Every field is a PATCH.** The modal saves the three fields it owns; the
   project's display name, which it does not edit, is preserved rather than
   blanked. An explicit empty value is the only thing that clears.
-- **Remove from Wisp** unregisters a configured project — the same verb as
-  `wisp project rm`. It is a two-click confirm in this modal, not a sidebar
-  control: the contained red button first arms a red **Remove?**, then the
-  second click drops the config entry. Tasks stay and nothing on disk is
-  deleted. A history-only repo (one Wisp only knows from tasks) has no config
-  entry to drop, so the footer explains why the control is absent.
+- **Remove from Wisp** unregisters a configured project. It is a two-step
+  confirm in this modal, not a sidebar control. When active tasks exist, the
+  confirmation offers **Archive all N active tasks**, checked by default.
+  Normal archive safety checks still apply, and archiving removes task
+  worktrees but never the project folder. Clearing the option leaves active
+  tasks visible as an unconfigured project. Once an unconfigured project's
+  tasks are all archived, it disappears from Projects; archived history remains
+  available through **Show archived**.
 - Scripts run in a fixed order: the repo's committed `.wisp/setup.sh` (the
   team's) before the configured one (this machine's). Both run — dropping
   either would silently change behaviour for a repo already relying on it.

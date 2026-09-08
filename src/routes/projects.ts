@@ -3,10 +3,12 @@ import { basename, isAbsolute, resolve } from "node:path";
 import { CONFIG_PATH, type RepoConfig, type WispConfig } from "../config";
 import { emit } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
+import { beginProjectRemoval } from "../project-removals";
 import { listTasks } from "../store";
 import { taskMode } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
+import { archiveTaskRows } from "./archive";
 import { err, json } from "./http";
 
 export type RepoEntry = string | RepoConfig;
@@ -87,11 +89,13 @@ export function statusRoute(): Promise<Response> {
 /** GET /api/repos */
 export function reposRoute(cfg: WispConfig): Promise<Response> {
   return (async () => {
-    // cfg.repos pins + the repo_path of every existing task (archived rows
-    // included — archive is not delete, and the form should still offer the
-    // repo), deduped by resolved path; exists-probes run concurrently.
+    // cfg.repos pins + the repo_path of every active task, deduped by resolved
+    // path; exists-probes run concurrently. Archived history stays available
+    // through ?archived=1, but does not keep an unregistered project in the
+    // Projects list forever.
+    const activeTasks = listTasks();
     const configured = cfg.repos.map((entry) => ({ path: repoEntryPath(entry), entry }));
-    const history = listTasks(true).map((t) => ({ path: t.repo_path, entry: undefined as RepoEntry | undefined }));
+    const history = activeTasks.map((t) => ({ path: t.repo_path, entry: undefined as RepoEntry | undefined }));
     const seen = new Set<string>();
     const unique = [...configured, ...history].filter(({ path }) => {
       const resolved = resolve(path);
@@ -225,8 +229,11 @@ export function copyPreviewRoute(req: Request): Promise<Response> {
 /** DELETE /api/projects */
 export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as { path?: unknown };
+    const body = (await req.json().catch(() => ({}))) as { path?: unknown; archiveTasks?: unknown };
     if (typeof body.path !== "string" || body.path.length === 0) return err("path is required", 400);
+    if (body.archiveTasks !== undefined && typeof body.archiveTasks !== "boolean") {
+      return err(`archiveTasks must be a boolean, got ${typeName(body.archiveTasks)}`, 400);
+    }
     const resolved = resolve(body.path);
     const next = cfg.repos.filter((entry) => resolve(repoEntryPath(entry)) !== resolved);
     if (next.length === cfg.repos.length) {
@@ -234,8 +241,22 @@ export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Respo
       if (historical) return err(`project '${resolved}' exists only in task history and is not configured`, 404);
       return err(`project not found in config repos: ${resolved}`, 404);
     }
-    persistRepos(cfg, next);
-    emit({ type: "project", action: "remove", path: resolved });
-    return json({ ok: true, path: resolved });
+    const finishRemoval = beginProjectRemoval(resolved);
+    try {
+      let archivedTaskCount = 0;
+      if (body.archiveTasks) {
+        const activeTasks = listTasks().filter((task) => resolve(task.repo_path) === resolved);
+        const result = await archiveTaskRows(activeTasks, false, cfg);
+        if ("error" in result) {
+          return err(`could not archive task '${result.task.title}': ${result.error}`, result.status);
+        }
+        archivedTaskCount = result.archived.length;
+      }
+      persistRepos(cfg, next);
+      emit({ type: "project", action: "remove", path: resolved });
+      return json({ ok: true, path: resolved, archivedTaskCount });
+    } finally {
+      finishRemoval();
+    }
   })();
 }

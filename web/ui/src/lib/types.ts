@@ -310,7 +310,7 @@ export type WispEvent =
 
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then
- * task-history repos, deduped by resolved path. `name` is the configured
+ * active-task repos, deduped by resolved path. `name` is the configured
  * display name or a path-derived basename; `exists` is a live fs probe.
  */
 export interface RepoInfo {

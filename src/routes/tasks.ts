@@ -3,15 +3,14 @@ import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../
 import {
   AttachError,
   decodeAttachments,
-  removeTaskAttachments,
   writeTurnAttachments,
   type DecodedAttachment,
 } from "../attachments";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
-import { emit } from "../events";
 import { pathExists, readSlice, readTailOf } from "../fsutil";
 import type { PullRequestCache } from "../pull-requests";
-import { hasRunningTurn, interruptTurn, killTurnForArchive, startTurn, submitTaskMessage, taskEnv } from "../runner";
+import { isProjectRemovalInProgress } from "../project-removals";
+import { hasRunningTurn, interruptTurn, startTurn, submitTaskMessage, taskEnv } from "../runner";
 import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
 import type { TaskSkillCache } from "../skills";
@@ -29,22 +28,21 @@ import {
   turnsFor,
 } from "../store";
 import { promptWithSuffix } from "../suffix-prompts";
-import { killForTask } from "../terminal";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { typeName } from "../validate";
 import {
-  archivePreflight,
   createWorktree,
   diffStat,
   fullDiff,
   localWorktree,
   pushBranch,
   readWorktreeFile,
-  removeWorktree,
   runSetup,
   worktreeHealth,
 } from "../worktree";
+import { archiveTaskRows } from "./archive";
 import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json } from "./http";
+import { updateTaskAndEmit } from "./task-update";
 
 /** Bytes served per log tail — positioned reads only, never whole files (a prior audit). */
 const LOG_TAIL_BYTES = 16_384;
@@ -90,95 +88,6 @@ async function launchTask(
   } catch (e) {
     if (getTask(task.id)?.archived) return;
     transition(task.id, "failed", String(e instanceof Error ? e.message : e).slice(0, 300));
-  }
-}
-
-/** Cap on a background failure sentence written into state_detail (transition() uses the same). */
-const STATE_DETAIL_CAP = 300;
-
-/** Persist metadata and publish the resulting task row after the write commits. */
-function updateTaskAndEmit(
-  taskId: string,
-  fields: Parameters<typeof setTaskFields>[1],
-  metadata?: "title",
-): Task | null {
-  setTaskFields(taskId, fields);
-  const updated = getTask(taskId);
-  if (!updated) return null;
-  emit({
-    type: "task",
-    taskId,
-    state: updated.state,
-    stateDetail: updated.state_detail,
-    seq: updated.seq,
-    ...(metadata === "title" ? { title: updated.title, updatedAt: updated.updated_at } : {}),
-  });
-  return updated;
-}
-
-/**
- * A field update on state_detail plus the emit that makes it visible — the same
- * pair the archive route uses for the flip. NOT a transition: the state did not
- * change, only the sentence describing it, so seq, the outbox and the notify
- * rules stay transition()'s alone.
- */
-function noteOnTask(taskId: string, detail: string): void {
-  updateTaskAndEmit(taskId, { state_detail: detail.slice(0, STATE_DETAIL_CAP) });
-}
-
-/**
- * Archive's destructive half, run after the 200 (Q11 / D4). Everything in here
- * either takes unbounded time (the two teardown hooks, and a worktree removal
- * that is tens of thousands of files on a JS monorepo) or cannot refuse, so
- * none of it belongs on the response path.
- *
- * Ordering still matters: the turn and the shells die before their cwd does.
- *
- * One consequence of answering early is that a teardown can fail after the task
- * already reports archived. It writes the failure into state_detail rather than
- * disappearing — the honest-state rule does not get a pass because the response
- * already went out. (killTurnForArchive's "the caller must not archive then" is
- * the one thing this restructure gives up: a harness that refuses to die now
- * leaves an archived task carrying that sentence, rather than a 409 the user
- * cannot act on. The stuck loop ignores archived tasks, so nothing flaps.)
- */
-async function teardownArchive(
-  task: Task,
-  force: boolean,
-  wasRunning: boolean,
-  removable: boolean,
-  cfg: WispConfig,
-): Promise<void> {
-  const failures: string[] = [];
-  const attempt = async (what: string, run: () => Promise<void>): Promise<void> => {
-    try {
-      await run();
-    } catch (e) {
-      failures.push(`${what}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-  if (wasRunning && force) {
-    // kill + finalize the turn BEFORE removing its cwd (a prior audit) —
-    // otherwise the turn row stays 'running' forever
-    await attempt("could not stop the running turn", () => killTurnForArchive(task.id));
-  }
-  // Interactive shells are independent of one-shot turns; both archive paths
-  // kill them before their cwd goes away.
-  await attempt("could not stop the task's shells", () => killForTask(task.id));
-  if (removable) {
-    await attempt("worktree teardown failed", () =>
-      removeWorktree(task.repo_path, task.worktree_path!, task.branch!, force, cfg, task.id),
-    );
-  }
-  // Attachments live OUTSIDE the worktree, so nothing above takes them, and
-  // they would be the one category of bytes an archive left growing (Q4: both
-  // paths, plain and force — including a local task, which has no worktree to
-  // remove at all). The turn manifests stay, so the conversation keeps saying
-  // what was attached and the bytes route can answer 410 instead of 404.
-  await attempt("could not remove the task's attachments", () => removeTaskAttachments(task.id));
-  if (failures.length > 0) {
-    console.error(`[wisp] task ${task.id}: archive teardown failed — ${failures.join("; ")}`);
-    noteOnTask(task.id, `Archived, but the teardown failed — ${failures.join("; ")}`);
   }
 }
 
@@ -256,6 +165,9 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     const def = adapters[harness];
     if (!def) return err(`unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`, 400);
     if (!(await pathExists(repoPath))) return err(`repoPath does not exist: ${repoPath}`, 400);
+    if (isProjectRemovalInProgress(repoPath)) {
+      return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
+    }
     // Explicit values win; then config harnessDefaults; then the harness's own defaults.
     const { model, effort } = resolveHarnessDefaults(
       cfg,
@@ -293,6 +205,11 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     // L4: 5-char ids are birthday-bound (~1.7% collision at 1k tasks) — retry
     // on a UNIQUE violation instead of 500ing the create request.
     let task: Task | null = null;
+    // A removal can begin while attachment decoding and defaults are resolved.
+    // Check again at the last point before the row exists.
+    if (isProjectRemovalInProgress(repoPath)) {
+      return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
+    }
     for (let attempt = 0; attempt < 5 && !task; attempt++) {
       try {
         task = createTask({
@@ -655,53 +572,10 @@ export function taskRoute(
       const body = (await req.json().catch(() => ({}))) as { force?: boolean };
       const force = body.force ?? false;
       const archiveTask = getTask(task.id) ?? task;
-      // ---- the refusal line (Q11): everything that can say no, before the
-      // response and before anything is destroyed. All of it is a fast read.
-      const running = hasRunningTurn(archiveTask.id);
-      if (running && !force) {
-        return err(`turn ${running.n} is still running — interrupt it first, or force-archive to kill it`, 409);
-      }
-      // A local task's "worktree" IS the user's checkout. Removing it would
-      // delete their working copy, and the archive hook is a worktree teardown
-      // (rm -rf node_modules and friends) — so archiving a local task is purely
-      // a bookkeeping flip. This is the load-bearing half of local mode.
-      const removable =
-        taskMode(archiveTask) === "worktree" &&
-        archiveTask.worktree_path !== null &&
-        archiveTask.branch !== null;
-      let preflight: Awaited<ReturnType<typeof archivePreflight>> | null = null;
-      if (removable) {
-        preflight = await archivePreflight(
-          archiveTask.worktree_path!,
-          archiveTask.branch!,
-          archiveTask.base_commit,
-          force,
-        );
-        if (preflight.refusal !== null) return err(preflight.refusal, 409);
-      }
-      // Preflight yields to git. A send may have started a turn while it was
-      // running, so re-check at the last safe point before the synchronous
-      // archive flip.
-      const latestRunning = hasRunningTurn(archiveTask.id);
-      if (latestRunning && !force) {
-        return err(
-          `turn ${latestRunning.n} is still running — interrupt it first, or force-archive to kill it`,
-          409,
-        );
-      }
-      // ---- the flip, the emit, the 200. From here the task IS archived, and
-      // the honest-state rule already covers the gap: an archived task's panes
-      // say the worktree is gone, which is true now and stays true once the
-      // bytes follow.
-      updateTaskAndEmit(archiveTask.id, {
-        archived: 1,
-        // the user has to be told where their files went; state_detail is where
-        // the row, the hover card and the header all already read from
-        ...(preflight?.leftBehind ? { state_detail: preflight.leftBehind } : {}),
-      });
-      // ---- the teardown, after the response. Deliberately not awaited.
-      void teardownArchive(archiveTask, force, latestRunning !== null, removable, cfg);
-      return json({ ok: true, branch: archiveTask.branch, note: preflight?.leftBehind ?? null });
+      const result = await archiveTaskRows([archiveTask], force, cfg);
+      if ("error" in result) return err(result.error, result.status);
+      const archived = result.archived[0]!;
+      return json({ ok: true, branch: archived.branch, note: archived.note });
     })();
   }
 

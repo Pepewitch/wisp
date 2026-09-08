@@ -393,19 +393,19 @@ describe("project writes", () => {
     expect(invalidated(spy)).toEqual([qk.repos])
   })
 
-  it("removing a project stales the repo list and nothing else", async () => {
+  it("removing a project stales project, task, and status lists", async () => {
     const { spy, wrapper } = harness()
     const { result } = renderHook(() => useRemoveProject(), { wrapper })
 
     await act(async () => {
-      await result.current.mutateAsync("/repo")
+      await result.current.mutateAsync({ path: "/repo", archiveTasks: true })
     })
 
     expect(mocks.request).toHaveBeenCalledWith("/api/projects", {
       method: "DELETE",
-      body: { path: "/repo" },
+      body: { path: "/repo", archiveTasks: true },
     })
-    expect(invalidated(spy)).toEqual([qk.repos])
+    expect(invalidated(spy)).toEqual([qk.repos, qk.tasks, qk.status])
   })
 
   it("a copy preview stales nothing — the POST is a read", async () => {

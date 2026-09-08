@@ -289,6 +289,10 @@ describe("S1 create-modal and project APIs", () => {
       slot: freeSlot(),
     });
     setTaskFields(task.id, { archived: 1 });
+    const afterArchive = (await (
+      await fetch(`${base}/api/repos`, { headers: { authorization: `Bearer ${token}` } })
+    ).json()) as { repos: { path: string }[] };
+    expect(afterArchive.repos.some((repo) => repo.path === historical)).toBe(false);
     const historyDelete = await fetch(`${base}/api/projects`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -297,12 +301,29 @@ describe("S1 create-modal and project APIs", () => {
     expect(historyDelete.status).toBe(404);
     expect(((await historyDelete.json()) as { error: string }).error).toContain("only in task history");
 
+    const activeTasks = ["one", "two"].map((suffix) =>
+      createTask({
+        id: newTaskId(),
+        title: `active ${suffix}`,
+        repo_path: first,
+        harness: "fake",
+        model: null,
+        mode: "local",
+        slot: freeSlot(),
+      }),
+    );
     const remove = await fetch(`${base}/api/projects`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ path: first }),
+      body: JSON.stringify({ path: first, archiveTasks: true }),
     });
     expect(remove.status).toBe(200);
+    expect(await remove.json()).toMatchObject({ archivedTaskCount: 2 });
+    expect(activeTasks.every((activeTask) => getTask(activeTask.id)?.archived === 1)).toBe(true);
+    const afterRemove = (await (
+      await fetch(`${base}/api/repos`, { headers: { authorization: `Bearer ${token}` } })
+    ).json()) as { repos: { path: string }[] };
+    expect(afterRemove.repos.some((repo) => repo.path === first)).toBe(false);
     const after = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Record<string, unknown>;
     expect(after.instanceId).toBe(instanceId);
     expect(after.unknownFutureSetting).toEqual({ keep: true });

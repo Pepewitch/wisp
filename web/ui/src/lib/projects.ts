@@ -2,7 +2,7 @@ import type { ApiTask, RepoInfo } from "./types";
 
 /**
  * The sidebar's project grouping (UX flow 1). GET /api/repos already returns
- * resolved paths, config projects first then task-history repos, each with a
+ * resolved paths, config projects first then active-task repos, each with a
  * display name (configured, else the server-derived basename) — so a group
  * exists for every repo the daemon knows about, even one with no tasks (the
  * `+` on an empty project is how its first task gets made).
@@ -19,7 +19,7 @@ export interface ProjectGroup {
   name: string;
   /** the daemon's fs probe at repos-fetch time */
   exists: boolean;
-  /** true when no /api/repos entry backed this group (task-history-only fallback) */
+  /** true when no /api/repos entry backed this group (active-task fallback) */
   unlisted: boolean;
   tasks: ApiTask[];
 }

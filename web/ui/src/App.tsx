@@ -414,6 +414,7 @@ function MainView({
         createFor={createFor}
         configuringPath={configuringPath}
         repos={reposQuery.data}
+        activeTaskCount={groups.find((group) => group.path === configuringPath)?.tasks.length ?? 0}
         harnesses={harnessesQuery.data}
         harnessesError={harnessesQuery.error}
         onCloseCreate={() => setCreateFor(null)}
@@ -598,6 +599,7 @@ function AppDialogs({
   createFor,
   configuringPath,
   repos,
+  activeTaskCount,
   harnesses,
   harnessesError,
   onCloseCreate,
@@ -607,6 +609,7 @@ function AppDialogs({
   createFor: { repoPath: string | null } | null
   configuringPath: string | null
   repos: RepoInfo[] | undefined
+  activeTaskCount: number
   harnesses: HarnessInfo[] | undefined
   harnessesError: unknown
   onCloseCreate: () => void
@@ -628,6 +631,7 @@ function AppDialogs({
       />
       <ProjectSettingsDialog
         project={repos?.find((repo) => repo.path === configuringPath) ?? null}
+        activeTaskCount={activeTaskCount}
         onOpenChange={(open) => !open && onCloseSettings()}
       />
       <AuthDialog />

@@ -20,24 +20,30 @@ import { cn } from "@/lib/utils"
  * patch, so the project's display name — which this modal does not edit — is
  * preserved rather than blanked.
  *
- * Remove from Wisp is the same verb as `wisp project rm`: it drops the config
- * entry, leaves task history, and never touches the directory on disk. A
- * history-only repo has no entry to drop, so the footer explains why the
- * control is absent.
+ * Remove from Wisp drops the config entry. Its confirmation can also archive
+ * every active task, using the same safety checks as each task's Archive
+ * action. A history-only repo has no entry to drop, so the footer explains why
+ * the control is absent.
  */
 export function ProjectSettingsDialog({
   project,
+  activeTaskCount,
   onOpenChange,
 }: {
   /** null closes the dialog; a repo opens it seeded from that repo's config */
   project: RepoInfo | null
+  activeTaskCount: number
   onOpenChange: (open: boolean) => void
 }) {
   return (
     <Dialog.Root open={project !== null} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
-        <ProjectSettingsPopup project={project} onClose={() => onOpenChange(false)} />
+        <ProjectSettingsPopup
+          project={project}
+          activeTaskCount={activeTaskCount}
+          onClose={() => onOpenChange(false)}
+        />
       </Dialog.Portal>
     </Dialog.Root>
   )
@@ -49,10 +55,12 @@ export function ProjectSettingsDialog({
  */
 export function ProjectSettingsPopup({
   project,
+  activeTaskCount,
   onClose,
   className,
 }: {
   project: RepoInfo | null
+  activeTaskCount: number
   onClose: () => void
   className?: string
 }) {
@@ -66,24 +74,49 @@ export function ProjectSettingsPopup({
       )}
     >
       {/* keyed on the path so switching projects never shows the last one's scripts */}
-      {project && <Form key={project.path} project={project} onClose={onClose} dialog />}
+      {project && (
+        <Form
+          key={project.path}
+          project={project}
+          activeTaskCount={activeTaskCount}
+          onClose={onClose}
+          dialog
+        />
+      )}
     </Dialog.Popup>
   )
 }
 
-export function ProjectSettingsSpecimen({ project }: { project: RepoInfo }) {
+export function ProjectSettingsSpecimen({
+  project,
+  activeTaskCount = 0,
+}: {
+  project: RepoInfo
+  activeTaskCount?: number
+}) {
   return (
     <div className={cn(POPOVER_SURFACE, "w-full max-w-[720px] overflow-hidden rounded-xl")}>
-      <Form project={project} onClose={() => {}} />
+      <Form project={project} activeTaskCount={activeTaskCount} onClose={() => {}} />
     </div>
   )
 }
 
-function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose: () => void; dialog?: boolean }) {
+function Form({
+  project,
+  activeTaskCount,
+  onClose,
+  dialog = false,
+}: {
+  project: RepoInfo
+  activeTaskCount: number
+  onClose: () => void
+  dialog?: boolean
+}) {
   const [setupScript, setSetupScript] = useState(project.setupScript)
   const [archiveScript, setArchiveScript] = useState(project.archiveScript)
   const [copyText, setCopyText] = useState(project.copyFiles.join("\n"))
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [archiveTasks, setArchiveTasks] = useState(activeTaskCount > 0)
 
   const saveProject = useSaveProject()
   const removeProject = useRemoveProject()
@@ -182,9 +215,31 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
             </p>
           ))}
         {confirmingRemove && (
-          <p className="mr-auto min-w-0 text-[11.5px] leading-relaxed text-muted-foreground">
-            Unregisters this project. Tasks stay; nothing on disk is deleted.
-          </p>
+          <div className="mr-auto min-w-0 pr-3 text-[11.5px] leading-relaxed text-muted-foreground">
+            {activeTaskCount > 0 ? (
+              <>
+                <label className="flex items-start gap-2 text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={archiveTasks}
+                    onChange={(event) => setArchiveTasks(event.currentTarget.checked)}
+                    className="mt-0.5 accent-primary"
+                  />
+                  <span>
+                    Archive all {activeTaskCount} active{" "}
+                    {activeTaskCount === 1 ? "task" : "tasks"}
+                  </span>
+                </label>
+                <p className="mt-1">
+                  {archiveTasks
+                    ? "Runs normal archive cleanup and removes task worktrees. The project folder stays on disk."
+                    : "Active tasks stay visible, so this project will remain in the Projects list."}
+                </p>
+              </>
+            ) : (
+              <p>This project has no active tasks, so it will disappear from Projects. Nothing on disk is deleted.</p>
+            )}
+          </div>
         )}
         {confirmingRemove ? (
           <>
@@ -205,9 +260,14 @@ function Form({ project, onClose, dialog = false }: { project: RepoInfo; onClose
               tone="destructive"
               aria-label={`Confirm remove ${label}`}
               disabled={removeProject.isPending}
-              onClick={() => removeProject.mutate(project.path, { onSuccess: onClose })}
+              onClick={() =>
+                removeProject.mutate(
+                  { path: project.path, archiveTasks },
+                  { onSuccess: onClose },
+                )
+              }
             >
-              {removeProject.isPending ? "Removing…" : "Remove?"}
+              {removeProject.isPending ? "Removing…" : "Remove project"}
             </Button>
           </>
         ) : (
