@@ -44,8 +44,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
+      # The advisory database is a moving target, so the tool has to be able to
+      # parse today's entries: 0.21 failed on a 2026 advisory whose format it
+      # predated, which is a tooling error rather than a finding. Keep this
+      # floor current when a run reports a parse error.
       - name: install cargo-audit
-        run: cargo install cargo-audit --locked --version ^0.21
+        run: cargo install cargo-audit --locked --version ^0.22
       # Reads the lock, so this needs no macOS runner and no build. Default
       # behavior is what is wanted: a vulnerability fails the run, while
       # unmaintained-crate notices are printed without failing it. A review
