@@ -105,7 +105,8 @@ describe("release promotion", () => {
     expect(releaseVersion(tag)).toBe(VERSION);
     expect(expectedReleaseAssets(VERSION)).toHaveLength(10);
     expect(new Set(expectedReleaseAssets(VERSION)).size).toBe(10);
-    expect(releaseNotesPath("/source", tag)).toBe(`/source/docs/v0.4/RELEASE-NOTES-alpha.16.md`);
+    const prerelease = VERSION.split("-").at(-1);
+    expect(releaseNotesPath("/source", tag)).toBe(`/source/docs/v0.4/RELEASE-NOTES-${prerelease}.md`);
     expect(() => releaseVersion("main")).toThrow("release tag must match");
   });
 

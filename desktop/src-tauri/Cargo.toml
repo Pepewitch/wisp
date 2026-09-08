@@ -19,7 +19,7 @@
 #   opens the right task is the whole point of a task notification.
 [package]
 name = "wisp-desktop"
-version = "0.4.0-alpha.16"
+version = "0.4.0-alpha.17"
 edition = "2021"
 rust-version = "1.82"
 description = "Native core for the Wisp desktop shell"
