@@ -172,7 +172,11 @@ export function MobileShell({
         {/* Its own row, indented so its TEXT starts on the title's left edge. */}
         {pullRequest?.kind === "found" && (
           <div className="flex pr-1 pb-1.5 pl-10">
-            <PullRequestStatusLink pullRequest={pullRequest.pullRequest} compact />
+            <PullRequestStatusLink
+              pullRequest={pullRequest.pullRequest}
+              others={pullRequest.others}
+              compact
+            />
           </div>
         )}
       </header>

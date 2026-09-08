@@ -613,9 +613,23 @@ pane, because §5 deleted that pane.
 ## 5f. The pull-request link
 
 A pull request is a provider-owned branch outcome, not task state and not proof
-that the agent created it. Wisp looks up the worktree task's ORIGINAL stored
-branch against that repository's `origin`; it never substitutes the branch
-currently checked out. The public response is the provider-neutral
+that the agent created it. Wisp looks up **every branch the task made** against
+that repository's `origin`, and shows the NEWEST pull request of them — the
+highest number the provider ever issued — with a muted count of the rest. It
+still never substitutes the branch currently checked out.
+
+The branches are enumerated from LOCAL git by the task id in their name
+(`wisp/<id>-…`), which is why there is nothing to record at push time and
+nothing to keep in sync. Local refs, not remote ones: a squash-merged branch is
+gone from `origin` within seconds, and its pull request is the one you most want
+to see. The task's stored branch always leads the list and is included even when
+git cannot be read, so this can only widen the answer, never narrow it. A cap
+(`PULL_REQUEST_TASK_BRANCH_LIMIT`) keeps one task from filling a GraphQL
+document it shares with every other task in the repository.
+
+One task, one answer: a provider failure on ANY of its branches beats a success
+on another, because the newest could be the one that failed and showing the
+older as current would be a confident lie. The public response is the provider-neutral
 `found` / `none` / `unsupported` / `unavailable` union. The first provider
 implementation is GitHub through the daemon's authenticated `gh`, and it
 accepts same-repository heads only — fork pull requests are outside this slice.

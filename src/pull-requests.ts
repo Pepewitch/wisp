@@ -1,12 +1,25 @@
 /**
- * Read-only pull-request discovery for a task's ORIGINAL branch.
+ * Read-only pull-request discovery for every branch a task made.
  *
  * A Git branch carries no pull-request metadata. The forge is authoritative,
  * so Wisp asks the provider through its authenticated CLI and normalizes the
  * answer before it reaches the UI. The public union stays provider-neutral;
  * this first implementation recognizes GitHub origins only.
+ *
+ * A task used to be looked up by the ONE branch its worktree was created on,
+ * and that branch is written once and never again — so a task that opened a
+ * second pull request from a second branch went on reporting its first one
+ * forever. Long tasks do that routinely: main moves, the next change wants its
+ * own review, and the agent branches again.
+ *
+ * The branches themselves are the record, and they need no bookkeeping to stay
+ * true, because a Wisp branch carries the task id in its NAME. `wisp/<id>-…`
+ * is enumerable straight out of git, locally and for free, and it keeps
+ * answering after the forge deletes a merged head ref — which is exactly when
+ * the remote can no longer be asked.
  */
 import type { ProbeSpawnFn } from "./adapters";
+import { pickPullRequest, taskBranches } from "./pull-request-branches";
 import {
   githubPullRequest,
   githubPullRequestBatch,
@@ -39,7 +52,13 @@ export interface PullRequestInfo {
 }
 
 export type PullRequestStatus =
-  | { kind: "found"; provider: "github"; pullRequest: PullRequestInfo }
+  | {
+      kind: "found";
+      provider: "github";
+      pullRequest: PullRequestInfo;
+      /** How many MORE this task has. Absent when this is the only one. */
+      others?: number;
+    }
   | { kind: "none"; provider: "github" }
   | { kind: "unsupported"; provider: null }
   | { kind: "unavailable"; provider: "github" | null };
@@ -98,6 +117,8 @@ interface OverviewRefresh {
 interface OverviewRepositoryGroup {
   cwd: string;
   branches: Map<string, Task[]>;
+  /** Every branch a task made, so its several answers can be picked between. */
+  taskBranches: Map<string, string[]>;
 }
 
 interface RepositoryOverviewRefresh {
@@ -194,7 +215,9 @@ export class PullRequestCache {
           );
         }
         queriedProvider = true;
-        return githubPullRequest(task, repository, this.run, controller.signal);
+        return taskBranches(task, this.run, controller.signal).then((branches) =>
+          githubPullRequest(task, repository, branches, this.run, controller.signal),
+        );
       })
       .catch((): PullRequestStatus => ({ kind: "unavailable", provider: null }));
     const job = Promise.race([lookup, expired])
@@ -323,13 +346,21 @@ export class PullRequestCache {
           entries.set(task.id, { status, checkedAt, stale: false });
           return;
         }
+        // Enumerate BEFORE touching `groups`: these run concurrently, and a
+        // get-or-create either side of an await lets two tasks each build a
+        // group and the later `set` drop the earlier one's branches.
+        const branches = await taskBranches(task, this.run, signal);
         const group = groups.get(repository) ?? {
           cwd: task.repo_path,
           branches: new Map<string, Task[]>(),
+          taskBranches: new Map<string, string[]>(),
         };
-        const branchTasks = group.branches.get(task.branch) ?? [];
-        branchTasks.push(task);
-        group.branches.set(task.branch, branchTasks);
+        group.taskBranches.set(task.id, branches);
+        for (const branch of branches) {
+          const branchTasks = group.branches.get(branch) ?? [];
+          branchTasks.push(task);
+          group.branches.set(branch, branchTasks);
+        }
         groups.set(repository, group);
       }),
     );
@@ -419,6 +450,7 @@ export class PullRequestCache {
     signal: AbortSignal,
   ): Promise<RepositoryOverviewRefresh> {
     const statuses = new Map<string, PullRequestStatus>();
+    const byBranch = new Map<string, PullRequestStatus>();
     let failed = false;
     for (const branches of chunks(
       [...group.branches.keys()],
@@ -437,10 +469,20 @@ export class PullRequestCache {
           provider: "github",
         } satisfies PullRequestStatus;
         if (status.kind === "unavailable") failed = true;
-        for (const task of group.branches.get(branch) ?? []) {
-          statuses.set(task.id, status);
-        }
+        byBranch.set(branch, status);
       }
+    }
+    // one answer per TASK, out of however many branches it made
+    for (const [taskId, branches] of group.taskBranches) {
+      statuses.set(
+        taskId,
+        pickPullRequest(
+          branches.map(
+            (branch) =>
+              byBranch.get(branch) ?? { kind: "unavailable", provider: "github" },
+          ),
+        ),
+      );
     }
     return { statuses, failed };
   }

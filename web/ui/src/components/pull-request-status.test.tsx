@@ -43,6 +43,24 @@ describe("PullRequestStatusLink", () => {
     expect(link.className).not.toContain("border")
   })
 
+  it("says it is the newest when the task made more than one", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} others={2} />)
+
+    // the row shows ONE pull request, so the count is the only thing that
+    // would otherwise be hidden — one short fact, muted, no box
+    const link = screen.getByRole("link", {
+      name: "PR #42 · Open · CI failed · Changes requested · newest of 3 on this task · Merge blocked: Show pull request status",
+    })
+    expect(link).toHaveTextContent("+2")
+  })
+
+  it("says nothing at all when it is the only one", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} />)
+
+    expect(screen.queryByTestId("pull-request-others")).toBeNull()
+    expect(screen.getByRole("link", { name: /PR #42/ }).textContent).not.toContain("+")
+  })
+
   it.each<{
     label: string
     overrides: Partial<PullRequestInfo>
