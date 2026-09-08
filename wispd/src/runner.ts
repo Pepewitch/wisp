@@ -35,6 +35,7 @@ import {
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
+import { processGroupEnded, signalProcessTree } from "./process-tree";
 import { processStartTime } from "./procid";
 import {
   createTurn,
@@ -227,6 +228,16 @@ export function startTurn(
       stderr: recorderEligible ? "pipe" : errFd,
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
       env: { ...process.env, ...taskEnv(task) },
+      // Its own process GROUP, so a stop reaches the builds, servers, and
+      // sub-agents the harness starts — not just the harness (ENG-03). The
+      // pid is unchanged, so `exited`, the persisted pid, and the identity
+      // check all still address this process; `-pid` now addresses its tree.
+      //
+      // The trade this makes deliberately: the harness no longer dies from a
+      // signal aimed at the daemon's own group (a Ctrl-C in a foreground
+      // `wisp serve`). It keeps running and the next daemon re-adopts the
+      // turn, which is the durability model the runner already implements.
+      detached: true,
     });
   } catch (e) {
     closeDescriptors([outFd, errFd]);
@@ -601,8 +612,8 @@ function failLiveTurn(
   const detail = `${stage} failed: ${error instanceof Error ? error.message : String(error)}`;
   sink.recordNote(`· ${detail}`);
   recordKillReason(turnId, detail);
-  child.kill();
-  const timer = setTimeout(() => childRunning(child) && child.kill("SIGKILL"), KILL_GRACE_MS);
+  killChildTree(child, "SIGTERM");
+  const timer = setTimeout(() => childRunning(child) && killChildTree(child, "SIGKILL"), KILL_GRACE_MS);
   timer.unref?.();
   void child.exited.finally(() => clearTimeout(timer));
 }
@@ -616,14 +627,22 @@ function failLiveTurn(
 async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void> {
   const child = liveChildren.get(turn.id);
   if (child) {
-    child.kill(sig);
+    killChildTree(child, sig);
   } else if (turn.pid && (await pidIdentity(turn.pid, turn.pid_start_time)) === "alive") {
-    try {
-      process.kill(turn.pid, sig);
-    } catch {
-      /* already gone; the watcher finalizes it */
-    }
+    // A re-adopted turn: identity-checked above, then the same group-first
+    // signal. A turn started before groups were owned leads none, so the
+    // group attempt reports `gone` and the pid signal below is what runs.
+    signalProcessTree(turn.pid, sig, () => process.kill(turn.pid!, sig));
   }
+}
+
+/**
+ * Signal a live child's whole group, falling back to the child handle. Bun's
+ * `child.kill` is preferred as the fallback because it also keeps the
+ * subprocess object's own bookkeeping straight.
+ */
+function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SIGKILL"): void {
+  signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
 }
 
 /** Wait up to ms for the turn ROW to leave 'running' — i.e. finalize has run. */
@@ -650,7 +669,7 @@ export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Pr
   if (child) {
     markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
     await closeLiveInput(taskId, turn.id);
-    child.kill();
+    killChildTree(child, "SIGTERM");
   } else if (turn.pid) {
     // re-adopted turn from before a daemon restart: the poll loop will finalize
     // it. Signal only a validated identity (H1) — a reused pid is a stranger.
@@ -660,7 +679,7 @@ export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Pr
     markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
     await closeLiveInput(taskId, turn.id);
     try {
-      process.kill(turn.pid, "SIGTERM");
+      signalProcessTree(turn.pid, "SIGTERM", (signal) => process.kill(turn.pid!, signal));
     } catch {
       setTurnInterrupt(turn.id, null); // exited between check and signal — let finalize judge the real outcome
       throw new Error(`turn process (pid ${turn.pid}) is already gone; it will finalize shortly`);
@@ -702,10 +721,35 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
   await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");
   // wait on the turn ROW, not the process: finalize must have run before archive proceeds
-  if (await turnFinalized(turn.id, graceMs)) return;
-  markInterrupted(turn.id, "turn interrupted by force-archive (escalated to SIGKILL after SIGTERM was trapped)");
-  await signalTurn(turn, "SIGKILL");
-  // re-adopted turns are finalized by a 3s poll, so allow at least one full tick
-  if (await turnFinalized(turn.id, Math.max(graceMs, 4000))) return;
-  throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived SIGKILL; refusing to archive`);
+  if (!(await turnFinalized(turn.id, graceMs))) {
+    markInterrupted(turn.id, "turn interrupted by force-archive (escalated to SIGKILL after SIGTERM was trapped)");
+    await signalTurn(turn, "SIGKILL");
+    // re-adopted turns are finalized by a 3s poll, so allow at least one full tick
+    if (!(await turnFinalized(turn.id, Math.max(graceMs, 4000)))) {
+      throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived SIGKILL; refusing to archive`);
+    }
+  }
+  await refuseIfTreeSurvives(turn, graceMs);
+}
+
+/**
+ * The turn ROW is finalized — but a finalized row only proves the harness
+ * exited, and archive is about to delete the worktree those processes are
+ * sitting in (ENG-03/ENG-04). So the last thing checked is the process GROUP:
+ * if anything the turn started is still in it, this refuses rather than
+ * deleting files under a live process.
+ *
+ * It checks without signalling. The leader is gone by now, so its pid can no
+ * longer be identity-checked, and a pid that has been recycled into a NEW
+ * group leader would make a blind `kill(-pid)` hit a stranger. Escalation
+ * already happened above, while the leader was alive and verified; what is
+ * left here is a decision, and the safe decision is to keep the worktree and
+ * say why.
+ */
+async function refuseIfTreeSurvives(turn: Turn, graceMs: number): Promise<void> {
+  if (!turn.pid) return;
+  if (await processGroupEnded(turn.pid, graceMs)) return;
+  throw new Error(
+    `turn ${turn.n} exited but processes it started are still running (process group ${turn.pid}); refusing to archive — stop them and retry`,
+  );
 }
