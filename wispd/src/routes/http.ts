@@ -1,6 +1,7 @@
 import { formatUsage, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
+import { typeName } from "../validate";
 
 /** SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit). */
 export function apiTask(t: Task): ApiTask {
@@ -86,6 +87,50 @@ export function json(data: unknown, status = 200, headers: Record<string, string
 
 export function err(message: string, status: number): Response {
   return json({ error: message }, status);
+}
+
+/**
+ * A request body, as the object every mutating route expects.
+ *
+ * The old pattern was `(await req.json().catch(() => ({}))) as { … }`, which
+ * has a hole a review found: `null`, `[]`, `7`, and `"text"` are all valid
+ * JSON, so the `catch` never fires and the very next line dereferences a
+ * non-object. `POST /api/tasks/:id/send` was worse — a bare `await req.json()`
+ * with no catch at all, so a malformed body became a 500 carrying a parser
+ * message.
+ *
+ * Three answers, deliberately distinct:
+ *
+ *   * an EMPTY body is `{}`. Callers legitimately send none — `POST …/archive`
+ *     with no options is a request, not a mistake — and turning that into a
+ *     400 would break the CLI.
+ *   * unparseable bytes are a 400 that says so, rather than being silently
+ *     treated as "no fields provided" and answered with a confusing complaint
+ *     about a missing field.
+ *   * valid JSON that is not an object is a 400 that names what arrived.
+ *
+ * A route uses it as `const body = await jsonObjectBody(req); if (body
+ * instanceof Response) return body;` — the same shape as the other validators
+ * here.
+ */
+export async function jsonObjectBody(req: Request): Promise<Record<string, unknown> | Response> {
+  let text: string;
+  try {
+    text = await req.text();
+  } catch (error) {
+    return err(`could not read the request body: ${error instanceof Error ? error.message : String(error)}`, 400);
+  }
+  if (text.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return err(`request body is not valid JSON: ${error instanceof Error ? error.message : String(error)}`, 400);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return err(`request body must be a JSON object, got ${typeName(parsed)}`, 400);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 export function integerQueryParam(url: URL, name: string, minimum: number): number | Response | null {

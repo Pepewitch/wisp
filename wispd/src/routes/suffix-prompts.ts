@@ -6,7 +6,7 @@ import {
   updateSuffixPrompt,
 } from "../suffix-prompts";
 import { typeName } from "../validate";
-import { err, json } from "./http";
+import { err, json, jsonObjectBody } from "./http";
 
 /** GET /api/suffix-prompts */
 export function listSuffixPromptsRoute(): Response {
@@ -16,7 +16,9 @@ export function listSuffixPromptsRoute(): Response {
 /** POST /api/suffix-prompts */
 export function createSuffixPromptRoute(req: Request): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as { name?: unknown; prompt?: unknown };
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as { name?: unknown; prompt?: unknown };
     const fields = readSuffixPromptFields(body);
     if (fields instanceof Response) return fields;
     try {
@@ -52,7 +54,9 @@ function readSuffixPromptFields(
 /** PATCH /api/suffix-prompts/:id — full replace of the editable fields. */
 export function updateSuffixPromptRoute(req: Request, id: string): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as { name?: unknown; prompt?: unknown };
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as { name?: unknown; prompt?: unknown };
     const fields = readSuffixPromptFields(body);
     if (fields instanceof Response) return fields;
     try {

@@ -10,7 +10,7 @@ import { taskMode } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
-import { err, json } from "./http";
+import { err, json, jsonObjectBody } from "./http";
 
 export type RepoEntry = string | RepoConfig;
 
@@ -186,7 +186,9 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
 /** POST /api/projects */
 export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as ProjectUpdateBody;
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as ProjectUpdateBody;
     const invalid = projectUpdateError(body);
     if (invalid) return invalid;
     // projectUpdateError narrowed the runtime value; bind that fact for the
@@ -231,7 +233,9 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
  */
 export function copyPreviewRoute(req: Request): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as { path?: unknown; patterns?: unknown };
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as { path?: unknown; patterns?: unknown };
     if (typeof body.path !== "string" || body.path.length === 0) return err("path is required", 400);
     if (!Array.isArray(body.patterns) || body.patterns.some((v) => typeof v !== "string")) {
       return err(`patterns must be an array of strings, got ${typeName(body.patterns)}`, 400);
@@ -246,7 +250,9 @@ export function copyPreviewRoute(req: Request): Promise<Response> {
 /** DELETE /api/projects */
 export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as { path?: unknown; archiveTasks?: unknown };
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as { path?: unknown; archiveTasks?: unknown };
     if (typeof body.path !== "string" || body.path.length === 0) return err("path is required", 400);
     if (body.archiveTasks !== undefined && typeof body.archiveTasks !== "boolean") {
       return err(`archiveTasks must be a boolean, got ${typeName(body.archiveTasks)}`, 400);

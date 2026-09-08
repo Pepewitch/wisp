@@ -67,6 +67,9 @@ export function parseTerminalSize(params: URLSearchParams): PtySize | null | str
   return { cols, rows };
 }
 
+/** 32 MiB: comfortably above the attachment caps, far below "allocate whatever arrives". */
+export const MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
+
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
 /** Deadline timers for sockets still waiting to authenticate, so an unauthenticated one cannot linger. */
 const terminalAuthDeadlines = new WeakMap<TerminalSocket, ReturnType<typeof setTimeout>>();
@@ -385,6 +388,12 @@ async function serveOwned(
       port,
       hostname,
       idleTimeout: 30,
+      // A deliberate ceiling rather than Bun's 128 MB default. The largest
+      // legitimate body is a create/send request carrying base64 attachments,
+      // which their own per-file and per-turn caps already bound well below
+      // this; anything larger is a mistake or an attempt to make the daemon
+      // allocate (ENG-09).
+      maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       websocket: {
         data: {} as TerminalSocketData,
         open(ws) {
