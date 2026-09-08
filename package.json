@@ -64,5 +64,9 @@
     "globals": "^17.11.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.68.0"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0"
   }
 }

@@ -281,6 +281,14 @@ function ShellView({
   const term = useRef<Terminal | null>(null)
   const fit = useRef<FitAddon | null>(null)
   const conn = useRef<TerminalConnection | null>(null)
+  /**
+   * The last geometry the daemon was told. Every fit used to send a resize,
+   * and a mount fires several — the initial fit, the ResizeObserver, and the
+   * "connecting…" line disappearing, which changes the row count. Each one
+   * SIGWINCHes the shell into redrawing its prompt, so unchanged sizes are
+   * dropped here rather than turned into work at the other end.
+   */
+  const sentSize = useRef<{ cols: number; rows: number } | null>(null)
   const [phase, setPhase] = useState<Phase>("connecting")
   const [detail, setDetail] = useState<string | null>(null)
   // bumping this re-runs the connect effect; the budget it spends is a ref, so
@@ -323,6 +331,27 @@ function ShellView({
     if (term.current) term.current.options.theme = TERMINAL_THEME[theme]
   }, [theme])
 
+  /**
+   * Fit the xterm to its pane and report what that came to. Returns null when
+   * the renderer has not measured a cell yet — an inactive tab is hidden, so
+   * its terminal has no dimensions to propose.
+   */
+  const measure = (): { cols: number; rows: number } | null => {
+    fit.current?.fit()
+    const d = fit.current?.proposeDimensions()
+    if (!d || !(d.cols > 0) || !(d.rows > 0)) return null
+    return { cols: d.cols, rows: d.rows }
+  }
+
+  /** Tell the daemon a new geometry, but only when it actually is one. */
+  const pushSize = (size: { cols: number; rows: number } | null): void => {
+    if (!size) return
+    const last = sentSize.current
+    if (last && last.cols === size.cols && last.rows === size.rows) return
+    sentSize.current = size
+    conn.current?.sendResize(size.cols, size.rows)
+  }
+
   // connect only while active
   useEffect(() => {
     const t = term.current
@@ -336,6 +365,13 @@ function ShellView({
     let sawHello = false
     setPhase("connecting")
     setDetail(null)
+
+    // Measure BEFORE connecting. The daemon creates the shell while answering
+    // this socket, so the size has to travel with the upgrade — a shell born
+    // at a default width prints its first prompt for a terminal nobody has,
+    // and a full-width prompt then survives every later redraw as a stale row.
+    const measured = measure()
+    if (measured) sentSize.current = measured
 
     const c = new TerminalConnection(
       taskId,
@@ -351,11 +387,9 @@ function ShellView({
           // exactly the daemon's buffer, whatever the tab held before.
           t.reset()
           if (hello.replay) t.write(hello.replay)
-          queueMicrotask(() => {
-            fit.current?.fit()
-            const d = fit.current?.proposeDimensions()
-            if (d) c.sendResize(d.cols, d.rows)
-          })
+          // The daemon already sized the shell to what connect() measured, so
+          // this only reports a pane that changed while the socket was opening.
+          queueMicrotask(() => pushSize(measure()))
         },
         onOutput: (data) => t.write(data),
         onExit: (code) => {
@@ -401,6 +435,7 @@ function ShellView({
       },
       transport,
       () => live,
+      measured,
     )
     const phaseIsOpen = () => live
     conn.current = c
@@ -425,11 +460,7 @@ function ShellView({
    */
   useEffect(() => {
     if (!active || !host.current) return
-    const refit = () => {
-      fit.current?.fit()
-      const d = fit.current?.proposeDimensions()
-      if (d && d.cols > 0 && d.rows > 0) conn.current?.sendResize(d.cols, d.rows)
-    }
+    const refit = () => pushSize(measure())
     const raf = requestAnimationFrame(refit)
     const ro = new ResizeObserver(refit)
     ro.observe(host.current)

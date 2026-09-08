@@ -3,23 +3,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
-import { serve } from "../src/daemon";
+import { parseTerminalSize, serve } from "../src/daemon";
 import {
-  darwinPtyArgv,
+  DEFAULT_PTY_SIZE,
   DISPLACED_MESSAGE,
   killAll,
   killForTask,
-  linuxPtyArgv,
   loginShell,
-  parseTty,
-  ReplayBuffer,
-  resizePty,
+  loginShellArgv,
   sessionKey,
-  sttyResizeArgv,
-  ttyForPidArgv,
   WEB_TERMINAL_TERM,
   webTerminalEnv,
-  type TerminalSpawnFn,
 } from "../src/terminal";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
 
@@ -460,7 +454,7 @@ describe("embedded web terminal", () => {
   });
 });
 
-describe("loginShell + PTY argv", () => {
+describe("loginShell + shell argv", () => {
   test("the browser shell always gets xterm capabilities", () => {
     expect(webTerminalEnv({}, {})).toMatchObject({
       TERM: WEB_TERMINAL_TERM,
@@ -472,6 +466,15 @@ describe("loginShell + PTY argv", () => {
     });
   });
 
+  test("drops an inherited COLUMNS/LINES so the tty stays authoritative", () => {
+    // The daemon may have been started from a terminal. Those values describe
+    // that window, and a shell startup file reading them would size the prompt
+    // for it instead of for the pane the pty was just sized to.
+    const env = webTerminalEnv({ COLUMNS: "204", LINES: "51" }, {});
+    expect(env.COLUMNS).toBeUndefined();
+    expect(env.LINES).toBeUndefined();
+  });
+
   test("prefers $SHELL when it points at an existing binary", () => {
     const orig = process.env.SHELL;
     const shell = Bun.which("sh");
@@ -479,8 +482,7 @@ describe("loginShell + PTY argv", () => {
     process.env.SHELL = shell;
     try {
       expect(loginShell()).toBe(shell);
-      expect(darwinPtyArgv()).toEqual(["script", "-q", "/dev/null", shell, "-l"]);
-      expect(linuxPtyArgv()).toEqual(["script", "-q", "-c", `'${shell}' -l`, "/dev/null"]);
+      expect(loginShellArgv()).toEqual([shell, "-l"]);
     } finally {
       if (orig === undefined) delete process.env.SHELL;
       else process.env.SHELL = orig;
@@ -499,133 +501,20 @@ describe("loginShell + PTY argv", () => {
   });
 });
 
-describe("PTY resize", () => {
-  test("parses the platform tty names and rejects ps noise", () => {
-    expect(parseTty("  ttys007\n")).toBe("ttys007");
-    expect(parseTty("pts/3\n")).toBe("pts/3");
-    expect(parseTty("?\n")).toBeNull();
-    expect(parseTty("pts/3\npts/4")).toBeNull();
+describe("terminal size on the upgrade", () => {
+  test("takes the pane's measured geometry", () => {
+    expect(parseTerminalSize(new URLSearchParams("shell=0&cols=58&rows=9"))).toEqual({ cols: 58, rows: 9 });
   });
 
-  test("builds the outside stty command for macOS and Linux", () => {
-    expect(ttyForPidArgv(42)).toEqual(["ps", "-o", "tty=", "-p", "42"]);
-    expect(sttyResizeArgv("darwin", "/dev/ttys007", 120, 40)).toEqual([
-      "stty",
-      "-f",
-      "/dev/ttys007",
-      "rows",
-      "40",
-      "cols",
-      "120",
-    ]);
-    expect(sttyResizeArgv("linux", "/dev/pts/3", 120, 40)).toEqual([
-      "stty",
-      "-F",
-      "/dev/pts/3",
-      "rows",
-      "40",
-      "cols",
-      "120",
-    ]);
+  test("a client that did not measure itself gets the documented default", () => {
+    expect(parseTerminalSize(new URLSearchParams("shell=0"))).toBeNull();
+    expect(DEFAULT_PTY_SIZE).toEqual({ cols: 80, rows: 24 });
   });
 
-  test("discovers the shell tty and resizes from outside the shell", async () => {
-    const seen: string[][] = [];
-    const spawn: TerminalSpawnFn = (cmd) => {
-      seen.push(cmd);
-      if (cmd[1] === "-axo") {
-        return { exitCode: 0, stdout: " 100 1 script\n 101 100 /bin/bash\n", stderr: "" };
-      }
-      if (cmd[0] === "ps") return { exitCode: 0, stdout: " pts/3\n", stderr: "" };
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-    let injected = false;
-    const result = await resizePty({
-      rootPid: 100,
-      shell: "/bin/bash",
-      platform: "linux",
-      cols: 120,
-      rows: 40,
-      device: null,
-      spawn,
-      fallback: () => {
-        injected = true;
-      },
-    });
-
-    expect(result.usedPty).toBe(true);
-    expect(result.device).toEqual({ pid: 101, path: "/dev/pts/3" });
-    expect(injected).toBe(false);
-    expect(seen).toEqual([
-      ["ps", "-axo", "pid=,ppid=,comm="],
-      ["ps", "-o", "tty=", "-p", "101"],
-      ["stty", "-F", "/dev/pts/3", "rows", "40", "cols", "120"],
-    ]);
-  });
-
-  test("falls back to the injected command when tty discovery fails", async () => {
-    const seen: string[][] = [];
-    const spawn: TerminalSpawnFn = (cmd) => {
-      seen.push(cmd);
-      return { exitCode: 1, stdout: "", stderr: "ps failed" };
-    };
-    let injected = "";
-    const result = await resizePty({
-      rootPid: 100,
-      shell: "/bin/bash",
-      platform: "linux",
-      cols: 120,
-      rows: 40,
-      device: null,
-      spawn,
-      fallback: () => {
-        injected = "stty rows 40 cols 120\r";
-      },
-    });
-
-    expect(result.usedPty).toBe(false);
-    expect(injected).toBe("stty rows 40 cols 120\r");
-    expect(seen).toEqual([["ps", "-axo", "pid=,ppid=,comm="]]);
-  });
-});
-
-describe("ReplayBuffer", () => {
-  test("returns everything it was given while under the cap", () => {
-    const buffer = new ReplayBuffer(64);
-    buffer.push("hello ");
-    buffer.push("world");
-    expect(buffer.text()).toBe("hello world");
-    expect(buffer.length).toBe(11);
-  });
-
-  test("ignores empty writes rather than growing a chunk list of nothing", () => {
-    const buffer = new ReplayBuffer(64);
-    buffer.push("");
-    expect(buffer.text()).toBe("");
-    expect(buffer.length).toBe(0);
-  });
-
-  test("drops WHOLE chunks from the front, never slicing mid-escape-sequence", () => {
-    const buffer = new ReplayBuffer(10);
-    buffer.push("aaaaa");
-    buffer.push("bbbbb");
-    buffer.push("ccccc"); // pushes past the cap; "aaaaa" leaves entire
-    expect(buffer.text()).toBe("bbbbbccccc");
-    expect(buffer.length).toBe(10);
-  });
-
-  test("a single chunk past the cap keeps its TAIL — the newest output", () => {
-    const buffer = new ReplayBuffer(5);
-    buffer.push("0123456789");
-    expect(buffer.text()).toBe("56789");
-    expect(buffer.length).toBe(5);
-  });
-
-  test("stays within the cap under sustained output", () => {
-    const buffer = new ReplayBuffer(100);
-    for (let i = 0; i < 500; i++) buffer.push(`line ${i}\n`);
-    expect(buffer.length).toBeLessThanOrEqual(100);
-    expect(buffer.text().endsWith("line 499\n")).toBe(true);
+  test("rejects a garbled size instead of quietly inventing one", () => {
+    for (const query of ["cols=0&rows=9", "cols=58&rows=0", "cols=abc&rows=9", "cols=58", "cols=1001&rows=9"]) {
+      expect(typeof parseTerminalSize(new URLSearchParams(query))).toBe("string");
+    }
   });
 });
 

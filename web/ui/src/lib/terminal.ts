@@ -1,6 +1,6 @@
 /**
  * The terminal tab's WebSocket client (S3.5) — a thin, testable wrapper over
- * the daemon's `/api/tasks/:id/terminal?shell=N` socket, plus the small
+ * the daemon's `/api/tasks/:id/terminal?shell=N&cols=C&rows=R` socket, plus the small
  * localStorage record of which tabs a task had open. The contract is the
  * daemon handlers in src/daemon.ts:
  *
@@ -13,7 +13,9 @@
  *
  * `shell=N` names the tab. Shells live on the DAEMON, keyed by (task, shell),
  * and outlive the socket — so the same N always reattaches to the same
- * process, and `replay` is how a fresh xterm catches up with it.
+ * process, and `replay` is how a fresh xterm catches up with it. `cols`/`rows`
+ * ride along on the upgrade because the shell may not exist yet: it is born at
+ * the size of the pane that asked for it.
  *
  * Authentication and target selection belong to the immutable daemon
  * transport. The token NEVER goes in the URL.
@@ -34,10 +36,14 @@ export interface TerminalHello {
   pty: boolean;
   cwd: string;
   /**
-   * Everything the shell has already printed, capped by the daemon. The shell
+   * A snapshot of the shell's screen, as the daemon models it. The shell
    * outlives its socket, so a reattaching tab must RESET its xterm and write
    * this — otherwise it shows a blank screen in front of a running session,
    * and appending instead of resetting would double every line.
+   *
+   * It describes a screen rather than replaying the bytes that produced one,
+   * which is what makes it safe to render at THIS pane's width: cursor moves
+   * recorded at some other width would land on the wrong rows here.
    */
   replay: string;
 }
@@ -70,9 +76,29 @@ export interface TerminalSocketLike {
   onclose: ((event: { code: number }) => void) | null;
 }
 
-/** The daemon path for one shell tab; the transport chooses its origin. */
-export function terminalSocketPath(taskId: string, shellId: number): string {
-  return `/api/tasks/${taskId}/terminal?shell=${shellId}`;
+/**
+ * The daemon path for one shell tab; the transport chooses its origin.
+ *
+ * The pane's measured size travels WITH the upgrade, because the daemon may
+ * have to create the shell before it can answer: a shell born at a default
+ * width draws its first prompt for a terminal that does not exist, and a
+ * prompt theme that fills the line then leaves that first draw stranded on
+ * screen. Omitted when the pane has not been measured yet — the daemon falls
+ * back to 80x24, exactly as it does for a client too old to send this.
+ */
+export function terminalSocketPath(taskId: string, shellId: number, size?: TerminalSize | null): string {
+  const query = new URLSearchParams({ shell: String(shellId) });
+  if (size && size.cols > 0 && size.rows > 0) {
+    query.set("cols", String(size.cols));
+    query.set("rows", String(size.rows));
+  }
+  return `/api/tasks/${taskId}/terminal?${query.toString()}`;
+}
+
+/** A terminal's geometry in character cells, as the fit addon measures it. */
+export interface TerminalSize {
+  cols: number;
+  rows: number;
 }
 
 // WebSocket readyState constants, mirrored so tests need no DOM constants.
@@ -90,6 +116,7 @@ export class TerminalConnection {
 
   private readonly taskId: string;
   private readonly shellId: number;
+  private readonly size: TerminalSize | null;
   private readonly handlers: TerminalClientHandlers;
   private readonly transport: Pick<DaemonTransport, "openWebSocket">;
   /** The owning component's staleness check — a stale connection ignores every event. */
@@ -101,9 +128,11 @@ export class TerminalConnection {
     handlers: TerminalClientHandlers,
     transport: Pick<DaemonTransport, "openWebSocket">,
     current: () => boolean = () => true,
+    size: TerminalSize | null = null,
   ) {
     this.taskId = taskId;
     this.shellId = shellId;
+    this.size = size;
     this.handlers = handlers;
     this.transport = transport;
     this.current = current;
@@ -116,7 +145,7 @@ export class TerminalConnection {
 
   connect(): void {
     const socket = this.transport.openWebSocket(
-      terminalSocketPath(this.taskId, this.shellId),
+      terminalSocketPath(this.taskId, this.shellId, this.size),
     ) as unknown as TerminalSocketLike;
     this.socket = socket;
 

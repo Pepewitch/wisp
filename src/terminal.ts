@@ -1,6 +1,20 @@
 import { existsSync } from "node:fs";
+import type { ReadStream } from "node:fs";
+import {
+  clampDimension,
+  closePty,
+  closePtySlave,
+  openPty,
+  ptyExecArgv,
+  readPty,
+  resizePty,
+  writePty,
+  type PtyHandle,
+  type PtySize,
+} from "./pty";
 import { taskEnv } from "./runner";
 import { getTask } from "./store";
+import { TerminalScreen } from "./terminal-screen";
 
 /** Live shells across every task. Each is a real login shell, so this is a resource cap. */
 const MAX_SHELLS = 32;
@@ -11,6 +25,14 @@ const IDLE_GC_INTERVAL_MS = 60 * 1000;
 const KILL_GRACE_MS = 5_000;
 /** The browser renderer is xterm.js, regardless of the daemon's own terminal. */
 export const WEB_TERMINAL_TERM = "xterm-256color";
+
+/**
+ * The size a shell is born at when a client attaches without saying how big it
+ * is. Every current client measures its pane before connecting; this only
+ * covers an older client, and 80x24 is the historical terminal default rather
+ * than any pane's real geometry.
+ */
+export const DEFAULT_PTY_SIZE: PtySize = { cols: 80, rows: 24 };
 
 /** Build the environment for a shell rendered by the embedded xterm.js UI. */
 export function webTerminalEnv(
@@ -26,54 +48,12 @@ export function webTerminalEnv(
     // always attached to xterm.js, so describe that terminal explicitly.
     TERM: WEB_TERMINAL_TERM,
     COLORTERM: "truecolor",
+    // The tty carries the real size now, and an inherited COLUMNS/LINES from
+    // whatever terminal launched the daemon would override it in the shell's
+    // startup files while being wrong for every pane.
+    COLUMNS: undefined,
+    LINES: undefined,
   };
-}
-
-/**
- * Characters of shell output held for replay to a reattaching browser. The
- * shell process outlives its websocket by design, so without this a tab
- * switch hands you a live shell behind a blank screen — the process kept its
- * cwd, its history and its running jobs, and the screen showed none of it.
- */
-export const REPLAY_MAX_CHARS = 256 * 1024;
-
-/**
- * The scrollback handed to a reattaching client. Chunks are kept WHOLE and
- * dropped from the front, because shell output is a stream of ANSI escape
- * sequences: slicing mid-sequence hands xterm half a control code. A single
- * chunk past the cap keeps its TAIL — the newest output is the useful end.
- *
- * Measured in UTF-16 units rather than bytes: the session decodes to strings
- * before it ever reaches here, and shell output is overwhelmingly ASCII, so
- * counting characters keeps the cap honest without a re-encode per chunk.
- */
-export class ReplayBuffer {
-  private readonly chunks: string[] = [];
-  private size = 0;
-  readonly cap: number;
-
-  constructor(cap: number = REPLAY_MAX_CHARS) {
-    this.cap = cap;
-  }
-
-  push(data: string): void {
-    if (data === "") return;
-    const chunk = data.length > this.cap ? data.slice(data.length - this.cap) : data;
-    this.chunks.push(chunk);
-    this.size += chunk.length;
-    // never drop the last chunk: it is already <= cap, so the loop is done
-    while (this.size > this.cap && this.chunks.length > 1) {
-      this.size -= this.chunks.shift()!.length;
-    }
-  }
-
-  text(): string {
-    return this.chunks.join("");
-  }
-
-  get length(): number {
-    return this.size;
-  }
 }
 
 /**
@@ -96,167 +76,10 @@ export interface TerminalClient {
   sendExit(code: number): void;
 }
 
-type ShellProcess = Bun.Subprocess<"pipe", "pipe", "pipe">;
+type ShellProcess = Bun.Subprocess<"ignore" | "pipe", "ignore" | "pipe", "pipe">;
 
-export interface TerminalSpawnResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-/** The small synchronous runner used for ps/stty, injectable for resize tests. */
-export type TerminalSpawnFn = (cmd: string[]) => TerminalSpawnResult;
-
-export const terminalSpawn: TerminalSpawnFn = (cmd) => {
-  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
-  return { exitCode: result.exitCode, stdout: result.stdout.toString().trim(), stderr: result.stderr.toString().trim() };
-};
-
-/** `ps` prints a blank-padded tty name; reject `?` and any ambiguous output. */
-export function parseTty(output: string): string | null {
-  const tty = output.trim();
-  if (!tty || tty === "?" || !/^(?:tty[^/\s]+|pts\/[^/\s]+)$/.test(tty)) return null;
-  return tty;
-}
-
-export function ttyForPidArgv(pid: number): string[] {
-  return ["ps", "-o", "tty=", "-p", String(pid)];
-}
-
-export function sttyResizeArgv(platform: string, device: string, cols: number, rows: number): string[] {
-  const flag = platform === "darwin" ? "-f" : platform === "linux" ? "-F" : null;
-  if (!flag) throw new Error(`stty resize is unsupported on platform '${platform}'`);
-  return ["stty", flag, device, "rows", String(rows), "cols", String(cols)];
-}
-
-interface ProcessRow {
-  pid: number;
-  ppid: number;
-  command: string;
-}
-
-export interface PtyDevice {
-  pid: number;
-  path: string;
-}
-
-function processTableArgv(): string[] {
-  // `-a -x` is accepted by both BSD ps (macOS) and procps ps (Linux).
-  return ["ps", "-axo", "pid=,ppid=,comm="];
-}
-
-function parseProcessTable(output: string): ProcessRow[] | null {
-  const lines = output.trim().split("\n");
-  if (!output.trim()) return null;
-  const rows: ProcessRow[] = [];
-  for (const line of lines) {
-    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/);
-    if (!match) return null;
-    rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3]! });
-  }
-  return rows;
-}
-
-function commandBase(command: string): string {
-  const name = command.trim().split(/\s+/, 1)[0] ?? "";
-  return name.slice(name.lastIndexOf("/") + 1).replace(/^[-+]/, "");
-}
-
-function shellBase(shell: string): string {
-  return shell.slice(shell.lastIndexOf("/") + 1).replace(/^[-+]/, "");
-}
-
-function descendantRows(rootPid: number, rows: ProcessRow[]): Array<ProcessRow & { depth: number }> {
-  const children = new Map<number, ProcessRow[]>();
-  for (const row of rows) {
-    const siblings = children.get(row.ppid) ?? [];
-    siblings.push(row);
-    children.set(row.ppid, siblings);
-  }
-  const descendants: Array<ProcessRow & { depth: number }> = [];
-  const seen = new Set<number>([rootPid]);
-  const visit = (parent: number, depth: number): void => {
-    for (const row of children.get(parent) ?? []) {
-      if (seen.has(row.pid)) continue;
-      seen.add(row.pid);
-      descendants.push({ ...row, depth });
-      visit(row.pid, depth + 1);
-    }
-  };
-  visit(rootPid, 1);
-  return descendants;
-}
-
-/** Find the login shell below the script wrapper, with a deepest-child fallback. */
-export function findLoginShellPid(rootPid: number, shell: string, spawn: TerminalSpawnFn = terminalSpawn): number | null {
-  let result: TerminalSpawnResult;
-  try {
-    result = spawn(processTableArgv());
-  } catch {
-    return null;
-  }
-  if (result.exitCode !== 0) return null;
-  const rows = parseProcessTable(result.stdout);
-  if (!rows) return null;
-  const descendants = descendantRows(rootPid, rows);
-  const expected = shellBase(shell);
-  const shellRows = descendants.filter((row) => commandBase(row.command) === expected);
-  const candidates = (shellRows.length ? shellRows : descendants).sort((a, b) => b.depth - a.depth);
-  return candidates[0]?.pid ?? null;
-}
-
-function ttyForPid(pid: number, spawn: TerminalSpawnFn): string | null {
-  let result: TerminalSpawnResult;
-  try {
-    result = spawn(ttyForPidArgv(pid));
-  } catch {
-    return null;
-  }
-  return result.exitCode === 0 ? parseTty(result.stdout) : null;
-}
-
-function resolvePtyDevice(rootPid: number, shell: string, spawn: TerminalSpawnFn): PtyDevice | null {
-  const pid = findLoginShellPid(rootPid, shell, spawn);
-  if (pid === null) return null;
-  const tty = ttyForPid(pid, spawn);
-  return tty ? { pid, path: `/dev/${tty}` } : null;
-}
-
-export interface PtyResizeOptions {
-  rootPid: number;
-  shell: string;
-  platform: string;
-  cols: number;
-  rows: number;
-  device: PtyDevice | null;
-  spawn?: TerminalSpawnFn;
-  fallback: () => void | Promise<void>;
-}
-
-export interface PtyResizeResult {
-  device: PtyDevice | null;
-  usedPty: boolean;
-}
-
-/** Resize the script-owned tty without writing anything to the shell's stdin. */
-export async function resizePty(options: PtyResizeOptions): Promise<PtyResizeResult> {
-  const spawn = options.spawn ?? terminalSpawn;
-  let device = options.device;
-  if (device) {
-    const currentTty = ttyForPid(device.pid, spawn);
-    if (!currentTty || `/dev/${currentTty}` !== device.path) device = null;
-  }
-  if (!device) device = resolvePtyDevice(options.rootPid, options.shell, spawn);
-  if (device) {
-    try {
-      const result = spawn(sttyResizeArgv(options.platform, device.path, options.cols, options.rows));
-      if (result.exitCode === 0) return { device, usedPty: true };
-    } catch {
-      // A disappearing shell or a platform-specific stty failure uses the safe fallback below.
-    }
-  }
-  await options.fallback();
-  return { device: null, usedPty: false };
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -271,40 +94,9 @@ export function loginShell(): string {
   return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
 }
 
-/** The exact script(1) invocation differs between the BSD and util-linux implementations. */
-export function darwinPtyArgv(shell: string = loginShell()): string[] {
-  return ["script", "-q", "/dev/null", shell, "-l"];
-}
-
-export function linuxPtyArgv(shell: string = loginShell()): string[] {
-  // util-linux script runs -c through sh -c, so the shell path is quoted into the string
-  return ["script", "-q", "-c", `${shellQuote(shell)} -l`, "/dev/null"];
-}
-
-function ptyArgv(platform: string, shell: string): string[] {
-  if (platform === "darwin") return darwinPtyArgv(shell);
-  if (platform === "linux") return linuxPtyArgv(shell);
-  throw new Error(`script(1) PTY is unsupported on platform '${platform}'`);
-}
-
-function shellQuote(arg: string): string {
-  return `'${arg.replaceAll("'", "'\\''")}'`;
-}
-
-function ptySpawnArgv(shell: string): string[] {
-  const argv = ptyArgv(process.platform, shell);
-  const scriptPath = Bun.which("script");
-  if (!scriptPath) throw new Error("script(1) is not available on PATH");
-  // Bun's piped stdin is a socket, while script(1) implementations inspect
-  // stdin as an OS pipe/terminal before creating their PTY. Put a tiny cat
-  // process in front of script to provide that POSIX pipe. The shell still
-  // runs inside script(1)'s PTY, and the named argv above remains the
-  // platform strategy we use for the actual script invocation.
-  return ["bash", "-c", `cat | exec ${[scriptPath, ...argv.slice(1)].map(shellQuote).join(" ")}`];
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+/** The login shell invocation, on the pty and in the piped fallback alike. */
+export function loginShellArgv(shell: string = loginShell()): string[] {
+  return [shell, "-l"];
 }
 
 /**
@@ -317,69 +109,97 @@ class TerminalSession {
   readonly key: string;
   private readonly taskId: string;
   private readonly child: ShellProcess;
-  private readonly shell: string;
+  private readonly handle: PtyHandle | null;
+  private readonly reader: ReadStream | null;
+  /** the daemon's model of the screen — what a reattaching client is sent */
+  private readonly screen: TerminalScreen;
   private client: TerminalClient | null = null;
   private detachedAt = Date.now();
   private finished = false;
   private inputQueue: Promise<void> = Promise.resolve();
-  private ptyDevice: PtyDevice | null = null;
-  /** everything the shell has printed, capped — replayed to whoever attaches next */
-  private readonly replay = new ReplayBuffer();
 
-  private constructor(key: string, taskId: string, cwd: string, child: ShellProcess, pty: boolean, shell: string) {
+  private constructor(
+    key: string,
+    taskId: string,
+    cwd: string,
+    child: ShellProcess,
+    handle: PtyHandle | null,
+    size: PtySize,
+  ) {
     this.key = key;
     this.taskId = taskId;
     this.cwd = cwd;
     this.child = child;
-    this.pty = pty;
-    this.shell = shell;
-    const outputDone = Promise.all([this.readStream(child.stdout, "stdout"), this.readStream(child.stderr, "stderr")]);
-    void child.exited.then(async (code) => {
-      await outputDone;
-      this.onExit(code);
-    });
+    this.handle = handle;
+    this.pty = handle !== null;
+    this.screen = new TerminalScreen(size);
+
+    if (handle) {
+      this.reader = readPty(
+        handle.masterFd,
+        (chunk) => this.emitOutput(chunk.toString("utf8")),
+        (error) => this.emitError(`terminal task ${taskId}: pty read failed: ${messageOf(error)}`),
+      );
+      // Anything the child half printed before it became the shell (a libc it
+      // could not load, a device it could not open) arrives here and nowhere
+      // else: after execve those descriptors are the pty itself.
+      void this.reportChildStartupFailure();
+    } else {
+      this.reader = null;
+      void this.readStream(child.stdout as ReadableStream<Uint8Array>, "stdout");
+      void this.readStream(child.stderr as ReadableStream<Uint8Array>, "stderr");
+    }
+    void child.exited.then((code) => this.finish(code));
   }
 
-  static open(key: string, taskId: string, cwd: string, env: Record<string, string>): TerminalSession {
-    let child: ShellProcess;
-    let pty = true;
+  static open(
+    key: string,
+    taskId: string,
+    cwd: string,
+    env: Record<string, string>,
+    size: PtySize,
+  ): TerminalSession {
     const shell = loginShell();
+    const wanted: PtySize = { cols: clampDimension(size.cols), rows: clampDimension(size.rows) };
+    let handle: PtyHandle | null = null;
     try {
-      child = Bun.spawn({
-        cmd: ptySpawnArgv(shell),
+      handle = openPty(wanted);
+      const child = Bun.spawn({
+        cmd: ptyExecArgv(handle.slavePath, loginShellArgv(shell)),
         cwd,
         env,
-        stdin: "pipe",
-        stdout: "pipe",
+        stdin: "ignore",
+        stdout: "ignore",
         stderr: "pipe",
       });
+      return new TerminalSession(key, taskId, cwd, child, handle, wanted);
     } catch (ptyError) {
-      pty = false;
+      if (handle) closePty(handle);
       console.warn(
-        `[wisp] terminal task ${taskId}: script(1) PTY spawn failed (${messageOf(ptyError)}); falling back to a piped login shell`,
+        `[wisp] terminal task ${taskId}: pty setup failed (${messageOf(ptyError)}); falling back to a piped login shell`,
       );
       try {
-        child = Bun.spawn({
-          cmd: [shell, "-l"],
+        const child = Bun.spawn({
+          cmd: loginShellArgv(shell),
           cwd,
           env,
           stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
         });
+        return new TerminalSession(key, taskId, cwd, child, null, wanted);
       } catch (plainError) {
         throw new Error(
-          `terminal shell spawn failed for task ${taskId}: PTY spawn failed (${messageOf(ptyError)}); piped ${shell} -l spawn failed (${messageOf(plainError)})`,
+          `terminal shell spawn failed for task ${taskId}: pty spawn failed (${messageOf(ptyError)}); piped ${shell} -l spawn failed (${messageOf(plainError)})`,
           { cause: plainError },
         );
       }
     }
-    return new TerminalSession(key, taskId, cwd, child!, pty, shell);
   }
 
-  /** What a newly attached client must render to see what the shell already printed. */
-  scrollback(): string {
-    return this.replay.text();
+  /** What a newly attached client must write to see the shell as it stands. */
+  scrollback(): Promise<string> {
+    return this.screen.snapshot();
   }
 
   isLive(): boolean {
@@ -430,28 +250,35 @@ class TerminalSession {
   }
 
   /**
-   * script(1) owns the PTY, so resize it from outside with stty against the
-   * shell's slave tty. This avoids echoing a command into the user's shell;
-   * discovery failures retain the old injected-command fallback.
+   * Resize the pty and the daemon's screen model together, so a snapshot can
+   * never describe a different geometry than the shell is drawing for.
    */
   resize(client: TerminalClient, cols: number, rows: number): Promise<void> {
     return this.enqueue(async () => {
       if (!this.accepts(client)) {
         throw new Error(`terminal task ${this.taskId}: client is no longer attached`);
       }
-      // The piped fallback has no tty at all, so resizing it remains a no-op.
-      if (!this.pty) return;
-      const result = await resizePty({
-        rootPid: this.child.pid,
-        shell: this.shell,
-        platform: process.platform,
-        cols,
-        rows,
-        device: this.ptyDevice,
-        fallback: () => this.writeAttached(`stty rows ${rows} cols ${cols}\r`),
-      });
-      this.ptyDevice = result.device;
+      this.applySize({ cols, rows });
     });
+  }
+
+  /**
+   * Adopt an arriving client's geometry BEFORE it is sent a snapshot. Without
+   * this the first thing a reattaching pane renders is the previous pane's
+   * width, and the shell only corrects itself one round trip later.
+   */
+  resizeForAttach(size: PtySize): void {
+    if (this.finished) return;
+    this.applySize(size);
+  }
+
+  private applySize(size: PtySize): void {
+    const next: PtySize = { cols: clampDimension(size.cols), rows: clampDimension(size.rows) };
+    const current = this.screen.size;
+    if (next.cols === current.cols && next.rows === current.rows) return;
+    // The piped fallback has no tty at all, so resizing it remains a no-op.
+    if (this.handle) resizePty(this.handle, next);
+    this.screen.resize(next);
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -463,8 +290,13 @@ class TerminalSession {
 
   private async writeAttached(data: string | Uint8Array): Promise<void> {
     try {
-      await this.child.stdin.write(data);
-      await this.child.stdin.flush();
+      if (this.handle) {
+        await writePty(this.handle.masterFd, data);
+        return;
+      }
+      const stdin = this.child.stdin as Bun.FileSink;
+      await stdin.write(data);
+      await stdin.flush();
     } catch (error) {
       throw new Error(`terminal task ${this.taskId}: stdin write failed: ${messageOf(error)}`, { cause: error });
     }
@@ -494,7 +326,9 @@ class TerminalSession {
     if (!killed) throw new Error(`terminal task ${this.taskId}: shell survived SIGKILL`);
   }
 
-  private async readStream(stream: ReadableStream<Uint8Array>, source: string): Promise<void> {
+  /** The piped fallback's output path; the pty reads from its master instead. */
+  private async readStream(stream: ReadableStream<Uint8Array> | null, source: string): Promise<void> {
+    if (!stream) return;
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     try {
@@ -512,10 +346,17 @@ class TerminalSession {
     }
   }
 
+  private async reportChildStartupFailure(): Promise<void> {
+    const stderr = this.child.stderr;
+    if (!stderr || !(stderr instanceof ReadableStream)) return;
+    const text = (await new Response(stderr).text()).trim();
+    if (text) console.error(`[wisp] terminal task ${this.taskId}: pty child: ${text}`);
+  }
+
   private emitOutput(data: string): void {
-    // buffered FIRST and unconditionally: output printed while no browser is
-    // attached is exactly the output a reattaching browser needs replayed
-    this.replay.push(data);
+    // parsed FIRST and unconditionally: output printed while no browser is
+    // attached is exactly the output a reattaching browser needs to see
+    this.screen.write(data);
     const client = this.client;
     if (!client || !client.isOpen()) return;
     try {
@@ -538,15 +379,32 @@ class TerminalSession {
     }
   }
 
-  private onExit(code: number): void {
+  /**
+   * The shell has exited. Close the SLAVE first: the daemon holds it open for
+   * the session's lifetime, and until it goes the master will not report the
+   * end of the output the shell left buffered there.
+   */
+  private async finish(code: number): Promise<void> {
     if (this.finished) return;
+    // Marked dead BEFORE the drain: a client attaching during it would
+    // otherwise be handed a shell that is already gone, and openSession would
+    // hand back this session instead of starting a replacement.
     this.finished = true;
+    if (this.handle) {
+      closePtySlave(this.handle);
+      await drained(this.reader);
+      // destroy first: the stream holds the master fd, and closing it from
+      // under an active read is an EBADF the reader would report as a fault
+      this.reader?.destroy();
+      closePty(this.handle);
+    }
     if (sessions.get(this.key) === this) {
       sessions.delete(this.key);
       stopIdleGcIfEmpty();
     }
     const client = this.client;
     this.client = null;
+    this.screen.dispose();
     if (!client || !client.isOpen()) return;
     try {
       client.sendExit(code);
@@ -554,6 +412,19 @@ class TerminalSession {
       console.error(`[wisp] terminal task ${this.taskId}: exit delivery failed: ${messageOf(error)}`);
     }
   }
+}
+
+/** Wait for a pty reader to deliver what is left, bounded so exit cannot hang. */
+function drained(reader: ReadStream | null): Promise<void> {
+  if (!reader || reader.closed) return Promise.resolve();
+  return Promise.race([
+    new Promise<void>((resolve) => {
+      reader.once("close", resolve);
+      reader.once("end", resolve);
+      reader.once("error", () => resolve());
+    }),
+    Bun.sleep(250),
+  ]);
 }
 
 const sessions = new Map<string, TerminalSession>();
@@ -587,12 +458,24 @@ async function idleGc(): Promise<void> {
 /**
  * Open or reuse the live shell for ONE TAB of a task. Reuse is what makes the
  * pane persistent: a tab switch, a task switch, or a browser reload builds a
- * new websocket, finds this shell still running, and replays its scrollback.
+ * new websocket, finds this shell still running, and is handed its screen.
+ *
+ * `size` is the arriving pane's real geometry. A new shell is BORN at it, so
+ * the very first prompt is drawn for the pane that will show it; an existing
+ * shell is resized to it before that client is sent anything.
  */
-export function openSession(taskId: string, shellId: number, worktreePath: string): TerminalSession {
+export function openSession(
+  taskId: string,
+  shellId: number,
+  worktreePath: string,
+  size: PtySize = DEFAULT_PTY_SIZE,
+): TerminalSession {
   const key = sessionKey(taskId, shellId);
   const existing = sessions.get(key);
-  if (existing?.isLive()) return existing;
+  if (existing?.isLive()) {
+    existing.resizeForAttach(size);
+    return existing;
+  }
   if (existing) sessions.delete(key);
   if (sessions.size >= MAX_SHELLS) {
     throw new Error(`terminal shell limit reached: maximum ${MAX_SHELLS} concurrent shells`);
@@ -604,6 +487,7 @@ export function openSession(taskId: string, shellId: number, worktreePath: strin
     taskId,
     worktreePath,
     webTerminalEnv(process.env, taskEnv(task)) as Record<string, string>,
+    size,
   );
   sessions.set(key, session);
   keepIdleGcAlive();
