@@ -168,7 +168,24 @@ export function Conversation({
           onScroll={onScroll}
           tabIndex={-1}
           data-testid="conversation-viewport"
-          className="scroll-slim min-h-0 flex-1 overflow-y-auto px-4.5 outline-none [overflow-anchor:auto]"
+          className={cn(
+            "scroll-slim min-h-0 flex-1 overflow-y-auto px-4.5 outline-none [overflow-anchor:auto]",
+            // ONE axis, and it is vertical (§5). `overflow-y-auto` alone left
+            // `overflow-x` computing to `auto` — the spec turns a `visible`
+            // axis into `auto` the moment its partner scrolls — so anything
+            // wider than the column gave the whole transcript a sideways
+            // scrollbar and slid the reading column out from under itself.
+            //
+            // `break-words` is what makes hiding that axis honest, and it is
+            // INHERITED, so one declaration covers everything the column
+            // renders: prose, a bubble's `whitespace-pre-wrap` text, an
+            // expanded tool output, a failure note. A URL, a hash or an
+            // inline-code token longer than the line has nowhere else to go,
+            // so it breaks — the same pair a diff row already uses. A code
+            // block keeps its long lines and its OWN scroller: `white-space:
+            // pre` allows no wrapping, and `pre` carries `overflow-x-auto`.
+            "overflow-x-hidden break-words"
+          )}
         >
           {/* Bottom-aligned while the transcript is shorter than the pane: a
               two-line conversation belongs just above the composer, not floating
