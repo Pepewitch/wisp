@@ -1,7 +1,9 @@
 # Wisp Desktop updates
 
 Wisp Desktop and a Wisp daemon are separate programs with separate release
-lifecycles. The Desktop **Updates** popover therefore has two named rows:
+lifecycles. The Desktop **Updates** popover — the download icon at the right
+end of the top bar, grouped with zoom and the settings gear, and on touch in
+the drawer footer — therefore has two named rows:
 
 - **Wisp Desktop** is global to the application and installs a signed `.app`
   update through the native Tauri updater;
@@ -153,11 +155,13 @@ signed versions on an Apple Silicon Mac:
    stapler validate`, and `spctl --assess --type execute`.
 3. Publish the next version through the tag workflow. Do not replace either
    version's tag or assets.
-4. In the older app, open **Updates** and click **Check now**. Confirm the
-   Desktop row shows the old and new versions and the expected release notes;
-   the selected-daemon row must remain separate.
+4. In the older app, open **Updates** — the download icon at the right end of
+   the top bar — and click **Check now**. Confirm the Desktop row shows the old
+   and new versions and the expected release notes; the selected-daemon row must
+   remain separate.
 5. Click **Update Desktop and relaunch**. Confirm download progress, a clean
-   relaunch, the new version in the header, and the same connections and tasks.
+   relaunch, the new version on the Desktop row, and the same connections and
+   tasks.
 6. Repeat the three Apple trust checks against the newly installed app. Confirm
    a bad-signature test is rejected and leaves the old app runnable.
 7. Run `brew update` and inspect `brew info --cask wisp-desktop`. If its

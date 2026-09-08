@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
-import { PersonBubble } from "./person-bubble"
+import { BUBBLE_ACTION, PersonBubble, UserMessageCopyButton } from "./person-bubble"
 
 /** The card itself: the one element carrying the bubble's fill and radius. */
 function bubble(): HTMLElement {
@@ -83,5 +83,59 @@ describe("the person bubble's floating actions", () => {
     render(<PersonBubble caption={<span>5 min ago</span>}>said something</PersonBubble>)
 
     expect(bubble().querySelector(".absolute")).toBeNull()
+  })
+
+  it("lines the toolbar's right edge up with the bubble's own", () => {
+    render(<PersonBubble actions={<span>copy</span>}>said something</PersonBubble>)
+
+    // flush, not inset: two edges 8px apart read as a box that missed its corner
+    expect(toolbar().className.split(/\s+/)).toContain("-right-px")
+  })
+})
+
+describe("a control on the floating toolbar", () => {
+  const classesOf = (name: string) =>
+    screen.getByRole("button", { name }).className.split(/\s+/)
+
+  it("is a square with its glyph in the middle, at both sizes", () => {
+    render(
+      <PersonBubble actions={<UserMessageCopyButton text="said something" />}>said something</PersonBubble>,
+    )
+
+    const classes = classesOf("Copy user message")
+    // equal dimensions and one centre, so a 12px glyph cannot sit off-axis in
+    // the frame the way a padding-sized button did
+    expect(classes).toContain("items-center")
+    expect(classes).toContain("justify-center")
+    // 32px around a 16px glyph by default, 20px around 12px where a pointer is
+    expect(classes).toContain("size-8")
+    expect(classes).toContain("[&>svg]:size-4")
+    expect(classes).toContain("pointer:size-5")
+    expect(classes).toContain("pointer:[&>svg]:size-3")
+    expect(classes).not.toContain("p-0.5")
+  })
+
+  it("is the same shape whatever the control is", () => {
+    render(
+      <PersonBubble
+        actions={
+          <>
+            <UserMessageCopyButton text="said something" />
+            <button type="button" aria-label="Cancel queued message" className={BUBBLE_ACTION}>
+              <span />
+            </button>
+          </>
+        }
+      >
+        said something
+      </PersonBubble>,
+    )
+
+    // §6b: the toolbar does not hide on touch, so every control in it is a
+    // thumb target there — and one class string is what keeps them equal
+    for (const size of ["size-8", "pointer:size-5"]) {
+      expect(classesOf("Copy user message")).toContain(size)
+      expect(classesOf("Cancel queued message")).toContain(size)
+    }
   })
 })

@@ -128,6 +128,41 @@ describe("browser daemon update control", () => {
   })
 })
 
+describe("the update trigger", () => {
+  it("names an icon-only trigger with everything the dot cannot say", () => {
+    renderCenter()
+
+    // The trigger carries a glyph and a 6px dot, so its accessible name is the
+    // whole readout — the count in words, for anyone not looking at it.
+    expect(
+      screen.getByRole("button", { name: "Updates, 2 available" })
+    ).toBeInTheDocument()
+  })
+
+  it("says only Updates when nothing waits behind it", () => {
+    renderCenter({
+      desktop: desktopUpdater({
+        status: { ...DESKTOP_STATUS, latestVersion: null, phase: "up-to-date" },
+      }),
+      daemonStatus: {
+        ...DAEMON_STATUS,
+        latestVersion: null,
+        state: "up-to-date",
+      },
+    })
+
+    expect(screen.getByRole("button", { name: "Updates" })).toBeInTheDocument()
+  })
+
+  it("carries a failure in the name as well as in the dot", () => {
+    renderCenter({ daemonError: "Synthetic failure" })
+
+    expect(
+      screen.getByRole("button", { name: /Updates.*needs attention/ })
+    ).toBeInTheDocument()
+  })
+})
+
 describe("Desktop update center", () => {
   it("renders separately scoped Desktop and selected-daemon rows", () => {
     renderCenter()

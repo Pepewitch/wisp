@@ -1,6 +1,6 @@
 import { Popover } from "@base-ui/react/popover"
 
-import { Refresh } from "@/components/icons"
+import { Download, Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
 import {
@@ -138,27 +138,30 @@ export function UpdateCenter({
   return (
     <Popover.Root defaultOpen={defaultOpen}>
       <Popover.Trigger
-        render={<Button size={mobile ? "lg" : "sm"} />}
-        className={mobile ? "max-w-24 px-2" : undefined}
+        render={<Button size={mobile ? "lg" : "sm"} icon />}
+        className="relative"
+        aria-label={updateTriggerLabel(availableCount, hasFailure)}
         title={
           hasFailure
             ? "An update needs attention"
             : "Application and daemon updates"
         }
       >
-        <span className="truncate">Updates</span>
-        {availableCount > 0 && (
-          <span className="font-mono text-[10.5px] text-muted-foreground">
-            · {availableCount}
-          </span>
-        )}
-        {hasFailure && (
+        <Download />
+        {/* The count was `Updates · 2` in words; on an icon it is a 6px dot in
+            the corner, which is the only badge shape in the app (§1: a state
+            dot, and nothing else, may carry a hue at this size). Amber is the
+            same "waiting on you" this app already paints on a task that needs
+            input; a real failure is the one thing allowed to be destructive.
+            The label carries both readings for anyone not looking at it. */}
+        {(availableCount > 0 || hasFailure) && (
           <span
-            aria-label="Update needs attention"
-            className="text-destructive"
-          >
-            !
-          </span>
+            aria-hidden
+            className={cn(
+              "absolute top-0 right-0 size-1.5 rounded-full",
+              hasFailure ? "bg-destructive" : "bg-state-needs-input"
+            )}
+          />
         )}
       </Popover.Trigger>
       <Popover.Portal>
@@ -472,6 +475,19 @@ function DaemonUpdateRow({
       </div>
     </section>
   )
+}
+
+/**
+ * What the icon says out loud. The trigger carries no text, so its accessible
+ * name is the whole readout: how many updates wait, and whether one of them
+ * went wrong. "Updates" stays the first word, because that is the surface's
+ * name in the popover, in the docs, and in what someone would search for.
+ */
+function updateTriggerLabel(availableCount: number, hasFailure: boolean): string {
+  const parts = ["Updates"]
+  if (availableCount > 0) parts.push(`${availableCount} available`)
+  if (hasFailure) parts.push("needs attention")
+  return parts.join(", ")
 }
 
 function daemonUpdateActionBlock(

@@ -285,7 +285,26 @@ The toolbar sits **clear of the top edge** (`bottom-full`), not straddling it.
 Straddling reads better until a three-control toolbar meets a one-line bubble,
 and then it sits on the words; 2px clear can never do that, whatever the
 toolbar grows to hold. Hover still carries across the gap, because the toolbar
-is a DOM child of the bubble.
+is a DOM child of the bubble. Its right edge is **flush with the bubble's**
+(`right-0`): inset by 8px it read as a box that had missed the corner it
+belongs to, two edges 8px apart with nothing between them.
+
+Every control in it is `BUBBLE_ACTION` in `person-bubble.tsx` — a class, for
+`POPOVER_SURFACE`'s reason: `CopyButton` owns its own element, so `cn()` is the
+one way copy, edit and cancel can share a shape. That shape is a **square with
+its glyph in the middle**: 20px around 12px with a pointer, so the toolbar is
+22px — a control height the app already has — and **32px around 16px by
+default**, the drawer footer's icon-button size, because the toolbar does not
+hide on touch and §6b's floor is about the hit box, not the look. Sizing is
+`pointer:`-relative for the same reason the reveal is: the generous size is the
+default, and a pointer is what makes the compact one safe. The frame is one
+step up the radius scale from its buttons (8 over 6), so the corners nest.
+
+It was a 16px button — a 12px glyph plus 2px of padding — in an 18px frame:
+the border traced the icon with nothing to spare, so the toolbar read as a box
+drawn too small rather than as a control, and any asymmetry in a glyph had
+nowhere to average out. A button whose size comes from PADDING has no centre of
+its own; give it equal dimensions and one `justify-center` instead.
 
 **`pointer:` is the variant that makes hover-reveal safe** (`index.css`).
 Tailwind's own `hover:` is already `@media (hover: hover)`, so a bare
@@ -721,6 +740,30 @@ leaving someone to wonder whether a remote just changed.
   surface is where the decision belongs (the updater's *Check after launch*
   sits with the update it governs). This modal is not a junk drawer for
   everything client-local.
+
+### 5h. The top bar's right end is one cluster
+
+The pointer shell's top bar has app chrome at both ends and they answer
+different questions. The left end is **which daemon am I on** — the mark, then
+the connection tabs. The right end is **this app**: the connection indicator
+states what it is doing, and then everything you can do TO it sits in one
+cluster, `gap-1` against the header's `gap-2.5`, so three same-sized icon
+buttons read as a group rather than as three controls that happen to be near
+each other. Updates, then zoom (Desktop only), then the gear — last, because
+the gear is the top-right corner (§5g).
+
+**App news is not connection chrome.** The update surface used to sit at the
+left end, hard against the connection tabs: the only labelled button in a bar
+of icons, in the corner that answers a different question. It is a
+`Download`-glyph icon button now, and its count is a 6px dot in the corner —
+`--state-needs-input` for an update waiting on you, `--destructive` for one
+that failed, which is the badge budget §1 already allows at that size. An
+icon-only trigger's accessible name carries what the dot cannot say
+(`Updates, 2 available`), and the name still starts with the surface's own
+word, because that is what someone searches for.
+
+On touch this cluster does not exist: there is no persistent top bar, so the
+gear and the update surface live in the drawer footer (§6b).
 
 ## 6. Panes and dividers
 
