@@ -413,6 +413,20 @@
   .xterm-viewport {
     overscroll-behavior: contain;
   }
+  /* A placeholder is not content, so it never gets its own scroll axis.
+     WebKit lays a textarea's placeholder out in a box of its own and does NOT
+     relayout it when the page zoom changes — and Desktop's zoom is exactly
+     that (`webview.setZoom`, ⌘+ / ⌘−). One step in leaves the placeholder box
+     at its old width inside a narrower field, so an EMPTY composer reports
+     content ~75px wider than itself and paints an overlay horizontal
+     scrollbar across the chat input. Chrome never did, which is why this only
+     ever showed up in the packaged app. Capping the box at the field's own
+     width is the whole fix: with nothing overflowing there is no axis to
+     scroll, rather than an axis with its scrollbar hidden. */
+  textarea::placeholder {
+    max-width: 100%;
+  }
+
   ::selection {
     background: var(--accent-wash);
   }
