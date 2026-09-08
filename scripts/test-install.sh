@@ -39,13 +39,34 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
     WISP_HOME="$HOME/occupied-home" /release/wisp init --port 8710 >/dev/null
     WISP_HOME="$HOME/occupied-home" /release/wisp serve >"$HOME/occupied.log" 2>&1 &
     OCCUPIED_PID=$!
-    sleep 1
-    kill -0 "$OCCUPIED_PID"
+    OCCUPIED_READY=no
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      if WISP_HOME="$HOME/occupied-home" /release/wisp ls >/dev/null 2>&1; then
+        OCCUPIED_READY=yes
+        break
+      fi
+      kill -0 "$OCCUPIED_PID" || {
+        cat "$HOME/occupied.log" >&2
+        echo "occupied-port daemon exited before it became ready" >&2
+        exit 1
+      }
+      sleep 0.2
+    done
+    [ "$OCCUPIED_READY" = yes ] || {
+      cat "$HOME/occupied.log" >&2
+      echo "occupied-port daemon did not become ready" >&2
+      exit 1
+    }
 
     /bin/sh /install.sh
     kill "$OCCUPIED_PID"
     wait "$OCCUPIED_PID" 2>/dev/null || true
-    test "$(sed -n "s/.*\"port\": \\([0-9]*\\).*/\\1/p" "$HOME/.wisp/config.json")" = 8711
+    SELECTED_PORT="$(sed -n "s/.*\"port\": \\([0-9]*\\).*/\\1/p" "$HOME/.wisp/config.json")"
+    [ "$SELECTED_PORT" = 8711 ] || {
+      echo "installer selected port ${SELECTED_PORT:-unknown};" \
+        "expected 8711 after a ready daemon occupied 8710" >&2
+      exit 1
+    }
     FIRST_CONFIG="$(sha256sum "$HOME/.wisp/config.json")"
     test "$(stat -c %a "$HOME/.wisp")" = 700
     test "$(stat -c %a "$HOME/.wisp/config.json")" = 600
