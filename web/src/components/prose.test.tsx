@@ -185,6 +185,16 @@ describe("Prose", () => {
     expect(container.textContent).toContain("local shot")
   })
 
+  /**
+   * SEC-03. This URL came from agent prose, so loading it is already an
+   * outbound request the reader did not ask for; it must at least not disclose
+   * which Wisp page was open when it happened.
+   */
+  it("sends no referrer with an agent-supplied remote image", () => {
+    const { container } = render(<Prose text="![shot](https://example.test/a.png)" />)
+    expect(container.querySelector("img")).toHaveAttribute("referrerpolicy", "no-referrer")
+  })
+
   it("autolinks a bare URL, which is how agents usually paste one", () => {
     const { container } = render(<Prose text="Posted: https://github.com/example-org/sample-app/pull/42" />)
     expect(container.querySelector("a")?.getAttribute("href")).toContain("/pull/42")

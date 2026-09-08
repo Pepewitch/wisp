@@ -66,7 +66,19 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   img: ({ src, alt }) => {
     const url = typeof src === "string" ? safeHttpUrl(src) : null
     if (!url) return <>{alt}</>
-    return <img src={url} alt={alt ?? ""} className="mt-2.5 max-w-full rounded-md" />
+    // `no-referrer`, because this URL came from agent prose and may point
+    // anywhere. Loading it is already an outbound request the reader did not
+    // ask for (SEC-03); the request must not also disclose which Wisp page
+    // was open when it happened. The same reasoning as `noreferrer` on the
+    // links above.
+    return (
+      <img
+        src={url}
+        alt={alt ?? ""}
+        referrerPolicy="no-referrer"
+        className="mt-2.5 max-w-full rounded-md"
+      />
+    )
   },
 
   ul: ({ children }) => <ul className="mt-2.5 ml-4 list-outside list-disc space-y-1 marker:text-faint">{children}</ul>,

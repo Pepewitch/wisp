@@ -75,6 +75,17 @@ function decodedName(raw: string): string | Response {
   }
 }
 
+/**
+ * Not cached, deliberately. These are screenshots a person pasted into a task,
+ * and archive/cancel DELETE the bytes — but the previous year-long `immutable`
+ * entry meant a browser kept serving them from its own disk long after the
+ * daemon began answering 410, so "removed when this task was archived" was
+ * true of the server and false of the profile that had viewed it (SEC-08).
+ * The browser refetches instead: attachments are count- and size-capped, the
+ * fetch is same-origin, and the daemon is normally on this machine.
+ */
+export const ATTACHMENT_CACHE_CONTROL = "private, no-store";
+
 async function serveAttachment(filePath: string, name: string, missingMessage: string): Promise<Response> {
   const file = Bun.file(filePath);
   if (!(await file.exists())) return err(missingMessage, 410);
@@ -85,7 +96,7 @@ async function serveAttachment(filePath: string, name: string, missingMessage: s
     headers: {
       "content-type": sniffed,
       "content-length": String(bytes.byteLength),
-      "cache-control": "private, immutable, max-age=31536000",
+      "cache-control": ATTACHMENT_CACHE_CONTROL,
       "x-content-type-options": "nosniff",
       "content-disposition": "inline",
     },
