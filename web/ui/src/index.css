@@ -96,6 +96,16 @@
   --color-diff-del: var(--diff-del);
   --color-diff-del-bg: var(--diff-del-bg);
 
+  /* the syntax family. The colours themselves are applied by the role map in
+     the base layer below; these exist so the GALLERY can label a swatch with
+     the same token the map reads, rather than inlining a `var()` into a
+     component (§8). */
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-entity: var(--syntax-entity);
+  --color-syntax-comment: var(--syntax-comment);
+
   /* accent family, for the rare place a token beats a utility */
   --color-accent-soft: var(--accent-soft);
   --color-accent-dim: var(--accent-dim);
@@ -216,6 +226,19 @@
   --diff-del: #de6f6b;
   --diff-del-bg: rgb(222 111 107 / 0.10);
 
+  /* syntax — the third hue family, and it lives INSIDE a code block (§1).
+     Four roles at ONE lightness and ONE chroma, so no role shouts over
+     another, and all four sit BELOW the accent's chroma (0.09 against 0.155):
+     colour in a code block must not out-compete the one violet the app spends
+     on the send button and the running dot. Comments are grey and italic,
+     names stay plain — most of a line is names, and if everything is coloured
+     nothing is. Contrast on `--code`: 9.3 / 9.8 / 9.5 / 9.6, comments 4.8. */
+  --syntax-keyword: #c0abe9;    /* oklch(0.78 0.09 300) — the app's own hue */
+  --syntax-string: #8ec899;     /* oklch(0.78 0.09 150) */
+  --syntax-number: #d0b477;     /* oklch(0.78 0.085 85) */
+  --syntax-entity: #7cc1e9;     /* oklch(0.78 0.09 235) — functions and types */
+  --syntax-comment: #827e8a;    /* oklch(0.60 0.018 300) */
+
   /* elevation and the modal veil — black, because the page is already near it */
   --elevation-float: 0 8px 24px rgb(0 0 0 / 0.5);
   --elevation-popover: 0 16px 40px rgb(0 0 0 / 0.66);
@@ -303,6 +326,16 @@
   --diff-add-bg: rgb(21 127 76 / 0.09);
   --diff-del: #b83a34;
   --diff-del-bg: rgb(184 58 52 / 0.08);
+
+  /* the same four roles, moved DOWN the lightness axis and up in chroma — the
+     move the accent already makes between themes, because a colour that reads
+     as text on graphite reads as a highlighter on paper. Contrast on `--code`:
+     6.2 / 5.4 / 5.8 / 5.4, comments 4.9. */
+  --syntax-keyword: #6b46a0;    /* oklch(0.48 0.14 300) */
+  --syntax-string: #00722e;     /* oklch(0.48 0.14 150) */
+  --syntax-number: #7f5500;     /* oklch(0.48 0.13 85) */
+  --syntax-entity: #0067a0;     /* oklch(0.48 0.14 235) */
+  --syntax-comment: #6a6772;    /* oklch(0.52 0.018 300) */
 
   /* elevation and the modal veil — a soft cool shadow, never a hole */
   --elevation-float: 0 6px 18px rgb(24 24 40 / 0.10);
@@ -429,5 +462,80 @@
 
   ::selection {
     background: var(--accent-wash);
+  }
+
+  /* ── syntax ──────────────────────────────────────────────────────────────
+     highlight.js emits CLASSES, not colours, so the theme is ours: five roles
+     mapped onto the `--syntax-*` tokens above (§1). Roles, not languages —
+     one map answers every language rather than one theme per language.
+
+     Everything not listed stays PLAIN, and that is the design: identifiers,
+     parameters, operators and punctuation are most of a line, so colouring
+     them would leave nothing for colour to pick out. */
+  .hljs-comment,
+  .hljs-quote {
+    color: var(--syntax-comment);
+    font-style: italic;
+  }
+  /* what the language RESERVES */
+  .hljs-keyword,
+  .hljs-literal,
+  .hljs-doctag,
+  .hljs-selector-tag,
+  .hljs-tag,
+  .hljs-name,
+  .hljs-meta .hljs-keyword {
+    color: var(--syntax-keyword);
+  }
+  /* what is quoted */
+  .hljs-string,
+  .hljs-char,
+  .hljs-regexp,
+  .hljs-template-tag,
+  .hljs-meta .hljs-string {
+    color: var(--syntax-string);
+  }
+  /* what is a literal value */
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-bullet,
+  .hljs-link {
+    color: var(--syntax-number);
+  }
+  /* what has a NAME: functions, types, keys — one hue, because a second cool
+     hue for types buys nothing a reader of one file actually needs */
+  .hljs-title,
+  .hljs-title.class_,
+  .hljs-title.function_,
+  .hljs-type,
+  .hljs-built_in,
+  .hljs-class .hljs-title,
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-property,
+  .hljs-section,
+  .hljs-selector-class,
+  .hljs-selector-id,
+  .hljs-selector-pseudo {
+    color: var(--syntax-entity);
+  }
+  /* a shebang, a decorator, a preprocessor line: present, not the point */
+  .hljs-meta {
+    color: var(--syntax-comment);
+  }
+  /* a ```diff fence is a diff, so it borrows the family the changes pane
+     already uses — two places must never disagree about what added means */
+  .hljs-addition {
+    color: var(--diff-add);
+  }
+  .hljs-deletion {
+    color: var(--diff-del);
+  }
+  /* markdown's own emphasis: weight and slant carry it, never hue */
+  .hljs-strong {
+    font-weight: 600;
+  }
+  .hljs-emphasis {
+    font-style: italic;
   }
 }

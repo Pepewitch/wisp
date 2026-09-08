@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest"
 
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
+import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+
 import { Prose } from "./prose"
 
 /**
@@ -55,6 +57,59 @@ describe("Prose", () => {
     // naming a language is what a highlighter reads, so the class survives
     expect(tagged?.className).toContain("language-ts")
     expect(bare?.className ?? "").not.toContain("language-")
+  })
+
+  /**
+   * Colour goes INSIDE a block that named a language, and nowhere else. The
+   * palette is ours (`--syntax-*`), so what the highlighter owes us is the
+   * ROLE of each token as a class; jsdom parses no CSS, so the classes are
+   * what a test can hold on to.
+   */
+  it("colours a fence that named a language, by role", () => {
+    const { container } = render(
+      <Prose text={"```ts\n// why\nexport const limit = 12\n```"} />,
+    )
+
+    expect(container.querySelector("code")?.className).toContain("language-ts")
+    expect(container.querySelector(".hljs-keyword")?.textContent).toBe("export")
+    expect(container.querySelector(".hljs-number")?.textContent).toBe("12")
+    expect(container.querySelector(".hljs-comment")?.textContent).toContain("why")
+  })
+
+  it("leaves a fence that named nothing alone, rather than guessing", () => {
+    const { container } = render(<Prose text={"```\nexport const limit = 12\n```"} />)
+
+    // `detect: false` is load-bearing: a bare fence is plain, which is what
+    // the block surface already says it is
+    expect(container.querySelectorAll("[class*=hljs-]")).toHaveLength(0)
+    expect(container.querySelector("pre")?.textContent).toContain("export const limit = 12")
+  })
+
+  it("renders a language it does not know as plain text instead of throwing", () => {
+    const { container } = render(<Prose text={"```mermaid\ngraph TD; a-->b\n```"} />)
+
+    // an agent's prose is not a build input; an unknown fence must not be able
+    // to take a turn down with it (`ignoreMissing`)
+    expect(container.querySelector("pre")?.textContent).toContain("graph TD")
+    expect(container.querySelectorAll("[class*=hljs-]")).toHaveLength(0)
+  })
+
+  it("stops highlighting a block too big to colour on every keystroke", () => {
+    const line = 'export const value = "highlight me"\n'
+    const huge = line.repeat(Math.ceil((PROSE_HIGHLIGHT_LIMIT + 1_000) / line.length))
+    const { container } = render(<Prose text={"```ts\n" + huge + "```"} />)
+
+    // past the limit the language class comes off, so it renders as what it
+    // then is — a block with no language, which is plain mono
+    expect(container.querySelectorAll("[class*=hljs-]")).toHaveLength(0)
+    expect(container.querySelector("pre")?.textContent).toContain("highlight me")
+  })
+
+  it("survives a fence that is still arriving", () => {
+    // the stream renders every chunk, so a fence with no closing ``` yet is a
+    // state the highlighter sees constantly
+    const { container } = render(<Prose text={"```ts\nexport const half = tru"} />)
+    expect(container.querySelector("pre")?.textContent).toContain("export const half")
   })
 
   it("renders bulleted and numbered lists", () => {

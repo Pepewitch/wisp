@@ -108,10 +108,29 @@ describe("the web app", () => {
     expect(html).toMatch(/textarea::placeholder\s*\{[^}]*max-width:\s*100%/);
   });
 
+  /**
+   * §1's rule is that every token exists in BOTH theme blocks or in neither:
+   * a colour that is only defined in one is the same bug three ways. jsdom
+   * parses no CSS, so the bundle is the only place the pairing can be proved.
+   */
+  test("the syntax palette is paired across both themes", async () => {
+    const html = await Bun.file(BUNDLE_PATH).text();
+    for (const token of ["--syntax-keyword", "--syntax-string", "--syntax-number", "--syntax-entity", "--syntax-comment"]) {
+      expect(html.match(new RegExp(`${token}:`, "g"))).toHaveLength(2);
+    }
+    // and the roles are mapped onto those tokens rather than to a hex
+    expect(html).toMatch(/\.hljs-keyword[^{]*\{[^}]*var\(--syntax-keyword\)/);
+    expect(html).toMatch(/\.hljs-addition[^{]*\{[^}]*var\(--diff-add\)/);
+  });
+
   test("the bundle is self-contained — one file, nothing external", async () => {
     const html = await Bun.file(BUNDLE_PATH).text();
     expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)="https?:/);
-    expect(html).not.toContain("@import");
+    // An `@import` RULE, not the six letters: highlight.js ships `@import`
+    // inside its Less and Objective-C keyword lists, so a bare substring
+    // check now trips on grammar data. A stylesheet import is always followed
+    // by whitespace and then a url() or a quoted string.
+    expect(html).not.toMatch(/@import\s+(url\(|["'])/);
     // No tag may FETCH anything: singlefile inlines scripts and styles, so a
     // surviving src=/href= is an un-inlined chunk. Asserted on the document
     // head only — the inlined bundle is minified JS full of strings that look
