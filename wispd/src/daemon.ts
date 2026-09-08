@@ -10,6 +10,7 @@ import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { resumeArchiveCleanups, startArchiveCleanupLoop } from "./routes/archive";
 import { route } from "./routes";
+import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
 import { err, json } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
@@ -277,16 +278,62 @@ function bindFailure(host: string, port: number): unknown | undefined {
   }
 }
 
+/**
+ * The sentence a losing daemon exits with. The health probe is what makes it
+ * useful: it names the daemon that actually answered rather than asserting
+ * something about a pid, and says plainly that nothing was changed — the whole
+ * point of taking ownership before recovery runs.
+ */
+async function homeConflictMessage(host: string, port: number, reason: string): Promise<string> {
+  const owner = await occupiedListener(host, port);
+  return [
+    `${process.env.WISP_HOME ?? "~/.wisp"} is already being served by ${owner}.`,
+    "This process changed no tasks, claims, schema, or outbox rows and is exiting.",
+    "Stop the running daemon before starting another, or point this one at a different WISP_HOME.",
+    `(${reason})`,
+  ].join(" ");
+}
+
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
   const appHtml = await bundledAppHtml();
-  // Hashing 2 MB of bundle is startup work, not per-request work; the policy
-  // itself is assembled per response because it names this daemon's origin.
-  const securityPolicy = pageSecurityPolicy(appHtml);
   const cfg = loadConfig();
   const hostname = process.env.WISP_HOST ?? cfg.host;
   const port = options.port ?? cfg.port;
-  // Do this before recovery or loops mutate shared state. A second daemon
-  // aimed at the same home must fail before touching live task lifecycle.
+  // OWNERSHIP FIRST — before the port preflight, before recovery, before any
+  // loop. An address being free says nothing about who owns this home: the
+  // persisted port can change, WISP_HOST can point elsewhere, and the old
+  // check's probe listener was released before recovery ran anyway. A second
+  // daemon must lose here, having touched nothing (ENG-02).
+  let ownership;
+  try {
+    ownership = acquireHomeOwnership();
+  } catch (error) {
+    if (error instanceof HomeBusyError) {
+      throw new Error(await homeConflictMessage(hostname, cfg.port, error.message), { cause: error });
+    }
+    throw error;
+  }
+  // Every failure from here on releases ownership: a daemon that could not
+  // start must not leave the home unopenable.
+  try {
+    return await serveOwned(options, cfg, hostname, port, appHtml, ownership);
+  } catch (error) {
+    ownership.release();
+    throw error;
+  }
+}
+
+async function serveOwned(
+  options: ServeOptions,
+  cfg: WispConfig,
+  hostname: string,
+  port: number,
+  appHtml: string,
+  ownership: { release(): void },
+): Promise<Bun.Server<TerminalSocketData>> {
+  // Hashing 2 MB of bundle is startup work, not per-request work; the policy
+  // itself is assembled per response because it names this daemon's origin.
+  const securityPolicy = pageSecurityPolicy(appHtml);
   const preflightFailure = port === 0 ? undefined : bindFailure(hostname, port);
   if (preflightFailure) {
     if ((preflightFailure as NodeJS.ErrnoException).code === "EADDRINUSE") {
@@ -441,6 +488,11 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     clearInterval(outboxTimer);
     clearInterval(stuckTimer);
     clearInterval(cleanupTimer);
+    // Ownership ends when this daemon decides to stop, not when its last
+    // socket drains: the loops are already cancelled, so nothing here will
+    // touch persisted state again, and a shutdown that stalls on a connection
+    // must not leave the home unopenable.
+    ownership.release();
     await stopServer(closeActiveConnections);
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on

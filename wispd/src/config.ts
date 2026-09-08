@@ -97,6 +97,13 @@ export const WORKTREE_ROOT = join(WISP_HOME, "worktrees");
 /** per-turn image attachments live at tasks/<id>/attachments/turn-<n>/ (S3; dirs are created at write time) */
 export const TASKS_DIR = join(WISP_HOME, "tasks");
 export const DB_PATH = join(WISP_HOME, "wisp.db");
+/**
+ * The file whose exclusive lock means "this daemon owns this home" (ENG-02).
+ * Separate from the task database on purpose: ordinary CLI reads of `wisp.db`
+ * must not contend with ownership, and ownership must not depend on whatever
+ * transaction the daemon happens to be running.
+ */
+export const HOME_LOCK_PATH = join(WISP_HOME, "daemon-owner.lock.db");
 export const CONFIG_PATH = join(WISP_HOME, "config.json");
 /** No-clobber authority for instanceId; config.json mirrors it for discoverability and backup. */
 export const INSTANCE_ID_PATH = join(WISP_HOME, "instance-id");
