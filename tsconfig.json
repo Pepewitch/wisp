@@ -8,5 +8,5 @@
     "types": ["bun"],
     "skipLibCheck": true
   },
-  "include": ["src", "scripts"]
+  "include": ["scripts"]
 }

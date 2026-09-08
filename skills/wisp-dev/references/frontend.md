@@ -1,6 +1,6 @@
 # Wisp frontend conventions
 
-`web/ui/` is the one shared React app (Vite + React + TypeScript + Tailwind v4
+`web/` is the one shared React app (Vite + React + TypeScript + Tailwind v4
 + shadcn on base-ui primitives). The daemon serves it in a browser and Tauri
 packages it for Wisp Desktop. It is the only one: the classic `web/index.html`,
 the abandoned first rewrite in `web/app/`, and the vendored xterm in
@@ -55,13 +55,13 @@ the change branches on Tauri, touches connection/runtime/native integration,
 or qualifies a material shared flow for release. Runtime-neutral styling does
 not need Cargo or a packaged-app build. See
 [Architecture](../../../docs/ARCHITECTURE.md) for the impact matrix and
-`web/ui/README.md` for the exact generated-bundle sequence.
+`web/README.md` for the exact generated-bundle sequence.
 
 This file is the law. `#/gallery` is the law rendered on real components — when
 you add a primitive, add its gallery entry in the same diff. An undocumented
 primitive is an incomplete change.
 
-Every value below is in `web/ui/src/index.css`. Read it once; then never write
+Every value below is in `web/src/index.css`. Read it once; then never write
 a hex in a component again.
 
 ---
@@ -252,13 +252,13 @@ CLI (`wisp serve`), the config directory (`~/.wisp`), the branch prefix
 The test: could you paste it into a shell or a config file? Then it is lowercase.
 Is it the name of the thing? Then it is `Wisp`.
 
-`STATE_LABEL` in `web/ui/src/lib/state.ts` is the only place a state's display
+`STATE_LABEL` in `web/src/lib/state.ts` is the only place a state's display
 name lives. Never render `task.state` directly in chrome.
 
 ## 4. Typography
 
 Geist Sans (`font-sans`) and Geist Mono (`font-mono`), bundled from the
-fontsource variable packages — zero CDN, OFL 1.1 text in `web/ui/licenses/`.
+fontsource variable packages — zero CDN, OFL 1.1 text in `web/licenses/`.
 No third face, ever.
 
 | Size | Weight | Use |
@@ -436,7 +436,7 @@ reducer and components receive the same `ActivityEvent` union regardless.
 Unknown/custom adapters degrade to unstructured human prose, never leaked JSON
 and never a fabricated lifecycle.
 
-`web/ui/src/lib/activity.ts`'s `summarizeStep()` owns the one tool input worth
+`web/src/lib/activity.ts`'s `summarizeStep()` owns the one tool input worth
 reading (`file_path` → `path` → `command` → `pattern` → …). A row that shows an
 unreadable argument object instead of its useful path or command is a bug.
 
@@ -831,7 +831,7 @@ gear and the update surface live in the drawer footer (§6b).
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its
-middle (`web/ui/src/components/panes.tsx`). Panes carry no border toward a
+middle (`web/src/components/panes.tsx`). Panes carry no border toward a
 handle — the handle *is* the divider. Layouts persist through the library's
 own `useDefaultLayout`; never hand-roll layout JSON.
 
@@ -928,27 +928,27 @@ point.
 - **Semantic tokens only.** `bg-primary`, `text-muted-foreground`,
   `bg-state-running`. Never a raw palette class (`bg-purple-400`), never a hex
   in a `className`. Need a new colour? Add a token to
-  `web/ui/src/index.css` named by meaning, not by hue — and check it against
+  `web/src/index.css` named by meaning, not by hue — and check it against
   the budget in §1 first.
 - **Elevation and stacking are scales, not literals.** Three depths
   (`shadow-float` / `shadow-popover` / `shadow-modal`) and five layers
   (`z-(--z-pane)` through `z-(--z-menu)`), both defined once in
-  `web/ui/src/index.css`. Never write `shadow-[0_16px_40px_…]` or a bare
+  `web/src/index.css`. Never write `shadow-[0_16px_40px_…]` or a bare
   `z-50`. A portalled popup does NOT win by being last in the DOM — DOM order
   only breaks ties between EQUAL z-indexes, so a surface that names no layer
   is painted over by any in-pane `z-10`. Shared popup chrome is
   `POPOVER_SURFACE` in
-  `web/ui/src/components/primitives.tsx`.
+  `web/src/components/primitives.tsx`.
 - **Tailwind class names must be literal.** State→class maps are static
-  `Record`s in `web/ui/src/lib/state.ts`; `bg-state-${state}` silently
+  `Record`s in `web/src/lib/state.ts`; `bg-state-${state}` silently
   generates nothing.
 - **No `dark:` overrides.** Two themes, one token contract: pair the value in
-  both blocks of `web/ui/src/index.css` and let the class on `<html>` choose
+  both blocks of `web/src/index.css` and let the class on `<html>` choose
   (§1, *Two themes*). A `dark:` utility, a second hex in a component, or a
   token that exists in one block only is the same bug three ways.
 - **`className` is for layout, not restyling.** Never override a primitive's
   colours or typography ad hoc. A new variant is born in
-  `web/ui/src/components/primitives.tsx` and reused.
+  `web/src/components/primitives.tsx` and reused.
 - **Control heights are 22 / 26 / 32.** Rows are 26 (list), 34 (pane header),
   36 (top bar). Radii are 6 / 8 / 12. Space is 2 4 6 8 12 18 — not a 4/8 grid;
   dense tooling lives on odd numbers.
@@ -956,7 +956,7 @@ point.
   `size-*`, not `w-* h-*`. Truncation: `truncate`.
 - **`cn()`** for conditional classes — no template-literal ternaries.
 - **Icons:** `@fluentui/react-icons`, re-exported through
-  `web/ui/src/components/icons.tsx` so there is one import surface.
+  `web/src/components/icons.tsx` so there is one import surface.
   `lucide-react` is not a dependency and must never become one. Icons are
   components, never string keys, and carry no size classes — their container
   sizes them.

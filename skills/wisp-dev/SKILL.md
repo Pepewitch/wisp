@@ -8,7 +8,7 @@ description: Modify and validate the Wisp repository using its contributor archi
 This is a routing guide for changing Wisp itself. It is intentionally not a
 second copy of the implementation. Read only the reference that matches the
 task, then inspect the source and nearby tests. When documentation and source
-disagree, `src/`, `web/ui/src/`, and `desktop/src-tauri/src/` win for the
+disagree, `wispd/src/`, `web/src/`, and `desktop/src-tauri/src/` win for the
 surfaces they own.
 
 Use the separate `wisp` skill when the job is to create, steer, or integrate a
@@ -29,7 +29,7 @@ Wisp has one authoritative daemon and several clients:
   and persisted turns. Each turn is one short-lived headless harness process.
 - SQLite and the webhook outbox are durable truth. The in-memory event bus and
   SSE streams are realtime delivery, never a ledger.
-- Harness-specific argv and wire knowledge stays under `src/adapters/`.
+- Harness-specific argv and wire knowledge stays under `wispd/src/adapters/`.
 - The React app uses Query for replaceable server state and a separate reducer
   for append-oriented activity. One generated, Git-ignored HTML file ships in
   both the daemon and Tauri app; transport and state scope vary by runtime.
@@ -38,10 +38,10 @@ Wisp has one authoritative daemon and several clients:
 
 | Change | Read first | Then inspect |
 | --- | --- | --- |
-| Add or change a harness or capability | [Adding a harness](../../docs/ADDING-A-HARNESS.md) | `src/adapters/`, captured fixtures, adapter/API tests |
-| Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `tests/harness-facts/`, fixtures, and narrow contract tests |
-| Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
-| Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/ui/README.md`, both runtime paths, the owning component/hook, and its tests |
+| Add or change a harness or capability | [Adding a harness](../../docs/ADDING-A-HARNESS.md) | `wispd/src/adapters/`, captured fixtures, adapter/API tests |
+| Check or refresh a builtin after its CLI or model lineup changes | Run `bun run harness:check`, then `bun run harness:snapshot` — their verdicts name the next action. Only then [Keeping built-in harnesses current](references/harness-sync.md) | The builtin, `wispd/tests/harness-facts/`, fixtures, and narrow contract tests |
+| Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `wispd/src/` module and its nearest tests |
+| Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/README.md`, both runtime paths, the owning component/hook, and its tests |
 | Change the desktop shell's native core, proxy, connections, credentials, or updater | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md), [Desktop updates](../../docs/DESKTOP-UPDATES.md), then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
 | Prepare, publish, recover, or promote a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, promotion receipt, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |

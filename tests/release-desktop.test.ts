@@ -16,7 +16,7 @@ import {
   releaseCertificateSource,
   verifyDesktopInventory,
 } from "../scripts/release-desktop";
-import { VERSION } from "../src/version";
+import { VERSION } from "../wispd/src/version";
 
 function syntheticApp(order: "forward" | "reverse"): string {
   const root = mkdtempSync(join(tmpdir(), "wisp-desktop-archive-"));

@@ -1,0 +1,19 @@
+{
+  "name": "wispd",
+  "version": "0.4.0-alpha.17",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "bin": {
+    "wisp": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0"
+  }
+}

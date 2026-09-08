@@ -1,5 +1,5 @@
-// Root lint for src/, tests/ and scripts/ (the owner-named housekeeping item:
-// only web/ui had a linter). Mirrors web/ui's strictness minus the react
+// Root lint for repository scripts/tests and the wispd package. Mirrors the
+// web package's strictness minus the react
 // plugins, plus the globals a Bun daemon actually has. The rule deltas below
 // are deliberate and documented — tune by editing HERE, not by sprinkling
 // eslint-disable comments.
@@ -12,7 +12,7 @@ import { productionMaintainabilityRules, testMaintainabilityRules } from "./esli
 export default defineConfig([
   globalIgnores(["dist", "web", "node_modules", "coverage", ".worktrees"]),
   {
-    files: ["{src,tests,scripts}/**/*.ts"],
+    files: ["{scripts,tests,wispd/src,wispd/tests,wispd/scripts}/**/*.ts"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.node, Bun: "readonly" },
@@ -39,7 +39,7 @@ export default defineConfig([
     },
   },
   {
-    files: ["tests/**/*.ts"],
+    files: ["{tests,wispd/tests}/**/*.ts"],
     rules: {
       // A suite is an executable specification. Keep a generous ceiling that
       // stops indefinite growth without forcing unrelated cases apart.

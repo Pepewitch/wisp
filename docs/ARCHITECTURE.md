@@ -9,7 +9,7 @@ behaves the same whichever interface is open.
 
 ```text
                          one shared React application
-                       web/ui -> web/ui-dist/index.html
+                         web -> web/ui-dist/index.html
                          /                         \
         daemon-served browser                     Wisp Desktop (Tauri)
         same-origin transport                     native loopback proxy
@@ -47,7 +47,7 @@ its connection's baseline after an event-stream reconnect.
 
 ## The shared client contract
 
-`web/ui/src/lib/transport.ts` defines `DaemonTransport`. UI code receives a
+`web/src/lib/transport.ts` defines `DaemonTransport`. UI code receives a
 transport from its runtime instead of constructing daemon URLs itself:
 
 - the browser implementation uses same-origin HTTP, SSE, WebSockets, and
@@ -133,7 +133,7 @@ any deliberate difference.
 
 | Change | Required compatibility review |
 | --- | --- |
-| `web/ui/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Run the root/UI gate and review both runtime semantics; build the app when Tauri, connection scope, transport, native integration, or release qualification is affected |
+| `web/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Run the root/UI gate and review both runtime semantics; build the app when Tauri, connection scope, transport, native integration, or release qualification is affected |
 | daemon route, public type, authentication, SSE, WebSocket, media, or update behavior | Run focused and root tests; check the CLI where applicable plus browser/Desktop consumers, and run transport/native gates only when those boundaries are affected |
 | `desktop/src-tauri/` command, metadata, credential, proxy, or Local setup behavior | Update the TypeScript bridge/runtime contract, run root and native gates, and preserve browser behavior |
 | generated UI bundle or packaging | Build `web/ui-dist/index.html` without committing it; prove the daemon and desktop package consume the same release bytes |
@@ -151,8 +151,9 @@ gates live in
 
 ## Build and distribution
 
-The source workspace is a Bun package with a React workspace and a Rust/Tauri
-desktop crate. `bun run build:ui` creates the ignored single-file UI bundle;
+The source workspace is a Bun monorepo with `wispd/` for the daemon and CLI,
+`web/` for the shared React app, and `desktop/` for the Rust/Tauri crate.
+`bun run build:ui` creates the ignored single-file UI bundle;
 the daemon binary embeds it and the desktop build packages the same output.
 Pull-request CI generates and exercises this artifact but never compares it to
 Git. Tag CI reproduces it once, transfers it by checksum between runners, and

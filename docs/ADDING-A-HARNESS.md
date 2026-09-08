@@ -4,9 +4,9 @@ Wisp drives four coding-agent CLIs — droid, claude, codex, cursor — through
 one seam: the adapter. An adapter is **declarative config plus small named
 strategies** (D7): how to run one headless turn, how to resume the session,
 and how to read the machine output. No harness knowledge lives outside
-`src/adapters/` — the daemon, routes, CLI, and shared browser/desktop UI all
+`wispd/src/adapters/` — the daemon, routes, CLI, and shared browser/desktop UI all
 render *through* the adapter, so a new harness is one entry in
-`src/adapters/builtins.ts` plus, at most, a few new named strategies.
+`wispd/src/adapters/builtins.ts` plus, at most, a few new named strategies.
 
 This doc is the distilled experience of adding all four. Follow the order —
 it is the order that keeps you from pinning a guess.
@@ -37,7 +37,7 @@ analogy with another harness. The concrete toolkit:
    every task.
 4. **One cheap live turn, captured** — run the harness headless by hand with
    a throwaway prompt, then sanitize paths, identifiers, and unrelated
-   environment metadata before saving it under `tests/fixtures/` (see its
+   environment metadata before saving it under `wispd/tests/fixtures/` (see its
    README). The codex parse strategy is tested against an observed,
    shape-preserving fixture, not a hand-written approximation.
 
@@ -46,7 +46,7 @@ If a surface can't be probed, it is **absent** — see §4.
 ## 1. The minimal adapter
 
 ```ts
-// src/adapters/builtins.ts
+// wispd/src/adapters/builtins.ts
 cursor: {
   bin: "cursor-agent",
   exec: ["-p", "--output-format", "stream-json", "-f", "--trust"],
@@ -88,7 +88,7 @@ result object.
 
 ## 2. Named strategies: reuse by name, add when the wire is new
 
-Every cross-cutting surface is a registry in `src/adapters/`; an adapter
+Every cross-cutting surface is a registry in `wispd/src/adapters/`; an adapter
 field holds a *key* into one. The existing inventory:
 
 | Registry (file) | Adapter field | Existing keys |
@@ -188,10 +188,10 @@ refusal carry the truth.
 Adding a builtin breaks several pins *by design*; each failure is a checklist
 item, not a surprise:
 
-- `ADAPTER_KEYS` (tests/adapters.test.ts) — the known-builtin set.
+- `ADAPTER_KEYS` (`wispd/tests/adapters.test.ts`) — the known-builtin set.
 - The "known: …" lists in validation error messages (adapters, format,
   config tests) — new strategy keys appear in them.
-- The `/api/harnesses` payload pin (tests/api-contracts.test.ts) — the new
+- The `/api/harnesses` payload pin (`wispd/tests/api-contracts.test.ts`) — the new
   harness's full published shape: exec/resume/effort/models/compact/…
 - The unknown-harness error message (routes tests) — names the valid set.
 - If you added a field (as slice 9 added `defaultModel`): the

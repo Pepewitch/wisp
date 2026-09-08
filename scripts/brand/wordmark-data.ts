@@ -13,13 +13,13 @@
  *
  * Provenance — regenerate only if the wordmark itself changes:
  *   bun add fontkit wawoff2   # dev-only, in a scratch dir
- *   woff2.decompress(web/ui/node_modules/@fontsource-variable/geist/files/
+ *   woff2.decompress(web/node_modules/@fontsource-variable/geist/files/
  *                    geist-latin-wght-normal.woff2)  ->  geist-latin.ttf
  *   fontkit.openSync(ttf).getVariation({ wght: 600 }).layout("Wisp")
  *   then glyph.path.toSVG() per glyph, with the pen x from run.positions.
  *
  * Coordinates are font units in a 1000-unit em, y UP from the baseline.
- * Geist is OFL 1.1; the licence text already rides along in web/ui/licenses/.
+ * Geist is OFL 1.1; the licence text already rides along in web/licenses/.
  */
 
 /** Units per em of the source font — every coordinate below is in these units. */

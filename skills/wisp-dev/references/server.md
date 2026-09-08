@@ -6,23 +6,23 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 
 ## Runtime map
 
-- `src/index.ts` selects daemon mode for `wisp serve`; every other command
-  enters `src/cli.ts`.
-- `src/cli.ts` is primarily a bearer-authenticated HTTP client. Business logic
+- `wispd/src/index.ts` selects daemon mode for `wisp serve`; every other command
+  enters `wispd/src/cli.ts`.
+- `wispd/src/cli.ts` is primarily a bearer-authenticated HTTP client. Business logic
   belongs behind the API, not in a CLI-only path.
-- `src/daemon.ts` loads config and adapters, performs recovery, starts
+- `wispd/src/daemon.ts` loads config and adapters, performs recovery, starts
   background loops, serves the generated web bundle, owns browser auth and
   terminal WebSocket upgrades, then delegates ordinary API requests.
-- `src/routes/index.ts` dispatches route families. Its order is behavior:
+- `wispd/src/routes/index.ts` dispatches route families. Its order is behavior:
   specific stream and attachment paths must precede generic task paths.
-- `src/store.ts` owns SQLite rows and task transitions. `src/runner.ts` owns
+- `wispd/src/store.ts` owns SQLite rows and task transitions. `wispd/src/runner.ts` owns
   one-shot harness processes, persisted logs, finalization, interruption,
   restart recovery, and stuck detection.
-- `src/worktree.ts` owns worktree creation, setup and cleanup hooks, health,
+- `wispd/src/worktree.ts` owns worktree creation, setup and cleanup hooks, health,
   git status/diff, and archive teardown.
-- `src/adapters/` is the only home for harness argv, machine-output parsing,
+- `wispd/src/adapters/` is the only home for harness argv, machine-output parsing,
   capabilities, and named wire strategies.
-- `src/events.ts` feeds realtime clients. `src/outbox.ts` delivers durable
+- `wispd/src/events.ts` feeds realtime clients. `wispd/src/outbox.ts` delivers durable
   notifications. Do not confuse either one's role with the other.
 
 ## Stable contracts
@@ -68,7 +68,7 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - What a reattaching client receives is a snapshot of the screen, not the bytes
   that produced it. Raw output encodes cursor motion that is only correct at
   the width it was written at, so replaying it into a differently sized pane
-  corrupts the display. `src/terminal-screen.ts` keeps the daemon's model in
+  corrupts the display. `wispd/src/terminal-screen.ts` keeps the daemon's model in
   the same engine the browser renders with, and it is resized with the pty.
 - Worktree file reads belong to the daemon, not to a client's own filesystem
   access: it owns the tree, so a remote connection and the browser get the
@@ -89,7 +89,7 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 
 ## Run locally
 
-Install the locked root workspace once; it includes `web/ui`:
+Install the locked root workspace once; it includes `web` and `wispd`:
 
 ```sh
 bun install --frozen-lockfile
@@ -124,7 +124,7 @@ WISP_DEV_PORT=18711 \
 bun run dev
 ```
 
-Root tests isolate `WISP_HOME` through `tests/setup.ts`; server and smoke tests
+Daemon tests isolate `WISP_HOME` through `wispd/tests/setup.ts`; server and smoke tests
 use dynamically allocated ports so they can run while the installed daemon
 remains active.
 
@@ -132,20 +132,20 @@ remains active.
 
 | Concern | Primary source |
 | --- | --- |
-| Config, paths, defaults | `src/config.ts` |
-| CLI parsing and presentation | `src/cli.ts` |
-| Authentication and HTTP responses | `src/routes/auth.ts`, `src/routes/http.ts` |
-| Task/API behavior | `src/routes/` |
-| Persistence and state transitions | `src/store.ts` |
-| Harness process lifecycle | `src/runner.ts` |
-| Worktrees, git, setup/archive hooks | `src/worktree.ts` |
-| Harness definitions and wire formats | `src/adapters/` |
-| Realtime streams | `src/events.ts`, `src/routes/stream.ts` |
-| Webhook delivery | `src/outbox.ts` |
-| Terminal sessions | `src/terminal.ts`, `src/daemon.ts` |
-| Pty allocation, sizing, and the `__pty-exec` child | `src/pty.ts` |
-| The daemon's model of each shell's screen | `src/terminal-screen.ts` |
-| Shared public shapes | `src/types.ts`, route serializers, `web/ui/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |
+| Config, paths, defaults | `wispd/src/config.ts` |
+| CLI parsing and presentation | `wispd/src/cli.ts` |
+| Authentication and HTTP responses | `wispd/src/routes/auth.ts`, `wispd/src/routes/http.ts` |
+| Task/API behavior | `wispd/src/routes/` |
+| Persistence and state transitions | `wispd/src/store.ts` |
+| Harness process lifecycle | `wispd/src/runner.ts` |
+| Worktrees, git, setup/archive hooks | `wispd/src/worktree.ts` |
+| Harness definitions and wire formats | `wispd/src/adapters/` |
+| Realtime streams | `wispd/src/events.ts`, `wispd/src/routes/stream.ts` |
+| Webhook delivery | `wispd/src/outbox.ts` |
+| Terminal sessions | `wispd/src/terminal.ts`, `wispd/src/daemon.ts` |
+| Pty allocation, sizing, and the `__pty-exec` child | `wispd/src/pty.ts` |
+| The daemon's model of each shell's screen | `wispd/src/terminal-screen.ts` |
+| Shared public shapes | `wispd/src/types.ts`, route serializers, `web/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |
 
 ## Validation
 
@@ -160,7 +160,8 @@ bun run check
 ```
 
 When a route or public type consumed by Desktop changes, include its focused
-client/contract tests and run `bun test tests/desktop-transport.test.ts` if the
+client/contract tests and run
+`bun run --cwd wispd test -- tests/desktop-transport.test.ts` if the
 change affects the two-daemon transport semantics. Run `bun run desktop:check`
 only when native code or a rule enforced by the native proxy is affected:
 capability or identity negotiation, authentication and headers, redirects,

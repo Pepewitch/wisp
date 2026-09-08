@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { MacReleaseManifest } from "../scripts/release-macos";
+import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import { renderHomebrewFormula } from "../scripts/render-homebrew-formula";
-import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManifest {
   return {

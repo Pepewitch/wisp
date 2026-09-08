@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "./release-desktop";
-import type { ReleaseManifest } from "./release-linux";
-import type { MacReleaseManifest } from "./release-macos";
+import type { ReleaseManifest } from "../wispd/scripts/release-linux";
+import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import { renderDesktopUpdateChannel } from "./render-desktop-update-channel";
 import { renderHomebrewCask } from "./render-homebrew-cask";
 import { renderHomebrewFormula } from "./render-homebrew-formula";

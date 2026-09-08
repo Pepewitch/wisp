@@ -14,10 +14,10 @@ import {
 import { arch, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { VERSION } from "../src/version";
-import { sourceIdentity, type SourceIdentity } from "./build-binary";
-import { sha256File } from "./release-linux";
-import { assertMacReleaseSource } from "./release-macos";
+import { VERSION } from "../wispd/src/version";
+import { sourceIdentity, type SourceIdentity } from "../wispd/scripts/build-binary";
+import { sha256File } from "../wispd/scripts/release-linux";
+import { assertMacReleaseSource } from "../wispd/scripts/release-macos";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DESKTOP_TARGET = "darwin-arm64";
