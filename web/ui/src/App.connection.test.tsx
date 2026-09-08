@@ -133,6 +133,24 @@ describe("connection-bound update recovery", () => {
   })
 })
 
+describe("the top bar's right end", () => {
+  it("groups the app's own controls in one cluster after the spacer", () => {
+    render(
+      <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
+        <App />
+      </DaemonRuntimeProvider>,
+    )
+
+    // updates, zoom and the gear are one group at 4px, not three controls
+    // spread across the header's 10px — and the gear is still the corner
+    const cluster = screen.getByRole("button", { name: "Settings" }).parentElement!
+    expect(cluster.className.split(/\s+/)).toContain("gap-1")
+    expect(cluster.parentElement!.tagName).toBe("HEADER")
+    expect(cluster.parentElement!.lastElementChild).toBe(cluster)
+    expect(cluster.lastElementChild).toBe(screen.getByRole("button", { name: "Settings" }))
+  })
+})
+
 describe("the top bar's settings gear", () => {
   it("opens Wisp settings, with the appearance section inside", async () => {
     render(

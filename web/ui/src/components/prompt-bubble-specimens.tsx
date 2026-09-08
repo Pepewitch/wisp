@@ -1,7 +1,12 @@
 import type { ReactNode } from "react"
 
 import { CopyButton } from "@/components/copy-button"
-import { BubbleTimestamp, PersonBubble } from "@/components/person-bubble"
+import { Dismiss, Pencil } from "@/components/icons"
+import {
+  BUBBLE_ACTION,
+  BubbleTimestamp,
+  PersonBubble,
+} from "@/components/person-bubble"
 import { Eyebrow, Rule } from "@/components/primitives"
 
 /**
@@ -59,7 +64,27 @@ function SpecimenCaption({ exact = false, word }: { exact?: boolean; word?: stri
 
 /** The floating toolbar, which the specimens show revealed. */
 function SpecimenActions() {
-  return <CopyButton text="specimen" label="Copy user message" copiedLabel="Copied user message" />
+  return <CopyButton text="specimen" label="Copy user message" copiedLabel="Copied user message" className={BUBBLE_ACTION} />
+}
+
+/**
+ * The three-control toolbar a QUEUED bubble carries — the case the geometry is
+ * actually sized for, and the reason it clears the bubble's top edge instead of
+ * straddling it. The two stand-ins are inert: the gallery has no message to
+ * edit or cancel, only the shape they make.
+ */
+function SpecimenQueuedActions() {
+  return (
+    <>
+      <SpecimenActions />
+      <button type="button" aria-label="Edit queued message" className={BUBBLE_ACTION}>
+        <Pencil />
+      </button>
+      <button type="button" aria-label="Cancel queued message" className={BUBBLE_ACTION}>
+        <Dismiss />
+      </button>
+    </>
+  )
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -144,6 +169,14 @@ export function PromptBubbleSpecimens() {
                   and at a phone's width the caption drops below, still right-aligned
                 </SpecimenBubble>
               </div>
+              <div className="mt-[30px]">
+                <SpecimenBubble
+                  caption={<span>queued for the next turn</span>}
+                  actions={<SpecimenQueuedActions />}
+                >
+                  three controls on a one-line bubble, and none of them on the words
+                </SpecimenBubble>
+              </div>
             </div>
           </div>
           <div>
@@ -170,6 +203,14 @@ export function PromptBubbleSpecimens() {
               first specimen to see it. A queued bubble's edit and cancel join it there. Every hidden state is
               <span className="text-faint"> pointer:</span>-gated, because touch has no hover and a control revealed
               only by one would be unreachable there.
+            </p>
+            <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+              Each control is a SQUARE with its glyph in the middle — 20px around 12px, so the toolbar is 22px, a
+              height the app's own buttons already use, and its right edge is flush with the bubble's. It was a 16px
+              button in an 18px frame inset 8px from the corner: the border traced the icon with nothing to spare, so
+              it read as a box drawn too small and hung slightly wrong. On touch every control is 32px around 16px —
+              the size of the drawer footer's icon buttons — because the toolbar does not hide there and a 16px
+              target under a thumb is not a target.
             </p>
             <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
               One row reversed and allowed to wrap is the whole responsive story. A caption that no longer fits

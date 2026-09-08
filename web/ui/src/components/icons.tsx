@@ -28,6 +28,7 @@ export {
   StarFilled,
   StarRegular as Star,
   ArrowClockwiseRegular as Refresh,
+  ArrowDownloadRegular as Download,
   ArrowUpRegular as ArrowUp,
   AttachRegular as Attach,
   ChevronDownRegular as ChevronDown,

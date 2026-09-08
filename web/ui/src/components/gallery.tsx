@@ -22,7 +22,10 @@ import { PullRequestSpecimens } from "@/components/pull-request-specimens"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
-import { UpdateGallerySpecimen } from "@/components/update-gallery-specimen"
+import {
+  HeaderClusterSpecimen,
+  UpdateGallerySpecimen,
+} from "@/components/update-gallery-specimen"
 import { STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { useTheme } from "@/lib/theme"
@@ -232,7 +235,7 @@ function FoundationSpecimens() {
           </div>
       </Section>
 
-      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen />
+      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">

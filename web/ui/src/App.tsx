@@ -516,16 +516,24 @@ function AppShell({
           <WispMark className="size-[17px]" />
         </span>
         {desktop && <DesktopConnectionChrome />}
-        {updateControl}
         <span className="flex-1" />
         <span className="ml-1">
           <ConnIndicator />
         </span>
-        {desktop && <DesktopZoomControl />}
-        {/* last, so the gear is the top-right corner it was asked for */}
-        <Button size="sm" icon aria-label="Settings" onClick={onOpenSettings}>
-          <Gear />
-        </Button>
+        {/* Everything you can do TO the app is ONE cluster at the right end,
+            4px apart against the header's 10px, so the three of them read as a
+            group rather than as three unrelated controls that happen to be
+            near each other. Updates used to sit at the LEFT end, hard against
+            the connection tabs — app news in the corner that answers "which
+            daemon am I on", and the only labelled button in a bar of icons.
+            The gear stays last: it is still the top-right corner (§5g). */}
+        <div className="flex shrink-0 items-center gap-1">
+          {updateControl}
+          {desktop && <DesktopZoomControl />}
+          <Button size="sm" icon aria-label="Settings" onClick={onOpenSettings}>
+            <Gear />
+          </Button>
+        </div>
       </header>
 
       <Shell

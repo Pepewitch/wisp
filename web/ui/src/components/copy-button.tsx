@@ -44,9 +44,16 @@ export function CopyButton({
       aria-label={copied ? copiedLabel : label}
       title={copied ? "Copied" : "Copy message"}
       onClick={() => void copy()}
-      className={cn("rounded-sm p-0.5 text-faint transition-colors hover:text-foreground", className)}
+      className={cn(
+        // Icons carry no size classes of their own: the container sizes them,
+        // so a caller that wants a bigger glyph passes ONE class rather than
+        // reaching inside this button. `BUBBLE_ACTION` is the one that does.
+        "inline-flex items-center justify-center rounded-sm p-0.5 text-faint transition-colors",
+        "hover:text-foreground [&>svg]:size-3",
+        className,
+      )}
     >
-      {copied ? <Check aria-hidden className="size-3" /> : <Copy aria-hidden className="size-3" />}
+      {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
     </button>
   )
 }

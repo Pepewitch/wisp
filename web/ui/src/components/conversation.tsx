@@ -12,6 +12,7 @@ import {
 
 import { ActivityList } from "@/components/activity-list"
 import {
+  BUBBLE_ACTION,
   BubbleTimestamp,
   PersonBubble,
   UserMessageCopyButton,
@@ -506,20 +507,20 @@ function QueuedMessage({
                     disabled={busy}
                     aria-label="Edit queued message"
                     title="Edit queued message"
-                    className="rounded-sm p-0.5 text-faint transition-colors hover:text-foreground disabled:opacity-50"
+                    className={BUBBLE_ACTION}
                     onClick={() => setEditing(true)}
                   >
-                    <Pencil className="size-3" />
+                    <Pencil />
                   </button>
                   <button
                     type="button"
                     disabled={busy}
                     aria-label="Cancel queued message"
                     title="Cancel queued message"
-                    className="rounded-sm p-0.5 text-faint transition-colors hover:text-foreground disabled:opacity-50"
+                    className={BUBBLE_ACTION}
                     onClick={() => cancel.mutate({ taskId, messageId: message.id })}
                   >
-                    <Dismiss className="size-3" />
+                    <Dismiss />
                   </button>
                 </>
               )}

@@ -58,12 +58,35 @@ export function BubbleTimestamp({
   )
 }
 
+/**
+ * One control on the bubble's floating toolbar — copy, and a queued bubble's
+ * edit and cancel. A CLASS rather than a component, for `POPOVER_SURFACE`'s
+ * reason: `CopyButton` owns its own copied state and element, so `cn()` is the
+ * one way all three can share a shape.
+ *
+ * It is a SQUARE, and the glyph sits in the middle of it. The toolbar used to
+ * be a 16px button — glyph plus 2px — inside an 18px frame, so the border
+ * traced the icon with no room to spare and read as a box that had been drawn
+ * too small rather than as a control. 20px around a 12px glyph gives it 4px on
+ * every side, which is the same inset the top bar's icon buttons have, and
+ * makes the toolbar 22px: a control height the app already uses.
+ *
+ * On touch it is 32px around a 16px glyph — the size of the drawer footer's
+ * icon buttons, because a 16px target under a thumb is not a target. Sizing is
+ * `pointer:`-relative rather than a breakpoint for the same reason the
+ * reveal is (§6b): the generous size is the DEFAULT, and a pointer is what
+ * makes the compact one safe.
+ */
+export const BUBBLE_ACTION =
+  "flex size-8 shrink-0 items-center justify-center rounded-sm p-0 text-faint transition-colors hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50 [&>svg]:size-4 pointer:size-5 pointer:[&>svg]:size-3"
+
 export function UserMessageCopyButton({ text }: { text: string }) {
   return (
     <CopyButton
       text={text}
       label="Copy user message"
       copiedLabel="Copied user message"
+      className={BUBBLE_ACTION}
     />
   )
 }
@@ -120,13 +143,22 @@ export function PersonBubble({
               // bubble, and then it sits on the words; 2px clear can never do
               // that, whatever the toolbar grows to hold. Hover still carries
               // across the gap, because the toolbar is a DOM child.
-              "absolute right-2 bottom-full mb-0.5 flex items-center rounded-md",
-              // No padding of its own and the LIGHTEST depth: this is in-pane
-              // chrome hanging off a 12.5px bubble, not a menu, and at
-              // `shadow-popover` a 22px box outweighed the message it belonged
-              // to. `border-border` for the same reason. 16px tall, exactly its
-              // buttons.
-              "border border-border bg-popover shadow-float transition-opacity",
+              //
+              // Its right edge is the BUBBLE's right edge — `-right-px`, not
+              // `right-0`, because absolute offsets are measured from the
+              // padding box and `right-0` would leave the two 1px borders
+              // running side by side a pixel apart. Inset by 8px it read as a
+              // box that had missed the corner it belongs to.
+              "absolute -right-px bottom-full mb-0.5 flex items-center",
+              // No padding of its own — the buttons ARE the toolbar, and each
+              // holds its own inset (`BUBBLE_ACTION`) — and the LIGHTEST depth:
+              // this is in-pane chrome hanging off a 12.5px bubble, not a menu,
+              // and at `shadow-popover` a small box outweighed the message it
+              // belonged to. `border-border` for the same reason. The frame is
+              // one step up the radius scale from its buttons (8 over 6), so
+              // the two corners nest instead of one squaring off inside the
+              // other — the same pair the top bar's icon buttons make.
+              "rounded-md border border-border bg-popover shadow-float transition-opacity",
               // hidden until the pointer arrives, and until a keyboard does;
               // on touch there is no hover, so it simply stays (§6b)
               "pointer:opacity-0 pointer:group-hover/bubble:opacity-100 pointer:group-focus-within/bubble:opacity-100",
