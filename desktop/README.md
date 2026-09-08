@@ -226,7 +226,7 @@ Two adjustments the React shell has to absorb:
 `open_external_url` is the only command that takes no connection: a link in a
 task's prose belongs to the internet, not to the daemon that reported it. It
 exists because the webview has no new-window handler, so `target="_blank"` is
-inert in the packaged app and every PR link did nothing. `src/external.rs`
+inert in the packaged app and every PR link did nothing. `src-tauri/src/external.rs`
 opens `http` and `https` only, and hands the launcher the reparsed URL rather
 than the string the webview sent.
 

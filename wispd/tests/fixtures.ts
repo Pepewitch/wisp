@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * Read a captured-harness-output fixture. These are real CLI output, not
- * hand-written approximations — see tests/fixtures/README.md for the exact
+ * hand-written approximations — see wispd/tests/fixtures/README.md for the exact
  * commands and versions they came from.
  */
 export function fixture(name: string): string {

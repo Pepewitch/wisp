@@ -175,7 +175,7 @@ describe("formatEvent", () => {
       expect(formatEvent(`{"type":"approval"}`, cursor)).toBeNull();
     });
 
-    // Real cursor-agent 2026.08.31 output (tests/fixtures/README.md): the turn
+    // Real cursor-agent 2026.08.31 output (wispd/tests/fixtures/README.md): the turn
     // says something, runs a command, says something else — and the result
     // event carries ALL of it fused ("…now.done"). The human feed must show
     // each prose line once, in place, and never the fused blob.
@@ -192,7 +192,7 @@ describe("formatEvent", () => {
     });
   });
 
-  // rendered from real captured output (tests/fixtures/README.md)
+  // rendered from real captured output (wispd/tests/fixtures/README.md)
   describe("codex", () => {
     test("a whole first turn reads as an activity feed", () => {
       expect(renderTurn("codex-first-turn.jsonl", codex)).toEqual([

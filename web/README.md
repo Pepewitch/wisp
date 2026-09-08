@@ -8,13 +8,13 @@ It is a Bun workspace managed by the repository root lockfile.
 
 Three sources are binding law before you write any of it:
 
-- [Frontend conventions](../../skills/wisp-dev/references/frontend.md) — the
+- [Frontend conventions](../skills/wisp-dev/references/frontend.md) — the
   design language (graphite & violet).
   No new hues, no chips, sentence case, honest states. A new surface ships with
   its gallery entry in the same diff.
-- [Architecture](../../docs/ARCHITECTURE.md) — the browser/desktop runtime,
+- [Architecture](../docs/ARCHITECTURE.md) — the browser/desktop runtime,
   transport, ownership, and connection-scoping contract.
-- [../../brand/README.md](../../brand/README.md) — the mark. `wisp-mark.tsx`
+- [Brand source and generation](../brand/README.md) — the mark. `wisp-mark.tsx`
   and the favicon in `index.html` are **generated**; edit the generator.
 
 ## Run it

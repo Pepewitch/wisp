@@ -141,7 +141,7 @@ now.", runs the command, then says "done", and the result line carries
 `"I'll run that echo command now.done"` — the two texts fused. (First seen in
 the wild on a 6-message review turn whose 1668-char result was byte-identical
 to the concatenation of its assistant texts.) The turn's conclusion is
-therefore derived from the assistant events (src/adapters/parse.ts's
+therefore derived from the assistant events (`wispd/src/adapters/parse.ts`'s
 `cursor-stream-json` strategy), and the result line is only the settlement
 signal plus the session/usage carrier. Also pinned: `model` (the displayName)
 arrives on the init event, thinking streams as `delta`/`completed` subtypes,
