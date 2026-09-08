@@ -74,20 +74,24 @@ describe("daemon capabilities", () => {
       },
     });
 
+    // /api/session verifies a token for the browser's auth dialog. It mints no
+    // ambient credential any more (SEC-01), and the cookie it retires does not
+    // authenticate a request even when it carries the real token.
     const session = await fetch(`${base}/api/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: TOKEN }),
     });
+    expect(session.status).toBe(200);
     const cookie = session.headers.get("set-cookie");
-    expect(cookie).not.toBeNull();
+    expect(cookie).toContain("wisp_token=;");
     expect(
       (
         await fetch(`${base}/api/capabilities`, {
-          headers: { cookie: cookie! },
+          headers: { cookie: `wisp_token=${TOKEN}` },
         })
       ).status,
-    ).toBe(200);
+    ).toBe(401);
   });
 
   test("keeps identity and feature details out of the public health response", async () => {

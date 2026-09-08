@@ -46,9 +46,7 @@ export function useLogStream(
       dispatch({ type: "reset", note });
       const next = factory
         ? factory(`/api/tasks/${taskId}/log/stream?format=${format}`)
-        : (runtime.transport.openEventStream(
-            `/api/tasks/${taskId}/log/stream?format=${format}`,
-          ) as unknown as SseLike);
+        : runtime.transport.openEventStream(`/api/tasks/${taskId}/log/stream?format=${format}`);
       const isCurrent = () => !closed && source === next;
       next.addEventListener("backlog", (ev) => {
         if (!isCurrent()) return;
@@ -77,7 +75,7 @@ export function useLogStream(
       });
       next.onopen = () => {
         if (!isCurrent()) return;
-        // EventSource auto-reconnected: the daemon resends the current turn's
+        // the stream auto-reconnected: the daemon resends the current turn's
         // backlog from scratch, so reset the pane instead of duplicating it
         if (errored) dispatch({ type: "reset", note: "reconnected — waiting for output…" });
         errored = false;
@@ -87,8 +85,8 @@ export function useLogStream(
         if (!isCurrent()) return;
         errored = true;
         conn.set("log", false);
-        // a hard failure (e.g. 401) never reconnects on its own — re-mint the
-        // cookie and rebuild once, not on a loop
+        // a hard failure (e.g. 401) never reconnects on its own — re-check the
+        // token and rebuild once, not on a loop
         if (next.readyState === SSE_CLOSED && reconnectTimer === null) {
           reconnectTimer = setTimeout(() => {
             reconnectTimer = null;

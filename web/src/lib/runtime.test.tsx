@@ -8,13 +8,13 @@ import {
   DaemonRuntimeProvider,
   useDaemonRuntime,
 } from "./runtime"
-import type { DaemonTransport } from "./transport"
+import type { DaemonEventStream, DaemonTransport } from "./transport"
 
 function fakeTransport(connectionId: string): DaemonTransport {
   return {
     connectionId,
     request: <T,>() => Promise.resolve({} as T),
-    openEventStream: () => ({}) as EventSource,
+    openEventStream: () => ({}) as DaemonEventStream,
     openWebSocket: () => ({}) as WebSocket,
     assetUrl: (path) => path,
     ensureReady: () => Promise.resolve(),

@@ -1,7 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { ConnectionQueryKeys } from "./query";
-import type { DaemonTransport } from "./transport";
+import type { DaemonEventStream, DaemonTransport } from "./transport";
 import type { ApiTask, TaskDetail, TaskState, WispEvent } from "./types";
 
 /**
@@ -18,15 +18,12 @@ import type { ApiTask, TaskDetail, TaskState, WispEvent } from "./types";
  *   any task/turn → /api/status git badges (debounced)
  *   reconnect     → invalidate everything once (a slept laptop resync)
  */
-export interface SseLike {
-  onmessage: ((ev: { data: string }) => void) | null;
-  onopen: (() => void) | null;
-  onerror: (() => void) | null;
-  readonly readyState: number;
-  /** named-frame subscription (the log stream's backlog/append/turn-end); /api/events uses onmessage */
-  addEventListener(type: string, listener: (ev: { data: string }) => void): void;
-  close(): void;
-}
+/**
+ * What this bridge needs of a stream. Now that the browser runtime streams
+ * over `fetch` rather than `EventSource` (SEC-01), this IS the transport's
+ * stream type rather than a structural stand-in for one.
+ */
+export type SseLike = DaemonEventStream;
 
 export type SseFactory = (url: string) => SseLike;
 
@@ -80,7 +77,7 @@ function debounce(fn: () => void, ms: number): Debounced {
 }
 
 export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
-  const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path) as unknown as SseLike);
+  const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path));
   const qk = opts.qk;
   const reconnectDelayMs = opts.reconnectDelayMs ?? 3_000;
   let source: SseLike | null = null;
@@ -181,8 +178,8 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (closed) return;
     if (!wasDown) opts.onConnectionChange?.(false);
     wasDown = true;
-    // readyState CLOSED means a hard failure (e.g. 401): the browser will not
-    // retry on its own — re-mint the cookie, then rebuild the stream once.
+    // readyState CLOSED means a hard failure (e.g. 401): the stream will not
+    // retry on its own — re-check the token, then rebuild the stream once.
     if (source && source.readyState === SSE_CLOSED && reconnectTimer === null) {
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;

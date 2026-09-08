@@ -21,11 +21,11 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Surface | Current browser behavior | Required desktop behavior |
 | --- | --- | --- |
 | JSON requests | `fetch("/api/…")`; bearer token from `localStorage` | immutable connection transport; bearer token injected by native code |
-| Browser stream auth | `POST /api/session` mints an HttpOnly cookie | desktop does not call `/api/session`; the native hop authenticates upstream |
-| Daemon events | one `EventSource("/api/events")` | one lightweight baseline plus event monitor per saved connection |
-| Task transcript | one selected-task log `EventSource` | only the active connection/task owns a log stream |
+| Browser stream auth | bearer header on a `fetch` event stream; the terminal socket authenticates in its first frame | desktop does not call `/api/session`; the native hop authenticates upstream, so its `EventSource` and socket need no in-band credential |
+| Daemon events | one authenticated `fetch` stream on `/api/events` | one lightweight baseline plus event monitor per saved connection |
+| Task transcript | one selected-task log stream | only the active connection/task owns a log stream |
 | Terminal | `WebSocket` URL derived from `window.location` | URL is derived from the initiating connection, never the active tab at callback time |
-| Attachments | relative `<img src="/api/…">` using the session cookie | connection-qualified proxy URL with no daemon credential in the URL |
+| Attachments | authenticated `fetch` rendered from a blob URL | connection-qualified proxy URL with no daemon credential in the URL |
 | Query cache | one global client and daemon-global keys | every daemon-owned key begins with `connectionId` |
 | Connectivity | one global value combining event and log streams | reachability, auth, and selected-log health are separate per connection |
 | Daemon update | one global query and a full-page reload on success | the app-global updater is bound to built-in Local; remotes cannot be updated through Desktop |
@@ -33,9 +33,9 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Content policy | none: the daemon serves the page without a CSP | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
 
 The web runtime remains intentionally single-daemon. It keeps same-origin
-requests, browser session cookies, and its current token migration behavior.
-Desktop support is added behind a runtime interface rather than by making the
-web build understand remote credentials.
+requests and its current token migration behavior. Desktop support is added
+behind a runtime interface rather than by making the web build understand
+remote credentials.
 
 ## Protocol inventory
 

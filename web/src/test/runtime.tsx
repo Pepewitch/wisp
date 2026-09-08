@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 
 import { DaemonRuntimeProvider } from "@/lib/runtime"
-import type { DaemonTransport } from "@/lib/transport"
+import type { DaemonEventStream, DaemonTransport } from "@/lib/transport"
 
 export function fakeDaemonTransport(
   connectionId = "test-connection",
@@ -11,7 +11,7 @@ export function fakeDaemonTransport(
   return {
     connectionId,
     request: async <T,>() => ({} as T),
-    openEventStream: () => ({}) as EventSource,
+    openEventStream: () => ({}) as DaemonEventStream,
     openWebSocket: () => ({}) as WebSocket,
     assetUrl: (path) => path,
     ensureReady: () => Promise.resolve(),

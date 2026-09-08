@@ -1,5 +1,5 @@
 import { loadAdapters } from "./adapters";
-import { checkHarnessDefaults, CONFIG_PATH, loadConfig } from "./config";
+import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
 import { startOutboxLoop } from "./outbox";
@@ -9,7 +9,7 @@ import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { route } from "./routes";
-import { authorized, postSession } from "./routes/auth";
+import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
 import { err, json } from "./routes/http";
 import { getTask } from "./store";
 import type { PtySize } from "./pty";
@@ -30,7 +30,17 @@ async function bundledAppHtml(): Promise<string> {
 // names from "./daemon" — the entrypoint's public surface is unchanged.
 export { authorized, postSession, route };
 
-type TerminalSocketData = { taskId: string; shellId: number; size: PtySize | null };
+type TerminalSocketData = {
+  taskId: string;
+  shellId: number;
+  size: PtySize | null;
+  /**
+   * False for a browser socket: a WebSocket handshake cannot carry an
+   * Authorization header, so the browser proves itself in the first frame
+   * instead. Nothing is attached and no shell is spawned until this is true.
+   */
+  authenticated: boolean;
+};
 type TerminalSocket = Bun.ServerWebSocket<TerminalSocketData>;
 
 /**
@@ -55,15 +65,50 @@ export function parseTerminalSize(params: URLSearchParams): PtySize | null | str
 }
 
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
+/** Deadline timers for sockets still waiting to authenticate, so an unauthenticated one cannot linger. */
+const terminalAuthDeadlines = new WeakMap<TerminalSocket, ReturnType<typeof setTimeout>>();
+/** How long a browser socket has to send its `auth` frame before the daemon closes it. */
+const TERMINAL_AUTH_TIMEOUT_MS = 10_000;
 
 function wsError(ws: TerminalSocket, message: string): void {
   if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message }));
+}
+
+/**
+ * A socket that upgraded without a credential. It gets one frame's worth of
+ * patience: send `auth_required`, start a deadline, and attach nothing. The
+ * page that opened it must know the token to get any further, which an
+ * attacker's page on another origin does not.
+ */
+function openTerminal(ws: TerminalSocket): void {
+  if (ws.data.authenticated) {
+    void attachTerminal(ws);
+    return;
+  }
+  ws.send(JSON.stringify({ type: "auth_required" }));
+  terminalAuthDeadlines.set(
+    ws,
+    setTimeout(() => {
+      terminalAuthDeadlines.delete(ws);
+      if (ws.readyState !== 1) return;
+      wsError(ws, "terminal authorization timed out");
+      ws.close(1008, "terminal authorization timed out");
+    }, TERMINAL_AUTH_TIMEOUT_MS),
+  );
+}
+
+function clearTerminalAuthDeadline(ws: TerminalSocket): void {
+  const deadline = terminalAuthDeadlines.get(ws);
+  if (deadline === undefined) return;
+  clearTimeout(deadline);
+  terminalAuthDeadlines.delete(ws);
 }
 
 async function attachTerminal(ws: TerminalSocket): Promise<void> {
   try {
     const task = getTask(ws.data.taskId);
     if (!task) throw new Error(`no such task: ${ws.data.taskId}`);
+    if (task.archived) throw new Error(`task ${task.id} is archived — worktree removed`);
     if (!task.worktree_path) throw new Error(`task ${task.id} has no worktree_path`);
     const session = openSession(task.id, ws.data.shellId, task.worktree_path, ws.data.size ?? DEFAULT_PTY_SIZE);
     const client: TerminalClient = {
@@ -89,12 +134,7 @@ async function attachTerminal(ws: TerminalSocket): Promise<void> {
   }
 }
 
-function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffer>): void {
-  const binding = terminalBindings.get(ws);
-  if (!binding) {
-    wsError(ws, `terminal task ${ws.data.taskId}: client is not attached`);
-    return;
-  }
+function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffer>, cfg: WispConfig): void {
   let body: unknown;
   try {
     body = JSON.parse(String(message));
@@ -107,6 +147,32 @@ function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffe
     return;
   }
   const value = body as Record<string, unknown>;
+  // The handshake, before there is anything to be attached to. A wrong token
+  // closes the socket rather than answering again: this frame is the only
+  // thing an unauthenticated socket may send, so retrying on it would turn a
+  // terminal upgrade into an oracle.
+  if (!ws.data.authenticated) {
+    if (value.type !== "auth") {
+      wsError(ws, "terminal protocol: this socket must authenticate first");
+      ws.close(1008, "unauthorized");
+      return;
+    }
+    if (!tokenAuthorizes(value.token, cfg)) {
+      wsError(ws, "unauthorized");
+      ws.close(1008, "unauthorized");
+      return;
+    }
+    ws.data.authenticated = true;
+    clearTerminalAuthDeadline(ws);
+    void attachTerminal(ws);
+    return;
+  }
+  if (value.type === "auth") return; // already authenticated at the upgrade; nothing to prove
+  const binding = terminalBindings.get(ws);
+  if (!binding) {
+    wsError(ws, `terminal task ${ws.data.taskId}: client is not attached`);
+    return;
+  }
   if (value.type === "in") {
     let data: string | Uint8Array;
     if (typeof value.data === "string") {
@@ -266,12 +332,13 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
       websocket: {
         data: {} as TerminalSocketData,
         open(ws) {
-          void attachTerminal(ws);
+          openTerminal(ws);
         },
         message(ws, message) {
-          terminalMessage(ws, message);
+          terminalMessage(ws, message, cfg);
         },
         close(ws) {
+          clearTerminalAuthDeadline(ws);
           const binding = terminalBindings.get(ws);
           if (!binding) return;
           binding.session.detach(binding.client);
@@ -289,14 +356,37 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
         // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
         if (path === "/api/session" && req.method === "POST") return postSession(req, cfg);
         if (!path.startsWith("/api/")) return err("not found", 404);
-        if (!authorized(req, cfg)) return err("unauthorized", 401);
         const terminalMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/terminal$/);
         if (terminalMatch && req.method === "GET") {
           const taskId = terminalMatch[1]!;
-          const task = getTask(taskId);
-          if (!task) return err(`no such task: ${taskId}`, 404);
-          if (task.archived) return err(`task ${taskId} is archived — worktree removed`, 409);
-          if (!task.worktree_path) return err(`task ${taskId} has no worktree_path`, 409);
+          // A terminal upgrade is command execution, so it is the one route
+          // that must not settle for "the request looked fine". Two gates:
+          //
+          //   Origin — a browser cannot forge it, so a page on another origin
+          //   (another port on this same host included) is refused outright,
+          //   before any lookup. `absent` means no browser sent it: the CLI,
+          //   or the desktop app's native proxy, and those must carry a bearer
+          //   token.
+          //
+          //   Credential — a browser handshake cannot carry a header, so a
+          //   same-origin socket may upgrade unauthenticated and prove itself
+          //   in its first frame instead. It attaches to nothing and spawns
+          //   nothing until it does.
+          const credentialed = authorized(req, cfg);
+          const origin = originVerdict(req, url);
+          if (origin === "foreign") {
+            return err(`terminal upgrades must come from this daemon's own origin, not ${JSON.stringify(req.headers.get("origin"))}`, 403);
+          }
+          if (!credentialed && origin === "absent") return err("unauthorized", 401);
+          // Whether a task exists is only answered to a caller that already
+          // proved itself; an unauthenticated socket hears it after the
+          // handshake, over the socket, from attachTerminal.
+          if (credentialed) {
+            const task = getTask(taskId);
+            if (!task) return err(`no such task: ${taskId}`, 404);
+            if (task.archived) return err(`task ${taskId} is archived — worktree removed`, 409);
+            if (!task.worktree_path) return err(`task ${taskId} has no worktree_path`, 409);
+          }
           // ?shell=N addresses one of the pane's tabs; absent means the first,
           // which is what every pre-tabs client sent
           const shellParam = url.searchParams.get("shell");
@@ -310,11 +400,12 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
           // at a default width and then redrawn when the client reports in.
           const size = parseTerminalSize(url.searchParams);
           if (typeof size === "string") return err(size, 400);
-          if (!server.upgrade(req, { data: { taskId, shellId, size } })) {
+          if (!server.upgrade(req, { data: { taskId, shellId, size, authenticated: credentialed } })) {
             return err("websocket upgrade failed", 500);
           }
           return undefined;
         }
+        if (!authorized(req, cfg)) return err("unauthorized", 401);
         return Promise.resolve()
           .then(() =>
             route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates),

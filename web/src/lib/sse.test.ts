@@ -82,7 +82,7 @@ function bridge(
       openEventStream: (url) => {
         const src = new FakeSse(url);
         sources.push(src);
-        return src as unknown as EventSource;
+        return src;
       },
     },
     getSelectedId: () => selectedId,
@@ -318,7 +318,7 @@ describe("the /api/events → queryClient bridge", () => {
       qk: createConnectionQueryKeys(connectionId),
       transport: {
         ensureReady: () => Promise.resolve(),
-        openEventStream: () => source as unknown as EventSource,
+        openEventStream: () => source,
       },
       getSelectedId: () => null,
       onConnectionChange: (live) => store.set("events", live),
@@ -338,7 +338,7 @@ describe("the /api/events → queryClient bridge", () => {
       qk,
       transport: {
         ensureReady: () => Promise.resolve(),
-        openEventStream: () => source as unknown as EventSource,
+        openEventStream: () => source,
       },
       getSelectedId: () => "t1",
       tasksDebounceMs: 10,

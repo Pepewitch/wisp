@@ -13,7 +13,7 @@ describe("useLogStream", () => {
     const transport = fakeDaemonTransport("connection-one", {
       openEventStream: (next) => {
         url = next
-        return fake.source as unknown as EventSource
+        return fake.source
       },
     })
     const { result, unmount } = renderHook(() => useLogStream("task-1", "activity", 0), {
@@ -68,7 +68,7 @@ describe("useLogStream", () => {
     const streams = [first, second]
     const connectionId = "connection-replaced-log"
     const transport = fakeDaemonTransport(connectionId, {
-      openEventStream: () => streams.shift()!.source as unknown as EventSource,
+      openEventStream: () => streams.shift()!.source,
     })
     const { result, rerender } = renderHook(
       ({ taskId }) => useLogStream(taskId, "activity", 0),

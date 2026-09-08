@@ -4,9 +4,11 @@
  * localStorage record of which tabs a task had open. The contract is the
  * daemon handlers in src/daemon.ts:
  *
- *   client → server:  {type:"in", data}                terminal input
+ *   client → server:  {type:"auth", token}               answers auth_required
+ *                     {type:"in", data}                 terminal input
  *                     {type:"resize", cols,rows}        after a fit
- *   server → client:  {type:"hello", pty, cwd, replay}  once, right after upgrade
+ *   server → client:  {type:"auth_required"}            prove yourself first
+ *                     {type:"hello", pty, cwd, replay}  once, after attaching
  *                     {type:"out", data}                shell output
  *                     {type:"exit", code}               the shell exited
  *                     {type:"error", message}           a named server error
@@ -18,7 +20,13 @@
  * the size of the pane that asked for it.
  *
  * Authentication and target selection belong to the immutable daemon
- * transport. The token NEVER goes in the URL.
+ * transport. The token NEVER goes in the URL — and, since SEC-01, never in an
+ * ambient cookie either. A browser cannot put a header on a WebSocket
+ * handshake, so the daemon upgrades a same-origin socket with no authority at
+ * all, asks for the credential with `auth_required`, and attaches nothing
+ * until the reply proves the token. Transports whose hop authenticates
+ * upstream (the desktop native proxy) never see that frame: they are already
+ * authenticated at the upgrade and get `hello` directly.
  *
  * The generation guard is the classic page's: a stale socket (from a previous
  * task, tab switch, or reconnect) must never write into a new session. Every
@@ -50,6 +58,7 @@ export interface TerminalHello {
 
 /** The parsed server → client frames (the union the daemon actually sends). */
 export type TerminalServerFrame =
+  | { type: "auth_required" }
   | { type: "hello"; pty: boolean; cwd: string; replay?: string }
   | { type: "out"; data: string }
   | { type: "exit"; code: number }
@@ -118,7 +127,7 @@ export class TerminalConnection {
   private readonly shellId: number;
   private readonly size: TerminalSize | null;
   private readonly handlers: TerminalClientHandlers;
-  private readonly transport: Pick<DaemonTransport, "openWebSocket">;
+  private readonly transport: Pick<DaemonTransport, "openWebSocket" | "socketToken">;
   /** The owning component's staleness check — a stale connection ignores every event. */
   private readonly current: () => boolean;
 
@@ -126,7 +135,7 @@ export class TerminalConnection {
     taskId: string,
     shellId: number,
     handlers: TerminalClientHandlers,
-    transport: Pick<DaemonTransport, "openWebSocket">,
+    transport: Pick<DaemonTransport, "openWebSocket" | "socketToken">,
     current: () => boolean = () => true,
     size: TerminalSize | null = null,
   ) {
@@ -166,6 +175,18 @@ export class TerminalConnection {
         return;
       }
       switch (frame.type) {
+        case "auth_required": {
+          // The daemon will not attach this socket until it is proved. A
+          // transport with no in-band credential cannot answer, and saying so
+          // is better than waiting out the daemon's handshake deadline.
+          const token = this.transport.socketToken?.() ?? null;
+          if (token === null) {
+            this.handlers.onError("terminal: this daemon asked for a token this connection cannot provide");
+            break;
+          }
+          socket.send(JSON.stringify({ type: "auth", token }));
+          break;
+        }
         case "hello":
           this.helloSeen = true;
           this.handlers.onHello({ pty: frame.pty, cwd: frame.cwd, replay: String(frame.replay ?? "") });

@@ -95,9 +95,9 @@ export interface UsageSummary {
 
 /**
  * One stored image on a turn (A1a). No URL and no path: the bytes come from
- * `GET /api/tasks/:id/attachments/:turn/:name`, which is cookie-authed like
- * every other read, and the name is the lookup key the daemon checks against
- * that turn's manifest.
+ * `GET /api/tasks/:id/attachments/:turn/:name`, authenticated like every other
+ * read, and the name is the lookup key the daemon checks against that turn's
+ * manifest.
  */
 export interface TurnAttachment {
   name: string;

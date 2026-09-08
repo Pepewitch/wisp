@@ -19,9 +19,10 @@ daemon's job; process restart is the supervisor's.
 
 `wisp token` prints the browser URL and access token for the daemon selected by
 the CLI profile. The browser runtime controls that one daemon. It keeps the
-token in origin-scoped storage for ordinary API requests and exchanges it for a
-same-origin session cookie used by browser-managed streams, terminals, and
-media. It remains independently usable without Wisp Desktop.
+token in origin-scoped storage and sends it as a bearer credential on every
+hop — API requests, event streams, the terminal socket's first frame, and
+attachment media. No cookie authenticates anything. It remains independently
+usable without Wisp Desktop.
 
 On Apple Silicon, install the desktop interface and daemon together with:
 
@@ -158,17 +159,17 @@ model. Levels per harness:
 ## The HTTP API (for scripts; the CLI covers normal use)
 
 `wisp token` prints the base URL and bearer token. `GET /api/health` is
-unauthenticated. `POST /api/session` accepts `{token}` and mints the browser's
-HttpOnly cookie. Every other API route requires
-`authorization: Bearer <token>` or that browser cookie. The web UI is served
-at `/`.
+unauthenticated. `POST /api/session` accepts `{token}` and answers whether it is
+the right one, so the browser's dialog can refuse a wrong token before storing
+it; it mints no credential. Every other API route requires
+`authorization: Bearer <token>`. The web UI is served at `/`.
 
 - `GET /api/health` — liveness
 - `GET /api/capabilities` — authenticated stable instance identity, Wisp build,
   integer API protocol version, and implemented API feature flags. Flags mean
   an API surface exists; runtime readiness such as automatic-update support is
   reported by that surface's own status response.
-- `POST /api/session` — exchange the token for the browser cookie
+- `POST /api/session` — verify a token (mints nothing)
 - `GET /api/tasks?archived=1` · `POST /api/tasks` (`{repoPath, prompt,
   harness, model?, effort?, mode?, attachments?, suffixPromptId?}`)
 - `GET /api/tasks/:id` · `POST /api/tasks/:id/send` (`{message, attachments?,
@@ -196,7 +197,11 @@ at `/`.
   bypasses the release cache for an explicit check. Status reports current and
   latest API protocol versions; latest is `null` when legacy, malformed, or
   unreachable release metadata cannot establish it.
-- `GET /api/tasks/:id/terminal` — browser-cookie-authenticated WebSocket
+- `GET /api/tasks/:id/terminal` — WebSocket. A bearer handshake attaches
+  immediately; a browser handshake (which cannot set a header) upgrades
+  unauthenticated, is asked for the token in an `auth_required` frame, and
+  attaches only after `{"type":"auth","token":"…"}`. Refused outright from a
+  foreign `Origin`
 
 Errors are JSON `{error}` with a named reason; 400 = bad request, 409 = state
 refusal (archived, turn running, unsaved work), 404 = no such task.

@@ -1,6 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog"
 import { useEffect } from "react"
 
+import { useAssetSrc } from "@/lib/asset-src"
 import { formatBytes } from "@/lib/attachments"
 import type { TurnAttachment } from "@/lib/types"
 
@@ -24,14 +25,15 @@ export function ImageViewer({
   index,
   onIndex,
   onClose,
-  urlFor,
+  pathFor,
 }: {
   images: TurnAttachment[]
   /** which image is showing; null = closed */
   index: number | null
   onIndex: (next: number) => void
   onClose: () => void
-  urlFor: (name: string) => string
+  /** The daemon API path for one attachment; the transport supplies the credential. */
+  pathFor: (name: string) => string
 }) {
   const open = index !== null && index >= 0 && index < images.length
 
@@ -47,6 +49,7 @@ export function ImageViewer({
   }, [open, index, images.length, onIndex])
 
   const current = open ? images[index!]! : null
+  const src = useAssetSrc(current ? pathFor(current.name) : null)
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
@@ -60,7 +63,7 @@ export function ImageViewer({
             <>
               <Dialog.Title className="sr-only">{current.name}</Dialog.Title>
               <img
-                src={urlFor(current.name)}
+                src={src ?? undefined}
                 alt={current.name}
                 className="max-h-[calc(80vh-2rem)] w-full rounded-md object-contain"
               />

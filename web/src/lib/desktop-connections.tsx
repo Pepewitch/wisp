@@ -44,7 +44,7 @@ import { resetDesktopApplication } from "@/lib/desktop-reset"
 import { queryClient } from "@/lib/query"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { taskTransitions } from "@/lib/task-transitions"
-import type { DaemonTransport } from "@/lib/transport"
+import type { DaemonEventStream, DaemonTransport } from "@/lib/transport"
 import type { ApiTask } from "@/lib/types"
 
 export interface DesktopConnectionEntry {
@@ -596,17 +596,18 @@ function InactiveConnectionMonitor({
     }
 
     refresh()
-    let events: EventSource | null = null
+    let events: DaemonEventStream | null = null
     try {
-      events = entry.transport.openEventStream("/api/events")
-      events.onopen = () => {
+      const stream = entry.transport.openEventStream("/api/events")
+      events = stream
+      stream.onopen = () => {
         onReachability(entry.metadata.id, "online")
         refresh()
       }
-      events.onmessage = schedule
-      // EventSource does not expose its HTTP refusal. Re-run the JSON probe so
+      stream.onmessage = schedule
+      // The stream does not expose its HTTP refusal. Re-run the JSON probe so
       // authentication and identity failures are not mislabeled as offline.
-      events.onerror = refresh
+      stream.onerror = refresh
     } catch {
       // The next time this connection becomes active, the normal bridge owns recovery.
     }

@@ -29,11 +29,13 @@ export interface PendingAttachment {
 }
 
 /**
- * The one place a stored attachment's URL is built (A1a). Same-origin and
- * cookie-authed like every other read. The name is percent-encoded because it
- * is a path segment on the wire — the daemon still resolves it against the
- * turn's manifest rather than against the filesystem, so this encoding is
- * transport correctness, not a security boundary.
+ * The one place a stored attachment's URL is built (A1a). It is a daemon API
+ * PATH, not a loadable URL: the read is authenticated like every other one, so
+ * the browser fetches it with its bearer header and renders the bytes from a
+ * blob URL (`useAssetSrc`). The name is percent-encoded because it is a path
+ * segment on the wire — the daemon still resolves it against the turn's
+ * manifest rather than against the filesystem, so this encoding is transport
+ * correctness, not a security boundary.
  */
 export function attachmentUrl(taskId: string, turn: number, name: string): string {
   return `/api/tasks/${taskId}/attachments/${turn}/${encodeURIComponent(name)}`;
