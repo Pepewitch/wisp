@@ -231,7 +231,13 @@ export interface PullRequestInfo {
 
 /** GET /api/tasks/:id/pull-request — provider failures never masquerade as "none". */
 export type PullRequestStatus =
-  | { kind: "found"; provider: "github"; pullRequest: PullRequestInfo }
+  | {
+      kind: "found"
+      provider: "github"
+      pullRequest: PullRequestInfo
+      /** How many MORE this task has; absent when this is the only one. */
+      others?: number
+    }
   | { kind: "none"; provider: "github" }
   | { kind: "unsupported"; provider: null }
   | { kind: "unavailable"; provider: "github" | null };

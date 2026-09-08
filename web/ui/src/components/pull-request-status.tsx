@@ -46,14 +46,20 @@ const MERGE_STATE = {
  */
 export function PullRequestStatusLink({
   pullRequest,
+  others = 0,
   compact = false,
 }: {
   pullRequest: PullRequestInfo
+  /** How many MORE this task has — it is showing its newest. */
+  others?: number
   compact?: boolean
 }) {
   const lifecycle = LIFECYCLE[pullRequest.lifecycle]
   const checks = CHECKS[pullRequest.checks]
   const review = REVIEW[pullRequest.review]
+  // A task with several branches shows its NEWEST pull request, so the count
+  // is the one thing the row would otherwise be hiding.
+  const more = others > 0 ? `newest of ${others + 1} on this task` : null
   const label = `PR #${pullRequest.number} · ${lifecycle} · ${checks} · ${review}`
   const mergeState = MERGE_STATE[pullRequest.mergeState]
   const iconTone = pullRequestIconTone(pullRequest)
@@ -65,8 +71,8 @@ export function PullRequestStatusLink({
     <a
       data-testid="pull-request-status"
       {...link}
-      aria-label={`${label} · ${mergeState}: ${pullRequest.title}`}
-      title={`${label} · ${mergeState} — ${pullRequest.title}`}
+      aria-label={`${label}${more ? ` · ${more}` : ""} · ${mergeState}: ${pullRequest.title}`}
+      title={`${label}${more ? ` · ${more}` : ""} · ${mergeState} — ${pullRequest.title}`}
       className={cn(
         "flex shrink-0 items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground",
         "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
@@ -95,6 +101,13 @@ export function PullRequestStatusLink({
         <span className="truncate">
           <span className="font-mono text-fg-secondary">PR #{pullRequest.number}</span>
           <span> · {lifecycle} · {checks} · {review}</span>
+        </span>
+      )}
+      {/* one short fact, and only when there IS one: this row is the newest of
+          several, and nothing else on screen would say so */}
+      {more && (
+        <span data-testid="pull-request-others" className="shrink-0 font-mono text-[10.5px] text-faint">
+          +{others}
         </span>
       )}
     </a>

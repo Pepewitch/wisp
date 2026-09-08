@@ -6,7 +6,6 @@ import {
   ACCENTS,
   PALETTE_GROUPS,
   PROBE_CONTEXT_ANSWER,
-  PR_SPECIMEN,
   ROW_PR_SPECIMENS,
   UPDATE_SPECIMEN,
   SUBAGENT_SPECIMEN,
@@ -19,7 +18,7 @@ import { ProbePanel } from "@/components/probe-panel"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
-import { PullRequestStatusLink } from "@/components/pull-request-status"
+import { PullRequestSpecimens } from "@/components/pull-request-specimens"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
@@ -211,12 +210,7 @@ function FoundationSpecimens() {
               Create task
             </Button>
           </div>
-          <div className="mt-4 flex items-center gap-3">
-            <PullRequestStatusLink pullRequest={PR_SPECIMEN} />
-            <span className="text-[11.5px] text-muted-foreground">
-              Branch outcome replaces the task header's Push button; unsupported or absent status renders nothing.
-            </span>
-          </div>
+          <PullRequestSpecimens />
           <div className="mt-4 flex items-center gap-3">
             <WispUpdateControl
               status={UPDATE_SPECIMEN}

@@ -337,6 +337,9 @@ export function TaskCard({
   const pr = pullRequest?.status.kind === "found"
     ? pullRequest.status.pullRequest
     : null
+  // A task branches more than once, and the card shows the newest PR right
+  // under the branch of record — the two CAN disagree, so the card says which.
+  const others = pullRequest?.status.kind === "found" ? (pullRequest.status.others ?? 0) : 0
 
   return (
     <div>
@@ -362,6 +365,7 @@ export function TaskCard({
             <Key>Pull request</Key>
             <Val>
               #{pr.number} · {pr.lifecycle}
+              {others > 0 && ` · newest of ${others + 1}`}
               {pullRequest?.stale &&
                 ` · stale, checked ${since(pullRequest.checkedAt)}`}
             </Val>

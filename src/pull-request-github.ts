@@ -1,4 +1,5 @@
 import type { ProbeSpawnFn } from "./adapters";
+import { pickPullRequest } from "./pull-request-branches";
 import type {
   PullRequestChecks,
   PullRequestInfo,
@@ -13,20 +14,24 @@ import { isRecord } from "./validate";
 export async function githubPullRequest(
   task: Task,
   repository: string,
+  branches: string[],
   run: ProbeSpawnFn,
   signal: AbortSignal,
 ): Promise<PullRequestStatus> {
+  const heads = branches.length > 0 ? branches : [task.branch!];
   const statuses = await githubPullRequestBatch(
     repository,
-    [task.branch!],
+    heads,
     task.repo_path,
     run,
     signal,
   );
-  return statuses.get(task.branch!) ?? {
-    kind: "unavailable",
-    provider: "github",
-  };
+  return pickPullRequest(
+    heads.map(
+      (branch) =>
+        statuses.get(branch) ?? { kind: "unavailable", provider: "github" },
+    ),
+  );
 }
 
 export async function githubPullRequestBatch(

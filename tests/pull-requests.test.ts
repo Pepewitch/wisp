@@ -3,6 +3,11 @@ import type { ProbeSpawnFn } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
 import type { SpawnResult } from "../src/doctor";
+import {
+  pickPullRequest,
+  PULL_REQUEST_TASK_BRANCH_LIMIT,
+  taskBranches,
+} from "../src/pull-request-branches";
 import { PullRequestCache } from "../src/pull-requests";
 import { createTask as createStoredTask, freeSlot, newTaskId, setTaskFields } from "../src/store";
 import type { Task } from "../src/types";
@@ -35,15 +40,23 @@ function task(overrides: Partial<Task> = {}): Task {
 
 const ok = (stdout: string): SpawnResult => ({ exitCode: 0, stdout, stderr: "" });
 
+/**
+ * The daemon asks git two things before it asks the provider anything: which
+ * repository this is, and which branches this task made (`wisp/<id>-…`). A
+ * stub that answers every `git` the same way hands a remote URL back as a
+ * branch name, so the two are answered separately.
+ */
 function githubRun(
   rows: unknown[],
   origin = "git@github.com:acme/widgets.git",
+  branches: string[] = [],
 ): { run: ProbeSpawnFn; calls: string[][] } {
   const calls: string[][] = [];
   return {
     calls,
     run: (cmd) => {
       calls.push(cmd);
+      if (cmd[1] === "for-each-ref") return Promise.resolve(ok(branches.join("\n")));
       return Promise.resolve(
         cmd[0] === "git"
           ? ok(origin)
@@ -120,11 +133,19 @@ describe("PullRequestCache", () => {
     );
     const result = await new PullRequestCache({ run }).status(task());
 
+    // which repository, then which branches this task made, then the provider
     expect(calls[0]).toEqual(["git", "remote", "get-url", "origin"]);
-    expect(calls[1]).toContain("name=widgets");
-    expect(calls[1]!.join(" ")).not.toContain("credential");
-    expect(calls[1]!.join(" ")).toContain("mergeStateStatus");
-    expect(calls[1]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
+    expect(calls[1]).toEqual([
+      "git",
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      "refs/heads/wisp/tpr01-*",
+    ]);
+    expect(calls[2]).toContain("name=widgets");
+    expect(calls[2]!.join(" ")).not.toContain("credential");
+    expect(calls[2]!.join(" ")).toContain("mergeStateStatus");
+    expect(calls[2]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
     expect(result).toEqual({
       kind: "found",
       provider: "github",
@@ -390,9 +411,212 @@ describe("PullRequestCache", () => {
     const callsBeforeHits = calls.length;
     await cache.status(task({ id: "keep" }));
     await cache.status(task({ id: "touch" }));
-    // The evicted task repeats only the provider lookup: repository discovery
-    // is cached once per repo path for both selected-task and overview reads.
-    expect(calls.length - callsBeforeHits).toBe(1);
+    // The evicted task repeats its branch enumeration and its provider lookup:
+    // repository discovery is cached once per repo path for both selected-task
+    // and overview reads, and the branch read is local and cheap.
+    expect(calls.length - callsBeforeHits).toBe(2);
+  });
+});
+
+describe("every branch a task made", () => {
+  /**
+   * A task branches more than once: main moves under a long task, and the next
+   * change wants its own review. The branch names carry the task id, so the
+   * daemon can enumerate them out of local git without recording anything.
+   */
+  /** `row()` defaults to PR 42's url, and the parser checks the two agree. */
+  const pr = (number: number, overrides: Record<string, unknown> = {}) =>
+    row({ number, url: `https://github.com/acme/widgets/pull/${number}`, ...overrides });
+
+  function multiBranchRun(
+    perBranch: Record<string, unknown[]>,
+    branches: string[],
+  ): { run: ProbeSpawnFn; calls: string[][] } {
+    const calls: string[][] = [];
+    return {
+      calls,
+      run: (cmd) => {
+        calls.push(cmd);
+        if (cmd[1] === "for-each-ref") return Promise.resolve(ok(branches.join("\n")));
+        if (cmd[0] === "git") return Promise.resolve(ok("git@github.com:acme/widgets.git"));
+        const query = cmd.join("\n");
+        // answer each aliased selection with the rows for its head ref
+        const heads = [...query.matchAll(/headRefName: "([^"]+)"/g)].map((m) => m[1]!);
+        const unique = heads.filter((head, index) => heads.indexOf(head) === index);
+        return Promise.resolve(
+          graphQlResponse(
+            unique.map((head) =>
+              (perBranch[head] ?? []).filter(
+                (candidate) => String((candidate as { state: string }).state) === "OPEN",
+              ),
+            ),
+            unique.map((head) =>
+              (perBranch[head] ?? []).filter(
+                (candidate) => String((candidate as { state: string }).state) !== "OPEN",
+              ),
+            ),
+          ),
+        );
+      },
+    };
+  }
+
+  test("asks about every branch, not only the one the worktree was created on", async () => {
+    const { run, calls } = multiBranchRun(
+      {
+        "wisp/tpr01-show-pr-status": [pr(48, { state: "MERGED", mergedAt: "2026-09-05T00:00:00Z" })],
+        "wisp/tpr01-second-change": [pr(53, { state: "OPEN" })],
+      },
+      ["wisp/tpr01-second-change", "wisp/tpr01-show-pr-status"],
+    );
+
+    const result = await new PullRequestCache({ run }).status(task());
+
+    const query = calls.find((cmd) => cmd[0] === "gh")!.join("\n");
+    expect(query).toContain('headRefName: "wisp/tpr01-show-pr-status"');
+    expect(query).toContain('headRefName: "wisp/tpr01-second-change"');
+    // the NEWEST pull request, and an honest count of what it is newest of
+    expect(result).toMatchObject({ kind: "found", others: 1 });
+    expect((result as { pullRequest: { number: number } }).pullRequest.number).toBe(53);
+  });
+
+  test("counts nothing when the task made exactly one pull request", async () => {
+    const { run } = multiBranchRun(
+      {
+        "wisp/tpr01-show-pr-status": [pr(48)],
+        "wisp/tpr01-second-change": [],
+      },
+      ["wisp/tpr01-second-change"],
+    );
+
+    const result = await new PullRequestCache({ run }).status(task());
+
+    expect(result).toMatchObject({ kind: "found" });
+    expect(result).not.toHaveProperty("others");
+  });
+
+  test("keeps answering after the forge deletes a merged head ref", async () => {
+    // local refs are read, not remote ones: a squash-merged branch is gone from
+    // origin within seconds, and its pull request is the one you want to see
+    const { run, calls } = multiBranchRun(
+      { "wisp/tpr01-deleted-remotely": [pr(60, { state: "MERGED", mergedAt: "2026-09-06T00:00:00Z" })] },
+      ["wisp/tpr01-deleted-remotely"],
+    );
+
+    const result = await new PullRequestCache({ run }).status(task());
+
+    expect(calls.find((cmd) => cmd[1] === "for-each-ref")).toEqual([
+      "git",
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      "refs/heads/wisp/tpr01-*",
+    ]);
+    expect((result as { pullRequest: { number: number } }).pullRequest.number).toBe(60);
+  });
+
+  test("a provider failure on any branch is never dressed up as an older success", async () => {
+    expect(
+      pickPullRequest([
+        { kind: "found", provider: "github", pullRequest: { number: 1 } as never },
+        { kind: "unavailable", provider: "github" },
+      ]),
+    ).toEqual({ kind: "unavailable", provider: "github" });
+  });
+
+  test("some branch answered `none` beats a branch nobody could ask about", () => {
+    expect(
+      pickPullRequest([
+        { kind: "unsupported", provider: null },
+        { kind: "none", provider: "github" },
+      ]),
+    ).toEqual({ kind: "none", provider: "github" });
+    expect(pickPullRequest([])).toEqual({ kind: "unsupported", provider: null });
+  });
+
+  test("the branch of record leads, and survives git being unreadable", async () => {
+    const failing: ProbeSpawnFn = (cmd) =>
+      cmd[1] === "for-each-ref"
+        ? Promise.reject(new Error("not a git repository"))
+        : Promise.resolve(ok("git@github.com:acme/widgets.git"));
+
+    await expect(
+      taskBranches(task(), failing, new AbortController().signal),
+    ).resolves.toEqual(["wisp/tpr01-show-pr-status"]);
+
+    const listed: ProbeSpawnFn = (cmd) =>
+      Promise.resolve(
+        ok(
+          cmd[1] === "for-each-ref"
+            ? ["wisp/tpr01-zzz", "wisp/tpr01-show-pr-status", "wisp/tpr01-aaa"].join("\n")
+            : "git@github.com:acme/widgets.git",
+        ),
+      );
+    // git's order is kept, not re-sorted by name: it is the recency the cap spends
+    await expect(
+      taskBranches(task(), listed, new AbortController().signal),
+    ).resolves.toEqual(["wisp/tpr01-show-pr-status", "wisp/tpr01-zzz", "wisp/tpr01-aaa"]);
+  });
+
+  test("asks git for the freshest branches, and spends the cap on those", async () => {
+    // 30 branches, listed the way `--sort=-committerdate` lists them: the cap
+    // must keep the recent ones, because a name sort could drop the branch
+    // holding the newest pull request — the one thing this is all for
+    const many = Array.from({ length: 30 }, (_, i) => `wisp/tpr01-branch-${String(i).padStart(2, "0")}`);
+    const calls: string[][] = [];
+    const listed: ProbeSpawnFn = (cmd) => {
+      calls.push(cmd);
+      return Promise.resolve(ok(cmd[1] === "for-each-ref" ? many.join("\n") : "git@github.com:acme/widgets.git"));
+    };
+
+    const branches = await taskBranches(task(), listed, new AbortController().signal);
+
+    expect(calls[0]).toContain("--sort=-committerdate");
+    expect(branches).toHaveLength(PULL_REQUEST_TASK_BRANCH_LIMIT);
+    expect(branches[0]).toBe("wisp/tpr01-show-pr-status");
+    // the head of git's list survives; the stale tail is what falls off
+    expect(branches[1]).toBe("wisp/tpr01-branch-00");
+    expect(branches).not.toContain("wisp/tpr01-branch-29");
+  });
+
+  test("a stuck git in one worktree does not hold up the rest of the sidebar", async () => {
+    // the overview enumerates inside an unbounded per-task Promise.all, so an
+    // enumeration that never settles would hang the WHOLE refresh — every other
+    // task's answer with it. Bounded, it falls back to the branch of record.
+    const calls: string[][] = [];
+    const stuck: ProbeSpawnFn = (cmd, opts) => {
+      calls.push(cmd);
+      if (cmd[1] === "for-each-ref") {
+        return opts?.cwd === "/tmp/stuck"
+          ? new Promise<SpawnResult>(() => {})
+          : Promise.resolve(ok(""));
+      }
+      if (cmd[0] === "git") return Promise.resolve(ok("git@github.com:acme/widgets.git"));
+      return Promise.resolve(graphQlResponse([[], []], [[], []]));
+    };
+    const cache = new PullRequestCache({ run: stuck, timeoutMs: 30 });
+    const hangs = task({ id: "stuck", branch: "wisp/stuck-one", repo_path: "/tmp/stuck" });
+    const fine = task({ id: "fine", branch: "wisp/fine-one" });
+
+    const result = await cache.overview([hangs, fine]);
+
+    // both answered, and the stuck task was still asked about by its branch
+    expect(result.tasks.stuck!.status).toEqual({ kind: "none", provider: "github" });
+    expect(result.tasks.fine!.status).toEqual({ kind: "none", provider: "github" });
+    const query = calls.find((cmd) => cmd[0] === "gh")!.join("\n");
+    expect(query).toContain('headRefName: "wisp/stuck-one"');
+  });
+
+  test("ignores anything git returned that is not one of this task's branches", async () => {
+    // a stdout that is not a branch list must never become a head in a query
+    const surprising: ProbeSpawnFn = (cmd) =>
+      Promise.resolve(
+        ok(cmd[1] === "for-each-ref" ? "git@github.com:acme/widgets.git\nmain" : "git@github.com:acme/widgets.git"),
+      );
+
+    await expect(
+      taskBranches(task(), surprising, new AbortController().signal),
+    ).resolves.toEqual(["wisp/tpr01-show-pr-status"]);
   });
 });
 
@@ -413,7 +637,10 @@ describe("PullRequestCache overview", () => {
 
     const result = await cache.overview([first, second, local, archived]);
 
-    expect(calls.filter((cmd) => cmd[0] === "git")).toHaveLength(1);
+    // one repository lookup, cached per repo path, plus one local branch read
+    // for each of the two live worktree tasks
+    expect(calls.filter((cmd) => cmd[1] === "remote")).toHaveLength(1);
+    expect(calls.filter((cmd) => cmd[1] === "for-each-ref")).toHaveLength(2);
     const providerCalls = calls.filter((cmd) => cmd[0] === "gh");
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]!.slice(0, 3)).toEqual(["gh", "api", "graphql"]);
