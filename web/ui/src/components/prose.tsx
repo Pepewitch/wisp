@@ -100,7 +100,24 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   // a transcript for "where did I say something". This one recedes toward the
   // reading column so the bubble stays the brightest thing in the stream.
   pre: ({ children }) => (
-    <pre className="scroll-slim mt-2.5 overflow-x-auto rounded-md border border-border bg-code px-3 py-2 font-mono text-[11.5px] leading-[1.75]">
+    <pre
+      className={cn(
+        "scroll-slim mt-2.5 overflow-x-auto rounded-md border border-border bg-code px-3 py-2",
+        "font-mono text-[11.5px] leading-[1.75]",
+        // A fence's contents arrive as a `code` element and so does inline
+        // code; the ONLY thing that tells them apart is the `language-*` class
+        // markdown adds when — and only when — the fence names a language. A
+        // bare ``` has none, so it took the inline branch above and wore the
+        // violet chip: pill fill, side padding and accent text, wrapped round
+        // a whole block, on top of this surface. Two code styles at once, and
+        // a block-sized wash of the one hue §1 spends on inline code.
+        //
+        // The block is the parent, so the block decides. A fence is plain
+        // mono on `--code` whether or not it named a language; naming one adds
+        // colour INSIDE the text, and nothing else.
+        "[&>code]:bg-transparent [&>code]:p-0 [&>code]:text-[11.5px] [&>code]:text-inherit"
+      )}
+    >
       {children}
     </pre>
   ),

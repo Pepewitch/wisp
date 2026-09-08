@@ -26,6 +26,37 @@ describe("Prose", () => {
     expect(screen.getByText("droid")).toBeInTheDocument()
   })
 
+  /**
+   * Markdown hands inline code and a fence's contents to the same element, and
+   * only a fence that NAMED a language carries a class to tell them apart. A
+   * bare fence used to take the inline branch and wear the violet chip around
+   * a whole block, on top of the block's own surface.
+   */
+  it("keeps the chip for a phrase and the plain surface for a block", () => {
+    const { container } = render(
+      <Prose text={"a `--z-menu` token\n\n```\nwisp task list\n```\n\n```ts\nconst n = 1\n```"} />,
+    )
+
+    const [inline, bare, tagged] = [...container.querySelectorAll("code")]
+    // the chip is a phrase inside a sentence: accent wash, accent text
+    expect(inline?.closest("pre")).toBeNull()
+    expect(inline?.className).toContain("bg-accent-wash")
+
+    // a block is a surface, and the block decides — whatever the child chose
+    // for itself is reset by the `pre` around it
+    for (const block of [bare, tagged]) {
+      const pre = block?.closest("pre")
+      expect(pre).not.toBeNull()
+      expect(pre?.className).toContain("bg-code")
+      expect(pre?.className).toContain("[&>code]:bg-transparent")
+      expect(pre?.className).toContain("[&>code]:text-inherit")
+    }
+
+    // naming a language is what a highlighter reads, so the class survives
+    expect(tagged?.className).toContain("language-ts")
+    expect(bare?.className ?? "").not.toContain("language-")
+  })
+
   it("renders bulleted and numbered lists", () => {
     const { container } = render(<Prose text={"- first\n- second\n"} />)
     expect(container.querySelectorAll("ul li")).toHaveLength(2)

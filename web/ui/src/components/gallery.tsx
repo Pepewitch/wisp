@@ -14,6 +14,7 @@ import {
 import { ArrowUp, More, Refresh, WispMark } from "@/components/icons"
 import { Button, DiffStat, Eyebrow, Meta, PaneHeader, POPOVER_SURFACE, Rule, StateDot, Tab } from "@/components/primitives"
 import { Prose } from "@/components/prose"
+import { ProseCodeSpecimen } from "@/components/prose-code-specimen"
 import { ProbePanel } from "@/components/probe-panel"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { SettingsSpecimen } from "@/components/settings-dialog"
@@ -235,7 +236,7 @@ function FoundationSpecimens() {
           </div>
       </Section>
 
-      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen />
+      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen /> <ProseCodeSpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">
