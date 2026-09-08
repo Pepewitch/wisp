@@ -69,11 +69,18 @@ EOF
     trap "kill \$DAEMON_PID 2>/dev/null || true" EXIT HUP INT TERM
 
     REGISTERED=no
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+    ATTEMPT=0
+    while [ "$ATTEMPT" -lt 100 ]; do
+      ATTEMPT=$((ATTEMPT + 1))
       if wisp project add /workspace/repo >"$HOME/project.log" 2>&1; then
         REGISTERED=yes
         break
       fi
+      kill -0 "$DAEMON_PID" || {
+        cat "$HOME/daemon.log" >&2
+        echo "activation daemon exited before it became ready" >&2
+        exit 1
+      }
       sleep 0.2
     done
     [ "$REGISTERED" = "yes" ] || {
