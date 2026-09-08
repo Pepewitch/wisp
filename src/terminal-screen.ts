@@ -59,7 +59,13 @@ export class TerminalScreen {
    * the model to reach the browser.
    */
   write(data: string): void {
-    this.pending = new Promise<void>((resolve) => this.term.write(data, resolve));
+    // The write is issued immediately — output must never wait on the model to
+    // reach the browser — but `pending` is CHAINED rather than replaced, so it
+    // resolves only once every earlier write has been parsed too. Assigning
+    // the newest promise instead would leave a snapshot correct only while
+    // xterm happens to run its callbacks in order.
+    const parsed = new Promise<void>((resolve) => this.term.write(data, resolve));
+    this.pending = this.pending.then(() => parsed);
   }
 
   resize(size: PtySize): void {

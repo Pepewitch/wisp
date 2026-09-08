@@ -160,7 +160,10 @@ function errno(): number {
   if (!cachedErrno) {
     try {
       const name = DARWIN ? "__error" : "__errno_location";
-      const lib = dlopen(LIBC_CANDIDATES[0]!, { [name]: { args: [], returns: FFIType.ptr } });
+      // cachedLibrary, not the first candidate: on musl the loaded libc is a
+      // later entry, and opening the wrong one silently reports errno 0
+      libc();
+      const lib = dlopen(cachedLibrary!, { [name]: { args: [], returns: FFIType.ptr } });
       const location = lib.symbols[name] as () => number | bigint | null;
       cachedErrno = () => {
         const address = location();
@@ -208,29 +211,28 @@ export function openPty(size: PtySize): PtyHandle {
   const c = libc();
   const masterFd = c.posix_openpt(O_RDWR | O_NOCTTY);
   if (masterFd < 0) fail("posix_openpt");
+  // ONE owner from here down. Every failure path unwinds through this handle
+  // and `closePty`, which blanks what it closes, so no descriptor is closed
+  // twice — the number would by then be free for the next open in this
+  // process to claim, and closing it again would take out an unrelated fd.
+  const handle: PtyHandle = { masterFd, slaveFd: -1, slavePath: "" };
   try {
     if (c.grantpt(masterFd) !== 0) fail("grantpt");
     if (c.unlockpt(masterFd) !== 0) fail("unlockpt");
     const namePtr = c.ptsname(masterFd);
     if (!namePtr) fail("ptsname");
-    const slavePath = new CString(namePtr).toString();
-    if (!slavePath) throw new Error("pty: ptsname returned an empty device name");
+    handle.slavePath = new CString(namePtr).toString();
+    if (!handle.slavePath) throw new Error("pty: ptsname returned an empty device name");
     // Held open for the session: see the header note about EOF on the master.
     // It also has to come BEFORE the size is set — Darwin does not attach a
     // tty to the master until a slave exists, and TIOCSWINSZ on a pty nobody
     // has opened fails with ENOTTY.
-    const slaveFd = c.open(ptr(cstr(slavePath)), O_RDWR | O_NOCTTY, 0);
-    if (slaveFd < 0) fail(`open(${slavePath})`);
-    const handle: PtyHandle = { masterFd, slaveFd, slavePath };
-    try {
-      resizePty(handle, size);
-    } catch (error) {
-      closePty(handle);
-      throw error;
-    }
+    handle.slaveFd = c.open(ptr(cstr(handle.slavePath)), O_RDWR | O_NOCTTY, 0);
+    if (handle.slaveFd < 0) fail(`open(${handle.slavePath})`);
+    resizePty(handle, size);
     return handle;
   } catch (error) {
-    c.close(masterFd);
+    closePty(handle);
     throw error;
   }
 }
@@ -366,6 +368,16 @@ export function ptyExecArgv(slavePath: string, command: string[]): string[] {
 }
 
 /**
+ * The pty slave devices this may be pointed at. The subcommand opens the path
+ * it is given and makes it a controlling terminal, so it is kept to the two
+ * device names that can be one. Running `wisp` at all already implies being
+ * able to run commands, but nothing here should reach a regular file.
+ */
+export function isPtySlavePath(path: string): boolean {
+  return /^\/dev\/ttys[0-9]+$/.test(path) || /^\/dev\/pts\/[0-9]+$/.test(path);
+}
+
+/**
  * The child half, running as its own process: take the pty as a controlling
  * terminal and become the shell. Everything here happens before any of the
  * daemon's own modules load, and execve replaces this process, so no Bun
@@ -375,6 +387,9 @@ export function runPtyExec(args: string[]): never {
   const [slavePath, ...command] = args;
   if (!slavePath || command.length === 0) {
     throw new Error(`usage: ${PTY_EXEC_COMMAND} <slave-device> <command> [args...]`);
+  }
+  if (!isPtySlavePath(slavePath)) {
+    throw new Error(`${PTY_EXEC_COMMAND}: ${JSON.stringify(slavePath)} is not a pty slave device`);
   }
   const c = libc();
   if (c.setsid() < 0) fail("setsid");

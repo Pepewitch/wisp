@@ -302,10 +302,36 @@ class TerminalSession {
     }
   }
 
+  /**
+   * Signal the shell's whole process GROUP where there is one.
+   *
+   * The pty child calls setsid, so the shell leads its own group and the
+   * negative pid reaches whatever it is running as well — killing a task's
+   * terminal should not leave its foreground job behind. The piped fallback
+   * has no group of its own; there `process.kill` raises ESRCH and the plain
+   * child signal is the correct thing anyway.
+   */
+  private signal(sig: NodeJS.Signals): void {
+    if (this.handle) {
+      try {
+        process.kill(-this.child.pid, sig);
+        return;
+      } catch {
+        // no such group: the shell is already gone, or it never led one
+      }
+    }
+    this.child.kill(sig);
+  }
+
   async kill(): Promise<void> {
     if (this.finished) return;
     try {
-      this.child.kill("SIGTERM");
+      // SIGHUP, not SIGTERM: an interactive shell IGNORES SIGTERM, and it used
+      // to be script(1) — which does not — that received this. Signalling the
+      // shell directly with SIGTERM made every archive and every shutdown wait
+      // out the grace period before SIGKILL. SIGHUP is what a terminal sends
+      // when it goes away, and a shell exits on it.
+      this.signal("SIGHUP");
     } catch (error) {
       throw new Error(`terminal task ${this.taskId}: failed to signal shell: ${messageOf(error)}`, { cause: error });
     }
@@ -315,7 +341,7 @@ class TerminalSession {
     ]);
     if (exited) return;
     try {
-      this.child.kill("SIGKILL");
+      this.signal("SIGKILL");
     } catch (error) {
       throw new Error(`terminal task ${this.taskId}: failed to SIGKILL shell: ${messageOf(error)}`, { cause: error });
     }

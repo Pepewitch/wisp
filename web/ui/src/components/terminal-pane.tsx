@@ -291,6 +291,14 @@ function ShellView({
   const sentSize = useRef<{ cols: number; rows: number } | null>(null)
   const [phase, setPhase] = useState<Phase>("connecting")
   const [detail, setDetail] = useState<string | null>(null)
+  /**
+   * The daemon could not give this shell a pty and fell back to pipes. It is a
+   * working shell, but one with no window size and no job control, so the
+   * prompt is drawn for a terminal that does not exist and Ctrl-C goes
+   * nowhere. Say so, rather than leaving it to look like the display bug this
+   * pane used to have.
+   */
+  const [noPty, setNoPty] = useState(false)
   // bumping this re-runs the connect effect; the budget it spends is a ref, so
   // a successful hello can refill it without tearing the live socket back down
   const [attempt, setAttempt] = useState(0)
@@ -365,6 +373,7 @@ function ShellView({
     let sawHello = false
     setPhase("connecting")
     setDetail(null)
+    setNoPty(false)
 
     // Measure BEFORE connecting. The daemon creates the shell while answering
     // this socket, so the size has to travel with the upgrade — a shell born
@@ -379,6 +388,7 @@ function ShellView({
       {
         onHello: (hello) => {
           setPhase("live")
+          setNoPty(!hello.pty)
           sawHello = true
           retries.current = 0 // a live shell refills the budget for the NEXT drop
           // RESET, then replay: this xterm may already hold what it rendered
@@ -473,9 +483,15 @@ function ShellView({
   return (
     <div className={cn("absolute inset-0 flex flex-col", !active && "pointer-events-none invisible")}>
       <div ref={host} className="min-h-0 flex-1 px-2.5 pb-1" />
-      {phase !== "live" && (
+      {(phase !== "live" || noPty) && (
         <div className="flex shrink-0 items-center gap-2.5 px-3.5 pb-1.5 font-mono text-[10.5px] text-faint">
-          <span className="min-w-0 truncate">{phase === "connecting" ? "connecting…" : detail}</span>
+          <span className="min-w-0 truncate">
+            {phase === "connecting"
+              ? "connecting…"
+              : phase === "live"
+                ? "no pty — this shell has no window size or job control"
+                : detail}
+          </span>
           {phase !== "connecting" && (
             <button
               type="button"

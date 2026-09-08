@@ -41,50 +41,58 @@ afterEach(async () => {
   server = null;
 });
 
+
+/**
+ * One task with a real worktree, plus the config the daemon needs to serve it.
+ * Every terminal test needs the same thing, and repeating it inline made the
+ * suite mostly setup — the interesting part of each test is what it does to
+ * the shell afterwards.
+ */
+function terminalFixture(label: string): { task: ReturnType<typeof createTask>; worktree: string } {
+  writeFileSync(
+    CONFIG_PATH,
+    JSON.stringify({
+      port: 18710,
+      host: "127.0.0.1",
+      token,
+      webhooks: [],
+      stuckMinutes: 10,
+      logMaxBytes: 5_000_000,
+      setupTimeoutMinutes: 10,
+      envAllowlist: {},
+      harnessDefaults: {},
+    }),
+  );
+
+  const root = mkdtempSync(join(tmpdir(), `wisp-terminal-${label}-test-`));
+  const repo = join(root, "repo");
+  const worktree = join(root, "worktree");
+  mkdirSync(repo);
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.email", "terminal-test@wisp"]);
+  git(repo, ["config", "user.name", "terminal-test"]);
+  writeFileSync(join(repo, "README"), `terminal ${label} test\n`);
+  git(repo, ["add", "README"]);
+  git(repo, ["commit", "-q", "-m", "init"]);
+
+  const taskId = newTaskId();
+  const branch = `wisp/${taskId}-terminal-${label}`;
+  git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
+  const task = createTask({
+    id: taskId,
+    title: `terminal ${label} test`,
+    repo_path: repo,
+    harness: "fake",
+    model: null,
+    slot: freeSlot(),
+  });
+  setTaskFields(task.id, { worktree_path: worktree, branch, base_commit: git(repo, ["rev-parse", "HEAD"]) });
+  return { task, worktree };
+}
+
 describe("embedded web terminal", () => {
   test("runs in the worktree and archive kills the attached shell", async () => {
-    writeFileSync(
-      CONFIG_PATH,
-      JSON.stringify({
-        port: 18710,
-        host: "127.0.0.1",
-        token,
-        webhooks: [],
-        stuckMinutes: 10,
-        logMaxBytes: 5_000_000,
-        setupTimeoutMinutes: 10,
-        envAllowlist: {},
-        harnessDefaults: {},
-      }),
-    );
-
-    const root = mkdtempSync(join(tmpdir(), "wisp-terminal-test-"));
-    const repo = join(root, "repo");
-    const worktree = join(root, "worktree");
-    mkdirSync(repo);
-    git(repo, ["init", "-q"]);
-    git(repo, ["config", "user.email", "terminal-test@wisp"]);
-    git(repo, ["config", "user.name", "terminal-test"]);
-    writeFileSync(join(repo, "README"), "terminal test\n");
-    git(repo, ["add", "README"]);
-    git(repo, ["commit", "-q", "-m", "init"]);
-
-    const taskId = newTaskId();
-    const branch = `wisp/${taskId}-terminal-test`;
-    git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-    const task = createTask({
-      id: taskId,
-      title: "terminal test",
-      repo_path: repo,
-      harness: "fake",
-      model: null,
-      slot: freeSlot(),
-    });
-    setTaskFields(task.id, {
-      worktree_path: worktree,
-      branch,
-      base_commit: git(repo, ["rev-parse", "HEAD"]),
-    });
+    const { task, worktree } = terminalFixture("attach");
 
     server = await serve({ port: 0 });
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
@@ -140,48 +148,7 @@ describe("embedded web terminal", () => {
     "respawns a fresh shell when the previous shell has exited",
     { timeout: 20_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-respawn-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal respawn test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-respawn`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal respawn test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task, worktree } = terminalFixture("respawn");
 
       server = await serve({ port: 0 });
       const first = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
@@ -221,48 +188,7 @@ describe("embedded web terminal", () => {
     "a reattaching tab replays its shell's scrollback, and tabs are separate shells",
     { timeout: 30_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-replay-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal replay test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-replay`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal replay test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task } = terminalFixture("replay");
 
       server = await serve({ port: 0 });
       const url = (shell: number): string =>
@@ -316,48 +242,7 @@ describe("embedded web terminal", () => {
     "a second client takes the shell and the first is told, not silenced",
     { timeout: 30_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-displace-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal displacement test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-displace`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal displacement test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task } = terminalFixture("displace");
 
       server = await serve({ port: 0 });
       const url = `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0`;
@@ -403,45 +288,99 @@ describe("embedded web terminal", () => {
     },
   );
 
+  test(
+    "the shell is created at the size the upgrade asked for",
+    { timeout: 20_000 },
+    async () => {
+      // The whole fix depends on this wiring: the pane measures itself, the
+      // size rides on the upgrade, and openSession creates the pty with it.
+      // Unit tests cover each half; this is the only place the daemon path
+      // from query string to a real shell's window size is exercised.
+      const { task } = terminalFixture("size");
+
+      server = await serve({ port: 0 });
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=58&rows=9`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      let seen = "";
+      let resolveSize!: () => void;
+      let rejectSize!: (error: Error) => void;
+      const reported = new Promise<void>((resolve, reject) => {
+        resolveSize = resolve;
+        rejectSize = reject;
+      });
+      ws.onerror = () => rejectSize(new Error("terminal websocket error"));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (message.type === "hello") {
+          expect(message.pty).toBe(true);
+          ws.send(JSON.stringify({ type: "in", data: "stty size\n" }));
+        }
+        if (message.type === "out") {
+          seen += String(message.data);
+          // "9 58" is rows then cols: the shell was born knowing the pane
+          if (/\b9 58\b/.test(seen)) resolveSize();
+        }
+      };
+      await waitFor(reported, 15_000);
+      ws.close();
+    },
+  );
+
+  test(
+    "killing a shell does not wait out the SIGKILL grace period",
+    { timeout: 20_000 },
+    async () => {
+      // An interactive shell IGNORES SIGTERM. While the shell ran under
+      // script(1) that did not matter, because script does not; now the shell
+      // is the child, so terminating it with SIGTERM would make every archive
+      // and every daemon shutdown sit through the full grace period first.
+      const { task } = terminalFixture("kill");
+
+      server = await serve({ port: 0 });
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=80&rows=24`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      // Kill it from an interactive PROMPT, not from a shell still starting
+      // up: a shell that has finished initialising is the one that has its
+      // signal handling in place, and it is the state a real pane is in.
+      let seen = "";
+      let started = false;
+      let resolveReady!: () => void;
+      let rejectReady!: (error: Error) => void;
+      const ready = new Promise<void>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      ws.onerror = () => rejectReady(new Error("terminal websocket error"));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (message.type === "hello") ws.send(JSON.stringify({ type: "in", data: "echo shell-ready\n" }));
+        if (message.type === "out" && /shell-ready/.test(seen + String(message.data)) && !started) {
+          started = true;
+          // a foreground job, so the kill has to reach the whole process group
+          ws.send(JSON.stringify({ type: "in", data: "sleep 30\n" }));
+        }
+        if (message.type === "out") {
+          seen += String(message.data);
+          if (/shell-ready/.test(seen)) resolveReady();
+        }
+      };
+      await waitFor(ready, 10_000);
+      await Bun.sleep(500); // let `sleep 30` become the foreground job
+
+      const killedAt = Date.now();
+      await killForTask(task.id);
+      // The grace period before SIGKILL is 5s; a shell that honours the signal
+      // is gone in well under a second.
+      expect(Date.now() - killedAt).toBeLessThan(3_000);
+      ws.close();
+    },
+  );
+
   test("rejects a shell id outside the per-task range instead of upgrading", async () => {
-    writeFileSync(
-      CONFIG_PATH,
-      JSON.stringify({
-        port: 18710,
-        host: "127.0.0.1",
-        token,
-        webhooks: [],
-        stuckMinutes: 10,
-        logMaxBytes: 5_000_000,
-        setupTimeoutMinutes: 10,
-        envAllowlist: {},
-        harnessDefaults: {},
-      }),
-    );
-
-    const root = mkdtempSync(join(tmpdir(), "wisp-terminal-shellid-test-"));
-    const repo = join(root, "repo");
-    const worktree = join(root, "worktree");
-    mkdirSync(repo);
-    git(repo, ["init", "-q"]);
-    git(repo, ["config", "user.email", "terminal-test@wisp"]);
-    git(repo, ["config", "user.name", "terminal-test"]);
-    writeFileSync(join(repo, "README"), "terminal shell id test\n");
-    git(repo, ["add", "README"]);
-    git(repo, ["commit", "-q", "-m", "init"]);
-
-    const taskId = newTaskId();
-    const branch = `wisp/${taskId}-terminal-shellid`;
-    git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-    const task = createTask({
-      id: taskId,
-      title: "terminal shell id test",
-      repo_path: repo,
-      harness: "fake",
-      model: null,
-      slot: freeSlot(),
-    });
-    setTaskFields(task.id, { worktree_path: worktree, branch, base_commit: git(repo, ["rev-parse", "HEAD"]) });
+      const { task } = terminalFixture("shellid");
 
     server = await serve({ port: 0 });
     const base = `http://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`;

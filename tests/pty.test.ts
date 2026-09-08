@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   clampDimension,
   closePty,
+  isPtySlavePath,
   openPty,
   ptyExecArgv,
   readPty,
   resizePty,
+  runPtyExec,
   writePty,
   type PtySize,
 } from "../src/pty";
@@ -138,6 +140,35 @@ describe("pty", () => {
       }
     },
   );
+
+  test("a closed pty is not closed twice, whatever failed", () => {
+    // openPty unwinds every failure through closePty. If a second close ever
+    // reached the same number, it would land on whichever descriptor the
+    // process opened next — so closing is idempotent, and this proves it by
+    // making the reuse happen: the pty opened after the first close is very
+    // likely to be handed the numbers just released.
+    const first = openPty({ cols: 80, rows: 24 });
+    const released = first.masterFd;
+    closePty(first);
+    expect(first.masterFd).toBe(-1);
+    expect(first.slaveFd).toBe(-1);
+
+    const second = openPty({ cols: 80, rows: 24 });
+    expect(second.masterFd).toBe(released); // the number really was recycled
+    closePty(first); // the stale handle must do nothing at all
+    // still usable: a stray close would have taken this pty's descriptor out
+    expect(() => resizePty(second, { cols: 100, rows: 30 })).not.toThrow();
+    closePty(second);
+  });
+
+  test("the child half refuses a path that is not a terminal device", () => {
+    expect(isPtySlavePath("/dev/ttys001")).toBe(true);
+    expect(isPtySlavePath("/dev/pts/3")).toBe(true);
+    for (const path of ["/etc/passwd", "/dev/null", "/dev/../etc/passwd", "/dev/ptsx/1", "ttys001"]) {
+      expect(isPtySlavePath(path)).toBe(false);
+    }
+    expect(() => runPtyExec(["/etc/passwd", "/bin/sh"])).toThrow(/not a pty slave device/);
+  });
 
   test("a pty may not be zero cells", () => {
     expect(clampDimension(0)).toBe(1);
