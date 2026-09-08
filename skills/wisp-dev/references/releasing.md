@@ -24,6 +24,15 @@ qualification do not imply permission to publish.
 - Raw evaluator output stays gitignored. Commit only reviewed, sanitized
   verdict records. Keep failed or superseded attempts under a clearly named
   `superseded/` path.
+- Every third-party action is pinned to a commit SHA and every container image
+  to a digest, enforced by `bun run workflows:check` in CI. Release jobs reach
+  Apple signing material, updater keys, publication rights, and a tap token —
+  a mutable upstream tag is an unreviewed dependency of all four (SEC-06). Pin
+  the SHA and leave the human-readable version in a trailing comment; bump both
+  together, deliberately.
+- Top-level workflow permissions stay `contents: read`. A job that needs more
+  declares it next to the step that uses it, so a job added later cannot
+  inherit publication rights by existing.
 - Wisp and its Homebrew tap are separate repositories. Review, commit, and
   publish each one independently.
 

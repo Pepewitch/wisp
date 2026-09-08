@@ -34,7 +34,7 @@
     "lint": "bunx eslint scripts tests wispd/src wispd/tests wispd/scripts",
     "lint:ui": "bun run --cwd web lint",
     "lint:all": "bun run --parallel lint lint:ui",
-    "check": "bun run docs:check && bun run lint:all && bun run typecheck:all && bun run test:all",
+    "check": "bun run docs:check && bun run workflows:check && bun run lint:all && bun run typecheck:all && bun run test:all",
     "smoke": "bun run build:ui && bash wispd/scripts/smoke.sh",
     "check:browser-security": "bun run build:ui && bun run scripts/browser-security-check.ts",
     "harness:check": "bun run wispd/scripts/harness/check.ts",
@@ -52,6 +52,7 @@
     "test:evaluator": "python3 -m unittest discover -s wispd/scripts/evaluator/tests -p 'test_*.py'",
     "evaluator:preflight": "bash wispd/scripts/evaluator/run.sh --preflight",
     "docs:check": "bun run scripts/check-doc-links.ts",
+    "workflows:check": "bun run scripts/check-workflow-pins.ts",
     "build:ui": "bun run --cwd web build",
     "desktop:check": "bash scripts/desktop/check.sh",
     "desktop:build": "bash scripts/desktop/build-macos.sh",
@@ -67,5 +68,8 @@
     "globals": "^17.11.0",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.68.0"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }
