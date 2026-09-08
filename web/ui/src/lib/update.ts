@@ -5,6 +5,12 @@ const RESTART_TIMEOUT_MS = 5 * 60 * 1000
 const RESTART_POLL_MS = 500
 const STATUS_POLL_MS = 2_000
 
+export interface DaemonUpdateOperation {
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly phase: "installing" | "restarting"
+}
+
 export interface WaitForUpdatedDaemonOptions {
   transport: Pick<DaemonTransport, "request">
   timeoutMs?: number

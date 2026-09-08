@@ -54,8 +54,8 @@ function renderCenter({
   daemonStatus = DAEMON_STATUS,
   daemonError = null,
   daemonOperation = null,
-  connectionId = "local",
-  connectionName = "Local",
+  checkingDaemon = false,
+  onCheck = () => undefined,
 }: {
   desktop?: DesktopUpdaterContextValue
   daemonStatus?: UpdateStatus
@@ -65,8 +65,8 @@ function renderCenter({
     connectionName: string
     phase: "installing" | "restarting"
   } | null
-  connectionId?: string
-  connectionName?: string
+  checkingDaemon?: boolean
+  onCheck?: () => void
 } = {}) {
   render(
     <UpdateCenter
@@ -74,11 +74,11 @@ function renderCenter({
       daemonStatus={daemonStatus}
       daemonError={daemonError}
       daemonOperation={daemonOperation}
-      connectionId={connectionId}
-      connectionName={connectionName}
+      checkingDaemon={checkingDaemon}
       supportedApiProtocols={[1]}
       onUpdateDesktop={() => undefined}
       onUpdateDaemon={() => undefined}
+      onCheck={onCheck}
     />
   )
   fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
@@ -164,7 +164,7 @@ describe("the update trigger", () => {
 })
 
 describe("Desktop update center", () => {
-  it("renders separately scoped Desktop and selected-daemon rows", () => {
+  it("renders separately scoped Desktop and Local-daemon rows", () => {
     renderCenter()
     expect(
       screen.getByRole("button", { name: /Updates.*2/ })
@@ -216,23 +216,36 @@ describe("Desktop update center", () => {
     expect(screen.getByText(/protocol unknown/)).toBeInTheDocument()
   })
 
-  it("keeps an operation on another tab named and does not paint the active daemon busy", () => {
+  it("keeps daemon operation chrome bound to Local", () => {
     renderCenter({
       daemonOperation: {
         connectionId: "build",
         connectionName: "Build host",
         phase: "restarting",
       },
-      connectionId: "local",
-      connectionName: "Local",
     })
-    expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
+    expect(screen.getByText("Restarting Local daemon…")).toBeInTheDocument()
+    expect(screen.queryByText(/Build host daemon is restarting/)).toBeNull()
     expect(
-      screen.getByText(/Build host daemon is restarting/)
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Update Local daemon" })
+      screen.getByRole("button", { name: "Update Desktop and relaunch" })
     ).toBeDisabled()
+  })
+
+  it("checks Desktop and Local through one explicit callback", () => {
+    const onCheck = vi.fn()
+    renderCenter({ onCheck })
+
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }))
+    expect(onCheck).toHaveBeenCalledOnce()
+  })
+
+  it("names and blocks a Local daemon check in progress", () => {
+    renderCenter({ checkingDaemon: true })
+
+    expect(
+      screen.getByRole("button", { name: "Checking Local daemon…" })
+    ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
     expect(
       screen.getByRole("button", { name: "Update Desktop and relaunch" })
     ).toBeDisabled()
@@ -252,11 +265,11 @@ describe("Desktop update center", () => {
         daemonStatus={DAEMON_STATUS}
         daemonError={null}
         daemonOperation={null}
-        connectionId="local"
-        connectionName="Local"
+        checkingDaemon={false}
         supportedApiProtocols={[1]}
         onUpdateDesktop={() => undefined}
         onUpdateDaemon={() => undefined}
+        onCheck={() => undefined}
       />
     )
     fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
@@ -273,11 +286,11 @@ describe("Desktop update center", () => {
         daemonStatus={DAEMON_STATUS}
         daemonError={null}
         daemonOperation={null}
-        connectionId="local"
-        connectionName="Local"
+        checkingDaemon={false}
         supportedApiProtocols={[1]}
         onUpdateDesktop={() => undefined}
         onUpdateDaemon={() => undefined}
+        onCheck={() => undefined}
       />
     )
     expect(
@@ -292,12 +305,12 @@ describe("Desktop update center", () => {
   it("blocks daemon updates while a Desktop install is in flight", () => {
     renderCenter({
       desktop: desktopUpdater({
-        pending: true,
         status: { ...DESKTOP_STATUS, phase: "downloading" },
       }),
     })
     expect(
       screen.getByRole("button", { name: "Update Local daemon" })
     ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
   })
 })

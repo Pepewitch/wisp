@@ -35,6 +35,7 @@ import {
 } from "@/lib/desktop-bridge"
 import { useDesktopTaskNotifications } from "@/lib/desktop-task-notifications"
 import { createDesktopTransport } from "@/lib/desktop-transport"
+import { DesktopUpdateCoordinationProvider } from "@/lib/desktop-update-coordination"
 import { useLocalConnectionActions } from "@/lib/desktop-local-actions"
 import { prepareLocalScope } from "@/lib/desktop-local-scope"
 import { reconnectDesktopConnection } from "@/lib/desktop-reconnect"
@@ -497,15 +498,17 @@ export function DesktopApplicationProvider({
 
   return (
     <DesktopConnectionContext.Provider value={context}>
-      <DesktopConnectionRuntime
-        connections={state.connections}
-        active={active}
-        onAttention={reportAttention}
-        onReachability={reportReachability}
-        onTasks={observeTasks}
-      >
-        {children}
-      </DesktopConnectionRuntime>
+      <DesktopUpdateCoordinationProvider>
+        <DesktopConnectionRuntime
+          connections={state.connections}
+          active={active}
+          onAttention={reportAttention}
+          onReachability={reportReachability}
+          onTasks={observeTasks}
+        >
+          {children}
+        </DesktopConnectionRuntime>
+      </DesktopUpdateCoordinationProvider>
     </DesktopConnectionContext.Provider>
   )
 }

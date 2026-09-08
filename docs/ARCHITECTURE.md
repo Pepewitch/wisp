@@ -116,12 +116,14 @@ Desktop
     └── Project E
 ```
 
-The active desktop tab therefore selects the scope for projects, tasks,
-terminals, daemon updates, and all daemon mutations. The Desktop application
-update is global and does not change when a tab changes. Local project add can
-return a native folder-picker path because the picker and daemon share a
-machine. A remote project path must be entered as it exists on the remote
-daemon's machine.
+The active desktop tab selects the scope for projects, tasks, terminals, and
+ordinary daemon mutations. Updates are the deliberate exception: the global
+Desktop surface owns the application plus the built-in **Local daemon**, even
+while a remote tab is selected. It never installs an update on a saved remote;
+those daemons are updated on their own host or through their own browser UI.
+Local project add can return a native folder-picker path because the picker and
+daemon share a machine. A remote project path must be entered as it exists on
+the remote daemon's machine.
 
 ## Change-impact contract
 
@@ -170,7 +172,8 @@ serialized, resumable promotion job re-verifies those public bytes before it
 atomically advances the Homebrew Formula, Cask, and fixed Desktop channel. A
 promotion-only retry never rebuilds or mutates the release. Homebrew bootstraps
 and repairs the app; the native Tauri updater owns normal in-app upgrades. The
-selected daemon keeps its independent Homebrew-backed update lifecycle. See
+built-in Local daemon keeps its independent Homebrew-backed update lifecycle,
+while saved remotes stay outside Desktop's package-manager control. See
 [Desktop updates](DESKTOP-UPDATES.md) for the trust boundary, channel, rollout,
 and two-version qualification contract. A native app replacement does not
 rewrite Homebrew's Caskroom receipt, so receipt reconciliation is a separate

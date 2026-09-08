@@ -89,7 +89,7 @@ export default function App() {
   )
 }
 
-/** Persists update-operation identity while the connection-keyed app remounts. */
+/** Keeps app chrome mounted while MainView resets its connection-owned state. */
 function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
   const updateControls = useWispUpdateControl()
   return <MainView key={runtimeKey} updateControls={updateControls} />

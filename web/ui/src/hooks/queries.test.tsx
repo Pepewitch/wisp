@@ -3,6 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
+import { createConnectionQueryKeys } from "@/lib/query"
 import type { DaemonTransport } from "@/lib/transport"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
@@ -103,6 +104,32 @@ describe("useUpdateStatus", () => {
     const { wrapper } = harness()
     renderHook(() => useUpdateStatus(), { wrapper })
     await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/update"))
+  })
+
+  it("can read an explicit Local target while another connection is active", async () => {
+    mocks.request.mockReset()
+    const localRequest = vi.fn().mockResolvedValue({
+      currentVersion: "0.4.0-alpha.6",
+      latestVersion: null,
+      state: "up-to-date",
+    })
+    const local = fakeDaemonTransport("local", {
+      request: localRequest as DaemonTransport["request"],
+    })
+    const { client, wrapper } = harness("saved-remote")
+
+    renderHook(
+      () =>
+        useUpdateStatus({
+          transport: local,
+          qk: createConnectionQueryKeys(local.connectionId),
+        }),
+      { wrapper },
+    )
+
+    await waitFor(() => expect(localRequest).toHaveBeenCalledWith("/api/update"))
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(client.getQueryCache().getAll()[0]?.queryKey[0]).toBe("local")
   })
 
   it("keeps duplicate task IDs under different connection cache keys", async () => {

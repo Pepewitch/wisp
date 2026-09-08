@@ -59,9 +59,11 @@ the older ad-hoc alpha.8; current releases must instead pass their Developer ID 
 notarization checks. Never disable Gatekeeper globally.
 
 The Desktop **Updates** popover separates the global **Wisp Desktop** release
-from the selected connection's daemon release. Checks do not install anything;
-Desktop replacement requires **Update Desktop and relaunch**. Alpha.8 cannot
-self-update, so bootstrap the current release with:
+from the built-in **Local daemon**, regardless of the selected tab. **Check
+now** refreshes both rows; it never installs either one. Saved remote daemons
+must be updated on their host or through their own browser UI. Desktop
+replacement requires **Update Desktop and relaunch**. Alpha.8 cannot self-update,
+so bootstrap the current release with:
 
 ```sh
 brew update
@@ -190,9 +192,10 @@ at `/`.
 - `GET /api/harnesses` (capabilities, effort levels, offered models per
   harness) ·
   `GET /api/outbox` (undelivered webhook queue)
-- `GET|POST /api/update` — daemon update status/action. Status reports current
-  and latest API protocol versions; latest is `null` when legacy, malformed,
-  or unreachable release metadata cannot establish it.
+- `GET|POST /api/update` — daemon update status/action. `GET` with `refresh=1`
+  bypasses the release cache for an explicit check. Status reports current and
+  latest API protocol versions; latest is `null` when legacy, malformed, or
+  unreachable release metadata cannot establish it.
 - `GET /api/tasks/:id/terminal` — browser-cookie-authenticated WebSocket
 
 Errors are JSON `{error}` with a named reason; 400 = bad request, 409 = state

@@ -28,7 +28,7 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Attachments | relative `<img src="/api/…">` using the session cookie | connection-qualified proxy URL with no daemon credential in the URL |
 | Query cache | one global client and daemon-global keys | every daemon-owned key begins with `connectionId` |
 | Connectivity | one global value combining event and log streams | reachability, auth, and selected-log health are separate per connection |
-| Daemon update | one global query and a full-page reload on success | update and recovery remain bound to the initiating connection |
+| Daemon update | one global query and a full-page reload on success | the app-global updater is bound to built-in Local; remotes cannot be updated through Desktop |
 | UI bundle | one inlined HTML document served by `wispd` | Tauri loads the same built React application from packaged assets |
 | Content policy | none: the daemon serves the page without a CSP | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
 
@@ -124,8 +124,10 @@ mismatch is observed, a late matching response cannot clear it; only an
 explicit checked reconnect may restore the connection.
 
 Every completion path retains the initiating `connectionId`. Changing the
-selected tab cannot retarget a REST mutation, reconnect timer, update poll,
-folder picker, attachment, event stream, log stream, or terminal socket.
+selected tab cannot retarget a REST mutation, reconnect timer, folder picker,
+attachment, event stream, log stream, or terminal socket. Desktop update reads,
+checks, installation, and recovery are the stronger form of the same rule:
+they are permanently bound to `local`, not initiated against the selected tab.
 
 ## Credential and proxy rules
 
@@ -164,6 +166,9 @@ ready:
    are never bypassed silently.
 11. Revoke a connection's route before deleting its saved token and metadata.
     Crash recovery resumes removal from a non-secret tombstone.
+12. Refuse a saved remote's `POST /api/update` before any upstream request.
+    Wisp Desktop owns only the built-in Local daemon's package-manager action;
+    the daemon-served browser remains a one-daemon client and is unaffected.
 
 ## Client state that must be scoped
 
@@ -270,9 +275,12 @@ One native event flows the other way: `desktop://focus-task` carries
 treats it as routing input — it validates both IDs like bootstrap metadata and
 ignores a connection it does not have — and never as a credential or a target.
 
-The updater is application-global by design; it never selects or mutates a
-daemon. Its endpoint, public key, candidate, URL, signature, installation path,
-and relaunch gate are native-owned rather than webview arguments. See
+The native application updater is global by design; it never selects or mutates
+a daemon. Its endpoint, public key, candidate, URL, signature, installation
+path, and relaunch gate are native-owned rather than webview arguments. The
+shared Updates surface separately binds daemon status and installation to the
+built-in Local transport; native proxy policy refuses the same install request
+for saved remotes. See
 [Desktop updates](DESKTOP-UPDATES.md) for that separate trust boundary.
 
 `reveal_worktree_file` is Local-only and reveals rather than opens. Reading a

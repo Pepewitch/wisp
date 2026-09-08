@@ -769,6 +769,36 @@ async fn desktop_update_refuses_an_incompatible_target_protocol() {
 }
 
 #[tokio::test]
+async fn desktop_refuses_to_update_a_saved_remote_daemon() {
+    let (alpha, bravo) = two_daemons().await;
+    let (harness, ids) = Harness::start(Some(&alpha), &[&bravo]).await;
+    let before = bravo.seen().len();
+
+    let response = harness
+        .client
+        .post(harness.route(&ids[0], "api/update"))
+        .header("content-type", "application/json")
+        .body(r#"{"version":"0.0.1-synthetic"}"#)
+        .send()
+        .await
+        .expect("request");
+
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    assert_eq!(
+        response
+            .headers()
+            .get("x-wisp-proxy-error")
+            .and_then(|value| value.to_str().ok()),
+        Some("remote-daemon-update")
+    );
+    assert_eq!(
+        bravo.seen().len(),
+        before,
+        "a remote update command must be refused before any upstream request"
+    );
+}
+
+#[tokio::test]
 async fn compatible_update_reloads_a_rotated_local_token_before_posting() {
     let local = MockDaemon::start("alpha", TOKEN_ONE, "wisp-instance-alpha").await;
     let (harness, _) = Harness::start(Some(&local), &[]).await;

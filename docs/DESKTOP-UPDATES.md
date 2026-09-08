@@ -7,19 +7,22 @@ the drawer footer — therefore has two named rows:
 
 - **Wisp Desktop** is global to the application and installs a signed `.app`
   update through the native Tauri updater;
-- **<connection> daemon** belongs to the selected connection and asks that
-  daemon to update itself through its existing install method.
+- **Local daemon** is permanently bound to the built-in Local connection and
+  asks the daemon on this Mac to update itself through its existing install
+  method, even while a saved remote tab is selected.
 
 There is no unqualified **Update** action. Desktop and daemon update operations
 are mutually exclusive: a Desktop relaunch cannot interrupt a daemon update,
 and a daemon update cannot start while Desktop is checking, installing, or
-waiting to relaunch. Changing connection tabs cannot retarget an operation or
-paint its progress onto a different daemon.
+waiting to relaunch. Saved remote daemons are never updated through Wisp
+Desktop; update them on their host or through that daemon's browser UI.
+Changing connection tabs has no effect on the Local row or an operation in
+progress.
 
 ## Discovery and installation
 
 ```text
-launch (one jittered check) or Check now
+launch (one jittered Desktop check) or Check now
                   |
                   v
 native fixed alpha-channel URL -----> signed release metadata in homebrew-tap
@@ -48,11 +51,15 @@ artifacts, non-newer versions, and any change between its bounded discovery
 request and Tauri's signed request. A confirmation is stale as soon as the
 pending candidate changes.
 
-Checks are opt-out and occur once, two to six seconds after launch. There is no
-periodic background polling. **Check now** is available except while an update
-operation is active or an installed update is waiting for relaunch. Download
-and installation begin only after the person clicks **Update Desktop and
-relaunch**.
+The opt-out launch check covers Wisp Desktop and occurs once, two to six
+seconds after launch. There is no periodic background polling. **Check now**
+checks both rows in parallel: native code refreshes the fixed Desktop channel,
+and the built-in Local transport asks its daemon to bypass the normal six-hour
+release cache. An older daemon safely treats that refresh query as an ordinary
+cached status read; forced refresh takes effect after Local contains this API
+contract. The button is unavailable while an update operation is active or an
+installed Desktop update is waiting for relaunch. Neither download nor
+installation begins from a check; each requires its row's explicit action.
 
 ## Signing and release channel
 
@@ -123,10 +130,12 @@ Never silently replace the public key and strand installed clients.
 ## Daemon protocol compatibility
 
 The Desktop binary declares the set of daemon API protocols it genuinely
-implements. An in-app daemon update is offered only when both the running and
+implements. A Local daemon update is offered only when both the running and
 candidate daemon protocols are in that set. Updating Desktop first is the safe
 path when a newer daemon needs a newer protocol. Adding a protocol number to
 the set without implementing and testing both versions is not compatibility.
+This gate is enforced in both the shared UI and native proxy; the proxy also
+refuses every saved remote's daemon-install request before contacting it.
 
 ## Recovery
 
@@ -157,8 +166,8 @@ signed versions on an Apple Silicon Mac:
    version's tag or assets.
 4. In the older app, open **Updates** — the download icon at the right end of
    the top bar — and click **Check now**. Confirm the Desktop row shows the old
-   and new versions and the expected release notes; the selected-daemon row must
-   remain separate.
+   and new versions and the expected release notes; the Local daemon row must
+   remain separate and must not change when a saved remote tab is selected.
 5. Click **Update Desktop and relaunch**. Confirm download progress, a clean
    relaunch, the new version on the Desktop row, and the same connections and
    tasks.

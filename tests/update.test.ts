@@ -171,6 +171,30 @@ describe("UpdateManager", () => {
     expect(requests).toBe(2);
   });
 
+  test("an explicit refresh bypasses the release cache", async () => {
+    let latest = "0.4.0-alpha.8";
+    let requests = 0;
+    const manager = new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: false,
+      fetch: async (input) => {
+        requests++;
+        return String(input).includes("api.github.com")
+          ? jsonResponse([release(latest)])
+          : jsonResponse(protocolManifest(latest));
+      },
+      detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
+    });
+
+    expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
+    latest = "0.4.0-alpha.9";
+    expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
+    expect(requests).toBe(2);
+
+    expect((await manager.refreshStatus()).latestVersion).toBe("0.4.0-alpha.9");
+    expect(requests).toBe(4);
+  });
+
   test("keeps legacy or invalid release protocol metadata explicitly unknown", async () => {
     const valid = protocolManifest("0.4.0-alpha.8");
     const cases: Array<[string, () => Response | Promise<Response>]> = [
@@ -406,6 +430,7 @@ describe("update API", () => {
     const base = `http://127.0.0.1:${server.port}`;
 
     expect((await fetch(`${base}/api/update`)).status).toBe(401);
+    expect((await fetch(`${base}/api/update?refresh=1`)).status).toBe(401);
     expect(
       (
         await fetch(`${base}/api/update`, {
@@ -425,9 +450,11 @@ describe("update API", () => {
   });
 
   test("serves update status and validates the requested version", async () => {
+    let now = new Date("2026-09-05T12:00:00Z");
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
+      now: () => now,
       fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
       detectInstallation: () => ({
         method: "unsupported",
@@ -444,6 +471,19 @@ describe("update API", () => {
       latestVersion: "0.4.0-alpha.8",
       state: "available",
       canAutoUpdate: false,
+      checkedAt: "2026-09-05T12:00:00.000Z",
+    });
+
+    now = new Date("2026-09-05T13:00:00Z");
+    const refreshed = await updateRoute(
+      new Request(`${url}?refresh=1`),
+      "/api/update",
+      "GET",
+      manager,
+    );
+    expect(refreshed).not.toBeNull();
+    expect(await refreshed!.json()).toMatchObject({
+      checkedAt: "2026-09-05T13:00:00.000Z",
     });
 
     const invalid = await updateRoute(

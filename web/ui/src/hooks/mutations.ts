@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { completeAuth, mintSession } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
-import { useDaemonRuntime } from "@/lib/runtime";
+import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
 
 /**
@@ -22,12 +22,33 @@ import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, Task
 /* ---------------- tasks ---------------- */
 
 /** POST /api/update — accept the release currently shown in the header. */
-export function useInstallUpdate() {
+export function useInstallUpdate(
+  target?: Pick<DaemonRuntime, "transport" | "qk">
+) {
   const client = useQueryClient()
-  const { transport, qk } = useDaemonRuntime()
+  const active = useDaemonRuntime()
+  const { transport, qk } = target ?? active
   return useMutation({
     mutationFn: (version: string) =>
       transport.request<UpdateStatus>("/api/update", { method: "POST", body: { version } }),
+    onSuccess: (status) => {
+      client.setQueryData(qk.update, status)
+    },
+  })
+}
+
+/**
+ * GET /api/update?refresh=1 — a person-initiated read command that bypasses
+ * the daemon's release cache. Older daemons safely treat it as a cached read.
+ */
+export function useRefreshUpdateStatus(
+  target?: Pick<DaemonRuntime, "transport" | "qk">
+) {
+  const client = useQueryClient()
+  const active = useDaemonRuntime()
+  const { transport, qk } = target ?? active
+  return useMutation({
+    mutationFn: () => transport.request<UpdateStatus>("/api/update?refresh=1"),
     onSuccess: (status) => {
       client.setQueryData(qk.update, status)
     },

@@ -434,6 +434,20 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
         return response;
     }
 
+    // The application-global Updates surface owns the built-in Local daemon.
+    // Keep that policy at the trusted hop too: a stale or compromised webview
+    // must not turn the same bundled UI into a remote package-manager control.
+    if target.kind == ConnectionKind::Remote
+        && route.rest == "api/update"
+        && parts.method == http::Method::POST
+    {
+        return refuse(
+            StatusCode::FORBIDDEN,
+            "remote-daemon-update",
+            "Wisp Desktop updates only the Local daemon; update this remote daemon on its host",
+        );
+    }
+
     let mut credential = match state.registry.credential(&target) {
         Ok(credential) => credential,
         Err(RegistryError::StaleRoute) => return stale_route(),

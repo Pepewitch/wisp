@@ -28,11 +28,11 @@ createRoot(document.getElementById("root")!).render(
         <DesktopZoomProvider>
           <DesktopBootstrapScreen promise={desktopBootstrap}>
             {(bootstrap) => (
-              <DesktopApplicationProvider initial={bootstrap}>
-                <DesktopUpdaterProvider>
+              <DesktopUpdaterProvider>
+                <DesktopApplicationProvider initial={bootstrap}>
                   <App />
-                </DesktopUpdaterProvider>
-              </DesktopApplicationProvider>
+                </DesktopApplicationProvider>
+              </DesktopUpdaterProvider>
             )}
           </DesktopBootstrapScreen>
         </DesktopZoomProvider>
