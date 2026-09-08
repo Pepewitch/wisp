@@ -118,6 +118,8 @@ branch).
 States: `creating`, `running`, `done`, `needs-input`, `stuck` (reversible),
 `failed`. `state_detail` names the cause; a `limit: ` prefix means a
 quota/usage limit — switch harness or model, or wait for the quota window.
+Droid `AskUser` ends the turn as `needs-input` (the question is the result;
+reply with `wisp send`) instead of waiting for a questionnaire nothing can answer.
 `wisp ls`/`show` may print `exited N` instead of `failed`: the turn delivered
 its result but the harness CLI exited nonzero — check the diff before redoing
 anything. Tasks NEVER silently succeed: a bare exit 0 with no parsed result is

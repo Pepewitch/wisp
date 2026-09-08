@@ -52,6 +52,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
       session: "session_id",
       model: "model",
       usage: "usage",
+      // AskUser has no JSON-RPC reply in this adapter; the live driver emits a
+      // non-empty needs_input array and closes the turn so send can continue.
+      needsInput: "needs_input",
     },
     usageFormat: "snake-tokens",
     events: "droid-stream-json",

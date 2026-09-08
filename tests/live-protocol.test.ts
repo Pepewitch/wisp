@@ -475,3 +475,139 @@ describe("Droid live tool results", () => {
     expect(/(?:^|\n)session_id:\s*([^\s\n]+)/.exec(bounded)?.[1]).toBe("session-1");
   });
 });
+
+describe("Droid live turn completion", () => {
+  async function bootDroid(): Promise<{
+    driver: DroidLiveDriver;
+    sink: MemorySink;
+    events: Record<string, any>[];
+    terminals: number[];
+  }> {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const terminals: number[] = [];
+    const driver = new DroidLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.droid!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialText: "hello",
+      initialImages: [],
+      emit: (event) => events.push(event),
+      onTerminal: () => {
+        terminals.push(Date.now());
+      },
+    });
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: { sessionId: "droid-session" } });
+    const firstMessage = await requestAt(sink, 1);
+    driver.handle({ id: firstMessage.id, result: {} });
+    await driver.ready;
+    return { driver, sink, events, terminals };
+  }
+
+  function notify(driver: DroidLiveDriver, notification: Record<string, unknown>): void {
+    driver.handle({
+      method: "droid.session_notification",
+      params: { notification },
+    });
+  }
+
+  test("AskUser ends the turn as needs-input and closes stdin without waiting for idle", async () => {
+    const { driver, events, terminals } = await bootDroid();
+    notify(driver, {
+      type: "create_message",
+      message: {
+        id: "assistant-1",
+        role: "assistant",
+        content: [
+          { type: "text", text: "which option?" },
+          { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire: "pick one" } },
+        ],
+        modelId: "fake-droid-model",
+        createdAt: 123,
+      },
+    });
+
+    expect(terminals).toHaveLength(1);
+    expect(events.filter((event) => event.type === "completion")).toEqual([
+      {
+        type: "completion",
+        finalText: "which option?",
+        session_id: "droid-session",
+        model: "fake-droid-model",
+        usage: null,
+        isError: false,
+        needs_input: ["AskUser"],
+      },
+    ]);
+    const parsed = parseOutput(
+      BUILTIN_ADAPTERS.droid!,
+      events.map((event) => JSON.stringify(event)).join("\n"),
+    );
+    expect(parsed).toMatchObject({ result: "which option?", needsInput: true, isError: false });
+    await expect(driver.send("later", "a reply", [])).rejects.toThrow("Droid turn already completed");
+    await driver.close();
+  });
+
+  test("agent_turn_completed closes stdin without an idle event, for success and error", async () => {
+    for (const reason of ["completed", "error"] as const) {
+      const { driver, events, terminals } = await bootDroid();
+      notify(driver, {
+        type: "create_message",
+        message: {
+          id: "assistant-1",
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          createdAt: 1,
+        },
+      });
+      notify(driver, {
+        type: "agent_turn_completed",
+        reason,
+        tokenUsage: { inputTokens: 3, outputTokens: 1 },
+      });
+
+      expect(terminals).toHaveLength(1);
+      expect(events.filter((event) => event.type === "completion")).toEqual([
+        {
+          type: "completion",
+          finalText: "done",
+          session_id: "droid-session",
+          model: null,
+          usage: { input_tokens: 3, output_tokens: 1 },
+          isError: reason !== "completed",
+        },
+      ]);
+      if (reason === "error") {
+        expect(events.filter((event) => event.type === "error")).toEqual([
+          { type: "error", source: "agent_loop", message: "Droid turn error" },
+        ]);
+      }
+      await driver.close();
+    }
+  });
+
+  test("an error completion with no assistant text leaves finalText empty", async () => {
+    const { driver, events, terminals } = await bootDroid();
+    notify(driver, { type: "agent_turn_completed", reason: "error" });
+    expect(terminals).toHaveLength(1);
+    expect(events.filter((event) => event.type === "completion")).toEqual([
+      {
+        type: "completion",
+        finalText: "",
+        session_id: "droid-session",
+        model: null,
+        usage: null,
+        isError: true,
+      },
+    ]);
+    expect(events.filter((event) => event.type === "error")).toEqual([
+      { type: "error", source: "agent_loop", message: "Droid turn error" },
+    ]);
+    await driver.close();
+  });
+});

@@ -634,8 +634,9 @@ async function turnFinalized(turnId: number, ms: number): Promise<boolean> {
 /**
  * Interrupt the task's running turn: the process is killed, the harness
  * session survives (session ids are salvaged from early stream events), and
- * the next `send` resumes it with a correction. SIGTERM first; a harness that
- * traps SIGTERM gets SIGKILL after graceMs (M3), recorded in the detail.
+ * the next `send` resumes it with a correction. Close live stdin first (the
+ * JSON-RPC shutdown); then SIGTERM; a harness that traps SIGTERM gets SIGKILL
+ * after graceMs (M3), recorded in the detail.
  */
 export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
   const turn = hasRunningTurn(taskId);
@@ -643,6 +644,7 @@ export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Pr
   const child = liveChildren.get(turn.id);
   if (child) {
     markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
+    await closeLiveInput(taskId, turn.id);
     child.kill();
   } else if (turn.pid) {
     // re-adopted turn from before a daemon restart: the poll loop will finalize
@@ -651,6 +653,7 @@ export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Pr
       throw new Error(`turn process (pid ${turn.pid}) is already gone; it will finalize shortly`);
     }
     markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
+    await closeLiveInput(taskId, turn.id);
     try {
       process.kill(turn.pid, "SIGTERM");
     } catch {
@@ -691,6 +694,7 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
   const turn = hasRunningTurn(taskId);
   if (!turn) return;
   markInterrupted(turn.id, "turn interrupted by force-archive");
+  await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");
   // wait on the turn ROW, not the process: finalize must have run before archive proceeds
   if (await turnFinalized(turn.id, graceMs)) return;

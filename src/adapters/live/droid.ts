@@ -86,9 +86,10 @@ function messageParams(
  * Session start, completion, actual-model and usage shapes plus the versioned
  * transport envelope were live-reverified on Droid 0.213.0 with gpt-6-astra.
  * Steering was last live-probed on 0.205.0. Admission is the
- * response to droid.add_user_message. Completion is agent_turn_completed,
- * followed by droid_working_state_changed:newState="idle"; only that idle
- * closes stdin. A correction admitted while a tool was sleeping completed in
+ * response to droid.add_user_message. Completion is agent_turn_completed
+ * (any reason) or an AskUser tool_use — both close stdin immediately, the
+ * same way Codex closes on turn/completed. Idle is only a fallback if that
+ * close raced. A correction admitted while a tool was sleeping completed in
  * the original turn and replaced its requested final answer.
  */
 export class DroidLiveDriver {
@@ -198,21 +199,37 @@ export class DroidLiveDriver {
         if (isError) {
           this.options.emit({ type: "error", source: "agent_loop", message: `Droid turn ${reason}` });
         }
-        this.options.emit({
-          type: "completion",
-          finalText: this.finalText || (isError ? `Droid turn ${reason}` : ""),
-          session_id: this.sessionId,
-          model: this.model,
+        this.emitCompletion({
           usage: droidUsage(notification.tokenUsage),
           isError,
         });
-        this.terminal = true;
         return;
       }
       case "droid_working_state_changed":
+        // Fallback: completion already closed stdin; a late idle is idempotent.
         if (notification.newState === "idle" && this.terminal) this.options.onTerminal();
         return;
     }
+  }
+
+  /** Last assistant prose is the conclusion; error copy lives on the error event, not here. */
+  private emitCompletion(options: {
+    usage: Record<string, number> | null;
+    isError: boolean;
+    needsInput?: string[];
+  }): void {
+    if (this.terminal) return;
+    this.options.emit({
+      type: "completion",
+      finalText: this.finalText,
+      session_id: this.sessionId,
+      model: this.model,
+      usage: options.usage,
+      isError: options.isError,
+      ...(options.needsInput && options.needsInput.length > 0 ? { needs_input: options.needsInput } : {}),
+    });
+    this.terminal = true;
+    this.options.onTerminal();
   }
 
   private handleMessage(message: Record<string, any>): void {
@@ -245,6 +262,12 @@ export class DroidLiveDriver {
           timestamp: message.createdAt,
           session_id: this.sessionId,
         });
+        // Wisp has no reply path for Droid AskUser. End the turn as
+        // needs-input so the operator answers with send, rather than waiting
+        // forever for a questionnaire nothing can fill in.
+        if (block.name === "AskUser") {
+          this.emitCompletion({ usage: null, isError: false, needsInput: ["AskUser"] });
+        }
       } else if (block.type === "tool_result") {
         this.options.emit({
           type: "tool_result",
