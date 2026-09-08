@@ -188,6 +188,64 @@ describe("Conversation top fade", () => {
   })
 })
 
+describe("the reading column's axis", () => {
+  const task = {
+    id: "twrap",
+    title: "One axis, and it is vertical",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/twrap",
+    base_commit: "abc123",
+    harness: "claude-code",
+    model: "claude-opus-5",
+    effort: null,
+    slot: 0,
+    state: "done",
+    state_detail: null,
+    session_id: "session-1",
+    seq: 1,
+    turn_count: 1,
+    archived: false,
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:01Z",
+    turns: [
+      {
+        id: 1,
+        task_id: "twrap",
+        n: 1,
+        // an address with no break opportunity, which is what pushed the
+        // whole transcript sideways
+        prompt: `look at https://example.test/${"segment/".repeat(14)}index.html`,
+        // a settled turn with no result opens its timeline unasked (§5), and
+        // this test is about the column, not the stream
+        result: "Read it.",
+        status: "done",
+        model: "claude-opus-5",
+        usage: null,
+        attachments: [],
+        log_file: "/tmp/turn.log",
+        started_at: "2026-09-03T00:00:00Z",
+        ended_at: "2026-09-03T00:00:01Z",
+      },
+    ],
+  } as unknown as TaskDetail
+
+  it("scrolls one way only, and breaks what cannot fit instead", () => {
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport()),
+    })
+
+    // `overflow-y-auto` alone leaves `overflow-x` computing to `auto`, so a
+    // token wider than the column hands the whole transcript a sideways
+    // scrollbar. `break-words` is inherited, so the one declaration also
+    // covers a bubble, an expanded tool output and a failure note.
+    const classes = screen.getByTestId("conversation-viewport").className.split(/\s+/)
+    expect(classes).toContain("overflow-y-auto")
+    expect(classes).toContain("overflow-x-hidden")
+    expect(classes).toContain("break-words")
+  })
+})
+
 describe("a steer that lands inside a running turn", () => {
   const message: TaskMessage = {
     id: "mfaketestid01",
