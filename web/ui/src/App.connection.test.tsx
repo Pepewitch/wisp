@@ -1,7 +1,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
+import type {
+  DesktopBootstrap,
+  DesktopBridge,
+  DesktopConnectionMetadata,
+  DesktopUpdateStatus,
+} from "@/lib/desktop-bridge"
+import {
+  DesktopApplicationProvider,
+  useDesktopConnections,
+} from "@/lib/desktop-connections"
+import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
+import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import type { UpdateStatus } from "@/lib/types"
 import { fakeDaemonTransport } from "@/test/runtime"
 
@@ -28,6 +40,114 @@ const UPDATE: UpdateStatus = {
   installMethod: "homebrew",
   message: null,
   checkedAt: "2026-09-05T08:00:00Z",
+}
+
+const LOCAL: DesktopConnectionMetadata = {
+  id: "local",
+  routeRevision: 0,
+  kind: "local",
+  name: "Local",
+  url: null,
+  instanceId: "wisp-instance-local",
+  ready: true,
+}
+
+const REMOTE: DesktopConnectionMetadata = {
+  id: "saved-remote",
+  routeRevision: 0,
+  kind: "remote",
+  name: "Saved remote",
+  url: "https://remote.example.test",
+  instanceId: "wisp-instance-remote",
+  ready: true,
+}
+
+const DESKTOP_STATUS: DesktopUpdateStatus = {
+  channel: "alpha",
+  configured: false,
+  currentVersion: "0.4.0-synthetic",
+  latestVersion: null,
+  phase: "unconfigured",
+  releaseNotes: null,
+  publishedAt: null,
+  checkedAt: null,
+  downloadedBytes: 0,
+  totalBytes: null,
+  message: "Updater is not configured.",
+}
+
+function desktopBootstrap(): DesktopBootstrap {
+  return {
+    connections: [LOCAL, REMOTE],
+    activeConnectionId: "local",
+    proxyBaseUrl: "http://127.0.0.1:45123/per-launch-capability",
+    local: {
+      available: true,
+      configPath: "/synthetic/.wisp/config.json",
+      baseUrl: "http://127.0.0.1:18710",
+      instanceId: LOCAL.instanceId,
+      hasToken: true,
+      reason: null,
+    },
+  }
+}
+
+function desktopBridge(): DesktopBridge {
+  const setup = {
+    status: desktopBootstrap().local,
+    cliPath: "/synthetic/bin/wisp",
+    daemonReachable: true,
+    nextStep: "ready" as const,
+    message: "Local Wisp is ready.",
+  }
+  return {
+    bootstrap: async () => desktopBootstrap(),
+    selectConnection: async () => undefined,
+    probeRemoteConnection: async () => ({
+      instanceId: REMOTE.instanceId,
+      apiProtocolVersion: 1,
+      version: "0.4.0-synthetic",
+    }),
+    probeSavedConnection: async () => ({
+      instanceId: REMOTE.instanceId,
+      apiProtocolVersion: 1,
+      version: "0.4.0-synthetic",
+    }),
+    addRemoteConnection: async () => REMOTE,
+    renameConnection: async () => LOCAL,
+    reconnectConnection: async () => LOCAL,
+    removeConnection: async () => undefined,
+    resetDesktopData: async () => undefined,
+    pickLocalProject: async () => null,
+    setupLocalWisp: async () => setup,
+    applyLocalWispSetup: async () => setup,
+    openExternalUrl: async () => undefined,
+    notifyTaskTransition: async () => undefined,
+    onFocusTask: async () => () => undefined,
+    desktopUpdateStatus: async () => DESKTOP_STATUS,
+    checkDesktopUpdate: async () => DESKTOP_STATUS,
+    installDesktopUpdate: async () => DESKTOP_STATUS,
+    relaunchDesktop: async () => undefined,
+    onDesktopUpdateStatus: async () => () => undefined,
+    revealWorktreeFile: async () => undefined,
+  }
+}
+
+function DesktopUpdateHarness() {
+  const desktop = useDesktopConnections()!
+  const updates = useWispUpdateControl()
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => void desktop.select(REMOTE.id)}
+      >
+        Select saved remote
+      </button>
+      <output aria-label="active connection">{desktop.active.metadata.id}</output>
+      {updates.desktop}
+    </>
+  )
 }
 
 vi.mock("@/hooks/queries", () => ({
@@ -135,6 +255,103 @@ describe("connection-bound update recovery", () => {
 
     await waitFor(() => expect(recoverFirst).toHaveBeenCalledOnce())
     expect(recoverSecond).not.toHaveBeenCalled()
+  })
+
+  it("keeps a Local daemon update visible and locked across Desktop tab changes", async () => {
+    let finishInstall!: (status: UpdateStatus) => void
+    let finishWait!: () => void
+    mocks.install.mockReturnValueOnce(
+      new Promise<UpdateStatus>((resolve) => (finishInstall = resolve))
+    )
+    mocks.waitForUpdatedDaemon.mockReturnValueOnce(
+      new Promise<void>((resolve) => (finishWait = resolve))
+    )
+    const nativeBridge = desktopBridge()
+
+    render(
+      <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
+        <DesktopApplicationProvider
+          initial={desktopBootstrap()}
+          bridge={nativeBridge}
+        >
+          <DesktopUpdateHarness />
+        </DesktopApplicationProvider>
+      </DesktopUpdaterProvider>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    fireEvent.click(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    )
+    await waitFor(() =>
+      expect(mocks.install).toHaveBeenCalledWith(UPDATE.latestVersion)
+    )
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select saved remote" })
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText("active connection")).toHaveTextContent(
+        REMOTE.id
+      )
+    )
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    expect(screen.getByText("Updating Local daemon…")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
+
+    finishInstall({ ...UPDATE, state: "restarting" })
+    await waitFor(() => expect(mocks.waitForUpdatedDaemon).toHaveBeenCalled())
+    const initiatingTransport = mocks.waitForUpdatedDaemon.mock.calls.at(-1)?.[1]
+      .transport
+    expect(initiatingTransport.connectionId).toBe("local")
+    finishWait()
+    await waitFor(() =>
+      expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
+    )
+  })
+
+  it("keeps a manual Local check visible and locked across Desktop tab changes", async () => {
+    let finishRefresh!: (status: UpdateStatus) => void
+    mocks.refresh.mockReturnValueOnce(
+      new Promise<UpdateStatus>((resolve) => (finishRefresh = resolve))
+    )
+    const nativeBridge = desktopBridge()
+
+    render(
+      <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
+        <DesktopApplicationProvider
+          initial={desktopBootstrap()}
+          bridge={nativeBridge}
+        >
+          <DesktopUpdateHarness />
+        </DesktopApplicationProvider>
+      </DesktopUpdaterProvider>
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }))
+    await waitFor(() => expect(mocks.refresh).toHaveBeenCalledOnce())
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select saved remote" })
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText("active connection")).toHaveTextContent(
+        REMOTE.id
+      )
+    )
+    fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+    expect(
+      screen.getByRole("button", { name: "Checking Local daemon…" })
+    ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
+
+    finishRefresh(UPDATE)
+    await waitFor(() =>
+      expect(screen.queryByText("Checking Local daemon…")).toBeNull()
+    )
   })
 })
 

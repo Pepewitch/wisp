@@ -9,14 +9,9 @@ import {
   type DesktopUpdaterContextValue,
 } from "@/lib/desktop-updater"
 import type { UpdateStatus } from "@/lib/types"
+import type { DaemonUpdateOperation } from "@/lib/update"
 import { daemonUpdateIsCompatible } from "@/lib/update-compatibility"
 import { cn } from "@/lib/utils"
-
-export interface DaemonUpdateOperation {
-  readonly connectionId: string
-  readonly connectionName: string
-  readonly phase: "installing" | "restarting"
-}
 
 /** The browser's one-daemon update control. Desktop uses UpdateCenter below. */
 export function WispUpdateControl({
@@ -219,10 +214,9 @@ export function UpdateCenter({
               <Button
                 size="sm"
                 disabled={
-                  desktop.pending ||
+                  desktopBlocksDaemon ||
                   checkingDaemon ||
-                  daemonOperation !== null ||
-                  desktop.status?.phase === "ready-to-relaunch"
+                  daemonOperation !== null
                 }
                 onClick={onCheck}
               >

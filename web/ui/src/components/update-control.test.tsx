@@ -305,12 +305,12 @@ describe("Desktop update center", () => {
   it("blocks daemon updates while a Desktop install is in flight", () => {
     renderCenter({
       desktop: desktopUpdater({
-        pending: true,
         status: { ...DESKTOP_STATUS, phase: "downloading" },
       }),
     })
     expect(
       screen.getByRole("button", { name: "Update Local daemon" })
     ).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
   })
 })

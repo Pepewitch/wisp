@@ -3,7 +3,6 @@ import { useMemo, useRef, useState } from "react"
 import {
   UpdateCenter,
   WispUpdateControl,
-  type DaemonUpdateOperation,
 } from "@/components/update-control"
 import { useInstallUpdate, useRefreshUpdateStatus } from "@/hooks/mutations"
 import { useUpdateStatus } from "@/hooks/queries"
@@ -13,15 +12,20 @@ import {
   desktopUpdateBlocksDaemon,
   useDesktopUpdater,
 } from "@/lib/desktop-updater"
+import { useDesktopUpdateCoordination } from "@/lib/desktop-update-coordination"
 import { queryClient } from "@/lib/query"
 import { createDaemonRuntime, useDaemonRuntime } from "@/lib/runtime"
-import { waitForUpdatedDaemon } from "@/lib/update"
+import {
+  waitForUpdatedDaemon,
+  type DaemonUpdateOperation,
+} from "@/lib/update"
 
-/** Keeps daemon-update ownership above connection-keyed application remounts. */
+/** Binds browser updates to one runtime and Desktop updates to app-global Local. */
 export function useWispUpdateControl() {
   const runtime = useDaemonRuntime()
   const desktop = useDesktopConnections()
   const desktopUpdater = useDesktopUpdater()
+  const desktopCoordination = useDesktopUpdateCoordination()
   const localConnection = desktop?.connections.find(
     (connection) => connection.metadata.kind === "local"
   )
@@ -37,14 +41,41 @@ export function useWispUpdateControl() {
   const updateQuery = useUpdateStatus(updateRuntime)
   const installUpdate = useInstallUpdate(updateRuntime)
   const refreshUpdate = useRefreshUpdateStatus(updateRuntime)
-  const [updateError, setUpdateError] = useState<{
+  const [browserUpdateError, setBrowserUpdateError] = useState<{
     connectionId: string
     message: string
   } | null>(null)
-  const [operation, setOperation] = useState<DaemonUpdateOperation | null>(null)
-  const operationRef = useRef<DaemonUpdateOperation | null>(null)
-  const desktopOperationRef = useRef(false)
-  const checkOperationRef = useRef(false)
+  const [browserOperation, setBrowserOperation] =
+    useState<DaemonUpdateOperation | null>(null)
+  const browserOperationRef = useRef<DaemonUpdateOperation | null>(null)
+  const browserDesktopOperationRef = useRef(false)
+  const browserCheckOperationRef = useRef(false)
+  const operation =
+    desktopCoordination?.daemonOperation ?? browserOperation
+  const setOperation =
+    desktopCoordination?.setDaemonOperation ?? setBrowserOperation
+  const operationRef =
+    desktopCoordination?.daemonOperationRef ?? browserOperationRef
+  const desktopOperationRef =
+    desktopCoordination?.desktopOperationRef ?? browserDesktopOperationRef
+  const checkOperationRef =
+    desktopCoordination?.checkOperationRef ?? browserCheckOperationRef
+  const updateError = desktopCoordination
+    ? desktopCoordination.daemonError
+    : browserUpdateError?.connectionId === updateRuntime.connectionId
+      ? browserUpdateError.message
+      : null
+  const clearUpdateError = (connectionId: string) => {
+    if (desktopCoordination) desktopCoordination.setDaemonError(null)
+    else
+      setBrowserUpdateError((current) =>
+        current?.connectionId === connectionId ? null : current
+      )
+  }
+  const recordUpdateError = (connectionId: string, message: string) => {
+    if (desktopCoordination) desktopCoordination.setDaemonError(message)
+    else setBrowserUpdateError({ connectionId, message })
+  }
   const desktopBlocksDaemon = desktopUpdater
     ? desktopUpdateBlocksDaemon(desktopUpdater.status, desktopUpdater.pending)
     : false
@@ -66,9 +97,7 @@ export function useWispUpdateControl() {
     }
     operationRef.current = installing
     setOperation(installing)
-    setUpdateError((current) =>
-      current?.connectionId === initiatingRuntime.connectionId ? null : current
-    )
+    clearUpdateError(initiatingRuntime.connectionId)
     try {
       await installUpdate.mutateAsync(version)
       const restarting = { ...installing, phase: "restarting" as const }
@@ -79,10 +108,10 @@ export function useWispUpdateControl() {
       })
       await initiatingRuntime.recoverAfterUpdate()
     } catch (error) {
-      setUpdateError({
-        connectionId: initiatingRuntime.connectionId,
-        message: error instanceof Error ? error.message : String(error),
-      })
+      recordUpdateError(
+        initiatingRuntime.connectionId,
+        error instanceof Error ? error.message : String(error)
+      )
       void queryClient.invalidateQueries({
         queryKey: initiatingRuntime.qk.update,
       })
@@ -119,40 +148,37 @@ export function useWispUpdateControl() {
     )
       return
     checkOperationRef.current = true
-    setUpdateError((current) =>
-      current?.connectionId === updateRuntime.connectionId ? null : current
-    )
+    desktopCoordination?.setCheckingDaemon(true)
+    clearUpdateError(updateRuntime.connectionId)
     try {
       const [, daemonResult] = await Promise.allSettled([
         desktopUpdater.check(),
         refreshUpdate.mutateAsync(),
       ])
       if (daemonResult.status === "rejected") {
-        setUpdateError({
-          connectionId: updateRuntime.connectionId,
-          message:
-            daemonResult.reason instanceof Error
-              ? daemonResult.reason.message
-              : String(daemonResult.reason),
-        })
+        recordUpdateError(
+          updateRuntime.connectionId,
+          daemonResult.reason instanceof Error
+            ? daemonResult.reason.message
+            : String(daemonResult.reason)
+        )
       }
     } finally {
       checkOperationRef.current = false
+      desktopCoordination?.setCheckingDaemon(false)
     }
   }
 
-  const activeError =
-    updateError?.connectionId === updateRuntime.connectionId
-      ? updateError.message
-      : null
+  const checkingDaemon =
+    desktopCoordination?.checkingDaemon ?? refreshUpdate.isPending
   const render = (mobile: boolean) =>
     desktop && desktopUpdater ? (
       <UpdateCenter
         desktop={desktopUpdater}
         daemonStatus={updateQuery.data}
-        daemonError={activeError}
+        daemonError={updateError}
         daemonOperation={operation}
-        checkingDaemon={refreshUpdate.isPending}
+        checkingDaemon={checkingDaemon}
         supportedApiProtocols={SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS}
         onUpdateDesktop={(version) =>
           void updateDesktop(version).catch(() => undefined)
@@ -165,7 +191,7 @@ export function useWispUpdateControl() {
       <WispUpdateControl
         status={updateQuery.data}
         updating={operation?.connectionId === runtime.connectionId}
-        error={activeError}
+        error={updateError}
         onUpdate={(version) => void updateWisp(version)}
       />
     )
