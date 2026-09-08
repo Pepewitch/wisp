@@ -13,28 +13,6 @@
  */
 import { db, setTaskFields } from "./store";
 
-// The job table. It also carries the hook the archive started with: a project
-// can be removed between the flip and the teardown, and the archive script
-// configured at that moment is the one that must run.
-db.exec(`
-CREATE TABLE IF NOT EXISTS archive_cleanups (
-  task_id TEXT PRIMARY KEY,
-  stage TEXT NOT NULL,
-  force INTEGER NOT NULL,
-  stop_turn INTEGER NOT NULL,
-  removable INTEGER NOT NULL,
-  repo_path TEXT NOT NULL,
-  worktree_path TEXT,
-  branch TEXT,
-  archive_script TEXT,
-  timeout_minutes INTEGER NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-`);
-
 const now = () => new Date().toISOString();
 
 /** The ordered stages of an archive teardown; `done` only exists as a deletion. */
