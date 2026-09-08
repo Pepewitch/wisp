@@ -62,6 +62,8 @@ describe("Homebrew Cask rendering", () => {
     expect(cask).toContain("macOS 12.3 or newer");
     expect(cask).toContain("Developer ID signed and notarized");
     expect(cask).toContain("Reset desktop data before uninstalling");
+    expect(cask).toStartWith("# frozen_string_literal: true\n\n");
+    expect(cask.indexOf("auto_updates true")).toBeLessThan(cask.indexOf("depends_on arch:"));
     expect(cask).not.toMatch(/API_KEY|PASSWORD|access.token|bearer/i);
   });
 

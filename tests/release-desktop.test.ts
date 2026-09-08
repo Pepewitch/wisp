@@ -14,6 +14,7 @@ import {
   deterministicAppTarGz,
   machOHasUuid,
   releaseCertificateSource,
+  verifyDesktopInventory,
 } from "../scripts/release-desktop";
 import { VERSION } from "../src/version";
 
@@ -143,6 +144,16 @@ describe("Wisp Desktop release metadata", () => {
     expect(readFileSync(join(root, "Wisp.app/Contents/Info.plist"), "utf8")).toBe("synthetic plist");
     expect(statSync(join(root, "Wisp.app/Contents/MacOS/wisp-desktop")).mode & 0o777).toBe(0o755);
     expect(statSync(join(root, "Wisp.app/Contents/Info.plist")).mode & 0o777).toBe(0o644);
+  });
+
+  test("accepts Apple's stapled ticket only for trusted release applications", () => {
+    const app = syntheticApp("forward");
+    expect(() => verifyDesktopInventory(app, false)).not.toThrow();
+    expect(() => verifyDesktopInventory(app, true)).toThrow("member inventory mismatch");
+
+    writeFileSync(join(app, "Contents/CodeResources"), "synthetic notarization ticket");
+    expect(() => verifyDesktopInventory(app, true)).not.toThrow();
+    expect(() => verifyDesktopInventory(app, false)).toThrow("member inventory mismatch");
   });
 
   test("refuses links instead of creating an ambiguous application archive", () => {

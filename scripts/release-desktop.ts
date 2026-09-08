@@ -176,7 +176,7 @@ function appEntries(app: string): AppEntry[] {
   return entries;
 }
 
-const EXPECTED_APP_MEMBERS = [
+const EXPECTED_UNSIGNED_APP_MEMBERS = [
   "",
   "Contents/",
   "Contents/Info.plist",
@@ -188,11 +188,25 @@ const EXPECTED_APP_MEMBERS = [
   "Contents/_CodeSignature/CodeResources",
 ] as const;
 
-function verifyDesktopInventory(app: string): void {
+const EXPECTED_STAPLED_APP_MEMBERS = [
+  "",
+  "Contents/",
+  "Contents/CodeResources",
+  "Contents/Info.plist",
+  "Contents/MacOS/",
+  "Contents/MacOS/wisp-desktop",
+  "Contents/Resources/",
+  "Contents/Resources/icon.icns",
+  "Contents/_CodeSignature/",
+  "Contents/_CodeSignature/CodeResources",
+] as const;
+
+export function verifyDesktopInventory(app: string, signed: boolean): void {
   const prefix = `${basename(app)}/`;
   const entries = appEntries(app);
   const members = entries.map((entry) => entry.name.slice(prefix.length));
-  if (JSON.stringify(members) !== JSON.stringify(EXPECTED_APP_MEMBERS)) {
+  const expected = signed ? EXPECTED_STAPLED_APP_MEMBERS : EXPECTED_UNSIGNED_APP_MEMBERS;
+  if (JSON.stringify(members) !== JSON.stringify(expected)) {
     throw new Error(`desktop application member inventory mismatch: ${JSON.stringify(members)}`);
   }
   for (const entry of entries) {
@@ -229,7 +243,7 @@ function signatureField(output: string, name: string): string | null {
 }
 
 function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
-  verifyDesktopInventory(app);
+  verifyDesktopInventory(app, signed);
   const binary = join(app, "Contents/MacOS/wisp-desktop");
   const fileType = run(["/usr/bin/file", "-b", binary]);
   if (!/Mach-O 64-bit executable arm64/.test(fileType)) throw new Error(`desktop binary is not arm64: ${fileType}`);
