@@ -108,7 +108,14 @@ export function changedTapFiles(porcelain: string): string[] {
   return porcelain
     .split(/\r?\n/)
     .filter(Boolean)
-    .map((line) => line.slice(3))
+    .map((line) => {
+      // Porcelain v1 normally starts with two status columns and a space.
+      // The shared command wrapper trims its complete stdout, however, so an
+      // unstaged first entry can arrive with its leading status-space removed.
+      if (/^[ MTADRCU?!]{2} /.test(line)) return line.slice(3);
+      if (/^[MTADRCU?!] /.test(line)) return line.slice(2);
+      throw new Error(`invalid git status --porcelain=v1 entry: ${JSON.stringify(line)}`);
+    })
     .sort();
 }
 

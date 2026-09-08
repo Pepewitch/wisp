@@ -145,6 +145,7 @@ describe("release promotion", () => {
     ].join("\n");
     expect(changedTapFiles(porcelain)).toEqual([...TAP_FILES].sort());
     expect(classifyTapState(changedTapFiles(porcelain))).toBe("prepared");
+    expect(changedTapFiles(porcelain.trim())).toEqual([...TAP_FILES].sort());
     expect(() => classifyTapState(["README.md"])).toThrow("outside the three-file tap contract");
   });
 
