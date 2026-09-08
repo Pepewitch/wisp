@@ -26,3 +26,19 @@ jobs:
         run: bun run build:binary
       - name: build linux-x64 deploy artifact
         run: bun build --compile --target=bun-linux-x64 wispd/src/index.ts --outfile dist/wisp-linux-x64
+
+  # Cookie scope, CSP enforcement, and framing refusal are BROWSER policies.
+  # The daemon suite cannot exercise any of them and no amount of raw HTTP can,
+  # so a review asked for focused browser tests rather than a green source
+  # suite (SEC-01/02/04, ENG-10). GitHub's ubuntu image ships Chrome.
+  browser-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: the browser boundary holds in a real browser
+        run: bun run check:browser-security
