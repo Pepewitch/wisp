@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import { renderHomebrewCask } from "../scripts/render-homebrew-cask";
-import { VERSION } from "../src/version";
+import { VERSION } from "../wispd/src/version";
 
 function manifest(overrides: Partial<DesktopReleaseManifest> = {}): DesktopReleaseManifest {
   return {

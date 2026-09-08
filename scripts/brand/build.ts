@@ -23,10 +23,10 @@ const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
 const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
-const INDEX_HTML = join(ROOT, "web/ui/index.html");
+const INDEX_HTML = join(ROOT, "web/index.html");
 const GEIST_WOFF2 = join(
   ROOT,
-  "web/ui/node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2",
+  "web/node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2",
 );
 
 /** Social preview: GitHub renders it at 1280×640; we ship exactly that, at 2×. */
@@ -89,7 +89,7 @@ await emit(join(BRAND, "wisp-logo-light.svg"), lockupSvg({ height: 72, fg: PALET
  * paths means `bun run brand:check` catches it drifting, the same way it catches
  * a stale favicon.
  *
- * Formatted to match web/ui/.prettierrc (no semicolons, double quotes, 2 spaces)
+ * Formatted to match web/.prettierrc (no semicolons, double quotes, 2 spaces)
  * so `bun run lint` stays green without a formatting pass.
  */
 const markComponent = `/**
@@ -113,7 +113,7 @@ ${markFacets({ size: 24, precision: 2 })
   )
 }
 `;
-await emit(join(ROOT, "web/ui/src/components/wisp-mark.tsx"), markComponent);
+await emit(join(ROOT, "web/src/components/wisp-mark.tsx"), markComponent);
 
 // ── the app's favicon, inlined ───────────────────────────────────────────────
 
@@ -136,7 +136,7 @@ if (from !== -1 && to !== -1) {
 } else {
   // first run: drop the block in right after the viewport meta
   const anchor = html.indexOf("\n", html.indexOf('name="viewport"'));
-  if (anchor === -1) throw new Error("web/ui/index.html: no viewport meta to anchor the favicon to");
+  if (anchor === -1) throw new Error("web/index.html: no viewport meta to anchor the favicon to");
   patched = `${html.slice(0, anchor)}\n${block}${html.slice(anchor)}`;
 }
 await emit(INDEX_HTML, patched);

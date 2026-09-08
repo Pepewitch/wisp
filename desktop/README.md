@@ -266,7 +266,7 @@ Errors are relayed with the daemon's own status and body, so the existing
 ## Build and test
 
 Changes to the native command or proxy contract must update its TypeScript
-bridge and tests in `web/ui` in the same change. Changes to shared UI, daemon
+bridge and tests in `web` in the same change. Changes to shared UI, daemon
 routes, auth, streams, terminals, media, or update behavior must verify both
 the daemon-served browser path and this desktop path; native-only verification
 does not cover code embedded in both clients.

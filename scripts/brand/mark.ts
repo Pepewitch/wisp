@@ -37,7 +37,7 @@ import {
 import { ADVANCE, GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
 /**
- * The violet material. `brand` is `--primary` from web/ui/src/index.css; the
+ * The violet material. `brand` is `--primary` from web/src/index.css; the
  * rest are that hue carried down to near-black and up to near-white, so the
  * whole ramp moves together if the hue ever does.
  */
@@ -340,7 +340,7 @@ ${body}
 
 /**
  * The favicon: the reduction, emitted as tightly as an SVG can be, because this
- * one is inlined into web/ui/index.html as a data URI and every byte ships in
+ * one is inlined into web/index.html as a data URI and every byte ships in
  * the bundle. One decimal is already sub-pixel at 32px.
  */
 export function faviconSvg(): string {
@@ -354,7 +354,7 @@ export function faviconSvg(): string {
 /**
  * The favicon as a data URI, for inlining into the app's <head>.
  *
- * The daemon serves ONE file and no asset routes (tests/web.test.ts), so the
+ * The daemon serves ONE file and no asset routes (wispd/tests/web.test.ts), so the
  * favicon cannot be a sibling file — it rides in the head. Kept unencoded apart
  * from the characters that would break the attribute: an un-escaped `#`
  * truncates the URI and `<`/`>`/`"` end the tag. Percent-encoding the whole

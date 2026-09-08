@@ -4,10 +4,6 @@
   "workspaces": {
     "": {
       "name": "wisp",
-      "dependencies": {
-        "@xterm/addon-serialize": "^0.14.0",
-        "@xterm/headless": "^6.0.0",
-      },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@tauri-apps/cli": "2.11.4",
@@ -18,7 +14,7 @@
         "typescript-eslint": "^8.68.0",
       },
     },
-    "web/ui": {
+    "web": {
       "name": "wisp-ui",
       "version": "0.0.1",
       "dependencies": {
@@ -66,6 +62,17 @@
         "vite": "^8",
         "vite-plugin-singlefile": "^2.3.3",
         "vitest": "^4.1.11",
+      },
+    },
+    "wispd": {
+      "name": "wispd",
+      "version": "0.4.0-alpha.17",
+      "bin": {
+        "wisp": "./src/index.ts",
+      },
+      "dependencies": {
+        "@xterm/addon-serialize": "^0.14.0",
+        "@xterm/headless": "^6.0.0",
       },
     },
   },
@@ -1386,7 +1393,9 @@
 
     "why-is-node-running": ["why-is-node-running@2.3.0", "", { "dependencies": { "siginfo": "^2.0.0", "stackback": "0.0.2" }, "bin": { "why-is-node-running": "cli.js" } }, "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w=="],
 
-    "wisp-ui": ["wisp-ui@workspace:web/ui"],
+    "wisp-ui": ["wisp-ui@workspace:web"],
+
+    "wispd": ["wispd@workspace:wispd"],
 
     "word-wrap": ["word-wrap@1.2.5", "", {}, "sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA=="],
 

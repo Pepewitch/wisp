@@ -1,0 +1,541 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Geist Sans + Geist Mono, bundled from the fontsource variable packages —
+   zero CDN, OFL 1.1 text rides along in web/licenses/. Two faces, and no
+   third one, ever. */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/* Streamdown ships its markup pre-classed with Tailwind utilities; Tailwind
+   only generates what it can see, so its dist has to be a scanned source.
+   Everything we care about is overridden in conversation.tsx's component map —
+   this covers the elements we do not override. */
+@source "../node_modules/streamdown/dist/index.js";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Chrome a POINTER reveals. Tailwind's own `hover:` is already guarded by
+   `@media (hover: hover)`, so `group-hover:opacity-100` alone would leave a
+   hidden control unreachable forever on touch (§6b: nothing is revealed by
+   hover there). Pair the two — `pointer:opacity-0 pointer:group-hover:…` — so
+   the resting state is only hidden where a pointer can bring it back. */
+@custom-variant pointer (@media (hover: hover));
+
+/* ────────────────────────────────────────────────────────────────────────
+   GRAPHITE & VIOLET
+
+   A neutral scale — near-black by default, near-white in light mode — four
+   levels of gray text, and one violet that only ever means "this is live" or
+   "this is the one action".
+
+   The violet is hue 300: oklch(0.705 0.155 300) = #AF87F1 on graphite, and
+   the same hue at oklch(0.5 0.19 300) on paper. Every accent below is derived
+   from that hue at fixed lightness and chroma per theme, so moving the hue
+   moves the whole family without touching contrast.
+
+   Five places take the accent and nowhere else: the running dot, the one
+   primary action, the send button, the focus ring, and inline code in prose.
+   Selection and active tabs are a BACKGROUND change — they never take hue.
+   ──────────────────────────────────────────────────────────────────────── */
+
+@theme inline {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-heading: var(--font-sans);
+
+  /* Elevation: three depths, and every floating surface names one. Four
+     hand-written rgb() shadows used to be copy-pasted across five files, which
+     is the same defect that left the task hover card with no z-index at all —
+     a value with no single source of truth drifts, and then one copy is
+     missing. Depth tracks how far a surface floats above the page; the values
+     are per-theme, because 50% black under a menu is depth on graphite and
+     grime on paper. */
+  --shadow-float: var(--elevation-float);     /* in-pane: jump-to-latest */
+  --shadow-popover: var(--elevation-popover); /* menus, hover cards */
+  --shadow-modal: var(--elevation-modal);     /* dialogs over a scrim */
+
+  /* explicit radii — 6 / 8 / 12, not a calc chain off one number */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── wisp domain tokens: named by meaning, never by hue ── */
+
+  /* the two gray levels shadcn has no name for */
+  --color-fg-secondary: var(--fg-secondary);
+  --color-faint: var(--faint);
+
+  /* surfaces shadcn has no name for */
+  --color-surface: var(--surface);
+  --color-code: var(--code);
+  --color-hover: var(--hover);
+  --color-border-strong: var(--border-strong);
+
+  /* The one modal scrim. `bg-black/60` was hand-copied into a dozen places,
+     three of them at /65 or /70 for no stated reason; and black at 60% is a
+     dimmer on graphite but a bruise on paper. One token, `bg-scrim`. */
+  --color-scrim: var(--scrim);
+
+  /* task states — mirrors TASK_STATES in src/lib/types.ts. `running` is the
+     one state that carries the brand hue: it is the app being alive. `failed`
+     and `needs-input` tint their own line of text, so both scales are real
+     text colours in their theme, not one hue reused at two backgrounds. */
+  --color-state-creating: var(--state-creating);
+  --color-state-running: var(--primary);
+  --color-state-done: var(--state-done);
+  --color-state-needs-input: var(--state-needs-input);
+  --color-state-stuck: var(--state-stuck);
+  --color-state-failed: var(--state-failed);
+
+  /* diff — the second and third places hue survives */
+  --color-diff-add: var(--diff-add);
+  --color-diff-add-bg: var(--diff-add-bg);
+  --color-diff-del: var(--diff-del);
+  --color-diff-del-bg: var(--diff-del-bg);
+
+  /* the syntax family. The colours themselves are applied by the role map in
+     the base layer below; these exist so the GALLERY can label a swatch with
+     the same token the map reads, rather than inlining a `var()` into a
+     component (§8). */
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-entity: var(--syntax-entity);
+  --color-syntax-comment: var(--syntax-comment);
+
+  /* accent family, for the rare place a token beats a utility */
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-dim: var(--accent-dim);
+  --color-accent-wash: var(--accent-wash);
+
+  /* A filled button's hover. `hover:brightness-110` was honest while every
+     theme was dark; on light it walks a violet UP toward its own white label
+     and takes the label's contrast with it, so the hover surface is a token
+     per theme rather than a filter. */
+  --color-primary-hover: var(--primary-hover);
+  --color-destructive-hover: var(--destructive-hover);
+
+  /* shadcn's own surface contract, so any primitive we add inherits all this */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* ── the two themes ─────────────────────────────────────────────────────────
+   Dark is Wisp's own, so it is what `:root` paints and a stray unclassed
+   subtree still looks like the app. Light is the same MEANINGS at the other
+   end of the scale, and every token below is paired — a value that exists in
+   one theme and not the other is the defect this file keeps warning about.
+
+   Light is not an inversion. Dark stacks every surface UP from the reading
+   column, and white is a ceiling, so light sends page surfaces DOWN into gray
+   while the surfaces that FLOAT — menus, hover cards, the palette — stay at
+   #fff and earn their depth from a shadow. What is preserved is the ordering
+   that carries meaning: the prompt bubble is still the one surface in a turn
+   furthest from the background, code still sits between the two, row hover is
+   still stronger than a resting card, and selection is still the strongest
+   neutral.
+
+   `color-scheme` is load-bearing rather than decoration. The native overlay
+   scrollbar, the caret and every default form control take their colour from
+   it, which is why the dark app on a light-appearance Mac used to flash a
+   WHITE scrollbar over the reading column the moment you hovered it. It also
+   means the two declarations below are the only place the platform is told
+   which theme is on screen.
+
+   lib/theme.ts writes `light` or `dark` on <html> and nowhere else. The light
+   selector is `:root.light`, not `.light`: `:root` and a bare class have equal
+   specificity, so a plain `.light` would leave the pairing to be decided by
+   whichever block a later edit happened to move last. */
+:root,
+.dark {
+  color-scheme: dark;
+
+  /* surfaces */
+  --background: #0d0d10;        /* reading column — brighter, still below the sidebar */
+  --surface: #0f0f12;           /* sidebar, right pane, top bar, inputs */
+  --code: #101014;              /* code blocks in prose — a step BELOW the bubble */
+  --card: #15151a;              /* prompt bubbles, raised chrome */
+  --popover: #131317;           /* hover cards, menus, the command palette */
+  --hover: #1a1a20;             /* row hover — never a resting state */
+  --accent: #1f1f26;            /* SELECTED. background only, no rail, no hue */
+  --secondary: #1a1a20;         /* quiet button surface */
+  --muted: #1a1a20;
+  --border: #212128;            /* pane dividers, hairlines */
+  --border-strong: #2b2b34;     /* input and button edges, drag grips */
+  --input: #2b2b34;
+
+  /* text — four levels, and four is enough */
+  --foreground: #eaeaee;        /* titles, prose, the thing you read */
+  --fg-secondary: #a2a2ad;      /* labels, tab text, tool verbs */
+  --muted-foreground: #74747f;  /* branches, harness · model, paths, counts */
+  --faint: #55555f;             /* eyebrows, separators, timings, placeholders */
+
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+
+  /* the one accent */
+  --primary: oklch(0.705 0.155 300);              /* #AF87F1 */
+  --primary-foreground: oklch(0.17 0.045 300);    /* ink on violet */
+  --accent-soft: oklch(0.79 0.125 300);           /* links, inline code, prompts */
+  --accent-dim: oklch(0.46 0.105 300);            /* focused edges */
+  --accent-wash: oklch(0.705 0.155 300 / 0.15);   /* the running dot's halo */
+  --ring: oklch(0.705 0.155 300);
+  --primary-hover: oklch(0.755 0.15 300);         /* the filled hover */
+
+  --destructive: #df605c;
+  --destructive-hover: #e8746f;
+  --destructive-foreground: #1b1010;
+
+  /* task states and diff, the two families that keep their hue */
+  --state-creating: #74747f;
+  --state-done: #57b983;
+  --state-needs-input: #ddb055;
+  --state-stuck: #c4844f;
+  --state-failed: #df605c;
+
+  --diff-add: #6bc48d;
+  --diff-add-bg: rgb(107 196 141 / 0.10);
+  --diff-del: #de6f6b;
+  --diff-del-bg: rgb(222 111 107 / 0.10);
+
+  /* syntax — the third hue family, and it lives INSIDE a code block (§1).
+     Four roles at ONE lightness and ONE chroma, so no role shouts over
+     another, and all four sit BELOW the accent's chroma (0.09 against 0.155):
+     colour in a code block must not out-compete the one violet the app spends
+     on the send button and the running dot. Comments are grey and italic,
+     names stay plain — most of a line is names, and if everything is coloured
+     nothing is. Contrast on `--code`: 9.3 / 9.8 / 9.5 / 9.6, comments 4.8. */
+  --syntax-keyword: #c0abe9;    /* oklch(0.78 0.09 300) — the app's own hue */
+  --syntax-string: #8ec899;     /* oklch(0.78 0.09 150) */
+  --syntax-number: #d0b477;     /* oklch(0.78 0.085 85) */
+  --syntax-entity: #7cc1e9;     /* oklch(0.78 0.09 235) — functions and types */
+  --syntax-comment: #827e8a;    /* oklch(0.60 0.018 300) */
+
+  /* elevation and the modal veil — black, because the page is already near it */
+  --elevation-float: 0 8px 24px rgb(0 0 0 / 0.5);
+  --elevation-popover: 0 16px 40px rgb(0 0 0 / 0.66);
+  --elevation-modal: 0 28px 70px rgb(0 0 0 / 0.7);
+  --scrim: rgb(0 0 0 / 0.6);
+
+  /* ── stacking order ──────────────────────────────────────────────────────
+     One scale, and every surface that floats over a pane NAMES its layer.
+
+     A portalled popup does not win by being last in the DOM: base-ui renders
+     it at the end of <body>, but DOM order only breaks ties BETWEEN EQUAL
+     z-indexes. An in-pane `z-10` (the conversation's scroll fade, a drag
+     grip) therefore paints straight over a popup that never set one — which
+     is exactly how the task hover card ended up under the centre column.
+
+     Reference these with `z-(--z-hovercard)`, never a bare `z-50`. */
+  --z-pane: 10;       /* in-pane affordances: the scroll fade, a drag grip */
+  --z-hovercard: 20;  /* preview cards floating over a pane */
+  --z-backdrop: 40;   /* the scrim under a modal or drawer */
+  --z-modal: 50;      /* the modal or drawer itself */
+  --z-nested-backdrop: 60; /* the scrim between a parent and nested modal */
+  --z-nested-modal: 70;    /* a modal launched from another modal */
+  --z-menu: 80;            /* menus and popovers — must clear any open modal */
+
+  /* sidebar surface family */
+  --sidebar: #0f0f12;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: #1f1f26;
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: #212128;
+  --sidebar-ring: var(--ring);
+}
+
+:root.light {
+  color-scheme: light;
+
+  /* surfaces — page surfaces recede DOWN from the reading column */
+  --background: #fbfbfd;        /* reading column — the brightest page surface */
+  --surface: #f6f6f9;           /* sidebar, right pane, top bar, inputs */
+  --code: #f1f1f5;              /* code blocks in prose — inset, below the bubble */
+  --popover: #ffffff;           /* hover cards, menus, the palette — these FLOAT */
+  --card: #ededf2;              /* prompt bubbles, raised chrome */
+  --hover: #e9e9f0;             /* row hover — never a resting state */
+  --accent: #e2e2ea;            /* SELECTED. background only, no rail, no hue */
+  --secondary: #eeeef3;         /* quiet button surface */
+  --muted: #eeeef3;
+  --border: #e4e4eb;            /* pane dividers, hairlines */
+  --border-strong: #cdcdd8;     /* input and button edges, drag grips */
+  --input: #cdcdd8;
+
+  /* text — the same four levels, held at the same contrast as dark's, so a
+     line that was readable does not become decoration in the other theme */
+  --foreground: #1a1a1f;        /* titles, prose, the thing you read */
+  --fg-secondary: #4f4f5a;      /* labels, tab text, tool verbs */
+  --muted-foreground: #6c6c78;  /* branches, harness · model, paths, counts */
+  --faint: #8a8a96;             /* eyebrows, separators, timings, placeholders */
+
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --secondary-foreground: var(--foreground);
+  --accent-foreground: var(--foreground);
+
+  /* the one accent, still hue 300 — moved down the lightness axis, because
+     #AF87F1 on white is a highlighter rather than a word */
+  --primary: oklch(0.5 0.19 300);
+  --primary-foreground: oklch(0.99 0.01 300);     /* light on violet */
+  --accent-soft: oklch(0.55 0.185 300);           /* links, inline code, prompts */
+  --accent-dim: oklch(0.72 0.13 300);             /* focused edges */
+  --accent-wash: oklch(0.5 0.19 300 / 0.14);      /* the running dot's halo */
+  --ring: oklch(0.5 0.19 300);
+  --primary-hover: oklch(0.44 0.19 300);          /* the filled hover — DOWN */
+
+  --destructive: #c0332e;
+  --destructive-hover: #a72a26;
+  --destructive-foreground: #fdf4f3;
+
+  /* the two hue families, darkened until each is a text colour on paper */
+  --state-creating: #6c6c78;
+  --state-done: #1f8a52;
+  --state-needs-input: #8a600c;
+  --state-stuck: #9a5a1c;
+  --state-failed: #c0332e;
+
+  --diff-add: #157f4c;
+  --diff-add-bg: rgb(21 127 76 / 0.09);
+  --diff-del: #b83a34;
+  --diff-del-bg: rgb(184 58 52 / 0.08);
+
+  /* the same four roles, moved DOWN the lightness axis and up in chroma — the
+     move the accent already makes between themes, because a colour that reads
+     as text on graphite reads as a highlighter on paper. Contrast on `--code`:
+     6.2 / 5.4 / 5.8 / 5.4, comments 4.9. */
+  --syntax-keyword: #6b46a0;    /* oklch(0.48 0.14 300) */
+  --syntax-string: #00722e;     /* oklch(0.48 0.14 150) */
+  --syntax-number: #7f5500;     /* oklch(0.48 0.13 85) */
+  --syntax-entity: #0067a0;     /* oklch(0.48 0.14 235) */
+  --syntax-comment: #6a6772;    /* oklch(0.52 0.018 300) */
+
+  /* elevation and the modal veil — a soft cool shadow, never a hole */
+  --elevation-float: 0 6px 18px rgb(24 24 40 / 0.10);
+  --elevation-popover: 0 14px 34px rgb(24 24 40 / 0.14);
+  --elevation-modal: 0 26px 60px rgb(24 24 40 / 0.20);
+  --scrim: rgb(28 28 44 / 0.35);
+
+  /* sidebar surface family */
+  --sidebar: #f6f6f9;
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: #e2e2ea;
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: #e4e4eb;
+  --sidebar-ring: var(--ring);
+}
+
+/* Slim scrollbars for every scroll container we own. The conversation is ONE
+   scroller for the whole task — see skills/wisp-dev/references/frontend.md.
+
+   The thumb is a token, so it follows the theme; the platform's own scrollbar
+   (xterm's viewport, and any WebKit build that ignores `scrollbar-color`)
+   follows `color-scheme` on the theme blocks above. Both are needed: the
+   packaged Mac app got its white hover bar from the missing one. */
+@utility scroll-slim {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+  /* Stop the wheel at this pane. Reaching the end of a nested scroller
+     otherwise chains the scroll outward, and macOS rubber-bands the page off
+     its container — visible as the whole shell sliding away from its edges. */
+  overscroll-behavior: contain;
+}
+
+/* The running pulse: a slow breath, never a strobe, and it never fades to
+   nothing — a dot that disappears reads as a rendering glitch rather than a
+   heartbeat. Only the running indicator uses it; a second blinking thing on
+   screen would compete with the one that means "this task is alive". */
+@keyframes wisp-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@utility animate-breathe {
+  animation: wisp-breathe 1.6s ease-in-out infinite;
+}
+
+/* motion is decoration here: the timer beside it already says the same thing */
+@media (prefers-reduced-motion: reduce) {
+  .animate-breathe {
+    animation: none;
+  }
+}
+
+/* The one eyebrow per pane: 10.5px, 600, +7.5% tracking, faint. */
+@utility eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-size: 16px;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* links a viewer adds later must not render browser-default blue */
+  a {
+    color: var(--accent-soft);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--primary);
+  }
+  /* mono is "a machine wrote this exact string", never a texture */
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
+    font-variant-ligatures: none;
+  }
+  /* The shell is exactly h-dvh, so the document has nothing to scroll — but
+     macOS rubber-bands it anyway, which is what makes an overscrolled pane
+     appear to bounce off its container. Nothing here is ever a scroll surface,
+     so say so. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+  /* xterm builds its own viewport element, so it cannot be given `scroll-slim`
+     in JSX — it gets the same containment here. */
+  .xterm-viewport {
+    overscroll-behavior: contain;
+  }
+  /* A placeholder is not content, so it never gets its own scroll axis.
+     WebKit lays a textarea's placeholder out in a box of its own and does NOT
+     relayout it when the page zoom changes — and Desktop's zoom is exactly
+     that (`webview.setZoom`, ⌘+ / ⌘−). One step in leaves the placeholder box
+     at its old width inside a narrower field, so an EMPTY composer reports
+     content ~75px wider than itself and paints an overlay horizontal
+     scrollbar across the chat input. Chrome never did, which is why this only
+     ever showed up in the packaged app. Capping the box at the field's own
+     width is the whole fix: with nothing overflowing there is no axis to
+     scroll, rather than an axis with its scrollbar hidden. */
+  textarea::placeholder {
+    max-width: 100%;
+  }
+
+  ::selection {
+    background: var(--accent-wash);
+  }
+
+  /* ── syntax ──────────────────────────────────────────────────────────────
+     highlight.js emits CLASSES, not colours, so the theme is ours: five roles
+     mapped onto the `--syntax-*` tokens above (§1). Roles, not languages —
+     one map answers every language rather than one theme per language.
+
+     Everything not listed stays PLAIN, and that is the design: identifiers,
+     parameters, operators and punctuation are most of a line, so colouring
+     them would leave nothing for colour to pick out. */
+  .hljs-comment,
+  .hljs-quote {
+    color: var(--syntax-comment);
+    font-style: italic;
+  }
+  /* what the language RESERVES */
+  .hljs-keyword,
+  .hljs-literal,
+  .hljs-doctag,
+  .hljs-selector-tag,
+  .hljs-tag,
+  .hljs-name,
+  .hljs-meta .hljs-keyword {
+    color: var(--syntax-keyword);
+  }
+  /* what is quoted */
+  .hljs-string,
+  .hljs-char,
+  .hljs-regexp,
+  .hljs-template-tag,
+  .hljs-meta .hljs-string {
+    color: var(--syntax-string);
+  }
+  /* what is a literal value */
+  .hljs-number,
+  .hljs-symbol,
+  .hljs-bullet,
+  .hljs-link {
+    color: var(--syntax-number);
+  }
+  /* what has a NAME: functions, types, keys — one hue, because a second cool
+     hue for types buys nothing a reader of one file actually needs */
+  .hljs-title,
+  .hljs-title.class_,
+  .hljs-title.function_,
+  .hljs-type,
+  .hljs-built_in,
+  .hljs-class .hljs-title,
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-property,
+  .hljs-section,
+  .hljs-selector-class,
+  .hljs-selector-id,
+  .hljs-selector-pseudo {
+    color: var(--syntax-entity);
+  }
+  /* a shebang, a decorator, a preprocessor line: present, not the point */
+  .hljs-meta {
+    color: var(--syntax-comment);
+  }
+  /* a ```diff fence is a diff, so it borrows the family the changes pane
+     already uses — two places must never disagree about what added means */
+  .hljs-addition {
+    color: var(--diff-add);
+  }
+  .hljs-deletion {
+    color: var(--diff-del);
+  }
+  /* markdown's own emphasis: weight and slant carry it, never hue */
+  .hljs-strong {
+    font-weight: 600;
+  }
+  .hljs-emphasis {
+    font-style: italic;
+  }
+}

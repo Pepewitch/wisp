@@ -25,4 +25,4 @@ jobs:
         # `bun run check` already built and exercised the ignored bundle.
         run: bun run build:binary
       - name: build linux-x64 deploy artifact
-        run: bun build --compile --target=bun-linux-x64 src/index.ts --outfile dist/wisp-linux-x64
+        run: bun build --compile --target=bun-linux-x64 wispd/src/index.ts --outfile dist/wisp-linux-x64

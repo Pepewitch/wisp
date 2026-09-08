@@ -1,5 +1,3 @@
 [test]
-preload = ["./tests/setup.ts"]
-# The Vitest files of the web app live under web/ui. They belong to
-# `bun run test:ui`, never to the root Bun test suite.
+# Daemon tests and frontend Vitest files have package-local runners.
 root = "tests"

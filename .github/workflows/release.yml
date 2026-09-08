@@ -92,13 +92,13 @@ jobs:
       # releasing.md step 4: build under the strict gates, then prove the
       # three files reproduce byte for byte on a clean rebuild.
       - name: build Linux release artifact
-        run: bun run scripts/release-linux.ts --require-tag
+        run: bun run wispd/scripts/release-linux.ts --require-tag
       - name: rebuild and require byte-identical assets
         run: |
           dir="dist/release/$GITHUB_REF_NAME"
           first="$(mktemp -d)"
           cp "$dir"/* "$first"/
-          bun run scripts/release-linux.ts --require-tag
+          bun run wispd/scripts/release-linux.ts --require-tag
           for file in "$first"/*; do
             cmp -s "$file" "$dir/$(basename "$file")" || {
               echo "non-reproducible asset: $(basename "$file")" >&2
@@ -191,7 +191,7 @@ jobs:
           cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
       - name: build macOS release artifacts
         run: |
-          bun run scripts/release-macos.ts --require-tag
+          bun run wispd/scripts/release-macos.ts --require-tag
           WISP_PREBUILT_UI=1 \
             CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
             bun run scripts/release-desktop.ts --require-tag
@@ -200,7 +200,7 @@ jobs:
           dir="dist/release/$GITHUB_REF_NAME"
           first="$(mktemp -d)"
           cp "$dir"/* "$first"/
-          bun run scripts/release-macos.ts --require-tag
+          bun run wispd/scripts/release-macos.ts --require-tag
           # Apple's LC_UUID is stable for a clean rebuild at the same target
           # path, but changes when Cargo's absolute target path changes. Clear
           # every cached artifact, then rebuild at the identical normalized

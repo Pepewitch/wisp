@@ -20,7 +20,7 @@ bun run harness:snapshot  # add --check to diff without writing
 ```
 
 `harness:check` compares the installed CLI against Wisp's per-surface pins in
-`tests/harness-facts/<harness>.json`. `harness:snapshot` re-reads every
+`wispd/tests/harness-facts/<harness>.json`. `harness:snapshot` re-reads every
 zero-token surface from the installed CLI, rewrites those facts, and prints a
 graded diff. Both verdicts name the next action.
 
@@ -43,7 +43,7 @@ Two things the commands deliberately will not do:
   surfaced for you to judge, because replacing a marker needs a real captured
   failure (§3), which no tool can supply.
 
-`bun test tests/harness-facts.test.ts` is the other half: it asserts the
+`bun run --cwd wispd test -- tests/harness-facts.test.ts` is the other half: it asserts the
 adapters still agree with the captured facts. Those assertions are containment,
 never equality — `staticModels` must not offer an id the catalog dropped, and
 the effort menu must not hide a level the CLI accepts. The reverse direction
@@ -55,7 +55,7 @@ Work in an isolated Wisp worktree. Record:
 
 - the Wisp commit and builtin being checked;
 - `<bin> --version` and the executable path;
-- the per-surface pins in `tests/harness-facts/<harness>.json` (`harness:check`
+- the per-surface pins in `wispd/tests/harness-facts/<harness>.json` (`harness:check`
   prints these against the installed version);
 - the versions named in that builtin's comments and captured fixtures;
 - the release-note range between the last verified version and the installed
@@ -69,7 +69,7 @@ Search the owning surfaces before probing:
 
 ```sh
 rg -n 'claude-code|staticModels|modelDiscovery|<harness-name>' \
-  src/adapters tests docs skills
+  wispd/src/adapters wispd/tests docs skills
 ```
 
 This exposes all version pins and prevents updating the model picker while
@@ -81,7 +81,7 @@ Start with commands that cannot reach a model:
 
 1. Run `<bin> --help` and the relevant subcommand help. Compare print mode,
    structured output, resume, model, effort, permissions, images, attach, and
-   subagent-forwarding flags with `src/adapters/builtins.ts`.
+   subagent-forwarding flags with `wispd/src/adapters/builtins.ts`.
 2. Ask native metadata surfaces for model ids and defaults. Prefer a real
    `models` or debug subcommand and keep `modelDiscovery` when one exists.
 3. For a bundled CLI, inspect its shipped catalog or source strings when the
@@ -138,17 +138,17 @@ features.
 
 Update the builtin and every direct contract pin. Common locations:
 
-- `src/adapters/builtins.ts`;
-- `tests/harness-facts/<harness>.json` (rewritten by `harness:snapshot`);
-- `tests/adapters.test.ts`;
-- `tests/api-contracts.test.ts`;
-- the nearest strategy tests and `tests/fixtures/README.md`;
+- `wispd/src/adapters/builtins.ts`;
+- `wispd/tests/harness-facts/<harness>.json` (rewritten by `harness:snapshot`);
+- `wispd/tests/adapters.test.ts`;
+- `wispd/tests/api-contracts.test.ts`;
+- the nearest strategy tests and `wispd/tests/fixtures/README.md`;
 - user or contributor guidance that names the old verified version.
 
 Run the narrow tests before any token-spending verification:
 
 ```sh
-bun test tests/adapters.test.ts tests/api-contracts.test.ts
+bun run --cwd wispd test -- tests/adapters.test.ts tests/api-contracts.test.ts
 ```
 
 If a wire shape changed, capture one current JSONL transcript, then sanitize

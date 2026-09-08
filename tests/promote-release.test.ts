@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
-import type { ReleaseManifest } from "../scripts/release-linux";
-import type { MacReleaseManifest } from "../scripts/release-macos";
+import type { ReleaseManifest } from "../wispd/scripts/release-linux";
+import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import {
   assertDisposableAuditHost,
   changedTapFiles,
@@ -15,7 +15,7 @@ import {
   TAP_FILES,
   validateReleaseMetadata,
 } from "../scripts/release-promotion";
-import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
+import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 const tag = `v${VERSION}`;
 const commit = "a".repeat(40);

@@ -29,7 +29,7 @@ qualification do not imply permission to publish.
 
 Current distribution targets are Ubuntu 24.04 LTS x86_64/glibc, an
 experimental Apple Silicon arm64 daemon archive, and an Apple Silicon desktop
-`.app` configured for macOS 12.3 or newer. `scripts/release-macos.ts` keeps the
+`.app` configured for macOS 12.3 or newer. `wispd/scripts/release-macos.ts` keeps the
 standalone daemon archive ad-hoc signed. Local and reproducibility Desktop
 builds are also ad-hoc, but a publishable Desktop archive must use the
 `--signed` path: Developer ID Application signature, trusted timestamp,
@@ -46,8 +46,8 @@ three jobs:
 1. `release-linux` requires the tag to point at `origin/main`, scans history
    with Gitleaks, builds the Linux asset with `--require-tag`, proves the
    three files reproduce byte for byte on a clean rebuild, and exercises the
-   artifact through `scripts/test-install.sh` and
-   `scripts/test-activation.sh`.
+   artifact through `wispd/scripts/test-install.sh` and
+   `wispd/scripts/test-activation.sh`.
 2. `publish` runs on arm64 macOS, builds and reproducibility-checks the Mac
    daemon and unsigned Desktop payloads the same way, then creates and verifies
    one trusted Desktop archive. It verifies all ten assets, renders and audits
@@ -170,14 +170,14 @@ fi
 
 For every release, update these direct pins:
 
-- `package.json`;
-- `src/version.ts`;
+- `wispd/package.json`;
+- `wispd/src/version.ts`;
 - `desktop/src-tauri/Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`;
-- the literal source-build expectations in `tests/version.test.ts`;
+- the literal source-build expectations in `wispd/tests/version.test.ts`;
 - the default and help text in `scripts/install.sh`;
-- the default artifact paths in `scripts/test-install.sh` and
-  `scripts/test-activation.sh`;
-- `VERSION` in `scripts/evaluator/run.sh`; and
+- the default artifact paths in `wispd/scripts/test-install.sh` and
+  `wispd/scripts/test-activation.sh`;
+- `VERSION` in `wispd/scripts/evaluator/run.sh`; and
 - the new release notes plus README/install wording that truly
   applies to this version.
 
@@ -185,12 +185,12 @@ Search the old version before committing:
 
 ```sh
 rg -n -F '<old-version>' \
-  package.json src tests scripts README.md docs skills
+  wispd/package.json wispd/src wispd/tests wispd/scripts README.md docs skills
 ```
 
 Classify every match. Do not rewrite published release notes merely to make an
 old version look current.
-`web/ui/package.json` has its own workspace version and is not a Wisp release
+`web/package.json` has its own workspace version and is not a Wisp release
 pin.
 
 Write release notes before tagging. State platform scope, signing posture,
@@ -242,8 +242,8 @@ public Desktop artifact:
 
 ```sh
 bun run build:ui
-bun run scripts/release-linux.ts --require-tag
-bun run scripts/release-macos.ts --require-tag
+bun run wispd/scripts/release-linux.ts --require-tag
+bun run wispd/scripts/release-macos.ts --require-tag
 desktop_repro_target="$(mktemp -d)"
 WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$desktop_repro_target" \
   bun run scripts/release-desktop.ts --require-tag
@@ -271,8 +271,8 @@ from the same clean tag, and compare every byte:
 ```sh
 first="$(mktemp -d)"
 cp "$release_dir"/* "$first/"
-bun run scripts/release-linux.ts --require-tag
-bun run scripts/release-macos.ts --require-tag
+bun run wispd/scripts/release-linux.ts --require-tag
+bun run wispd/scripts/release-macos.ts --require-tag
 CARGO_TARGET_DIR="$desktop_repro_target" \
   cargo clean --manifest-path desktop/src-tauri/Cargo.toml
 CARGO_TARGET_DIR="$desktop_repro_target" \
@@ -312,7 +312,7 @@ verifies the signature with an independent streaming verifier; re-extracts the
 archive; and repeats the Apple trust checks. Its manifest and checksum set bind
 the signature file and trust posture.
 
-The builders refuse a dirty tree or a `package.json`/`src/version.ts`
+The builders refuse a dirty tree or a `wispd/package.json`/`wispd/src/version.ts`
 mismatch. The Mac builder also verifies arm64 architecture, ad-hoc signature,
 archive contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
@@ -331,11 +331,11 @@ fake-model evaluator before spending model quota:
 ```sh
 bun run test:install
 bun run test:activation
-scripts/evaluator/run.sh --preflight --rebuild-image
+wispd/scripts/evaluator/run.sh --preflight --rebuild-image
 ```
 
 Run the paid evaluator panel only when the release scope requires it. Follow
-[`scripts/evaluator/README.md`](../../../scripts/evaluator/README.md): use a
+[`wispd/scripts/evaluator/README.md`](../../../wispd/scripts/evaluator/README.md): use a
 revocable, spend-capped mode-`0600` key file, run cases sequentially, and
 review the sanitized evidence before retaining any record.
 
@@ -405,7 +405,7 @@ is still required.
 
 Inspect manifests and release notes for local paths, account data, tokens,
 headers, query strings, and unsupported claims. Compiled binaries disable
-automatic `.env` and `bunfig` loading in `scripts/build-binary.ts`; keep that
+automatic `.env` and `bunfig` loading in `wispd/scripts/build-binary.ts`; keep that
 boundary.
 
 ## 6. Publish the GitHub prerelease

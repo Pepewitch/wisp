@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { MacReleaseManifest } from "./release-macos";
+import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
