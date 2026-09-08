@@ -1,6 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { copyFile, mkdir, open, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { branchFor } from "./branch-name";
 import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
 import { pathExists } from "./fsutil";
@@ -100,30 +101,20 @@ export async function worktreeHealth(worktree: string): Promise<WorktreeHealth> 
   return { ok: true, kind: "ok", reason: null };
 }
 
-export function slugify(s: string): string {
-  return (
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 24) || "task"
-  );
-}
-
 export interface WorktreeInfo {
   path: string;
   branch: string;
   base_commit: string;
 }
 
-export async function createWorktree(repoPath: string, taskId: string, slug: string, cfg: WispConfig): Promise<WorktreeInfo> {
+export async function createWorktree(repoPath: string, taskId: string, cfg: WispConfig): Promise<WorktreeInfo> {
   const repo = resolve(repoPath);
   must(await git(["rev-parse", "--git-dir"], repo), `not a git repository: ${repo}`);
   const base_commit = must(await git(["rev-parse", "HEAD"], repo), `repo has no commits: ${repo}`);
   if ((await git(["submodule", "status"], repo)).out !== "") {
     throw new Error("repos with submodules are not supported yet (failing loudly rather than half-working)");
   }
-  const branch = `wisp/${taskId}-${slug}`;
+  const branch = branchFor(taskId);
   const path = join(WORKTREE_ROOT, `${basename(repo)}-${taskId}`);
   // Prune stale admin entries first: a manually deleted worktree dir leaves one
   // behind, and `git worktree add` at that path then fails confusingly (a prior audit).

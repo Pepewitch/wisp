@@ -66,7 +66,7 @@ function makeRepo(): string {
 async function forgottenTask(): Promise<{ id: string; repo: string; worktree: string; branch: string }> {
   const repo = makeRepo();
   const id = newTaskId();
-  const wt = await createWorktree(repo, id, "forgotten", cfg());
+  const wt = await createWorktree(repo, id, cfg());
   writeFileSync(join(wt.path, "the-agent-left-this.txt"), "untracked by anything\n");
   rmSync(join(wt.path, ".git"), { recursive: true, force: true });
   rmSync(join(repo, ".git", "worktrees"), { recursive: true, force: true });
@@ -80,7 +80,7 @@ async function forgottenTask(): Promise<{ id: string; repo: string; worktree: st
 async function healthyTask(): Promise<{ id: string; repo: string; worktree: string; branch: string }> {
   const repo = makeRepo();
   const id = newTaskId();
-  const wt = await createWorktree(repo, id, "healthy", cfg());
+  const wt = await createWorktree(repo, id, cfg());
   const task = createTask({ id, title: "healthy worktree", repo_path: repo, harness: "fake", model: null, slot: freeSlot() });
   setTaskFields(task.id, { worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
   transition(task.id, "done", "wrapped up");
@@ -199,7 +199,7 @@ describe("archive answers before it destroys (D4)", () => {
     // every teardown failure: it arrives too late to be a 409.
     const repo = makeRepo();
     const id = newTaskId();
-    const wt = await createWorktree(repo, id, "late-failure", cfg());
+    const wt = await createWorktree(repo, id, cfg());
     const notARepo = mkdtempSync(join(tmpdir(), "wisp-not-a-repo-"));
     const task = createTask({
       id,
