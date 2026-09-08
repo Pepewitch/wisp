@@ -64,10 +64,20 @@ Desktop upgrades after the first self-update-capable release:
   re-extracts the archive and repeats Apple trust checks;
 - GitHub publishes the archive, updater signature, manifests, checksum sets,
   daemon artifacts, and release notes as immutable assets;
-- the same workflow renders the Homebrew Formula, Cask, and alpha update
-  channel from the verified manifests and commits those three files together;
+- a separate serialized promotion job downloads and verifies those immutable
+  public assets again, renders the Homebrew Formula, Cask, and alpha update
+  channel from their manifests, and commits those three files together;
 - the channel is advanced only after anonymous downloads and Apple trust checks
-  pass for the public bytes.
+  pass for the public bytes, then the job waits for the fixed channel URL and
+  requires the full Homebrew livecheck audit.
+
+Separating immutable publication from mutable channel promotion makes the
+second stage resumable. A failed promotion can be rerun for the existing tag,
+including through the release workflow's manual tag input, without rebuilding,
+re-signing, notarizing, or replacing a public asset. Promotion is idempotent:
+an already-current tap is verified without another commit. The command runs
+Homebrew audits only on a disposable Mac and refuses a host with an installed
+Wisp Formula/Cask or an already-registered audit tap.
 
 The Cask and updater reference the same `.tar.gz`, so there is no parallel app
 artifact whose behavior can drift. The Cask declares `auto_updates true` and
@@ -83,10 +93,12 @@ bookkeeping from the same immutable archive and must never downgrade the app.
 
 The committed updater public key is not secret. Its encrypted private key and
 password are repository secrets. Apple release credentials are also repository
-secrets. A signed tag build stops before publication when any credential is
-missing, when the public key is a placeholder, or when signing, notarization,
-stapling, signature verification, anonymous download verification, or strict
-Homebrew audit fails. Never paste private keys or certificates into an issue,
+secrets. A signed tag build stops before creating the release when any
+credential is missing, when the public key is a placeholder, or when signing,
+notarization, stapling, signature verification, reproducibility, or the offline
+Homebrew audit fails. Once immutable assets exist, any anonymous-download,
+Apple trust, online Homebrew, tap, or channel failure stops promotion without
+mutating those assets. Never paste private keys or certificates into an issue,
 PR, task prompt, test fixture, command argument captured in logs, or committed
 file.
 
@@ -94,7 +106,9 @@ The public alpha.8 app predates this updater and is ad-hoc signed. It cannot
 self-update. Alpha.12 is the first published Developer ID signed release
 containing the embedded key and must be installed once through Homebrew with
 `--greedy`. Alpha.13 completed the first end-to-end public proof by discovering,
-verifying, installing, and relaunching from alpha.12.
+verifying, installing, and relaunching from alpha.12. Alpha.16 is the current
+published signed release; its alpha.13-to-alpha.16 human updater receipt is
+still pending.
 
 Treat the updater key as a long-lived release root. Before any app containing a
 new public key is published, rotate the key freely and repeat qualification. An
@@ -158,3 +172,9 @@ state, and Homebrew receipt reconciliation. This qualifies the public updater
 path on that machine; it is not broad macOS or hardware qualification. Repeat
 the two-version receipt for future trust-root, channel, installer, or updater
 changes rather than treating this historical pass as permanent coverage.
+Alpha.16's publication, public channel, and package audits have passed, but do
+not describe alpha.13-to-alpha.16 as qualified until that human-observed
+replacement, relaunch, state-preservation, Apple trust, and Homebrew receipt
+reconciliation record exists. Record the sanitized result in the
+[v0.4 qualification ledger](v0.4/QUALIFICATION.md); keep raw machine evidence
+private.

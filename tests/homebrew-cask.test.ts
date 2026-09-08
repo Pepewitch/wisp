@@ -86,20 +86,17 @@ describe("Homebrew Cask rendering", () => {
 
   test("authenticates online audits without a signing exception", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const promotion = readFileSync(new URL("../scripts/promote-release.ts", import.meta.url), "utf8");
     expect(workflow).toContain("HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}");
-    expect(workflow).not.toContain("--except signing,github_prerelease_version");
+    expect(promotion).not.toContain("signing,github_prerelease_version");
     const deferredLivecheckAudits =
-      "--except github_prerelease_version,livecheck_version,livecheck_https_availability";
-    expect(workflow).toContain(deferredLivecheckAudits);
-    expect(workflow).toContain("public Desktop update channel did not converge");
-    expect(workflow).toContain(
-      "--except github_prerelease_version \\\n            Pepewitch/tap/wisp-desktop",
-    );
-    expect(workflow.indexOf(deferredLivecheckAudits)).toBeLessThan(
-      workflow.indexOf('git -C "$tap" push origin HEAD:main'),
-    );
-    expect(workflow.indexOf("public Desktop update channel did not converge")).toBeGreaterThan(
-      workflow.indexOf('git -C "$tap" push origin HEAD:main'),
+      '"github_prerelease_version,livecheck_version,livecheck_https_availability"';
+    expect(promotion).toContain(deferredLivecheckAudits);
+    expect(promotion).toContain('"github_prerelease_version"');
+    expect(promotion).toContain("public Desktop update channel did not converge");
+    expect(promotion.indexOf(deferredLivecheckAudits)).toBeLessThan(promotion.indexOf("publishTap(args.tapDir"));
+    expect(promotion.lastIndexOf("auditAfterPromotion()")).toBeGreaterThan(
+      promotion.lastIndexOf("publishTap(args.tapDir"),
     );
   });
 });

@@ -45,6 +45,7 @@
     "release:linux": "bun run build:ui && bun run scripts/release-linux.ts",
     "release:macos": "bun run build:ui && bun run scripts/release-macos.ts",
     "release:desktop": "bun run scripts/release-desktop.ts",
+    "release:promote": "bun run scripts/promote-release.ts",
     "test:install": "bash scripts/test-install.sh",
     "test:activation": "bash scripts/test-activation.sh",
     "test:evaluator": "python3 -m unittest discover -s scripts/evaluator/tests -p 'test_*.py'",

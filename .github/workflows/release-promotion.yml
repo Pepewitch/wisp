@@ -1,0 +1,87 @@
+name: release-promotion
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/promote-release.ts"
+      - "scripts/release-promotion.ts"
+      - "scripts/render-homebrew-formula.ts"
+      - "scripts/render-homebrew-cask.ts"
+      - "scripts/render-desktop-update-channel.ts"
+      - "tests/promote-release.test.ts"
+      - "tests/homebrew-formula.test.ts"
+      - "tests/homebrew-cask.test.ts"
+      - "tests/desktop-update-channel.test.ts"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-promotion.yml"
+      - "package.json"
+      - "bun.lock"
+  pull_request:
+    paths:
+      - "scripts/promote-release.ts"
+      - "scripts/release-promotion.ts"
+      - "scripts/render-homebrew-formula.ts"
+      - "scripts/render-homebrew-cask.ts"
+      - "scripts/render-desktop-update-channel.ts"
+      - "tests/promote-release.test.ts"
+      - "tests/homebrew-formula.test.ts"
+      - "tests/homebrew-cask.test.ts"
+      - "tests/desktop-update-channel.test.ts"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/release-promotion.yml"
+      - "package.json"
+      - "bun.lock"
+
+jobs:
+  public-promotion-dry-run:
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: exercise the public promotion path without publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+        run: |
+          # Pin one immutable public fixture whose tap/channel already agree.
+          # Advance this deliberately after a later release is promoted.
+          mkdir -p dist/promotion-check
+          release_root=dist/promotion-check/release-alpha16
+          tap=dist/promotion-check/homebrew-tap
+          receipt=dist/promotion-check/promotion-receipt.json
+          git fetch --force origin main \
+            refs/tags/v0.4.0-alpha.16:refs/tags/v0.4.0-alpha.16
+          git worktree add --detach "$release_root" v0.4.0-alpha.16
+          git clone https://github.com/Pepewitch/homebrew-tap.git "$tap"
+          bun run release:promote -- \
+            --tag v0.4.0-alpha.16 \
+            --release-root "$release_root" \
+            --tap-dir "$tap" \
+            --receipt "$receipt"
+          test "$(jq -r .result "$receipt")" = dry-run
+          test "$(jq -r .tapState "$receipt")" = already-promoted
+      - name: retain promotion diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-promotion-dry-run-${{ github.run_attempt }}
+          path: dist/promotion-check/promotion-receipt.json
+          retention-days: 14
+          if-no-files-found: warn

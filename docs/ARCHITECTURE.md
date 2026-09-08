@@ -165,8 +165,11 @@ The public macOS distribution keeps the service and interface composable:
   it as an owned child.
 
 Desktop application releases are Developer ID signed, notarized, and updater
-signed before the tag workflow can publish them. Homebrew bootstraps and
-repairs the app; the native Tauri updater owns normal in-app upgrades. The
+signed before the tag workflow can publish immutable assets. A separate
+serialized, resumable promotion job re-verifies those public bytes before it
+atomically advances the Homebrew Formula, Cask, and fixed Desktop channel. A
+promotion-only retry never rebuilds or mutates the release. Homebrew bootstraps
+and repairs the app; the native Tauri updater owns normal in-app upgrades. The
 selected daemon keeps its independent Homebrew-backed update lifecycle. See
 [Desktop updates](DESKTOP-UPDATES.md) for the trust boundary, channel, rollout,
 and two-version qualification contract. A native app replacement does not

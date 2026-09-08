@@ -43,7 +43,7 @@ Wisp has one authoritative daemon and several clients:
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `src/` module and its nearest tests |
 | Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/ui/README.md`, both runtime paths, the owning component/hook, and its tests |
 | Change the desktop shell's native core, proxy, connections, credentials, or updater | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md), [Desktop updates](../../docs/DESKTOP-UPDATES.md), then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
-| Prepare or publish a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, release notes, evaluator guide, and both repository diffs |
+| Prepare, publish, recover, or promote a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, promotion receipt, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
 | Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
 | Change the mark or generated brand assets | `brand/README.md` | `scripts/brand/`; never hand-edit generated assets |
@@ -104,3 +104,8 @@ publication surfaces.
 8. Keep investigation notes and implementation plans in `.context/` by
    default. Commit one only when it serves a durable repository-level purpose,
    and sanitize it to the standard required for any public artifact.
+9. Treat immutable GitHub release publication and mutable Homebrew/update-channel
+   promotion as separate states. Recover a valid published release through the
+   idempotent promotion path; never rebuild, replace assets, or create a new
+   version solely because promotion failed. Run promotion audits only on the
+   disposable host required by the release playbook.
