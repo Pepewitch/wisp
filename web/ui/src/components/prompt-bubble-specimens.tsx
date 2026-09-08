@@ -177,8 +177,8 @@ export function PromptBubbleSpecimens() {
               <span className="text-faint">5 min ago</span> — drops to its own line beneath rather than squeezing
               the words. A steer carries <span className="text-faint">sent mid-turn</span> there, because a settled
               turn shows its steers at the head of the turn and two right-aligned cards would otherwise look alike.
-              A queued bubble has no caption at all: it has not been sent, so it has no time to state, and the line
-              inside it already says the truer thing.
+              A queued bubble carries where its delivery stands in place of a time, because it has not been sent —
+              and nothing at all is left inside a bubble but the person's words.
             </p>
           </div>
         </div>

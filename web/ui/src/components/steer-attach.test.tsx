@@ -44,7 +44,9 @@ describe("SteerBox agent metadata", () => {
   it("keeps the task's selected effort visible after its model", () => {
     render_(<SteerBox task={task({ effort: "xhigh" })} hasImage onSend={() => {}} />)
     const effort = screen.getByText("xhigh effort")
-    expect(effort.parentElement?.textContent).toMatch(/codex.*gpt-5.*xhigh effort/)
+    // its own span now, so it can never break mid-phrase in a squeezed bar
+    expect(effort.className).toContain("whitespace-nowrap")
+    expect(effort.closest("div")?.textContent).toMatch(/codex.*gpt-5.*xhigh effort/)
   })
 })
 

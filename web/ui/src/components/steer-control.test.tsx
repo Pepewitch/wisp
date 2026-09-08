@@ -123,27 +123,38 @@ describe("the running-turn composer control", () => {
   })
 })
 
-describe("the composer control bar on touch", () => {
-  it("leaves harness and model to the task header, which already says them", () => {
-    mount(<SteerBox task={task("done")} touch />)
+describe("the composer control bar answers its own width", () => {
+  /** jsdom evaluates no container query, so both arrangements are in the DOM. */
+  const shown = (text: string) =>
+    screen.getAllByText(text).map((node) => node.className)
 
-    expect(screen.queryByText("codex")).toBeNull()
-    expect(screen.queryByText("gpt-5")).toBeNull()
+  it("marks the bar a container rather than reading the window", () => {
+    const { container } = mount(<SteerBox task={task("done")} />)
+
+    // Desktop's zoom shrinks this pane in CSS pixels without touching the
+    // window, so a media query would never fire for it
+    expect(container.querySelector('[class~="@container"]')).not.toBeNull()
   })
 
-  it("keeps them on pointer, where the bar has the width", () => {
+  it("yields harness and model at the first step, where the task header still says them", () => {
     mount(<SteerBox task={task("done")} />)
 
-    expect(screen.getByText("codex")).toBeInTheDocument()
-    expect(screen.getByText("gpt-5")).toBeInTheDocument()
+    expect(screen.getByText("codex").closest("span.hidden")?.className).toContain("@lg:flex")
   })
 
-  it("gives the running note its own line rather than wrapping it four deep", () => {
-    mount(<SteerBox task={task()} touch />)
+  it("gives the running note its own line until the bar is wide enough to inline it", () => {
+    mount(<SteerBox task={task()} />)
 
-    // one line above the controls, not a flex sibling squeezed between the
-    // suffix picker and the send button
-    const note = screen.getByText("running · send won't interrupt")
-    expect(note.parentElement).toBe(note.closest(".flex-col"))
+    const notes = shown("running · send won't interrupt")
+    expect(notes).toHaveLength(2)
+    // the stacked one disappears once the row is wide enough for the inline one
+    expect(notes.some((c) => c.includes("@2xl:hidden"))).toBe(true)
+    expect(notes.some((c) => c.includes("@2xl:block") && c.includes("whitespace-nowrap"))).toBe(true)
+  })
+
+  it("keeps the keyboard hint for the wide arrangement alone", () => {
+    mount(<SteerBox task={task("done")} />)
+
+    expect(screen.getByTitle("Enter sends · Shift+Enter for a new line").className).toContain("@2xl:block")
   })
 })

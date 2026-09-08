@@ -312,16 +312,21 @@ function TurnBlock({
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
       <PersonBubble
         actions={<UserMessageCopyButton text={turn.prompt} />}
-        caption={<BubbleTimestamp at={turn.started_at} />}
+        caption={
+          <>
+            {deliveryUncertain && (
+              <>
+                <span>retried after an unconfirmed delivery; an earlier process may also have received it</span>
+                <span aria-hidden>·</span>
+              </>
+            )}
+            <BubbleTimestamp at={turn.started_at} />
+          </>
+        }
       >
         <div data-turn-prompt className="whitespace-pre-wrap">
           {turn.prompt}
         </div>
-        {deliveryUncertain && (
-          <div className="mt-1 text-[10.5px] text-faint">
-            retried after an unconfirmed delivery; an earlier process may also have received it
-          </div>
-        )}
       </PersonBubble>
 
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
@@ -418,17 +423,18 @@ function SteeredMessage({
                 prompt bubble — two right-aligned cards with nothing but 12px
                 against 30px of gap to say which one started the turn. */}
             <span className="whitespace-nowrap">sent mid-turn</span>
+            {message.delivery_uncertain && (
+              <>
+                <span aria-hidden>·</span>
+                <span>retried after an unconfirmed native admission</span>
+              </>
+            )}
             <span aria-hidden>·</span>
             <BubbleTimestamp at={message.created_at} />
           </>
         }
       >
         <div className="whitespace-pre-wrap">{message.text}</div>
-        {message.delivery_uncertain && (
-          <div className="mt-1 text-[10.5px] text-faint">
-            delivery retried after an unconfirmed native admission
-          </div>
-        )}
       </PersonBubble>
       <MessageAttachments
         taskId={taskId}
@@ -471,12 +477,24 @@ function QueuedMessage({
 
   return (
     <article data-message={message.id} data-status={message.status} className="pt-[30px]">
-      {/* No caption at all: this one has not been SENT, so it has no time to
-          state, and the line inside already says the truer thing (§5). Edit
-          and cancel join copy in the floating toolbar, because they are
+      {/* No time to state: this one has not been SENT. What it states instead
+          is where its delivery stands, and that goes in the caption like every
+          other fact — the bubble holds the person's words and nothing else.
+          Edit and cancel join copy in the floating toolbar, because they are
           controls. While editing they come back inside — the bubble is a form
           then, and a form owns its own Save. */}
       <PersonBubble
+        caption={
+          <span>
+            {archived
+              ? "not delivered; task is archived"
+              : cancelled
+                ? "retry cancelled; prior delivery may already have succeeded"
+              : message.delivery_uncertain
+                ? "queued for retry; prior delivery may already have succeeded"
+                : "queued for the next turn"}
+          </span>
+        }
         actions={
           !editing && (
             <>
@@ -519,36 +537,24 @@ function QueuedMessage({
         ) : (
           <div className="whitespace-pre-wrap">{message.text}</div>
         )}
-        <div className="mt-1.5 flex items-center gap-2 text-[10.5px] text-faint">
-          <span>
-            {archived
-              ? "not delivered; task is archived"
-              : cancelled
-                ? "retry cancelled; prior delivery may already have succeeded"
-              : message.delivery_uncertain
-                ? "queued for retry; prior delivery may already have succeeded"
-                : "queued for the next turn"}
-          </span>
-          {editing && (
-            <>
-              <span className="flex-1" />
-              <button type="button" disabled={busy} className="hover:text-foreground" onClick={save}>
-                Save
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                className="hover:text-foreground"
-                onClick={() => {
-                  setEditing(false)
-                  setDraft(message.text)
-                }}
-              >
-                Cancel
-              </button>
-            </>
-          )}
-        </div>
+        {editing && (
+          <div className="mt-1.5 flex items-center justify-end gap-2 text-[10.5px] text-faint">
+            <button type="button" disabled={busy} className="hover:text-foreground" onClick={save}>
+              Save
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className="hover:text-foreground"
+              onClick={() => {
+                setEditing(false)
+                setDraft(message.text)
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </PersonBubble>
       <MessageAttachments
         taskId={taskId}

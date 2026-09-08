@@ -605,8 +605,12 @@ describe("the bubble's caption", () => {
     // one toolbar, three controls, all of them on the card
     expect(edit.parentElement).toBe(cancel.parentElement)
     expect(card.contains(edit)).toBe(true)
-    // it has not been sent; the line inside already says the truer thing
-    expect(card).toHaveTextContent("queued for the next turn")
+    // where its delivery stands is a FACT, so it rides the caption like every
+    // other one — the card holds the person's words and nothing else
+    const status = screen.getByText("queued for the next turn")
+    expect(card.contains(status)).toBe(false)
+    expect(card).toHaveTextContent("Then add tests")
+    // it has not been sent, so it has no time to state
     expect(card.closest("article")!.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(0)
   })
 

@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react"
 
 import { CopyButton } from "@/components/copy-button"
-import { POPOVER_SURFACE } from "@/components/primitives"
 import { useTick } from "@/hooks/useTick"
 import { fromNow, utcIso } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -121,9 +120,13 @@ export function PersonBubble({
               // bubble, and then it sits on the words; 2px clear can never do
               // that, whatever the toolbar grows to hold. Hover still carries
               // across the gap, because the toolbar is a DOM child.
-              "absolute right-2 bottom-full mb-0.5 flex items-center gap-0.5 rounded-md p-0.5",
-              POPOVER_SURFACE,
-              "transition-opacity",
+              "absolute right-2 bottom-full mb-0.5 flex items-center rounded-md",
+              // No padding of its own and the LIGHTEST depth: this is in-pane
+              // chrome hanging off a 12.5px bubble, not a menu, and at
+              // `shadow-popover` a 22px box outweighed the message it belonged
+              // to. `border-border` for the same reason. 16px tall, exactly its
+              // buttons.
+              "border border-border bg-popover shadow-float transition-opacity",
               // hidden until the pointer arrives, and until a keyboard does;
               // on touch there is no hover, so it simply stays (§6b)
               "pointer:opacity-0 pointer:group-hover/bubble:opacity-100 pointer:group-focus-within/bubble:opacity-100",
@@ -133,10 +136,20 @@ export function PersonBubble({
           </div>
         )}
       </div>
-      {/* one muted register for the whole caption, so a word beside the time
-          never has to restate the size it is already written in */}
+      {/* One muted register for the whole caption, so a word beside the time
+          never has to restate the size it is already written in. It wraps
+          within itself as well as onto its own line, because a delivery state
+          is a SENTENCE ("retry cancelled; prior delivery may already have
+          succeeded"), not a label. */}
       {caption && (
-        <div className="flex shrink-0 items-center gap-1.5 pb-1 text-[10.5px] text-faint">{caption}</div>
+        <div
+          className={cn(
+            "flex max-w-full shrink-0 flex-wrap items-center justify-end gap-x-1.5",
+            "pb-1 text-right text-[10.5px] text-faint",
+          )}
+        >
+          {caption}
+        </div>
       )}
     </div>
   )
