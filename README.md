@@ -18,10 +18,11 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current version: `0.4.0-alpha.13`.** This is a published experimental
-prerelease, not production-ready software. Alpha.13 is the second signed
-Desktop release and completed the first public in-app update from alpha.12; it
-also adds theme settings and a rebuilt small-screen shell.
+**Current candidate: `0.4.0-alpha.14`.** This experimental prerelease is not
+production-ready software. Alpha.14 carries the shared conversation-caption
+and slash-command selection fixes onto the signed Desktop update channel. It
+remains pending until the tagged artifacts and public Homebrew channel pass the
+release gates.
 
 ## Why Wisp
 
@@ -50,8 +51,8 @@ lifecycle state, and phone-capable steering.
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
 is machine qualification only. The public alpha.13 Desktop archive is Developer
 ID signed, notarized, stapled, and updater-signed; its alpha.12-to-alpha.13
-self-update was qualified on one Apple Silicon Mac. Future releases retain the
-same fail-closed publication gates.
+self-update was qualified on one Apple Silicon Mac. Alpha.14 must pass the same
+fail-closed publication gates before it becomes the current public release.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -62,7 +63,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.13 # replace with the current published alpha
+version=0.4.0-alpha.14 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -72,7 +73,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.13/wisp-v0.4.0-alpha.13-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.14/wisp-v0.4.0-alpha.14-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -259,7 +260,7 @@ shared-client contract.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.13 # replace with the installed alpha
+version=0.4.0-alpha.14 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh
