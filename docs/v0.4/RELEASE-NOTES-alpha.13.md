@@ -13,10 +13,9 @@ The desktop app targets Apple Silicon macOS 12.3 or newer. Intel macOS remains
 unsupported, and the configured deployment minimum is not evidence that every
 macOS version in that range has been qualified.
 
-At release preparation time, alpha.13 signing, notarization, stapling, public
-download verification, Homebrew publication, and the alpha.12-to-alpha.13
-in-app update receipt are pending. The candidate must not publish unless every
-release trust gate passes.
+Alpha.13 passed signing, notarization, stapling, public-download verification,
+Homebrew publication, and the alpha.12-to-alpha.13 in-app update receipt before
+closeout. It remains an experimental alpha after those gates.
 
 ## Install or upgrade
 
@@ -65,9 +64,10 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 ## Known limits
 
-- The updater is not qualified until an installed alpha.12 app discovers,
-  verifies, installs, and relaunches into the public alpha.13 artifact. A fresh
-  alpha.13 Homebrew install alone does not prove that upgrade path.
+- The updater path is qualified only by one alpha.12-to-alpha.13 journey on one
+  Apple Silicon Mac. This is not broad hardware or macOS qualification, and a
+  future trust-root, channel, installer, or updater change must repeat the
+  two-version receipt.
 - Apple Silicon support has limited single-machine qualification; Intel Macs
   are unsupported.
 - Closing Wisp Desktop does not stop daemons or agents. The app is an interface,
@@ -94,6 +94,10 @@ The release must publish exactly these ten immutable assets:
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
-Publication, anonymous-download verification, Homebrew online audits, and the
-installed updater qualification remain pending until the release and
-post-release checks complete.
+All ten assets were published from clean commit
+`8fb6065b902b66d88dd3a569989442b8b1296a9a`. Anonymous downloads matched the
+qualified bytes; checksum, tampered-signature rejection, Developer ID,
+notarization, staple, Gatekeeper, strict Homebrew audit, in-app replacement,
+relaunch, and state-preservation checks passed. Homebrew tap commit
+`4fbb81e136043605f8b7865fa97fddb15dbc063f` advanced the Formula, Cask, and
+Desktop channel together.

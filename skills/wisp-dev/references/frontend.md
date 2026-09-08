@@ -42,8 +42,10 @@ Every UI change must classify its impact on both clients:
   inline stylesheets allowed. See `desktop/README.md`; a blocked stylesheet
   renders wrong rather than failing, so it is invisible to the browser gate.
 
-Every shared UI change gets the root/UI source gate, which generates the bundle
-it exercises, and an explicit impact review for both runtimes. Run
+Every shared UI PR gets the root/UI source gate, which generates the bundle it
+exercises, and an explicit browser/Desktop impact note with evidence for both
+runtimes. A browser screenshot is not Desktop evidence when CSP, native chrome,
+window sizing, proxying, or a Tauri branch can change the result. Run
 `bun run desktop:check` when native code or an
 enforced native transport/connection contract is affected. Build with
 `bash scripts/desktop/build-macos.sh --app-only` and exercise both clients when

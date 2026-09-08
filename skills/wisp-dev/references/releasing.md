@@ -1,9 +1,9 @@
 # Releasing and publishing Wisp
 
 Use this playbook for a versioned Linux/macOS release, GitHub publication, or
-Homebrew tap update. It records the v0.4 process that produced and qualified
-the public alpha.8 release. The scripts are authoritative when a command or
-filename changes.
+Homebrew tap update. It records the evolving v0.4 process, including the first
+signed Desktop publication in alpha.12 and the first public in-app update in
+alpha.13. The scripts are authoritative when a command or filename changes.
 
 Publishing a tag, GitHub release, or tap commit changes public state. Do it
 only when the owner explicitly authorizes that release. Preparation and local
@@ -52,9 +52,11 @@ authorization and the sole trigger. It runs two jobs:
    both Homebrew recipes plus the Desktop update channel offline, creates the
    "Wisp <version>" GitHub prerelease with the release notes as its body,
    verifies the ten public URLs and both Desktop trust chains anonymously,
-   audits the Formula and Cask online, and pushes exactly `Formula/wisp.rb`,
-   `Casks/wisp-desktop.rb`, and `updates/wisp-desktop-alpha.json` to
-   `Pepewitch/homebrew-tap` in one commit.
+   audits every non-livecheck Formula/Cask rule online, pushes exactly
+   `Formula/wisp.rb`, `Casks/wisp-desktop.rb`, and
+   `updates/wisp-desktop-alpha.json` to `Pepewitch/homebrew-tap` in one commit,
+   waits for the fixed raw channel URL to converge, then requires the full
+   livecheck audit.
 
 The workflow needs these repository secrets:
 
@@ -533,7 +535,7 @@ HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online Pepewitch/tap/wisp
 HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online --cask \
-    --except github_prerelease_version \
+    --except github_prerelease_version,livecheck_version \
     Pepewitch/tap/wisp-desktop
 git -C "$tap" diff --check
 git -C "$tap" diff -- Formula/wisp.rb Casks/wisp-desktop.rb \
@@ -549,8 +551,10 @@ Keychain credentials unless the user removes connections or resets Desktop
 data first. The channel must name the same archive and updater signature bound
 by the release manifest.
 
-`github_prerelease_version` is the one temporary audit exception for the
-custom-tap alpha. Do not exclude Homebrew's signing or Gatekeeper checks.
+`github_prerelease_version` is the persistent audit exception for the
+custom-tap alpha. `livecheck_version` is deferred only before publication,
+because the staged Cask is necessarily newer than the still-public channel.
+Do not exclude Homebrew's signing or Gatekeeper checks.
 
 Commit and push the tap only with explicit authorization:
 
@@ -568,9 +572,26 @@ EOF
 git -C "$tap" push origin HEAD:main
 ```
 
-Then verify the public tap:
+The fixed raw channel URL advertises a five-minute cache. Wait for that exact
+URL—not a cache-busting variant—to return the committed bytes before running
+the full livecheck audit:
 
 ```sh
+public_channel="$(mktemp)"
+channel_url="https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json"
+channel_ready=0
+for _ in $(seq 1 24); do
+  if curl --proto '=https' --tlsv1.2 -fsSL "$channel_url" \
+    -o "$public_channel" && \
+    cmp -s "$tap/updates/wisp-desktop-alpha.json" "$public_channel"
+  then
+    channel_ready=1
+    break
+  fi
+  sleep 15
+done
+test "$channel_ready" = 1
+
 brew update
 homebrew_api_token="$(gh auth token)" || {
   echo "GitHub authentication is required for Homebrew's online audits" >&2
@@ -587,6 +608,9 @@ HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
     --except github_prerelease_version \
     Pepewitch/tap/wisp-desktop
 ```
+
+This post-push Cask audit must not exclude `livecheck_version`; it proves the
+application's compiled fixed channel, the public tap, and the Cask agree.
 
 ## 9. Qualify fresh install and upgrade
 
@@ -660,16 +684,21 @@ sleep 4
 ps -axo comm= | awk -F/ '$NF == "wisp-desktop" { found=1 } END { exit !found }'
 ```
 
-The first signed, self-update-capable Desktop release is a bootstrap release:
-the public alpha.8 app cannot discover it, so install it through the Homebrew
-`--greedy` path above. Qualifying the updater itself requires a second signed
-version. Leave the bootstrap version installed, publish the next version, use
-**Updates → Check now**, confirm the displayed old/new versions and notes, then
-choose **Update Desktop and relaunch**. Re-run the Apple checks above against
-the replaced app and confirm connections, tasks, and daemon state persist. A
-bad-signature negative test must leave the older app runnable. Record the
-two-version receipt; a single fresh install does not qualify self-update. See
-[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
+The first signed, self-update-capable Desktop release is a bootstrap release.
+Alpha.12 filled that role because the public alpha.8 app could not discover it;
+alpha.13 completed the first two-version public receipt. For a new updater,
+trust-root, channel, or installer change, leave the older signed version
+installed, publish the next version, use **Updates → Check now**, confirm the
+displayed old/new versions and notes, then choose **Update Desktop and
+relaunch**. Re-run the Apple checks against the replaced app and confirm
+connections, tasks, and daemon state persist. A bad-signature negative test
+must leave the older app runnable.
+
+The native updater does not rewrite Homebrew's Caskroom receipt. After proving
+the in-app replacement, run `brew upgrade --cask --greedy wisp-desktop` and
+verify Homebrew reconciles to the same public version without a downgrade.
+Record the two-version receipt; a fresh install alone does not qualify
+self-update. See [`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 
 ## 10. Close out without rewriting history
 

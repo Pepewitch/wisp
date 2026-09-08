@@ -88,6 +88,16 @@ describe("Homebrew Cask rendering", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
     expect(workflow).toContain("HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}");
     expect(workflow).not.toContain("--except signing,github_prerelease_version");
-    expect(workflow).toContain("--except github_prerelease_version");
+    expect(workflow).toContain("--except github_prerelease_version,livecheck_version");
+    expect(workflow).toContain("public Desktop update channel did not converge");
+    expect(workflow).toContain(
+      "--except github_prerelease_version \\\n            Pepewitch/tap/wisp-desktop",
+    );
+    expect(workflow.indexOf("--except github_prerelease_version,livecheck_version")).toBeLessThan(
+      workflow.indexOf('git -C "$tap" push origin HEAD:main'),
+    );
+    expect(workflow.indexOf("public Desktop update channel did not converge")).toBeGreaterThan(
+      workflow.indexOf('git -C "$tap" push origin HEAD:main'),
+    );
   });
 });

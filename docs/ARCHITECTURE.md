@@ -169,7 +169,9 @@ signed before the tag workflow can publish them. Homebrew bootstraps and
 repairs the app; the native Tauri updater owns normal in-app upgrades. The
 selected daemon keeps its independent Homebrew-backed update lifecycle. See
 [Desktop updates](DESKTOP-UPDATES.md) for the trust boundary, channel, rollout,
-and two-version qualification contract.
+and two-version qualification contract. A native app replacement does not
+rewrite Homebrew's Caskroom receipt, so receipt reconciliation is a separate
+package-manager operation; neither operation changes daemon-owned task state.
 
 See [Apple Silicon installation](INSTALL-MACOS.md) and the
 [release playbook](../skills/wisp-dev/references/releasing.md) for current

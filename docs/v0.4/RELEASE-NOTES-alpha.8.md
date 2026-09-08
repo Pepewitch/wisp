@@ -115,6 +115,8 @@ The tag workflow must publish exactly these nine immutable assets:
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
-Publication, anonymous-download verification, Homebrew online audits, and
-installed upgrade qualification remain pending until the tag workflow and
-post-release checks complete.
+All nine assets were published from clean commit
+`f456a543aeab3cdbd5ae39ab406e2a3fa7614a08`. The release and Homebrew install
+path completed their public-byte and machine checks; the ad-hoc-signing limits
+above remain part of this historical release. Alpha.12 later replaced this
+bootstrap path with Developer ID signing, notarization, and a signed updater.
