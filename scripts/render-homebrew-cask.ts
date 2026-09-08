@@ -41,7 +41,9 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
     throw new Error("manifest is not the approved signed Apple Silicon desktop release");
   }
 
-  return `cask "wisp-desktop" do
+  return `# frozen_string_literal: true
+
+cask "wisp-desktop" do
   version "${manifest.version}"
   sha256 "${manifest.artifact.sha256}"
 
@@ -57,13 +59,12 @@ export function renderHomebrewCask(manifest: DesktopReleaseManifest): string {
     end
   end
 
+  auto_updates true
   depends_on arch: :arm64
   depends_on macos: :monterey
   depends_on formula: "pepewitch/tap/wisp"
 
   app "Wisp.app"
-
-  auto_updates true
 
   uninstall quit: "dev.wisp.desktop"
 
