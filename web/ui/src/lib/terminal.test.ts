@@ -101,6 +101,17 @@ describe("terminalSocketPath", () => {
   it("addresses the tab, so the same id reattaches to the same daemon shell", () => {
     expect(terminalSocketPath("tabc", 3)).toBe("/api/tasks/tabc/terminal?shell=3");
   });
+
+  it("carries the pane's size, because the shell is born while this is answered", () => {
+    expect(terminalSocketPath("tabc", 0, { cols: 58, rows: 9 })).toBe(
+      "/api/tasks/tabc/terminal?shell=0&cols=58&rows=9",
+    );
+  });
+
+  it("omits a size it could not measure rather than inventing one", () => {
+    expect(terminalSocketPath("tabc", 0, null)).toBe("/api/tasks/tabc/terminal?shell=0");
+    expect(terminalSocketPath("tabc", 0, { cols: 0, rows: 0 })).toBe("/api/tasks/tabc/terminal?shell=0");
+  });
 });
 
 describe("hello replay", () => {

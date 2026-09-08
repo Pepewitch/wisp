@@ -61,6 +61,15 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   client to connect owns it and the previous one is told it was displaced. Two
   clients on one task — a browser and the desktop app — is therefore normal
   and visible, never a terminal that silently ignores what you type.
+- A shell is BORN at the size of the pane that asked for it, which is why the
+  geometry rides on the WebSocket upgrade rather than arriving in a later
+  frame: the first prompt is drawn before any client message could reach the
+  daemon, and a prompt drawn for the wrong width survives on screen.
+- What a reattaching client receives is a snapshot of the screen, not the bytes
+  that produced it. Raw output encodes cursor motion that is only correct at
+  the width it was written at, so replaying it into a differently sized pane
+  corrupts the display. `src/terminal-screen.ts` keeps the daemon's model in
+  the same engine the browser renders with, and it is resized with the pty.
 - Worktree file reads belong to the daemon, not to a client's own filesystem
   access: it owns the tree, so a remote connection and the browser get the
   same viewer. The path arrives from a link an agent wrote, so containment is
@@ -134,6 +143,8 @@ remains active.
 | Realtime streams | `src/events.ts`, `src/routes/stream.ts` |
 | Webhook delivery | `src/outbox.ts` |
 | Terminal sessions | `src/terminal.ts`, `src/daemon.ts` |
+| Pty allocation, sizing, and the `__pty-exec` child | `src/pty.ts` |
+| The daemon's model of each shell's screen | `src/terminal-screen.ts` |
 | Shared public shapes | `src/types.ts`, route serializers, `web/ui/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |
 
 ## Validation

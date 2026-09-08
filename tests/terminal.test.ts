@@ -3,23 +3,17 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
-import { serve } from "../src/daemon";
+import { parseTerminalSize, serve } from "../src/daemon";
 import {
-  darwinPtyArgv,
+  DEFAULT_PTY_SIZE,
   DISPLACED_MESSAGE,
   killAll,
   killForTask,
-  linuxPtyArgv,
   loginShell,
-  parseTty,
-  ReplayBuffer,
-  resizePty,
+  loginShellArgv,
   sessionKey,
-  sttyResizeArgv,
-  ttyForPidArgv,
   WEB_TERMINAL_TERM,
   webTerminalEnv,
-  type TerminalSpawnFn,
 } from "../src/terminal";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
 
@@ -47,50 +41,58 @@ afterEach(async () => {
   server = null;
 });
 
+
+/**
+ * One task with a real worktree, plus the config the daemon needs to serve it.
+ * Every terminal test needs the same thing, and repeating it inline made the
+ * suite mostly setup — the interesting part of each test is what it does to
+ * the shell afterwards.
+ */
+function terminalFixture(label: string): { task: ReturnType<typeof createTask>; worktree: string } {
+  writeFileSync(
+    CONFIG_PATH,
+    JSON.stringify({
+      port: 18710,
+      host: "127.0.0.1",
+      token,
+      webhooks: [],
+      stuckMinutes: 10,
+      logMaxBytes: 5_000_000,
+      setupTimeoutMinutes: 10,
+      envAllowlist: {},
+      harnessDefaults: {},
+    }),
+  );
+
+  const root = mkdtempSync(join(tmpdir(), `wisp-terminal-${label}-test-`));
+  const repo = join(root, "repo");
+  const worktree = join(root, "worktree");
+  mkdirSync(repo);
+  git(repo, ["init", "-q"]);
+  git(repo, ["config", "user.email", "terminal-test@wisp"]);
+  git(repo, ["config", "user.name", "terminal-test"]);
+  writeFileSync(join(repo, "README"), `terminal ${label} test\n`);
+  git(repo, ["add", "README"]);
+  git(repo, ["commit", "-q", "-m", "init"]);
+
+  const taskId = newTaskId();
+  const branch = `wisp/${taskId}-terminal-${label}`;
+  git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
+  const task = createTask({
+    id: taskId,
+    title: `terminal ${label} test`,
+    repo_path: repo,
+    harness: "fake",
+    model: null,
+    slot: freeSlot(),
+  });
+  setTaskFields(task.id, { worktree_path: worktree, branch, base_commit: git(repo, ["rev-parse", "HEAD"]) });
+  return { task, worktree };
+}
+
 describe("embedded web terminal", () => {
   test("runs in the worktree and archive kills the attached shell", async () => {
-    writeFileSync(
-      CONFIG_PATH,
-      JSON.stringify({
-        port: 18710,
-        host: "127.0.0.1",
-        token,
-        webhooks: [],
-        stuckMinutes: 10,
-        logMaxBytes: 5_000_000,
-        setupTimeoutMinutes: 10,
-        envAllowlist: {},
-        harnessDefaults: {},
-      }),
-    );
-
-    const root = mkdtempSync(join(tmpdir(), "wisp-terminal-test-"));
-    const repo = join(root, "repo");
-    const worktree = join(root, "worktree");
-    mkdirSync(repo);
-    git(repo, ["init", "-q"]);
-    git(repo, ["config", "user.email", "terminal-test@wisp"]);
-    git(repo, ["config", "user.name", "terminal-test"]);
-    writeFileSync(join(repo, "README"), "terminal test\n");
-    git(repo, ["add", "README"]);
-    git(repo, ["commit", "-q", "-m", "init"]);
-
-    const taskId = newTaskId();
-    const branch = `wisp/${taskId}-terminal-test`;
-    git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-    const task = createTask({
-      id: taskId,
-      title: "terminal test",
-      repo_path: repo,
-      harness: "fake",
-      model: null,
-      slot: freeSlot(),
-    });
-    setTaskFields(task.id, {
-      worktree_path: worktree,
-      branch,
-      base_commit: git(repo, ["rev-parse", "HEAD"]),
-    });
+    const { task, worktree } = terminalFixture("attach");
 
     server = await serve({ port: 0 });
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
@@ -146,48 +148,7 @@ describe("embedded web terminal", () => {
     "respawns a fresh shell when the previous shell has exited",
     { timeout: 20_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-respawn-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal respawn test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-respawn`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal respawn test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task, worktree } = terminalFixture("respawn");
 
       server = await serve({ port: 0 });
       const first = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
@@ -227,48 +188,7 @@ describe("embedded web terminal", () => {
     "a reattaching tab replays its shell's scrollback, and tabs are separate shells",
     { timeout: 30_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-replay-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal replay test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-replay`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal replay test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task } = terminalFixture("replay");
 
       server = await serve({ port: 0 });
       const url = (shell: number): string =>
@@ -322,48 +242,7 @@ describe("embedded web terminal", () => {
     "a second client takes the shell and the first is told, not silenced",
     { timeout: 30_000 },
     async () => {
-      writeFileSync(
-        CONFIG_PATH,
-        JSON.stringify({
-          port: 18710,
-          host: "127.0.0.1",
-          token,
-          webhooks: [],
-          stuckMinutes: 10,
-          logMaxBytes: 5_000_000,
-          setupTimeoutMinutes: 10,
-          envAllowlist: {},
-          harnessDefaults: {},
-        }),
-      );
-
-      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-displace-test-"));
-      const repo = join(root, "repo");
-      const worktree = join(root, "worktree");
-      mkdirSync(repo);
-      git(repo, ["init", "-q"]);
-      git(repo, ["config", "user.email", "terminal-test@wisp"]);
-      git(repo, ["config", "user.name", "terminal-test"]);
-      writeFileSync(join(repo, "README"), "terminal displacement test\n");
-      git(repo, ["add", "README"]);
-      git(repo, ["commit", "-q", "-m", "init"]);
-
-      const taskId = newTaskId();
-      const branch = `wisp/${taskId}-terminal-displace`;
-      git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-      const task = createTask({
-        id: taskId,
-        title: "terminal displacement test",
-        repo_path: repo,
-        harness: "fake",
-        model: null,
-        slot: freeSlot(),
-      });
-      setTaskFields(task.id, {
-        worktree_path: worktree,
-        branch,
-        base_commit: git(repo, ["rev-parse", "HEAD"]),
-      });
+      const { task } = terminalFixture("displace");
 
       server = await serve({ port: 0 });
       const url = `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0`;
@@ -409,45 +288,99 @@ describe("embedded web terminal", () => {
     },
   );
 
+  test(
+    "the shell is created at the size the upgrade asked for",
+    { timeout: 20_000 },
+    async () => {
+      // The whole fix depends on this wiring: the pane measures itself, the
+      // size rides on the upgrade, and openSession creates the pty with it.
+      // Unit tests cover each half; this is the only place the daemon path
+      // from query string to a real shell's window size is exercised.
+      const { task } = terminalFixture("size");
+
+      server = await serve({ port: 0 });
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=58&rows=9`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      let seen = "";
+      let resolveSize!: () => void;
+      let rejectSize!: (error: Error) => void;
+      const reported = new Promise<void>((resolve, reject) => {
+        resolveSize = resolve;
+        rejectSize = reject;
+      });
+      ws.onerror = () => rejectSize(new Error("terminal websocket error"));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (message.type === "hello") {
+          expect(message.pty).toBe(true);
+          ws.send(JSON.stringify({ type: "in", data: "stty size\n" }));
+        }
+        if (message.type === "out") {
+          seen += String(message.data);
+          // "9 58" is rows then cols: the shell was born knowing the pane
+          if (/\b9 58\b/.test(seen)) resolveSize();
+        }
+      };
+      await waitFor(reported, 15_000);
+      ws.close();
+    },
+  );
+
+  test(
+    "killing a shell does not wait out the SIGKILL grace period",
+    { timeout: 20_000 },
+    async () => {
+      // An interactive shell IGNORES SIGTERM. While the shell ran under
+      // script(1) that did not matter, because script does not; now the shell
+      // is the child, so terminating it with SIGTERM would make every archive
+      // and every daemon shutdown sit through the full grace period first.
+      const { task } = terminalFixture("kill");
+
+      server = await serve({ port: 0 });
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=80&rows=24`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      // Kill it from an interactive PROMPT, not from a shell still starting
+      // up: a shell that has finished initialising is the one that has its
+      // signal handling in place, and it is the state a real pane is in.
+      let seen = "";
+      let started = false;
+      let resolveReady!: () => void;
+      let rejectReady!: (error: Error) => void;
+      const ready = new Promise<void>((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+      });
+      ws.onerror = () => rejectReady(new Error("terminal websocket error"));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (message.type === "hello") ws.send(JSON.stringify({ type: "in", data: "echo shell-ready\n" }));
+        if (message.type === "out" && /shell-ready/.test(seen + String(message.data)) && !started) {
+          started = true;
+          // a foreground job, so the kill has to reach the whole process group
+          ws.send(JSON.stringify({ type: "in", data: "sleep 30\n" }));
+        }
+        if (message.type === "out") {
+          seen += String(message.data);
+          if (/shell-ready/.test(seen)) resolveReady();
+        }
+      };
+      await waitFor(ready, 10_000);
+      await Bun.sleep(500); // let `sleep 30` become the foreground job
+
+      const killedAt = Date.now();
+      await killForTask(task.id);
+      // The grace period before SIGKILL is 5s; a shell that honours the signal
+      // is gone in well under a second.
+      expect(Date.now() - killedAt).toBeLessThan(3_000);
+      ws.close();
+    },
+  );
+
   test("rejects a shell id outside the per-task range instead of upgrading", async () => {
-    writeFileSync(
-      CONFIG_PATH,
-      JSON.stringify({
-        port: 18710,
-        host: "127.0.0.1",
-        token,
-        webhooks: [],
-        stuckMinutes: 10,
-        logMaxBytes: 5_000_000,
-        setupTimeoutMinutes: 10,
-        envAllowlist: {},
-        harnessDefaults: {},
-      }),
-    );
-
-    const root = mkdtempSync(join(tmpdir(), "wisp-terminal-shellid-test-"));
-    const repo = join(root, "repo");
-    const worktree = join(root, "worktree");
-    mkdirSync(repo);
-    git(repo, ["init", "-q"]);
-    git(repo, ["config", "user.email", "terminal-test@wisp"]);
-    git(repo, ["config", "user.name", "terminal-test"]);
-    writeFileSync(join(repo, "README"), "terminal shell id test\n");
-    git(repo, ["add", "README"]);
-    git(repo, ["commit", "-q", "-m", "init"]);
-
-    const taskId = newTaskId();
-    const branch = `wisp/${taskId}-terminal-shellid`;
-    git(repo, ["worktree", "add", "-q", "-b", branch, worktree, "HEAD"]);
-    const task = createTask({
-      id: taskId,
-      title: "terminal shell id test",
-      repo_path: repo,
-      harness: "fake",
-      model: null,
-      slot: freeSlot(),
-    });
-    setTaskFields(task.id, { worktree_path: worktree, branch, base_commit: git(repo, ["rev-parse", "HEAD"]) });
+      const { task } = terminalFixture("shellid");
 
     server = await serve({ port: 0 });
     const base = `http://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`;
@@ -460,7 +393,7 @@ describe("embedded web terminal", () => {
   });
 });
 
-describe("loginShell + PTY argv", () => {
+describe("loginShell + shell argv", () => {
   test("the browser shell always gets xterm capabilities", () => {
     expect(webTerminalEnv({}, {})).toMatchObject({
       TERM: WEB_TERMINAL_TERM,
@@ -472,6 +405,15 @@ describe("loginShell + PTY argv", () => {
     });
   });
 
+  test("drops an inherited COLUMNS/LINES so the tty stays authoritative", () => {
+    // The daemon may have been started from a terminal. Those values describe
+    // that window, and a shell startup file reading them would size the prompt
+    // for it instead of for the pane the pty was just sized to.
+    const env = webTerminalEnv({ COLUMNS: "204", LINES: "51" }, {});
+    expect(env.COLUMNS).toBeUndefined();
+    expect(env.LINES).toBeUndefined();
+  });
+
   test("prefers $SHELL when it points at an existing binary", () => {
     const orig = process.env.SHELL;
     const shell = Bun.which("sh");
@@ -479,8 +421,7 @@ describe("loginShell + PTY argv", () => {
     process.env.SHELL = shell;
     try {
       expect(loginShell()).toBe(shell);
-      expect(darwinPtyArgv()).toEqual(["script", "-q", "/dev/null", shell, "-l"]);
-      expect(linuxPtyArgv()).toEqual(["script", "-q", "-c", `'${shell}' -l`, "/dev/null"]);
+      expect(loginShellArgv()).toEqual([shell, "-l"]);
     } finally {
       if (orig === undefined) delete process.env.SHELL;
       else process.env.SHELL = orig;
@@ -499,133 +440,20 @@ describe("loginShell + PTY argv", () => {
   });
 });
 
-describe("PTY resize", () => {
-  test("parses the platform tty names and rejects ps noise", () => {
-    expect(parseTty("  ttys007\n")).toBe("ttys007");
-    expect(parseTty("pts/3\n")).toBe("pts/3");
-    expect(parseTty("?\n")).toBeNull();
-    expect(parseTty("pts/3\npts/4")).toBeNull();
+describe("terminal size on the upgrade", () => {
+  test("takes the pane's measured geometry", () => {
+    expect(parseTerminalSize(new URLSearchParams("shell=0&cols=58&rows=9"))).toEqual({ cols: 58, rows: 9 });
   });
 
-  test("builds the outside stty command for macOS and Linux", () => {
-    expect(ttyForPidArgv(42)).toEqual(["ps", "-o", "tty=", "-p", "42"]);
-    expect(sttyResizeArgv("darwin", "/dev/ttys007", 120, 40)).toEqual([
-      "stty",
-      "-f",
-      "/dev/ttys007",
-      "rows",
-      "40",
-      "cols",
-      "120",
-    ]);
-    expect(sttyResizeArgv("linux", "/dev/pts/3", 120, 40)).toEqual([
-      "stty",
-      "-F",
-      "/dev/pts/3",
-      "rows",
-      "40",
-      "cols",
-      "120",
-    ]);
+  test("a client that did not measure itself gets the documented default", () => {
+    expect(parseTerminalSize(new URLSearchParams("shell=0"))).toBeNull();
+    expect(DEFAULT_PTY_SIZE).toEqual({ cols: 80, rows: 24 });
   });
 
-  test("discovers the shell tty and resizes from outside the shell", async () => {
-    const seen: string[][] = [];
-    const spawn: TerminalSpawnFn = (cmd) => {
-      seen.push(cmd);
-      if (cmd[1] === "-axo") {
-        return { exitCode: 0, stdout: " 100 1 script\n 101 100 /bin/bash\n", stderr: "" };
-      }
-      if (cmd[0] === "ps") return { exitCode: 0, stdout: " pts/3\n", stderr: "" };
-      return { exitCode: 0, stdout: "", stderr: "" };
-    };
-    let injected = false;
-    const result = await resizePty({
-      rootPid: 100,
-      shell: "/bin/bash",
-      platform: "linux",
-      cols: 120,
-      rows: 40,
-      device: null,
-      spawn,
-      fallback: () => {
-        injected = true;
-      },
-    });
-
-    expect(result.usedPty).toBe(true);
-    expect(result.device).toEqual({ pid: 101, path: "/dev/pts/3" });
-    expect(injected).toBe(false);
-    expect(seen).toEqual([
-      ["ps", "-axo", "pid=,ppid=,comm="],
-      ["ps", "-o", "tty=", "-p", "101"],
-      ["stty", "-F", "/dev/pts/3", "rows", "40", "cols", "120"],
-    ]);
-  });
-
-  test("falls back to the injected command when tty discovery fails", async () => {
-    const seen: string[][] = [];
-    const spawn: TerminalSpawnFn = (cmd) => {
-      seen.push(cmd);
-      return { exitCode: 1, stdout: "", stderr: "ps failed" };
-    };
-    let injected = "";
-    const result = await resizePty({
-      rootPid: 100,
-      shell: "/bin/bash",
-      platform: "linux",
-      cols: 120,
-      rows: 40,
-      device: null,
-      spawn,
-      fallback: () => {
-        injected = "stty rows 40 cols 120\r";
-      },
-    });
-
-    expect(result.usedPty).toBe(false);
-    expect(injected).toBe("stty rows 40 cols 120\r");
-    expect(seen).toEqual([["ps", "-axo", "pid=,ppid=,comm="]]);
-  });
-});
-
-describe("ReplayBuffer", () => {
-  test("returns everything it was given while under the cap", () => {
-    const buffer = new ReplayBuffer(64);
-    buffer.push("hello ");
-    buffer.push("world");
-    expect(buffer.text()).toBe("hello world");
-    expect(buffer.length).toBe(11);
-  });
-
-  test("ignores empty writes rather than growing a chunk list of nothing", () => {
-    const buffer = new ReplayBuffer(64);
-    buffer.push("");
-    expect(buffer.text()).toBe("");
-    expect(buffer.length).toBe(0);
-  });
-
-  test("drops WHOLE chunks from the front, never slicing mid-escape-sequence", () => {
-    const buffer = new ReplayBuffer(10);
-    buffer.push("aaaaa");
-    buffer.push("bbbbb");
-    buffer.push("ccccc"); // pushes past the cap; "aaaaa" leaves entire
-    expect(buffer.text()).toBe("bbbbbccccc");
-    expect(buffer.length).toBe(10);
-  });
-
-  test("a single chunk past the cap keeps its TAIL — the newest output", () => {
-    const buffer = new ReplayBuffer(5);
-    buffer.push("0123456789");
-    expect(buffer.text()).toBe("56789");
-    expect(buffer.length).toBe(5);
-  });
-
-  test("stays within the cap under sustained output", () => {
-    const buffer = new ReplayBuffer(100);
-    for (let i = 0; i < 500; i++) buffer.push(`line ${i}\n`);
-    expect(buffer.length).toBeLessThanOrEqual(100);
-    expect(buffer.text().endsWith("line 499\n")).toBe(true);
+  test("rejects a garbled size instead of quietly inventing one", () => {
+    for (const query of ["cols=0&rows=9", "cols=58&rows=0", "cols=abc&rows=9", "cols=58", "cols=1001&rows=9"]) {
+      expect(typeof parseTerminalSize(new URLSearchParams(query))).toBe("string");
+    }
   });
 });
 

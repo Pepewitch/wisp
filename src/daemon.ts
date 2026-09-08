@@ -12,7 +12,8 @@ import { route } from "./routes";
 import { authorized, postSession } from "./routes/auth";
 import { err, json } from "./routes/http";
 import { getTask } from "./store";
-import { MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
+import type { PtySize } from "./pty";
+import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
 // The generated single-file app is loaded only when the daemon starts. That
@@ -29,8 +30,30 @@ async function bundledAppHtml(): Promise<string> {
 // names from "./daemon" — the entrypoint's public surface is unchanged.
 export { authorized, postSession, route };
 
-type TerminalSocketData = { taskId: string; shellId: number };
+type TerminalSocketData = { taskId: string; shellId: number; size: PtySize | null };
 type TerminalSocket = Bun.ServerWebSocket<TerminalSocketData>;
+
+/**
+ * The pane's geometry from the upgrade query, or null when the client did not
+ * measure itself (an older UI). Returns the error message on bad input, since
+ * a garbled size must be a 400 rather than a silently defaulted shell.
+ */
+export function parseTerminalSize(params: URLSearchParams): PtySize | null | string {
+  const raw = { cols: params.get("cols"), rows: params.get("rows") };
+  if (raw.cols === null && raw.rows === null) return null;
+  const cols = Number(raw.cols);
+  const rows = Number(raw.rows);
+  for (const [name, value] of [
+    ["cols", cols],
+    ["rows", rows],
+  ] as const) {
+    if (!Number.isInteger(value) || value < 1 || value > 1000) {
+      return `terminal ${name} must be an integer from 1 to 1000, got ${JSON.stringify(name === "cols" ? raw.cols : raw.rows)}`;
+    }
+  }
+  return { cols, rows };
+}
+
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
 
 function wsError(ws: TerminalSocket, message: string): void {
@@ -42,7 +65,7 @@ async function attachTerminal(ws: TerminalSocket): Promise<void> {
     const task = getTask(ws.data.taskId);
     if (!task) throw new Error(`no such task: ${ws.data.taskId}`);
     if (!task.worktree_path) throw new Error(`task ${task.id} has no worktree_path`);
-    const session = openSession(task.id, ws.data.shellId, task.worktree_path);
+    const session = openSession(task.id, ws.data.shellId, task.worktree_path, ws.data.size ?? DEFAULT_PTY_SIZE);
     const client: TerminalClient = {
       isOpen: () => ws.readyState === 1,
       sendOutput: (data) => ws.send(JSON.stringify({ type: "out", data })),
@@ -51,10 +74,14 @@ async function attachTerminal(ws: TerminalSocket): Promise<void> {
     };
     session.attach(client); // replaces any prior browser attachment; the shell itself survives
     terminalBindings.set(ws, { session, client });
-    // `replay` is what the shell has already printed. The client RESETS its
-    // xterm and writes this, so a reattached tab shows the session it left
-    // rather than a blank screen in front of a still-running shell.
-    ws.send(JSON.stringify({ type: "hello", pty: session.pty, cwd: session.cwd, replay: session.scrollback() }));
+    // `replay` is a SNAPSHOT of the shell's screen as the daemon models it,
+    // not the bytes that produced it. The client resets its xterm and writes
+    // this, so a reattached tab shows the session it left — and, because it is
+    // a picture rather than a re-run of history, it renders identically at
+    // whatever width this pane happens to be.
+    const replay = await session.scrollback();
+    if (ws.readyState !== 1) return;
+    ws.send(JSON.stringify({ type: "hello", pty: session.pty, cwd: session.cwd, replay }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     wsError(ws, message);
@@ -277,7 +304,15 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
           if (!Number.isInteger(shellId) || shellId < 0 || shellId >= MAX_SHELLS_PER_TASK) {
             return err(`shell must be an integer from 0 to ${MAX_SHELLS_PER_TASK - 1}, got ${JSON.stringify(shellParam)}`, 400);
           }
-          if (!server.upgrade(req, { data: { taskId, shellId } })) return err("websocket upgrade failed", 500);
+          // ?cols/?rows is the pane's measured geometry. It arrives with the
+          // upgrade so a NEW shell is born at the size that will display it:
+          // the first prompt is drawn once, correctly, instead of being drawn
+          // at a default width and then redrawn when the client reports in.
+          const size = parseTerminalSize(url.searchParams);
+          if (typeof size === "string") return err(size, 400);
+          if (!server.upgrade(req, { data: { taskId, shellId, size } })) {
+            return err("websocket upgrade failed", 500);
+          }
           return undefined;
         }
         return Promise.resolve()

@@ -6,7 +6,14 @@ export {};
 const args = process.argv.slice(2);
 
 try {
-  if (args[0] === "serve") {
+  if (args[0] === "__pty-exec") {
+    // The child half of src/pty.ts, and deliberately the FIRST branch: this
+    // process exists only to take a pty as its controlling terminal and
+    // execve() the user's shell over itself. Loading config or the CLI here
+    // would run daemon code inside what is about to become the shell.
+    const { runPtyExec } = await import("./pty");
+    runPtyExec(args.slice(1));
+  } else if (args[0] === "serve") {
     const { serve } = await import("./daemon");
     await serve();
   } else if (args[0] === "version" || args[0] === "--version") {
