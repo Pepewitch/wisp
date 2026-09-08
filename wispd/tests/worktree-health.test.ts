@@ -217,7 +217,7 @@ describe("archive answers before it destroys (D4)", () => {
     expect(getTask(id)!.archived).toBe(1);
 
     await eventually("the failure to reach state_detail", () =>
-      (getTask(id)!.state_detail ?? "").startsWith("Archived, but the teardown failed"),
+      (getTask(id)!.state_detail ?? "").startsWith("Archived. Cleanup is incomplete"),
     );
     const detail = getTask(id)!.state_detail!;
     expect(detail).toContain("worktree teardown failed");

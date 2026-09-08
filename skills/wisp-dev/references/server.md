@@ -52,6 +52,13 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   adopts the caller's checkout, skips worktree hooks, and never removes it.
 - Archive separates synchronous safety/refusal checks from background
   teardown. Preserve branches and user work.
+- That teardown is a DURABLE JOB (`archive_cleanups`), written in the same
+  transaction as the archived flip and resumed at startup and on a slow timer.
+  It fails closed: a stage that could not stop a process ends the attempt, so
+  nothing destructive runs behind a failed stop, and the reason lands in
+  `state_detail`. Stages are idempotent because a resumed job may repeat the
+  one it was interrupted in, and the job carries the archive hook that was
+  configured when the user asked — a project can be removed in between.
 
 ### API and realtime
 

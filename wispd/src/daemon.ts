@@ -8,6 +8,7 @@ import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests"
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
+import { resumeArchiveCleanups, startArchiveCleanupLoop } from "./routes/archive";
 import { route } from "./routes";
 import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
 import { err, json } from "./routes/http";
@@ -326,6 +327,10 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
+  // An archive whose daemon died mid-teardown left a worktree and attachment
+  // bytes behind. The job row that owns that cleanup is resumed here, before
+  // the port opens, for the same reason orphaned turns are (ENG-04).
+  await resumeArchiveCleanups();
 
   let server: Bun.Server<TerminalSocketData>;
   try {
@@ -430,10 +435,12 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   }
   const outboxTimer = startOutboxLoop(cfg);
   const stuckTimer = startStuckLoop(cfg);
+  const cleanupTimer = startArchiveCleanupLoop();
   const stopServer = server.stop.bind(server);
   server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
     clearInterval(outboxTimer);
     clearInterval(stuckTimer);
+    clearInterval(cleanupTimer);
     await stopServer(closeActiveConnections);
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
