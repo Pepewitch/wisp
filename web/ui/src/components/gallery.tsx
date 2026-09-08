@@ -504,7 +504,7 @@ function WorkflowSpecimens() {
           <div className="flex flex-col gap-10">
             <div>
               <Eyebrow>A configured project</Eyebrow>
-              <ProjectSettingsSpecimen project={REPOS[0]!} />
+              <ProjectSettingsSpecimen project={REPOS[0]!} activeTaskCount={3} />
             </div>
             <div>
               <Eyebrow>A repo wisp only knows from task history — nothing set yet</Eyebrow>
@@ -513,8 +513,9 @@ function WorkflowSpecimens() {
                 All three fields are worktree-only, and the modal says so once at the top rather than three times.
                 Every field is a PATCH — the display name it does not edit is preserved. The copy patterns resolve
                 against the real repo and list what they take, debounced, because a glob is only trustworthy once you
-                have seen its output. A configured project&apos;s red Remove from Wisp button is a two-click confirm;
-                a history-only repo has no config entry to drop, so its footer explains why the control is absent.
+                have seen its output. A configured project&apos;s red Remove from Wisp button opens a confirmation
+                that can archive all active tasks; a history-only repo has no config entry to drop, so its footer
+                explains why the control is absent.
               </p>
             </div>
           </div>

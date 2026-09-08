@@ -71,13 +71,16 @@ describe("project settings remove", () => {
 
   it("unregisters behind a two-click confirm and never fires on the first click", async () => {
     const calls = stubApi()
-    mount(<ProjectSettingsSpecimen project={CONFIGURED} />)
+    mount(<ProjectSettingsSpecimen project={CONFIGURED} activeTaskCount={2} />)
 
     const remove = screen.getByRole("button", { name: "Remove from Wisp" })
     expect(remove).toHaveClass("bg-destructive", "text-destructive-foreground")
     fireEvent.click(remove)
     expect(calls.some((call) => call.method === "DELETE")).toBe(false)
-    expect(screen.getByText("Unregisters this project. Tasks stay; nothing on disk is deleted.")).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Archive all 2 active tasks" })).toBeChecked()
+    expect(
+      screen.getByText("Runs normal archive cleanup and removes task worktrees. The project folder stays on disk."),
+    ).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull()
 
     fireEvent.click(screen.getByRole("button", { name: "Keep sample-app" }))
@@ -93,7 +96,25 @@ describe("project settings remove", () => {
     expect(calls.find((call) => call.method === "DELETE")).toEqual({
       path: "/api/projects",
       method: "DELETE",
-      body: { path: "/repo" },
+      body: { path: "/repo", archiveTasks: true },
+    })
+  })
+
+  it("lets active tasks stay when the archive option is cleared", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={CONFIGURED} activeTaskCount={2} />)
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove from Wisp" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Archive all 2 active tasks" }))
+    expect(
+      screen.getByText("Active tasks stay visible, so this project will remain in the Projects list."),
+    ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove sample-app" }))
+
+    await waitFor(() => expect(calls.some((call) => call.method === "DELETE")).toBe(true))
+    expect(calls.find((call) => call.method === "DELETE")?.body).toEqual({
+      path: "/repo",
+      archiveTasks: false,
     })
   })
 })

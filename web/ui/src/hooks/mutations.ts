@@ -319,16 +319,19 @@ export function useSaveProject() {
 }
 
 /**
- * DELETE /api/projects — unregister a configured project. Task history stays
- * and nothing on disk is deleted; the call site closes the settings modal.
+ * DELETE /api/projects — unregister a configured project, optionally
+ * archiving all of its active tasks behind their normal safety checks.
  */
 export function useRemoveProject() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (path: string) => transport.request("/api/projects", { method: "DELETE", body: { path } }),
+    mutationFn: ({ path, archiveTasks }: { path: string; archiveTasks: boolean }) =>
+      transport.request("/api/projects", { method: "DELETE", body: { path, archiveTasks } }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
+      void client.invalidateQueries({ queryKey: qk.tasks });
+      void client.invalidateQueries({ queryKey: qk.status });
     },
   });
 }

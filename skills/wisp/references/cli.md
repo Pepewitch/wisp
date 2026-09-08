@@ -129,9 +129,11 @@ The project registry feeds the web UI's pickers and per-project automation.
 task creation, after the repo's own `.wisp/setup.sh`), an archive script
 (teardown hook; its failure never blocks an archive), and copy globs (files
 copied from the repo into each new worktree, e.g. `.env`). `--copy` repeats
-and the flags REPLACE the stored list. Task history survives `project rm`.
-The gear dialog's **Remove from Wisp** is that same unregister. Scripts never
-run for `--local` tasks.
+and the flags REPLACE the stored list. Task history survives `project rm`. An
+unregistered project remains in the Projects list only while it has active
+tasks; archived history remains under **Show archived**. The gear dialog's
+**Remove from Wisp** can also archive every active task while unregistering.
+Scripts never run for `--local` tasks.
 
 ## Daemon & diagnostics
 
