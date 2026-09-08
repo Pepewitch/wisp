@@ -18,11 +18,12 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current candidate: `0.4.0-alpha.17`.** This experimental prerelease is not
-production-ready software. It carries the real-PTY terminal, multi-branch pull
-request discovery, Droid questionnaire, and resumable release-promotion fixes.
-Alpha.16 remains the current public release until alpha.17's tagged artifacts
-and Homebrew/Desktop channels pass every release gate.
+**Current public release: `0.4.0-alpha.17`.** This experimental prerelease is
+not production-ready software. It carries the real-PTY terminal, multi-branch
+pull-request discovery, Droid questionnaire, and resumable release-promotion
+fixes. Its immutable daemon/Desktop assets and Homebrew/Desktop channels passed
+the automated release gates; its human-observed alpha.16-to-alpha.17 in-app
+update receipt remains pending.
 
 ## Why Wisp
 
@@ -49,10 +50,10 @@ lifecycle state, and phone-capable steering.
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
-is machine qualification only. The public alpha.16 Desktop archive is Developer
+is machine qualification only. The public alpha.17 Desktop archive is Developer
 ID signed, notarized, stapled, and updater-signed. Alpha.13's
 alpha.12-to-alpha.13 self-update was qualified on one Apple Silicon Mac;
-alpha.16's alpha.13-to-alpha.16 human updater receipt is still pending.
+alpha.17's alpha.16-to-alpha.17 human updater receipt is still pending.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that

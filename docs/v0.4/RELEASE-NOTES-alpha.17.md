@@ -4,6 +4,12 @@ This is an **experimental feature prerelease**, not production-ready software.
 It is the fourth Wisp Desktop release prepared with Developer ID signing,
 Apple notarization, and cryptographically signed in-app updates.
 
+**Release outcome:** immutable publication passed from commit
+`0cea1266183fb359636b934a40e860ea6f695b99`. The initial promotion attempt
+exposed a trimmed Git-porcelain parsing bug without changing the immutable
+release; promotion-only recovery then passed at Homebrew tap commit
+`84658e9d7f48f81459fc0276bb6ec71068a759a8`.
+
 Alpha.17 brings the daemon, browser UI, and Desktop app onto one merged release
 source. It replaces the embedded terminal's pipe-backed emulation with a real
 sized PTY, keeps pull-request status current when a long task creates more than
@@ -15,12 +21,12 @@ unsupported, and the configured deployment minimum is not evidence that every
 macOS version in that range has been qualified.
 
 Alpha.17's signing, notarization, stapling, updater-signature, anonymous public
-download, Homebrew, and fixed-channel gates are pending until the tag workflow
-completes. Its human-observed update journey is also pending.
+download, Homebrew, and fixed-channel gates passed. Its human-observed update
+journey remains pending.
 
 ## Install or upgrade
 
-After publication, a new Mac can install the Desktop app and its required
+A new Mac can install the Desktop app and its required
 CLI/daemon Formula with:
 
 ```sh
@@ -90,7 +96,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 ## Release assets
 
-The release must publish exactly these ten immutable assets:
+The release published exactly these ten immutable assets:
 
 - `wisp-v0.4.0-alpha.17-linux-x86_64`
 - `release-manifest.json`
@@ -103,7 +109,7 @@ The release must publish exactly these ten immutable assets:
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
-The exact release commit, clean-tree proof, public checksums, Developer ID,
-notarization, staple, Gatekeeper, updater-signature, tamper-rejection,
-Formula/Cask audit, fixed-channel, and human updater receipts remain pending
-until publication and qualification complete.
+The clean-tree, public checksum, Developer ID, notarization, staple,
+Gatekeeper, updater-signature, tamper-rejection, Formula/Cask audit, and
+fixed-channel gates passed through the automated release and recovery
+workflows. The human updater receipt remains pending.
