@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { branchFor } from "../src/branch-name";
 import type { WispConfig } from "../src/config";
 import {
   ARCHIVE_COMMIT_MESSAGE,
@@ -17,7 +18,6 @@ import {
   removeWorktree,
   resolveDiffBase,
   runSetup,
-  slugify,
   statusSummary,
   worktreeHealth,
 } from "../src/worktree";
@@ -44,14 +44,6 @@ function makeRepo(): string {
   return repo;
 }
 
-describe("slugify", () => {
-  test("normalizes and caps length", () => {
-    expect(slugify("Fix the THING!! now")).toBe("fix-the-thing-now");
-    expect(slugify("###")).toBe("task");
-    expect(slugify("x".repeat(50)).length).toBeLessThanOrEqual(24);
-  });
-});
-
 describe("worktree lifecycle", () => {
   test("create → isolated branch and path; allowlist file copied", async () => {
     const repo = makeRepo();
@@ -61,21 +53,21 @@ describe("worktree lifecycle", () => {
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "ignore env"], repo);
     writeFileSync(join(repo, ".env"), "SECRET=1\n");
     const cfgAllow = { envAllowlist: { [repo]: [".env"] } } as unknown as WispConfig;
-    const wt = await createWorktree(repo, "tabc12", "my-task", cfgAllow);
+    const wt = await createWorktree(repo, "tabc12", cfgAllow);
     expect(existsSync(wt.path)).toBe(true);
-    expect(wt.branch).toBe("wisp/tabc12-my-task");
+    expect(wt.branch).toBe(branchFor("tabc12"));
     expect(existsSync(join(wt.path, ".env"))).toBe(true);
     expect(await isDirty(wt.path)).toBe(false); // gitignored copy doesn't dirty the worktree
   });
 
   test("non-repo fails loudly", async () => {
     const dir = mkdtempSync(join(tmpdir(), "wisp-notrepo-"));
-    await expect(createWorktree(dir, "tx", "x", cfg)).rejects.toThrow(/not a git repository/);
+    await expect(createWorktree(dir, "tx", cfg)).rejects.toThrow(/not a git repository/);
   });
 
   test("unpushed detection: clean base → false, local commit → true", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tdef34", "unpushed", cfg);
+    const wt = await createWorktree(repo, "tdef34", cfg);
     expect(await hasUnpushedWork(wt.path, wt.branch, wt.base_commit)).toBe(false);
     writeFileSync(join(wt.path, "work.txt"), "w\n");
     sh(["git", "add", "."], wt.path);
@@ -85,7 +77,7 @@ describe("worktree lifecycle", () => {
 
   test("commits merged into another local branch count as saved (never pushed anywhere)", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tmrg90", "merged", cfg);
+    const wt = await createWorktree(repo, "tmrg90", cfg);
     writeFileSync(join(wt.path, "work.txt"), "w\n");
     sh(["git", "add", "."], wt.path);
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "work"], wt.path);
@@ -97,7 +89,7 @@ describe("worktree lifecycle", () => {
 
   test("archive refuses a dirty worktree; force commits the work onto the kept branch and removes", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tghi56", "dirty", cfg);
+    const wt = await createWorktree(repo, "tghi56", cfg);
     writeFileSync(join(wt.path, "uncommitted.txt"), "oops\n");
     expect((await archivePreflight(wt.path, wt.branch, wt.base_commit, false)).refusal).toMatch(/uncommitted/);
 
@@ -116,7 +108,7 @@ describe("worktree lifecycle", () => {
 
   test("a repo that signs every commit and rejects them in a hook still saves the work", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tsig01", "hooked", cfg);
+    const wt = await createWorktree(repo, "tsig01", cfg);
     // both of these would otherwise be able to fail the one step that saves
     // the user's bytes: an unusable signing key, and a hook that says no
     sh(["git", "config", "commit.gpgsign", "true"], repo);
@@ -132,7 +124,7 @@ describe("worktree lifecycle", () => {
 
   test("clean worktree archives without force, committing nothing", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tjkl78", "clean", cfg);
+    const wt = await createWorktree(repo, "tjkl78", cfg);
     const before = shOut(["git", "rev-parse", wt.branch], repo).trim();
     expect((await archivePreflight(wt.path, wt.branch, wt.base_commit, false)).refusal).toBeNull();
     await removeWorktree(repo, wt.path, wt.branch, false);
@@ -149,7 +141,7 @@ describe("worktree lifecycle", () => {
 describe("worktreeHealth", () => {
   test("a live worktree is ok, with no reason to show", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "thlt01", "healthy", cfg);
+    const wt = await createWorktree(repo, "thlt01", cfg);
     expect(await worktreeHealth(wt.path)).toEqual({ ok: true, kind: "ok", reason: null });
     // a plain repo checkout (a local task's "worktree") is healthy too
     expect((await worktreeHealth(repo)).ok).toBe(true);
@@ -232,7 +224,7 @@ describe("removeWorktree on a worktree git has forgotten", () => {
   /** A real worktree, then its .git file and admin entry destroyed behind git's back. */
   async function forgottenWorktree(): Promise<{ repo: string; path: string; branch: string }> {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfgt01", "forgotten", cfg);
+    const wt = await createWorktree(repo, "tfgt01", cfg);
     writeFileSync(join(wt.path, "the-agent-left-this.txt"), "not tracked by anything\n");
     rmSync(join(wt.path, ".git"), { recursive: true, force: true });
     rmSync(join(repo, ".git", "worktrees"), { recursive: true, force: true });
@@ -272,7 +264,7 @@ describe("removeWorktree on a worktree git has forgotten", () => {
 
   test("an already-deleted directory is the same story, with nothing to leave behind", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfgt02", "vanished", cfg);
+    const wt = await createWorktree(repo, "tfgt02", cfg);
     rmSync(wt.path, { recursive: true, force: true });
     const pre = await archivePreflight(wt.path, wt.branch, wt.base_commit, false);
     expect(pre.health.reason).toContain("is gone");
@@ -289,7 +281,7 @@ describe("archive teardown hooks", () => {
     const repo = makeRepo();
     const marker = join(mkdtempSync(join(tmpdir(), "wisp-teardown-")), "order.txt");
     const withScript = { ...cfg, repos: [{ path: repo, archiveScript: `echo project >> ${marker}` }] };
-    const wt = await createWorktree(repo, "ttd001", "teardown", withScript);
+    const wt = await createWorktree(repo, "ttd001", withScript);
     mkdirSync(join(wt.path, ".wisp"), { recursive: true });
     writeFileSync(join(wt.path, ".wisp", "cleanup.sh"), `#!/usr/bin/env bash\necho repo >> ${marker}\n`);
     await removeWorktree(repo, wt.path, wt.branch, true, withScript, "ttd001");
@@ -300,7 +292,7 @@ describe("archive teardown hooks", () => {
   test("a hung hook is killed at the timeout and the worktree is still removed", async () => {
     const repo = makeRepo();
     const impatient = { ...cfg, setupTimeoutMinutes: 0.02, repos: [{ path: repo, archiveScript: "sleep 60" }] };
-    const wt = await createWorktree(repo, "ttd002", "hung-teardown", impatient);
+    const wt = await createWorktree(repo, "ttd002", impatient);
     const started = Date.now();
     await removeWorktree(repo, wt.path, wt.branch, true, impatient, "ttd002");
     expect(Date.now() - started).toBeLessThan(20_000); // nowhere near the 60s sleep
@@ -310,7 +302,7 @@ describe("archive teardown hooks", () => {
   test("a failing hook never strands the worktree — teardown stays best effort", async () => {
     const repo = makeRepo();
     const withScript = { ...cfg, repos: [{ path: repo, archiveScript: "exit 9" }] };
-    const wt = await createWorktree(repo, "ttd003", "bad-teardown", withScript);
+    const wt = await createWorktree(repo, "ttd003", withScript);
     await removeWorktree(repo, wt.path, wt.branch, false, withScript, "ttd003");
     expect(existsSync(wt.path)).toBe(false);
   });
@@ -324,7 +316,7 @@ describe("archive teardown hooks", () => {
 describe("readWorktreeFile (the UI's file viewer)", () => {
   test("reads a text file by relative or absolute path, canonicalizing what it read", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfil01", "file-read", cfg);
+    const wt = await createWorktree(repo, "tfil01", cfg);
     mkdirSync(join(wt.path, ".context"));
     writeFileSync(join(wt.path, ".context", "PLAN.md"), "# Plan\n\nStep one.\n");
 
@@ -342,7 +334,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
 
   test("a binary file is a state the caller can act on, not a failure", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfil02", "file-binary", cfg);
+    const wt = await createWorktree(repo, "tfil02", cfg);
     writeFileSync(join(wt.path, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0xff]));
     expect(await readWorktreeFile(wt.path, "blob.bin")).toEqual({
       kind: "binary",
@@ -353,7 +345,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
 
   test("nothing outside the worktree is readable, and the answer never says which reason", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfil03", "file-contain", cfg);
+    const wt = await createWorktree(repo, "tfil03", cfg);
     const outside = join(mkdtempSync(join(tmpdir(), "wisp-outside-")), "secret.txt");
     writeFileSync(outside, "SECRET\n");
 
@@ -376,7 +368,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
 
   test("a file past the cap comes back truncated with its real size", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tfil04", "file-cap", cfg);
+    const wt = await createWorktree(repo, "tfil04", cfg);
     const size = FILE_CAP + 4096;
     writeFileSync(join(wt.path, "big.log"), "x".repeat(size));
     const file = await readWorktreeFile(wt.path, "big.log");
@@ -388,7 +380,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
 describe("fullDiff (web UI diff pane)", () => {
   test("diff against the base covers committed + unstaged work; untracked files are new-file diffs", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tdif01", "diffs", cfg);
+    const wt = await createWorktree(repo, "tdif01", cfg);
     writeFileSync(join(wt.path, "committed.txt"), "BRANCH_WORK\n");
     sh(["git", "add", "."], wt.path);
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "branch work"], wt.path);
@@ -406,7 +398,7 @@ describe("fullDiff (web UI diff pane)", () => {
 
   test("untracked nested, empty, and binary files get a renderable patch; gitignored stay out", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tdif04", "untracked-shapes", cfg);
+    const wt = await createWorktree(repo, "tdif04", cfg);
     mkdirSync(join(wt.path, "nested"));
     writeFileSync(join(wt.path, "nested", "new.txt"), "NESTED_UNTRACKED\n");
     writeFileSync(join(wt.path, "empty.txt"), "");
@@ -424,7 +416,7 @@ describe("fullDiff (web UI diff pane)", () => {
 
   test("with no base commit it diffs against HEAD (staged + unstaged only)", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tdif02", "head-diff", cfg);
+    const wt = await createWorktree(repo, "tdif02", cfg);
     writeFileSync(join(wt.path, "committed.txt"), "BRANCH_WORK\n");
     sh(["git", "add", "."], wt.path);
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "branch work"], wt.path);
@@ -436,7 +428,7 @@ describe("fullDiff (web UI diff pane)", () => {
 
   test("caps the diff text at 512 KB and flags truncation", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tdif03", "cap", cfg);
+    const wt = await createWorktree(repo, "tdif03", cfg);
     writeFileSync(join(wt.path, "big.txt"), `${"y".repeat(600 * 1024)}\n`);
     sh(["git", "add", "."], wt.path);
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "big"], wt.path);
@@ -449,7 +441,7 @@ describe("fullDiff (web UI diff pane)", () => {
 describe("statusSummary (web UI sidebar)", () => {
   test("counts dirty files, commits ahead of the base, and unpushed work", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tsta01", "status", cfg);
+    const wt = await createWorktree(repo, "tsta01", cfg);
     expect(await statusSummary(wt.path, wt.branch, wt.base_commit)).toEqual({
       dirtyFiles: 0,
       ahead: 0,
@@ -466,7 +458,7 @@ describe("statusSummary (web UI sidebar)", () => {
 
   test("a null base commit reports ahead 0", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tsta02", "no-base", cfg);
+    const wt = await createWorktree(repo, "tsta02", cfg);
     const s = await statusSummary(wt.path, wt.branch, null);
     expect(s.ahead).toBe(0);
   });
@@ -484,26 +476,26 @@ describe("runSetup (.wisp/setup.sh)", () => {
 
   test("no setup script is a no-op", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tns001", "no-setup", cfg);
+    const wt = await createWorktree(repo, "tns001", cfg);
     await runSetup("tns001", repo, wt.path, {}, cfg); // resolves, does nothing
   });
 
   test("successful setup runs inside the worktree", async () => {
     const repo = repoWithSetup("#!/usr/bin/env bash\necho hi > setup-ran.txt\n");
-    const wt = await createWorktree(repo, "tso002", "setup-ok", cfg);
+    const wt = await createWorktree(repo, "tso002", cfg);
     await runSetup("tso002", repo, wt.path, {}, cfg);
     expect(existsSync(join(wt.path, "setup-ran.txt"))).toBe(true);
   });
 
   test("nonzero exit fails loudly with the exit code", async () => {
     const repo = repoWithSetup("#!/usr/bin/env bash\nexit 3\n");
-    const wt = await createWorktree(repo, "tsf003", "setup-fail", cfg);
+    const wt = await createWorktree(repo, "tsf003", cfg);
     await expect(runSetup("tsf003", repo, wt.path, {}, cfg)).rejects.toThrow(/setup script failed \(exit 3\)/);
   });
 
   test("hung setup is killed after setupTimeoutMinutes and fails loudly", async () => {
     const repo = repoWithSetup("#!/usr/bin/env bash\nsleep 60\n");
-    const wt = await createWorktree(repo, "tsh004", "setup-hung", cfg);
+    const wt = await createWorktree(repo, "tsh004", cfg);
     const impatient = { ...cfg, setupTimeoutMinutes: 0.02 }; // 1.2s
     const started = Date.now();
     await expect(runSetup("tsh004", repo, wt.path, {}, impatient)).rejects.toThrow(/timed out/);
@@ -516,7 +508,7 @@ describe("runSetup (.wisp/setup.sh)", () => {
   test("the project's configured setupScript runs too, after the repo's own", async () => {
     const repo = repoWithSetup("#!/usr/bin/env bash\necho repo >> order.txt\n");
     const withScript = { ...cfg, repos: [{ path: repo, setupScript: "echo project >> order.txt" }] };
-    const wt = await createWorktree(repo, "tsc005", "setup-both", withScript);
+    const wt = await createWorktree(repo, "tsc005", withScript);
     await runSetup("tsc005", repo, wt.path, {}, withScript);
     expect(readFileSync(join(wt.path, "order.txt"), "utf8")).toBe("repo\nproject\n");
   });
@@ -524,7 +516,7 @@ describe("runSetup (.wisp/setup.sh)", () => {
   test("a configured setupScript runs even with no .wisp/setup.sh", async () => {
     const repo = makeRepo();
     const withScript = { ...cfg, repos: [{ path: repo, setupScript: "echo ran > only.txt" }] };
-    const wt = await createWorktree(repo, "tsc006", "setup-only", withScript);
+    const wt = await createWorktree(repo, "tsc006", withScript);
     await runSetup("tsc006", repo, wt.path, {}, withScript);
     expect(existsSync(join(wt.path, "only.txt"))).toBe(true);
   });
@@ -532,7 +524,7 @@ describe("runSetup (.wisp/setup.sh)", () => {
   test("a failing configured setupScript fails the task loudly", async () => {
     const repo = makeRepo();
     const withScript = { ...cfg, repos: [{ path: repo, setupScript: "exit 7" }] };
-    const wt = await createWorktree(repo, "tsc007", "setup-bad", withScript);
+    const wt = await createWorktree(repo, "tsc007", withScript);
     await expect(runSetup("tsc007", repo, wt.path, {}, withScript)).rejects.toThrow(
       /project setup script failed \(exit 7\)/,
     );
@@ -580,7 +572,7 @@ describe("copyFiles (untracked files carried into a new worktree)", () => {
   test("createWorktree copies the matches, making nested directories on the way", async () => {
     const repo = repoWithEnv();
     const withCopy = { ...cfg, repos: [{ path: repo, copyFiles: [".env*"] }] };
-    const wt = await createWorktree(repo, "tcp001", "copy", withCopy);
+    const wt = await createWorktree(repo, "tcp001", withCopy);
     expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("ROOT=1\n");
     expect(readFileSync(join(wt.path, "backend", ".env"), "utf8")).toBe("BACKEND=1\n");
     expect(existsSync(join(wt.path, "node_modules", "pkg", ".env"))).toBe(false);
@@ -590,7 +582,7 @@ describe("copyFiles (untracked files carried into a new worktree)", () => {
     const repo = repoWithEnv();
     writeFileSync(join(repo, "legacy.txt"), "old\n");
     const both = { ...cfg, envAllowlist: { [repo]: ["legacy.txt"] }, repos: [{ path: repo, copyFiles: [".env*"] }] };
-    const wt = await createWorktree(repo, "tcp002", "copy-both", both);
+    const wt = await createWorktree(repo, "tcp002", both);
     expect(existsSync(join(wt.path, "legacy.txt"))).toBe(true);
     expect(existsSync(join(wt.path, ".env"))).toBe(true);
   });
@@ -697,7 +689,7 @@ describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", 
 
   test("an ordinary task is unchanged — its base IS the fork point", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tbase1", "ordinary", cfg);
+    const wt = await createWorktree(repo, "tbase1", cfg);
     writeFileSync(join(wt.path, "work.txt"), "the agent's work\n");
     sh(["git", "add", "-A"], wt.path);
     sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "work"], wt.path);
@@ -708,7 +700,7 @@ describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", 
 
   test("a base commit unrelated to HEAD degrades to their fork point, never a cross-history diff", async () => {
     const repo = makeRepo();
-    const wt = await createWorktree(repo, "tbase2", "orphan", cfg);
+    const wt = await createWorktree(repo, "tbase2", cfg);
     const forkPoint = wt.base_commit;
     // an orphan branch shares no history with the base; merge-base finds nothing
     sh(["git", "checkout", "-q", "--orphan", "detached-history"], wt.path);

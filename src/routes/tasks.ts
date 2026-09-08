@@ -42,7 +42,6 @@ import {
   readWorktreeFile,
   removeWorktree,
   runSetup,
-  slugify,
   worktreeHealth,
 } from "../worktree";
 import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json } from "./http";
@@ -72,7 +71,7 @@ async function launchTask(
     const wt =
       mode === "local"
         ? await localWorktree(task.repo_path)
-        : await createWorktree(task.repo_path, task.id, slugify(task.title), cfg);
+        : await createWorktree(task.repo_path, task.id, cfg);
     setTaskFields(task.id, { worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
     // Still 'creating', but the worktree now EXISTS — re-emit so watchers
     // refetch and pick up worktree_path. Setup can run for minutes, and until

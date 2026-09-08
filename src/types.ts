@@ -12,7 +12,7 @@ export type TaskState = (typeof TASK_STATES)[number];
  * Where a task's turns actually run.
  *
  * `worktree` (the default, and everything wisp did before): an isolated git
- * worktree under WORKTREE_ROOT on its own `wisp/<id>-<slug>` branch, created
+ * worktree under WORKTREE_ROOT on its own `wisp/<id>-<words>` branch, created
  * at task start and REMOVED at archive.
  *
  * `local`: the repo checkout itself, on whatever branch it is already on.

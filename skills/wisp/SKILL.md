@@ -103,7 +103,8 @@ and never appear in the task's diff. Delivery, limits, and lifecycle:
 
 ## 7. Integrating work
 
-Each task works on branch `wisp/<id>-<slug>` (`wisp show` prints worktree and
+Each task works on branch `wisp/<id>-<words>` — the words are a readable tag
+derived from the id, not from the prompt (`wisp show` prints worktree and
 branch).
 
 1. Review the diff: `git -C <repo> diff main...<branch>`.
