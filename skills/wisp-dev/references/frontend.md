@@ -88,15 +88,74 @@ The accent appears in exactly five places:
 Selection and active tabs are a **background change** — `bg-accent`. They never
 take the hue. If a sixth accent appears, one of the five was not load-bearing.
 
-Semantic hue survives in three more places and nowhere else:
+Semantic hue survives in four more places and nowhere else:
 
 - **state dots** — `--color-state-*`, on 6px dots only
 - **diff add/del** — `--color-diff-*`, text and 10% row tints
 - **destructive/error** — `--destructive`, for real failures only
+- **syntax** — `--syntax-*`, INSIDE a code block that named a language, and
+  nowhere else (below)
 
 `failed` and `needs-input` are the only two states allowed to tint their own
 line of *text*, because they are the only two a person has to act on. Every
 other state line is `text-muted-foreground`.
+
+### Code: a chip in a sentence, a surface on its own, colour only inside
+
+Markdown hands inline code and a fence's contents to the same `code` element,
+and the only thing that tells them apart is the `language-*` class it gets when
+— and only when — the fence names a language. Three cases, three answers:
+
+- **`` `inline` ``** is a **chip**: `bg-accent-wash` and `text-accent-soft`,
+  the fifth of the accent's five places. It is a phrase inside running prose
+  with no box of its own, so it needs the wash to be picked out at all.
+- **a fence with no language** is **plain mono on `--code`**. The block already
+  says "this is code" with its fill, its border and its face; hue would be
+  saying it a fourth time. A bare fence used to fall through to the inline
+  branch and wear the chip around a whole block — `pre` now resets whatever its
+  child chose (`[&>code]:bg-transparent`), because a mapper cannot see its own
+  parent and the block is the parent.
+- **a fence that named a language** is the same box with **colour inside the
+  text**. Naming a language never moves the box.
+
+Highlighting is `rehype-highlight` (lowlight → highlight.js) appended to
+Streamdown's rehype chain in `lib/prose-highlight.ts`. Three things about it
+are load-bearing:
+
+- It runs **after `sanitize`**, or its spans would be stripped.
+- `detect: false` — an unlabelled fence is never guessed at, which is what
+  keeps the plain case plain. `ignoreMissing: true` — a fence naming something
+  outside the common set (`mermaid`, a typo) renders plain rather than
+  throwing. An agent's prose is not a build input and must not be able to take
+  a turn down with it.
+- Highlighting reruns on **every chunk** while a fence is still arriving, so
+  past `PROSE_HIGHLIGHT_LIMIT` (20 000 characters — ~73ms per pass, measured)
+  the language class comes off and the block renders as what it then is: plain.
+
+It emits **classes, not colours**, which is the whole reason to prefer it over
+a bundled VSCode theme: the palette is ours. Five roles in `index.css`, mapped
+once for every language rather than a theme per language:
+
+| role | token | what it holds |
+|---|---|---|
+| keyword | `--syntax-keyword` | what the language reserves — hue 300, the app's own |
+| string | `--syntax-string` | what is quoted |
+| number | `--syntax-number` | a literal value |
+| entity | `--syntax-entity` | what has a NAME: functions, types, keys |
+| comment | `--syntax-comment` | an aside — grey, and italic |
+
+Four of the five sit at **one lightness and one chroma** (0.78 / 0.09 on
+graphite, 0.48 / 0.14 on paper — the same move down the lightness axis the
+accent makes), so no role shouts over another, and all of them sit BELOW the
+accent's chroma: colour in a code block must never out-compete the one violet
+the app spends on the send button and the running dot. A `` ```diff `` fence
+borrows `--diff-add` / `--diff-del`, because two surfaces must not disagree
+about what "added" means.
+
+**Everything else stays plain, and that is the design.** Identifiers,
+parameters, operators and punctuation are most of a line; colouring them would
+leave nothing for colour to pick out. Adding a sixth role means arguing that
+one of the five was not load-bearing.
 
 ### The transcript's one brightest surface is the prompt bubble
 

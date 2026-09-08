@@ -1,5 +1,6 @@
 import { Prose } from "@/components/prose"
 import { Eyebrow, Rule } from "@/components/primitives"
+import { cn } from "@/lib/utils"
 
 /**
  * The gallery's code specimens: the three shapes markdown can hand us, on the
@@ -27,6 +28,49 @@ const TAGGED_FENCE = [
   "}",
   "```",
 ].join("\n")
+
+/** One fence per shape a turn actually carries, on the real renderer. */
+const LANGUAGES: readonly { label: string; text: string }[] = [
+  {
+    label: "ts · the four roles in one line",
+    text: ["```ts", 'const turns = await client.request<Turn[]>("/api/tasks", { limit: 12 })', "```"].join("\n"),
+  },
+  {
+    label: "bash · what an agent runs",
+    text: ["```bash", "#!/usr/bin/env bash", 'wisp task list --json | jq \'.[] | select(.state == "running")\'', "```"].join(
+      "\n",
+    ),
+  },
+  {
+    label: "json · keys are names, values are quoted",
+    text: ["```json", '{ "harness": "claude", "effort": "high", "turns": 3, "archived": false }', "```"].join("\n"),
+  },
+  {
+    label: "sql",
+    text: ["```sql", "select state, count(*) from tasks where archived = 0 group by state", "```"].join("\n"),
+  },
+  {
+    label: "diff · borrows the changes pane's family",
+    text: ["```diff", "--- a/steer-box.tsx", "+++ b/steer-box.tsx", "-  const busy = false", "+  const busy = sending", "```"].join(
+      "\n",
+    ),
+  },
+  {
+    label: "python",
+    text: ["```py", "def promote(version: str, *, dry_run: bool = False) -> None:", '    print(f"promoting {version}")', "```"].join(
+      "\n",
+    ),
+  },
+]
+
+/** Literal class names, never `bg-syntax-${name}` — a template generates nothing. */
+const ROLES: readonly { name: string; dot: string; text: string; role: string }[] = [
+  { name: "keyword", dot: "bg-syntax-keyword", text: "text-syntax-keyword", role: "what the language reserves" },
+  { name: "string", dot: "bg-syntax-string", text: "text-syntax-string", role: "what is quoted" },
+  { name: "number", dot: "bg-syntax-number", text: "text-syntax-number", role: "a literal value" },
+  { name: "entity", dot: "bg-syntax-entity", text: "text-syntax-entity", role: "what has a name" },
+  { name: "comment", dot: "bg-syntax-comment", text: "text-syntax-comment", role: "an aside, italic" },
+]
 
 export function ProseCodeSpecimen() {
   return (
@@ -77,7 +121,33 @@ export function ProseCodeSpecimen() {
           <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
             Naming a language changes what happens INSIDE the text and nothing about the box.
           </p>
+          <div className="mt-4 space-y-1.5">
+            {ROLES.map((role) => (
+              <div key={role.name} className="flex items-baseline gap-2 text-[11.5px]">
+                <span aria-hidden className={cn("size-2 shrink-0 translate-y-[3px] rounded-full", role.dot)} />
+                <span className={cn("font-mono text-[11px]", role.text)}>{role.name}</span>
+                <span className="text-faint">{role.role}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
+            Five roles, not one theme per language: one map answers every language highlight.js knows. Four of them sit
+            at one lightness and one chroma, BELOW the accent's, so a code block never out-colours the one violet the
+            app spends on the send button and the running dot. Identifiers, parameters and punctuation stay plain —
+            they are most of a line, and if everything is coloured nothing is.
+          </p>
         </div>
+      </div>
+
+      <div className="mt-8 grid grid-cols-2 gap-x-10 gap-y-5">
+        {LANGUAGES.map((language) => (
+          <div key={language.label}>
+            <Eyebrow>{language.label}</Eyebrow>
+            <div className="mt-2 rounded-lg border border-border bg-surface p-3">
+              <Prose text={language.text} />
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   )

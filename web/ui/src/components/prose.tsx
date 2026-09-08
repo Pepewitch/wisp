@@ -3,6 +3,7 @@ import remarkBreaks from "remark-breaks"
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown"
 
 import { externalLinkProps } from "@/lib/external-links"
+import { PROSE_HIGHLIGHT_PLUGINS } from "@/lib/prose-highlight"
 import { safeHttpUrl } from "@/lib/paste-links"
 import { cn } from "@/lib/utils"
 import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
@@ -37,9 +38,14 @@ const PROSE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBrea
  * `javascript:` or `file:` href. `linkSafety` is a different mechanism and
  * blocks none of this; leaving it at its default is deliberate.
  */
-const PROSE_REHYPE_PLUGINS = Object.entries(defaultRehypePlugins)
-  .filter(([name]) => name !== "harden")
-  .map(([, plugin]) => plugin) as ComponentProps<typeof Streamdown>["rehypePlugins"]
+const PROSE_REHYPE_PLUGINS = [
+  ...Object.entries(defaultRehypePlugins)
+    .filter(([name]) => name !== "harden")
+    .map(([, plugin]) => plugin),
+  // LAST, and deliberately after `sanitize`: the `hljs-*` spans are added to a
+  // tree that has already been sanitised, so they reach the DOM (§5b).
+  ...PROSE_HIGHLIGHT_PLUGINS,
+] as ComponentProps<typeof Streamdown>["rehypePlugins"]
 
 const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   p: ({ children }) => <p className="mt-2.5 first:mt-0">{children}</p>,
