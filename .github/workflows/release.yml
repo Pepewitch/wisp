@@ -393,10 +393,11 @@ jobs:
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           brew audit --strict --online Pepewitch/tap/wisp
           # The staged Cask is newer than the still-public channel until the
-          # next step pushes all three tap files. Defer only that circular
-          # livecheck comparison; signing and Gatekeeper checks stay enabled.
+          # next step pushes all three tap files. Homebrew's HTTPS livecheck
+          # audit invokes the same version comparison internally, so defer
+          # both livecheck paths; signing and Gatekeeper checks stay enabled.
           brew audit --strict --online --cask \
-            --except github_prerelease_version,livecheck_version \
+            --except github_prerelease_version,livecheck_version,livecheck_https_availability \
             Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
