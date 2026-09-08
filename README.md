@@ -102,7 +102,9 @@ fresh machine gets the CLI/daemon too. Install only the Formula with
 
 Homebrew bootstraps and repairs Wisp Desktop. Starting with alpha.12, the app's
 **Updates** popover can install later signed Desktop versions itself; the
-selected daemon has a separate, explicitly named update row. Alpha.8 predates
+machine's built-in **Local daemon** has a separate, explicitly named update
+row. Saved remote daemons are updated on their own hosts, never by this
+app-global control. Alpha.8 predates
 the updater, so moving from it to a current updater-capable release requires
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
 The public alpha.12-to-alpha.13 journey has exercised discovery, signature

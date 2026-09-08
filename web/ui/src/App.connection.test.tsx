@@ -7,6 +7,7 @@ import { fakeDaemonTransport } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({
   install: vi.fn(),
+  refresh: vi.fn(),
   waitForUpdatedDaemon: vi.fn(),
 }))
 const fixtures = vi.hoisted(() => ({
@@ -43,6 +44,10 @@ vi.mock("@/hooks/queries", () => ({
 
 vi.mock("@/hooks/mutations", () => ({
   useInstallUpdate: () => ({ mutateAsync: mocks.install, isPending: false }),
+  useRefreshUpdateStatus: () => ({
+    mutateAsync: mocks.refresh,
+    isPending: false,
+  }),
   useAddProject: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
 }))
 

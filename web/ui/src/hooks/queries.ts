@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "@/lib/api";
-import { useDaemonRuntime } from "@/lib/runtime";
+import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
   DiffResponse,
@@ -39,8 +39,11 @@ export function useStatus() {
 export const UPDATE_STATUS_POLL_MS = 60 * 60 * 1000
 
 /** Release discovery is daemon-cached, so one hourly read does not become one GitHub call per browser. */
-export function useUpdateStatus() {
-  const { transport, qk } = useDaemonRuntime()
+export function useUpdateStatus(
+  target?: Pick<DaemonRuntime, "transport" | "qk">
+) {
+  const active = useDaemonRuntime()
+  const { transport, qk } = target ?? active
   return useQuery({
     queryKey: qk.update,
     queryFn: () => transport.request<UpdateStatus>("/api/update"),

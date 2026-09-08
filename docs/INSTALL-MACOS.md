@@ -171,12 +171,15 @@ new daemon answers its health check.
 Wisp Desktop has one **Updates** popover with two independent rows:
 
 - **Wisp Desktop** checks and installs the global application version;
-- **<selected connection> daemon** updates only that daemon.
+- **Local daemon** checks and updates the daemon on this Mac, regardless of the
+  selected connection tab.
 
-Checking never installs. Desktop download and replacement start only after
-**Update Desktop and relaunch** is clicked. The app checks once shortly after
-launch by default, has a **Check now** action, and does not poll periodically.
-A daemon update in progress temporarily disables Desktop relaunch.
+Saved remote daemons are never updated by Wisp Desktop; update them on their
+host or through their own browser UI. **Check now** refreshes both named rows
+but never installs either one. Desktop download and replacement start only
+after **Update Desktop and relaunch** is clicked. The optional launch check is
+Desktop-only and does not poll periodically. A Local daemon update in progress
+temporarily disables Desktop relaunch.
 
 The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and

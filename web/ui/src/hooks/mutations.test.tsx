@@ -30,6 +30,7 @@ import {
   useInstallUpdate,
   useMintSession,
   usePushTask,
+  useRefreshUpdateStatus,
   useRenameTask,
   useRemoveProject,
   useReprobeHarnesses,
@@ -94,6 +95,32 @@ describe("task writes", () => {
       body: { version: "0.4.0-alpha.8" },
     })
     expect(client.getQueryData(qk.update)).toEqual(status)
+  })
+
+  it("force-refreshes an explicit Local daemon while a remote is active", async () => {
+    const status = {
+      currentVersion: "0.4.0-alpha.8",
+      latestVersion: "0.4.0-alpha.9",
+      state: "available",
+    }
+    const localRequest = vi.fn().mockResolvedValue(status)
+    const local = fakeDaemonTransport("local", {
+      request: localRequest as DaemonTransport["request"],
+    })
+    const { client, wrapper } = harness("saved-remote")
+    const localTarget = {
+      transport: local,
+      qk: createConnectionQueryKeys(local.connectionId),
+    }
+    const { result } = renderHook(() => useRefreshUpdateStatus(localTarget), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync()
+    })
+
+    expect(localRequest).toHaveBeenCalledWith("/api/update?refresh=1")
+    expect(mocks.request).not.toHaveBeenCalled()
+    expect(client.getQueryData(localTarget.qk.update)).toEqual(status)
   })
 
   it("creating a task posts the composer's body and stales the task list", async () => {

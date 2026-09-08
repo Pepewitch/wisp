@@ -452,10 +452,10 @@ export class UpdateManager {
     await this.releaseRefresh;
   }
 
-  async getStatus(): Promise<UpdateStatus> {
+  private async readStatus(force: boolean): Promise<UpdateStatus> {
     if (this.operation) return this.status(this.detectedInstallation());
     try {
-      await this.fetchLatest(false);
+      await this.fetchLatest(force);
       if (this.state === "unavailable") {
         this.state = null;
         this.message = null;
@@ -465,6 +465,15 @@ export class UpdateManager {
       this.message = `could not check for updates: ${error instanceof Error ? error.message : String(error)}`;
     }
     return this.status(this.detectedInstallation());
+  }
+
+  async getStatus(): Promise<UpdateStatus> {
+    return this.readStatus(false);
+  }
+
+  /** An explicit person-initiated check bypasses the normal release cache. */
+  async refreshStatus(): Promise<UpdateStatus> {
+    return this.readStatus(true);
   }
 
   async start(expectedVersion: unknown): Promise<UpdateStatus> {

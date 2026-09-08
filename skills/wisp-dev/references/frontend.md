@@ -26,11 +26,13 @@ Every UI change must classify its impact on both clients:
   `createConnectionQueryKeys(connectionId)` in connection-explicit test
   infrastructure.
 - Daemon-owned state, drafts, attachments, preferences, streams, terminals,
-  daemon updates, and late async callbacks stay bound to their initiating
-  `connectionId`. Pure layout and theme state may remain global.
-- The Desktop application updater is deliberately global. Render it separately
-  from the selected connection's daemon updater, name both actions, and retain
-  the initiating connection for any daemon operation across tab changes. See
+  and late async callbacks stay bound to their initiating `connectionId`. Pure
+  layout and theme state may remain global.
+- The Desktop Updates surface is deliberately global. Render its application
+  and **Local daemon** rows separately, and bind every daemon check, install,
+  recovery callback, error, and query key to the built-in `local` transport,
+  never the selected remote tab. The native proxy must keep refusing remote
+  daemon installation. The browser retains its one-daemon updater. See
   [`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 - Browser-only auth and native-only connection/folder-picker/setup behavior
   stay behind their runtime boundaries. Any intentional difference is named in
@@ -737,9 +739,9 @@ leaving someone to wonder whether a remote just changed.
   trigger text is the VALUE, so the trigger takes an explicit `aria-label` for
   the field — `Dark` alone announces nothing.
 - Preferences that already live in their own surface stay there while that
-  surface is where the decision belongs (the updater's *Check after launch*
-  sits with the update it governs). This modal is not a junk drawer for
-  everything client-local.
+  surface is where the decision belongs (the updater's *Check Desktop after
+  launch* sits with the update it governs). This modal is not a junk drawer
+  for everything client-local.
 
 ### 5h. The top bar's right end is one cluster
 

@@ -8,7 +8,10 @@ export function updateRoute(
   updates: UpdateManager,
 ): Response | Promise<Response> | null {
   if (path !== "/api/update") return null;
-  if (method === "GET") return updates.getStatus().then((status) => json(status));
+  if (method === "GET") {
+    const refresh = new URL(req.url).searchParams.get("refresh") === "1";
+    return (refresh ? updates.refreshStatus() : updates.getStatus()).then((status) => json(status));
+  }
   if (method !== "POST") return err("not found", 404);
   return req
     .json()

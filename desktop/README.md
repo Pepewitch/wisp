@@ -31,10 +31,12 @@ shortcuts. The browser runtime mounts no zoom provider and keeps the browser's
 own zoom behavior.
 
 Desktop updates are a native capability, not a daemon route. The Update Center
-shows one global application row and one selected-daemon row with explicit
-labels. Native code owns the channel endpoint, updater key, candidate, download,
-installation path, and relaunch. The webview can only request a check and
-confirm the exact version it was shown. See
+shows one global application row and one built-in **Local daemon** row with
+explicit labels, regardless of the selected connection tab. Saved remote
+daemons cannot be updated through the Desktop proxy. Native code owns the app
+channel endpoint, updater key, candidate, download, installation path, and
+relaunch. The webview can only request a check and confirm the exact version it
+was shown. See
 [`docs/DESKTOP-UPDATES.md`](../docs/DESKTOP-UPDATES.md).
 
 ## Why there is a native core at all
@@ -105,6 +107,9 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 11. Local's non-secret target identity and monotonic revision survive app
     launches. Old revisions receive a native 409, and an open terminal is
     revoked as soon as its revision stops being current.
+12. `POST /api/update` is accepted only for the built-in Local connection.
+    Saved remotes are updated on their host, not through this app-global
+    package-manager surface.
 
 ## The webview content policy
 

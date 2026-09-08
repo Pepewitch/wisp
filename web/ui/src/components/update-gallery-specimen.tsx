@@ -55,16 +55,17 @@ export function UpdateGallerySpecimen() {
           daemonStatus={UPDATE_SPECIMEN}
           daemonError={null}
           daemonOperation={null}
-          connectionId="local"
-          connectionName="Local"
+          checkingDaemon={false}
           supportedApiProtocols={[1]}
           onUpdateDesktop={() => undefined}
           onUpdateDaemon={() => undefined}
+          onCheck={() => undefined}
           defaultOpen
         />
       </div>
       <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-        Desktop is global; the daemon row follows the selected connection. Their
+        Desktop is global; the daemon row is permanently bound to Local. Saved
+        remotes stay outside this package-manager control, and the two owners'
         actions, progress, failures, and versions never collapse into one
         ambiguous update button.
       </p>
@@ -112,11 +113,11 @@ export function HeaderClusterSpecimen() {
                   daemonStatus={reading.daemon}
                   daemonError={reading.error}
                   daemonOperation={null}
-                  connectionId="local"
-                  connectionName="Local"
+                  checkingDaemon={false}
                   supportedApiProtocols={[1]}
                   onUpdateDesktop={() => undefined}
                   onUpdateDaemon={() => undefined}
+                  onCheck={() => undefined}
                 />
                 <Button size="sm" icon aria-label="Zoom, 100%">
                   <ZoomIn />
@@ -138,11 +139,11 @@ export function HeaderClusterSpecimen() {
             daemonStatus={UPDATE_SPECIMEN}
             daemonError={null}
             daemonOperation={null}
-            connectionId="local"
-            connectionName="Local"
+            checkingDaemon={false}
             supportedApiProtocols={[1]}
             onUpdateDesktop={() => undefined}
             onUpdateDaemon={() => undefined}
+            onCheck={() => undefined}
             mobile
           />
           <Button size="lg" icon aria-label="Settings, touch">

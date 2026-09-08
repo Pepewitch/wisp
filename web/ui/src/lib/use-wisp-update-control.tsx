@@ -1,11 +1,11 @@
-import { useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 
 import {
   UpdateCenter,
   WispUpdateControl,
   type DaemonUpdateOperation,
 } from "@/components/update-control"
-import { useInstallUpdate } from "@/hooks/mutations"
+import { useInstallUpdate, useRefreshUpdateStatus } from "@/hooks/mutations"
 import { useUpdateStatus } from "@/hooks/queries"
 import { SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS } from "@/lib/desktop-bridge"
 import { useDesktopConnections } from "@/lib/desktop-connections"
@@ -14,7 +14,7 @@ import {
   useDesktopUpdater,
 } from "@/lib/desktop-updater"
 import { queryClient } from "@/lib/query"
-import { useDaemonRuntime } from "@/lib/runtime"
+import { createDaemonRuntime, useDaemonRuntime } from "@/lib/runtime"
 import { waitForUpdatedDaemon } from "@/lib/update"
 
 /** Keeps daemon-update ownership above connection-keyed application remounts. */
@@ -22,8 +22,21 @@ export function useWispUpdateControl() {
   const runtime = useDaemonRuntime()
   const desktop = useDesktopConnections()
   const desktopUpdater = useDesktopUpdater()
-  const updateQuery = useUpdateStatus()
-  const installUpdate = useInstallUpdate()
+  const localConnection = desktop?.connections.find(
+    (connection) => connection.metadata.kind === "local"
+  )
+  const updateRuntime = useMemo(() => {
+    if (!localConnection) return runtime
+    return createDaemonRuntime(localConnection.transport, {
+      recoverAfterUpdate: () =>
+        queryClient.invalidateQueries({
+          queryKey: [localConnection.metadata.id],
+        }),
+    })
+  }, [localConnection, runtime])
+  const updateQuery = useUpdateStatus(updateRuntime)
+  const installUpdate = useInstallUpdate(updateRuntime)
+  const refreshUpdate = useRefreshUpdateStatus(updateRuntime)
   const [updateError, setUpdateError] = useState<{
     connectionId: string
     message: string
@@ -31,6 +44,7 @@ export function useWispUpdateControl() {
   const [operation, setOperation] = useState<DaemonUpdateOperation | null>(null)
   const operationRef = useRef<DaemonUpdateOperation | null>(null)
   const desktopOperationRef = useRef(false)
+  const checkOperationRef = useRef(false)
   const desktopBlocksDaemon = desktopUpdater
     ? desktopUpdateBlocksDaemon(desktopUpdater.status, desktopUpdater.pending)
     : false
@@ -39,11 +53,12 @@ export function useWispUpdateControl() {
     if (
       operationRef.current ||
       desktopOperationRef.current ||
+      checkOperationRef.current ||
       desktopBlocksDaemon
     )
       return
-    const initiatingRuntime = runtime
-    const connectionName = desktop?.active.metadata.name ?? "Wisp"
+    const initiatingRuntime = updateRuntime
+    const connectionName = desktop ? "Local" : "Wisp"
     const installing: DaemonUpdateOperation = {
       connectionId: initiatingRuntime.connectionId,
       connectionName,
@@ -78,7 +93,12 @@ export function useWispUpdateControl() {
   }
 
   const updateDesktop = async (version: string) => {
-    if (!desktopUpdater || operationRef.current || desktopOperationRef.current)
+    if (
+      !desktopUpdater ||
+      operationRef.current ||
+      desktopOperationRef.current ||
+      checkOperationRef.current
+    )
       return
     desktopOperationRef.current = true
     try {
@@ -89,8 +109,40 @@ export function useWispUpdateControl() {
     }
   }
 
+  const checkUpdates = async () => {
+    if (
+      !desktopUpdater ||
+      operationRef.current ||
+      desktopOperationRef.current ||
+      checkOperationRef.current ||
+      desktopBlocksDaemon
+    )
+      return
+    checkOperationRef.current = true
+    setUpdateError((current) =>
+      current?.connectionId === updateRuntime.connectionId ? null : current
+    )
+    try {
+      const [, daemonResult] = await Promise.allSettled([
+        desktopUpdater.check(),
+        refreshUpdate.mutateAsync(),
+      ])
+      if (daemonResult.status === "rejected") {
+        setUpdateError({
+          connectionId: updateRuntime.connectionId,
+          message:
+            daemonResult.reason instanceof Error
+              ? daemonResult.reason.message
+              : String(daemonResult.reason),
+        })
+      }
+    } finally {
+      checkOperationRef.current = false
+    }
+  }
+
   const activeError =
-    updateError?.connectionId === runtime.connectionId
+    updateError?.connectionId === updateRuntime.connectionId
       ? updateError.message
       : null
   const render = (mobile: boolean) =>
@@ -100,13 +152,13 @@ export function useWispUpdateControl() {
         daemonStatus={updateQuery.data}
         daemonError={activeError}
         daemonOperation={operation}
-        connectionId={runtime.connectionId}
-        connectionName={desktop.active.metadata.name}
+        checkingDaemon={refreshUpdate.isPending}
         supportedApiProtocols={SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS}
         onUpdateDesktop={(version) =>
           void updateDesktop(version).catch(() => undefined)
         }
         onUpdateDaemon={(version) => void updateWisp(version)}
+        onCheck={() => void checkUpdates()}
         mobile={mobile}
       />
     ) : (

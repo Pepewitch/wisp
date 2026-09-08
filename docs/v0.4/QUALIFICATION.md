@@ -37,7 +37,8 @@ public versions:
 
 1. The older signed app discovers the expected newer version and bounded
    release notes through **Updates → Check now**.
-2. The Desktop row remains separate from the selected daemon row.
+2. The Desktop row remains separate from the built-in Local daemon row, even
+   while a saved remote tab is selected.
 3. **Update Desktop and relaunch** downloads, verifies, replaces, and relaunches
    the app without asking the webview to choose a URL, signature, or key.
 4. Connections, projects, selected task, task history, daemon state, branches,

@@ -79,6 +79,11 @@ Data flow uses TanStack Query for reads, a bridge from the daemon's
 Provider PR state and the daemon-cached release status are the only polling
 exceptions.
 
+The Desktop Updates surface is app-global and deliberately does not follow the
+active connection: its daemon query, forced check, install, error, and recovery
+stay bound to the built-in `local` transport. Saved remotes have no Desktop
+package-manager action. The browser runtime retains its one-daemon updater.
+
 Writes use the centralized TanStack mutation hooks in `hooks/mutations.ts`;
 feature hooks add only their local confirmation or refusal state. Keep that
 boundary when adding a write rather than calling `api()` directly from a

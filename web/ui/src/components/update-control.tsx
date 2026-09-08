@@ -1,4 +1,5 @@
 import { Popover } from "@base-ui/react/popover"
+import type { ReactNode } from "react"
 
 import { Download, Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
@@ -88,11 +89,11 @@ export function UpdateCenter({
   daemonStatus,
   daemonError,
   daemonOperation,
-  connectionId,
-  connectionName,
+  checkingDaemon,
   supportedApiProtocols,
   onUpdateDesktop,
   onUpdateDaemon,
+  onCheck,
   mobile = false,
   defaultOpen = false,
 }: {
@@ -100,11 +101,11 @@ export function UpdateCenter({
   daemonStatus: UpdateStatus | undefined
   daemonError: string | null
   daemonOperation: DaemonUpdateOperation | null
-  connectionId: string
-  connectionName: string
+  checkingDaemon: boolean
   supportedApiProtocols: readonly number[]
   onUpdateDesktop: (version: string) => void
   onUpdateDaemon: (version: string) => void
+  onCheck: () => void
   mobile?: boolean
   /** Gallery/test seam. Production leaves the surface closed initially. */
   defaultOpen?: boolean
@@ -129,7 +130,6 @@ export function UpdateCenter({
     desktop.status?.phase === "failed" ||
     daemonError !== null ||
     daemonStatus?.state === "failed"
-  const activeDaemonBusy = daemonOperation?.connectionId === connectionId
   const desktopBlocksDaemon = desktopUpdateBlocksDaemon(
     desktop.status,
     desktop.pending
@@ -144,7 +144,7 @@ export function UpdateCenter({
         title={
           hasFailure
             ? "An update needs attention"
-            : "Application and daemon updates"
+            : "Desktop and Local daemon updates"
         }
       >
         <Download />
@@ -187,6 +187,7 @@ export function UpdateCenter({
                 pending={desktop.pending}
                 error={desktop.error}
                 daemonOperation={daemonOperation}
+                daemonChecking={checkingDaemon}
                 onInstall={onUpdateDesktop}
                 onRelaunch={() =>
                   void desktop.relaunch().catch(() => undefined)
@@ -196,21 +197,13 @@ export function UpdateCenter({
                 status={daemonStatus}
                 error={daemonError}
                 operation={daemonOperation}
-                activeOperation={activeDaemonBusy}
-                connectionName={connectionName}
+                checking={checkingDaemon}
                 compatible={compatible}
                 desktopBlocksDaemon={desktopBlocksDaemon}
                 supportedApiProtocols={supportedApiProtocols}
                 onUpdate={onUpdateDaemon}
               />
             </div>
-            {daemonOperation && !activeDaemonBusy && (
-              <p className="mt-2 text-[11px] leading-normal text-muted-foreground">
-                {daemonOperation.connectionName} daemon is{" "}
-                {daemonOperation.phase}. Desktop relaunch stays disabled until
-                it recovers.
-              </p>
-            )}
             <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-2">
               <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
                 <input
@@ -221,15 +214,17 @@ export function UpdateCenter({
                   }
                   className="accent-primary"
                 />
-                Check after launch
+                Check Desktop after launch
               </label>
               <Button
                 size="sm"
                 disabled={
                   desktop.pending ||
+                  checkingDaemon ||
+                  daemonOperation !== null ||
                   desktop.status?.phase === "ready-to-relaunch"
                 }
-                onClick={() => void desktop.check().catch(() => undefined)}
+                onClick={onCheck}
               >
                 <Refresh />
                 Check now
@@ -247,6 +242,7 @@ function DesktopUpdateRow({
   pending,
   error,
   daemonOperation,
+  daemonChecking,
   onInstall,
   onRelaunch,
 }: {
@@ -254,6 +250,7 @@ function DesktopUpdateRow({
   pending: boolean
   error: string | null
   daemonOperation: DaemonUpdateOperation | null
+  daemonChecking: boolean
   onInstall: (version: string) => void
   onRelaunch: () => void
 }) {
@@ -314,6 +311,7 @@ function DesktopUpdateRow({
         canInstall={canInstall}
         target={target}
         daemonOperation={daemonOperation}
+        daemonChecking={daemonChecking}
         onInstall={onInstall}
         onRelaunch={onRelaunch}
       />
@@ -328,6 +326,7 @@ function DesktopUpdateAction({
   canInstall,
   target,
   daemonOperation,
+  daemonChecking,
   onInstall,
   onRelaunch,
 }: {
@@ -337,6 +336,7 @@ function DesktopUpdateAction({
   canInstall: boolean
   target: string | null | undefined
   daemonOperation: DaemonUpdateOperation | null
+  daemonChecking: boolean
   onInstall: (version: string) => void
   onRelaunch: () => void
 }) {
@@ -346,11 +346,13 @@ function DesktopUpdateAction({
         <Button
           size="sm"
           tone="primary"
-          disabled={daemonOperation !== null || pending}
+          disabled={daemonOperation !== null || daemonChecking || pending}
           title={
-            daemonOperation
-              ? `Wait for ${daemonOperation.connectionName} daemon to recover`
-              : "Relaunch Wisp Desktop"
+            daemonChecking
+              ? "Wait for the Local daemon check to finish"
+              : daemonOperation
+                ? `Wait for ${daemonOperation.connectionName} daemon to recover`
+                : "Relaunch Wisp Desktop"
           }
           onClick={onRelaunch}
         >
@@ -365,11 +367,13 @@ function DesktopUpdateAction({
         <Button
           size="sm"
           tone="primary"
-          disabled={daemonOperation !== null || busy}
+          disabled={daemonOperation !== null || daemonChecking || busy}
           title={
-            daemonOperation
-              ? `Wait for ${daemonOperation.connectionName} daemon to recover`
-              : `Install Wisp Desktop ${target} and relaunch`
+            daemonChecking
+              ? "Wait for the Local daemon check to finish"
+              : daemonOperation
+                ? `Wait for ${daemonOperation.connectionName} daemon to recover`
+                : `Install Wisp Desktop ${target} and relaunch`
           }
           onClick={() => onInstall(target)}
         >
@@ -400,8 +404,7 @@ function DaemonUpdateRow({
   status,
   error,
   operation,
-  activeOperation,
-  connectionName,
+  checking,
   compatible,
   desktopBlocksDaemon,
   supportedApiProtocols,
@@ -410,8 +413,7 @@ function DaemonUpdateRow({
   status: UpdateStatus | undefined
   error: string | null
   operation: DaemonUpdateOperation | null
-  activeOperation: boolean
-  connectionName: string
+  checking: boolean
   compatible: boolean
   desktopBlocksDaemon: boolean
   supportedApiProtocols: readonly number[]
@@ -419,25 +421,24 @@ function DaemonUpdateRow({
 }) {
   const target = status?.latestVersion
   const actionBlock = daemonUpdateActionBlock(
-    operation !== null,
+    operation !== null || checking,
     desktopBlocksDaemon
   )
-  const available =
+  const available = Boolean(
     target !== null &&
     target !== undefined &&
     status?.canAutoUpdate &&
     compatible &&
     (status.state === "available" || status.state === "failed")
+  )
   const blockedMessage =
     target && !compatible
       ? `Wisp ${target} uses daemon API protocol ${status?.latestApiProtocolVersion ?? "unknown"}; this Desktop supports ${supportedApiProtocols.join(", ")}. Update Desktop first for a newer protocol, or update this daemon out of band for an older one.`
       : null
   return (
-    <section aria-label={`${connectionName} daemon update`} className="pt-3">
+    <section aria-label="Local daemon update" className="pt-3">
       <div className="flex items-baseline justify-between gap-3">
-        <h3 className="truncate text-[12.5px] font-medium">
-          {connectionName} daemon
-        </h3>
+        <h3 className="truncate text-[12.5px] font-medium">Local daemon</h3>
         <VersionLine current={status?.currentVersion} latest={target} />
       </div>
       {(error ?? blockedMessage ?? status?.message) && (
@@ -452,29 +453,65 @@ function DaemonUpdateRow({
           {error ?? blockedMessage ?? status?.message}
         </p>
       )}
-      <div className="mt-2 flex justify-end">
-        {activeOperation ? (
-          <Button size="sm" disabled>
-            {operation?.phase === "restarting"
-              ? `Restarting ${connectionName} daemon…`
-              : `Updating ${connectionName} daemon…`}
-          </Button>
-        ) : available ? (
-          <Button
-            size="sm"
-            tone="outline"
-            disabled={actionBlock.disabled}
-            title={actionBlock.title}
-            onClick={() => onUpdate(target)}
-          >
-            {status.state === "failed" || error
-              ? `Retry ${connectionName} daemon update`
-              : `Update ${connectionName} daemon`}
-          </Button>
-        ) : null}
-      </div>
+      <DaemonUpdateAction
+        checking={checking}
+        operation={operation}
+        available={available}
+        actionBlock={actionBlock}
+        target={target}
+        failed={status?.state === "failed" || error !== null}
+        onUpdate={onUpdate}
+      />
     </section>
   )
+}
+
+function DaemonUpdateAction({
+  checking,
+  operation,
+  available,
+  actionBlock,
+  target,
+  failed,
+  onUpdate,
+}: {
+  checking: boolean
+  operation: DaemonUpdateOperation | null
+  available: boolean
+  actionBlock: { disabled: boolean; title: string | undefined }
+  target: string | null | undefined
+  failed: boolean
+  onUpdate: (version: string) => void
+}) {
+  let action: ReactNode = null
+  if (checking) {
+    action = (
+      <Button size="sm" disabled>
+        Checking Local daemon…
+      </Button>
+    )
+  } else if (operation) {
+    action = (
+      <Button size="sm" disabled>
+        {operation.phase === "restarting"
+          ? "Restarting Local daemon…"
+          : "Updating Local daemon…"}
+      </Button>
+    )
+  } else if (available && target) {
+    action = (
+      <Button
+        size="sm"
+        tone="outline"
+        disabled={actionBlock.disabled}
+        title={actionBlock.title}
+        onClick={() => onUpdate(target)}
+      >
+        {failed ? "Retry Local daemon update" : "Update Local daemon"}
+      </Button>
+    )
+  }
+  return <div className="mt-2 flex justify-end">{action}</div>
 }
 
 /**
@@ -483,7 +520,10 @@ function DaemonUpdateRow({
  * went wrong. "Updates" stays the first word, because that is the surface's
  * name in the popover, in the docs, and in what someone would search for.
  */
-function updateTriggerLabel(availableCount: number, hasFailure: boolean): string {
+function updateTriggerLabel(
+  availableCount: number,
+  hasFailure: boolean
+): string {
   const parts = ["Updates"]
   if (availableCount > 0) parts.push(`${availableCount} available`)
   if (hasFailure) parts.push("needs attention")
