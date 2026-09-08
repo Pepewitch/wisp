@@ -18,11 +18,11 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current candidate: `0.4.0-alpha.16`.** This experimental prerelease is not
-production-ready software. Alpha.16 carries the shared conversation-caption
-and slash-command selection fixes onto the signed Desktop update channel. It
-remains pending until the tagged artifacts and public Homebrew channel pass the
-release gates.
+**Current release: `0.4.0-alpha.16`.** This experimental prerelease is not
+production-ready software. Its ten immutable assets, Developer ID signature,
+notarization, staple, updater signature, anonymous downloads, Homebrew recipes,
+and public Desktop channel passed the release gates. The human-observed
+alpha.13-to-alpha.16 in-app replacement remains pending.
 
 ## Why Wisp
 
@@ -49,10 +49,10 @@ lifecycle state, and phone-capable steering.
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
-is machine qualification only. The public alpha.13 Desktop archive is Developer
-ID signed, notarized, stapled, and updater-signed; its alpha.12-to-alpha.13
-self-update was qualified on one Apple Silicon Mac. Alpha.16 must pass the same
-fail-closed publication gates before it becomes the current public release.
+is machine qualification only. The public alpha.16 Desktop archive is Developer
+ID signed, notarized, stapled, and updater-signed. Alpha.13's
+alpha.12-to-alpha.13 self-update was qualified on one Apple Silicon Mac;
+alpha.16's alpha.13-to-alpha.16 human updater receipt is still pending.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -328,6 +328,9 @@ runtime difference belongs behind the documented boundary rather than in a
 shared component shortcut.
 Release maintainers must follow the
 [publishing and qualification playbook](skills/wisp-dev/references/releasing.md).
+Immutable GitHub publication and mutable Homebrew/update-channel promotion are
+separate serialized jobs. A promotion failure can be rerun for the existing tag
+without rebuilding, re-signing, notarizing, or changing public release assets.
 
 ## Documentation
 
@@ -337,6 +340,7 @@ Release maintainers must follow the
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Desktop updates](docs/DESKTOP-UPDATES.md)
+- [v0.4 release qualification](docs/v0.4/QUALIFICATION.md)
 - [Security policy and trust model](SECURITY.md)
 - [Adding a harness](docs/ADDING-A-HARNESS.md)
 - [Operator skill](skills/wisp/SKILL.md)

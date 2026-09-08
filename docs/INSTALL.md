@@ -1,8 +1,8 @@
 # Install and activate Wisp on Linux
 
 This guide covers **Ubuntu 24.04 LTS, x86_64, glibc**.
-`0.4.0-alpha.16` is an experimental feature prerelease candidate. The Apple
-Silicon Homebrew path is documented separately in
+`0.4.0-alpha.16` is the current published experimental feature prerelease. The
+Apple Silicon Homebrew path is documented separately in
 [INSTALL-MACOS.md](INSTALL-MACOS.md).
 
 The alpha is machine-qualified, not human-validated. It is not production

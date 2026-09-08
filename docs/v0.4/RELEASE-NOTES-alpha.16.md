@@ -1,7 +1,7 @@
 # Wisp 0.4.0-alpha.16
 
 This is an **experimental feature prerelease**, not production-ready software.
-It is the third Wisp Desktop release intended to ship with Developer ID
+It is the third Wisp Desktop release to ship with Developer ID
 signing, Apple notarization, and cryptographically signed in-app updates.
 
 Alpha.13 established the public Desktop update path by replacing an installed
@@ -19,9 +19,10 @@ The desktop app targets Apple Silicon macOS 12.3 or newer. Intel macOS remains
 unsupported, and the configured deployment minimum is not evidence that every
 macOS version in that range has been qualified.
 
-Alpha.16 remains a release candidate until signing, notarization, stapling,
-public-download verification, Homebrew publication, and the human-observed
-alpha.13-to-alpha.16 updater journey have completed.
+Alpha.16 passed signing, notarization, stapling, updater-signature verification,
+anonymous public-download verification, and Homebrew/update-channel
+publication. Its human-observed alpha.13-to-alpha.16 updater journey remains
+pending, so that two-version path is not yet qualified.
 
 ## Install or upgrade
 
@@ -90,7 +91,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 ## Release assets
 
-The release must publish exactly these ten immutable assets:
+The release publishes exactly these ten immutable assets:
 
 - `wisp-v0.4.0-alpha.16-linux-x86_64`
 - `release-manifest.json`
@@ -103,6 +104,10 @@ The release must publish exactly these ten immutable assets:
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
-The exact release commit, public-download evidence, Homebrew tap commit, and
-alpha.13-to-alpha.16 updater receipt remain pending until publication and
-qualification complete.
+The immutable release tag points to commit
+`3a34ecb2175e5198eaf510cc017e936e4655addb`. All ten public checksum sets,
+Developer ID, notarization, staple, Gatekeeper, updater-signature, tamper
+rejection, Formula/Cask audit, and fixed-channel checks passed. Homebrew tap
+commit `520943acf0ebc3b7a8f871444d9e7497f8eb1489` publishes alpha.16. The
+alpha.13-to-alpha.16 human replacement, relaunch, state-preservation, and
+receipt-reconciliation record remains pending.

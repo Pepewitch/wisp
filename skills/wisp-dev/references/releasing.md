@@ -39,7 +39,9 @@ hardened runtime, notarization, staple, and a separate updater signature.
 
 `.github/workflows/release.yml` automates the publish steps below. The
 maintainer's push of the annotated `v<version>` tag is the explicit publish
-authorization and the sole trigger. It runs two jobs:
+authorization. One repository-wide concurrency group serializes releases so
+two tags cannot race to advance the Homebrew or Desktop channels. It runs
+three jobs:
 
 1. `release-linux` requires the tag to point at `origin/main`, scans history
    with Gitleaks, builds the Linux asset with `--require-tag`, proves the
@@ -51,16 +53,41 @@ authorization and the sole trigger. It runs two jobs:
    one trusted Desktop archive. It verifies all ten assets, renders and audits
    both Homebrew recipes plus the Desktop update channel offline, creates the
    "Wisp <version>" GitHub prerelease with the release notes as its body,
-   verifies the ten public URLs and both Desktop trust chains anonymously,
-   audits every non-livecheck Formula/Cask rule online, pushes exactly
-   `Formula/wisp.rb`, `Casks/wisp-desktop.rb`, and
-   `updates/wisp-desktop-alpha.json` to `Pepewitch/homebrew-tap` in one commit,
-   waits for the fixed raw channel URL to converge, then requires the full
-   livecheck audit.
+   and verifies the ten public URLs and both Desktop trust chains anonymously.
+   This is the immutable publication boundary.
+3. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
+   and verifies the public assets again, renders and audits the Formula, Cask,
+   and update channel in an isolated Homebrew tap, pushes exactly those three
+   files to `Pepewitch/homebrew-tap` in one commit, waits for the fixed raw
+   channel URL to converge, then requires the full livecheck audit. It emits a
+   timing log and machine-readable promotion receipt.
+
+Promotion is deliberately a separate job. If it fails after the immutable
+GitHub release exists, rerun only the failed `promote` job. The workflow also
+has a manual recovery input for an existing tag:
+
+```sh
+gh workflow run release.yml --ref main -f tag="v$version"
+```
+
+Manual dispatch skips compilation, Apple signing, notarization, and GitHub
+release creation. It requires `--ref main` and runs the current promotion
+implementation from `main` against a separate immutable checkout of the
+requested tag.
+This allows a promotion bug to be fixed on `main` without changing the release
+source or public assets.
+
+Pull requests that change the promotion command, renderers, Homebrew/channel
+tests, or release workflow also trigger `.github/workflows/release-promotion.yml`.
+Its disposable macOS runner anonymously replays the published alpha.16 path,
+including all ten downloads, updater and Apple trust checks, actual Homebrew
+audits, exact-channel comparison, and safe temporary-tap cleanup. It records a
+dry-run receipt and has no tap write credential or `--publish` capability.
 
 The workflow needs these repository secrets:
 
-- `HOMEBREW_TAP_TOKEN`: fine-grained token with Contents write access to the tap;
+- `HOMEBREW_TAP_TOKEN`: fine-grained token with Contents write access to the
+  tap, exposed only to the promotion job;
 - `APPLE_CERTIFICATE`: base64 PKCS#12 Developer ID Application certificate;
 - `APPLE_CERTIFICATE_PASSWORD`;
 - `APPLE_SIGNING_IDENTITY`: the exact Developer ID Application identity;
@@ -73,20 +100,23 @@ The matching updater public key is committed at
 `desktop/src-tauri/updater-public.key`. Never print or place a private value on
 a command line captured in logs. The workflow writes the Apple API key to a
 mode-`0600` runner-temporary file and stops before publication if any input or
-trust check is absent. It
-never writes back to this repository — assets attach to the GitHub release
+trust check is absent. Immutable publication clones the public tap without the
+write token; only promotion receives it. The workflow never writes back to this
+repository — assets attach to the GitHub release
 and the Formula/Cask commit lands in the tap repository — so publishing cannot
-re-trigger this repository's CI. Nothing is public until the `publish` job
-runs, so a failed Linux-side gate cannot half-publish a release.
+re-trigger this repository's CI. No release assets are public until the
+`publish` job runs, so a failed Linux-side gate cannot half-publish a release.
 
 Preparation (steps 1-3, landed on `main` as the release preparation PR), the
 external evaluator panel, the exact-credential scan of step 5, local
 qualification in step 9, and the step 10 close-out records remain private
 maintainer records.
 Steps 4-8 below remain the manual fallback and the source of the automated
-gates. If the workflow fails before the prerelease is created, delete the
-tag, fix, and re-tag: an unpublished tag is still mutable. Once assets are
-public, never mutate them.
+gates. If the workflow fails before the prerelease is created, delete the tag,
+fix, and re-tag: an unpublished tag is still mutable. Once assets are public,
+never mutate them and do not create a new version merely because channel
+promotion failed. Rerun the promotion job or manually dispatch the existing
+tag after fixing the promotion implementation on `main`.
 
 ## 1. Prepare a release branch
 
@@ -111,9 +141,15 @@ notes="$repo/docs/v0.N/RELEASE-NOTES-alpha.N.md"
 tap="$(brew --repository Pepewitch/tap)"
 ```
 
-The manual fallback requires `Pepewitch/tap` to be Homebrew's registered,
-clean tap checkout so name-based Formula and Cask audits resolve the files just
-rendered. Do not substitute an arbitrary clone without registering it first.
+The low-level manual fallback requires `Pepewitch/tap` to be Homebrew's
+registered, clean tap checkout so name-based Formula and Cask audits resolve
+the files just rendered. Run that fallback only on a disposable Mac with no
+installed `wisp` Formula or `wisp-desktop` Cask. Never create a colliding audit
+tap on an operator machine: Homebrew can associate cleanup with the installed
+token and remove the working application. The preferred promotion command
+accepts a separate clean tap clone, creates its audit tap only after proving
+the host is disposable, removes the copied definitions before untapping, and
+refuses unsafe hosts.
 
 Confirm that the target version and tag do not already exist locally or
 remotely. Stop if either exists; release identities are not reusable.
@@ -501,8 +537,51 @@ release metadata.
 
 ## 8. Publish the Homebrew Formula, Cask, and update channel
 
-Once the Mac assets are public, repeat the prepared recipe audits online and
-synchronize the three files in one tap commit:
+Once the Mac assets are public, promotion is a resumable operation. Prefer the
+manual recovery dispatch when the automatic `promote` job did not complete:
+
+```sh
+gh workflow run release.yml --ref main -f tag="$tag"
+gh run list --workflow release.yml --limit 5
+```
+
+The dispatch uses the current promotion implementation but checks the release
+identity, notes, updater key, and manifests out from the immutable tag. It
+downloads all ten assets anonymously, repeats checksum, updater-signature,
+tamper-rejection, Developer ID, notarization, staple, and Gatekeeper checks,
+then advances the tap. If the tap and channel already contain the exact
+generated bytes, it performs final verification without creating another
+commit.
+
+The same implementation is available on a disposable Apple Silicon Mac for a
+dry run or an explicitly authorized manual promotion:
+
+```sh
+promotion_tap="$(mktemp -d)/homebrew-tap"
+git clone https://github.com/Pepewitch/homebrew-tap.git "$promotion_tap"
+bun run release:promote -- \
+  --tag "$tag" \
+  --tap-dir "$promotion_tap"
+
+# Use a fresh clean tap clone after inspecting a dry run.
+promotion_tap="$(mktemp -d)/homebrew-tap"
+git clone https://github.com/Pepewitch/homebrew-tap.git "$promotion_tap"
+bun run release:promote -- \
+  --tag "$tag" \
+  --tap-dir "$promotion_tap" \
+  --publish
+```
+
+The command refuses a non-arm64 host, an installed Wisp Formula/Cask, a
+registered `Pepewitch/tap`, a non-annotated or non-main tag, any public asset
+inventory other than the exact ten files, mismatched manifest identities, a
+dirty or stale tap checkout, or changes outside the exact three promotion
+files. `--publish` is a separate explicit capability; omitting it never pushes.
+
+The following low-level sequence documents the gates owned by that command.
+Use it only on the disposable fallback host described above. Repeat the
+prepared recipe audits online and synchronize the three files in one tap
+commit:
 
 ```sh
 tap="$(brew --repository Pepewitch/tap)"
@@ -535,7 +614,7 @@ HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online Pepewitch/tap/wisp
 HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
   brew audit --strict --online --cask \
-    --except github_prerelease_version,livecheck_version \
+    --except github_prerelease_version,livecheck_version,livecheck_https_availability \
     Pepewitch/tap/wisp-desktop
 git -C "$tap" diff --check
 git -C "$tap" diff -- Formula/wisp.rb Casks/wisp-desktop.rb \
@@ -552,9 +631,11 @@ data first. The channel must name the same archive and updater signature bound
 by the release manifest.
 
 `github_prerelease_version` is the persistent audit exception for the
-custom-tap alpha. `livecheck_version` is deferred only before publication,
-because the staged Cask is necessarily newer than the still-public channel.
-Do not exclude Homebrew's signing or Gatekeeper checks.
+custom-tap alpha. `livecheck_version` and `livecheck_https_availability` are
+deferred only before channel promotion, because both invoke the circular
+version comparison while the staged Cask is necessarily newer than the
+still-public channel. The post-push audit restores both. Do not exclude
+Homebrew's signing or Gatekeeper checks.
 
 Commit and push the tap only with explicit authorization:
 
@@ -703,9 +784,12 @@ self-update. See [`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 ## 10. Close out without rewriting history
 
 After public qualification, update the README, install guides, and release
-notes with only the facts just observed. Keep raw and machine-specific
-evidence outside the public repository. Retain prior passes and failures in
-the private project record rather than rewriting them.
+notes with only the facts just observed, and add the sanitized two-version
+result to `docs/v0.4/QUALIFICATION.md`. Keep raw and machine-specific evidence
+outside the public repository. Retain prior passes and failures in the private
+project record rather than rewriting them. A source-document closeout does not
+authorize editing the already-published GitHub release body or replacing an
+asset.
 
 The final receipt should name:
 

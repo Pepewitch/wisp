@@ -10,10 +10,10 @@ use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
 The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
-builds are ad-hoc signed. Starting with alpha.11, the tag release pipeline
-requires Developer ID signing, notarization, stapling, and updater signing
-before publication. The published alpha.8 predates that pipeline and remains
-ad-hoc signed.
+builds are ad-hoc signed. Starting with alpha.12, public Desktop releases
+require Developer ID signing, notarization, stapling, and updater signing
+before immutable publication. Alpha.16 is the current signed public release;
+the historical alpha.8 predates that pipeline and remains ad-hoc signed.
 
 Status: working alpha. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned
@@ -310,8 +310,11 @@ unexpected bundle member or builder path, and produces a deterministic
 the ad-hoc payload with a second isolated Cargo target and requires byte-identical
 output. It then creates one timestamped, Developer ID signed and notarized
 archive, updater-signs those exact bytes, independently verifies both trust
-chains, and publishes the update channel only after anonymous verification.
-The full contract is in [Desktop updates](../docs/DESKTOP-UPDATES.md).
+chains, and publishes ten immutable assets. A separate serialized promotion
+job downloads and verifies those public bytes again before atomically advancing
+the Homebrew Formula, Cask, and update channel. Promotion can be rerun for an
+existing tag without rebuilding or mutating its release. The full contract is
+in [Desktop updates](../docs/DESKTOP-UPDATES.md).
 
 Uninstalling the Cask quits and removes the app but does not delete native
 metadata or Keychain entries. Remove remote connections or use **Reset desktop

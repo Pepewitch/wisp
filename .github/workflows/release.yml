@@ -3,18 +3,33 @@ name: release
 # Publishing is tag-driven, never merge-driven. The release preparation PR
 # (skills/wisp-dev/references/releasing.md) lands the synchronized version and
 # release notes on main; pushing the annotated `v<version>` tag is the maintainer's
-# explicit publish authorization and the sole trigger. Nothing writes back to
-# this repository: assets attach to the GitHub prerelease and the rendered
-# Homebrew Formula commits to the separate Pepewitch/homebrew-tap repository,
-# so publishing can never re-trigger this repository's CI.
+# explicit publish authorization. Immutable asset publication and mutable
+# channel promotion are separate jobs, so a failed promotion can be rerun
+# without rebuilding or mutating a release. workflow_dispatch is recovery-only:
+# it accepts an existing public tag and runs the promotion job by itself.
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing public annotated release tag to promote
+        required: true
+        type: string
+
+concurrency:
+  group: wisp-release
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
   release-linux:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,10 +125,12 @@ jobs:
 
   publish:
     needs: release-linux
+    if: github.event_name == 'push'
     # release-macos.ts refuses any host except arm64 macOS, so the Mac asset
     # must build here. This job is also the single publication point: nothing
     # is public until it runs, so a Linux-side failure cannot half-publish.
     runs-on: macos-15
+    timeout-minutes: 120
     permissions:
       contents: write # create the GitHub prerelease
     steps:
@@ -257,16 +274,10 @@ jobs:
             exit 1
           }
 
-      # Checkout persists the masked tap token through Git's credential
-      # helper. Never place that token in a remote URL or process argument.
-      - name: checkout the Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: Pepewitch/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          ref: main
-          fetch-depth: 0
-          path: homebrew-tap
+      # Immutable publication needs only a public, read-only tap checkout.
+      # The write credential is exposed solely to the later promotion job.
+      - name: clone the Homebrew tap read-only
+        run: git clone --branch main --single-branch https://github.com/Pepewitch/homebrew-tap.git homebrew-tap
 
       # Render from the locally verified manifests and prove both recipes load
       # before the public release exists. Online URL audits follow publication.
@@ -384,63 +395,83 @@ jobs:
           xcrun stapler validate "$extracted/Wisp.app"
           spctl --assess --type execute --verbose=4 "$extracted/Wisp.app"
 
-      # releasing.md step 8: now that URLs exist, run online audits and update
-      # exactly the three prepared tap files in one commit.
-      - name: audit the published Homebrew Formula and Cask
+  promote:
+    needs: publish
+    if: always() && ((github.event_name == 'push' && needs.publish.result == 'success') || github.event_name == 'workflow_dispatch')
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Recovery uses the current workflow implementation from the chosen
+          # branch; a separate checkout below supplies immutable tag inputs.
+          fetch-depth: 0
+          fetch-tags: true
+      - name: require main for manual recovery
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF" = refs/heads/main
+      - name: checkout the immutable release source for recovery
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+          fetch-tags: true
+          path: release-source
+      - name: restore and verify the annotated release tag
+        run: |
+          release_root=.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            release_root=release-source
+          fi
+          git -C "$release_root" fetch --force origin \
+            "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git -C "$release_root" cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: checkout the Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: Pepewitch/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          ref: main
+          fetch-depth: 0
+          path: homebrew-tap
+      - name: promote the verified public release
         env:
+          GH_TOKEN: ${{ github.token }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
-          tap="$GITHUB_WORKSPACE/homebrew-tap"
-          brew audit --strict --online Pepewitch/tap/wisp
-          # The staged Cask is newer than the still-public channel until the
-          # next step pushes all three tap files. Homebrew's HTTPS livecheck
-          # audit invokes the same version comparison internally, so defer
-          # both livecheck paths; signing and Gatekeeper checks stay enabled.
-          brew audit --strict --online --cask \
-            --except github_prerelease_version,livecheck_version,livecheck_https_availability \
-            Pepewitch/tap/wisp-desktop
-          git -C "$tap" diff --check
-
-      - name: push the Homebrew tap
-        run: |
-          tap="$GITHUB_WORKSPACE/homebrew-tap"
-          git -C "$tap" fetch origin main
-          test "$(git -C "$tap" rev-parse HEAD)" = "$(git -C "$tap" rev-parse origin/main)"
-          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb updates/wisp-desktop-alpha.json)"
-          actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
-          test "$actual" = "$expected"
-          git -C "$tap" config user.name "github-actions[bot]"
-          git -C "$tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb updates/wisp-desktop-alpha.json
-          staged="$(git -C "$tap" diff --cached --name-only | LC_ALL=C sort)"
-          test "$staged" = "$expected"
-          git -C "$tap" diff --quiet
-          git -C "$tap" diff --cached --check
-          git -C "$tap" commit -m "release: update Wisp to ${GITHUB_REF_NAME#v}"
-          git -C "$tap" push origin HEAD:main
-          git -C "$tap" log -1 --stat
-          public_channel="$(mktemp)"
-          channel_url="https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json"
-          channel_ready=0
-          # raw.githubusercontent.com advertises a five-minute cache. Exercise
-          # the exact fixed URL embedded in Desktop until it serves this commit.
-          for _ in {1..24}; do
-            if curl --proto '=https' --tlsv1.2 -fsSL "$channel_url" \
-              -o "$public_channel" && \
-              cmp -s "$tap/updates/wisp-desktop-alpha.json" "$public_channel"
-            then
-              channel_ready=1
-              break
-            fi
-            sleep 15
-          done
-          test "$channel_ready" = 1 || {
-            echo "public Desktop update channel did not converge" >&2
-            exit 1
-          }
-          # Now require the livecheck comparison that was deliberately deferred
-          # before the channel existed. Only the custom-tap prerelease policy is
-          # excluded; all signing and Gatekeeper checks remain active.
-          brew audit --strict --online --cask \
-            --except github_prerelease_version \
-            Pepewitch/tap/wisp-desktop
+          set -o pipefail
+          mkdir -p dist/promotion
+          release_root=.
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            release_root=release-source
+          fi
+          bun run release:promote -- \
+            --tag "$RELEASE_TAG" \
+            --tap-dir homebrew-tap \
+            --release-root "$release_root" \
+            --receipt dist/promotion/promotion-receipt.json \
+            --publish 2>&1 | tee dist/promotion/promotion.log
+      - name: retain promotion diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-promotion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/promotion/promotion.log
+            dist/promotion/promotion-receipt.json
+          retention-days: 30
+          if-no-files-found: warn
