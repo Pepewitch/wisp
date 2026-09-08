@@ -1,9 +1,8 @@
 # Wisp 0.4.0-alpha.12
 
 This is an **experimental feature prerelease**, not a production-ready
-release. It is the first Wisp Desktop candidate intended to ship with
-Developer ID signing, Apple notarization, and cryptographically signed in-app
-updates.
+release. It is the first Wisp Desktop prerelease to ship with Developer ID
+signing, Apple notarization, and cryptographically signed in-app updates.
 
 The desktop app targets Apple Silicon macOS 12.3 or newer. Intel macOS remains
 unsupported, and the configured deployment minimum is not evidence that every
@@ -15,10 +14,9 @@ polling and no GitHub release or Homebrew update was published. Alpha.12 keeps
 the same trust gates and deliberately replaces the unshipped updater trust
 root before any released client can depend on it.
 
-At release preparation time, Developer ID signing, notarization, stapling,
-public-download verification, and installed-app qualification are pending. The
-candidate must not publish unless every signing and trust gate passes. The
-release remains an alpha even after those gates succeed.
+Alpha.12 passed Developer ID signing, notarization, stapling, public-download
+verification, Homebrew installation, and installed-app qualification before
+closeout. It remains an alpha after those gates.
 
 ## Install or upgrade
 
@@ -85,9 +83,9 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 ## Known limits
 
 - Alpha.12 is the updater bootstrap release. Alpha.8 cannot discover it, and a
-  single alpha.12 installation does not prove self-update. The first complete
-  updater qualification requires leaving alpha.12 installed, publishing a
-  second signed version, and updating to it through **Updates**.
+  single alpha.12 installation did not prove self-update. Alpha.13 later
+  completed that two-version qualification through **Updates** on one Apple
+  Silicon Mac.
 - Apple Silicon support has limited single-machine qualification; Intel Macs
   are unsupported.
 - Closing Wisp Desktop does not stop daemons or agents. The app is an
@@ -114,6 +112,9 @@ The release must publish exactly these ten immutable assets:
 - `release-manifest-desktop-darwin-arm64.json`
 - `SHA256SUMS-desktop-darwin-arm64`
 
-Publication, anonymous-download verification, Homebrew online audits, and
-installed upgrade qualification remain pending until the manual release and
-post-release checks complete.
+All ten assets were published from clean commit
+`b486dea2fdcf6c57306ef1aef6af7f9b541fa1ac`. Anonymous downloads, checksum and
+updater-signature verification, Developer ID, notarization, staple, Gatekeeper,
+strict Homebrew audit, installed upgrade, and state-preservation checks passed.
+Homebrew tap commit `f838aef032147618a5b372107fc21a97b82ff7e5`
+advanced the Formula, Cask, and Desktop channel together.

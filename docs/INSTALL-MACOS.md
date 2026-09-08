@@ -2,9 +2,9 @@
 
 Alpha.12 was the first Wisp Desktop prerelease to ship with Developer ID
 signing, Apple notarization, and signed in-app updates. Alpha.13 is the second
-signed release and the first candidate used to exercise that updater. Apple
-Silicon support remains experimental and has only limited single-machine
-qualification.
+signed release and completed the first public alpha.12-to-alpha.13 in-app
+update. Apple Silicon support remains experimental and has only limited
+single-machine qualification.
 
 ## Scope and security notice
 
@@ -19,10 +19,10 @@ The experimental v0.4 target is:
 Intel Macs are unsupported. The configured 12.3 deployment target is enforced
 by the app metadata and Mach-O loader command, but it is not evidence that
 12.3 or every later macOS version has been qualified. Alpha.8 was ad-hoc signed
-and may have required a per-app Gatekeeper exception. Current releases are
-expected to open normally only after their release workflow proves Developer
-ID signing, notarization, and stapling. Do not disable or bypass Gatekeeper for an
-artifact that fails those checks. Verify the download URL is under
+and may have required a per-app Gatekeeper exception. Current releases open
+normally only after their release workflow proves Developer ID signing,
+notarization, and stapling. Do not disable or bypass Gatekeeper for an artifact
+that fails those checks. Verify the download URL is under
 `github.com/Pepewitch/wisp`, that Homebrew accepts the recipe checksum, and that
 `wisp version --json` reports the release version and commit.
 
@@ -203,6 +203,14 @@ brew update
 brew reinstall --cask Pepewitch/tap/wisp-desktop
 ```
 
+An in-app replacement does not rewrite Homebrew's Caskroom receipt. Immediately
+after self-update, `Wisp.app` can correctly report the newer version while
+`brew info --cask wisp-desktop` still lists the bootstrap version as installed.
+This is bookkeeping, not an app downgrade. Run `brew update` followed by
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` to synchronize the
+receipt; Homebrew installs the same immutable archive and must not replace a
+newer app with an older one.
+
 The updater and Cask install the same Developer ID signed, notarized archive.
 The update channel, version, URL, release notes, size, and Minisign signature
 are release-generated and native-controlled; the webview cannot choose them.
@@ -222,9 +230,10 @@ restart. Start the managed service before using automatic updates:
 brew services restart wisp
 ```
 
-An earlier alpha-to-alpha upgrade preserved config, history, branches,
-worktrees, and repository work in one test environment. That is not broad
-Apple Silicon support.
+The public alpha.12-to-alpha.13 in-app update, subsequent Cask receipt sync,
+and daemon Formula restart preserved config, history, branches, worktrees, and
+repository work in one test environment. That is not broad Apple Silicon
+support.
 
 ## Develop beside the installed service
 

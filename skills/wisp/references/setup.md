@@ -34,7 +34,8 @@ CLI/daemon too when needed. The app does not bundle or own a child daemon;
 Local uses the standard `~/.wisp` profile and Homebrew service. Public alpha.8
 is ad-hoc signed and not notarized. Starting with alpha.12, releases fail
 closed unless Developer ID signing and notarization pass; do not bypass
-Gatekeeper for a current artifact that fails verification.
+Gatekeeper for a current artifact that fails verification. The public
+alpha.12-to-alpha.13 self-update passed end to end on one Apple Silicon Mac.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
@@ -68,7 +69,10 @@ brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop
 ```
 
 Later Desktop releases can use the native signed updater. Homebrew remains the
-repair path with `brew reinstall --cask Pepewitch/tap/wisp-desktop`. See
+repair path with `brew reinstall --cask Pepewitch/tap/wisp-desktop`. An in-app
+replacement does not update Homebrew's Caskroom receipt; use `brew update` and
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` when that receipt
+needs to catch up to the already-installed app. See
 [`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
 
 Before uninstalling, remove each remote or use **Reset desktop data** if saved

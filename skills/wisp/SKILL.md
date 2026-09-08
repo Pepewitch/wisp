@@ -36,8 +36,9 @@ picking, and removal behavior are in the setup reference.
 Desktop and daemon releases are independent. In Desktop, use the **Updates**
 popover: **Wisp Desktop** is the global signed application update and the named
 daemon row applies only to the selected connection. Public alpha.8 predates
-self-update; bootstrap the first signed updater release through Homebrew with
-`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
+self-update; bootstrap a current signed release through Homebrew with
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. The public
+alpha.12-to-alpha.13 in-app path is qualified on one Apple Silicon Mac.
 
 ## 2. Creating tasks
 

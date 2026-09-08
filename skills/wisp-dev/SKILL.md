@@ -90,7 +90,9 @@ publication surfaces.
    For every UI or daemon-contract change, identify both consumers, test the
    affected paths, and document intentional divergence. Never accept a
    browser-only pass for shared code or a desktop-only pass for code also
-   served by the daemon.
+   served by the daemon. The PR description or review receipt must name the
+   browser impact, Desktop impact, and the evidence for each; “shared code” is
+   not itself evidence that both runtime paths work.
    Application-global Desktop state and connection-scoped daemon state must
    remain visibly distinct; a tab change must never retarget delayed work.
 6. `web/ui-dist/index.html` is derived and Git-ignored. Never edit, stage, or

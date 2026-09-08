@@ -75,6 +75,12 @@ uses the same channel for livecheck. Use `brew upgrade --cask --greedy
 Pepewitch/tap/wisp-desktop` when explicitly repairing or bootstrapping an
 auto-updating installation.
 
+The Tauri updater replaces `Wisp.app`; it does not rewrite Homebrew's Caskroom
+receipt. After a successful in-app update, Homebrew can temporarily describe
+the prior receipt as installed even though the application bundle is newer.
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` reconciles that
+bookkeeping from the same immutable archive and must never downgrade the app.
+
 The committed updater public key is not secret. Its encrypted private key and
 password are repository secrets. Apple release credentials are also repository
 secrets. A signed tag build stops before publication when any credential is
@@ -85,9 +91,10 @@ PR, task prompt, test fixture, command argument captured in logs, or committed
 file.
 
 The public alpha.8 app predates this updater and is ad-hoc signed. It cannot
-self-update. Alpha.11 is the first Developer ID signed release containing the
-embedded key and must be installed once through Homebrew with `--greedy`. The
-following release is the first end-to-end proof of Desktop self-update.
+self-update. Alpha.12 is the first published Developer ID signed release
+containing the embedded key and must be installed once through Homebrew with
+`--greedy`. Alpha.13 completed the first end-to-end public proof by discovering,
+verifying, installing, and relaunching from alpha.12.
 
 Treat the updater key as a long-lived release root. Before any app containing a
 new public key is published, rotate the key freely and repeat qualification. An
@@ -139,8 +146,15 @@ signed versions on an Apple Silicon Mac:
    relaunch, the new version in the header, and the same connections and tasks.
 6. Repeat the three Apple trust checks against the newly installed app. Confirm
    a bad-signature test is rejected and leaves the old app runnable.
-7. Run `brew update` and inspect `brew info --cask wisp-desktop`; Homebrew must
+7. Run `brew update` and inspect `brew info --cask wisp-desktop`. If its
+   Caskroom receipt still names the older version, synchronize it with
+   `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`; Homebrew must then
    agree with the installed version and must not downgrade the app.
 
-Until that two-version journey has passed, report the updater as implemented
-and release-gated, not as publicly qualified.
+The alpha.12-to-alpha.13 journey passed on one Apple Silicon Mac, including a
+tampered-archive rejection that left alpha.12 runnable, public-channel
+discovery, signed replacement, relaunch, Apple trust checks, preserved daemon
+state, and Homebrew receipt reconciliation. This qualifies the public updater
+path on that machine; it is not broad macOS or hardware qualification. Repeat
+the two-version receipt for future trust-root, channel, installer, or updater
+changes rather than treating this historical pass as permanent coverage.

@@ -18,10 +18,10 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current source version: `0.4.0-alpha.13`.** This is an experimental release
-candidate, not production-ready software. Alpha.13 is the second signed Desktop
-release and the first candidate intended to qualify the alpha.12 in-app updater;
-it also adds theme settings and a rebuilt small-screen shell.
+**Current version: `0.4.0-alpha.13`.** This is a published experimental
+prerelease, not production-ready software. Alpha.13 is the second signed
+Desktop release and completed the first public in-app update from alpha.12; it
+also adds theme settings and a rebuilt small-screen shell.
 
 ## Why Wisp
 
@@ -48,9 +48,10 @@ lifecycle state, and phone-capable steering.
 | Intel macOS | Unsupported; no artifact planned |
 
 Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
-is machine qualification only. The published alpha.8 is not Developer ID
-signed or notarized. The alpha.13 candidate cannot publish unless Developer ID
-signing, notarization, stapling, and updater-signature verification all pass.
+is machine qualification only. The public alpha.13 Desktop archive is Developer
+ID signed, notarized, stapled, and updater-signed; its alpha.12-to-alpha.13
+self-update was qualified on one Apple Silicon Mac. Future releases retain the
+same fail-closed publication gates.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -102,6 +103,8 @@ Homebrew bootstraps and repairs Wisp Desktop. Starting with alpha.12, the app's
 selected daemon has a separate, explicitly named update row. Alpha.8 predates
 the updater, so moving from it to a current updater-capable release requires
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`.
+The public alpha.12-to-alpha.13 journey has exercised discovery, signature
+verification, replacement, relaunch, and state preservation end to end.
 
 See [Apple Silicon installation](docs/INSTALL-MACOS.md) for the current
 platform limits and activation steps.
@@ -214,12 +217,12 @@ never receives those tokens. A URL and token do not create connectivity—the
 remote daemon must already be reachable through trusted HTTPS or a
 user-managed exact-loopback tunnel.
 
-The first alpha requires Apple Silicon and is configured for macOS 12.3 or
-newer, but that oldest version has not been broadly qualified. Published
-alpha.8 is ad-hoc signed and not notarized, so first launch may require Finder's
-Open command or Privacy & Security approval. Every current release fails
-closed unless Developer ID signing and notarization succeed. Do not disable
-Gatekeeper globally. See [Desktop updates](docs/DESKTOP-UPDATES.md).
+The Desktop distribution requires Apple Silicon and is configured for macOS
+12.3 or newer, but that full OS range has not been broadly qualified. The old
+alpha.8 archive was ad-hoc signed; current releases are Developer ID signed and
+notarized and fail closed before publication if that trust chain is absent. Do
+not bypass Gatekeeper for a current artifact that fails verification. See
+[Desktop updates](docs/DESKTOP-UPDATES.md).
 
 For another device, keep Wisp bound to loopback and use Tailscale Serve or an
 SSH tunnel. Never publish the configured Wisp port directly to the internet.
@@ -318,6 +321,10 @@ bun run dev
 The contributor contract is [skills/wisp-dev/SKILL.md](skills/wisp-dev/SKILL.md).
 Frontend changes must follow
 [the frontend conventions](skills/wisp-dev/references/frontend.md).
+Every shared UI or daemon-contract PR must identify and validate its effect on
+both the daemon-served browser and packaged Desktop clients; an intentional
+runtime difference belongs behind the documented boundary rather than in a
+shared component shortcut.
 Release maintainers must follow the
 [publishing and qualification playbook](skills/wisp-dev/references/releasing.md).
 
@@ -328,6 +335,7 @@ Release maintainers must follow the
 - [Architecture](docs/ARCHITECTURE.md)
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
+- [Desktop updates](docs/DESKTOP-UPDATES.md)
 - [Security policy and trust model](SECURITY.md)
 - [Adding a harness](docs/ADDING-A-HARNESS.md)
 - [Operator skill](skills/wisp/SKILL.md)
