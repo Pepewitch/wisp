@@ -138,6 +138,7 @@ describe("PullRequestCache", () => {
     expect(calls[1]).toEqual([
       "git",
       "for-each-ref",
+      "--sort=-committerdate",
       "--format=%(refname:short)",
       "refs/heads/wisp/tpr01-*",
     ]);
@@ -507,6 +508,7 @@ describe("every branch a task made", () => {
     expect(calls.find((cmd) => cmd[1] === "for-each-ref")).toEqual([
       "git",
       "for-each-ref",
+      "--sort=-committerdate",
       "--format=%(refname:short)",
       "refs/heads/wisp/tpr01-*",
     ]);
@@ -550,20 +552,59 @@ describe("every branch a task made", () => {
             : "git@github.com:acme/widgets.git",
         ),
       );
+    // git's order is kept, not re-sorted by name: it is the recency the cap spends
     await expect(
       taskBranches(task(), listed, new AbortController().signal),
-    ).resolves.toEqual(["wisp/tpr01-show-pr-status", "wisp/tpr01-aaa", "wisp/tpr01-zzz"]);
+    ).resolves.toEqual(["wisp/tpr01-show-pr-status", "wisp/tpr01-zzz", "wisp/tpr01-aaa"]);
   });
 
-  test("caps how many of one task's branches reach a shared provider query", async () => {
+  test("asks git for the freshest branches, and spends the cap on those", async () => {
+    // 30 branches, listed the way `--sort=-committerdate` lists them: the cap
+    // must keep the recent ones, because a name sort could drop the branch
+    // holding the newest pull request — the one thing this is all for
     const many = Array.from({ length: 30 }, (_, i) => `wisp/tpr01-branch-${String(i).padStart(2, "0")}`);
-    const listed: ProbeSpawnFn = (cmd) =>
-      Promise.resolve(ok(cmd[1] === "for-each-ref" ? many.join("\n") : "git@github.com:acme/widgets.git"));
+    const calls: string[][] = [];
+    const listed: ProbeSpawnFn = (cmd) => {
+      calls.push(cmd);
+      return Promise.resolve(ok(cmd[1] === "for-each-ref" ? many.join("\n") : "git@github.com:acme/widgets.git"));
+    };
 
     const branches = await taskBranches(task(), listed, new AbortController().signal);
 
+    expect(calls[0]).toContain("--sort=-committerdate");
     expect(branches).toHaveLength(PULL_REQUEST_TASK_BRANCH_LIMIT);
     expect(branches[0]).toBe("wisp/tpr01-show-pr-status");
+    // the head of git's list survives; the stale tail is what falls off
+    expect(branches[1]).toBe("wisp/tpr01-branch-00");
+    expect(branches).not.toContain("wisp/tpr01-branch-29");
+  });
+
+  test("a stuck git in one worktree does not hold up the rest of the sidebar", async () => {
+    // the overview enumerates inside an unbounded per-task Promise.all, so an
+    // enumeration that never settles would hang the WHOLE refresh — every other
+    // task's answer with it. Bounded, it falls back to the branch of record.
+    const calls: string[][] = [];
+    const stuck: ProbeSpawnFn = (cmd, opts) => {
+      calls.push(cmd);
+      if (cmd[1] === "for-each-ref") {
+        return opts?.cwd === "/tmp/stuck"
+          ? new Promise<SpawnResult>(() => {})
+          : Promise.resolve(ok(""));
+      }
+      if (cmd[0] === "git") return Promise.resolve(ok("git@github.com:acme/widgets.git"));
+      return Promise.resolve(graphQlResponse([[], []], [[], []]));
+    };
+    const cache = new PullRequestCache({ run: stuck, timeoutMs: 30 });
+    const hangs = task({ id: "stuck", branch: "wisp/stuck-one", repo_path: "/tmp/stuck" });
+    const fine = task({ id: "fine", branch: "wisp/fine-one" });
+
+    const result = await cache.overview([hangs, fine]);
+
+    // both answered, and the stuck task was still asked about by its branch
+    expect(result.tasks.stuck!.status).toEqual({ kind: "none", provider: "github" });
+    expect(result.tasks.fine!.status).toEqual({ kind: "none", provider: "github" });
+    const query = calls.find((cmd) => cmd[0] === "gh")!.join("\n");
+    expect(query).toContain('headRefName: "wisp/stuck-one"');
   });
 
   test("ignores anything git returned that is not one of this task's branches", async () => {

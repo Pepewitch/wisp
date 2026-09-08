@@ -625,7 +625,12 @@ gone from `origin` within seconds, and its pull request is the one you most want
 to see. The task's stored branch always leads the list and is included even when
 git cannot be read, so this can only widen the answer, never narrow it. A cap
 (`PULL_REQUEST_TASK_BRANCH_LIMIT`) keeps one task from filling a GraphQL
-document it shares with every other task in the repository.
+document it shares with every other task in the repository — and because a cap
+TRUNCATES, the rest are ordered by `-committerdate` rather than by name: a name
+sort could drop the branch holding the newest pull request, which is the one
+thing this is for. The enumeration is timeout-bounded like every other spawn,
+falling back to the branch of record, so one stuck `git` cannot hang the
+sidebar's whole refresh.
 
 One task, one answer: a provider failure on ANY of its branches beats a success
 on another, because the newest could be the one that failed and showing the
@@ -643,6 +648,10 @@ pending or unknown stays muted. Never recreate branch protection,
 CODEOWNERS, or required-approval rules in Wisp. `/push` remains a Tier-1 palette
 command. `none`, `unsupported`, and `unavailable` all render nothing: an absent
 PR is not an error, and a missing provider CLI or credential is not task news.
+
+The count rides the header link and the hover card, not the sidebar icon: the
+icon compresses to three glance states on purpose, and the card is where the
+branch of record and a later pull request sit one row apart and can disagree.
 
 The sidebar carries one smaller, non-interactive branch icon before the Git
 marks for every non-archived task with a PR. It compresses detail to three

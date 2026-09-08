@@ -215,7 +215,7 @@ export class PullRequestCache {
           );
         }
         queriedProvider = true;
-        return taskBranches(task, this.run, controller.signal).then((branches) =>
+        return this.branches(task, controller.signal).then((branches) =>
           githubPullRequest(task, repository, branches, this.run, controller.signal),
         );
       })
@@ -349,7 +349,7 @@ export class PullRequestCache {
         // Enumerate BEFORE touching `groups`: these run concurrently, and a
         // get-or-create either side of an await lets two tasks each build a
         // group and the later `set` drop the earlier one's branches.
-        const branches = await taskBranches(task, this.run, signal);
+        const branches = await this.branches(task, signal);
         const group = groups.get(repository) ?? {
           cwd: task.repo_path,
           branches: new Map<string, Task[]>(),
@@ -547,6 +547,38 @@ export class PullRequestCache {
     this.overviewRepositoryBackoff.set(repository, {
       failures,
       nextRefreshAt: at + backoff,
+    });
+  }
+
+  /**
+   * Branch enumeration, bounded like every other spawn this class makes.
+   *
+   * `repository()` carries its own timeout and the selected-task lookup races
+   * the whole chain against one, but the OVERVIEW enumerates inside an
+   * unbounded per-task `Promise.all`: one stuck `git` in one worktree would
+   * hang the sidebar's entire refresh. Timing out falls back to the branch of
+   * record — the answer this feature widened — rather than to nothing.
+   */
+  private branches(task: Task, signal: AbortSignal): Promise<string[]> {
+    const stored = task.branch ? [task.branch] : [];
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const expired = new Promise<string[]>((resolve) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        resolve(stored);
+      }, this.timeoutMs);
+    });
+    return Promise.race([
+      taskBranches(task, this.run, controller.signal).catch(() => stored),
+      expired,
+    ]).finally(() => {
+      if (timeout !== null) clearTimeout(timeout);
+      controller.abort();
+      signal.removeEventListener("abort", abort);
     });
   }
 

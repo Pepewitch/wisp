@@ -43,6 +43,9 @@ export async function taskBranches(
         [
           "git",
           "for-each-ref",
+          // recency, not name: the cap truncates, and a name sort could drop
+          // the branch holding the newest pull request
+          "--sort=-committerdate",
           "--format=%(refname:short)",
           `refs/heads/wisp/${task.id}-*`,
         ],
@@ -57,8 +60,8 @@ export async function taskBranches(
   const names = found.stdout
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith(prefix) && line !== stored)
-    .sort();
+    // git's order is kept: it is the recency the cap is about to spend
+    .filter((line) => line.startsWith(prefix) && line !== stored);
   return [stored, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
 }
 

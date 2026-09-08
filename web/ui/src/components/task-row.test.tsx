@@ -69,12 +69,14 @@ const PR: PullRequestInfo = {
 function found(
   overrides: Partial<PullRequestInfo> = {},
   stale = false,
+  others = 0,
 ): PullRequestOverviewEntry {
   return {
     status: {
       kind: "found",
       provider: "github",
       pullRequest: { ...PR, ...overrides },
+      ...(others > 0 ? { others } : {}),
     },
     checkedAt: "2026-09-05T08:00:00Z",
     stale,
@@ -211,6 +213,41 @@ describe("the sidebar pull-request status", () => {
     const icon = screen.getByTestId("sidebar-pull-request-icon")
     expect(icon.querySelector("svg")).toHaveClass(tone)
     expect(icon.closest("a")).toBeNull()
+  })
+
+  /** Open the hover card the way base-ui's own interaction sees it. */
+  async function openCard() {
+    const row = document.querySelector(`[data-task-id="${TASK.id}"]`)!
+    fireEvent.pointerEnter(row, { pointerType: "mouse" })
+    fireEvent.mouseEnter(row)
+    fireEvent.mouseMove(row)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400)
+    })
+  }
+
+  it("says on the card which of a task's several pull requests this is", async () => {
+    // Branch and pull request sit one row apart on the card, and a task that
+    // branched again can have them disagree — so the card says which it shows.
+    vi.useFakeTimers()
+    try {
+      mount(<TaskRow task={TASK} pullRequest={found({}, false, 2)} selected={false} onSelect={() => {}} />)
+      await openCard()
+      expect(screen.getByText(/#42 · open · newest of 3/)).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("says nothing extra when the task made exactly one", async () => {
+    vi.useFakeTimers()
+    try {
+      mount(<TaskRow task={TASK} pullRequest={found()} selected={false} onSelect={() => {}} />)
+      await openCard()
+      expect(screen.getByText("#42 · open")).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("retains a stale status and names its age in the tooltip", () => {
