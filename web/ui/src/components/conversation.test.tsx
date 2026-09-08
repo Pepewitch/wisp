@@ -174,7 +174,7 @@ describe("Conversation top fade", () => {
 
     expect(screen.getByText("Use the safer approach")).toBeInTheDocument()
     expect(screen.getByText(/retried after an unconfirmed delivery/)).toBeInTheDocument()
-    expect(screen.getByText("sent during this turn")).toBeInTheDocument()
+    expect(screen.getByText("sent mid-turn")).toBeInTheDocument()
     expect(screen.getByText("Then add tests")).toBeInTheDocument()
     expect(screen.getByText("queued for the next turn")).toBeInTheDocument()
     expect(screen.getByText("retry cancelled; prior delivery may already have succeeded")).toBeInTheDocument()
@@ -277,7 +277,7 @@ describe("a steer that lands inside a running turn", () => {
     expect(steer).toBeGreaterThan(before!)
     expect(after).toBeGreaterThan(steer!)
     expect(article.querySelectorAll("[data-steered-message]")).toHaveLength(1)
-    expect(screen.getByText("sent during this turn")).toBeInTheDocument()
+    expect(screen.getByText("sent mid-turn")).toBeInTheDocument()
   })
 
   it("falls back to the head of the turn when the timeline carries no anchor", () => {
@@ -308,7 +308,7 @@ describe("a steer that lands inside a running turn", () => {
     })
 
     expect(screen.getByText("queued for the next turn")).toBeInTheDocument()
-    expect(screen.queryByText("sent during this turn")).toBeNull()
+    expect(screen.queryByText("sent mid-turn")).toBeNull()
     expect(screen.queryByTestId("conversation-viewport")!.querySelectorAll("[data-steered-message]")).toHaveLength(0)
   })
 })
@@ -513,5 +513,149 @@ describe("copying user messages", () => {
 
     fireEvent.click(buttons[2]!)
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("Then add tests"))
+  })
+})
+
+describe("the bubble's caption", () => {
+  const base = {
+    id: "tcap",
+    title: "Captions",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/tcap",
+    base_commit: "abc123",
+    harness: "droid",
+    model: "fake",
+    effort: null,
+    slot: 0,
+    state: "running",
+    state_detail: "turn 1",
+    session_id: "session-1",
+    seq: 1,
+    turn_count: 1,
+    archived: false,
+    mode: "worktree",
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:02Z",
+    diffstat: null,
+    worktreeReason: null,
+    turns: [
+      {
+        id: 1,
+        task_id: "tcap",
+        n: 1,
+        prompt: "Original request",
+        result: null,
+        status: "running",
+        model: "fake",
+        usage: null,
+        attachments: [],
+        log_file: "/tmp/turn.log",
+        started_at: "2026-09-03T00:00:00Z",
+        ended_at: null,
+      },
+    ],
+    messages: [
+      {
+        id: "m-queued",
+        task_id: "tcap",
+        text: "Then add tests",
+        status: "queued",
+        delivery: null,
+        turn_n: null,
+        delivery_uncertain: false,
+        attachments: [],
+        created_at: "2026-09-03T00:00:02Z",
+        updated_at: "2026-09-03T00:00:02Z",
+      },
+    ],
+  } as unknown as TaskDetail
+
+  const mount = () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    return render(<Conversation task={base} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
+  }
+
+  /** The card carrying the bubble's own fill, for a given piece of its text. */
+  const cardFor = (text: string): HTMLElement => screen.getByText(text).closest(".bg-card") as HTMLElement
+
+  it("hangs a prompt's time in the gutter and floats its copy control", () => {
+    mount()
+
+    const card = cardFor("Original request")
+    const article = card.closest("article")!
+    expect(card).toHaveTextContent("Original request")
+    // the fact goes to the gutter, outside the card
+    expect(article.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(1)
+    expect(card.querySelector("[data-bubble-timestamp]")).toBeNull()
+    // the control floats ON the card, so the card is what reveals it
+    const copy = screen.getAllByRole("button", { name: "Copy user message" })[0]!
+    expect(card.contains(copy)).toBe(true)
+    expect(copy.parentElement!.className).toContain("absolute")
+  })
+
+  it("floats a queued message's edit and cancel with copy, and gives it no time", () => {
+    mount()
+
+    const card = cardFor("Then add tests")
+    const edit = screen.getByRole("button", { name: "Edit queued message" })
+    const cancel = screen.getByRole("button", { name: "Cancel queued message" })
+    // one toolbar, three controls, all of them on the card
+    expect(edit.parentElement).toBe(cancel.parentElement)
+    expect(card.contains(edit)).toBe(true)
+    // where its delivery stands is a FACT, so it rides the caption like every
+    // other one — the card holds the person's words and nothing else
+    const status = screen.getByText("queued for the next turn")
+    expect(card.contains(status)).toBe(false)
+    expect(card).toHaveTextContent("Then add tests")
+    // it has not been sent, so it has no time to state
+    expect(card.closest("article")!.querySelectorAll("[data-bubble-timestamp]")).toHaveLength(0)
+  })
+
+  it("keeps a steer's delivery word in the caption, not on a line of its own", () => {
+    const steered = {
+      ...base,
+      messages: [
+        {
+          id: "m-steered",
+          task_id: "tcap",
+          text: "Use the shared row primitive",
+          status: "delivered",
+          delivery: "steered",
+          turn_n: 1,
+          delivery_uncertain: false,
+          attachments: [],
+          created_at: "2026-09-03T00:00:01Z",
+          updated_at: "2026-09-03T00:00:01Z",
+        },
+      ],
+    } as unknown as TaskDetail
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<Conversation task={steered} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport(), client),
+    })
+
+    const card = cardFor("Use the shared row primitive")
+    // the bubble is only as tall as the words; the word rides the gutter with
+    // the time it belongs beside
+    expect(card).toHaveTextContent("Use the shared row primitive")
+    expect(card.contains(screen.getByText("sent mid-turn"))).toBe(false)
+    expect(screen.getByText("sent mid-turn").parentElement).toContainElement(
+      card.parentElement!.querySelector("[data-bubble-timestamp]")!,
+    )
+  })
+
+  it("brings Save and Cancel back inside while the bubble is a form", () => {
+    mount()
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit queued message" }))
+
+    const card = screen.getByRole("textbox").closest(".bg-card") as HTMLElement
+    expect(card).toContainElement(screen.getByRole("button", { name: "Save" }))
+    expect(card).toContainElement(screen.getByRole("button", { name: "Cancel" }))
+    // the caption empties: only the prompt bubble above still offers copy
+    expect(screen.getAllByRole("button", { name: "Copy user message" })).toHaveLength(1)
   })
 })

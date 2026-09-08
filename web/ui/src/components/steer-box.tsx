@@ -249,7 +249,10 @@ export function SteerBox({
   return (
     <div
       className={cn(
-        "relative shrink-0 bg-gradient-to-t from-background from-60% to-transparent",
+        // @container, not a media query: Desktop's zoom shrinks this pane in
+        // CSS pixels without touching the window, and a dragged divider does
+        // the same. The bar has to answer the space it actually has.
+        "@container relative shrink-0 bg-gradient-to-t from-background from-60% to-transparent",
         touch ? "px-3 pt-2 pb-2.5" : "px-4.5 pt-2.5 pb-3.5"
       )}
     >
@@ -548,17 +551,30 @@ function ComposerControls({
   onSend: () => void
   onStop: () => void
 }) {
-  // Five things wanted one row, and on a phone the row is ~340px wide. Harness
-  // and model say again what the task header says two rows up, so on touch they
-  // yield the width; the running note takes its own line rather than wrapping
-  // four words deep between the suffix picker and the send button.
+  // Five things want one row, and the row is often not wide enough: a phone, a
+  // dragged-in centre pane, and — the case a media query would never catch —
+  // Desktop's zoom, which leaves the window alone and shrinks every pane in CSS
+  // pixels. So the bar answers ITS OWN width (§5c), in two steps, and both
+  // things that yield are things the task header two rows up still says.
+  //
+  //   always       attach · suffix · send, and the running note on its own line
+  //   @lg  512px   + harness · model · effort, which truncates before it wraps
+  //   @2xl 672px   + the note or the ↵ hint inline, and the stacked note goes
+  //
+  // The note takes a line of its own rather than wrapping four words deep
+  // between the suffix picker and the send button, which is what a bar with no
+  // opinion about its width did.
   const note = blocked ? "running · send won't interrupt" : null
   return (
     <div className="mt-2 flex flex-col gap-1">
-      {touch && note && <span className="px-0.5 text-[11px] text-faint">{note}</span>}
+      {note && <span className="px-0.5 text-[11px] text-faint @2xl:hidden">{note}</span>}
       <div className="flex items-center gap-2">
-        {!touch && task && <TaskIdentity task={task} />}
-        {!touch && <span aria-hidden className="h-3 w-px bg-border-strong" />}
+        {task && (
+          <span className="hidden min-w-0 @lg:flex">
+            <TaskIdentity task={task} />
+          </span>
+        )}
+        <span aria-hidden className="hidden h-3 w-px shrink-0 bg-border-strong @lg:block" />
         <AttachButton pending={attachments} touch={touch} />
         <SuffixPromptPicker
           key={taskId ?? "no-task"}
@@ -568,17 +584,16 @@ function ComposerControls({
           touch={touch}
         />
         <span className="flex-1" />
-        {!touch &&
-          (note ? (
-            <span className="shrink-0 text-[10.5px] text-faint">{note}</span>
-          ) : (
-            <span
-              className="font-mono text-[10.5px] text-faint"
-              title="Enter sends · Shift+Enter for a new line"
-            >
-              ↵
-            </span>
-          ))}
+        {note ? (
+          <span className="hidden shrink-0 whitespace-nowrap text-[10.5px] text-faint @2xl:block">{note}</span>
+        ) : (
+          <span
+            className="hidden shrink-0 font-mono text-[10.5px] text-faint @2xl:block"
+            title="Enter sends · Shift+Enter for a new line"
+          >
+            ↵
+          </span>
+        )}
         <button
           type="button"
           onClick={canStop ? onStop : onSend}

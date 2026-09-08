@@ -103,7 +103,13 @@ export function TaskIdentity({ task }: { task: ApiTask }) {
             {task.model}
           </span>
         ) : null,
-        task.effort ? `${task.effort} effort` : null,
+        // one unbreakable item: "xhigh effort" wrapping mid-phrase was how a
+        // squeezed bar announced itself before the bar learned its own width
+        task.effort ? (
+          <span key="effort" className="shrink-0 whitespace-nowrap">
+            {task.effort} effort
+          </span>
+        ) : null,
       ]}
     />
   )

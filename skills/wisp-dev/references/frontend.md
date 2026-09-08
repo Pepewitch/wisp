@@ -251,14 +251,84 @@ There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
 turn.
 
-Every bubble the person actually SENT says **when**, on its own last muted
-line: a prompt bubble from the turn's `started_at`, a steer from the message's
-`created_at`. Relative by default, because "5 min ago" is the fact you want
-while a task is live, and **one click swaps that bubble alone** to the exact
-UTC instant in mono — the form you paste into a log search. The toggle is per
-bubble and never persists: asking when one message was sent is a question, not
-a mode. A queued bubble gets no timestamp — it has not been sent, and its line
-already says the truer thing.
+### The bubble holds the words; its caption and its controls hang off it
+
+`PersonBubble` in `components/person-bubble.tsx` is the ONE shape for anything
+the person said — a turn's prompt, a steer, a queued message — and it holds
+their words. Everything about the bubble rather than in it hangs off it, split
+by KIND rather than by convenience:
+
+- the **caption** states FACTS — what this bubble is, and when it was sent. One
+  muted register, in the gutter to the bubble's left, on its bottom edge.
+- the **actions** ACT on it — copy, and a queued message's edit and cancel. One
+  small floating toolbar wholly above the bubble's top-right corner, revealed
+  by a pointer.
+
+**Nothing else is ever inside a bubble.** Not the queued bubble's four-way
+delivery status, not the two delivery-uncertain notes: they are facts, so they
+go in the caption with every other fact. A line inside is what made the queued
+bubble look unlike its neighbours. The one exception is a bubble being EDITED,
+which is a form (below).
+
+Because a delivery state is a SENTENCE and not a label, the caption wraps
+within itself as well as onto its own line — `flex-wrap`, `max-w-full`,
+`text-right`.
+
+The toolbar is **in-pane chrome, not a popup**: no padding of its own,
+`border-border`, and `shadow-float` — the lightest of the three depths, the one
+documented for in-pane surfaces. At `POPOVER_SURFACE`'s `shadow-popover` a 22px
+box outweighed the 12.5px message it belonged to.
+
+The toolbar sits **clear of the top edge** (`bottom-full`), not straddling it.
+Straddling reads better until a three-control toolbar meets a one-line bubble,
+and then it sits on the words; 2px clear can never do that, whatever the
+toolbar grows to hold. Hover still carries across the gap, because the toolbar
+is a DOM child of the bubble.
+
+**`pointer:` is the variant that makes hover-reveal safe** (`index.css`).
+Tailwind's own `hover:` is already `@media (hover: hover)`, so a bare
+`opacity-0 group-hover:opacity-100` leaves the control hidden and unreachable
+FOREVER on touch — §6b's rule, broken silently. Pair them —
+`pointer:opacity-0 pointer:group-hover/…:opacity-100` — so the resting state is
+only hidden where a pointer exists to bring it back, and add
+`pointer:group-focus-within/…:opacity-100` so a keyboard can reach it too.
+
+Inside, that chrome was a right-aligned row under left-aligned prose — two
+alignments in one box, so the bubble read lopsided, and a line plus its gap
+turned the bottom third of a short bubble into padding. Outside, it costs
+**nothing**: the bubble is capped at 76%, so the 24% beside it was already
+empty.
+
+`flex-row-reverse` + `flex-wrap` is the whole responsive story, and there is no
+breakpoint to keep in sync. Reversed, the bubble is the first item and sits at
+the right edge with its caption to the left; when the two no longer fit — a
+phone, or the exact UTC instant, which is twice as wide as `5 min ago` — the
+caption wraps to its own line beneath, still right-aligned, rather than
+squeezing the words. Never add a second layout for the narrow case.
+
+What the caption carries, and nothing else:
+
+- **when it was sent**, for anything actually sent: a prompt bubble from the
+  turn's `started_at`, a steer from the message's `created_at`. Relative by
+  default, because "5 min ago" is the fact you want while a task is live, and
+  **one click swaps that bubble alone** to the exact UTC instant in mono — the
+  form you paste into a log search. The toggle is per bubble and never
+  persists: asking when one message was sent is a question, not a mode.
+- **`sent mid-turn`**, on a steer. Two words, and they are load-bearing rather
+  than decoration: a settled turn renders with its activity collapsed, so every
+  steer in it falls back to the head of the turn and lands directly under the
+  prompt bubble. Without the word, two right-aligned cards sit there with only
+  12px against 30px of gap to say which one started the turn. It was a line
+  INSIDE the bubble and made every steer a row taller for a fact that fits in
+  space already going spare.
+- **where the delivery stands**, on a queued one, in place of a time: it has
+  not been sent, so there is no time to state. `queued for the next turn`, or
+  the archived / cancelled / retry-uncertain wording the state calls for.
+
+What the toolbar carries: **copy**, on every bubble, and **edit and cancel** on
+a queued one. While a queued bubble is being EDITED it is a form, so `Save` and
+`Cancel` appear inside it and the toolbar disappears: a form owns its own
+commit, and only a form puts controls in a bubble.
 
 `lib/time.ts` is the app's ONE relative clock — dayjs for the arithmetic,
 Wisp's own terse vocabulary for the words (`just now`, `5 min ago`, `3h ago`,
@@ -539,6 +609,26 @@ query. Keep polling `none` so a newly opened PR appears; stop asking for each
 terminal merged/closed PR. On provider failure, keep the last successful answer
 with an explicit stale bit and back that repository off exponentially, capped
 at 15 minutes. One unavailable repository must not throttle the others.
+
+### 5c-ii. The steer box's control bar answers its own width too
+
+`SteerBox`'s bar is the create modal's rule applied to a pane instead of a
+modal, and for a third reason on top of the phone and the dragged divider:
+**Desktop's zoom leaves the window alone and shrinks every pane in CSS
+pixels**, so a media query would never fire for it. `@container`, in two steps:
+
+| width | the bar holds |
+|---|---|
+| any | attach · suffix · send, and a running note on its own line |
+| `@lg` 512px | + harness · model · effort, truncating before it wraps |
+| `@2xl` 672px | + the note or the `↵` hint inline; the stacked note goes |
+
+Both things that yield are things the **task header two rows up still says**,
+so nothing leaves the screen. Do not reach for `touch` here: `touch` sizes
+controls for a thumb, it does not know how much room the bar has. A squeezed
+bar announced itself as `xhigh` above `effort` and a four-word note wrapped
+between the suffix picker and the send button; every item in the bar is
+`shrink-0` and unbreakable now, and the layout answers the width instead.
 
 ### 5g. Wisp settings — the gear that is not a project's
 

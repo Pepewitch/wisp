@@ -16,6 +16,13 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Chrome a POINTER reveals. Tailwind's own `hover:` is already guarded by
+   `@media (hover: hover)`, so `group-hover:opacity-100` alone would leave a
+   hidden control unreachable forever on touch (§6b: nothing is revealed by
+   hover there). Pair the two — `pointer:opacity-0 pointer:group-hover:…` — so
+   the resting state is only hidden where a pointer can bring it back. */
+@custom-variant pointer (@media (hover: hover));
+
 /* ────────────────────────────────────────────────────────────────────────
    GRAPHITE & VIOLET
 
