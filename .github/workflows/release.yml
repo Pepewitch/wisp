@@ -392,10 +392,11 @@ jobs:
         run: |
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           brew audit --strict --online Pepewitch/tap/wisp
-          # This custom-tap channel intentionally carries prereleases. Signing
-          # and Gatekeeper checks remain enabled for the Developer ID build.
+          # The staged Cask is newer than the still-public channel until the
+          # next step pushes all three tap files. Defer only that circular
+          # livecheck comparison; signing and Gatekeeper checks stay enabled.
           brew audit --strict --online --cask \
-            --except github_prerelease_version \
+            --except github_prerelease_version,livecheck_version \
             Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
@@ -418,7 +419,27 @@ jobs:
           git -C "$tap" push origin HEAD:main
           git -C "$tap" log -1 --stat
           public_channel="$(mktemp)"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json" \
-            -o "$public_channel"
-          cmp -s "$tap/updates/wisp-desktop-alpha.json" "$public_channel"
+          channel_url="https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json"
+          channel_ready=0
+          # raw.githubusercontent.com advertises a five-minute cache. Exercise
+          # the exact fixed URL embedded in Desktop until it serves this commit.
+          for _ in {1..24}; do
+            if curl --proto '=https' --tlsv1.2 -fsSL "$channel_url" \
+              -o "$public_channel" && \
+              cmp -s "$tap/updates/wisp-desktop-alpha.json" "$public_channel"
+            then
+              channel_ready=1
+              break
+            fi
+            sleep 15
+          done
+          test "$channel_ready" = 1 || {
+            echo "public Desktop update channel did not converge" >&2
+            exit 1
+          }
+          # Now require the livecheck comparison that was deliberately deferred
+          # before the channel existed. Only the custom-tap prerelease policy is
+          # excluded; all signing and Gatekeeper checks remain active.
+          brew audit --strict --online --cask \
+            --except github_prerelease_version \
+            Pepewitch/tap/wisp-desktop
