@@ -209,7 +209,7 @@ describe("buildArgv", () => {
   });
 
   // codex's resume is a subcommand, not a flag — these argvs are exactly the
-  // ones run live against codex-cli 0.149.0 (tests/fixtures/README.md)
+  // ones run live against codex-cli 0.149.0 (wispd/tests/fixtures/README.md)
   describe("codex", () => {
     test("first turn", () => {
       expect(buildArgv(codex, { prompt: "Reply with exactly the word: papaya" })).toEqual([
@@ -482,7 +482,7 @@ describe("parseOutput (codex, captured fixtures)", () => {
   });
 });
 
-// Sanitized cursor-agent 2026.08.31 output (tests/fixtures/README.md): a turn that
+// Sanitized cursor-agent 2026.08.31 output (wispd/tests/fixtures/README.md): a turn that
 // speaks, runs a command, speaks again — and whose result event carries ALL
 // of it fused ("I'll run that echo command now.done"). The same contract the
 // codex fixtures pin: parse is tested against captured reality.
@@ -608,7 +608,7 @@ describe("USAGE_FORMATTERS (Theme B)", () => {
 // P5e: a failed turn must name its actual cause, not just "turn exited 1".
 // Each harness's failure shape was captured live with an unknown model (the
 // cheap stand-in that exercises the same reporting path as a mid-turn limit);
-// see tests/fixtures/README.md.
+// see wispd/tests/fixtures/README.md.
 describe("errorDetail (captured fixtures)", () => {
   const CLAUDE_UNKNOWN_MODEL =
     "There's an issue with the selected model (bogus-model). It may not exist or you may not have access to it. Run --model to pick a different model.";
@@ -715,7 +715,7 @@ describe("errorDetail (captured fixtures)", () => {
 
 // P5e: limit/quota exhaustion is classified per adapter (each harness words
 // it differently) so the runner can prefix state_detail with "limit: ".
-// Marker wording: each CLI's own strings (tests/fixtures/README.md) — real
+// Marker wording: each CLI's own strings (wispd/tests/fixtures/README.md) — real
 // Limits were not induced; markers came from the installed CLIs' own strings.
 describe("limit classification", () => {
   test("claude: a limit-shaped result detail matches; an unknown-model detail does not", () => {

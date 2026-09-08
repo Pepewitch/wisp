@@ -24,7 +24,8 @@ per harness would erase exactly the information that keeps a refresh cheap.
   `harness:snapshot` refreshes these itself.
 - **`live`** — needs a real turn. Never re-run automatically; carried forward
   with its pin and reported when stale, so a turn is spent only when the report
-  says one is genuinely needed. Refreshing these is `harness-sync.md` §5.
+  says one is genuinely needed. Refreshing these is
+  [harness sync §5](../../../skills/wisp-dev/references/harness-sync.md#5-escalate-to-one-minimal-live-turn).
 
 ## What may be recorded
 
