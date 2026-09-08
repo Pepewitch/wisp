@@ -26,18 +26,40 @@ function SpecimenThumb({ label }: { label: string }) {
  * The production bubble, so the specimens cannot drift from the transcript.
  * The gallery has no turn to render, only words and a caption.
  */
-function SpecimenBubble({ caption, children }: { caption?: ReactNode; children: ReactNode }) {
-  return <PersonBubble caption={caption}>{children}</PersonBubble>
+function SpecimenBubble({
+  caption,
+  actions,
+  children,
+}: {
+  caption?: ReactNode
+  actions?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <PersonBubble caption={caption} actions={actions}>
+      {children}
+    </PersonBubble>
+  )
 }
 
-/** Copy then when, the same order and spacing the transcript uses. */
-function SpecimenCaption({ exact = false }: { exact?: boolean }) {
+/** What the bubble is, then when — the transcript's order and spacing. */
+function SpecimenCaption({ exact = false, word }: { exact?: boolean; word?: string }) {
   return (
     <>
-      <CopyButton text="specimen" label="Copy user message" copiedLabel="Copied user message" />
+      {word && (
+        <>
+          <span className="whitespace-nowrap">{word}</span>
+          <span aria-hidden>·</span>
+        </>
+      )}
       <BubbleTimestamp at={SENT_AT} defaultExact={exact} />
     </>
   )
+}
+
+/** The floating toolbar, which the specimens show revealed. */
+function SpecimenActions() {
+  return <CopyButton text="specimen" label="Copy user message" copiedLabel="Copied user message" />
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -92,14 +114,25 @@ export function PromptBubbleSpecimens() {
         </div>
       </Section>
 
-      <Section title="The caption hangs in the gutter, never inside the bubble">
+      <Section title="Facts hang in the gutter, controls float above the corner">
         <div className="grid grid-cols-2 gap-10">
           <div>
             <Eyebrow>Both readings · either one is a click away</Eyebrow>
             <div className="mt-2.5 rounded-lg border border-border bg-surface p-3">
-              <SpecimenBubble caption={<SpecimenCaption />}>
+              <SpecimenBubble caption={<SpecimenCaption />} actions={<SpecimenActions />}>
                 can you make the timestamp readable at a glance?
               </SpecimenBubble>
+              <div className="mt-[12px]">
+                <SpecimenBubble
+                  caption={
+                    <>
+                      <SpecimenCaption word="sent mid-turn" />
+                    </>
+                  }
+                >
+                  and say which of us started the turn
+                </SpecimenBubble>
+              </div>
               <div className="mt-[30px]">
                 <SpecimenBubble caption={<SpecimenCaption exact />}>
                   and exact when I need to grep for it
@@ -115,10 +148,10 @@ export function PromptBubbleSpecimens() {
           </div>
           <div>
             <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-              The bubble holds the person's WORDS. When it was sent, and the control that copies it, sit in the
-              gutter to its left — the bubble is capped at 76%, so that space was already empty and the caption
-              costs no height at all. Inside, they were a right-aligned row under left-aligned prose: two alignments
-              in one box, and a line of chrome plus its gap where a short message had only three lines of text.
+              The bubble holds the person's WORDS. What this bubble IS and when it was sent sit in the gutter to its
+              left — the bubble is capped at 76%, so that space was already empty and the caption costs no height at
+              all. Inside, they were a right-aligned row under left-aligned prose: two alignments in one box, and a
+              line of chrome plus its gap where a short message had only three lines of text.
             </p>
             <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
               Relative by default, in the terse vocabulary the sidebar already speaks (
@@ -131,11 +164,21 @@ export function PromptBubbleSpecimens() {
               not a preference.
             </p>
             <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+              A control is not a fact, so it is not in the caption. Copy floats on a small toolbar wholly above the
+              bubble's top-right corner — clear of the edge rather than straddling it, because a three-control
+              toolbar on a one-line bubble would otherwise sit on the words — and a pointer reveals it. Hover the
+              first specimen to see it. A queued bubble's edit and cancel join it there. Every hidden state is
+              <span className="text-faint"> pointer:</span>-gated, because touch has no hover and a control revealed
+              only by one would be unreachable there.
+            </p>
+            <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
               One row reversed and allowed to wrap is the whole responsive story. A caption that no longer fits
               beside its bubble — a phone, or the exact instant, which is twice as wide as{" "}
               <span className="text-faint">5 min ago</span> — drops to its own line beneath rather than squeezing
-              the words. A queued bubble carries copy, edit and cancel there and no time at all: it has not been
-              sent, and the line inside it already says the truer thing.
+              the words. A steer carries <span className="text-faint">sent mid-turn</span> there, because a settled
+              turn shows its steers at the head of the turn and two right-aligned cards would otherwise look alike.
+              A queued bubble has no caption at all: it has not been sent, so it has no time to state, and the line
+              inside it already says the truer thing.
             </p>
           </div>
         </div>

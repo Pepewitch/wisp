@@ -251,14 +251,36 @@ There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
 turn.
 
-### The bubble holds the words; its caption hangs in the gutter
+### The bubble holds the words; its caption and its controls hang off it
 
 `PersonBubble` in `components/person-bubble.tsx` is the ONE shape for anything
 the person said — a turn's prompt, a steer, a queued message — and it holds
-their words plus, at most, one left-aligned muted line saying what Wisp must
-say about the delivery. Everything else lives in the **caption**: a row that
-sits in the gutter to the bubble's left, on its bottom edge, carrying when it
-was sent and the controls that act on it.
+their words. Everything about the bubble rather than in it hangs off it, split
+by KIND rather than by convenience:
+
+- the **caption** states FACTS — what this bubble is, and when it was sent. One
+  muted register, in the gutter to the bubble's left, on its bottom edge.
+- the **actions** ACT on it — copy, and a queued message's edit and cancel. One
+  small floating toolbar on the shared `POPOVER_SURFACE`, wholly above the
+  bubble's top-right corner, revealed by a pointer.
+
+Only a delivery state too long or too consequential for a gutter earns a line
+inside — today that is the queued bubble's four-way status and the two
+delivery-uncertain notes, and nothing else.
+
+The toolbar sits **clear of the top edge** (`bottom-full`), not straddling it.
+Straddling reads better until a three-control toolbar meets a one-line bubble,
+and then it sits on the words; 2px clear can never do that, whatever the
+toolbar grows to hold. Hover still carries across the gap, because the toolbar
+is a DOM child of the bubble.
+
+**`pointer:` is the variant that makes hover-reveal safe** (`index.css`).
+Tailwind's own `hover:` is already `@media (hover: hover)`, so a bare
+`opacity-0 group-hover:opacity-100` leaves the control hidden and unreachable
+FOREVER on touch — §6b's rule, broken silently. Pair them —
+`pointer:opacity-0 pointer:group-hover/…:opacity-100` — so the resting state is
+only hidden where a pointer exists to bring it back, and add
+`pointer:group-focus-within/…:opacity-100` so a keyboard can reach it too.
 
 Inside, that chrome was a right-aligned row under left-aligned prose — two
 alignments in one box, so the bubble read lopsided, and a line plus its gap
@@ -281,11 +303,20 @@ What the caption carries, and nothing else:
   **one click swaps that bubble alone** to the exact UTC instant in mono — the
   form you paste into a log search. The toggle is per bubble and never
   persists: asking when one message was sent is a question, not a mode.
-- **copy**, on every bubble.
-- **edit and cancel**, on a queued one. A queued bubble gets no timestamp — it
-  has not been sent, and its line already says the truer thing. While it is
-  being EDITED the bubble is a form, so `Save` and `Cancel` come back inside
-  with the status line and the caption empties: a form owns its own commit.
+- **`sent mid-turn`**, on a steer. Two words, and they are load-bearing rather
+  than decoration: a settled turn renders with its activity collapsed, so every
+  steer in it falls back to the head of the turn and lands directly under the
+  prompt bubble. Without the word, two right-aligned cards sit there with only
+  12px against 30px of gap to say which one started the turn. It was a line
+  INSIDE the bubble and made every steer a row taller for a fact that fits in
+  space already going spare.
+- nothing at all, on a queued one. It has not been sent, so it has no time to
+  state — and its line inside already says the truer thing.
+
+What the toolbar carries: **copy**, on every bubble, and **edit and cancel** on
+a queued one. While a queued bubble is being EDITED it is a form, so `Save` and
+`Cancel` come back inside with the status line and the toolbar disappears: a
+form owns its own commit.
 
 `lib/time.ts` is the app's ONE relative clock — dayjs for the arithmetic,
 Wisp's own terse vocabulary for the words (`just now`, `5 min ago`, `3h ago`,

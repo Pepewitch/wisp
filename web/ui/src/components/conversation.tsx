@@ -311,12 +311,8 @@ function TurnBlock({
   return (
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
       <PersonBubble
-        caption={
-          <>
-            <UserMessageCopyButton text={turn.prompt} />
-            <BubbleTimestamp at={turn.started_at} />
-          </>
-        }
+        actions={<UserMessageCopyButton text={turn.prompt} />}
+        caption={<BubbleTimestamp at={turn.started_at} />}
       >
         <div data-turn-prompt className="whitespace-pre-wrap">
           {turn.prompt}
@@ -412,17 +408,22 @@ function SteeredMessage({
   return (
     <div data-steered-message={message.id} className="mt-3">
       <PersonBubble
+        actions={<UserMessageCopyButton text={message.text} />}
         caption={
           <>
-            <UserMessageCopyButton text={message.text} />
+            {/* Two words, in the gutter that was already empty, rather than a
+                line inside the bubble. They are load-bearing: a SETTLED turn
+                renders with its activity collapsed, so every steer in it falls
+                back to the head of the turn (§5) and lands directly under the
+                prompt bubble — two right-aligned cards with nothing but 12px
+                against 30px of gap to say which one started the turn. */}
+            <span className="whitespace-nowrap">sent mid-turn</span>
+            <span aria-hidden>·</span>
             <BubbleTimestamp at={message.created_at} />
           </>
         }
       >
         <div className="whitespace-pre-wrap">{message.text}</div>
-        {/* what this bubble IS stays inside it and left-aligned, under the
-            words it describes; when it was sent hangs in the gutter (§5) */}
-        <div className="mt-1 text-[10.5px] text-faint">sent during this turn</div>
         {message.delivery_uncertain && (
           <div className="mt-1 text-[10.5px] text-faint">
             delivery retried after an unconfirmed native admission
@@ -470,13 +471,13 @@ function QueuedMessage({
 
   return (
     <article data-message={message.id} data-status={message.status} className="pt-[30px]">
-      {/* No timestamp: this one has not been SENT, and the line inside already
-          says the truer thing (§5). Its controls ride the caption with the
-          copy control, so the bubble keeps the one shape every bubble has.
-          While editing they come back inside, because the bubble is a form
-          then and a form owns its own Save. */}
+      {/* No caption at all: this one has not been SENT, so it has no time to
+          state, and the line inside already says the truer thing (§5). Edit
+          and cancel join copy in the floating toolbar, because they are
+          controls. While editing they come back inside — the bubble is a form
+          then, and a form owns its own Save. */}
       <PersonBubble
-        caption={
+        actions={
           !editing && (
             <>
               <UserMessageCopyButton text={message.text} />
