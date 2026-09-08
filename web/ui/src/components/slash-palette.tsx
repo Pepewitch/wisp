@@ -1,9 +1,8 @@
-import type { Ref } from "react"
-import { defaultFilter } from "cmdk"
+import { useMemo, type Ref } from "react"
 
 import { Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { slashValue, type SlashEntry, type SlashGroup } from "@/lib/slash"
+import { rankSlashGroups, slashScore, slashValue, type SlashEntry, type SlashGroup } from "@/lib/slash"
 import { cn } from "@/lib/utils"
 
 /**
@@ -36,19 +35,20 @@ export function SlashPaletteList({
   /** Gallery-only controlled selection; an empty value prevents mount-time scrolling. */
   selectedValue?: string
 }) {
-  const shown = groups.filter((group) => group.entries.length > 0)
+  // Order is the answer here: cmdk selects the first row, and Enter runs what
+  // is selected. See `rankSlashGroups`.
+  const ranked = useMemo(() => rankSlashGroups(groups, query), [groups, query])
+  const shown = ranked.filter((group) => group.entries.length > 0)
   return (
     <Command
       ref={commandRef}
       label="Slash commands"
       loop
-      // cmdk gives extremely weak subsequence matches a positive score
-      // (`status` matches `usage` at ~0.004). Keep a small relevance floor
-      // while preserving useful shorthand such as `ctx` → `context`.
-      filter={(value, search, keywords) => {
-        const score = defaultFilter(value, search, keywords)
-        return score >= 0.05 ? score : 0
-      }}
+      // The name you typed wins, an alias only finds a name you did not know,
+      // and a fuzzy hint comes last — see `slashScore`. cmdk's own scorer
+      // ranks `/fresh` level with `/context` for the query `context`, and
+      // cmdk selects the first row of a tie, so Enter ran the wrong command.
+      filter={slashScore}
       {...(selectedValue === undefined ? {} : { value: selectedValue, onValueChange: () => {} })}
     >
       <CommandInput value={query} onValueChange={() => {}} aria-hidden />

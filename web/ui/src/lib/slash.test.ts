@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest"
 
-import { compactEntry, slashTokenAt, TIER1_ENTRIES, tier2Entries, tier3Entries } from "./slash"
+import {
+  compactEntry,
+  slashName,
+  slashScore,
+  slashTokenAt,
+  slashValue,
+  TIER1_ENTRIES,
+  tier2Entries,
+  tier3Entries,
+} from "./slash"
 
 describe("slashTokenAt (the trigger law)", () => {
   it("a slash on an empty draft or after whitespace is a command token", () => {
@@ -96,5 +105,68 @@ describe("compactEntry (A5)", () => {
   it("no compaction, no entry", () => {
     expect(compactEntry(null)).toEqual([])
     expect(compactEntry(undefined)).toEqual([])
+  })
+})
+
+describe("slashScore (what the row under the cursor answers to)", () => {
+  /** The real palette for a claude task: Tier 1, its two reads, and compact. */
+  const ENTRIES = [
+    ...TIER1_ENTRIES,
+    ...tier2Entries(["context", "usage"]),
+    ...compactEntry({ kind: "action", recordsTurn: false }),
+  ]
+
+  /** Every row that survives, best first — cmdk sorts by score descending. */
+  const ranked = (query: string): string[] =>
+    ENTRIES.map((entry) => ({ name: entry.name, score: slashScore(slashValue(entry), query, entry.keywords) }))
+      .filter((row) => row.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map((row) => row.name)
+
+  it("puts the command you actually named first, ahead of rows that merely alias it", () => {
+    // the bug: /fresh and /compact both carry `context` as an alias, and cmdk
+    // scored all three at 0.891, so list order decided and Enter ran /fresh
+    expect(ranked("context")[0]).toBe("context")
+    expect(ranked("compact")[0]).toBe("compact")
+    expect(ranked("usage")[0]).toBe("usage")
+    expect(ranked("push")[0]).toBe("push")
+  })
+
+  it("scores an exact name above every alias, whatever the alias matched", () => {
+    expect(slashScore("probe:context", "context", ["context", "tokens"])).toBe(1)
+    expect(slashScore("fresh", "context", ["reset", "context", "clear"])).toBeLessThan(1)
+  })
+
+  it("prefers the shortest completion while you are still typing", () => {
+    expect(ranked("con")[0]).toBe("context")
+    expect(ranked("stat")[0]).toBe("status")
+    expect(ranked("tok")[0]).toBe("tokens")
+  })
+
+  it("keeps an alias as a way to FIND a name, ranked under every name match", () => {
+    // nothing is named `reset`; the only way to reach /fresh is its alias
+    expect(ranked("reset")).toEqual(["fresh"])
+    expect(slashScore("fresh", "reset", ["reset"])).toBeGreaterThan(0)
+  })
+
+  it("still answers shorthand, and answers it with the right command", () => {
+    // cmdk ranked /compact above /context here, because it scored the value
+    // `probe:context` rather than the name
+    expect(ranked("ctx")[0]).toBe("context")
+  })
+
+  it("drops noise rather than ranking it", () => {
+    expect(slashScore("probe:usage", "status", ["usage", "limits"])).toBe(0)
+    expect(ranked("zzzz")).toEqual([])
+  })
+
+  it("shows everything, in list order, before anything is typed", () => {
+    expect(slashScore("probe:context", "", ["context"])).toBe(1)
+    expect(slashScore("fresh", "   ", ["reset"])).toBe(1)
+  })
+
+  it("reads the command name out of a probe row's disambiguating value", () => {
+    expect(slashName("probe:context")).toBe("context")
+    expect(slashName("fresh")).toBe("fresh")
   })
 })

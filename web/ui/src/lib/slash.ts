@@ -1,3 +1,5 @@
+import { defaultFilter } from "cmdk";
+
 import type {
   ApiTask,
   HarnessCompact,
@@ -94,8 +96,74 @@ export interface SlashEntry {
  * Keep a harness probe's identity distinct from a Wisp-native command while
  * preserving the harness's own command name in the row.
  */
+const PROBE_VALUE_PREFIX = "probe:";
+
 export function slashValue(entry: SlashEntry): string {
-  return entry.probe ? `probe:${entry.probe}` : entry.name;
+  return entry.probe ? `${PROBE_VALUE_PREFIX}${entry.probe}` : entry.name;
+}
+
+/**
+ * The command NAME behind a row's unique value — what the person is actually
+ * typing. `probe:context` is bookkeeping; `context` is the command.
+ */
+export function slashName(value: string): string {
+  return value.startsWith(PROBE_VALUE_PREFIX)
+    ? value.slice(PROBE_VALUE_PREFIX.length)
+    : value;
+}
+
+/**
+ * cmdk gives extremely weak subsequence matches a positive score (`status`
+ * matches `usage` at ~0.004). Anything under this is noise.
+ */
+const FUZZY_FLOOR = 0.05;
+
+/**
+ * How well one palette row answers what the person typed.
+ *
+ * cmdk's own scorer cannot do this job, because it knows nothing about which
+ * part of a row is its NAME. Ask it to rank `context` and it returns **0.891
+ * for every one** of `/context`, `/compact` and `/fresh` — the last two only
+ * because they carry `context` as an alias, and `/context` no better because
+ * its value is the disambiguating `probe:context` rather than its own name.
+ * Equal scores fall back to list order, so the row under the cursor was
+ * whichever happened to be first, and Enter ran a command nobody asked for.
+ *
+ * So the rank is banded, and the bands say what a `/` palette is for: you are
+ * typing a command's NAME. An alias is how you FIND a name you did not know;
+ * it never outranks the name itself.
+ *
+ *   1          the name is exactly what you typed
+ *   0.7-0.9    the name starts with it, shortest completion first
+ *   0.6        an alias is exactly what you typed
+ *   0.5        an alias starts with it
+ *   0.15-0.4   cmdk's fuzzy score over the NAME  (`ctx` -> `context`)
+ *   0.05-0.14  cmdk's fuzzy score over the aliases
+ *   0          no match
+ */
+export function slashScore(
+  value: string,
+  search: string,
+  keywords: readonly string[] = [],
+): number {
+  const query = search.trim().toLowerCase();
+  if (!query) return 1;
+
+  const name = slashName(value).toLowerCase();
+  const aliases = keywords.map((keyword) => keyword.toLowerCase());
+
+  if (name === query) return 1;
+  // a shorter completion is the likelier one: `co` means `/context` before it
+  // means `/contextualize`
+  if (name.startsWith(query)) return 0.7 + 0.2 * (query.length / name.length);
+  if (aliases.includes(query)) return 0.6;
+  if (aliases.some((alias) => alias.startsWith(query))) return 0.5;
+
+  const byName = defaultFilter(name, query);
+  if (byName >= FUZZY_FLOOR) return 0.15 + 0.25 * byName;
+
+  const byAlias = defaultFilter(name, query, [...keywords]);
+  return byAlias >= FUZZY_FLOOR ? 0.05 + 0.09 * byAlias : 0;
 }
 
 /** One tier as the palette renders it: a heading, its entries, and its cost. */
@@ -225,6 +293,41 @@ export function tier3Entries(
     keywords: ["skill"],
     prefill: invoke === "prompt" ? `use the ${s.name} skill: ` : `/${s.name}`,
   }));
+}
+
+/**
+ * The palette in the order it should be read: best row first, and the group
+ * holding it first.
+ *
+ * cmdk re-sorts its own DOM by score, but it does that by moving nodes React
+ * owns, and it never reached these rows — the list stayed in tier order no
+ * matter what anything scored. cmdk then selects the FIRST row it finds, so
+ * the order is not decoration: it is what Enter runs. Rank here, in the render
+ * that produces the DOM, and cmdk's own pass becomes a no-op over an already
+ * sorted list rather than the thing the answer depends on.
+ *
+ * Rows that score 0 are left in place at the end; cmdk unmounts them, and
+ * dropping them here would take `CommandEmpty`'s count with them.
+ */
+export function rankSlashGroups(
+  groups: SlashGroup[],
+  query: string,
+): SlashGroup[] {
+  if (!query.trim()) return groups;
+  const scored = groups.map((group) => {
+    const rows = group.entries
+      .map((entry) => ({
+        entry,
+        score: slashScore(slashValue(entry), query, entry.keywords),
+      }))
+      // stable, so an exact tie keeps the order the tier declared
+      .sort((a, b) => b.score - a.score);
+    return {
+      group: { ...group, entries: rows.map((row) => row.entry) },
+      best: rows[0]?.score ?? 0,
+    };
+  });
+  return scored.sort((a, b) => b.best - a.best).map((row) => row.group);
 }
 
 /** The slash token the palette is bound to: `/` through the next whitespace. */

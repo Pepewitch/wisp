@@ -498,12 +498,48 @@ the composer exactly twice: the focus ring, and the Create button.
 `/` is a real picker, not a prefill. It opens when the draft is empty or the
 character before the caret is whitespace, and it binds to the **slash token
 under the caret** — the `/` through the next whitespace. `src/lib` is a path;
-`look at src/lib /st` is a command. Filtering is cmdk's, driven by a
+`look at src/lib /st` is a command. Hiding is cmdk's, driven by a
 visually-hidden `Command.Input`; the textarea stays the real input and forwards
 ↑/↓/Home/End/↵ to the cmdk root. No component above the composer may install a
 document-level key handler. The palette and report panels share one positioned
 wrapper with the composer, so their left and right edges answer the input width,
 not the outer footer before its responsive padding.
+
+### Ranking is OURS, and it is what Enter runs
+
+cmdk selects the **first row it finds**, so the order of the list is not
+presentation — it is the answer. `slashScore` and `rankSlashGroups` in
+`lib/slash.ts` decide it, in the render that produces the DOM, and cmdk's own
+score-sort becomes a no-op over an already sorted list rather than the thing
+correctness depends on. Never leave the order to cmdk: it re-sorts by moving
+nodes React owns, and it did not reach these rows at all.
+
+cmdk's scorer cannot do this job, because it knows nothing about which part of
+a row is its **name**. Asked to rank `context` it returned **0.891 for every
+one** of `/context`, `/compact` and `/fresh` — the last two only because they
+carry `context` as an alias, and `/context` no better because its cmdk value is
+the disambiguating `probe:context` rather than its own name. Equal scores fell
+back to list order, so the row under the cursor was whichever tier happened to
+come first, and Enter started a fresh harness session for someone who typed
+`/context` in full.
+
+The bands say what a `/` palette is for. **You are typing a command's name.**
+An alias is how you FIND a name you did not know; it never outranks the name.
+
+| score | match |
+|---|---|
+| 1 | the name IS what you typed |
+| 0.7–0.9 | the name starts with it, shortest completion first |
+| 0.6 | an alias IS what you typed |
+| 0.5 | an alias starts with it |
+| 0.15–0.4 | cmdk's fuzzy score over the NAME (`ctx` → `context`) |
+| 0.05–0.14 | cmdk's fuzzy score over the aliases |
+| 0 | no match — cmdk unmounts the row |
+
+Groups stay contiguous and are ordered by their best row, so the best match is
+always the first row of the first group. A tie keeps the order the tier
+declared. The floor is not decoration either: cmdk scores `usage` against
+`status` at ~0.004, and every one of those is a row you have to look past.
 
 Four dismissals — Escape, a space (commands take no arguments), the caret
 leaving the token, and picking an item — and one rule that makes them bearable:
