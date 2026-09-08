@@ -80,6 +80,12 @@ function box(): HTMLTextAreaElement {
   return screen.getByPlaceholderText("Ask for changes, or / for commands") as HTMLTextAreaElement
 }
 
+/** The one row Enter would run — cmdk selects exactly one at a time. */
+function selectedRow(): string | null {
+  const row = screen.getByTestId("slash-palette").querySelector('[data-selected="true"]')
+  return row?.getAttribute("data-testid") ?? null
+}
+
 /** Typing, with the caret where a real caret would be. */
 function type(text: string, caret = text.length) {
   fireEvent.change(box(), { target: { value: text, selectionStart: caret } })
@@ -610,6 +616,58 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
     expect(screen.getByTestId("slash-probe:context")).not.toHaveTextContent("runs a turn")
   })
 
+  it("typing the whole of /context selects /context, not a row that merely aliases it", async () => {
+    const calls = stubApi(() => ({ status: 200, body: MARKDOWN_ANSWER }))
+    const onSend = vi.fn(async () => {})
+    // the reported bug: /fresh and /compact both carry `context` as an alias,
+    // cmdk scored all three at 0.891, and the first ROW won the tie — so Enter
+    // started a fresh harness session instead of reading the context report
+    mount(
+      <SteerBox
+        task={task()}
+        probeCommands={["context", "usage"]}
+        compact={{ kind: "action", recordsTurn: false }}
+        onSend={onSend}
+      />,
+    )
+
+    type("/")
+    await screen.findByTestId("slash-palette")
+    type("/context")
+
+    // read the VALUE: cmdk marks its selected row `true`, and the bug put that
+    // mark on /fresh while /context sat below it
+    await waitFor(() => expect(selectedRow()).toBe("slash-probe:context"))
+    fireEvent.keyDown(box(), { key: "Enter" })
+
+    await waitFor(() =>
+      expect(calls).toEqual([{ path: "/api/tasks/tk9zdy/probe", method: "POST", body: { command: "context" } }]),
+    )
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it("the aliases that FIND a command still rank under every command they name", async () => {
+    mount(
+      <SteerBox
+        task={task()}
+        probeCommands={["context", "usage"]}
+        compact={{ kind: "action", recordsTurn: false }}
+        onSend={async () => {}}
+      />,
+    )
+
+    type("/")
+    await screen.findByTestId("slash-palette")
+
+    // nothing is NAMED reset; /fresh's alias is the only way to reach it
+    type("/reset")
+    await waitFor(() => expect(selectedRow()).toBe("slash-fresh"))
+
+    // and shorthand still lands on the command it abbreviates
+    type("/ctx")
+    await waitFor(() => expect(selectedRow()).toBe("slash-probe:context"))
+  })
+
   it("typing /usage then Enter runs the harness's plan and limits probe", async () => {
     const calls = stubApi(() => ({
       status: 200,
@@ -626,7 +684,7 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
     type("/")
     await screen.findByTestId("slash-palette")
     type("/usage")
-    await waitFor(() => expect(screen.getByTestId("slash-probe:usage")).toHaveAttribute("data-selected"))
+    await waitFor(() => expect(selectedRow()).toBe("slash-probe:usage"))
     fireEvent.keyDown(box(), { key: "Enter" })
 
     const panel = await screen.findByTestId("probe-panel")
