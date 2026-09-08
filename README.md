@@ -9,7 +9,7 @@
 
 An isolated Git worktree per task, and a state machine that cannot lie about it.
 
-<sub>TypeScript on Bun · zero runtime dependencies · Linux + Apple Silicon path to 1.0 · self-hosted · no accounts</sub>
+<sub>TypeScript on Bun · self-contained binary · Linux + Apple Silicon path to 1.0 · self-hosted · no accounts</sub>
 
 </div>
 
@@ -38,8 +38,15 @@ update receipt remains pending.
   app is served by the daemon you operate.
 
 No individual feature is unique. The product bet is their combination:
-self-hosted, no account, harness-independent, isolated worktrees, truthful
+self-hosted, no account, harness-independent, separate worktrees, truthful
 lifecycle state, and phone-capable steering.
+
+“Isolated worktree” means one thing precisely: each task gets its own checkout
+and branch, so parallel agents do not edit the same files. It is **not** a
+sandbox. A harness runs as your user with your credentials and your network,
+and it can read and write outside its worktree. For a repository you do not
+trust, use a separate OS account or a disposable VM — a prompt that says “work
+only here” does not enforce anything.
 
 ## v0.4 platform claims
 
@@ -54,6 +61,24 @@ is machine qualification only. The public alpha.17 Desktop archive is Developer
 ID signed, notarized, stapled, and updater-signed. Alpha.13's
 alpha.12-to-alpha.13 self-update was qualified on one Apple Silicon Mac;
 alpha.17's alpha.16-to-alpha.17 human updater receipt is still pending.
+
+### What “experimental alpha” currently means
+
+| Area | Where it stands |
+|---|---|
+| Task lifecycle, worktrees, CLI/API | Exercised daily by its author; covered by the regression suite |
+| Browser and phone UI | Same daemon, same contract; bearer-authenticated on every hop |
+| Desktop (Apple Silicon) | Signed, notarized, updater-signed; one qualified self-update, one receipt pending |
+| Linux install and upgrade | Machine-qualified; the full upgrade/rollback matrix is not |
+| Multi-user or shared deployment | Not a goal, not implemented, no authorization boundary |
+| Sandboxing agent processes | Not implemented; see the worktree note above |
+
+Before Wisp stops calling itself alpha, these are the numbers it has to be able
+to show rather than assert: a first task that succeeds on a clean install, no
+message whose delivery is uncertain after a daemon restart, a Stop that leaves
+no process behind, a restore from backup that produces the same task list, and
+an in-app update that recovers on both platforms. Each of those is a measurable
+claim; none of them is “it feels stable”.
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -249,6 +274,16 @@ identifies a saved child by PID plus process start time, or finalizes a dead
 one from its persisted log. Undelivered messages remain in their per-task FIFO;
 native RPC admissions have bounded acknowledgement waits and never hold turn
 finalization open forever.
+
+The shipped daemon is one compiled binary: no Node, no `node_modules`, and no
+sibling asset directory to install. That is what “self-contained” means, and it
+is not the same as dependency-free. The binary embeds the generated single-file
+UI bundle and two npm packages — `@xterm/headless` and `@xterm/addon-serialize`,
+which model each terminal's screen server-side — plus the UI bundle's own
+build-time dependencies. The macOS desktop shell is a Tauri application with a
+Rust dependency tree of its own (`desktop/src-tauri/Cargo.lock`). Bundling
+those removes an installation step, not their supply chain: `bun.lock` and that
+`Cargo.lock` are the inventory, and CI audits both weekly.
 
 The daemon is the authority. The CLI's task and project operations, the
 daemon-served browser runtime, and the native desktop runtime use its HTTP API;
