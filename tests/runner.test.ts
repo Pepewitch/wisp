@@ -1131,6 +1131,116 @@ describe("killTurnForArchive (force-archive, a prior audit)", () => {
   );
 });
 
+describe("Droid live AskUser and interrupt", () => {
+  test("AskUser ends the turn as needs-input when stdin closes, without an idle event", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-"));
+    const harnessPath = join(dir, "fake-droid");
+    writeFileSync(
+      harnessPath,
+      `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const notify = (notification) => frame({
+  jsonrpc: "2.0",
+  type: "notification",
+  method: "droid.session_notification",
+  params: { notification },
+});
+for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+  const request = JSON.parse(line);
+  if (request.method === "droid.initialize_session") {
+    frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-ask-session" } });
+  } else if (request.method === "droid.add_user_message") {
+    frame({ jsonrpc: "2.0", id: request.id, result: {} });
+    notify({ type: "create_message", message: {
+      id: "assistant-1",
+      role: "assistant",
+      content: [
+        { type: "text", text: "WHICH_OPTION" },
+        { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire: "pick one" } },
+      ],
+      createdAt: 123,
+    } });
+  }
+}
+`,
+    );
+    chmodSync(harnessPath, 0o755);
+    const def: AdapterDef = {
+      bin: harnessPath,
+      exec: [],
+      liveInput: "droid-jsonrpc",
+      parse: {
+        format: "json",
+        resultType: "completion",
+        result: "finalText",
+        session: "session_id",
+        needsInput: "needs_input",
+      },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "ask me", def, cfg);
+    await until(() => getTask(task.id)?.state === "needs-input");
+
+    const [turn] = turnsFor(task.id);
+    expect(turn?.status).toBe("done");
+    expect(turn?.result).toBe("WHICH_OPTION");
+    expect(getTask(task.id)?.state).toBe("needs-input");
+    expect(getTask(task.id)?.state_detail).toBe("WHICH_OPTION");
+  });
+
+  test("interrupt closes live stdin before SIGTERM so a TERM-trapping harness can exit", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-interrupt-stdin-"));
+    const markPath = join(dir, "order.txt");
+    const harnessPath = join(dir, "fake-droid");
+    writeFileSync(
+      harnessPath,
+      `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const mark = ${JSON.stringify(markPath)};
+const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+process.on("SIGTERM", () => appendFileSync(mark, "term\\n"));
+for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+  const request = JSON.parse(line);
+  if (request.method === "droid.initialize_session") {
+    frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-interrupt-session" } });
+  } else if (request.method === "droid.add_user_message") {
+    frame({ jsonrpc: "2.0", id: request.id, result: {} });
+  }
+}
+appendFileSync(mark, "stdin\\n");
+`,
+    );
+    chmodSync(harnessPath, 0o755);
+    const def: AdapterDef = {
+      bin: harnessPath,
+      exec: [],
+      liveInput: "droid-jsonrpc",
+      parse: { format: "json", resultType: "completion", result: "finalText", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "hang", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+    await until(() => {
+      try {
+        return readFileSync(turnsFor(task.id)[0]!.log_file, "utf8").includes('"subtype":"init"');
+      } catch {
+        return false;
+      }
+    });
+
+    await interruptTurn(task.id, 500);
+
+    expect(hasRunningTurn(task.id)).toBeNull();
+    expect(turnsFor(task.id)[0]!.status).toBe("interrupted");
+    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a correction");
+    expect(readFileSync(markPath, "utf8")).toContain("stdin");
+  });
+});
+
 describe("interruptTurn", () => {
   test(
     "marks the turn interrupted and the task needs-input with the steer hint",

@@ -268,6 +268,20 @@ describe("parseOutput (stream-json)", () => {
     const p = parseOutput(droid, raw);
     expect(p.result).toBe("ok");
     expect(p.session).toBe("d-1");
+    expect(p.needsInput).toBe(false);
+  });
+
+  test("droid: a non-empty needs_input array means needs-input", () => {
+    const raw = `{"type":"completion","finalText":"which option?","session_id":"d-1","needs_input":["AskUser"]}`;
+    const p = parseOutput(droid, raw);
+    expect(p.needsInput).toBe(true);
+    expect(p.result).toBe("which option?");
+    expect(p.isError).toBe(false);
+  });
+
+  test("droid: an empty needs_input array is not needs-input", () => {
+    const raw = `{"type":"completion","finalText":"ok","session_id":"d-1","needs_input":[]}`;
+    expect(parseOutput(droid, raw).needsInput).toBe(false);
   });
 
   // slice 9: the cursor transcript shape, binary-verified against
@@ -661,6 +675,15 @@ describe("errorDetail (captured fixtures)", () => {
       `{"type":"error","source":"cli","message":"partial generated text"}`,
     ].join("\n");
     expect(errorDetail(droid, out, "")).toBe("provider failed");
+  });
+
+  test("droid: an error event still names the failure when completion finalText is empty", () => {
+    const out = [
+      `{"type":"error","source":"agent_loop","message":"Droid turn error"}`,
+      `{"type":"completion","finalText":"","session_id":"s","isError":true}`,
+    ].join("\n");
+    expect(errorDetail(droid, out, "")).toBe("Droid turn error");
+    expect(parseOutput(droid, out)).toMatchObject({ result: "", isError: true, needsInput: false });
   });
 
   test("droid: errors without a source keep last-wins behavior", () => {
