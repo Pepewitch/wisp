@@ -79,7 +79,7 @@ source or public assets.
 
 Pull requests that change the promotion command, renderers, Homebrew/channel
 tests, or release workflow also trigger `.github/workflows/release-promotion.yml`.
-Its disposable macOS runner anonymously replays the published alpha.16 path,
+Its disposable macOS runner anonymously replays the published alpha.17 path,
 including all ten downloads, updater and Apple trust checks, actual Homebrew
 audits, exact-channel comparison, and safe temporary-tap cleanup. It records a
 dry-run receipt and has no tap write credential or `--publish` capability.

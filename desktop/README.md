@@ -12,7 +12,7 @@ security boundary implemented here.
 The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
 builds are ad-hoc signed. Starting with alpha.12, public Desktop releases
 require Developer ID signing, notarization, stapling, and updater signing
-before immutable publication. Alpha.16 is the current signed public release;
+before immutable publication. Alpha.17 is the current signed public release;
 the historical alpha.8 predates that pipeline and remains ad-hoc signed.
 
 Status: working alpha. The shared React application selects the desktop runtime

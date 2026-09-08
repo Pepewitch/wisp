@@ -17,6 +17,7 @@ public claim.
 | `0.4.0-alpha.12` | Passed from `b486dea2fdcf6c57306ef1aef6af7f9b541fa1ac` | Passed at tap `f838aef032147618a5b372107fc21a97b82ff7e5` | Bootstrap release; no older updater-capable version existed |
 | `0.4.0-alpha.13` | Passed from `8fb6065b902b66d88dd3a569989442b8b1296a9a` | Passed at tap `4fbb81e136043605f8b7865fa97fddb15dbc063f` | Alpha.12 → alpha.13 passed on one Apple Silicon Mac |
 | `0.4.0-alpha.16` | Passed from `3a34ecb2175e5198eaf510cc017e936e4655addb` | Passed at tap `520943acf0ebc3b7a8f871444d9e7497f8eb1489` | Alpha.13 → alpha.16 pending |
+| `0.4.0-alpha.17` | Passed from `0cea1266183fb359636b934a40e860ea6f695b99` | Passed at tap `84658e9d7f48f81459fc0276bb6ec71068a759a8` | Alpha.16 → alpha.17 pending |
 
 “Passed” for immutable publication means the exact ten public assets matched
 their checksum sets, the Desktop updater signature accepted the archive and

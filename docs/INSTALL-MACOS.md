@@ -3,10 +3,10 @@
 Alpha.12 was the first Wisp Desktop prerelease to ship with Developer ID
 signing, Apple notarization, and signed in-app updates. Alpha.13 is the second
 signed release and completed the first public alpha.12-to-alpha.13 in-app
-update. Alpha.16 is the current third signed release: its immutable assets and
-Homebrew/update channel are public, while its alpha.13-to-alpha.16 human updater
-receipt is pending. Apple Silicon support remains experimental and has only
-limited single-machine qualification.
+update. Alpha.17 is the current fourth signed release: its immutable assets and
+Homebrew/update channel passed the automated release gates, while its
+alpha.16-to-alpha.17 human updater receipt is pending. Apple Silicon support
+remains experimental and has only limited single-machine qualification.
 
 ## Scope and security notice
 
@@ -199,7 +199,7 @@ If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
 After alpha.12 is installed, later signed Desktop upgrades, including
-alpha.13-to-alpha.16, use the Tauri updater. Homebrew remains the recovery path:
+alpha.16-to-alpha.17, use the Tauri updater. Homebrew remains the recovery path:
 
 ```sh
 brew update
@@ -235,9 +235,9 @@ brew services restart wisp
 
 The public alpha.12-to-alpha.13 in-app update, subsequent Cask receipt sync,
 and daemon Formula restart preserved config, history, branches, worktrees, and
-repository work in one test environment. Alpha.16 has passed publication and
-channel promotion but its alpha.13-to-alpha.16 human updater receipt remains
-pending. Neither result is broad Apple Silicon support.
+repository work in one test environment. Alpha.17 has passed publication and
+channel promotion, but its alpha.16-to-alpha.17 human updater receipt remains pending.
+Neither result is broad Apple Silicon support.
 
 ## Develop beside the installed service
 

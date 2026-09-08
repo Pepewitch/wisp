@@ -63,15 +63,15 @@ jobs:
           # Pin one immutable public fixture whose tap/channel already agree.
           # Advance this deliberately after a later release is promoted.
           mkdir -p dist/promotion-check
-          release_root=dist/promotion-check/release-alpha16
+          release_root=dist/promotion-check/release-alpha17
           tap=dist/promotion-check/homebrew-tap
           receipt=dist/promotion-check/promotion-receipt.json
           git fetch --force origin main \
-            refs/tags/v0.4.0-alpha.16:refs/tags/v0.4.0-alpha.16
-          git worktree add --detach "$release_root" v0.4.0-alpha.16
+            refs/tags/v0.4.0-alpha.17:refs/tags/v0.4.0-alpha.17
+          git worktree add --detach "$release_root" v0.4.0-alpha.17
           git clone https://github.com/Pepewitch/homebrew-tap.git "$tap"
           bun run release:promote -- \
-            --tag v0.4.0-alpha.16 \
+            --tag v0.4.0-alpha.17 \
             --release-root "$release_root" \
             --tap-dir "$tap" \
             --receipt "$receipt"

@@ -39,8 +39,8 @@ daemon row applies only to the selected connection. Public alpha.8 predates
 self-update; bootstrap a current signed release through Homebrew with
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. The public
 alpha.12-to-alpha.13 in-app path is qualified on one Apple Silicon Mac. The
-current public alpha.16 app is signed, notarized, stapled, updater-signed, and
-available through Homebrew and the Desktop channel; its alpha.13-to-alpha.16
+current public alpha.17 app is signed, notarized, stapled, updater-signed, and
+available through Homebrew and the Desktop channel; its alpha.16-to-alpha.17
 human updater receipt remains pending.
 
 ## 2. Creating tasks

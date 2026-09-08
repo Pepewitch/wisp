@@ -8,7 +8,7 @@ configured harness credential as security-sensitive.
 
 | Version | Security fixes |
 |---|---|
-| Current `0.4.0-alpha.x` | Best effort while the alpha is current; public Desktop alpha.16 is Developer ID signed, notarized, stapled, and updater-signed |
+| Current `0.4.0-alpha.x` | Best effort while the alpha is current; public Desktop alpha.17 is Developer ID signed, notarized, stapled, and updater-signed |
 | Earlier development versions | No |
 
 There is no production-supported release yet.

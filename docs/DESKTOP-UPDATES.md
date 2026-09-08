@@ -106,8 +106,8 @@ The public alpha.8 app predates this updater and is ad-hoc signed. It cannot
 self-update. Alpha.12 is the first published Developer ID signed release
 containing the embedded key and must be installed once through Homebrew with
 `--greedy`. Alpha.13 completed the first end-to-end public proof by discovering,
-verifying, installing, and relaunching from alpha.12. Alpha.16 is the current
-published signed release; its alpha.13-to-alpha.16 human updater receipt is
+verifying, installing, and relaunching from alpha.12. Alpha.17 is the current
+published signed release; its alpha.16-to-alpha.17 human updater receipt is
 still pending.
 
 Treat the updater key as a long-lived release root. Before any app containing a
@@ -172,8 +172,8 @@ state, and Homebrew receipt reconciliation. This qualifies the public updater
 path on that machine; it is not broad macOS or hardware qualification. Repeat
 the two-version receipt for future trust-root, channel, installer, or updater
 changes rather than treating this historical pass as permanent coverage.
-Alpha.16's publication, public channel, and package audits have passed, but do
-not describe alpha.13-to-alpha.16 as qualified until that human-observed
+Alpha.17's publication, public channel, and package audits have passed, but do
+not describe alpha.16-to-alpha.17 as qualified until that human-observed
 replacement, relaunch, state-preservation, Apple trust, and Homebrew receipt
 reconciliation record exists. Record the sanitized result in the
 [v0.4 qualification ledger](v0.4/QUALIFICATION.md); keep raw machine evidence
