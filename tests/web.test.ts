@@ -95,6 +95,19 @@ describe("the web app", () => {
    * self-contained: a CDN reference or an un-inlined chunk would 404 in the
    * browser and there is no static handler left to catch it.
    */
+  /**
+   * A stylesheet is not unit-testable — jsdom parses no CSS — so the one place
+   * this rule can be proved is the artifact that ships it. WebKit never
+   * relayouts a textarea's placeholder box when the page zoom changes, and
+   * Desktop's zoom IS a page zoom, so without the cap an empty chat input
+   * reports ~75px of content it does not have and paints a horizontal
+   * scrollbar over itself.
+   */
+  test("the chat input's placeholder cannot outgrow its field", async () => {
+    const html = await Bun.file(BUNDLE_PATH).text();
+    expect(html).toMatch(/textarea::placeholder\s*\{[^}]*max-width:\s*100%/);
+  });
+
   test("the bundle is self-contained — one file, nothing external", async () => {
     const html = await Bun.file(BUNDLE_PATH).text();
     expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)="https?:/);
