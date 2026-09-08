@@ -35,11 +35,24 @@ async function waitFor<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+/**
+ * Teardown gets an explicit timeout, because it can legitimately outlast the
+ * 5s one `bun:test` gives a hook by default.
+ *
+ * `killAll()` walks every live session through `Session.kill()`, and that is a
+ * SIGHUP plus up to `KILL_GRACE_MS` (5s) for the shell to go, then a SIGKILL
+ * plus another 5s — 10s of honest waiting per session in the worst case. On a
+ * developer's machine the shell exits on the hangup in milliseconds and the
+ * whole file runs in ~2s, so the default was never felt; on a loaded CI runner
+ * one slow hangup crossed 5s and the hook was killed mid-teardown, which
+ * failed the test that had just PASSED and then the next one, whose server had
+ * been left standing. The tests themselves already ask for 20s.
+ */
 afterEach(async () => {
   await killAll();
   if (server) await server.stop(true);
   server = null;
-});
+}, 30_000);
 
 
 /**
