@@ -7,11 +7,14 @@ import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config
 import { pathExists } from "./fsutil";
 import { assertWorkingDirectoryAllowed } from "./launch-policy";
 import { signalProcessTree } from "./process-tree";
+import { READ_TIMEOUT_MS, runBounded, WRITE_TIMEOUT_MS } from "./subprocess";
 
 interface GitResult {
   ok: boolean;
   out: string;
   err: string;
+  /** stdout hit its byte budget; only `fullDiff` has a use for knowing. */
+  truncated: boolean;
 }
 
 /**
@@ -19,13 +22,35 @@ interface GitResult {
  * daemon's only thread — diffStat on each polled GET /api/tasks/:id, push,
  * archive, task creation — and a 2-second `git worktree add` or a slow
  * `git status` on a big repo must not stall all tasks and the entire API.
- * Stdout and stderr are drained concurrently with the exit wait: a child
- * that fills the pipe buffer while we only await exit would deadlock.
+ *
+ * Bounded, always (a later review): the run carries a deadline and a byte
+ * budget, because neither existed. A `git` that hangs on an unresponsive
+ * filesystem or a credential prompt used to wait forever, and output was
+ * buffered in full before any cap looked at its size — so a generated
+ * lockfile diff cost tens of megabytes to serve a 512 KiB response. The
+ * budget is enforced while reading now; see subprocess.ts.
  */
-async function git(args: string[], cwd: string): Promise<GitResult> {
-  const p = Bun.spawn({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
-  const [out, err, exitCode] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { ok: exitCode === 0, out: out.trim(), err: err.trim() };
+async function git(args: string[], cwd: string, options: GitRunOptions = {}): Promise<GitResult> {
+  const result = await runBounded({
+    cmd: ["git", ...args],
+    cwd,
+    maxBytes: options.maxBytes,
+    timeoutMs: options.timeoutMs ?? READ_TIMEOUT_MS,
+  });
+  if (result.timedOut) {
+    return {
+      ok: false,
+      out: "",
+      err: `git ${args[0] ?? ""} timed out after ${Math.round((options.timeoutMs ?? READ_TIMEOUT_MS) / 1000)}s and was stopped`,
+      truncated: false,
+    };
+  }
+  return { ok: result.exitCode === 0, out: result.out.trim(), err: result.err.trim(), truncated: result.truncated };
+}
+
+interface GitRunOptions {
+  maxBytes?: number;
+  timeoutMs?: number;
 }
 
 /** Cap on the one stderr line a git failure is allowed to put in a message. */
@@ -120,13 +145,15 @@ export async function createWorktree(repoPath: string, taskId: string, cfg: Wisp
   const path = join(WORKTREE_ROOT, `${basename(repo)}-${taskId}`);
   // Prune stale admin entries first: a manually deleted worktree dir leaves one
   // behind, and `git worktree add` at that path then fails confusingly (a prior audit).
-  await git(["worktree", "prune"], repo);
+  await git(["worktree", "prune"], repo, { timeoutMs: WRITE_TIMEOUT_MS });
   // A concurrent git process can hold index.lock — retry with backoff before failing.
   // The backoff sleep is async too: sleepSync would freeze the whole daemon (M1).
-  let r = await git(["worktree", "add", "-b", branch, path], repo);
+  // Checking out a large tree is real work, so these mutating calls get the
+  // write budget rather than the short deadline a status probe uses.
+  let r = await git(["worktree", "add", "-b", branch, path], repo, { timeoutMs: WRITE_TIMEOUT_MS });
   for (let attempt = 0; !r.ok && r.err.includes("index.lock") && attempt < 3; attempt++) {
     await Bun.sleep(500 * 2 ** attempt);
-    r = await git(["worktree", "add", "-b", branch, path], repo);
+    r = await git(["worktree", "add", "-b", branch, path], repo, { timeoutMs: WRITE_TIMEOUT_MS });
   }
   must(r, "git worktree add failed");
   await copyIntoWorktree(repo, path, cfg);
@@ -565,12 +592,14 @@ export async function fullDiff(
 ): Promise<{ diff: string; truncated: boolean; untracked: string[]; base: string | null }> {
   const base = base_commit === null ? null : await resolveDiffBase(worktree, base_commit);
   const [diffOut, lsOut] = await Promise.all([
-    git(base ? ["diff", base] : ["diff", "HEAD"], worktree),
+    // The cap is the READ budget, not a slice afterwards: a generated diff
+    // used to be buffered whole before this line looked at its length.
+    git(base ? ["diff", base] : ["diff", "HEAD"], worktree, { maxBytes: DIFF_CAP }),
     git(["ls-files", "--others", "--exclude-standard"], worktree),
   ]);
   let diff = must(diffOut, "git diff failed");
-  let truncated = diff.length > DIFF_CAP;
-  if (truncated) diff = diff.slice(0, DIFF_CAP);
+  let truncated = diffOut.truncated || diff.length > DIFF_CAP;
+  if (diff.length > DIFF_CAP) diff = diff.slice(0, DIFF_CAP);
   const others = must(lsOut, "git ls-files failed");
   const untracked = others === "" ? [] : others.split("\n");
   if (!truncated) {
@@ -688,7 +717,9 @@ export async function statusSummary(
 }
 
 export async function pushBranch(worktree: string, branch: string): Promise<string> {
-  return must(await git(["push", "-u", "origin", branch], worktree), "git push failed");
+  // A network operation, so it gets the write budget rather than the short
+  // read deadline every status probe uses.
+  return must(await git(["push", "-u", "origin", branch], worktree, { timeoutMs: WRITE_TIMEOUT_MS }), "git push failed");
 }
 
 /** What archive learned before it destroyed anything (Q11). */
@@ -769,7 +800,7 @@ export const ARCHIVE_COMMIT_MESSAGE = "wisp: uncommitted work at archive";
  */
 async function commitDirtyWork(worktree: string, branch: string): Promise<void> {
   if (!(await isDirty(worktree))) return;
-  must(await git(["add", "-A"], worktree), `could not stage uncommitted work on ${branch}`);
+  must(await git(["add", "-A"], worktree, { timeoutMs: WRITE_TIMEOUT_MS }), `could not stage uncommitted work on ${branch}`);
   // `git commit` exits nonzero on an empty commit, so the staged diff is the
   // guard rather than the exit code: nothing to commit must never fail archive
   if ((await git(["diff", "--cached", "--quiet"], worktree)).ok) return;
@@ -777,7 +808,7 @@ async function commitDirtyWork(worktree: string, branch: string): Promise<void> 
     ? []
     : ["-c", "user.name=wisp", "-c", "user.email=wisp@localhost"];
   must(
-    await git([...identity, "commit", "--no-verify", "--no-gpg-sign", "-m", ARCHIVE_COMMIT_MESSAGE], worktree),
+    await git([...identity, "commit", "--no-verify", "--no-gpg-sign", "-m", ARCHIVE_COMMIT_MESSAGE], worktree, { timeoutMs: WRITE_TIMEOUT_MS }),
     `could not commit uncommitted work onto ${branch}`,
   );
 }
@@ -808,7 +839,7 @@ export async function removeWorktree(
     // Prune the stale admin entry and let the row clear. The bytes are the
     // deviation documented in archivePreflight — force takes them, plain
     // archive leaves them.
-    await git(["worktree", "prune"], repo);
+    await git(["worktree", "prune"], repo, { timeoutMs: WRITE_TIMEOUT_MS });
     if (force) await rm(worktree, { recursive: true, force: true });
     return;
   }
@@ -825,5 +856,5 @@ export async function removeWorktree(
   if (configured) {
     await runTeardownStep(["bash", "-c", configured], "project archive script", taskId, worktree, minutes);
   }
-  must(await git(["worktree", "remove", "--force", worktree], repo), "git worktree remove failed");
+  must(await git(["worktree", "remove", "--force", worktree], repo, { timeoutMs: WRITE_TIMEOUT_MS }), "git worktree remove failed");
 }

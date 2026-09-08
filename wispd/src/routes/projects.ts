@@ -5,6 +5,7 @@ import { emit } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
 import { beginProjectRemoval } from "../project-removals";
 import { listTasks } from "../store";
+import { Coalescer, Semaphore } from "../subprocess";
 import { taskMode } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
@@ -60,13 +61,30 @@ const REASON_CAP = 200;
  * omitting the row or reporting zeros are the two ways this endpoint used to lie
  * about a broken worktree, and the sidebar believed it.
  */
+/**
+ * Bounds on the fan-out. Each task's entry is several git processes, so an
+ * unbounded `Promise.all` over every live task is a process storm on one
+ * developer machine — and two clients polling (or an SSE invalidation landing
+ * while the previous request is still running) used to start a second one on
+ * top of the first (ENG-05).
+ */
+const STATUS_PROBE_CONCURRENCY = 4;
+const statusProbes = new Semaphore(STATUS_PROBE_CONCURRENCY);
+const statusFanOut = new Coalescer<Record<string, unknown>>();
+
 export function statusRoute(): Promise<Response> {
   return (async () => {
-    // per-task probes run CONCURRENTLY — one unreadable worktree must never 500
-    // the rest, and must never cost another task its marks
-    const live = listTasks().filter((t) => t.worktree_path !== null && t.branch !== null);
-    const rows = await Promise.all(
-      live.map(async (t): Promise<[string, unknown]> => {
+    return json({ tasks: await statusFanOut.run(collectStatus) });
+  })();
+}
+
+async function collectStatus(): Promise<Record<string, unknown>> {
+  // per-task probes run CONCURRENTLY — one unreadable worktree must never 500
+  // the rest, and must never cost another task its marks — but only
+  // STATUS_PROBE_CONCURRENCY of them at a time
+  const live = listTasks().filter((t) => t.worktree_path !== null && t.branch !== null);
+  const rows = await Promise.all(
+      live.map(async (t): Promise<[string, unknown]> => statusProbes.run(async () => {
         try {
           const health = await worktreeHealth(t.worktree_path!);
           if (!health.ok) return [t.id, { branch: t.branch, worktreeReason: health.reason }];
@@ -80,10 +98,9 @@ export function statusRoute(): Promise<Response> {
           console.warn(`[wisp] /api/status: task ${t.id} (${t.worktree_path}): ${message}`);
           return [t.id, { branch: t.branch, worktreeReason: `Git could not read this worktree — ${message}`.slice(0, REASON_CAP) }];
         }
-      }),
-    );
-    return json({ tasks: Object.fromEntries(rows) });
-  })();
+      })),
+  );
+  return Object.fromEntries(rows);
 }
 
 /** GET /api/repos */

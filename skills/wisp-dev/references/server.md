@@ -19,7 +19,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   one-shot harness processes, persisted logs, finalization, interruption,
   restart recovery, and stuck detection.
 - `wispd/src/worktree.ts` owns worktree creation, setup and cleanup hooks, health,
-  git status/diff, and archive teardown.
+  git status/diff, and archive teardown. Every git call goes through
+  `wispd/src/subprocess.ts`, which enforces a byte budget WHILE reading and a
+  deadline: read probes get a short one, mutating calls (worktree add/remove,
+  the archive commit, push) get the write budget. `/api/status` fans out behind
+  a semaphore and a coalescer, because each task's entry is several git
+  processes.
 - `wispd/src/adapters/` is the only home for harness argv, machine-output parsing,
   capabilities, and named wire strategies.
 - `wispd/src/events.ts` feeds realtime clients. `wispd/src/outbox.ts` delivers durable
