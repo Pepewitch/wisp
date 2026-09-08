@@ -18,11 +18,11 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current release: `0.4.0-alpha.16`.** This experimental prerelease is not
-production-ready software. Its ten immutable assets, Developer ID signature,
-notarization, staple, updater signature, anonymous downloads, Homebrew recipes,
-and public Desktop channel passed the release gates. The human-observed
-alpha.13-to-alpha.16 in-app replacement remains pending.
+**Current candidate: `0.4.0-alpha.17`.** This experimental prerelease is not
+production-ready software. It carries the real-PTY terminal, multi-branch pull
+request discovery, Droid questionnaire, and resumable release-promotion fixes.
+Alpha.16 remains the current public release until alpha.17's tagged artifacts
+and Homebrew/Desktop channels pass every release gate.
 
 ## Why Wisp
 
@@ -63,7 +63,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.16 # replace with the current published alpha
+version=0.4.0-alpha.17 # replace with the current published alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -73,7 +73,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.16/wisp-v0.4.0-alpha.16-linux-x86_64
+artifact=dist/release/v0.4.0-alpha.17/wisp-v0.4.0-alpha.17-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -260,7 +260,7 @@ shared-client contract.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.16 # replace with the installed alpha
+version=0.4.0-alpha.17 # replace with the installed alpha
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh
