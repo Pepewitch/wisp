@@ -18,6 +18,7 @@ import {
   transition,
 } from "./store";
 import { summarize } from "./text";
+import { isUnresolvedInterrupt } from "./interrupt-state";
 import type { RecorderOutcome } from "./recording/turn-recorder";
 
 async function safeRead(path: string): Promise<string> {
@@ -127,7 +128,9 @@ export async function finalizeTurn(
   const killReason = currentTurn?.kill_detail ?? undefined;
   if (interruptDetail !== null) {
     finishTurn(turnId, "interrupted", exitCode, parsed.result);
-    transition(taskId, "needs-input", interruptDetail);
+    // Leader finalization must not turn an incomplete Stop into permission to
+    // resume. Keep the retry control visible, including after restart.
+    transition(taskId, isUnresolvedInterrupt(interruptDetail) ? "stuck" : "needs-input", interruptDetail);
     return;
   }
 

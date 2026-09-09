@@ -204,6 +204,10 @@ before delivery. During a running turn it uses the verified native steering
 channel for Claude, Droid, and Codex; other harnesses keep the message visibly
 queued and start it as the next turn. Sending never stops current work.
 `wisp interrupt` and the UI's Stop control are the explicit destructive path.
+Stop waits for the turn's process group to exit, escalating if necessary,
+before reporting success or starting queued work. While stopping, new sends
+and archive requests are refused. An incomplete stop keeps those operations
+blocked until Stop can confirm completion; the conversation session is kept.
 If the daemon loses durable proof while starting or natively admitting a
 message, it keeps the message queued and marks the delivery uncertain rather
 than risking data loss. Recovery may therefore replay that stable-ID message

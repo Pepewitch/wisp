@@ -1,6 +1,7 @@
 import { removeTaskAttachments } from "../attachments";
 import { repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn, killTurnForArchive } from "../runner";
+import { assertTaskNotStopping } from "../turn-interrupt";
 import {
   advanceArchiveCleanup,
   archiveTaskWithCleanup,
@@ -204,6 +205,11 @@ export function startArchiveCleanupLoop(): ReturnType<typeof setInterval> {
 
 async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedArchive | ArchiveRefusal> {
   const task = getTask(snapshot.id) ?? snapshot;
+  try {
+    assertTaskNotStopping(task.id);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error), status: 409, task };
+  }
   const running = hasRunningTurn(task.id);
   if (running && !force) {
     return {
@@ -249,6 +255,11 @@ export async function archiveTaskRows(
   // A send may have started a turn while Git preflight yielded. Recheck every
   // row before the synchronous archive flips.
   for (const candidate of prepared) {
+    try {
+      assertTaskNotStopping(candidate.task.id);
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error), status: 409, task: candidate.task };
+    }
     const latestRunning = hasRunningTurn(candidate.task.id);
     if (latestRunning && !force) {
       return {

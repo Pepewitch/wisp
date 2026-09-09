@@ -11,6 +11,7 @@ import { pathExists, readSlice, readTailOf } from "../fsutil";
 import type { PullRequestCache } from "../pull-requests";
 import { isProjectRemovalInProgress } from "../project-removals";
 import { hasRunningTurn, interruptTurn, startTurn, submitTaskMessage, taskEnv } from "../runner";
+import { InterruptConflict } from "../turn-interrupt";
 import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
 import type { TaskSkillCache } from "../skills";
@@ -318,6 +319,7 @@ async function sendTaskResponse(
     });
   } catch (error) {
     if (error instanceof AttachError) return err(error.message, 400);
+    if (error instanceof InterruptConflict) return err(error.message, 409);
     const detail = error instanceof Error ? error.message : String(error);
     if (detail.includes("was already used for different content") || detail.endsWith("was cancelled")) {
       return err(detail, 409);
