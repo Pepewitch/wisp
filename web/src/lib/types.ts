@@ -525,3 +525,39 @@ export interface ActivityLogStreamFrames {
   "turn-end": { turn: number; status: TurnStatus }
   state: { state: TaskState; state_detail: string | null }
 }
+
+/**
+ * GET /api/search — exact text across this daemon's live tasks.
+ *
+ * The daemon searches four durable columns and says which one answered:
+ * a task title, a turn's prompt, a turn's concluding result, and a queued or
+ * steered message. Per-turn transcripts are NOT searched, so the sidebar
+ * states that scope rather than implying a whole-history index.
+ */
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message"
+
+export interface SearchSnippet {
+  kind: SearchSnippetKind
+  /** the turn a prompt/result came from; null for a title or a message */
+  turn: number | null
+  text: string
+  /** the match's position inside `text` — the client highlights what it was given */
+  offset: number
+  length: number
+}
+
+export interface SearchTaskHit {
+  id: string
+  title: string
+  repo_path: string
+  updated_at: string
+  matches: number
+  snippets: SearchSnippet[]
+}
+
+export interface SearchResponse {
+  query: string
+  tasks: SearchTaskHit[]
+  /** a daemon scan cap was reached: this answer is not the whole ledger */
+  truncated: boolean
+}

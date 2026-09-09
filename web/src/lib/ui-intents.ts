@@ -4,11 +4,14 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * TWO intents. `/log` is the palette's one command that needs another
+ * THREE intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
- * already mounted, and that view is the only thing that can select it.
+ * already mounted, and that view is the only thing that can select it. A find
+ * request is ⌘F, the task overflow menu, and a picked cross-project result:
+ * three places that all mean "open the transcript's find bar", none of which
+ * owns the scroller that has to answer.
  */
 import { LOCAL_CONNECTION_ID } from "./transport";
 
@@ -18,18 +21,27 @@ export interface TaskFocusRequest {
   readonly seq: number;
 }
 
+/** A request to open find-in-task. `query` seeds the box; null keeps what is there. */
+export interface FindRequest {
+  readonly query: string | null;
+  readonly seq: number;
+}
+
 export interface UiIntents {
   subscribe(fn: () => void): () => void;
   streamFocusRequests(): number;
   focusStream(): void;
   taskFocusRequest(): TaskFocusRequest | null;
   focusTask(taskId: string): void;
+  findRequest(): FindRequest | null;
+  openFind(query?: string | null): void;
 }
 
 function createUiIntents(): UiIntents {
   const listeners = new Set<() => void>();
   let streamFocusRequests = 0;
   let taskFocusRequest: TaskFocusRequest | null = null;
+  let findRequest: FindRequest | null = null;
   const notify = () => {
     for (const fn of listeners) fn();
   };
@@ -54,6 +66,14 @@ function createUiIntents(): UiIntents {
     },
     focusTask(taskId: string): void {
       taskFocusRequest = { taskId, seq: (taskFocusRequest?.seq ?? 0) + 1 };
+      notify();
+    },
+    /** the latest ⌘F / menu / picked-result request to open find-in-task */
+    findRequest(): FindRequest | null {
+      return findRequest;
+    },
+    openFind(query: string | null = null): void {
+      findRequest = { query, seq: (findRequest?.seq ?? 0) + 1 };
       notify();
     },
   };

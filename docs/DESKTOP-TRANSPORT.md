@@ -54,6 +54,8 @@ The UI reads or mutates these route families:
   same-origin session probe);
 - daemon-owned configuration: `/api/repos`, `/api/projects`,
   `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
+- cross-task text search: `/api/search?q=…`, whose query string a proxy must
+  forward verbatim — the search term is percent-encoded user text, not a path;
 - task content: diffs, skills, probes, queued messages, and attachment bytes.
 
 JSON errors are part of the user-facing contract. A transport must preserve the

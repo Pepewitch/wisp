@@ -252,6 +252,9 @@ hand the daemon's token to any other local service. The app provides:
   readiness for the original task branch, including glanceable sidebar status,
   when the daemon's `gh` can read it;
 - a Git diff pane and worktree terminal;
+- search in two scopes: `⌘F` finds exact text in the task you are reading, and
+  `⌘⇧F` searches every live task's titles, prompts, results, and queued
+  messages from the projects sidebar (archived tasks are excluded);
 - phone-specific chat, changes, and terminal tabs.
 
 The UI is one self-contained HTML bundle embedded in the binary. It loads no

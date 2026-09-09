@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from "react"
 
-import { ChevronDown, FolderAdd, Gear, Plus } from "@/components/icons"
+import { ChevronDown, FolderAdd, Gear, Plus, Search } from "@/components/icons"
 import { Button, Eyebrow } from "@/components/primitives"
+import { ProjectSearchInput, ProjectSearchResults } from "@/components/project-search"
+import type { ProjectSearch } from "@/hooks/useProjectSearch"
 import { TaskRow, TaskRowTouch } from "@/components/task-row"
 import type { ProjectGroup } from "@/lib/projects"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
@@ -41,6 +43,12 @@ interface SidebarProps {
    * that width from the one string on screen that says which task this is.
    */
   updateControl?: ReactNode
+  /**
+   * Cross-project search (⌘⇧F). The state lives above this pane so one search
+   * survives the drawer/pane split and can be opened from the keyboard; the
+   * pane owns only where the box and the results sit.
+   */
+  search: ProjectSearch
   /** Desktop-only: native picker for Local, daemon path prompt for remotes. */
   onAddProject?: () => void
   addProjectPending?: boolean
@@ -67,6 +75,7 @@ export function Sidebar({
   onNewTask,
   onConfigureProject,
   onOpenSettings,
+  search,
   updateControl,
   onAddProject,
   addProjectPending = false,
@@ -81,6 +90,19 @@ export function Sidebar({
         style={touch ? { paddingTop: "env(safe-area-inset-top)" } : undefined}
       >
         <Eyebrow className="flex-1">Projects</Eyebrow>
+        {/* Search sits LEFT of add-project: reading a task is the common act
+            and registering one is the rare one, so the pair reads
+            most-used-first toward the edge. */}
+        <Button
+          size={touch ? "lg" : "sm"}
+          icon
+          aria-label="Search tasks"
+          title="Search tasks (⌘⇧F)"
+          onClick={search.open ? search.close : search.request}
+          className={cn(search.open && "bg-hover text-foreground")}
+        >
+          <Search />
+        </Button>
         {/* the <span> carries the tooltip: a disabled button fires no mouse
             events, so a `title` on it would never show on hover */}
         <span title={onAddProject ? "Add project" : ADD_PROJECT_HINT}>
@@ -96,20 +118,38 @@ export function Sidebar({
         </span>
       </div>
 
+      {/* The box pushes the tree DOWN rather than covering it: the projects
+          are the context for the results, and a pane that jumps to a filtered
+          list with no visible input has stopped explaining itself. */}
+      {search.open && (
+        <ProjectSearchInput
+          query={search.query}
+          focusToken={search.focusToken}
+          onQueryChange={search.setQuery}
+          onClose={search.close}
+          onCommit={() => search.commit(groups, onSelect)}
+          onMove={(delta) => search.move(delta, groups)}
+          touch={touch}
+        />
+      )}
+
       {error && <div className="px-3.5 pb-1.5 text-[11.5px] text-destructive">{error}</div>}
 
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
-        {loading && groups.length === 0 ? (
+        {search.open && search.query.trim() !== "" ? (
+          <ProjectSearchResults
+            query={search.daemonQuery}
+            groups={groups}
+            selectedId={selectedId}
+            activeId={search.activeId}
+            onSelect={onSelect}
+            onHitsChange={search.setHits}
+            touch={touch}
+          />
+        ) : loading && groups.length === 0 ? (
           <div className="px-2.5 py-1 text-[11.5px] text-faint">Loading…</div>
         ) : groups.length === 0 && archivedTasks.length === 0 ? (
-          <div className="px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
-            {onAddProject ? (
-              <>No projects yet. Add a project, then its <span className="text-muted-foreground">+</span> creates the first task.</>
-            ) : (
-              <>No projects yet. Run <code className="text-muted-foreground">wisp project add &lt;path&gt;</code> to register
-                one, then its <span className="text-muted-foreground">+</span> creates the first task.</>
-            )}
-          </div>
+          <NoProjects canAdd={onAddProject !== undefined} />
         ) : (
           <div className="flex flex-col">
             {groups.map((group) => (
@@ -126,15 +166,12 @@ export function Sidebar({
               />
             ))}
 
-            {[true, false].map(incomplete => {
-              const rows = archivedTasks.filter(t => Boolean(t.cleanup && t.cleanup.state !== "complete") === incomplete)
-              return rows.length > 0 && <section key={String(incomplete)} className="mt-3">
-                <div className="flex h-6 items-center px-2"><Eyebrow>{incomplete ? "Cleanup" : "Archived"}</Eyebrow></div>
-                <div className="mt-px flex flex-col gap-px pl-0.5">{rows.map(t => touch
-                  ? <TaskRowTouch key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />
-                  : <TaskRow key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />)}</div>
-              </section>
-            })}
+            <ArchiveSections
+              archivedTasks={archivedTasks}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              touch={touch}
+            />
           </div>
         )}
       </div>
@@ -182,6 +219,43 @@ export function Sidebar({
       </div>
     </aside>
   )
+}
+
+/** The one placeholder a pane with no projects at all can honestly show. */
+function NoProjects({ canAdd }: { canAdd: boolean }) {
+  return (
+    <div className="px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
+      {canAdd ? (
+        <>No projects yet. Add a project, then its <span className="text-muted-foreground">+</span> creates the first task.</>
+      ) : (
+        <>No projects yet. Run <code className="text-muted-foreground">wisp project add &lt;path&gt;</code> to register
+          one, then its <span className="text-muted-foreground">+</span> creates the first task.</>
+      )}
+    </div>
+  )
+}
+
+/** Unfinished cleanup first, then archived history — two sections, one shape. */
+function ArchiveSections({
+  archivedTasks,
+  selectedId,
+  onSelect,
+  touch,
+}: {
+  archivedTasks: ApiTask[]
+  selectedId: string | null
+  onSelect: (id: string) => void
+  touch: boolean
+}) {
+  return [true, false].map(incomplete => {
+    const rows = archivedTasks.filter(t => Boolean(t.cleanup && t.cleanup.state !== "complete") === incomplete)
+    return rows.length > 0 && <section key={String(incomplete)} className="mt-3">
+      <div className="flex h-6 items-center px-2"><Eyebrow>{incomplete ? "Cleanup" : "Archived"}</Eyebrow></div>
+      <div className="mt-px flex flex-col gap-px pl-0.5">{rows.map(t => touch
+        ? <TaskRowTouch key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />
+        : <TaskRow key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />)}</div>
+    </section>
+  })
 }
 
 /** One project: a 28px header row over its task list. */

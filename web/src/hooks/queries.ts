@@ -11,6 +11,7 @@ import type {
   PullRequestOverview,
   PullRequestStatus,
   RepoInfo,
+  SearchResponse,
   StatusEntry,
   SuffixPrompt,
   TaskDetail,
@@ -25,6 +26,27 @@ export function useTasks(showArchived: boolean) {
   return useQuery({
     queryKey: qk.tasksList(showArchived),
     queryFn: () => transport.request<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : "?cleanup=1"}`),
+  });
+}
+
+/**
+ * GET /api/search — the sidebar's cross-project search.
+ *
+ * `placeholderData: keepPrevious` is what makes typing feel like filtering
+ * rather than reloading: the previous answer stays on screen while the next
+ * one is in flight, so the results list never blinks empty between keystrokes.
+ * An empty query is not a request — the daemon refuses it, and there is
+ * nothing to ask.
+ */
+export function useTaskSearch(query: string) {
+  const { transport, qk } = useDaemonRuntime();
+  const trimmed = query.trim();
+  return useQuery({
+    queryKey: qk.search(trimmed),
+    queryFn: () => transport.request<SearchResponse>(`/api/search?q=${encodeURIComponent(trimmed)}`),
+    enabled: trimmed !== "",
+    placeholderData: (previous) => previous,
+    staleTime: 10_000,
   });
 }
 

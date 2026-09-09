@@ -107,6 +107,11 @@
   --color-syntax-entity: var(--syntax-entity);
   --color-syntax-comment: var(--syntax-comment);
 
+  /* the find-match fill, so a daemon snippet in the sidebar can wear the same
+     background the transcript's ::highlight() paints (§8: never a hex in a
+     className, and never a second value for one meaning) */
+  --color-find-match: var(--find-match);
+
   /* accent family, for the rare place a token beats a utility */
   --color-accent-soft: var(--accent-soft);
   --color-accent-dim: var(--accent-dim);
@@ -211,6 +216,14 @@
   --ring: oklch(0.705 0.155 300);
   --primary-hover: oklch(0.755 0.15 300);         /* the filled hover */
 
+  /* find-in-task. A match is a text RANGE, the family ::selection already
+     belongs to, so the resting hit is the same neutral the app spends on a
+     selected row and the CURRENT hit is the selection's own hue, one step
+     louder — a caret you can find in a 40-turn transcript. No new hue, and
+     nothing in app chrome takes either one. */
+  --find-match: #3a3a45;
+  --find-match-current: oklch(0.705 0.155 300 / 0.34);
+
   --destructive: #df605c;
   --destructive-hover: #e8746f;
   --destructive-foreground: #1b1010;
@@ -311,6 +324,10 @@
   --accent-wash: oklch(0.5 0.19 300 / 0.14);      /* the running dot's halo */
   --ring: oklch(0.5 0.19 300);
   --primary-hover: oklch(0.44 0.19 300);          /* the filled hover — DOWN */
+
+  /* find-in-task — the same pair, moved for paper (§1) */
+  --find-match: #dcdce8;
+  --find-match-current: oklch(0.5 0.19 300 / 0.22);
 
   --destructive: #c0332e;
   --destructive-hover: #a72a26;
@@ -464,6 +481,18 @@
 
   ::selection {
     background: var(--accent-wash);
+  }
+
+  /* Find-in-task paints RANGES, never elements: wrapping matches in <mark>
+     would mean mutating a tree React owns while a live turn appends to it.
+     Both names are registered in lib/find.ts; the current match is a second
+     highlight over the same range, so this order is what stacks it on top. */
+  ::highlight(wisp-find) {
+    background: var(--find-match);
+  }
+  ::highlight(wisp-find-current) {
+    background: var(--find-match-current);
+    color: var(--foreground);
   }
 
   /* ── syntax ──────────────────────────────────────────────────────────────

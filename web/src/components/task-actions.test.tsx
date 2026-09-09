@@ -76,12 +76,13 @@ async function pick(itemName: string) {
 }
 
 describe("the overflow menu", () => {
-  it("offers rename and archive only", async () => {
+  it("offers find, rename and archive only", async () => {
     mount(<TaskActions task={TASK} />)
     fireEvent.click(screen.getByRole("button", { name: "More actions" }))
 
     const items = await screen.findAllByRole("menuitem")
-    expect(items.map((el) => el.textContent)).toEqual(["Rename", "Archive"])
+    // Find carries its chord, because the menu is how you learn there is one.
+    expect(items.map((el) => el.textContent)).toEqual(["Find in task⌘F", "Rename", "Archive"])
   })
 
   it("renames the task from the triple-dot menu", async () => {

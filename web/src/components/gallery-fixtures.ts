@@ -1,6 +1,7 @@
 import { compactEntry, TIER1_ENTRIES, tier2Entries, tier3Entries, type SlashGroup } from "@/lib/slash"
 import type {
   ProbeAnswer,
+  SearchTaskHit,
   PullRequestInfo,
   PullRequestOverviewEntry,
   UpdateStatus,
@@ -175,6 +176,28 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
  * up. The swatch itself is painted from the TOKEN, so it always tells the
  * truth about the theme on screen; the hex beside it is that theme's value.
  */
+/** Two hits for the search entry: the daemon located each match, so offsets are its own. */
+export const SEARCH_HITS: SearchTaskHit[] = [
+  {
+    id: "t5qmha",
+    title: "Fix the steer box swallowing cmd-enter",
+    repo_path: "/Users/dev/work/wisp",
+    updated_at: new Date().toISOString(),
+    matches: 3,
+    snippets: [
+      { kind: "prompt", turn: 2, text: "…the composer should vacuum its draft before…", offset: 22, length: 6 },
+    ],
+  },
+  {
+    id: "tppxvp",
+    title: "Port the projects API to config write-back",
+    repo_path: "/Users/dev/work/wisp",
+    updated_at: new Date().toISOString(),
+    matches: 1,
+    snippets: [{ kind: "result", turn: 1, text: "vacuum pass left 4 files changed", offset: 0, length: 6 }],
+  },
+]
+
 export const SURFACES = [
   { name: "Void", token: "--background", dark: "#141418", light: "#FBFBFD", note: "Reading column, stream, diff body" },
   { name: "Surface", token: "--surface", dark: "#19191D", light: "#F6F6F9", note: "Sidebar, right pane, top bar, inputs" },

@@ -16,6 +16,7 @@ import { Button, DiffStat, Eyebrow, Meta, PaneHeader, POPOVER_SURFACE, Rule, Sta
 import { Prose } from "@/components/prose"
 import { ProseCodeSpecimen } from "@/components/prose-code-specimen"
 import { ProbePanel } from "@/components/probe-panel"
+import { SearchSpecimens } from "@/components/search-gallery-specimen"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
@@ -383,6 +384,10 @@ function InteractionSpecimens() {
               </p>
             </div>
           </div>
+      </Section>
+
+      <Section title="Search — two questions, two shapes">
+        <SearchSpecimens />
       </Section>
 
       <Section title="A read's answer is a report, not a bubble">

@@ -11,6 +11,7 @@ import {
 } from "react"
 
 import { ActivityList } from "@/components/activity-list"
+import { FindBar } from "@/components/find-in-task"
 import {
   BUBBLE_ACTION,
   BubbleTimestamp,
@@ -24,6 +25,7 @@ import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
+import { useFindInTask } from "@/hooks/useFindInTask"
 import { formatBytes } from "@/lib/attachments"
 import {
   activityByTurn,
@@ -67,12 +69,15 @@ export function Conversation({
   task,
   stream,
   note,
+  touch = false,
 }: {
   task: TaskDetail | null
   /** the live log follow; its blocks belong to the newest turn(s) */
   stream: StreamState
   /** "connecting…" / "select a task" — the stream's own placeholder */
   note?: string | null
+  /** touch mode: the find bar spans the column and takes 44px hit boxes */
+  touch?: boolean
 }) {
   const runtime = useDaemonRuntime()
   const uiIntents = uiIntentsFor(runtime.connectionId)
@@ -101,6 +106,8 @@ export function Conversation({
   // `/log` (A2): the palette asks, this scroller answers. A monotonic counter,
   // so a second request while already pinned is still a request.
   const focusRequests = useSyncExternalStore(uiIntents.subscribe, uiIntents.streamFocusRequests)
+  // ⌘F, the overflow menu and a picked cross-project result all land here.
+  const find = useFindInTask(viewport, uiIntents)
 
   useLayoutEffect(() => {
     const el = viewport.current
@@ -162,6 +169,7 @@ export function Conversation({
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 z-(--z-pane) h-6 bg-gradient-to-b from-background from-30% to-transparent"
         />
+        {find.open && <FindBar state={find} touch={touch} />}
 
         <div
           ref={viewport}
@@ -697,7 +705,9 @@ function Activity({
     // affordance, and only for turns that actually ran
     if (turn.status === "running") return null
     return (
-      <div ref={node} className="mt-3.5">
+      // the find bar counts these: a collapsed timeline is text the page does
+      // not have, so it explains a miss instead of being one
+      <div ref={node} data-activity="collapsed" className="mt-3.5">
         <button
           type="button"
           onClick={load}
@@ -712,7 +722,7 @@ function Activity({
   }
 
   return (
-    <div ref={node} className="mt-4 flex flex-col gap-0.5">
+    <div ref={node} data-activity="open" className="mt-4 flex flex-col gap-0.5">
       {!live && loaded && (
         <button
           type="button"

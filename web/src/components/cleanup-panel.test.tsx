@@ -10,6 +10,7 @@ import { createDesktopTransport } from "@/lib/desktop-transport"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import type { ApiTask } from "@/lib/types"
+import { inertProjectSearch } from "@/test/project-search"
 
 const TASK = { id: "tfixture", title: "Archive fixture", state: "done", archived: true,
   cleanup: { state: "needs-attention", step: "Project archive script", error: "The script may have partially completed. Check its effects before continuing.",
@@ -63,7 +64,7 @@ it("keeps a delayed cleanup response scoped to the Desktop connection that initi
 
 it.each([false, true])("shows incomplete archived tasks with history hidden (touch=%s)", touch => {
   render(<Sidebar groups={[]} archivedTasks={[TASK]} status={{}} pullRequests={{}} selectedId={null} onSelect={() => {}}
-    showArchived={false} onShowArchivedChange={() => {}} onNewTask={() => {}} onConfigureProject={() => {}} error={null} loading={false} touch={touch} />,
+    showArchived={false} onShowArchivedChange={() => {}} onNewTask={() => {}} onConfigureProject={() => {}} search={inertProjectSearch()} error={null} loading={false} touch={touch} />,
   { wrapper: runtimeWrapper(fakeDaemonTransport()) })
   expect(screen.getByText("Cleanup")).toBeInTheDocument()
   expect(screen.getByText("Archive fixture")).toBeInTheDocument()
