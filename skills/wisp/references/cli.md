@@ -60,9 +60,13 @@ wisp interrupt <task>
 wisp fresh <task>
 ```
 
-`send` starts the next turn in the same harness session (and re-arms a done
-task). `interrupt` kills the running turn; the session survives, steer
-afterwards with `send`. `fresh` clears the stored session id so the NEXT turn
+`send` steers a supported live harness or queues the message for the next turn;
+it does not stop current work. On an idle task it starts the next turn in the
+same session. `interrupt` explicitly stops the turn's process group and waits
+for completion, escalating if needed. Sending and archiving are refused while
+Stop is pending or incomplete; retry Stop after resolving the reported failure.
+The session survives, so a later `send` can continue the conversation.
+`fresh` clears the stored session id so the NEXT turn
 starts cold (the web palette's `/fresh`).
 
 ```

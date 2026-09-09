@@ -120,11 +120,14 @@ export function useSteerSubmit({
     if (!canStop || !task) return
     const id = task.id
     setPalette(null)
-    setNote(null)
+    setNote({ taskId: id, tone: "muted", text: "Stopping…" })
     setSending(true)
     const request = onInterrupt ? Promise.resolve().then(onInterrupt) : interruptTask.mutateAsync(id)
     void request.then(
-      () => setSending(false),
+      () => {
+        setSending(false)
+        setNote({ taskId: id, tone: "muted", text: "Stopped" })
+      },
       (error) => {
         setSending(false)
         setNote(failureNote(id, error))

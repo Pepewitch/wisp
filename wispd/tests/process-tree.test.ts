@@ -8,7 +8,7 @@
  * traps SIGTERM and one that keeps the turn's stdout pipe open, which is what
  * stalls finalization until it dies.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +20,15 @@ import {
   hasRunningTurn,
   interruptTurn,
   killTurnForArchive,
+  recoverOrphanedTurns,
   startTurn,
+  submitTaskMessage,
 } from "../src/runner";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
+import { createTask, createTurn, freeSlot, getTask, newTaskId, setTaskFields, setTurnInterrupt, transition, turnsFor } from "../src/store";
+import { processStartTime } from "../src/procid";
+import { STOPPING } from "../src/interrupt-state";
+import { archiveTaskRows } from "../src/routes/archive";
+import { route } from "../src/routes";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -40,8 +46,10 @@ const cfg: WispConfig = {
 
 /** Pids this file launched outside a turn, killed on the way out even if a case fails. */
 const strays: number[] = [];
+const fixtureGroups: number[] = [];
 
 afterEach(() => {
+  for (const pid of fixtureGroups.splice(0)) signalProcessGroup(pid, "SIGKILL");
   for (const pid of strays.splice(0)) {
     try {
       process.kill(pid, "SIGKILL");
@@ -151,6 +159,157 @@ describe("signalling a process group", () => {
 });
 
 describe("interrupting a turn stops its descendants", () => {
+  test("live steering leaves the current harness and its child running", async () => {
+    const task = makeTask("live-steering");
+    const def: AdapterDef = {
+      ...bashAdapter([
+        'IFS= read -r first',
+        'sleep 30 & echo $! > child.pid',
+        'IFS= read -r correction',
+        'echo accepted > steered',
+        'wait',
+      ].join('\n')),
+      liveInput: "claude-stream-json",
+    };
+    startTurn(task, "start work", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    const result = await submitTaskMessage(getTask(task.id)!, "change direction", def, cfg);
+    expect(result.disposition).toBe("steered");
+    await until(() => existsSync(join(task.worktree_path!, "steered")));
+    expect(hasRunningTurn(task.id)?.id).toBe(turn.id);
+    expect(alive(turn.pid!)).toBe(true);
+    expect(alive(descendant)).toBe(true);
+    expect(turnsFor(task.id)[0]?.interrupt_detail).toBeNull();
+    await interruptTurn(task.id, 200);
+    expect(alive(descendant)).toBe(false);
+  }, 10_000);
+
+  test("an identity-validated re-adopted turn also stops its resistant child after leader exit", async () => {
+    const task = makeTask("readopted-stop");
+    const log = join(task.worktree_path!, "turn.out.log");
+    writeFileSync(log, "");
+    const child = Bun.spawn({
+      cmd: ["sh", "-c", `sh -c 'trap "" TERM; echo $$ > child.pid; while :; do sleep 1; done' & wait`],
+      cwd: task.worktree_path!, stdout: "ignore", stderr: "ignore", detached: true,
+    });
+    fixtureGroups.push(child.pid);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    createTurn(task.id, 1, "work before restart", child.pid, log, processStartTime(child.pid));
+    setTaskFields(task.id, { turn_count: 1 });
+    transition(task.id, "running", "turn 1");
+    await recoverOrphanedTurns({ fake: bashAdapter("true") }, cfg);
+    await interruptTurn(task.id, 200);
+    await child.exited;
+    expect(alive(descendant)).toBe(false);
+    expect(processGroupAlive(child.pid)).toBe(false);
+    expect(hasRunningTurn(task.id)).toBeNull();
+  }, 15_000);
+
+  test("a failed stop refuses sending and archive until a successful retry", async () => {
+    const task = makeTask("stop-refused");
+    const def = bashAdapter('sleep 30 & echo $! > child.pid; wait');
+    startTurn(task, "start work", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    const kill = process.kill.bind(process);
+    const denied = spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === -turn.pid! && signal !== 0) throw Object.assign(new Error("fixture signal denied"), { code: "EPERM" });
+      return kill(pid, signal);
+    });
+    try {
+      await expect(interruptTurn(task.id, 50)).rejects.toThrow("Could not fully stop turn");
+      expect(alive(descendant)).toBe(true);
+      await expect(submitTaskMessage(getTask(task.id)!, "cannot race", def, cfg)).rejects.toThrow("Could not fully stop turn");
+      const url = new URL(`http://localhost/api/tasks/${task.id}/send`);
+      const response = await route(new Request(url, {
+        method: "POST", body: JSON.stringify({ message: "cannot race through HTTP either" }),
+      }), url, url.pathname, cfg, { fake: def });
+      expect(response.status).toBe(409);
+      expect((await response.json()).error).toContain("Could not fully stop turn");
+      await expect(killTurnForArchive(task.id, 50)).rejects.toThrow("Could not fully stop turn");
+      const archive = await archiveTaskRows([getTask(task.id)!], true, cfg);
+      expect(archive).toMatchObject({ status: 409 });
+      expect(getTask(task.id)?.archived).toBe(0);
+    } finally {
+      denied.mockRestore();
+    }
+    await interruptTurn(task.id, 200);
+    expect(alive(descendant)).toBe(false);
+    expect(hasRunningTurn(task.id)).toBeNull();
+    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a correction");
+  }, 10_000);
+
+  test("recovery retains an unresolved Stop until retry confirms completion", async () => {
+    const task = makeTask("pending-stop-recovery");
+    const log = join(task.worktree_path!, "turn.out.log");
+    writeFileSync(log, "");
+    const child = Bun.spawn({ cmd: ["sh", "-c", "exit 0"], stdout: "ignore", stderr: "ignore", detached: true });
+    const turnId = createTurn(task.id, 1, "old work", child.pid, log, processStartTime(child.pid));
+    setTaskFields(task.id, { turn_count: 1 });
+    transition(task.id, "running", "turn 1");
+    await child.exited;
+    setTurnInterrupt(turnId, STOPPING);
+    const def = bashAdapter("true");
+    await recoverOrphanedTurns({ fake: def }, cfg);
+    expect(turnsFor(task.id)[0]?.status).toBe("interrupted");
+    expect(getTask(task.id)?.state).toBe("stuck");
+    await expect(submitTaskMessage(getTask(task.id)!, "must wait", def, cfg)).rejects.toThrow("Stopping");
+    expect(await archiveTaskRows([getTask(task.id)!], true, cfg)).toMatchObject({ status: 409 });
+    await interruptTurn(task.id, 100);
+    expect(getTask(task.id)?.state).toBe("needs-input");
+    const next = await submitTaskMessage(getTask(task.id)!, "safe now", def, cfg);
+    expect(next.disposition).toBe("started");
+    await until(() => hasRunningTurn(task.id) === null);
+  }, 10_000);
+
+  test("waits for a resistant child after its leader exits before finalizing or starting queued work", async () => {
+    const task = makeTask("leader-exits");
+    const pidFile = join(task.worktree_path!, "child.pid");
+    const nextFile = join(task.worktree_path!, "next.started");
+    const def = bashAdapter([
+      'if [ -f child.pid ]; then',
+      '  if kill -0 "$(cat child.pid)" 2>/dev/null; then echo overlap > next.started; else echo safe > next.started; fi',
+      '  exit 0',
+      'fi',
+      // Readiness is written AFTER the child's trap is installed. The leader
+      // deliberately has no trap and exits promptly when Stop sends TERM.
+      `sh -c 'trap "" TERM; echo $$ > child.pid; while :; do sleep 1; done' &`,
+      'wait',
+    ].join('\n'));
+    startTurn(task, "start work", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(pidFile);
+
+    // Ordinary sending queues without stopping either process.
+    const queued = await submitTaskMessage(getTask(task.id)!, "next work", def, cfg);
+    expect(queued.disposition).toBe("queued-next");
+    expect(alive(turn.pid!)).toBe(true);
+    expect(alive(descendant)).toBe(true);
+
+    const stopping = interruptTurn(task.id, 1000);
+    // Attach a handler immediately so a regression cannot leak a rejection.
+    void stopping.catch(() => {});
+    await until(() => !alive(turn.pid!));
+    expect(alive(descendant)).toBe(true);
+    expect(hasRunningTurn(task.id)?.id).toBe(turn.id);
+    expect(getTask(task.id)?.state_detail).toContain("Stopping");
+    expect(existsSync(nextFile)).toBe(false);
+    await expect(submitTaskMessage(getTask(task.id)!, "racing send", def, cfg)).rejects.toThrow("Stopping");
+
+    await Promise.all([stopping, interruptTurn(task.id, 1000)]);
+    expect(alive(descendant)).toBe(false);
+    expect(processGroupAlive(turn.pid!)).toBe(false);
+    expect(turnsFor(task.id)[0]?.status).toBe("interrupted");
+    expect(turnsFor(task.id)[0]?.interrupt_detail).toContain("escalated to SIGKILL");
+    await until(() => existsSync(nextFile));
+    expect(readFileSync(nextFile, "utf8").trim()).toBe("safe");
+    await until(() => hasRunningTurn(task.id) === null);
+  }, 15_000);
+
   test("a harness's child does not outlive the stop", async () => {
     const task = makeTask("child");
     const pidFile = join(task.worktree_path!, "child.pid");

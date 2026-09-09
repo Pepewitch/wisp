@@ -3,6 +3,8 @@ import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { api } from "@/lib/api"
+import { createDesktopTransport } from "@/lib/desktop-transport"
+import { sameOriginWebTransport } from "@/lib/web-transport"
 import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -33,6 +35,32 @@ const task = (state: ApiTask["state"] = "running"): ApiTask =>
   }) as ApiTask
 
 describe("the running-turn composer control", () => {
+  it.each([
+    ["browser", 200], ["desktop", 200], ["browser", 409], ["desktop", 409],
+  ] as const)("waits for confirmed Stop and shows a refusal on %s (HTTP %s)", async (runtime, status) => {
+    let answer!: (response: Response) => void
+    const fetcher = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { answer = resolve }))
+    vi.stubGlobal("fetch", fetcher)
+    const transport = runtime === "browser"
+      ? sameOriginWebTransport
+      : createDesktopTransport("http://127.0.0.1:45678/fixture-capability", "remote-fixture", 1)
+    render(<SteerBox task={task()} onSend={() => {}} />, { wrapper: runtimeWrapper(transport) })
+    fireEvent.click(screen.getByRole("button", { name: "Stop turn" }))
+    expect(await screen.findByTestId("steer-note")).toHaveTextContent("Stopping…")
+    expect(screen.queryByText("Stopped")).toBeNull()
+    await waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    expect(fetcher.mock.calls[0]?.[0]).toBe(runtime === "browser"
+      ? "/api/tasks/tk9zdy/interrupt"
+      : "http://127.0.0.1:45678/fixture-capability/connections/remote-fixture/1/api/tasks/tk9zdy/interrupt")
+    fireEvent.change(screen.getByPlaceholderText("Ask for changes, or / for commands"), { target: { value: "next work" } })
+    expect(screen.getByRole("button", { name: "Send safely" })).toBeDisabled()
+    answer(new Response(JSON.stringify(status === 200 ? { ok: true } : { error: "Could not fully stop turn: retry Stop" }), { status }))
+    await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent(
+      status === 200 ? "Stopped" : "Could not fully stop turn: retry Stop",
+    ))
+    if (status === 409) expect(screen.queryByText("Stopped")).toBeNull()
+  })
+
   it.each(["running", "stuck"] as const)(
     "is a clickable stop button while a %s task's draft is empty",
     async (state) => {

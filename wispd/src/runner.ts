@@ -34,6 +34,7 @@ import {
   type LiveOutputSink,
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
+import { assertTaskNotStopping, interruptTaskTurn, isTaskStopping, turnFinalized, waitForInterrupt } from "./turn-interrupt";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { assertGroupEnded, forgetOwnedGroupIfEmpty, ownsGroup, rememberOwnedGroup, signalProcessTree } from "./process-tree";
 import { processStartTime } from "./procid";
@@ -179,6 +180,7 @@ export function startTurn(
   attachments: StoredAttachment[] = [],
   sourceMessageId?: string,
 ): void {
+  assertTaskNotStopping(task.id);
   const n = task.turn_count + 1;
   // A1c: a delivery adapter gets its images by having their paths named in the
   // prompt, so the strategy's sentence goes immediately before the user's
@@ -333,6 +335,7 @@ export async function submitTaskMessage(
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
   if (currentTask.state === "creating") throw new Error("task is still being created");
+  assertTaskNotStopping(task.id);
   task = currentTask;
   const id = clientMessageId ?? newTaskMessageId();
   const attachmentHash = taskMessageAttachmentsFingerprint(attachments);
@@ -412,6 +415,7 @@ export async function submitTaskMessage(
 
 /** Start exactly one FIFO message when a task has no running turn. */
 export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: WispConfig): TaskMessage | null {
+  if (isTaskStopping(taskId)) return null;
   const task = getTask(taskId);
   if (
     !task ||
@@ -497,6 +501,7 @@ async function watchTurn(
   const capTimer = recorder ? null : setInterval(() => void capTick(), 5000);
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
+  await waitForInterrupt(turnId);
   liveChildren.delete(turnId);
   // The common case: the harness took its children with it, so there is no
   // group left to protect an archive from.
@@ -509,6 +514,7 @@ async function watchTurn(
   for (const fd of fds) {
     closeDescriptors([fd]);
   }
+  await waitForInterrupt(turnId);
   await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
   if (!getTurn(turnId)?.interrupt_detail?.includes("force-archive")) startNextQueuedMessage(taskId, def, cfg);
 }
@@ -547,6 +553,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
         killGraceMs: KILL_GRACE_MS,
         onKillReason: (reason) => recordKillReason(turn.id, reason),
         onEnded: async () => {
+          await waitForInterrupt(turn.id);
           await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
           if (!getTurn(turn.id)?.interrupt_detail?.includes("force-archive")) {
             startNextQueuedMessage(task.id, def, cfg);
@@ -559,6 +566,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
           ? `pid ${turn.pid} was reused by another process — never signaling it`
           : "ended while daemon was down";
       console.error(`[wisp] finalizing task ${task.id} turn ${turn.n} (${why})`);
+      await waitForInterrupt(turn.id);
       await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
       if (!getTurn(turn.id)?.interrupt_detail?.includes("force-archive")) {
         startNextQueuedMessage(task.id, def, cfg);
@@ -655,66 +663,9 @@ function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SI
   signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
 }
 
-/** Wait up to ms for the turn ROW to leave 'running' — i.e. finalize has run. */
-async function turnFinalized(turnId: number, ms: number): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    if (getTurn(turnId)?.status !== "running") return true;
-    await Bun.sleep(100);
-  }
-  return getTurn(turnId)?.status !== "running";
-}
-
-/**
- * Interrupt the task's running turn: the process is killed, the harness
- * session survives (session ids are salvaged from early stream events), and
- * the next `send` resumes it with a correction. Close live stdin first (the
- * JSON-RPC shutdown); then SIGTERM; a harness that traps SIGTERM gets SIGKILL
- * after graceMs (M3), recorded in the detail.
- */
-export async function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
-  const turn = hasRunningTurn(taskId);
-  if (!turn) throw new Error("no running turn to interrupt");
-  const child = liveChildren.get(turn.id);
-  if (child) {
-    markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
-    await closeLiveInput(taskId, turn.id);
-    killChildTree(child, "SIGTERM");
-  } else if (turn.pid) {
-    // re-adopted turn from before a daemon restart: the poll loop will finalize
-    // it. Signal only a validated identity (H1) — a reused pid is a stranger.
-    if ((await pidIdentity(turn.pid, turn.pid_start_time)) !== "alive") {
-      throw new Error(`turn process (pid ${turn.pid}) is already gone; it will finalize shortly`);
-    }
-    markInterrupted(turn.id, "turn interrupted — session kept, send a correction");
-    await closeLiveInput(taskId, turn.id);
-    try {
-      signalProcessTree(turn.pid, "SIGTERM", (signal) => process.kill(turn.pid!, signal));
-    } catch {
-      setTurnInterrupt(turn.id, null); // exited between check and signal — let finalize judge the real outcome
-      throw new Error(`turn process (pid ${turn.pid}) is already gone; it will finalize shortly`);
-    }
-  } else {
-    throw new Error("running turn has no pid to signal");
-  }
-  await escalateIfNotFinalized(
-    turn,
-    graceMs,
-    "turn interrupted (escalated to SIGKILL after SIGTERM was trapped) — session kept, send a correction",
-  );
-  // A steer follows this request with /send. Do not acknowledge the interrupt
-  // while the old row can still make that send lose the hasRunningTurn race.
-  // Re-adopted turns finalize on a 3s poll, so leave room for one full tick
-  // after an escalation.
-  if (await turnFinalized(turn.id, Math.max(graceMs, 4000))) return;
-  throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived the interrupt`);
-}
-
-/** SIGKILL a turn whose row is still 'running' after graceMs, updating its interrupt detail first (M3). */
-async function escalateIfNotFinalized(turn: Turn, graceMs: number, detail: string): Promise<void> {
-  if (await turnFinalized(turn.id, graceMs)) return;
-  markInterrupted(turn.id, detail);
-  await signalTurn(turn, "SIGKILL");
+/** Explicit interruption; normal message delivery never calls this operation. */
+export function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
+  return interruptTaskTurn(taskId, graceMs, (turnId) => liveChildren.get(turnId));
 }
 
 /**
@@ -725,6 +676,7 @@ async function escalateIfNotFinalized(turn: Turn, graceMs: number, detail: strin
  * or the turn row would stay 'running' forever.
  */
 export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
+  assertTaskNotStopping(taskId);
   const turn = hasRunningTurn(taskId);
   if (!turn) {
     // No LIVE turn is not the same as nothing running. A harness that exited
@@ -750,4 +702,3 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
   }
   if (turn.pid) await assertGroupEnded(turn.pid, `turn ${turn.n}`, graceMs);
 }
-
