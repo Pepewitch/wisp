@@ -44,15 +44,15 @@ describe("theme palette", () => {
   it("preserves the dark surface hierarchy above a charcoal reading column", () => {
     const levels = ["--background", "--surface", "--code", "--popover", "--card", "--hover", "--accent"]
       .map((token) => luminance(color(darkCss!, token)))
-    expect(levels[0]).toBeGreaterThan(0.01)
-    expect(levels[0]).toBeLessThan(0.02)
+    expect(levels[0]).toBeGreaterThan(0.006)
+    expect(levels[0]).toBeLessThan(0.009)
     for (let index = 1; index < levels.length; index++) {
       expect(levels[index]).toBeGreaterThan(levels[index - 1]!)
     }
   })
 
   it("keeps reading text and code comments readable on the brighter surfaces", () => {
-    for (const surface of ["--background", "--surface", "--code", "--card", "--popover"]) {
+    for (const surface of ["--background", "--surface", "--code", "--card", "--popover", "--hover", "--accent"]) {
       for (const text of ["--foreground", "--fg-secondary", "--muted-foreground"]) {
         expect(contrast(color(darkCss!, text), color(darkCss!, surface))).toBeGreaterThanOrEqual(4.5)
       }
@@ -61,5 +61,16 @@ describe("theme palette", () => {
       expect(contrast(color(darkCss!, `--syntax-${role}`), color(darkCss!, "--code")))
         .toBeGreaterThanOrEqual(4.5)
     }
+  })
+
+  it("keeps four distinct text levels without pushing prose to pure white", () => {
+    const levels = ["--faint", "--muted-foreground", "--fg-secondary", "--foreground"]
+      .map((token) => luminance(color(darkCss!, token)))
+    for (let index = 1; index < levels.length; index++) {
+      expect(levels[index]! - levels[index - 1]!).toBeGreaterThan(0.08)
+    }
+    expect(levels[3]).toBeLessThan(0.9)
+    expect(contrast(color(darkCss!, "--faint"), color(darkCss!, "--background")))
+      .toBeGreaterThanOrEqual(4.5)
   })
 })

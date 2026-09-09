@@ -41,12 +41,12 @@ const MAX_SHELLS_PER_TASK = 8
  */
 const TERMINAL_THEME: Record<Theme, ITheme> = {
   dark: {
-    background: "#1b1c1f",
-    foreground: "#abadb7",
+    background: "#141418",
+    foreground: "#b5b5bf",
     cursor: "#af87f1",
-    selectionBackground: "#37383f",
-    black: "#1b1c1f",
-    brightBlack: "#94959f",
+    selectionBackground: "#303038",
+    black: "#141418",
+    brightBlack: "#a0a0ab",
     white: "#eaeaee",
     brightWhite: "#ffffff",
     green: "#6bc48d",

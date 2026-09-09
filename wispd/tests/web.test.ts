@@ -162,7 +162,7 @@ describe("the web app", () => {
     expect(href![1]).toBe(faviconDataUri(brandSvg));
 
     // and the theme colour matches the app's top-bar surface
-    expect(html).toContain('<meta name="theme-color" content="#202124" />');
+    expect(html).toContain('<meta name="theme-color" content="#19191d" />');
   });
 });
 

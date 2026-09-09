@@ -177,24 +177,24 @@
   color-scheme: dark;
 
   /* surfaces */
-  --background: #1b1c1f;        /* reading column — charcoal, below the sidebar */
-  --surface: #202124;           /* sidebar, right pane, top bar, inputs */
-  --code: #222327;              /* code blocks in prose — a step BELOW the bubble */
-  --card: #292a2f;              /* prompt bubbles, raised chrome */
-  --popover: #26272c;           /* hover cards, menus, the command palette */
-  --hover: #303137;             /* row hover — never a resting state */
-  --accent: #37383f;            /* SELECTED. background only, no rail, no hue */
-  --secondary: #303137;         /* quiet button surface */
-  --muted: #303137;
-  --border: #34353c;            /* pane dividers, hairlines */
-  --border-strong: #46474f;     /* input and button edges, drag grips */
-  --input: #46474f;
+  --background: #141418;        /* reading column — charcoal, below the sidebar */
+  --surface: #19191d;           /* sidebar, right pane, top bar, inputs */
+  --code: #1b1b20;              /* code blocks in prose — a step BELOW the bubble */
+  --card: #222228;              /* prompt bubbles, raised chrome */
+  --popover: #1f1f25;           /* hover cards, menus, the command palette */
+  --hover: #292930;             /* row hover — never a resting state */
+  --accent: #303038;            /* SELECTED. background only, no rail, no hue */
+  --secondary: #292930;         /* quiet button surface */
+  --muted: #292930;
+  --border: #2d2d35;            /* pane dividers, hairlines */
+  --border-strong: #3f3f48;     /* input and button edges, drag grips */
+  --input: #3f3f48;
 
   /* text — four levels, and four is enough */
   --foreground: #eaeaee;        /* titles, prose, the thing you read */
-  --fg-secondary: #abadb7;      /* labels, tab text, tool verbs */
-  --muted-foreground: #94959f;  /* branches, harness · model, paths, counts */
-  --faint: #74757f;             /* eyebrows, separators, timings, placeholders */
+  --fg-secondary: #b5b5bf;      /* labels, tab text, tool verbs */
+  --muted-foreground: #a0a0ab;  /* branches, harness · model, paths, counts */
+  --faint: #80808c;             /* eyebrows, separators, timings, placeholders */
 
   --card-foreground: var(--foreground);
   --popover-foreground: var(--foreground);
@@ -215,7 +215,7 @@
   --destructive-foreground: #1b1010;
 
   /* task states and diff, the two families that keep their hue */
-  --state-creating: #94959f;
+  --state-creating: #a0a0ab;
   --state-done: #57b983;
   --state-needs-input: #ddb055;
   --state-stuck: #c4844f;
@@ -237,7 +237,7 @@
   --syntax-string: #8ec899;     /* oklch(0.78 0.09 150) */
   --syntax-number: #d0b477;     /* oklch(0.78 0.085 85) */
   --syntax-entity: #7cc1e9;     /* oklch(0.78 0.09 235) — functions and types */
-  --syntax-comment: #96929e;    /* quiet, readable on the raised code surface */
+  --syntax-comment: #a09ca8;    /* quiet, readable on the raised code surface */
 
   /* elevation and the modal veil — black, because the page is already near it */
   --elevation-float: 0 8px 24px rgb(0 0 0 / 0.5);
@@ -289,8 +289,7 @@
   --border-strong: #cdcdd8;     /* input and button edges, drag grips */
   --input: #cdcdd8;
 
-  /* text — the same four levels, held at the same contrast as dark's, so a
-     line that was readable does not become decoration in the other theme */
+  /* text — the same four levels, tuned for reading on paper */
   --foreground: #1a1a1f;        /* titles, prose, the thing you read */
   --fg-secondary: #4f4f5a;      /* labels, tab text, tool verbs */
   --muted-foreground: #6c6c78;  /* branches, harness · model, paths, counts */

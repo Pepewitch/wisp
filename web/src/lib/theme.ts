@@ -72,7 +72,7 @@ export function resolveTheme(preference: ThemePreference, system: Theme): Theme 
  * values match the top bar's surface. scripts/brand/build.ts writes the dark
  * value into index.html too.
  */
-const CHROME_COLOR: Record<Theme, string> = { dark: "#202124", light: "#f6f6f9" }
+const CHROME_COLOR: Record<Theme, string> = { dark: "#19191d", light: "#f6f6f9" }
 
 function setMeta(name: string, content: string): void {
   const existing = document.head.querySelector(`meta[name="${name}"]`)

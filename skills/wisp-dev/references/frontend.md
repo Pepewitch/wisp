@@ -210,7 +210,7 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   meaning: the prompt bubble is still the surface furthest from the background
   inside a turn, code still sits between the two, row hover is still stronger
   than a resting card, selection is still the strongest neutral, and the four
-  text levels hold the same contrast ratios they held on graphite.
+  text levels preserve their reading hierarchy.
 - **A colour that needs both themes is a token pair, never a `dark:`
   utility.** Every family is paired: surfaces, text, the accent, the six state
   dots, diff add/del, destructive, the three elevations, and the modal veil.
