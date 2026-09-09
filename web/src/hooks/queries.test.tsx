@@ -14,6 +14,7 @@ import {
   PULL_REQUEST_POLL_MS,
   pullRequestPollInterval,
   usePullRequestOverview,
+  usePullRequests,
   usePullRequestStatus,
   useUpdateStatus,
 } from "./queries"
@@ -90,6 +91,60 @@ describe("usePullRequestOverview", () => {
 
   it("refreshes at the bounded one-minute overview interval", () => {
     expect(PULL_REQUEST_OVERVIEW_POLL_MS).toBe(60_000)
+  })
+})
+
+describe("usePullRequests", () => {
+  const MERGED: PullRequestStatus = {
+    kind: "found",
+    provider: "github",
+    pullRequest: { ...PR, lifecycle: "merged" },
+  }
+  const OPEN: PullRequestStatus = { kind: "found", provider: "github", pullRequest: PR }
+
+  beforeEach(() => {
+    mocks.request.mockReset()
+  })
+
+  it("shows the sidebar and the header the same PR, from whichever answered last", async () => {
+    // the overview is a minute behind the per-task poll, which is the whole
+    // reason the row said Open while the header said Merged
+    mocks.request.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "/api/pull-requests"
+          ? { tasks: { tpr01: { status: OPEN, checkedAt: "2026-09-04T12:00:00Z", stale: false } } }
+          : MERGED,
+      ),
+    )
+    const { wrapper } = harness()
+    const { result } = renderHook(() => usePullRequests("tpr01"), { wrapper })
+    await waitFor(() => expect(result.current.selected).toEqual(MERGED))
+    expect(result.current.tasks.tpr01?.status).toEqual(MERGED)
+  })
+
+  it("still serves the sidebar every other live task", async () => {
+    mocks.request.mockImplementation((path: string) =>
+      Promise.resolve(
+        path === "/api/pull-requests"
+          ? { tasks: { tpr02: { status: OPEN, checkedAt: "2026-09-04T12:00:00Z", stale: false } } }
+          : MERGED,
+      ),
+    )
+    const { wrapper } = harness()
+    const { result } = renderHook(() => usePullRequests("tpr01"), { wrapper })
+    await waitFor(() => expect(result.current.tasks.tpr02?.status).toEqual(OPEN))
+    expect(result.current.tasks.tpr01?.status).toEqual(MERGED)
+  })
+
+  it("reads the overview alone when nothing is selected", async () => {
+    mocks.request.mockResolvedValue({
+      tasks: { tpr02: { status: OPEN, checkedAt: "2026-09-04T12:00:00Z", stale: false } },
+    })
+    const { wrapper } = harness()
+    const { result } = renderHook(() => usePullRequests(null), { wrapper })
+    await waitFor(() => expect(result.current.tasks.tpr02?.status).toEqual(OPEN))
+    expect(result.current.selected).toBeUndefined()
+    expect(mocks.request).not.toHaveBeenCalledWith("/api/tasks/null/pull-request")
   })
 })
 
