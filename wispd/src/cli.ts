@@ -1,3 +1,4 @@
+import { cleanupCommand } from "./cli-cleanup";
 import { doctorCommand } from "./cli-doctor";
 import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
@@ -32,6 +33,7 @@ usage:
   ${COMMAND} interrupt <task>                        stop the running turn (session survives)
   ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)
   ${COMMAND} push <task>                             push the task branch to origin
+  ${COMMAND} cleanup <task> [--log|--retry|--confirm-complete|--rerun]  inspect or resolve cleanup
   ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work)
   ${COMMAND} project add <path> [--name <name>]      register a repo for the web project picker
   ${COMMAND} project rm <path>                       remove a configured project (task history stays)
@@ -580,11 +582,14 @@ export async function cli(args: string[]): Promise<void> {
       console.log(data.output || "pushed");
       break;
     }
+    case "cleanup":
+      await cleanupCommand(positional[0], flags, api);
+      break;
     case "archive": {
       const data = await api(`/api/tasks/${positional[0]}/archive`, "POST", {
         force: flags.force === true || flags.f === true,
       });
-      console.log(`archived (branch ${data.branch} kept)`);
+      console.log(`archived (branch ${data.branch} kept); cleanup continues in the background. Check: ${COMMAND} cleanup ${positional[0]}`);
       // the teardown finishes in the background, so anything it decided NOT to
       // delete has to be said here — the user needs to know where their files are
       if (data.note) console.log(data.note);

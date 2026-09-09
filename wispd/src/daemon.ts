@@ -1,3 +1,4 @@
+import { recoverCleanupProgress } from "./archive-progress";
 import { loadAdapters } from "./adapters";
 import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "./attachments";
 import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
@@ -9,7 +10,7 @@ import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests"
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
-import { resumeArchiveCleanups, startArchiveCleanupLoop } from "./routes/archive";
+import { startArchiveCleanupLoop } from "./routes/archive";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { HomeLifetime } from "./home-lifetime";
@@ -394,10 +395,7 @@ async function serveOwned(
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
-  // An archive whose daemon died mid-teardown left a worktree and attachment
-  // bytes behind. The job row that owns that cleanup is resumed here, before
-  // the port opens, for the same reason orphaned turns are (ENG-04).
-  await resumeArchiveCleanups();
+  recoverCleanupProgress(); // classify interrupted scripts; slow work starts after listening
 
   let stopping = false;
   let server: Bun.Server<TerminalSocketData>;

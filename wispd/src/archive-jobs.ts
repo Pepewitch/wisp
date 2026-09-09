@@ -89,6 +89,8 @@ export function archiveTaskWithCleanup(
       $created_at: stamp,
       $updated_at: stamp,
     });
+    db.query("INSERT OR IGNORE INTO archive_cleanup_progress (task_id, phase) VALUES (?, ?)")
+      .run(taskId, job.stage === "remove-worktree" ? "save-work" : job.stage);
   })();
 }
 
@@ -122,6 +124,9 @@ export function failArchiveCleanup(taskId: string, error: string): void {
 
 /** The job finished every stage; the absence of a row is what "clean" means. */
 export function clearArchiveCleanup(taskId: string): void {
-  db.query(`DELETE FROM archive_cleanups WHERE task_id = ?`).run(taskId);
+  db.transaction(() => {
+    db.query("DELETE FROM archive_cleanup_progress WHERE task_id = ?").run(taskId);
+    db.query(`DELETE FROM archive_cleanups WHERE task_id = ?`).run(taskId);
+  })();
 }
 

@@ -10,6 +10,7 @@ export const DAEMON_CAPABILITIES = Object.freeze({
   terminal: true,
   attachments: true,
   managedUpdates: true,
+  archiveCleanup: true,
 } as const);
 
 export interface DaemonCapabilities {

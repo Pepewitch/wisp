@@ -71,6 +71,7 @@ describe("daemon capabilities", () => {
         terminal: true,
         attachments: true,
         managedUpdates: true,
+        archiveCleanup: true,
       },
     });
 

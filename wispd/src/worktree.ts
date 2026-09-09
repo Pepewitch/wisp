@@ -349,32 +349,6 @@ async function runScriptStep(
 export const TEARDOWN_TIMEOUT_MINUTES = 5;
 
 /**
- * A teardown step: the same timeout and SIGKILL escalation as a setup step,
- * without its throw. Teardown hooks stay BEST EFFORT — a failing
- * `rm -rf node_modules` must not strand a worktree the user asked to archive —
- * so the outcome is logged and the removal carries on. What it must not do is
- * hang, which is what it did before this shared the setup machinery: both hooks
- * were a bare `await Bun.spawn({...}).exited`.
- */
-async function runTeardownStep(
-  cmd: string[],
-  what: string,
-  taskId: string,
-  worktree: string,
-  timeoutMinutes: number,
-): Promise<void> {
-  const logPath = join(LOG_DIR, `${taskId}-archive.log`);
-  const r = await runScript(cmd, what, taskId, worktree, {}, timeoutMinutes, logPath);
-  if (r.timedOut) {
-    console.error(
-      `[wisp] task ${taskId}: ${what} timed out after ${timeoutMinutes} min and was killed${r.escalated ? " (escalated to SIGKILL)" : ""} — archive continues, see ${logPath}`,
-    );
-  } else if (r.code !== 0) {
-    console.warn(`[wisp] task ${taskId}: ${what} exited ${r.code} — archive continues, see ${logPath}`);
-  }
-}
-
-/**
  * Worktree setup, in a fixed order: the repo's own .wisp/setup.sh first (the
  * team's, committed and shared), then the project's configured setupScript
  * (this machine's, edited in the web UI). Both run, because dropping either
@@ -804,7 +778,7 @@ export const ARCHIVE_COMMIT_MESSAGE = "wisp: uncommitted work at archive";
  * saves the user's bytes. An identity is supplied ONLY when git cannot resolve
  * one at all — overriding a configured user would misattribute their commit.
  */
-async function commitDirtyWork(worktree: string, branch: string): Promise<void> {
+export async function commitDirtyWork(worktree: string, branch: string): Promise<void> {
   if (!(await isDirty(worktree))) return;
   must(await git(["add", "-A"], worktree, { timeoutMs: WRITE_TIMEOUT_MS }), `could not stage uncommitted work on ${branch}`);
   // `git commit` exits nonzero on an empty commit, so the staged diff is the
@@ -820,11 +794,9 @@ async function commitDirtyWork(worktree: string, branch: string): Promise<void> 
 }
 
 /**
- * Archive's destructive half, run AFTER the response (Q11 / D4): the teardown
- * hooks and `git worktree remove --force` on a monorepo worktree are tens of
- * thousands of files and seconds of wall clock, and nothing in here can refuse
- * — `archivePreflight` already asked everything that could. It either finishes
- * or throws, and a throw is a background failure the caller must surface
+ * Remove the worktree after archive preflight. The archive worker checkpoints
+ * scripts separately before calling this filesystem/Git step. Removal can take
+ * seconds or fail after preflight; a throw is a background failure the caller must surface
  * (state_detail), never swallow.
  *
  * The branch is always kept.
@@ -834,8 +806,7 @@ export async function removeWorktree(
   worktree: string,
   branch: string,
   force: boolean,
-  cfg?: WispConfig,
-  taskId = "archive",
+  steps: { save?: boolean } = {},
 ): Promise<void> {
   const repo = resolve(repoPath);
   const health = await worktreeHealth(worktree);
@@ -849,18 +820,6 @@ export async function removeWorktree(
     if (force) await rm(worktree, { recursive: true, force: true });
     return;
   }
-  await commitDirtyWork(worktree, branch);
-  // Both hooks run before removal, the repo's own first and then the project's
-  // configured one — the same order setup uses. Each is awaited so
-  // `git worktree remove` never races it, and each is timeout-bounded.
-  const minutes = cfg?.setupTimeoutMinutes ?? TEARDOWN_TIMEOUT_MINUTES;
-  const cleanup = join(worktree, ".wisp", "cleanup.sh");
-  if (await pathExists(cleanup)) {
-    await runTeardownStep(["bash", cleanup], "cleanup script", taskId, worktree, minutes);
-  }
-  const configured = cfg && repoConfigFor(cfg, repo)?.archiveScript?.trim();
-  if (configured) {
-    await runTeardownStep(["bash", "-c", configured], "project archive script", taskId, worktree, minutes);
-  }
+  if (steps.save !== false) await commitDirtyWork(worktree, branch);
   must(await git(["worktree", "remove", "--force", worktree], repo, { timeoutMs: WRITE_TIMEOUT_MS }), "git worktree remove failed");
 }

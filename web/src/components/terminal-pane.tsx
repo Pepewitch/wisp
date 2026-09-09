@@ -139,7 +139,7 @@ export function TerminalSection({
     taskId === null
       ? "No task selected"
       : archived
-        ? "The worktree is gone"
+        ? "Terminals are unavailable for archived tasks."
         : worktreePath === null
           ? "Preparing the worktree…"
           : null

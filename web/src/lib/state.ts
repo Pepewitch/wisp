@@ -108,3 +108,7 @@ export function elapsed(startedAt: string, now: number): string | null {
  * in `lib/time.ts`, so a sidebar row and a prompt bubble never disagree.
  */
 export { fromNow as since } from "./time"
+
+export const CLEANUP_LABEL = {
+  pending: "Cleanup pending", running: "Cleaning up", "needs-attention": "Cleanup needs attention", complete: "Cleanup complete",
+} as const

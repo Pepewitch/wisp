@@ -1,3 +1,4 @@
+import { cleanupProgress } from "../src/archive-progress";
 /**
  * Archive teardown as a durable job (ENG-04).
  *
@@ -170,6 +171,8 @@ describe("resumed deletion checks older background groups", () => {
       expect(existsSync(fixture.attachmentDir)).toBe(true);
       signalProcessGroup(child.pid, "SIGKILL");
       await child.exited;
+      const retry = await call(`/api/tasks/${fixture.id}/cleanup`, { method: "POST", body: JSON.stringify({ action: "retry", revision: cleanupProgress(fixture.id)!.revision }) });
+      expect(retry.status).toBe(202);
       await resumeArchiveCleanups();
       expect(archiveCleanup(fixture.id)).toBeNull();
       expect(existsSync(fixture.attachmentDir)).toBe(false);
@@ -196,7 +199,7 @@ describe("a failing stage stops the sequence", () => {
     await eventually("the failure to be recorded", () => archiveCleanup(fixture.id)?.last_error !== null);
     const job = archiveCleanup(fixture.id)!;
     expect(job.stage).toBe("remove-worktree");
-    expect(job.last_error).toContain("worktree teardown failed");
+    expect(job.last_error).toContain("git worktree remove failed");
     expect(job.attempts).toBeGreaterThan(0);
 
     // Fail-closed: the files are still there, and the NEXT stage never ran.
@@ -237,7 +240,7 @@ describe("a failing stage stops the sequence", () => {
     const job = archiveCleanup(fixture.id);
     expect(job).not.toBeNull();
     expect(job!.stage).toBe("stop-turn");
-    expect(job!.last_error).toContain("could not stop the running turn");
+    expect(job!.last_error).toContain("refusing to archive");
     // Fail-closed: nothing destructive ran behind the failed stop.
     expect(existsSync(fixture.worktree)).toBe(true);
     expect(existsSync(fixture.attachmentDir)).toBe(true);
@@ -255,6 +258,7 @@ describe("a failing stage stops the sequence", () => {
     // What an operator repairing this would do: point the job at the real repo.
     const job = archiveCleanup(fixture.id)!;
     archiveTaskWithCleanup(fixture.id, null, { ...job, repo_path: fixture.repo });
+    await call(`/api/tasks/${fixture.id}/cleanup`, { method: "POST", body: JSON.stringify({ action: "retry", revision: cleanupProgress(fixture.id)!.revision }) });
     await resumeArchiveCleanups();
 
     expect(archiveCleanup(fixture.id)).toBeNull();

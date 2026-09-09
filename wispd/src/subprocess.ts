@@ -46,6 +46,8 @@ export interface RunOptions {
   timeoutMs?: number;
   /** Caller-owned cancellation, on top of the deadline. */
   signal?: AbortSignal;
+  /** Persist ownership before the command may execute; the gate exits on parent EOF. */
+  beforeStart?: (pid: number) => void;
 }
 
 export interface RunResult {
@@ -70,14 +72,29 @@ export async function runBounded(options: RunOptions): Promise<RunResult> {
     return { exitCode: null, out: "", err: "", truncated: false, timedOut: false, cancelled: true };
   }
   const child = Bun.spawn({
-    cmd: options.cmd,
+    cmd: options.beforeStart
+      ? ["bash", "-c", 'read -r gate && [ "$gate" = start ] && exec "$@"', "wisp-command", ...options.cmd]
+      : options.cmd,
     cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "ignore",
+    stdin: options.beforeStart ? "pipe" : "ignore",
     ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
     detached: true,
   });
+  if (options.beforeStart) {
+    try {
+      options.beforeStart(child.pid);
+      child.stdin!.write("start\n");
+      child.stdin!.end();
+    } catch (error) {
+      child.stdin!.end();
+      child.kill("SIGKILL");
+      await child.exited;
+      await Promise.all([child.stdout.cancel(), child.stderr.cancel()]);
+      throw error;
+    }
+  }
   const group = new CommandGroup(child);
   const stopped = Promise.withResolvers<void>();
   let stopping = false;
