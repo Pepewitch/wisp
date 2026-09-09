@@ -207,7 +207,7 @@ export function Conversation({
                 // pattern-matches its final message and exits 1 on a hit, so the
                 // real result ends up here and nowhere else.
                 failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
-                archived={task.archived}
+                archived={task.archived && !task.attachmentsRetained}
                 onBeforeToggle={compensate}
               />
             ))}
@@ -217,6 +217,7 @@ export function Conversation({
                 taskId={task.id}
                 message={message}
                 archived={task.archived}
+                assetsRemoved={task.archived && !task.attachmentsRetained}
               />
             ))}
             <div className="h-4 shrink-0" />
@@ -468,10 +469,12 @@ function QueuedMessage({
   taskId,
   message,
   archived,
+  assetsRemoved,
 }: {
   taskId: string
   message: TaskMessage
   archived: boolean
+  assetsRemoved: boolean
 }) {
   const update = useUpdateQueuedMessage()
   const cancel = useCancelQueuedMessage()
@@ -578,7 +581,7 @@ function QueuedMessage({
         taskId={taskId}
         messageId={message.id}
         attachments={message.attachments}
-        archived={archived}
+        archived={assetsRemoved}
         cancelled={cancelled}
       />
       {(update.error || cancel.error) && (

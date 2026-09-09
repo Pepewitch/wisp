@@ -1,3 +1,4 @@
+import { TaskRetentionDialog } from "./task-retention-dialog"
 import { useState } from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
@@ -17,19 +18,62 @@ import type { ApiTask } from "@/lib/types"
  * reads the same here, on a sidebar row's hover control and behind `/archive`.
  */
 export function TaskActions({ task }: { task: ApiTask }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [retentionOpen, setRetentionOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
   const archive = useArchiveFlow(task)
 
   return (
     <>
-      <Menu label="More actions" icon={<More />} iconOnly align="end">
-        <MenuItem onClick={() => setRenameOpen(true)}>Rename</MenuItem>
-        <MenuItem onClick={() => archive.request(false)} disabled={task.archived}>
+      <Menu
+        label="More actions"
+        icon={<More />}
+        iconOnly
+        align="end"
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+      >
+        <MenuItem
+          onClick={() => {
+            setMenuOpen(false)
+            setRenameOpen(true)
+          }}
+        >
+          Rename
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setMenuOpen(false)
+            archive.request(false)
+          }}
+          disabled={task.archived}
+        >
           Archive
         </MenuItem>
+        {task.archived && task.attachmentsRetained !== undefined && (
+          <MenuItem
+            onClick={() => {
+              setMenuOpen(false)
+              setRetentionOpen(true)
+            }}
+          >
+            Export or delete task data…
+          </MenuItem>
+        )}
       </Menu>
 
-      <RenameTaskDialog task={task} open={renameOpen} onOpenChange={setRenameOpen} />
+      {retentionOpen && (
+        <TaskRetentionDialog
+          key={task.id}
+          task={task}
+          onClose={() => setRetentionOpen(false)}
+        />
+      )}
+      <RenameTaskDialog
+        task={task}
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+      />
 
       <ArchiveConfirmDialog
         task={task}

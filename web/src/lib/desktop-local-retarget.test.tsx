@@ -61,6 +61,7 @@ function bridge(overrides: Partial<DesktopBridge>): DesktopBridge {
     reconnectConnection: async () => LOCAL,
     removeConnection: async () => undefined,
     resetDesktopData: async () => undefined,
+    saveTaskExport: async () => true,
     pickLocalProject: async () => null,
     setupLocalWisp: async () => ({
       status: bootstrap().local,

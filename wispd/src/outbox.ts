@@ -1,6 +1,9 @@
 import { trackHomeWork } from "./home-lifetime";
 import type { WispConfig } from "./config";
-import { markAttempt, markDelivered, pendingOutbox } from "./store";
+import { getTask, markAttempt, markDelivered, pendingOutbox } from "./store";
+
+const activeTasks = new Set<string>();
+export const taskDeliveryActive = (id: string): boolean => activeTasks.has(id);
 
 /**
  * One delivery pass over every due outbox row, exported so tests can drive it
@@ -14,6 +17,9 @@ import { markAttempt, markDelivered, pendingOutbox } from "./store";
  */
 export async function deliverOutbox(cfg: WispConfig): Promise<void> {
   for (const row of pendingOutbox()) {
+    if (!getTask(row.task_id) || getTask(row.task_id)?.purge_pending || activeTasks.has(row.task_id)) continue;
+    activeTasks.add(row.task_id);
+    try {
     if (cfg.webhooks.length === 0) {
       markDelivered(row.id);
       continue;
@@ -39,6 +45,7 @@ export async function deliverOutbox(cfg: WispConfig): Promise<void> {
     }
     if (allOk) markDelivered(row.id);
     else markAttempt(row.id, row.attempts + 1, lastErr);
+    } finally { activeTasks.delete(row.task_id); }
   }
 }
 

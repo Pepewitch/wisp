@@ -7,7 +7,7 @@ import { backgroundWork } from "../task-processes";
 
 /** SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit). */
 export function apiTask(t: Task): ApiTask {
-  return { ...t, archived: t.archived !== 0, background: backgroundWork(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...t, archived: t.archived !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export type ApiTaskMessage = Omit<

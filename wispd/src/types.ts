@@ -50,6 +50,8 @@ export interface Task {
   seq: number;
   turn_count: number;
   archived: number;
+  archive_assets_retained?: number;
+  purge_pending?: number;
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
   created_at: string;
@@ -92,6 +94,8 @@ export function displayStateWord(
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
 export type ApiTask = Omit<Task, "archived"> & {
+  attachmentsRetained?: boolean;
+  deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
   background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };

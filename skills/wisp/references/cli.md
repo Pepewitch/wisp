@@ -172,3 +172,11 @@ It does not start the daemon. A persisted port never changes silently.
   message, don't guess from the exit code alone.
 - Short flags are always boolean (`-a`, `-f`); value flags are always long
   (`--timeout 900`, never `-t`).
+
+Archived task conversations and attachments are retained. After cleanup finishes,
+`wisp export <task>` writes a portable JSON snapshot to stdout (use a private
+output file). `wisp purge <task> --confirm <task>` permanently removes Wisp-owned
+task data while retaining the repository and Git branches. Export first if the
+history is wanted; a partial deletion can be retried with the same command.
+See [retention and export](../../../docs/ARCHIVE-CLEANUP.md#retention-export-and-permanent-deletion)
+for limits and full-backup guidance.

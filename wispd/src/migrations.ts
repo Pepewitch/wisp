@@ -301,6 +301,15 @@ FROM turns JOIN tasks ON tasks.id = turns.task_id WHERE turns.pid > 1;
         FROM archive_cleanups;`);
     },
   },
+  {
+    id: 5,
+    name: "archive-asset-retention",
+    up: db => {
+      const cols = (db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map(c => c.name);
+      if (!cols.includes("archive_assets_retained")) db.exec("ALTER TABLE tasks ADD COLUMN archive_assets_retained INTEGER NOT NULL DEFAULT 0");
+      if (!cols.includes("purge_pending")) db.exec("ALTER TABLE tasks ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */
@@ -375,8 +384,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
  * so, loudly, instead of failing a user's next message.
  *
  * `turns` still has no declared foreign key. Adding one to a live table means
- * rebuilding it, which is a migration with real risk and no user-visible
- * benefit until something actually deletes tasks — and nothing does yet.
+ * rebuilding it. Permanent deletion explicitly removes dependent rows in one
+ * transaction, including on older profiles without foreign-key enforcement.
  */
 export function enforceForeignKeys(db: Database): { enabled: boolean; violations: number } {
   const violations = (db.query("PRAGMA foreign_key_check").all() as unknown[]).length;

@@ -132,7 +132,7 @@ ID3=$(echo "$OUT3" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
 wait_state "$ID3" failed 30
 $WISP ls | grep "$ID3" | grep -q "exited 3" || fail "exit code not surfaced"
 
-echo "[4b] --image end to end: stored, listed, served by the bytes route, gone after archive"
+echo "[4b] --image end to end: stored, listed, served by the bytes route, retained after archive"
 # a real 1x1 PNG: the daemon sniffs magic bytes, so a fake one would be rejected
 printf '\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n\x2d\xb4\x00\x00\x00\x00IEND\xaeB\x60\x82' > "$SMOKE/shot.png"
 OUTI=$($WISP new "$REPO" "look at this" --harness fake --image "$SMOKE/shot.png")
@@ -151,14 +151,14 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer smoketok
   "http://127.0.0.1:$PORT/api/tasks/$IDI/attachments/1/ghost.png")
 [[ "$CODE" == "404" ]] || fail "an unlisted attachment name should 404 (got: $CODE)"
 $WISP archive "$IDI" | grep -q archived || fail "archive of an attached task failed"
-# archive deletes the bytes and KEEPS the manifest: 410, and the record still reads
+# archive preserves bytes and the manifest
 for i in $(seq 1 40); do
   CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer smoketoken" "$BYTES")
   [[ "$CODE" == "410" ]] && break
   sleep 0.25
 done
-[[ "$CODE" == "410" ]] || fail "archived attachment should be 410 gone (got: $CODE)"
-$WISP show "$IDI" | grep -q "removed when this task was archived" \
+[[ "$CODE" == "200" ]] || fail "archived attachment should remain readable (got: $CODE)"
+$WISP show "$IDI" | grep -q "attached:" \
   || fail "the archived turn forgot it ever carried an image"
 
 echo "[5] archive clean task"

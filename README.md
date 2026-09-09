@@ -332,6 +332,14 @@ store when a client or realtime connection restarts. See
 [Architecture](docs/ARCHITECTURE.md) for the ownership boundaries and
 shared-client contract.
 
+Wisp admits up to 100 simultaneously running tasks by default, including tasks
+preparing a workspace. Set a positive integer `maxConcurrentTasks` in
+`config.json` and restart the daemon to change that ceiling. At capacity, finish
+or stop another task and retry; Wisp does not silently queue a new task. Steering
+an already running task keeps its slot. There is no limit on the accumulated
+number of turns in a task; harness iteration behavior remains harness-owned.
+
+
 ## Safe removal
 
 For a Linux installation:
@@ -416,6 +424,7 @@ without rebuilding, re-signing, notarizing, or changing public release assets.
 - [Install and activate](docs/INSTALL.md)
 - [Install on Apple Silicon](docs/INSTALL-MACOS.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Archive, export, and deletion](docs/ARCHIVE-CLEANUP.md)
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Desktop updates](docs/DESKTOP-UPDATES.md)
@@ -430,10 +439,3 @@ without rebuilding, re-signing, notarizing, or changing public release assets.
 ## License
 
 [MIT](LICENSE) © 2026 pepewitch.
-
-Wisp admits up to 100 simultaneously running tasks by default, including tasks
-preparing a workspace. Set a positive integer `maxConcurrentTasks` in
-`config.json` and restart the daemon to change that ceiling. At capacity, finish
-or stop another task and retry; Wisp does not silently queue a new task. Steering
-an already running task keeps its slot. There is no limit on the accumulated
-number of turns in a task; harness iteration behavior remains harness-owned.

@@ -1,3 +1,4 @@
+import { retentionRoute } from "./retention";
 import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
@@ -584,6 +585,8 @@ export function taskRoute(
       }
     })();
   }
+
+  if (action === "export" || action === "purge" || action === "storage") return retentionRoute(req, task, action);
 
   if (action === "cleanup") return cleanupRoute(req, task.id);
 
