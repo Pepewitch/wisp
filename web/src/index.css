@@ -220,9 +220,17 @@
      belongs to, so the resting hit is the same neutral the app spends on a
      selected row and the CURRENT hit is the selection's own hue, one step
      louder — a caret you can find in a 40-turn transcript. No new hue, and
-     nothing in app chrome takes either one. */
+     nothing in app chrome takes either one.
+
+     Both intensities were picked by looking at them over the four surfaces a
+     match can land on — prompt bubble, prose, code block, sidebar row — in
+     both themes. Below ~0.4 the current match was not reliably tellable from
+     the seventeen resting ones, which is the whole job of the pair; a SOLID
+     violet is unmistakable but reads as the one primary action, which the
+     send button already owns. Resting matches stay neutral because 17 hues on
+     screen is an unreadable turn. */
   --find-match: #3a3a45;
-  --find-match-current: oklch(0.705 0.155 300 / 0.34);
+  --find-match-current: oklch(0.705 0.155 300 / 0.48);
 
   --destructive: #df605c;
   --destructive-hover: #e8746f;
@@ -326,8 +334,8 @@
   --primary-hover: oklch(0.44 0.19 300);          /* the filled hover — DOWN */
 
   /* find-in-task — the same pair, moved for paper (§1) */
-  --find-match: #dcdce8;
-  --find-match-current: oklch(0.5 0.19 300 / 0.22);
+  --find-match: #d6d6e4;
+  --find-match-current: oklch(0.5 0.19 300 / 0.45);
 
   --destructive: #c0332e;
   --destructive-hover: #a72a26;
