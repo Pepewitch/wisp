@@ -5,9 +5,11 @@ on:
     branches: [main]
     paths:
       - "scripts/promote-release.ts"
+      - "scripts/promotion-fixture.ts"
       - "scripts/release-promotion.ts"
       - "scripts/render-homebrew-formula.ts"
       - "scripts/render-homebrew-cask.ts"
+      - "scripts/render-daemon-update-channel.ts"
       - "scripts/render-desktop-update-channel.ts"
       - "wispd/scripts/release-linux.ts"
       - "wispd/scripts/release-macos.ts"
@@ -15,6 +17,7 @@ on:
       - "tests/promote-release.test.ts"
       - "tests/homebrew-formula.test.ts"
       - "tests/homebrew-cask.test.ts"
+      - "tests/daemon-update-channel.test.ts"
       - "tests/desktop-update-channel.test.ts"
       - ".github/workflows/release.yml"
       - ".github/workflows/release-promotion.yml"
@@ -23,9 +26,11 @@ on:
   pull_request:
     paths:
       - "scripts/promote-release.ts"
+      - "scripts/promotion-fixture.ts"
       - "scripts/release-promotion.ts"
       - "scripts/render-homebrew-formula.ts"
       - "scripts/render-homebrew-cask.ts"
+      - "scripts/render-daemon-update-channel.ts"
       - "scripts/render-desktop-update-channel.ts"
       - "wispd/scripts/release-linux.ts"
       - "wispd/scripts/release-macos.ts"
@@ -33,6 +38,7 @@ on:
       - "tests/promote-release.test.ts"
       - "tests/homebrew-formula.test.ts"
       - "tests/homebrew-cask.test.ts"
+      - "tests/daemon-update-channel.test.ts"
       - "tests/desktop-update-channel.test.ts"
       - ".github/workflows/release.yml"
       - ".github/workflows/release-promotion.yml"
@@ -71,23 +77,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
-          # Pin one immutable public fixture whose tap/channel already agree.
-          # Advance this deliberately after a later release is promoted.
+          # The fixture is whichever release the tap currently serves, read out
+          # of the tap itself. Nothing here names a version, so this cannot go
+          # stale when a later release is promoted.
           mkdir -p dist/promotion-check
-          release_root=dist/promotion-check/release-alpha17
+          release_root=dist/promotion-check/release-source
           tap=dist/promotion-check/homebrew-tap
           receipt=dist/promotion-check/promotion-receipt.json
-          git fetch --force origin main \
-            refs/tags/v0.4.0-alpha.17:refs/tags/v0.4.0-alpha.17
-          git worktree add --detach "$release_root" v0.4.0-alpha.17
           git clone https://github.com/Pepewitch/homebrew-tap.git "$tap"
+          tag="$(bun run scripts/promotion-fixture.ts --tap-dir "$tap")"
+          echo "replaying the promoted release $tag"
+          git fetch --force origin main "refs/tags/$tag:refs/tags/$tag"
+          git worktree add --detach "$release_root" "$tag"
           bun run release:promote -- \
-            --tag v0.4.0-alpha.17 \
+            --tag "$tag" \
             --release-root "$release_root" \
             --tap-dir "$tap" \
             --receipt "$receipt"
-          test "$(jq -r .result "$receipt")" = dry-run
-          test "$(jq -r .tapState "$receipt")" = already-promoted
+          result="$(jq -r .result "$receipt")"
+          state="$(jq -r .tapState "$receipt")"
+          test "$result" = dry-run || {
+            echo "::error::promotion receipt recorded $result, expected an unpublished dry run"
+            exit 1
+          }
+          # The fixture is the release the tap serves, so re-rendering it must
+          # reproduce the tap byte for byte. Anything else means this change
+          # would rewrite files that are already public.
+          test "$state" = already-promoted || {
+            echo "::error::replaying $tag reported tapState=$state, so this change would rewrite the" \
+              "already-published tap files for $tag; inspect the retained receipt and the tap diff"
+            exit 1
+          }
       - name: retain promotion diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
