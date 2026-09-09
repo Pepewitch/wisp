@@ -21,5 +21,8 @@ export function retentionRoute(req: Request, task: Task, action: string): Promis
       console.error(`[wisp] task ${action} failed for ${task.id}:`, e);
       return err(`Task ${action} could not finish. Check free disk space and file permissions on the daemon host, then retry. Permanent deletion can be retried safely.`, 500);
     }
-  })());
+  })()).then(response => {
+    response.headers.set("cache-control", "private, no-store");
+    return response;
+  });
 }

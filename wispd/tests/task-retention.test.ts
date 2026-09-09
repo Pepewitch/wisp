@@ -27,6 +27,8 @@ function fixture() {
 test("export is a readable snapshot; purge removes managed files/records and keeps the repository", async () => {
   const f = fixture();
   const data = await exportTask(f.task);
+  const response = await retentionRoute(new Request("http://fixture/export"), f.task, "export");
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
   expect(data.task.title).toBe("Retention fixture");
   expect(data.turns).toHaveLength(1);
   expect(data.files.map(x => Buffer.from(x.dataBase64, "base64").toString()).sort()).toEqual(["attachment bytes", "transcript bytes"]);
