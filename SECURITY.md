@@ -8,10 +8,13 @@ configured harness credential as security-sensitive.
 
 | Version | Security fixes |
 |---|---|
-| Current `0.4.0-alpha.x` | Best effort while the alpha is current; public Desktop alpha.17 is Developer ID signed, notarized, stapled, and updater-signed |
-| Earlier development versions | No |
+| Current `0.5.0` | Best effort while current; Desktop publication requires Developer ID signing, notarization, stapling, and updater signing |
+| Earlier versions, including `0.4.0-alpha.x` | Upgrade to the current release; no maintained backport branch |
 
-There is no production-supported release yet.
+There is no production support guarantee. The 0.5.0 engineering and security
+review produced fixes, not a certification of zero vulnerabilities. See the
+[qualification ledger](docs/v0.5/QUALIFICATION.md) for release evidence,
+remaining platform gaps, and native dependency advisory scope.
 
 ## Trust model
 
@@ -56,7 +59,7 @@ There is no production-supported release yet.
 5. Use separate, revocable harness credentials with the smallest practical
    scope and spend limit for automated or evaluation runs.
 6. Review task branches before merging or pushing them.
-7. For the experimental Apple Silicon alpha, install only through the
+7. On Apple Silicon, install only through the
    documented `Pepewitch/tap/wisp` Formula or `wisp-desktop` Cask, verify the
    GitHub owner and checksum, and do not disable Gatekeeper globally. Current
    Desktop tag releases require Developer ID signing, notarization, stapling,
@@ -153,5 +156,5 @@ public issue. Use GitHub's private vulnerability-reporting flow:
 <https://github.com/Pepewitch/wisp/security/advisories/new>
 
 Include the affected Wisp version and commit, the exact platform/OS baseline,
-impact, reproduction steps, and a redacted proof. Alpha response times are not
+impact, reproduction steps, and a redacted proof. Response times are not
 guaranteed.

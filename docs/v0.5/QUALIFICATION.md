@@ -5,11 +5,36 @@ regular pre-1.0 release, not a claim of exhaustive security or platform coverage
 
 ## 0.5.0 publication
 
-Pending at source preparation: source checks, clean annotated main tag,
-reproducible daemon and unsigned Desktop artifacts, signed/notarized Desktop,
-anonymous ten-asset verification, updater tamper rejection, and Homebrew plus
-fixed-channel promotion. Record the workflow and immutable source after these
-checks finish. Do not modify a published release body or replace its assets.
+**Published and promoted on 2026-09-09.**
+[Wisp 0.5.0](https://github.com/Pepewitch/wisp/releases/tag/v0.5.0) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), with ten assets.
+The annotated tag resolves to clean main commit
+[`6cd3cef4587fe0570d3737f5061e73f8f3b58c23`](https://github.com/Pepewitch/wisp/commit/6cd3cef4587fe0570d3737f5061e73f8f3b58c23),
+landed through [PR #104](https://github.com/Pepewitch/wisp/pull/104).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34341499608)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | 42 root, 1,021 daemon, 635 UI tests; lint/types, docs, workflow pins, brand, 20 smoke scenarios, 12 evaluator unit tests, 20 real Chrome checks; native and packaged-app gates passed |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and the clean tagged source; the downloaded macOS daemon reported 0.5.0 at that commit |
+| Distribution | Fresh-runner Homebrew audits, Formula/Cask/channel promotion, fixed-URL convergence, and post-promotion livecheck passed |
+
+The promotion receipt records completion at **11:03:17 UTC**, with Homebrew tap
+commit [`a1724ced4202a891a57d51cfc59b32919246e968`](https://github.com/Pepewitch/homebrew-tap/commit/a1724ced4202a891a57d51cfc59b32919246e968).
+An independent anonymous download verified the checksums and public Desktop's
+Apple trust and updater signature. The public Formula, Cask, and fixed Desktop
+channel exactly matched rendering from those verified 0.5.0 manifests.
+The legacy alpha channel name is preserved so existing 0.4 clients can discover
+the regular 0.5.0 version.
+
+No installed daemon service or production Desktop profile was upgraded for
+these checks. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## Evidence inherited from the merged review fixes
 
