@@ -93,7 +93,9 @@ describe("Homebrew Cask rendering", () => {
       '"github_prerelease_version,livecheck_version,livecheck_https_availability"';
     expect(promotion).toContain(deferredLivecheckAudits);
     expect(promotion).toContain('"github_prerelease_version"');
-    expect(promotion).toContain("public Desktop update channel did not converge");
+    expect(promotion).toContain('"Desktop update channel"');
+    expect(promotion).toContain('"daemon update channel"');
+    expect(promotion).toContain("did not converge");
     expect(promotion.indexOf(deferredLivecheckAudits)).toBeLessThan(promotion.indexOf("publishTap(args.tapDir"));
     expect(promotion.lastIndexOf("auditAfterPromotion()")).toBeGreaterThan(
       promotion.lastIndexOf("publishTap(args.tapDir"),

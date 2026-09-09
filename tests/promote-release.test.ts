@@ -140,11 +140,18 @@ describe("release promotion", () => {
     }
   });
 
-  test("renders exactly three tap files from manifests bound to one tag commit", () => {
+  test("renders every tap file from manifests bound to one tag commit", () => {
     const rendered = renderTapFiles(manifests(), "Release notes.", tag, commit);
     expect(Object.keys(rendered).sort()).toEqual([...TAP_FILES].sort());
     expect(rendered["Formula/wisp.rb"]).toContain(`wisp-v${VERSION}-darwin-arm64.tar.gz`);
     expect(rendered["Casks/wisp-desktop.rb"]).toContain(`version "${VERSION}"`);
+    expect(JSON.parse(rendered["updates/wisp-daemon.json"])).toEqual({
+      schemaVersion: 1,
+      product: "wisp",
+      version: VERSION,
+      apiProtocolVersion: API_PROTOCOL_VERSION,
+      publishedAt: "2026-09-08T04:14:26.000Z",
+    });
     expect(JSON.parse(rendered["updates/wisp-desktop-alpha.json"]).version).toBe(VERSION);
 
     const mismatched = manifests();
@@ -152,17 +159,18 @@ describe("release promotion", () => {
     expect(() => renderTapFiles(mismatched, "Release notes.", tag, commit)).toThrow("does not match release");
   });
 
-  test("accepts only a clean or exact three-file tap transition", () => {
+  test("accepts only a clean or exact release-file tap transition", () => {
     expect(classifyTapState([])).toBe("already-promoted");
     const porcelain = [
       " M Formula/wisp.rb",
       " M Casks/wisp-desktop.rb",
+      " M updates/wisp-daemon.json",
       " M updates/wisp-desktop-alpha.json",
     ].join("\n");
     expect(changedTapFiles(porcelain)).toEqual([...TAP_FILES].sort());
     expect(classifyTapState(changedTapFiles(porcelain))).toBe("prepared");
     expect(changedTapFiles(porcelain.trim())).toEqual([...TAP_FILES].sort());
-    expect(() => classifyTapState(["README.md"])).toThrow("outside the three-file tap contract");
+    expect(() => classifyTapState(["README.md"])).toThrow("outside the tap contract");
   });
 
   test("refuses to create a colliding audit tap on an operator machine", () => {
@@ -195,6 +203,7 @@ describe("release promotion", () => {
     expect(workflow).toContain("bun run release:promote --");
     expect(workflow).toContain("--publish");
     expect(workflow).toContain("promotion-receipt.json");
+    expect(workflow).toContain("render-daemon-update-channel.ts");
     expect(workflow).toContain("if: always()");
     expect(workflow).toContain('test "$GITHUB_REF" = refs/heads/main');
     expect(workflow.indexOf("publish the GitHub release")).toBeLessThan(workflow.indexOf("promote:"));

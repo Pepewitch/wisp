@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
 import { serve } from "../src/daemon";
 import type { CommandResult, UpdateStatus } from "../src/update";
-import { compareVersions, isHomebrewServiceProcess, selectLatestRelease, UpdateManager } from "../src/update";
+import { compareVersions, isHomebrewServiceProcess, UpdateManager } from "../src/update";
 import { updateRoute } from "../src/routes/update";
 import { API_PROTOCOL_VERSION } from "../src/version";
 
@@ -26,12 +26,16 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-function release(version: string, options: { draft?: boolean; prerelease?: boolean } = {}) {
+function daemonChannel(
+  version: string,
+  apiProtocolVersion: unknown = API_PROTOCOL_VERSION,
+): Record<string, unknown> {
   return {
-    tag_name: `v${version}`,
-    draft: options.draft ?? false,
-    prerelease: options.prerelease ?? version.includes("-"),
-    published_at: "2026-09-05T12:00:00Z",
+    schemaVersion: 1,
+    product: "wisp",
+    version,
+    apiProtocolVersion,
+    publishedAt: "2026-09-05T12:00:00.000Z",
   };
 }
 
@@ -40,18 +44,6 @@ function jsonResponse(value: unknown, status = 200, headers: Record<string, stri
     status,
     headers: { "content-type": "application/json", ...headers },
   });
-}
-
-function protocolManifest(version: string, apiProtocolVersion: unknown = 1): Record<string, unknown> {
-  return {
-    schemaVersion: 1,
-    product: "wisp",
-    version,
-    apiProtocolVersion,
-    commit: "a".repeat(40),
-    dirty: false,
-    target: { os: "linux", arch: "x86_64", libc: "glibc" },
-  };
 }
 
 async function waitFor(manager: UpdateManager, state: UpdateStatus["state"]): Promise<UpdateStatus> {
@@ -75,25 +67,6 @@ describe("release selection", () => {
     expect(() => compareVersions("0.4.0-alpha..1", "0.4.0-alpha.1")).toThrow("invalid release version");
   });
 
-  test("selects the highest published version, including prereleases", () => {
-    expect(
-      selectLatestRelease(
-        [
-          release("0.4.0-alpha.8"),
-          release("0.4.0-alpha.10"),
-          release("0.4.0-beta.2"),
-          release("0.4.0-alpha.99", { draft: true }),
-        ],
-        "0.4.0-alpha.6",
-      ),
-    ).toMatchObject({ version: "0.4.0-beta.2", tag: "v0.4.0-beta.2" });
-    expect(
-      selectLatestRelease(
-        [release("0.5.0", { prerelease: false }), release("0.6.0-rc.1")],
-        "0.4.0",
-      ),
-    ).toMatchObject({ version: "0.6.0-rc.1" });
-  });
 });
 
 describe("supervisor detection", () => {
@@ -132,22 +105,22 @@ describe("UpdateManager", () => {
     const second = manager.getStatus();
     await Bun.sleep(0);
     expect(requests).toBe(1);
-    complete(jsonResponse([release("0.4.0-alpha.8")]));
+    complete(jsonResponse(daemonChannel("0.4.0-alpha.8")));
     expect((await first).latestVersion).toBe("0.4.0-alpha.8");
     expect((await second).latestVersion).toBe("0.4.0-alpha.8");
-    expect(requests).toBe(2);
+    expect(requests).toBe(1);
   });
 
-  test("caches the GitHub release response and reports unsupported builds honestly", async () => {
+  test("caches the promoted daemon channel and reports unsupported builds honestly", async () => {
     let requests = 0;
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async (input) => {
+      fetch: async () => {
         requests++;
-        return String(input).includes("api.github.com")
-          ? jsonResponse([release("0.4.0-alpha.8")], 200, { etag: '"release-7"' })
-          : jsonResponse(protocolManifest("0.4.0-alpha.8"));
+        return jsonResponse(daemonChannel("0.4.0-alpha.8"), 200, {
+          etag: '"release-7"',
+        });
       },
       detectInstallation: () => ({
         method: "unsupported",
@@ -168,20 +141,22 @@ describe("UpdateManager", () => {
       checkedAt: expect.any(String),
     });
     await manager.getStatus();
-    expect(requests).toBe(2);
+    expect(requests).toBe(1);
   });
 
-  test("an explicit refresh bypasses the release cache", async () => {
+  test("an explicit refresh bypasses caches and conditional channel requests", async () => {
     let latest = "0.4.0-alpha.8";
-    let requests = 0;
+    let now = new Date("2026-09-05T12:00:00Z");
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async (input) => {
-        requests++;
-        return String(input).includes("api.github.com")
-          ? jsonResponse([release(latest)])
-          : jsonResponse(protocolManifest(latest));
+      now: () => now,
+      fetch: async (input, init) => {
+        requests.push({ url: String(input), init });
+        return jsonResponse(daemonChannel(latest), 200, {
+          etag: `"${latest}"`,
+        });
       },
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
     });
@@ -189,70 +164,71 @@ describe("UpdateManager", () => {
     expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
     latest = "0.4.0-alpha.9";
     expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
-    expect(requests).toBe(2);
+    expect(requests).toHaveLength(1);
 
+    now = new Date("2026-09-05T12:00:01Z");
     expect((await manager.refreshStatus()).latestVersion).toBe("0.4.0-alpha.9");
-    expect(requests).toBe(4);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.url).toEndWith(`?refresh=${now.getTime()}`);
+    expect(requests[1]!.init?.cache).toBe("no-store");
+    expect(requests[1]!.init?.headers).toMatchObject({
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+    });
+    expect(requests[1]!.init?.headers).not.toHaveProperty("if-none-match");
   });
 
-  test("keeps legacy or invalid release protocol metadata explicitly unknown", async () => {
-    const valid = protocolManifest("0.4.0-alpha.8");
-    const cases: Array<[string, () => Response | Promise<Response>]> = [
-      ["missing", () => jsonResponse({ ...valid, apiProtocolVersion: undefined })],
-      ["numeric string", () => jsonResponse({ ...valid, apiProtocolVersion: "1" })],
-      ["zero", () => jsonResponse({ ...valid, apiProtocolVersion: 0 })],
-      ["fraction", () => jsonResponse({ ...valid, apiProtocolVersion: 1.5 })],
-      ["unsafe integer", () => jsonResponse({ ...valid, apiProtocolVersion: Number.MAX_SAFE_INTEGER + 1 })],
-      ["wrong schema", () => jsonResponse({ ...valid, schemaVersion: 2 })],
-      ["wrong product", () => jsonResponse({ ...valid, product: "other" })],
-      ["wrong version", () => jsonResponse({ ...valid, version: "0.4.0-alpha.9" })],
-      ["wrong target", () => jsonResponse({ ...valid, target: { os: "darwin", arch: "arm64" } })],
-      ["dirty", () => jsonResponse({ ...valid, dirty: true })],
-      ["bad commit", () => jsonResponse({ ...valid, commit: "not-a-commit" })],
-      ["not found", () => new Response(null, { status: 404 })],
-      ["malformed JSON", () => new Response("{", { status: 200 })],
-      ["network failure", () => Promise.reject(new Error("offline"))],
+  test("rejects malformed daemon channel metadata instead of guessing", async () => {
+    const valid = daemonChannel("0.4.0-alpha.8");
+    const cases: Array<[string, unknown]> = [
+      ["missing protocol", { ...valid, apiProtocolVersion: undefined }],
+      ["numeric string", { ...valid, apiProtocolVersion: "1" }],
+      ["zero", { ...valid, apiProtocolVersion: 0 }],
+      ["fraction", { ...valid, apiProtocolVersion: 1.5 }],
+      ["unsafe integer", { ...valid, apiProtocolVersion: Number.MAX_SAFE_INTEGER + 1 }],
+      ["wrong schema", { ...valid, schemaVersion: 2 }],
+      ["wrong product", { ...valid, product: "other" }],
+      ["invalid version", { ...valid, version: "0.4.0-alpha.01" }],
+      ["bad date", { ...valid, publishedAt: "yesterday" }],
+      ["unknown field", { ...valid, extra: true }],
+      ["list", [valid]],
     ];
 
-    for (const [label, manifestResponse] of cases) {
+    for (const [label, channel] of cases) {
       const manager = new UpdateManager({
         currentVersion: "0.4.0-alpha.6",
         dirty: false,
-        fetch: async (input) =>
-          String(input).includes("api.github.com")
-            ? jsonResponse([release("0.4.0-alpha.8")])
-            : manifestResponse(),
+        fetch: async () => jsonResponse(channel),
         detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual installation" }),
       });
       const status = await manager.getStatus();
       expect(status, label).toMatchObject({
-        latestVersion: "0.4.0-alpha.8",
+        latestVersion: null,
         latestApiProtocolVersion: null,
-        state: "available",
+        state: "unavailable",
         canAutoUpdate: false,
-        message: "manual installation",
       });
+      expect(status.message, label).toContain("daemon update channel");
     }
   });
 
-  test("retains fetched protocol metadata when the release list is unchanged", async () => {
+  test("retains channel metadata when a routine conditional request is unchanged", async () => {
     let now = new Date("2026-09-05T12:00:00Z");
-    let releaseRequests = 0;
-    let manifestRequests = 0;
+    let requests = 0;
+    const headers: Array<RequestInit["headers"]> = [];
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
       releaseCacheMs: 1,
       now: () => now,
-      fetch: async (input) => {
-        if (String(input).includes("api.github.com")) {
-          releaseRequests++;
-          return releaseRequests === 1
-            ? jsonResponse([release("0.4.0-alpha.8")], 200, { etag: '"release-7"' })
-            : new Response(null, { status: 304 });
-        }
-        manifestRequests++;
-        return jsonResponse(protocolManifest("0.4.0-alpha.8", API_PROTOCOL_VERSION));
+      fetch: async (_input, init) => {
+        headers.push(init?.headers);
+        requests++;
+        return requests === 1
+          ? jsonResponse(daemonChannel("0.4.0-alpha.8"), 200, {
+              etag: '"release-7"',
+            })
+          : new Response(null, { status: 304 });
       },
       detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "manual" }),
     });
@@ -260,8 +236,8 @@ describe("UpdateManager", () => {
     expect((await manager.getStatus()).latestApiProtocolVersion).toBe(API_PROTOCOL_VERSION);
     now = new Date("2026-09-05T12:00:01Z");
     expect((await manager.getStatus()).latestApiProtocolVersion).toBe(API_PROTOCOL_VERSION);
-    expect(releaseRequests).toBe(2);
-    expect(manifestRequests).toBe(1);
+    expect(requests).toBe(2);
+    expect(headers[1]).toMatchObject({ "if-none-match": '"release-7"' });
   });
 
   test("updates a Homebrew installation without replacing its binary directly", async () => {
@@ -284,7 +260,7 @@ describe("UpdateManager", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
       run,
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
       restart: () => {
@@ -297,7 +273,7 @@ describe("UpdateManager", () => {
       state: "installing",
       canAutoUpdate: true,
       installMethod: "homebrew",
-      latestApiProtocolVersion: null,
+      latestApiProtocolVersion: API_PROTOCOL_VERSION,
     });
     await waitFor(manager, "restarting");
     expect(commands).toEqual([
@@ -314,7 +290,7 @@ describe("UpdateManager", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
       run: async () => ({ exitCode: 1, stdout: "", stderr: "tap unavailable" }),
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
       restart: () => {
@@ -350,7 +326,9 @@ describe("UpdateManager", () => {
       dirty: false,
       fetch: async (input) => {
         const url = String(input);
-        if (url.includes("api.github.com")) return jsonResponse([release("0.4.0-alpha.8")]);
+        if (url.includes("wisp-daemon.json")) {
+          return jsonResponse(daemonChannel("0.4.0-alpha.8"));
+        }
         if (url.endsWith("/release-manifest.json")) {
           return jsonResponse({
             schemaVersion: 1,
@@ -402,7 +380,7 @@ describe("update API", () => {
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
     });
     writeFileSync(
@@ -455,7 +433,7 @@ describe("update API", () => {
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
       now: () => now,
-      fetch: async () => jsonResponse([release("0.4.0-alpha.8")]),
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
       detectInstallation: () => ({
         method: "unsupported",
         supervised: false,

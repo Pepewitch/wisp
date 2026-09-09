@@ -8,18 +8,24 @@ import {
 import { chmod, mkdir, open, rename, rm, symlink } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  compareVersions,
+  isReleaseVersion,
+} from "../../shared/release-version";
 import type { SpawnResult } from "./doctor";
-import { fetchReleaseApiProtocolVersion } from "./release-metadata";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
 
-const RELEASES_URL = "https://api.github.com/repos/Pepewitch/wisp/releases?per_page=100";
+export { compareVersions } from "../../shared/release-version";
+
+const DAEMON_CHANNEL_URL =
+  "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
 const RELEASE_URL = "https://github.com/Pepewitch/wisp/releases/download";
 const MANAGED_INSTALL_MARKER = "wisp-managed-install-v1";
 const RELEASE_CACHE_MS = 6 * 60 * 60 * 1000;
 const RESTART_DELAY_MS = 500;
+const MAX_CHANNEL_BYTES = 16 * 1024;
 const MAX_ARTIFACT_BYTES = 250 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
-const IDENTIFIER = /^[0-9A-Za-z-]+$/;
 const HOMEBREW_SERVICE_LABELS = ["sh.brew.wisp", "homebrew.mxcl.wisp"] as const;
 
 export type InstallMethod = "homebrew" | "managed-linux" | "unsupported";
@@ -44,11 +50,12 @@ export interface ReleaseInfo {
   apiProtocolVersion: number | null;
 }
 
-interface GitHubRelease {
-  tag_name?: unknown;
-  draft?: unknown;
-  prerelease?: unknown;
-  published_at?: unknown;
+interface DaemonUpdateChannel {
+  schemaVersion: 1;
+  product: "wisp";
+  version: string;
+  apiProtocolVersion: number;
+  publishedAt: string;
 }
 
 interface LinuxManifest {
@@ -201,72 +208,40 @@ export function detectInstallation(): Installation {
   }
 }
 
-interface ParsedVersion {
-  core: [string, string, string];
-  prerelease: string[] | null;
-}
-
-function parseVersion(value: string): ParsedVersion | null {
-  const match = /^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
-  if (!match) return null;
-  const core = [match[1]!, match[2]!, match[3]!] as const;
-  if (core.some((part) => part.length > 1 && part.startsWith("0"))) return null;
-  const prerelease = match[4]?.split(".") ?? null;
+function parseDaemonUpdateChannel(value: unknown): ReleaseInfo {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("daemon update channel is not an object");
+  }
+  const channel = value as Partial<DaemonUpdateChannel>;
+  const keys = Object.keys(value).sort();
+  const expectedKeys = [
+    "apiProtocolVersion",
+    "product",
+    "publishedAt",
+    "schemaVersion",
+    "version",
+  ];
+  const publishedAt =
+    typeof channel.publishedAt === "string" ? new Date(channel.publishedAt) : new Date(NaN);
   if (
-    prerelease?.some(
-      (part) => !IDENTIFIER.test(part) || (/^[0-9]+$/.test(part) && part.length > 1 && part.startsWith("0")),
-    )
+    JSON.stringify(keys) !== JSON.stringify(expectedKeys) ||
+    channel.schemaVersion !== 1 ||
+    channel.product !== "wisp" ||
+    typeof channel.version !== "string" ||
+    !isReleaseVersion(channel.version) ||
+    !Number.isSafeInteger(channel.apiProtocolVersion) ||
+    (channel.apiProtocolVersion as number) < 1 ||
+    Number.isNaN(publishedAt.valueOf()) ||
+    publishedAt.toISOString() !== channel.publishedAt
   ) {
-    return null;
+    throw new Error("daemon update channel is invalid");
   }
-  return { core: [...core], prerelease };
-}
-
-function compareNumeric(left: string, right: string): number {
-  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
-  return left === right ? 0 : left < right ? -1 : 1;
-}
-
-/** SemVer precedence without accepting ranges or partial versions. */
-export function compareVersions(left: string, right: string): number {
-  const parsed = parseVersion(left);
-  const other = parseVersion(right);
-  if (!parsed || !other) throw new Error(`invalid release version comparison: ${left}, ${right}`);
-  for (let index = 0; index < parsed.core.length; index++) {
-    const difference = compareNumeric(parsed.core[index]!, other.core[index]!);
-    if (difference !== 0) return difference;
-  }
-  const leftPre = parsed.prerelease;
-  const rightPre = other.prerelease;
-  if (leftPre === null || rightPre === null) return leftPre === rightPre ? 0 : leftPre === null ? 1 : -1;
-  for (let index = 0; index < Math.max(leftPre.length, rightPre.length); index++) {
-    const a = leftPre[index];
-    const b = rightPre[index];
-    if (a === undefined || b === undefined) return a === b ? 0 : a === undefined ? -1 : 1;
-    if (a === b) continue;
-    const aNumeric = /^[0-9]+$/.test(a);
-    const bNumeric = /^[0-9]+$/.test(b);
-    if (aNumeric && bNumeric) return compareNumeric(a, b);
-    if (aNumeric) return -1;
-    if (bNumeric) return 1;
-    return a < b ? -1 : 1;
-  }
-  return 0;
-}
-
-export function selectLatestRelease(releases: GitHubRelease[], currentVersion: string): ReleaseInfo | null {
-  const candidates: ReleaseInfo[] = [];
-  for (const release of releases) {
-    if (release.draft === true || typeof release.tag_name !== "string" || typeof release.published_at !== "string") {
-      continue;
-    }
-    const tag = release.tag_name;
-    const version = tag.startsWith("v") ? tag.slice(1) : "";
-    if (!parseVersion(version)) continue;
-    if (compareVersions(version, currentVersion) < 0) continue;
-    candidates.push({ version, tag, publishedAt: release.published_at, apiProtocolVersion: null });
-  }
-  return candidates.sort((a, b) => compareVersions(b.version, a.version))[0] ?? null;
+  return {
+    version: channel.version,
+    tag: `v${channel.version}`,
+    publishedAt: channel.publishedAt,
+    apiProtocolVersion: channel.apiProtocolVersion as number,
+  };
 }
 
 async function downloadVerifiedArtifact(
@@ -359,6 +334,7 @@ export class UpdateManager {
   private checkedAt: Date | null = null;
   private etag: string | null = null;
   private releaseRefresh: Promise<void> | null = null;
+  private releaseRefreshForced = false;
   private installation: Installation | null = null;
   private operation: Promise<void> | null = null;
   private starting = false;
@@ -413,15 +389,23 @@ export class UpdateManager {
     return this.installation;
   }
 
-  private async performReleaseRefresh(): Promise<void> {
+  private async performReleaseRefresh(force: boolean): Promise<void> {
     const now = this.now();
     const headers: Record<string, string> = {
-      accept: "application/vnd.github+json",
-      "x-github-api-version": "2022-11-28",
+      accept: "application/json",
       "user-agent": `wisp/${this.currentVersion}`,
     };
-    if (this.etag) headers["if-none-match"] = this.etag;
-    const response = await this.fetcher(RELEASES_URL, {
+    if (force) {
+      headers["cache-control"] = "no-cache";
+      headers.pragma = "no-cache";
+    } else if (this.etag) {
+      headers["if-none-match"] = this.etag;
+    }
+    const url = force
+      ? `${DAEMON_CHANNEL_URL}?refresh=${now.getTime()}`
+      : DAEMON_CHANNEL_URL;
+    const response = await this.fetcher(url, {
+      cache: force ? "no-store" : "default",
       headers,
       signal: AbortSignal.timeout(10_000),
     });
@@ -429,14 +413,20 @@ export class UpdateManager {
       this.checkedAt = now;
       return;
     }
-    if (!response.ok) throw new Error(`GitHub releases returned ${response.status}`);
-    const body = (await response.json()) as unknown;
-    if (!Array.isArray(body)) throw new Error("GitHub releases did not return a list");
-    const release = selectLatestRelease(body as GitHubRelease[], this.currentVersion);
-    if (release !== null) {
-      release.apiProtocolVersion = await fetchReleaseApiProtocolVersion(this.fetcher, release);
+    if (!response.ok) throw new Error(`daemon update channel returned ${response.status}`);
+    const body = await response.text();
+    if (Buffer.byteLength(body) > MAX_CHANNEL_BYTES) {
+      throw new Error("daemon update channel is too large");
     }
-    this.release = release;
+    let channel: unknown;
+    try {
+      channel = JSON.parse(body);
+    } catch {
+      throw new Error("daemon update channel is not valid JSON");
+    }
+    const release = parseDaemonUpdateChannel(channel);
+    this.release =
+      compareVersions(release.version, this.currentVersion) >= 0 ? release : null;
     this.checkedAt = now;
     this.etag = response.headers.get("etag");
   }
@@ -444,12 +434,27 @@ export class UpdateManager {
   private async fetchLatest(force: boolean): Promise<void> {
     const now = this.now();
     if (!force && this.checkedAt && now.getTime() - this.checkedAt.getTime() < this.releaseCacheMs) return;
-    if (!this.releaseRefresh) {
-      this.releaseRefresh = this.performReleaseRefresh().finally(() => {
-        this.releaseRefresh = null;
-      });
+    for (;;) {
+      if (this.releaseRefresh) {
+        const pending = this.releaseRefresh;
+        const satisfiesRequest = !force || this.releaseRefreshForced;
+        await pending;
+        if (satisfiesRequest) return;
+        continue;
+      }
+      this.releaseRefreshForced = force;
+      const refresh = this.performReleaseRefresh(force);
+      this.releaseRefresh = refresh;
+      try {
+        await refresh;
+        return;
+      } finally {
+        if (this.releaseRefresh === refresh) {
+          this.releaseRefresh = null;
+          this.releaseRefreshForced = false;
+        }
+      }
     }
-    await this.releaseRefresh;
   }
 
   private async readStatus(force: boolean): Promise<UpdateStatus> {
@@ -480,7 +485,7 @@ export class UpdateManager {
     if (this.operation || this.starting || this.state === "restarting") {
       throw new Error("an update is already in progress");
     }
-    if (typeof expectedVersion !== "string" || !parseVersion(expectedVersion)) {
+    if (typeof expectedVersion !== "string" || !isReleaseVersion(expectedVersion)) {
       throw new Error("version must name a complete Wisp release");
     }
     this.starting = true;

@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "./release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
 import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
+import { renderDaemonUpdateChannel } from "./render-daemon-update-channel";
 import { renderDesktopUpdateChannel } from "./render-desktop-update-channel";
 import { renderHomebrewCask } from "./render-homebrew-cask";
 import { renderHomebrewFormula } from "./render-homebrew-formula";
@@ -12,6 +13,7 @@ const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha\.(?:0|
 export const TAP_FILES = [
   "Casks/wisp-desktop.rb",
   "Formula/wisp.rb",
+  "updates/wisp-daemon.json",
   "updates/wisp-desktop-alpha.json",
 ] as const;
 
@@ -100,6 +102,10 @@ export function renderTapFiles(
   return {
     "Casks/wisp-desktop.rb": renderHomebrewCask(manifests.desktop),
     "Formula/wisp.rb": renderHomebrewFormula(manifests.macos),
+    "updates/wisp-daemon.json": renderDaemonUpdateChannel(
+      manifests.linux,
+      manifests.desktop.publishedAt,
+    ),
     "updates/wisp-desktop-alpha.json": renderDesktopUpdateChannel(manifests.desktop, notes),
   };
 }
@@ -123,7 +129,7 @@ export function classifyTapState(paths: string[]): "prepared" | "already-promote
   if (paths.length === 0) return "already-promoted";
   const expected = [...TAP_FILES].sort();
   if (JSON.stringify([...paths].sort()) !== JSON.stringify(expected)) {
-    throw new Error(`promotion changed files outside the three-file tap contract: ${JSON.stringify(paths)}`);
+    throw new Error(`promotion changed files outside the tap contract: ${JSON.stringify(paths)}`);
   }
   return "prepared";
 }

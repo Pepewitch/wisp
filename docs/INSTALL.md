@@ -198,7 +198,21 @@ continue after logout. An administrator can enable that with
 
 Rerunning the installer for the same version is idempotent. Installing a later
 version writes a separate managed version and switches the `current` symlink
-only after verification. Restart the daemon after a CLI upgrade:
+only after verification. An installer-managed daemon running as the active
+`wisp.service` process can check and upgrade itself:
+
+```sh
+wisp update
+```
+
+The command and browser update action read the fixed daemon channel published
+with each supported release. Wisp then downloads the release manifest and
+binary, verifies the target, size, SHA-256, and embedded version/commit
+identity, writes the new version separately, and atomically switches
+`current`. It exits only after activation; systemd's `Restart=always` starts
+the upgraded binary.
+
+After an out-of-band CLI upgrade, restart the daemon manually:
 
 ```sh
 systemctl --user restart wisp.service
@@ -206,14 +220,10 @@ wisp version
 wisp doctor --harness droid
 ```
 
-The web header also shows the running daemon version. When GitHub has a newer
-published Wisp release, an installer-managed binary running as the active
-`wisp.service` process shows an **Update** button. Wisp downloads the release
-manifest and binary, verifies the target, size, SHA-256, and embedded
-version/commit identity, writes the new version separately, then atomically
-switches `current`. It exits only after activation; systemd's `Restart=always`
-starts the upgraded binary, and the browser reloads after the expected version
-answers its health check.
+The web header also shows the running daemon version. When the channel has a
+newer promoted Wisp release, an installer-managed binary running as the active
+`wisp.service` process shows an **Update** button. The browser reloads after
+the expected version answers its health check.
 
 The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
