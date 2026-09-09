@@ -37,13 +37,11 @@ async function git(args: string[], cwd: string, options: GitRunOptions = {}): Pr
     maxBytes: options.maxBytes,
     timeoutMs: options.timeoutMs ?? READ_TIMEOUT_MS,
   });
+  if (result.cleanupError) {
+    throw new Error(`git ${args[0] ?? ""}: ${result.cleanupError}`);
+  }
   if (result.timedOut) {
-    return {
-      ok: false,
-      out: "",
-      err: `git ${args[0] ?? ""} timed out after ${Math.round((options.timeoutMs ?? READ_TIMEOUT_MS) / 1000)}s and was stopped`,
-      truncated: false,
-    };
+    throw new Error(`git ${args[0] ?? ""} timed out after ${Math.round((options.timeoutMs ?? READ_TIMEOUT_MS) / 1000)}s and was stopped`);
   }
   // A cap-truncated read is a SUCCESS with less data, not a failure. The child
   // is killed on purpose once the budget is reached, so it exits by signal

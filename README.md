@@ -214,6 +214,9 @@ turns and daemon restarts. Plain archive refuses surviving background work;
 force-archive stops verified groups before deleting files. While stopping, new sends
 and archive requests are refused. An incomplete stop keeps those operations
 blocked until Stop can confirm completion; the conversation session is kept.
+Wisp's short-lived Git commands also bound process-group cleanup and output
+draining after a timeout, cancellation, or stdout cap. If cleanup cannot be
+confirmed, the operation reports an error rather than claiming it stopped.
 If the daemon loses durable proof while starting or natively admitting a
 message, it keeps the message queued and marks the delivery uncertain rather
 than risking data loss. Recovery may therefore replay that stable-ID message

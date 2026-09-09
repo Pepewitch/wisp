@@ -15,7 +15,8 @@
  * the callers differ on what they mean: a truncated diff is a normal answer the
  * pane labels, and a timed-out `git status` is a task-level error sentence.
  */
-import { signalProcessTree } from "./process-tree";
+import { CommandGroup } from "./command-group";
+import { CappedOutput } from "./capped-output";
 
 /** A read probe should answer or get out of the way; a push may legitimately take longer. */
 export const READ_TIMEOUT_MS = 20_000;
@@ -32,6 +33,8 @@ export const DEFAULT_MAX_ERROR_BYTES = 64 * 1024;
 
 /** Grace between the deadline's TERM and its KILL. */
 const KILL_GRACE_MS = 2_000;
+/** Final bound on signalling, exit notification, and pipe cleanup after Stop. */
+const STOP_BUDGET_MS = KILL_GRACE_MS + 1_000;
 
 export interface RunOptions {
   cmd: string[];
@@ -54,72 +57,18 @@ export interface RunResult {
   /** the deadline (or the caller's signal) ended it, not the command */
   timedOut: boolean;
   cancelled: boolean;
+  /** An incomplete Stop must never masquerade as successful command cleanup. */
+  cleanupError?: string;
 }
 
 /**
- * Read a stream up to `maxBytes`, then stop.
- *
- * Returning early is the point: the reader releases the lock and the caller
- * kills the child, so a command that keeps producing cannot keep the daemon
- * allocating. Chunks are decoded incrementally so a multi-byte character split
- * across a chunk boundary is not mangled.
- */
-async function readCapped(
-  stream: ReadableStream<Uint8Array> | undefined,
-  maxBytes: number,
-  onCap: (() => void) | null,
-): Promise<{ text: string; truncated: boolean }> {
-  if (!stream) return { text: "", truncated: false };
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let text = "";
-  let bytes = 0;
-  let truncated = false;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done || !value) return { text: text + decoder.decode(), truncated };
-      if (truncated) continue; // draining: read and discard so the child never blocks
-      const room = maxBytes - bytes;
-      if (value.byteLength >= room) {
-        text += decoder.decode(value.subarray(0, room)) + decoder.decode();
-        truncated = true;
-        if (onCap) {
-          // stdout: nothing beyond the budget can be used, so stop the child
-          // from HERE — not after both readers resolve. The other stream only
-          // reaches EOF when the process dies, so waiting would sit out the
-          // whole deadline on a producer that already exceeded its budget
-          // (measured: 19s instead of 200ms).
-          onCap();
-          return { text, truncated };
-        }
-        // stderr: keep draining. A hook or credential helper that writes more
-        // than the budget to stderr is noisy, not failing, and killing an
-        // otherwise-succeeding `git worktree add` or `push` over it would turn
-        // chatter into a failed task (a review's note).
-        continue;
-      }
-      bytes += value.byteLength;
-      text += decoder.decode(value, { stream: true });
-    }
-  } catch {
-    // A killed child's pipe reads as an error; whatever arrived is the answer.
-    return { text: text + decoder.decode(), truncated };
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-/**
- * Run a command with a byte budget and a deadline.
- *
- * stdout and stderr are drained CONCURRENTLY with the exit wait, because a
- * child that fills a pipe while the parent only awaits exit deadlocks — the
- * bug this preserves from the code it replaces.
+ * Bound the complete command: leader, inherited pipes, and termination.
+ * Ordinary completion still drains both streams and preserves the exit code.
  */
 export async function runBounded(options: RunOptions): Promise<RunResult> {
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-  const timeoutMs = options.timeoutMs ?? READ_TIMEOUT_MS;
+  if (options.signal?.aborted) {
+    return { exitCode: null, out: "", err: "", truncated: false, timedOut: false, cancelled: true };
+  }
   const child = Bun.spawn({
     cmd: options.cmd,
     cwd: options.cwd,
@@ -127,66 +76,92 @@ export async function runBounded(options: RunOptions): Promise<RunResult> {
     stderr: "pipe",
     stdin: "ignore",
     ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
-    // Its own group, so a deadline reaches whatever the command started —
-    // `git` shelling out to a credential helper, a hook running a build.
     detached: true,
   });
-
+  const group = new CommandGroup(child);
+  const stopped = Promise.withResolvers<void>();
+  let stopping = false;
+  let settled = false;
   let timedOut = false;
   let cancelled = false;
+  let cleanupError: string | undefined;
   let killTimer: ReturnType<typeof setTimeout> | undefined;
-  const stop = (): void => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    signalProcessTree(child.pid, "SIGTERM", (signal) => child.kill(signal));
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const finishStop = (error?: unknown): void => {
+    if (settled) return;
+    settled = true;
+    if (error) cleanupError = `command cleanup incomplete: ${error instanceof Error ? error.message : String(error)}`;
+    group.close();
+    stdout.close();
+    stderr.close();
+    // Even an unkillable leader must not hold a CLI caller's event loop open.
+    if (child.exitCode === null && child.signalCode === null) child.unref();
+    stopped.resolve();
+  };
+  const stop = (reason: "timeout" | "cancel" | "cap"): void => {
+    if (stopping || settled) return;
+    stopping = true;
+    timedOut = reason === "timeout";
+    cancelled = reason === "cancel";
+    // The first stop reason owns the operation. A later timeout or abort must
+    // neither restart the grace period nor schedule another escalation.
+    clearTimeout(deadline);
     killTimer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        signalProcessTree(child.pid, "SIGKILL", (signal) => child.kill(signal));
-      }
+      void group.inspect("SIGKILL").then(ended => {
+        if (ended) finishStop();
+      }, finishStop);
     }, KILL_GRACE_MS);
-    killTimer.unref?.();
+    hardTimer = setTimeout(() => {
+      finishStop(new Error("process termination could not be confirmed before the cleanup deadline"));
+    }, STOP_BUDGET_MS);
+    void (async () => {
+      if (await group.inspect("SIGTERM")) { finishStop(); return; }
+      while (!settled) {
+        await Bun.sleep(50);
+        if (settled) return;
+        if (await group.inspect()) { finishStop(); return; }
+      }
+    })().catch(finishStop);
   };
-
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    stop();
-  }, timeoutMs);
-  deadline.unref?.();
-  const onAbort = (): void => {
-    cancelled = true;
-    stop();
-  };
+  const deadline = setTimeout(() => stop("timeout"), options.timeoutMs ?? READ_TIMEOUT_MS);
+  const onAbort = (): void => stop("cancel");
+  const stdout = new CappedOutput(child.stdout, options.maxBytes ?? DEFAULT_MAX_BYTES, () => stop("cap"));
+  const stderr = new CappedOutput(child.stderr, options.maxErrorBytes ?? DEFAULT_MAX_ERROR_BYTES);
+  options.signal?.addEventListener("abort", onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
-  else options.signal?.addEventListener("abort", onAbort, { once: true });
 
+  const exited = child.exited.then(exitCode => {
+    if (!settled && (stopping || !stdout.ended || !stderr.ended)) {
+      // Capture only at the owned exit boundary. Later timeouts must validate
+      // a surviving identity, not trust a historical numeric group ID.
+      void group.captureExit().catch(() => {});
+    }
+    return exitCode;
+  });
   try {
-    const [stdout, stderr] = await Promise.all([
-      readCapped(child.stdout as ReadableStream<Uint8Array> | undefined, maxBytes, stop),
-      // stderr keeps its budget but does NOT stop the child. A hook or a
-      // credential helper that writes more than the budget to stderr is noisy,
-      // not failing, and killing a `git worktree add` or a `push` over it would
-      // turn chatter into a failed task (a review's note). Past the budget the
-      // extra bytes are simply dropped: the reader stops storing, the child
-      // keeps writing into a pipe nobody reads, and the deadline still bounds
-      // the whole run.
-      readCapped(
-        child.stderr as ReadableStream<Uint8Array> | undefined,
-        options.maxErrorBytes ?? DEFAULT_MAX_ERROR_BYTES,
-        null,
-      ),
-    ]);
-    const exitCode = await child.exited;
+    await Promise.race([Promise.all([exited, stdout.done, stderr.done]), stopped.promise]);
+    // EOF and a finalized leader do not settle a Stop: a resistant child may
+    // have redirected both pipes and still be running in the command's group.
+    if (stopping) await stopped.promise;
     return {
-      exitCode,
+      exitCode: child.exitCode,
       out: stdout.text,
       err: stderr.text,
       truncated: stdout.truncated,
       timedOut,
       cancelled,
+      ...(cleanupError ? { cleanupError } : {}),
     };
   } finally {
+    settled = true;
+    group.close();
     clearTimeout(deadline);
     if (killTimer) clearTimeout(killTimer);
+    if (hardTimer) clearTimeout(hardTimer);
     options.signal?.removeEventListener("abort", onAbort);
+    stdout.close();
+    stderr.close();
   }
 }
 
