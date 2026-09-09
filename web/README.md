@@ -133,3 +133,10 @@ build, but it still requires an explicit browser/Desktop impact review.
 For pixel checks, prefer `bun scripts/capture-app.ts [outdir]` (zero-dep, raw
 CDP against system Chrome) over eyeballing a browser pane: it emits
 deterministic desktop, mobile, and gallery PNGs.
+
+The shadcn 4.19.0 Tailwind stylesheet is vendored unchanged at
+`src/styles/shadcn.css`, with its MIT notice in `licenses/shadcn-MIT.txt`.
+Normal install/build does not need the component-generator CLI or its transitive
+dependencies. For deliberate component generation, invoke a reviewed, pinned CLI
+version separately and inspect its changes. When updating the vendored stylesheet,
+retain its license and compare the generated CSS and both runtime surfaces.
