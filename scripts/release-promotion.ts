@@ -7,7 +7,7 @@ import { renderHomebrewCask } from "./render-homebrew-cask";
 import { renderHomebrewFormula } from "./render-homebrew-formula";
 
 const AUDIT_TAP = "Pepewitch/tap";
-const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)-(alpha\.\d+)$/;
+const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha\.(?:0|[1-9]\d*)))?$/;
 
 export const TAP_FILES = [
   "Casks/wisp-desktop.rb",
@@ -38,14 +38,14 @@ export interface PromotionArgs {
 
 export function releaseVersion(tag: string): string {
   const match = tag.match(RELEASE_TAG);
-  if (!match) throw new Error(`release tag must match v<semver>-alpha.<number>, got ${JSON.stringify(tag)}`);
+  if (!match) throw new Error(`release tag must match v<semver> or v<semver>-alpha.<number>, got ${JSON.stringify(tag)}`);
   return tag.slice(1);
 }
 
 export function releaseNotesPath(root: string, tag: string): string {
   const match = tag.match(RELEASE_TAG);
   if (!match) releaseVersion(tag);
-  return resolve(root, `docs/v${match![1]}.${match![2]}/RELEASE-NOTES-${match![4]}.md`);
+  return resolve(root, `docs/v${match![1]}.${match![2]}/RELEASE-NOTES-${match![4] ?? releaseVersion(tag)}.md`);
 }
 
 export function expectedReleaseAssets(version: string): string[] {
@@ -65,8 +65,8 @@ export function expectedReleaseAssets(version: string): string[] {
 
 export function validateReleaseMetadata(metadata: ReleaseMetadata, tag: string): void {
   const version = releaseVersion(tag);
-  if (metadata.tagName !== tag || metadata.isDraft || !metadata.isPrerelease) {
-    throw new Error("public release must be the exact non-draft prerelease requested for promotion");
+  if (metadata.tagName !== tag || metadata.isDraft || metadata.isPrerelease !== version.includes("-")) {
+    throw new Error("public release must be the exact non-draft release with the tag-matching prerelease status");
   }
   const expected = expectedReleaseAssets(version);
   const actual = metadata.assets.map((asset) => asset.name).sort();
@@ -169,7 +169,7 @@ export function parsePromotionArgs(args: string[]): PromotionArgs {
   }
   if (!tag || !tapDir) {
     throw new Error(
-      "usage: promote-release.ts --tag <v0.0.0-alpha.N> --tap-dir <homebrew-tap> [--release-root <tag-checkout>] [--publish] [--receipt <path>]",
+      "usage: promote-release.ts --tag <v0.0.0[-alpha.N]> --tap-dir <homebrew-tap> [--release-root <tag-checkout>] [--publish] [--receipt <path>]",
     );
   }
   releaseVersion(tag);

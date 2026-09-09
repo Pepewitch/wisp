@@ -69,7 +69,7 @@ cask "wisp-desktop" do
   uninstall quit: "dev.wisp.desktop"
 
   caveats <<~EOS
-    This Apple Silicon alpha requires macOS 12.3 or newer. Wisp Desktop is
+    This Apple Silicon app requires macOS 12.3 or newer. Wisp Desktop is
     Developer ID signed and notarized. After the initial Homebrew install, the
     application can install its own cryptographically signed updates.
 

@@ -31,13 +31,9 @@ qualification do not imply permission to publish.
   the SHA and leave the human-readable version in a trailing comment; bump both
   together, deliberately.
 - The advisory gate runs against the whole locked tree, including build-time
-  tooling. `shadcn` (a build input: `web/src/index.css` imports its Tailwind
-  layer) drags in a CLI's own server dependencies, and those are where every
-  advisory so far has come from — `qs`, `hono`, `js-yaml`, none of which the
-  shipped binary or the browser bundle runs. Clear them with a root
-  `overrides` entry pinning the patched floor, which UPGRADES the dependency;
-  reach for `bun audit --ignore <CVE>` only when no compatible floor exists,
-  and say why in the same commit.
+  tooling. The unchanged shadcn 4.19.0 stylesheet is vendored with its MIT
+  license in `web/src/styles/shadcn.css` and `web/licenses/shadcn-MIT.txt`;
+  its component-generator dependency graph was removed. Keep dependency changes separate from a version-only release.
 - Top-level workflow permissions stay `contents: read`. A job that needs more
   declares it next to the step that uses it, so a job added later cannot
   inherit publication rights by existing.
@@ -209,6 +205,13 @@ Classify every match. Do not rewrite published release notes merely to make an
 old version look current.
 `web/package.json` has its own workspace version and is not a Wisp release
 pin.
+
+Stable tags use `v<major>.<minor>.<patch>` and notes at
+`docs/v<major>.<minor>/RELEASE-NOTES-<version>.md`. Alpha tags retain their
+historical `RELEASE-NOTES-alpha.N.md` paths. The workflow publishes stable tags
+as regular latest releases and alpha tags as prereleases. Promotion verifies
+the matching GitHub status. Preserve the legacy Desktop alpha endpoint and
+wire channel so installed clients can discover stable releases.
 
 Write release notes before tagging. State platform scope, signing posture,
 install/upgrade commands, changes, known limits, and the exact ten expected
@@ -450,12 +453,19 @@ brew audit --strict Pepewitch/tap/wisp
 brew audit --strict --cask Pepewitch/tap/wisp-desktop
 ```
 
-Then push the tag and create the release from the existing tag:
+Normally push the tag and let the workflow create the release. Do not race it
+with a manual `gh release create`. The following is a manual fallback only
+when automated publication is disabled and all the same gates have passed;
+set the release flags according to the validated version:
 
 ```sh
 gh auth status
 gh repo view Pepewitch/wisp --json visibility,url
 git push origin "$tag"
+case "$version" in
+  *-alpha.*) set -- --prerelease --latest=false ;;
+  *) set -- --latest=true ;;
+esac
 
 gh release create "$tag" \
   "$release_dir/wisp-v$version-linux-x86_64" \
@@ -470,8 +480,7 @@ gh release create "$tag" \
   "$release_dir/SHA256SUMS-desktop-darwin-arm64" \
   --repo Pepewitch/wisp \
   --verify-tag \
-  --prerelease \
-  --latest=false \
+  "$@" \
   --title "Wisp $version" \
   --notes-file "$notes"
 ```

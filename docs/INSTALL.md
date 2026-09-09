@@ -1,12 +1,13 @@
 # Install and activate Wisp on Linux
 
 This guide covers **Ubuntu 24.04 LTS, x86_64, glibc**.
-`0.4.0-alpha.17` is the current experimental feature prerelease. The
+`0.5.0` is the release covered by this guide. The
 Apple Silicon Homebrew path is documented separately in
 [INSTALL-MACOS.md](INSTALL-MACOS.md).
 
-The alpha is machine-qualified, not human-validated. It is not production
-support.
+Automated install and activation gates cover this target. Full clean-machine
+and upgrade/rollback qualification remains incomplete; see the
+[0.5 qualification ledger](v0.5/QUALIFICATION.md).
 
 ## Before you start
 
@@ -27,7 +28,7 @@ account in a separate container.
 Use the public release installer:
 
 ```sh
-version=0.4.0-alpha.17 # replace with the current published alpha
+version=0.5.0 # replace with the current published release
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -45,7 +46,7 @@ candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.17/wisp-v0.4.0-alpha.17-linux-x86_64
+artifact=dist/release/v0.5.0/wisp-v0.5.0-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -221,7 +222,7 @@ show the available version but update manually because Wisp cannot guarantee
 their restart.
 
 The complete Linux upgrade and rollback matrix is not yet qualified. Take a
-backup before changing alpha versions — the procedure below, not a plain `cp`
+backup before changing versions — the procedure below, not a plain `cp`
 of a live profile.
 
 ## Back up and restore a Wisp home
@@ -334,7 +335,7 @@ The uninstaller removes only installer-managed binaries, symlinks, and the
 managed systemd user unit:
 
 ```sh
-version=0.4.0-alpha.17 # replace with the installed alpha
+version=0.5.0 # replace with the installed version
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh

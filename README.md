@@ -18,12 +18,16 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Current public release: `0.4.0-alpha.17`.** This experimental prerelease is
-not production-ready software. It carries the real-PTY terminal, multi-branch
-pull-request discovery, Droid questionnaire, and resumable release-promotion
-fixes. Its immutable daemon/Desktop assets and Homebrew/Desktop channels passed
-the automated release gates; its human-observed alpha.16-to-alpha.17 in-app
-update receipt remains pending.
+**Wisp 0.5.0** brings the daemon and Desktop app together after the 0.4 alpha
+series. Desktop is now a usable daily interface for local and remote tasks,
+with a real terminal, clearer background-work status, and actionable recovery.
+A substantial engineering and security review led to fixes across process
+cleanup, database ownership, authenticated media, and task data retention.
+
+See [0.5.0 release notes](docs/v0.5/RELEASE-NOTES-0.5.0.md) and the
+[qualification ledger](docs/v0.5/QUALIFICATION.md) for evidence and remaining
+limits. This is a pre-1.0 release for single-user, self-hosted use; the review
+is not a guarantee that no security issues remain.
 
 ## Why Wisp
 
@@ -48,38 +52,20 @@ and it can read and write outside its worktree. For a repository you do not
 trust, use a separate OS account or a disposable VM — a prompt that says “work
 only here” does not enforce anything.
 
-## v0.4 platform claims
+## Supported release targets
 
-| Platform | Current v0.4 claim |
+| Platform | 0.5.0 scope |
 |---|---|
-| Ubuntu 24.04 LTS, x86_64, glibc | Experimental alpha |
-| Apple Silicon arm64, macOS 12.3+ configured minimum | Experimental alpha; every release is gated on Developer ID signing and notarization |
-| Intel macOS | Unsupported; no artifact planned |
+| Ubuntu 24.04 LTS, x86_64, glibc | CLI/daemon and browser UI; automated install and activation gates |
+| Apple Silicon arm64, macOS 12.3+ configured minimum | CLI/daemon and Desktop; Desktop publication requires Developer ID signing and notarization |
+| Intel macOS | Unsupported; no release artifact |
 
-Built-in harnesses are Droid, Claude Code, Codex, and Cursor. The Linux result
-is machine qualification only. The public alpha.17 Desktop archive is Developer
-ID signed, notarized, stapled, and updater-signed. Alpha.13's
-alpha.12-to-alpha.13 self-update was qualified on one Apple Silicon Mac;
-alpha.17's alpha.16-to-alpha.17 human updater receipt is still pending.
-
-### What “experimental alpha” currently means
-
-| Area | Where it stands |
-|---|---|
-| Task lifecycle, worktrees, CLI/API | Exercised daily by its author; covered by the regression suite |
-| Browser and phone UI | Same daemon, same contract; bearer-authenticated on every hop |
-| Desktop (Apple Silicon) | Signed, notarized, updater-signed; one qualified self-update, one receipt pending |
-| Linux install and upgrade | Machine-qualified; the full upgrade/rollback matrix is not |
-| Multi-user or shared deployment | Not a goal, not implemented, no authorization boundary |
-| Sandboxing agent processes | Not implemented; see the worktree note above |
-
-Before Wisp stops calling itself alpha, these are the numbers it has to be able
-to show rather than assert: a first task that succeeds on a clean install, no
-message whose delivery is uncertain after a daemon restart, a Stop that leaves
-nothing running in the process group Wisp owns, a restore from backup that
-produces the same task list, and
-an in-app update that recovers on both platforms. Each of those is a measurable
-claim; none of them is “it feels stable”.
+Built-in harnesses are Droid, Claude Code, Codex, and Cursor. Wisp runs as your
+OS user, without a multi-user authorization boundary or an agent sandbox.
+The macOS deployment minimum is not a claim that every supported OS version
+has been exercised. Full clean-machine, provider, update/rollback, and backup
+relocation journeys still have qualification gaps; see the
+[0.5 ledger](docs/v0.5/QUALIFICATION.md).
 
 You bring Git, a repository, and at least one installed and authenticated
 harness. Wisp runs on the same host and as the same user so it can reach that
@@ -90,7 +76,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.4.0-alpha.17 # replace with the current published alpha
+version=0.5.0 # replace with the current published release
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -100,7 +86,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.4.0-alpha.17/wisp-v0.4.0-alpha.17-linux-x86_64
+artifact=dist/release/v0.5.0/wisp-v0.5.0-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -345,7 +331,7 @@ number of turns in a task; harness iteration behavior remains harness-owned.
 For a Linux installation:
 
 ```sh
-version=0.4.0-alpha.17 # replace with the installed alpha
+version=0.5.0 # replace with the installed version
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh
@@ -428,7 +414,9 @@ without rebuilding, re-signing, notarizing, or changing public release assets.
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Desktop updates](docs/DESKTOP-UPDATES.md)
-- [v0.4 release qualification](docs/v0.4/QUALIFICATION.md)
+- [0.5.0 release notes](docs/v0.5/RELEASE-NOTES-0.5.0.md)
+- [v0.5 release qualification](docs/v0.5/QUALIFICATION.md)
+- [Historical v0.4 qualification](docs/v0.4/QUALIFICATION.md)
 - [Security policy and trust model](SECURITY.md)
 - [Adding a harness](docs/ADDING-A-HARNESS.md)
 - [Operator skill](skills/wisp/SKILL.md)

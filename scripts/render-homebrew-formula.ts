@@ -33,7 +33,7 @@ export function renderHomebrewFormula(manifest: MacReleaseManifest): string {
     manifest.artifact.format !== "tar.gz" ||
     manifest.artifact.binary.file !== "wisp"
   ) {
-    throw new Error("manifest is not the approved ad-hoc Apple Silicon alpha");
+    throw new Error("manifest is not the approved ad-hoc Apple Silicon daemon");
   }
   const url =
     `https://github.com/Pepewitch/wisp/releases/download/v${manifest.version}/` +
@@ -58,7 +58,7 @@ class Wisp < Formula
 
   def caveats
     <<~EOS
-      This experimental Apple Silicon alpha is ad-hoc signed, not Developer ID
+      This Apple Silicon daemon is ad-hoc signed, not Developer ID
       signed or notarized. Gatekeeper may require explicit approval. Do not
       disable Gatekeeper globally.
 

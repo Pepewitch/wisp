@@ -40,13 +40,14 @@ picking, and removal behavior are in the setup reference.
 
 Desktop and daemon releases are independent. In Desktop, use the **Updates**
 popover: **Wisp Desktop** is the global signed application update and the named
-daemon row applies only to the selected connection. Public alpha.8 predates
+**Local daemon** row always applies to the built-in Local connection, even
+when a remote tab is selected. Update saved remote daemons on their own host. Public alpha.8 predates
 self-update; bootstrap a current signed release through Homebrew with
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. The public
 alpha.12-to-alpha.13 in-app path is qualified on one Apple Silicon Mac. The
-current public alpha.17 app is signed, notarized, stapled, updater-signed, and
-available through Homebrew and the Desktop channel; its alpha.16-to-alpha.17
-human updater receipt remains pending.
+0.5.0 release follows the same signing and promotion gates, with its release
+evidence and pending human updater journey recorded in
+[the qualification ledger](../../docs/v0.5/QUALIFICATION.md).
 
 ## 2. Creating tasks
 

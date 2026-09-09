@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderDesktopUpdateChannel } from "../scripts/render-desktop-update-channel";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 
-function manifest(): DesktopReleaseManifest {
-  const version = "0.4.0-alpha.9";
+function manifest(version = "0.4.0-alpha.9"): DesktopReleaseManifest {
   return {
     schemaVersion: 2,
     product: "wisp-desktop",
@@ -62,6 +61,15 @@ describe("Desktop update channel", () => {
         },
       },
     });
+  });
+
+  test("carries a regular release through the installed alpha clients' wire contract", () => {
+    const channel = JSON.parse(renderDesktopUpdateChannel(manifest("0.5.0"), "0.5 release notes."));
+    expect(channel.channel).toBe("alpha");
+    expect(channel.version).toBe("0.5.0");
+    expect(channel.platforms["darwin-aarch64-app"].url).toBe(
+      "https://github.com/Pepewitch/wisp/releases/download/v0.5.0/wisp-desktop-v0.5.0-darwin-arm64.tar.gz",
+    );
   });
 
   test("refuses an unnotarized release or oversized notes", () => {

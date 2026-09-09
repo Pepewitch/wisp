@@ -9,6 +9,7 @@ const MAX_NOTES_BYTES = 16 * 1024;
 
 export interface DesktopUpdateChannel {
   schemaVersion: 1;
+  // Keep the original wire contract so installed 0.4 alpha clients can upgrade.
   channel: "alpha";
   version: string;
   publishedAt: string;

@@ -647,6 +647,17 @@ mod tests {
     }
 
     #[test]
+    fn regular_release_is_accepted_on_the_legacy_channel_and_upgrades_alpha() {
+        let now = OffsetDateTime::parse("2026-09-06T12:00:00Z", &Rfc3339).unwrap();
+        let candidate = validate_manifest(&manifest("0.5.0", "2026-09-06T11:59:00Z"), now).unwrap();
+        assert_eq!(candidate.version_text, "0.5.0");
+        assert!(
+            Version::parse(&candidate.version_text).unwrap()
+                > Version::parse("0.4.0-alpha.17").unwrap()
+        );
+    }
+
+    #[test]
     fn rejects_future_unknown_or_redirectable_channel_data() {
         let now = OffsetDateTime::parse("2026-09-06T12:00:00Z", &Rfc3339).unwrap();
         assert!(
