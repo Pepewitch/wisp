@@ -1,3 +1,4 @@
+import { clearAssetCache } from "./asset-src";
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { ConnectionQueryKeys } from "./query";
@@ -130,12 +131,14 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (evt.type === "message") {
+      clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/messages/`);
       if (evt.taskId === opts.getSelectedId()) invalidateSelectedMessages();
       return;
     }
     // State and turn boundaries can change git-status badges.
     invalidateStatus();
     if (evt.type === "task") {
+      clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/`);
       // state/title/archive changes land in the sidebar
       invalidateTasks();
       if (evt.taskId === opts.getSelectedId()) {
@@ -162,6 +165,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     // the stream went down and came back: refetch the world once, and reopen
     // the log stream so its pane restarts from a fresh backlog
     wasDown = false;
+    clearAssetCache(qk.connection[0]);
     void opts.client.invalidateQueries({ queryKey: qk.tasks });
     void opts.client.invalidateQueries({ queryKey: qk.status });
     void opts.client.invalidateQueries({ queryKey: qk.repos });

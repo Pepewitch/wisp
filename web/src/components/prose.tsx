@@ -4,7 +4,7 @@ import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdo
 
 import { externalLinkProps } from "@/lib/external-links"
 import { PROSE_HIGHLIGHT_PLUGINS } from "@/lib/prose-highlight"
-import { safeHttpUrl } from "@/lib/paste-links"
+import { RemoteImage } from "./remote-image"
 import { cn } from "@/lib/utils"
 import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
 
@@ -54,32 +54,7 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
 
   a: ({ children, href }) => <ProseLink href={href}>{children}</ProseLink>,
 
-  /**
-   * Only an image that can actually load is an image.
-   *
-   * `harden` used to replace every non-absolute `src` with a grey placeholder,
-   * and dropping it (see the rehype chain above) would otherwise turn a
-   * relative path into a broken-image icon: it resolves against the app's own
-   * origin, where there is no asset route to answer it. Its alt text is the
-   * one thing left that says anything, so that is what renders.
-   */
-  img: ({ src, alt }) => {
-    const url = typeof src === "string" ? safeHttpUrl(src) : null
-    if (!url) return <>{alt}</>
-    // `no-referrer`, because this URL came from agent prose and may point
-    // anywhere. Loading it is already an outbound request the reader did not
-    // ask for (SEC-03); the request must not also disclose which Wisp page
-    // was open when it happened. The same reasoning as `noreferrer` on the
-    // links above.
-    return (
-      <img
-        src={url}
-        alt={alt ?? ""}
-        referrerPolicy="no-referrer"
-        className="mt-2.5 max-w-full rounded-md"
-      />
-    )
-  },
+  img: ({ src, alt }) => <RemoteImage src={typeof src === "string" ? src : undefined} alt={alt} />,
 
   ul: ({ children }) => <ul className="mt-2.5 ml-4 list-outside list-disc space-y-1 marker:text-faint">{children}</ul>,
   ol: ({ children }) => (

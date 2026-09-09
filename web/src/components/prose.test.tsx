@@ -180,8 +180,9 @@ describe("Prose", () => {
       />
     )
     const images = container.querySelectorAll("img")
-    expect(images).toHaveLength(1)
-    expect(images[0]).toHaveAttribute("src", "https://example.test/a.png")
+    expect(images).toHaveLength(0)
+    fireEvent.click(screen.getByRole("button", { name: "Load image" }))
+    expect(container.querySelector("img")).toHaveAttribute("src", "https://example.test/a.png")
     expect(container.textContent).toContain("local shot")
   })
 
@@ -192,6 +193,7 @@ describe("Prose", () => {
    */
   it("sends no referrer with an agent-supplied remote image", () => {
     const { container } = render(<Prose text="![shot](https://example.test/a.png)" />)
+    fireEvent.click(screen.getByRole("button", { name: "Load image" }))
     expect(container.querySelector("img")).toHaveAttribute("referrerpolicy", "no-referrer")
   })
 
@@ -263,4 +265,17 @@ describe("Prose", () => {
       expect(container.querySelectorAll("th")).toHaveLength(2)
     })
   })
+})
+
+it.each(["https://example.test/marker.png", "http://127.0.0.1:8123/marker.png", "http://192.168.1.1/marker.png"])("requires consent for %s and resets it when streamed URLs change", url => {
+  const view = render(<Prose text={`![fixture](${url})`} />)
+  expect(view.container.querySelector("img")).toBeNull()
+  expect(screen.getByText(url)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "Load image" }))
+  expect(view.container.querySelector("img")).toHaveAttribute("src", url)
+  view.rerender(<Prose text="![fixture](https://other.test/new.png)" />)
+  expect(view.container.querySelector("img")).toBeNull()
+  fireEvent.click(screen.getByRole("button", { name: "Load image" }))
+  fireEvent.error(view.container.querySelector("img")!)
+  expect(screen.getByRole("button", { name: "Retry image" })).toBeInTheDocument()
 })

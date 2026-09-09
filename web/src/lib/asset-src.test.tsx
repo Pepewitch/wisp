@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { clearAssetCache, useAssetSrc } from "./asset-src"
@@ -129,4 +129,38 @@ describe("useAssetSrc", () => {
     expect(result.current).toBeNull()
     expect(fetchAsset).not.toHaveBeenCalled()
   })
+})
+
+it("revokes visible bytes and rejects a stale fetch after task invalidation", async () => {
+  let resolveOld!: (blob: Blob) => void
+  const fetchAsset = vi.fn().mockImplementationOnce(() => new Promise<Blob>(resolve => { resolveOld = resolve }))
+    .mockRejectedValue(new Error("410"))
+  const { result } = renderHook(() => useAssetSrc(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(fetchAsset).toHaveBeenCalledTimes(1))
+  act(() => clearAssetCache("local", "/api/tasks/t1/"))
+  await act(async () => resolveOld(new Blob(["deleted secret"])))
+  expect(result.current).toBeNull()
+  expect(URL.createObjectURL).not.toHaveBeenCalled()
+})
+
+it("invalidates only the selected connection and revokes already displayed assets", async () => {
+  const fetchAsset = vi.fn().mockResolvedValueOnce(new Blob(["secret"])).mockRejectedValue(new Error("404"))
+  const view = renderHook(() => useAssetSrc(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("one", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current).toMatch(/^blob:/))
+  const original = view.result.current
+  act(() => clearAssetCache("two", "/api/tasks/t1/"))
+  expect(view.result.current).toBe(original)
+  act(() => clearAssetCache("one", "/api/tasks/t1/"))
+  expect(view.result.current).toBeNull()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(original)
+})
+
+it("evicts oversized cached bytes once their last viewer unmounts", async () => {
+  const fetchAsset = vi.fn().mockResolvedValue({ size: 65 * 1024 * 1024 })
+  const view = renderHook(() => useAssetSrc(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current).toMatch(/^blob:/))
+  const original = view.result.current
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(original)
+  view.unmount()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(original)
 })

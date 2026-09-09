@@ -21,7 +21,7 @@ if (!label || !worktree) throw new Error("usage: seed-transport-daemon <label> <
 
 const title = `transport task ${label}`;
 const prompt = `transport prompt ${label}`;
-const output = `transport output ${label}\n`;
+const output = process.argv[4] ?? `transport output ${label}\n`;
 const logFile = join(LOG_DIR, `${label}.out.log`);
 const attachmentBytes = Buffer.concat([PNG_BYTES, Buffer.from(`-${label}`)]);
 

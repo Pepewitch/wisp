@@ -138,7 +138,8 @@ async function startDaemon(home: string, entry: string): Promise<{ daemon: Bun.S
   const token = (JSON.parse(await readFile(join(home, "config.json"), "utf8")) as { token: string }).token;
   const checkout = join(home, "checkout");
   await mkdir(checkout);
-  const seed = Bun.spawnSync([process.execPath, join(import.meta.dir, "../wispd/tests/helpers/seed-transport-daemon.ts"), "browser", checkout], {
+  const seed = Bun.spawnSync([process.execPath, join(import.meta.dir, "../wispd/tests/helpers/seed-transport-daemon.ts"), "browser", checkout,
+    `![External fixture](https://example.invalid/wisp-image-fixture.png)\n\n![Local fixture](http://127.0.0.1:${port + 1}/wisp-image-fixture.png)\n\n![Internal fixture](http://10.0.0.1/wisp-image-fixture.png)`], {
     env: { ...process.env, WISP_HOME: home }, stdout: "pipe", stderr: "pipe",
   });
   if (seed.exitCode !== 0) throw new Error(`browser fixture failed: ${seed.stderr.toString()}`);
@@ -174,6 +175,7 @@ function startOtherLocalService(port: number, daemonOrigin: string): Bun.Server<
     hostname: "127.0.0.1",
     fetch(request) {
       const url = new URL(request.url);
+      if (url.pathname === "/wisp-image-fixture.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"), { headers: { "content-type": "image/png" } });
       if (url.pathname === "/cookies") {
         return new Response(JSON.stringify({ cookie: request.headers.get("cookie") }), {
           headers: { "content-type": "application/json" },
@@ -394,6 +396,21 @@ async function checkTerminalHandshake(page: Page, origin: string, home: string):
   check("authenticated attachment bytes decode in the browser without HTTP caching", media.status === 200 && media.width === 1 && media.cache === "private, no-store", JSON.stringify(media));
 }
 
+/** No image URL chosen by Markdown gets a network request before consent. */
+async function checkImageConsent(page: Page, origin: string): Promise<void> {
+  // Block non-fixture destinations even if the renderer regresses. Network events
+  // still record attempted requests, so blocking cannot make this test pass falsely.
+  await page.client.send("Network.setBlockedURLs", { urls: ["https://example.invalid/*", "http://10.0.0.1/*"] }, page.session);
+  page.client.events.length = 0;
+  await page.client.send("Page.navigate", { url: `${origin}/` }, page.session);
+  await waitInPage(page, `Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Load image').length === 3`, "remote image placeholders");
+  const requested = () => page.client.events.filter(e => e.method === "Network.requestWillBeSent" && String((e.params.request as { url?: string }).url).includes("wisp-image-fixture.png"));
+  check("external, loopback, and internal Markdown images make no request before consent", requested().length === 0, JSON.stringify(requested()));
+  await page.evaluate(`Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Load image')[1].click()`);
+  await waitInPage(page, `Array.from(document.images).some(i => i.src.includes('wisp-image-fixture.png') && i.naturalWidth === 1)`, "consented fixture image");
+  check("only the individually consented image loads", requested().length === 1 && String((requested()[0]?.params.request as { url?: string }).url).startsWith("http://127.0.0.1:"), JSON.stringify(requested()));
+}
+
 /** 5: what a page on another local port can get out of the daemon. */
 async function checkOtherLocalPort(page: Page, origin: string, attackerOrigin: string, token: string): Promise<void> {
   await page.client.send("Page.navigate", { url: `${attackerOrigin}/` }, page.session);
@@ -497,10 +514,20 @@ async function main(): Promise<void> {
     page = browser.page;
 
     await checkTerminalHandshake(page, started.origin, home);
+    await checkImageConsent(page, started.origin);
+    // Reset this fixture's selection before the clean-app navigation below.
+    await page.evaluate(`Object.keys(localStorage).filter(key => key !== 'wisp_token').forEach(key => localStorage.removeItem(key))`);
+    await page.client.send("Page.navigate", { url: "about:blank" }, page.session);
+    await waitInPage(page, 'location.href === "about:blank"', "fixture UI disposal");
     const archived = await fetch(`${started.origin}/api/tasks/tspike/archive`, {
       method: "POST", headers: { authorization: `Bearer ${started.token}`, "content-type": "application/json" }, body: JSON.stringify({ force: true }),
     });
     if (!archived.ok) throw new Error(`fixture archive failed: ${await archived.text()}`);
+    const cleanupDeadline = Date.now() + 8000;
+    while ((await (await fetch(`${started.origin}/api/tasks?cleanup=1`, { headers: { authorization: `Bearer ${started.token}` } })).json() as unknown[]).length > 0) {
+      if (Date.now() > cleanupDeadline) throw new Error("fixture cleanup did not finish");
+      await sleep(50);
+    }
     // App-load assertions concern its own navigation, not the JSON document's favicon.
     page.client.events.length = 0;
     await checkTheAppLoads(page, started.origin);

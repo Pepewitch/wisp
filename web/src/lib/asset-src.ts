@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 
 import { useDaemonTransport } from "./runtime"
 import type { DaemonTransport } from "./transport"
@@ -27,8 +27,15 @@ const MAX_CACHED_ASSETS = 32
 
 interface CacheEntry {
   url: string
+  bytes: number
 }
 
+let revision = 0
+const listeners = new Set<() => void>()
+const subscribe = (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn) } }
+const snapshot = () => revision
+const notify = () => { revision++; for (const fn of listeners) fn() }
+const MAX_CACHED_BYTES = 64 * 1024 * 1024
 const cache = new Map<string, CacheEntry>()
 const pending = new Map<string, Promise<string>>()
 /**
@@ -49,7 +56,7 @@ const mountedAssets = new Map<string, number>()
  */
 function evictIfNeeded(): void {
   for (const [key, entry] of cache) {
-    if (cache.size <= MAX_CACHED_ASSETS) return
+    if (cache.size <= MAX_CACHED_ASSETS && [...cache.values()].reduce((n, e) => n + e.bytes, 0) <= MAX_CACHED_BYTES) return
     if ((mountedAssets.get(key) ?? 0) > 0) continue
     cache.delete(key)
     URL.revokeObjectURL(entry.url)
@@ -65,14 +72,15 @@ function release(key: string): void {
   const next = (mountedAssets.get(key) ?? 0) - 1
   if (next > 0) mountedAssets.set(key, next)
   else mountedAssets.delete(key)
+  evictIfNeeded()
 }
 
-/** Test seam: drop every cached blob URL. */
-export function clearAssetCache(): void {
-  for (const entry of cache.values()) URL.revokeObjectURL(entry.url)
-  cache.clear()
-  pending.clear()
-  mountedAssets.clear()
+/** Invalidate only the originating connection/task; pending responses cannot repopulate it. */
+export function clearAssetCache(connectionId?: string, pathPrefix = ""): void {
+  const matches = (key: string) => connectionId === undefined || key.startsWith(`${connectionId}\n${pathPrefix}`)
+  for (const [key, entry] of cache) if (matches(key)) { URL.revokeObjectURL(entry.url); cache.delete(key) }
+  for (const key of pending.keys()) if (matches(key)) pending.delete(key)
+  notify()
 }
 
 async function loadAsset(
@@ -82,13 +90,15 @@ async function loadAsset(
 ): Promise<string> {
   const inFlight = pending.get(key)
   if (inFlight) return await inFlight
-  const request = (async () => {
+  const request = Promise.resolve().then(async () => {
+    if (pending.get(key) !== request) throw new Error("Asset request invalidated")
     const blob = await transport.fetchAsset!(path)
+    if (pending.get(key) !== request) throw new Error("Asset request invalidated")
     const url = URL.createObjectURL(blob)
-    cache.set(key, { url })
+    cache.set(key, { url, bytes: blob.size })
     evictIfNeeded()
     return url
-  })().finally(() => pending.delete(key))
+  }).finally(() => { if (pending.get(key) === request) pending.delete(key) })
   pending.set(key, request)
   return await request
 }
@@ -100,6 +110,7 @@ async function loadAsset(
  */
 export function useAssetSrc(path: string | null): string | null {
   const transport = useDaemonTransport()
+  const generation = useSyncExternalStore(subscribe, snapshot, snapshot)
   // A transport whose own hop is credentialed (the desktop proxy) needs no
   // fetch at all, so the URL is the answer during render.
   const direct =
@@ -110,14 +121,19 @@ export function useAssetSrc(path: string | null): string | null {
   const cached = key === null ? null : (cache.get(key)?.url ?? null)
   // Tagged with its key, so a resolved URL is never rendered for the image
   // that replaced it.
-  const [loaded, setLoaded] = useState<{ key: string; url: string } | null>(null)
+  const [, setLoaded] = useState<{ key: string; url: string } | null>(null)
+
+  useEffect(() => {
+    if (key === null || direct !== null) return
+    retain(key)
+    return () => release(key)
+  }, [key, direct])
 
   useEffect(() => {
     if (path === null || key === null || direct !== null) return
     // Retained for as long as this component renders it — before the fetch
     // resolves, too, since that is when the entry appears. Eviction may drop
     // an unmounted entry; it may not revoke one that is on screen.
-    retain(key)
     let live = true
     if (cached === null) {
       void loadAsset(transport, key, path).then(
@@ -132,9 +148,8 @@ export function useAssetSrc(path: string | null): string | null {
     }
     return () => {
       live = false
-      release(key)
     }
-  }, [transport, path, key, direct, cached])
+  }, [transport, path, key, direct, cached, generation])
 
-  return direct ?? cached ?? (loaded?.key === key ? loaded.url : null)
+  return direct ?? cached
 }
