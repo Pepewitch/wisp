@@ -1,3 +1,4 @@
+import { openFetchEventStream } from "./fetch-event-source"
 import {
   ApiError,
   LOCAL_CONNECTION_ID,
@@ -10,6 +11,15 @@ export { ApiError } from "./transport"
 /**
  * Same-origin authentication used only by the daemon-served browser runtime.
  * Desktop transports keep credentials in native code and do not use this key.
+ *
+ * This token is the browser's ONLY credential now. The daemon used to also
+ * mint an HttpOnly `wisp_token` cookie, because `EventSource`, `WebSocket`,
+ * and `<img>` cannot send headers — but a cookie is scoped to host and path,
+ * never to port (RFC 6265 §8.5), so any other HTTP service on 127.0.0.1
+ * received the daemon's full-control token in its Cookie header (SEC-01).
+ * Every one of those three channels is now explicit instead: `fetch`
+ * streaming for SSE, an in-band first frame for the terminal socket, and an
+ * authenticated fetch to a blob URL for media.
  */
 const TOKEN_KEY = "wisp_token"
 
@@ -37,6 +47,12 @@ export function failureDisplay(error: unknown): {
 
 export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? ""
+}
+
+/** The bearer header, or nothing when this browser has no token yet. */
+function authHeaders(): Record<string, string> {
+  const token = getToken()
+  return token ? { authorization: `Bearer ${token}` } : {}
 }
 
 /* ---------------- auth gate (drives AuthDialog) ---------------- */
@@ -74,8 +90,14 @@ export function requireAuth(): Promise<void> {
   return gate
 }
 
-/** POST /api/session — trade a token for the HttpOnly same-origin cookie. */
-export async function mintSession(token: string): Promise<void> {
+/**
+ * POST /api/session — ask the daemon whether this token is the right one.
+ *
+ * It mints nothing. The dialog calls it so a wrong token is refused before it
+ * is stored, and an upgraded daemon answers it by expiring the pre-0.4
+ * root-token cookie a browser may still be holding.
+ */
+export async function verifyToken(token: string): Promise<void> {
   const response = await fetch("/api/session", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -108,9 +130,7 @@ async function request<T>(
   options: DaemonRequestOptions = {}
 ): Promise<T> {
   for (;;) {
-    const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.authorization = `Bearer ${token}`
+    const headers: Record<string, string> = { ...authHeaders() }
 
     let body: string | undefined
     if (options.body !== undefined) {
@@ -149,20 +169,33 @@ async function ensureReady(): Promise<void> {
   const token = getToken()
   if (token) {
     try {
-      await mintSession(token)
+      await verifyToken(token)
       return
     } catch (error) {
       // the stored token is stale — drop it before the modal asks again
       if (error instanceof ApiError && error.status === 401)
         localStorage.removeItem(TOKEN_KEY)
     }
-  } else {
-    // the HttpOnly cookie can outlive localStorage: a successful headerless
-    // request proves EventSource and media requests are already authenticated
-    const probe = await fetch("/api/outbox").catch(() => null)
-    if (probe?.ok) return
   }
   await requireAuth()
+}
+
+/**
+ * Fetch a protected asset for display. There is no ambient credential a
+ * `<img src>` could inherit, so media is fetched with the bearer header and
+ * shown from a blob URL (`useAssetSrc` owns the caching and revocation).
+ */
+async function fetchAsset(path: string): Promise<Blob> {
+  const response = await fetch(path, {
+    headers: authHeaders(),
+    cache: "no-store",
+  }).catch(() => null)
+  if (!response) throw new ApiError("Could not reach the daemon", 0)
+  if (!response.ok) {
+    if (response.status === 401) void requireAuth()
+    throw new ApiError(`asset error: ${response.status}`, response.status)
+  }
+  return await response.blob()
 }
 
 function webSocketUrl(path: string): string {
@@ -175,8 +208,14 @@ function webSocketUrl(path: string): string {
 export const sameOriginWebTransport: Readonly<DaemonTransport> = Object.freeze({
   connectionId: LOCAL_CONNECTION_ID,
   request,
-  openEventStream: (path: string) => new EventSource(path),
+  openEventStream: (path: string) =>
+    openFetchEventStream(path, { headers: authHeaders }),
   openWebSocket: (path: string) => new WebSocket(webSocketUrl(path)),
+  // Same-origin path, kept for a caller that only needs to name the asset;
+  // fetchAsset is what actually loads one, because this URL carries no
+  // credential.
   assetUrl: (path: string) => path,
+  fetchAsset,
+  socketToken: () => getToken() || null,
   ensureReady,
 })

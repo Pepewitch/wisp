@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { completeAuth, mintSession } from "@/lib/api";
+import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
@@ -389,13 +389,14 @@ export function useReprobeHarnesses() {
 /* ---------------- auth ---------------- */
 
 /**
- * POST /api/session — trade the token for the HttpOnly cookie EventSource
- * needs. Nothing is invalidated: every request parked on the 401 gate retries
- * itself once `completeAuth` releases it.
+ * POST /api/session — check the token before storing it. Nothing is
+ * invalidated: every request parked on the 401 gate retries itself once
+ * `completeAuth` releases it, and each retry carries the token as a bearer
+ * header (there is no ambient session to mint — SEC-01).
  */
-export function useMintSession() {
+export function useVerifyToken() {
   return useMutation({
-    mutationFn: (token: string) => mintSession(token),
+    mutationFn: (token: string) => verifyToken(token),
     onSuccess: (_data, token) => completeAuth(token),
   });
 }

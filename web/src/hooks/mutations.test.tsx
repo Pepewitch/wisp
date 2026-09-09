@@ -10,13 +10,13 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({
   request: vi.fn(),
-  mintSession: vi.fn(),
+  verifyToken: vi.fn(),
   completeAuth: vi.fn(),
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  mintSession: mocks.mintSession,
+  verifyToken: mocks.verifyToken,
   completeAuth: mocks.completeAuth,
 }))
 
@@ -28,7 +28,7 @@ import {
   useFreshSession,
   useInterruptTask,
   useInstallUpdate,
-  useMintSession,
+  useVerifyToken,
   usePushTask,
   useRefreshUpdateStatus,
   useRenameTask,
@@ -70,8 +70,8 @@ const settles = (assert: () => void) => waitFor(assert)
 beforeEach(() => {
   mocks.request.mockReset()
   mocks.request.mockResolvedValue({})
-  mocks.mintSession.mockReset()
-  mocks.mintSession.mockResolvedValue(undefined)
+  mocks.verifyToken.mockReset()
+  mocks.verifyToken.mockResolvedValue(undefined)
   mocks.completeAuth.mockReset()
 })
 
@@ -487,24 +487,24 @@ describe("re-probing harnesses", () => {
   })
 })
 
-describe("minting a session", () => {
+describe("verifying the browser token", () => {
   it("releases the 401 gate with the token that worked, and stales nothing", async () => {
     const { spy, wrapper } = harness()
-    const { result } = renderHook(() => useMintSession(), { wrapper })
+    const { result } = renderHook(() => useVerifyToken(), { wrapper })
 
     await act(async () => {
       await result.current.mutateAsync("wisp-token")
     })
 
-    expect(mocks.mintSession).toHaveBeenCalledWith("wisp-token")
+    expect(mocks.verifyToken).toHaveBeenCalledWith("wisp-token")
     expect(mocks.completeAuth).toHaveBeenCalledWith("wisp-token")
     expect(invalidated(spy)).toEqual([])
   })
 
   it("a refused token never releases the gate", async () => {
-    mocks.mintSession.mockRejectedValue(new Error("unauthorized — check `wisp token` on the daemon host"))
+    mocks.verifyToken.mockRejectedValue(new Error("unauthorized — check `wisp token` on the daemon host"))
     const { wrapper } = harness()
-    const { result } = renderHook(() => useMintSession(), { wrapper })
+    const { result } = renderHook(() => useVerifyToken(), { wrapper })
 
     await act(async () => {
       await result.current.mutateAsync("wrong").catch(() => undefined)

@@ -53,12 +53,31 @@ manifest, artifact hash, and embedded build identity. macOS delegates
 installation and checksum verification to Homebrew. Neither path accepts a
 caller-provided URL or uses `sudo`.
 
-The browser keeps the bearer token in its origin-scoped `localStorage` for
-ordinary API requests and exchanges it for an HttpOnly, SameSite=Strict cookie
-used by browser-managed streams, terminals, and media. Tokens in URL query
-parameters are not accepted. Treat any script running in the Wisp origin as
-able to read the bearer token; the self-contained bundle and private encrypted
-transport remain part of the security boundary.
+The browser keeps the bearer token in its origin-scoped `localStorage` and
+sends it explicitly on every hop: API requests, the event streams (served over
+`fetch` rather than `EventSource`, which cannot set a header), the terminal
+socket (whose first frame carries the token, because a WebSocket handshake
+cannot set one either), and attachment media (fetched, then rendered from a
+blob URL). Nothing is authenticated ambiently.
+
+Releases before 0.4 also minted an HttpOnly `wisp_token` cookie whose value was
+the root token. Cookies are scoped to host and path, never to port
+(RFC 6265 §8.5), so any other HTTP service on the same host — a development
+server, something behind a local tunnel — received a full-control credential in
+its `Cookie` header. That exchange is gone; an upgraded daemon expires the old
+cookie the next time a browser authenticates, and no cookie authenticates a
+request. If a browser used an affected release on a host that also ran
+untrusted HTTP services, rotate the token (`wisp token --rotate`, then restart
+the daemon).
+
+A terminal upgrade is command execution, so it is also origin-checked: the
+daemon refuses a handshake whose `Origin` is not its own, another port on the
+same host included. Set `WISP_ALLOWED_ORIGINS` when a reverse proxy rewrites
+`Host` and the daemon therefore cannot derive the browser's origin itself.
+
+Tokens in URL query parameters are not accepted. Treat any script running in
+the Wisp origin as able to read the bearer token; the self-contained bundle and
+private encrypted transport remain part of the security boundary.
 
 Wisp Desktop keeps remote tokens in the macOS Keychain and reads Local's token
 from the standard Wisp profile into native process memory. The webview receives

@@ -15,7 +15,7 @@ export {
   failureDisplay,
   failureReason,
   getToken,
-  mintSession,
+  verifyToken,
   requireAuth,
   type AuthState,
 } from "./web-transport"

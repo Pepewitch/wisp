@@ -75,7 +75,7 @@ function handlers(): TerminalClientHandlers & { calls: Record<string, unknown[][
 }
 
 /** Build a connection + the mock socket its factory will hand out. */
-function setup(current: () => boolean = () => true) {
+function setup(current: () => boolean = () => true, socketToken?: () => string | null) {
   const h = handlers();
   let socket: MockSocket | null = null;
   const conn = new TerminalConnection(
@@ -87,6 +87,7 @@ function setup(current: () => boolean = () => true) {
         socket = new MockSocket(url);
         return socket as unknown as WebSocket;
       },
+      socketToken,
     },
     current,
   );
@@ -287,6 +288,49 @@ describe("TerminalConnection framing", () => {
     second.socket().message({ type: "hello", pty: true, cwd: "/wt" });
     second.socket().closeFromServer(1000);
     expect(second.h.calls.close).toEqual([[1000, false]]);
+  });
+});
+
+describe("TerminalConnection authorization handshake (SEC-01)", () => {
+  it("answers auth_required with the transport's token, and nothing else", () => {
+    const { conn, h, socket } = setup(() => true, () => "synthetic-token");
+    conn.connect();
+    socket().open();
+
+    socket().message({ type: "auth_required" });
+
+    expect(socket().sent.map((frame) => JSON.parse(frame))).toEqual([
+      { type: "auth", token: "synthetic-token" },
+    ]);
+    // Nothing is rendered off the back of the handshake itself.
+    expect(h.calls.hello).toHaveLength(0);
+    expect(h.calls.error).toHaveLength(0);
+  });
+
+  /**
+   * The desktop transport authenticates its own hop and never sees this frame.
+   * If it somehow did, waiting out the daemon's deadline in silence would look
+   * like a hung terminal, so say what happened instead.
+   */
+  it("says so when the connection has no in-band credential to offer", () => {
+    const { conn, h, socket } = setup();
+    conn.connect();
+    socket().open();
+
+    socket().message({ type: "auth_required" });
+
+    expect(socket().sent).toHaveLength(0);
+    expect(h.calls.error[0]![0]).toMatch(/token this connection cannot provide/);
+  });
+
+  it("attaches on the hello that follows the handshake", () => {
+    const { conn, h, socket } = setup(() => true, () => "synthetic-token");
+    conn.connect();
+    socket().open();
+    socket().message({ type: "auth_required" });
+    socket().message({ type: "hello", pty: true, cwd: "/wt/t1", replay: "$ " });
+
+    expect(h.calls.hello).toEqual([[{ pty: true, cwd: "/wt/t1", replay: "$ " }]]);
   });
 });
 

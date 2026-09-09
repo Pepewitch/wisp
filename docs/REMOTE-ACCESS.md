@@ -38,9 +38,16 @@ wisp token
 ```
 
 Paste that token into the Wisp authentication screen once. The browser keeps
-it in origin-scoped storage for ordinary API requests and also trades it for an
-HttpOnly, SameSite=Strict cookie used by streams, terminals, and media. Test a
-harmless follow-up on a disposable task before relying on the connection.
+it in origin-scoped storage and sends it as a bearer token on every request,
+stream, terminal socket, and image; nothing is authenticated by a cookie. Test
+a harmless follow-up on a disposable task before relying on the connection.
+
+If the proxy rewrites `Host`, the daemon cannot derive the browser's own origin
+and will refuse terminal upgrades from it. Name the public origin explicitly:
+
+```sh
+WISP_ALLOWED_ORIGINS=https://wisp.your-tailnet.ts.net wisp serve
+```
 
 Wisp Desktop can use the same private HTTPS address. Click `+`, enter the Serve
 URL and the token printed on the daemon host, confirm the authenticated daemon

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { authorized, postSession, route } from "../src/daemon";
+import { ALLOWED_ORIGINS_ENV, originVerdict } from "../src/routes/auth";
 import { closeTurnBroker, openTurnBroker, TurnBroker } from "../src/recording/broker";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
 import { formatSteerNote } from "../src/turn-notes";
@@ -93,22 +94,20 @@ function sseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
   };
 }
 
-describe("POST /api/session (cookie minting for browser streaming clients)", () => {
-  test("the right token gets an HttpOnly cookie; anything else is a 401", async () => {
+describe("POST /api/session (token verification for the browser auth dialog)", () => {
+  test("the right token is accepted; anything else is a 401", async () => {
     const ok = await postSession(
       new Request("http://wisp.test/api/session", { method: "POST", body: JSON.stringify({ token: "testtoken" }) }),
       cfg,
     );
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ ok: true });
-    expect(ok.headers.get("set-cookie")).toBe("wisp_token=testtoken; Path=/; HttpOnly; SameSite=Strict");
 
     const wrong = await postSession(
       new Request("http://wisp.test/api/session", { method: "POST", body: JSON.stringify({ token: "nope" }) }),
       cfg,
     );
     expect(wrong.status).toBe(401);
-    expect(wrong.headers.get("set-cookie")).toBeNull();
 
     // a near-miss (differs only in the last char) is exactly as unauthorized
     const nearMiss = await postSession(
@@ -116,34 +115,101 @@ describe("POST /api/session (cookie minting for browser streaming clients)", () 
       cfg,
     );
     expect(nearMiss.status).toBe(401);
-    expect(nearMiss.headers.get("set-cookie")).toBeNull();
 
     const garbage = await postSession(new Request("http://wisp.test/api/session", { method: "POST", body: "{" }), cfg);
     expect(garbage.status).toBe(401);
   });
+
+  /** SEC-01: the route no longer mints an ambient credential — it retires the one older releases minted. */
+  test("mints no token cookie and expires the pre-0.4 one", async () => {
+    const ok = await postSession(
+      new Request("http://wisp.test/api/session", { method: "POST", body: JSON.stringify({ token: "testtoken" }) }),
+      cfg,
+    );
+    const cookie = ok.headers.get("set-cookie") ?? "";
+    expect(cookie).not.toContain("wisp_token=testtoken");
+    expect(cookie).toContain("wisp_token=;");
+    expect(cookie).toContain("Max-Age=0");
+  });
+
+  /** A body that is valid JSON but not an object must not become a 500 (ENG-09). */
+  test("a non-object JSON body is a 401, not a crash", async () => {
+    for (const body of ["null", "[]", '"testtoken"', "7"]) {
+      const response = await postSession(
+        new Request("http://wisp.test/api/session", { method: "POST", body }),
+        cfg,
+      );
+      expect(response.status).toBe(401);
+    }
+  });
 });
 
-describe("authorized() — bearer header OR wisp_token cookie", () => {
+describe("authorized() — the bearer header, and nothing ambient", () => {
   const at = (init?: RequestInit) => authorized(new Request("http://wisp.test/api/tasks", init), cfg);
 
   test("accepts the bearer header (the CLI path)", () => {
     expect(at({ headers: { authorization: "Bearer testtoken" } })).toBe(true);
   });
 
-  test("accepts a matching wisp_token cookie, alone or among others", () => {
-    expect(at({ headers: { cookie: "wisp_token=testtoken" } })).toBe(true);
-    expect(at({ headers: { cookie: "other=1; wisp_token=testtoken; theme=dark" } })).toBe(true);
+  /**
+   * SEC-01. `wisp_token` used to be accepted here and its value WAS the root
+   * token; cookies are scoped to host, never to port, so every other local
+   * HTTP service received a full-control credential. No cookie authenticates
+   * anything now, including one carrying the correct token.
+   */
+  test("rejects the retired wisp_token cookie even when it holds the real token", () => {
+    expect(at({ headers: { cookie: "wisp_token=testtoken" } })).toBe(false);
+    expect(at({ headers: { cookie: "other=1; wisp_token=testtoken; theme=dark" } })).toBe(false);
   });
 
-  test("rejects a wrong cookie, a wrong bearer, and no auth", () => {
-    expect(at({ headers: { cookie: "wisp_token=wrong" } })).toBe(false);
+  test("rejects a wrong bearer and no auth at all", () => {
     expect(at({ headers: { authorization: "Bearer wrong" } })).toBe(false);
     // a near-miss differs only in the last char — still not the token
     expect(at({ headers: { authorization: "Bearer testtokeo" } })).toBe(false);
-    expect(at({ headers: { cookie: "wisp_token=testtokeo" } })).toBe(false);
     expect(at()).toBe(false);
-    // a lookalike cookie name must not match
-    expect(at({ headers: { cookie: "wisp_tokenx=testtoken" } })).toBe(false);
+    // the token is not a credential anywhere but the Authorization header
+    expect(at({ headers: { "x-wisp-token": "testtoken" } })).toBe(false);
+  });
+});
+
+describe("originVerdict() — whose page sent this", () => {
+  const verdict = (headers?: Record<string, string>) => {
+    const url = new URL("http://127.0.0.1:18710/api/tasks/t1/terminal");
+    return originVerdict(new Request(url, { headers }), url);
+  };
+
+  test("this daemon's own origin is allowed", () => {
+    expect(verdict({ origin: "http://127.0.0.1:18710" })).toBe("allowed");
+  });
+
+  /** SEC-02: a port is not a boundary for cookies, but it IS a distinct origin. */
+  test("another port on the same host is foreign", () => {
+    expect(verdict({ origin: "http://127.0.0.1:19999" })).toBe("foreign");
+  });
+
+  test("a sibling host, an unrelated site, a scheme change, and null are all foreign", () => {
+    expect(verdict({ origin: "http://localhost:18710" })).toBe("foreign");
+    expect(verdict({ origin: "https://attacker.example" })).toBe("foreign");
+    expect(verdict({ origin: "https://127.0.0.1:18710" })).toBe("foreign");
+    expect(verdict({ origin: "null" })).toBe("foreign");
+  });
+
+  test("no Origin at all is a non-browser client, reported as absent", () => {
+    expect(verdict()).toBe("absent");
+  });
+
+  test("a reverse-proxy origin can be allowed deliberately, and only exactly", () => {
+    const previous = process.env[ALLOWED_ORIGINS_ENV];
+    process.env[ALLOWED_ORIGINS_ENV] = "https://wisp.example.ts.net , https://other.example";
+    try {
+      expect(verdict({ origin: "https://wisp.example.ts.net" })).toBe("allowed");
+      expect(verdict({ origin: "https://other.example" })).toBe("allowed");
+      expect(verdict({ origin: "https://wisp.example.ts.net.attacker.example" })).toBe("foreign");
+      expect(verdict({ origin: "http://wisp.example.ts.net" })).toBe("foreign");
+    } finally {
+      if (previous === undefined) delete process.env[ALLOWED_ORIGINS_ENV];
+      else process.env[ALLOWED_ORIGINS_ENV] = previous;
+    }
   });
 });
 

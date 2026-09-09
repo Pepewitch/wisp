@@ -36,7 +36,7 @@ process.
 | --- | --- | --- |
 | Daemon | projects, tasks, turns, messages, worktrees, harness execution, logs, terminals, lifecycle, update state | desktop tabs or client layout |
 | Shared React app | presentation, connection-scoped query state, navigation, drafts, attachments, stream and terminal clients | daemon credentials or task truth |
-| Browser runtime | one implicit same-origin daemon, browser session exchange and cookie | remote connection registry |
+| Browser runtime | one implicit same-origin daemon, bearer credential for every hop | remote connection registry |
 | Desktop native core | Local discovery, remote connection metadata, Keychain credentials, native folder picker, authenticated loopback proxy, macOS task notifications, signed application updates | projects, tasks, or a child daemon |
 | CLI | task/project API client plus local profile, install, and diagnostic commands | alternate daemon business logic |
 
@@ -67,9 +67,12 @@ is no separate desktop fork of the React application.
 ## Browser request path
 
 The daemon serves the generated UI bundle. The browser keeps the token in
-origin-scoped `localStorage` for ordinary same-origin API requests and exchanges
-it for an HttpOnly, SameSite=Strict cookie so browser-managed EventSource,
-WebSocket, and media requests can authenticate. Tokens never belong in URLs.
+origin-scoped `localStorage` and presents it explicitly on every hop, because
+nothing is authenticated ambiently: ordinary API requests carry the bearer
+header, event streams run over `fetch` (`EventSource` cannot set headers), the
+terminal socket authenticates in its first frame (a WebSocket handshake cannot
+set headers either), and media is fetched and rendered from a blob URL.
+Tokens never belong in URLs, and no cookie is a credential.
 
 This runtime intentionally represents one daemon. Remote browser access is a
 networking concern handled with a private HTTPS proxy or SSH tunnel, not a

@@ -14,7 +14,9 @@ generate it, and never edit, stage, or commit it.
 Every UI change must classify its impact on both clients:
 
 - The browser runtime represents one implicit same-origin daemon and owns its
-  token-to-cookie session flow.
+  token: it is the credential on every hop, including the ones a browser
+  cannot put a header on (see `fetch-event-source.ts`, the terminal socket's
+  `auth` frame, and `useAssetSrc`).
 - The desktop runtime represents Local plus saved remotes. Native code owns
   targets and credentials; React receives immutable, connection-qualified
   `DaemonTransport` instances.
@@ -247,7 +249,7 @@ The same rule, applied to our own name. **Wisp** is the product: the header, the
 page title, the README, anything the app says about itself. **`wisp`** stays
 lowercase wherever it is literal data a person types or a machine reads — the
 CLI (`wisp serve`), the config directory (`~/.wisp`), the branch prefix
-(`wisp/t5qmha-…`), the cookie (`wisp_token`), the package name, and every path.
+(`wisp/t5qmha-…`), the storage key (`wisp_token`), the package name, and every path.
 
 The test: could you paste it into a shell or a config file? Then it is lowercase.
 Is it the name of the thing? Then it is `Wisp`.

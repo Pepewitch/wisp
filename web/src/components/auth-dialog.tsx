@@ -1,19 +1,19 @@
 import { useState, useSyncExternalStore } from "react"
 
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
-import { useMintSession } from "@/hooks/mutations"
+import { useVerifyToken } from "@/hooks/mutations"
 import { authStore } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 /**
  * The 401 gate. `api()` parks every in-flight request on requireAuth(); this
- * dialog resolves it by trading the token for the HttpOnly cookie, and the
- * parked requests then retry themselves.
+ * dialog resolves it by checking the token and storing it for this browser,
+ * and the parked requests then retry themselves with it as a bearer header.
  */
 export function AuthDialog() {
   const auth = useSyncExternalStore(authStore.subscribe, authStore.snapshot)
   const [value, setValue] = useState("")
-  const mint = useMintSession()
+  const mint = useVerifyToken()
   if (!auth.open) return null
 
   const submit = () => {
@@ -33,7 +33,7 @@ export function AuthDialog() {
         <h2 className="text-[14.5px] font-semibold tracking-[-0.01em]">This daemon needs a token</h2>
         <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
           Run <code className="rounded bg-accent-wash px-1.5 py-px text-[11.5px] text-accent-soft">wisp token</code> on
-          the daemon host and paste it here. It becomes an HttpOnly cookie, so this is once per browser.
+          the daemon host and paste it here. It is saved in this browser, so this is once per browser.
         </p>
         <input
           autoFocus

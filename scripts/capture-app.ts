@@ -211,8 +211,20 @@ async function main(): Promise<void> {
     await client.send("Page.enable", {}, sessionId);
     await client.send("Runtime.enable", {}, sessionId);
     await client.send("Network.enable", {}, sessionId);
-    const cookie = await client.send("Network.setCookie", { name: "wisp_token", value: token, url: APP_ORIGIN }, sessionId);
-    if (cookie.success === false) throw new Error("Chrome rejected the wisp_token cookie");
+    // The app authenticates every request, stream, socket, and image with the
+    // bearer token it keeps in localStorage — there is no ambient cookie to
+    // set any more (SEC-01), so seed the storage the app actually reads.
+    // Runtime.addBinding-free and idempotent: the script runs before any app
+    // code on every navigation this session performs.
+    await client.send(
+      "Page.addScriptToEvaluateOnNewDocument",
+      {
+        // about:blank has an opaque origin with no storage; the app's own
+        // origin is the navigation that matters.
+        source: `try { localStorage.setItem("wisp_token", ${JSON.stringify(token)}); } catch {}`,
+      },
+      sessionId,
+    );
 
     await capture(client, sessionId, outdir, "desktop", APP_URL, 1280, 900, false);
     await capture(client, sessionId, outdir, "mobile", APP_URL, 390, 844, true);

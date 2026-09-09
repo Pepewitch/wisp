@@ -1,9 +1,25 @@
 import { useState } from "react"
 
 import { ImageViewer } from "@/components/image-viewer"
+import { useAssetSrc } from "@/lib/asset-src"
 import { attachmentUrl, formatBytes } from "@/lib/attachments"
-import { useDaemonTransport } from "@/lib/runtime"
 import type { TurnAttachment } from "@/lib/types"
+
+/**
+ * One thumbnail. Its own component because resolving a protected asset is a
+ * hook (`useAssetSrc`), and the gallery renders these in a list.
+ */
+function AttachmentThumb({ path, name }: { path: string; name: string }) {
+  const src = useAssetSrc(path)
+  return (
+    <img
+      src={src ?? undefined}
+      alt={name}
+      loading="lazy"
+      className="size-14 rounded-sm object-cover"
+    />
+  )
+}
 
 /**
  * A past turn's images, under its prompt bubble (A1a). Right-aligned with the
@@ -21,13 +37,14 @@ import type { TurnAttachment } from "@/lib/types"
 export function AttachmentGallery({
   attachments,
   archived,
-  urlFor,
+  pathFor,
   testId,
   removedReason,
 }: {
   attachments: TurnAttachment[]
   archived: boolean
-  urlFor: (name: string) => string
+  /** The daemon API path for one attachment; the transport supplies the credential. */
+  pathFor: (name: string) => string
   testId?: string
   removedReason?: string
 }) {
@@ -59,12 +76,7 @@ export function AttachmentGallery({
             className="cursor-pointer rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={() => setOpenIndex(i)}
           >
-            <img
-              src={urlFor(a.name)}
-              alt={a.name}
-              loading="lazy"
-              className="size-14 rounded-sm object-cover"
-            />
+            <AttachmentThumb path={pathFor(a.name)} name={a.name} />
           </button>
         ))}
       </div>
@@ -73,7 +85,7 @@ export function AttachmentGallery({
         index={openIndex}
         onIndex={setOpenIndex}
         onClose={() => setOpenIndex(null)}
-        urlFor={urlFor}
+        pathFor={pathFor}
       />
     </>
   )
@@ -90,12 +102,11 @@ export function TurnAttachments({
   attachments: TurnAttachment[]
   archived: boolean
 }) {
-  const transport = useDaemonTransport()
   return (
     <AttachmentGallery
       attachments={attachments}
       archived={archived}
-      urlFor={(name) => transport.assetUrl(attachmentUrl(taskId, turn, name))}
+      pathFor={(name) => attachmentUrl(taskId, turn, name)}
       testId="turn-attachments"
     />
   )

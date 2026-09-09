@@ -65,7 +65,7 @@ describe("the same-origin web transport", () => {
     })
   })
 
-  it("mints the EventSource cookie from the saved browser token", async () => {
+  it("verifies the saved token instead of minting an ambient session", async () => {
     localStorage.setItem("wisp_token", "synthetic-browser-token")
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -80,33 +80,81 @@ describe("the same-origin web transport", () => {
     })
   })
 
-  it("accepts an existing cookie after a headerless same-origin probe", async () => {
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response(null, { status: 200 }))
+  /**
+   * SEC-01. There used to be a headerless probe here, because the daemon's
+   * HttpOnly cookie could outlive localStorage and prove that streams and
+   * media were already authenticated. No such credential exists now, so a
+   * browser without a stored token has nothing to fall back on and must ask.
+   */
+  it("asks for a token rather than probing for an ambient credential", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
 
-    await sameOriginWebTransport.ensureReady()
+    const pending = sameOriginWebTransport.ensureReady()
+    await vi.waitFor(() => expect(authStore.snapshot().open).toBe(true))
+    completeAuth("fresh-synthetic-token")
+    await pending
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/outbox")
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it("keeps stream and asset paths same-origin and derives the websocket scheme", () => {
-    const eventUrls: string[] = []
-    const socketUrls: string[] = []
-    class FakeEventSource {
-      constructor(url: string | URL) {
-        eventUrls.push(String(url))
+  it("streams events over an authenticated fetch, never an EventSource", () => {
+    localStorage.setItem("wisp_token", "synthetic-browser-token")
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }))
+    class ForbiddenEventSource {
+      constructor() {
+        throw new Error("the browser runtime must not use EventSource")
       }
     }
+    vi.stubGlobal("EventSource", ForbiddenEventSource)
+
+    const stream = sameOriginWebTransport.openEventStream("/api/events")
+    stream.close()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/events")
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+      accept: "text/event-stream",
+      authorization: "Bearer synthetic-browser-token",
+    })
+  })
+
+  it("fetches media with the bearer header", async () => {
+    localStorage.setItem("wisp_token", "synthetic-browser-token")
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("bytes", { status: 200 }))
+
+    const path = "/api/tasks/duplicate-task/attachments/1/image.png"
+    // Asserted by CONTENT, not by `instanceof Blob`: jsdom and Node each bring
+    // their own Blob class, so identity depends on which one the environment
+    // installed. This passed locally and failed on CI for exactly that reason.
+    const blob = await sameOriginWebTransport.fetchAsset!(path)
+    expect(await blob.text()).toBe("bytes")
+
+    expect(fetchMock).toHaveBeenCalledWith(path, {
+      headers: { authorization: "Bearer synthetic-browser-token" },
+      cache: "no-store",
+    })
+  })
+
+  it("hands the terminal socket a credential to send in-band", () => {
+    localStorage.setItem("wisp_token", "synthetic-browser-token")
+    expect(sameOriginWebTransport.socketToken!()).toBe("synthetic-browser-token")
+    localStorage.clear()
+    expect(sameOriginWebTransport.socketToken!()).toBeNull()
+  })
+
+  it("keeps asset paths same-origin and derives the websocket scheme", () => {
+    const socketUrls: string[] = []
     class FakeWebSocket {
       constructor(url: string | URL) {
         socketUrls.push(String(url))
       }
     }
-    vi.stubGlobal("EventSource", FakeEventSource)
     vi.stubGlobal("WebSocket", FakeWebSocket)
 
-    sameOriginWebTransport.openEventStream("/api/events")
     sameOriginWebTransport.openWebSocket(
       "/api/tasks/duplicate-task/terminal?shell=2"
     )
@@ -117,7 +165,6 @@ describe("the same-origin web transport", () => {
         "/api/tasks/duplicate-task/attachments/1/image.png"
       )
     ).toBe("/api/tasks/duplicate-task/attachments/1/image.png")
-    expect(eventUrls).toEqual(["/api/events"])
     expect(socketUrls).toEqual([
       "ws://localhost:3000/api/tasks/duplicate-task/terminal?shell=2",
     ])

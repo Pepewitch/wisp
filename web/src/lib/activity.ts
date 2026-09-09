@@ -124,7 +124,7 @@ export function fetchTurnActivity(
     const source: SseLike = factory
       ? factory(path)
       : transport
-        ? (transport.openEventStream(path) as unknown as SseLike)
+        ? transport.openEventStream(path)
         : (() => {
             throw new Error("activity stream requires a daemon transport")
           })()

@@ -1,6 +1,5 @@
 import { AttachmentGallery } from "@/components/turn-attachments"
 import { messageAttachmentUrl } from "@/lib/attachments"
-import { useDaemonTransport } from "@/lib/runtime"
 import type { TurnAttachment } from "@/lib/types"
 
 export function MessageAttachments({
@@ -16,13 +15,12 @@ export function MessageAttachments({
   archived: boolean
   cancelled?: boolean
 }) {
-  const transport = useDaemonTransport()
   return (
     <AttachmentGallery
       attachments={attachments}
       archived={archived}
       removedReason={cancelled ? "removed when this message was cancelled" : undefined}
-      urlFor={(name) => transport.assetUrl(messageAttachmentUrl(taskId, messageId, name))}
+      pathFor={(name) => messageAttachmentUrl(taskId, messageId, name)}
     />
   )
 }

@@ -55,8 +55,14 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Expected refusals are named HTTP errors, not guessed client-side state.
 - SQLite is authoritative. `/api/events` drives query invalidation; the
   per-task log stream carries append-oriented transcript/activity data.
-- Browser SSE and WebSockets authenticate with the daemon-minted cookie.
-  Bearer tokens do not belong in URLs.
+- Nothing authenticates ambiently. Browser SSE carries the bearer header over
+  a `fetch` stream, the terminal socket authenticates in its first frame, and
+  media is fetched rather than referenced — the daemon-minted `wisp_token`
+  cookie was a full-control credential handed to every other service on the
+  host (SEC-01). Bearer tokens do not belong in URLs either.
+- A terminal upgrade is command execution: it is refused outright from a
+  foreign `Origin`, and an unauthenticated socket attaches to nothing and
+  reveals nothing about which tasks exist.
 - A shell outlives its socket and holds exactly ONE attachment, so the latest
   client to connect owns it and the previous one is told it was displaced. Two
   clients on one task — a browser and the desktop app — is therefore normal

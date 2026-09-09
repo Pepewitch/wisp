@@ -1,3 +1,4 @@
+import { adaptEventSource } from "./fetch-event-source"
 import {
   ApiError,
   type DaemonRequestOptions,
@@ -81,7 +82,10 @@ export function createDesktopTransport(
   const transport: DaemonTransport = {
     connectionId,
     request,
-    openEventStream: (path) => new EventSource(qualify(path)),
+    // The native proxy injects the credential on this hop, so the browser's
+    // own EventSource is still the right client here — unlike the web
+    // transport, which has to carry a bearer header itself (SEC-01).
+    openEventStream: (path) => adaptEventSource(new EventSource(qualify(path))),
     openWebSocket: (path) => new WebSocket(socketUrl(qualify(path))),
     assetUrl: qualify,
     ensureReady: () => request("/api/health"),

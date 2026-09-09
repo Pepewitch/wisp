@@ -189,9 +189,10 @@ Run `wisp token` and open the URL it prints. A new home prefers
 <http://127.0.0.1:8710>; `wisp init` persists the first available loopback port
 from `8711`–`8799` when the default is unavailable. A persisted port never
 moves silently. Paste the printed token into the app once; the browser keeps it
-in origin-scoped storage for API requests and the daemon also exchanges it for
-an HttpOnly, SameSite=Strict cookie used by browser-managed streams, terminals,
-and media. The app provides:
+in origin-scoped storage and sends it as a bearer token on every request,
+stream, terminal socket, and image. Nothing is authenticated ambiently — no
+cookie — because a cookie is scoped to a host rather than a port, and would
+hand the daemon's token to any other local service. The app provides:
 
 - projects and task creation;
 - streamed turn history and steering;
