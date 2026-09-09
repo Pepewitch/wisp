@@ -46,6 +46,11 @@ function errorCode(error: unknown): string | undefined {
  * (`pidIdentity`); this adds no new way to signal a stranger.
  */
 export function signalProcessGroup(pid: number, signal: NodeJS.Signals): TreeSignalOutcome {
+  // `kill(-1)` signals every process the user may signal and `kill(0)` the
+  // caller's own group. Neither can be reached from a real child pid, and a
+  // guard is cheaper than reasoning about it (a review's note): treating every
+  // throw as `gone` otherwise hides EINVAL from a nonsense pid too.
+  if (!Number.isInteger(pid) || pid <= 1) return "gone";
   try {
     process.kill(-pid, signal);
     return "group";
@@ -85,6 +90,7 @@ export function signalProcessTree(
  * follows it; a `gone` group is the only safe answer for archive.
  */
 export function processGroupAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
     process.kill(-pid, 0);
     return true;

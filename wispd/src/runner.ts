@@ -47,6 +47,7 @@ import {
   getTask,
   getTaskMessage,
   getTurn,
+  latestTurnForTask,
   listTasks,
   markTaskMessageDelivered,
   newTaskMessageId,
@@ -70,6 +71,17 @@ export { startStuckLoop, stuckTick } from "./stuck";
 export { finalizeTurn } from "./turn-finalize";
 /** Live children by turn id — for interrupts. Re-adopted turns (post-restart) fall back to pid. */
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
+/**
+ * Process groups this daemon created, kept for its lifetime.
+ *
+ * A finished turn can still have members in its group — a harness that exited
+ * without waiting for something it started — and archive has to see them
+ * before it deletes their worktree. Checking `kill(-pid, 0)` for an arbitrary
+ * old pid would be unsafe, because that pid may since have been recycled by a
+ * stranger who leads a group; a pid in this set was OUR leader in THIS
+ * process, which is as much identity as a dead leader can offer.
+ */
+const spawnedGroups = new Set<number>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
 
@@ -273,6 +285,7 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
+  spawnedGroups.add(child.pid);
   const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
   const { recorder, sink, stderrPump } = capture;
   // stderr must be drained independently of the stdout protocol pump. A noisy
@@ -721,7 +734,16 @@ async function escalateIfNotFinalized(turn: Turn, graceMs: number, detail: strin
  */
 export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
   const turn = hasRunningTurn(taskId);
-  if (!turn) return;
+  if (!turn) {
+    // No LIVE turn is not the same as nothing running. A harness that exited
+    // without waiting for something it started leaves that process in the
+    // turn's group, and this is the gate in front of deleting the worktree it
+    // is sitting in — the early return here used to let archive proceed (a
+    // review asked for the missing test and the test found the hole).
+    const latest = latestTurnForTask(taskId);
+    if (latest?.pid && spawnedGroups.has(latest.pid)) await refuseIfTreeSurvives(latest, graceMs);
+    return;
+  }
   markInterrupted(turn.id, "turn interrupted by force-archive");
   await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");

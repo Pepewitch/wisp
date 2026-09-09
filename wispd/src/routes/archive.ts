@@ -1,5 +1,5 @@
 import { removeTaskAttachments } from "../attachments";
-import { loadConfig, repoConfigFor, type WispConfig } from "../config";
+import { repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn, killTurnForArchive } from "../runner";
 import {
   advanceArchiveCleanup,
@@ -70,7 +70,11 @@ async function runCleanupStages(job: ArchiveCleanupJob): Promise<void> {
       stage: "stop-turn",
       what: "could not stop the running turn",
       run: async () => {
-        if (job.stop_turn && job.force) await killTurnForArchive(job.task_id);
+        // Called even when nothing was running at archive time: a finished
+        // turn can still have left members in its process group, and this is
+        // the stage that must refuse rather than let the removal proceed. It
+        // is a no-op when there is neither a live turn nor a survivor.
+        if (job.force || !job.stop_turn) await killTurnForArchive(job.task_id);
       },
     },
     {
@@ -131,11 +135,23 @@ async function runCleanupStages(job: ArchiveCleanupJob): Promise<void> {
  * archive script configured when the user asked is the one that must run.
  */
 function teardownConfig(job: ArchiveCleanupJob): WispConfig {
-  const base = loadConfig();
+  // Built from the job's own fields rather than `loadConfig()`. Re-reading the
+  // live config would make a teardown depend on a file it does not need — one
+  // that can be temporarily unreadable, and whose loader repairs permissions
+  // and may persist as a side effect (a review's note). Everything
+  // `removeWorktree` reads is already on the job.
   return {
-    ...base,
-    setupTimeoutMinutes: job.timeout_minutes,
+    instanceId: "",
+    port: 0,
+    host: "127.0.0.1",
+    token: "",
+    webhooks: [],
     repos: job.archive_script === null ? [] : [{ path: job.repo_path, archiveScript: job.archive_script }],
+    stuckMinutes: 0,
+    logMaxBytes: 0,
+    setupTimeoutMinutes: job.timeout_minutes,
+    envAllowlist: {},
+    harnessDefaults: {},
   };
 }
 

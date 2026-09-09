@@ -213,6 +213,38 @@ describe("interrupting a turn stops its descendants", () => {
   }, 40_000);
 
   /**
+   * The fail-closed gate itself: the harness exits cleanly, but something it
+   * started is still in its group. `killTurnForArchive` has to refuse rather
+   * than let the caller delete a worktree with a live process in it — and
+   * nothing tested the refusal, only the happy path (a review's note).
+   */
+  test("force-archive refuses while the turn's group still has members", async () => {
+    const task = makeTask("survivor");
+    const pidFile = join(task.worktree_path!, "child.pid");
+    // The harness exits immediately; its child keeps the GROUP alive, having
+    // been detached from the pipe so nothing waits on it.
+    startTurn(
+      task,
+      "leave something behind",
+      bashAdapter(`sleep 30 >/dev/null 2>&1 & echo $! > ${JSON.stringify(pidFile)}; exit 0`),
+      cfg,
+    );
+    const grandchild = await recordedPid(pidFile);
+    await until(() => hasRunningTurn(task.id) === null, 15_000);
+    expect(alive(grandchild)).toBe(true);
+
+    const refusal = await killTurnForArchive(task.id, 500).then(
+      () => null,
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    // The turn is finished, so there is nothing left to interrupt — the gate
+    // that must fire is the group check.
+    expect(refusal ?? "").toContain("processes it started are still running");
+    expect(alive(grandchild)).toBe(true);
+  }, 40_000);
+
+  /**
    * The case that used to hang rather than leak: the harness exits but leaves
    * a child holding the turn's stdout. The pump never sees EOF, so the turn
    * cannot finalize until that child is gone — which is exactly why the stop
