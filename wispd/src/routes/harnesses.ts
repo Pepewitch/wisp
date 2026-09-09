@@ -40,7 +40,7 @@ export function harnessesRoute(
     // Daemon-level feature flags. A client newer than its daemon reads a
     // missing flag as false and hides the feature, instead of offering a
     // switch an older /send would silently ignore.
-    features: { taskAgentSwitching: true },
+    features: { taskAgentSwitching: true, taskSearch: true },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,
       hasModel: def.model !== undefined,

@@ -11,6 +11,7 @@ import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { startArchiveCleanupLoop } from "./routes/archive";
+import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { HomeLifetime } from "./home-lifetime";
@@ -265,6 +266,13 @@ export interface ServeOptions {
   pullRequestCacheTtlMs?: number;
   /** Update-route injection. Production uses the GitHub release and platform installers. */
   updateManager?: UpdateManager;
+  /**
+   * Catch-up indexing of agent prose for turns older than the index
+   * (turn-text-backfill.ts). Default true. A test that asserts what is or is
+   * not indexed turns it off, so a background pass cannot answer the question
+   * under it.
+   */
+  proseBackfill?: boolean;
 }
 
 async function occupiedListener(host: string, port: number): Promise<string> {
@@ -507,6 +515,9 @@ async function serveOwned(
   const outboxTimer = startOutboxLoop(cfg);
   const stuckTimer = startStuckLoop(cfg);
   const cleanupTimer = startArchiveCleanupLoop();
+  // Catch-up work for turns that ended before the prose index existed. After
+  // Bun.serve on purpose: listening never waits on a disk sweep.
+  const proseTimer = options.proseBackfill === false ? null : startTurnTextBackfillLoop(adapters);
   const processLoop = startProcessGroupLoop();
   const stopServer = server.stop.bind(server);
   let stopPromise: Promise<void> | undefined;
@@ -517,6 +528,7 @@ async function serveOwned(
       clearInterval(outboxTimer);
       clearInterval(stuckTimer);
       clearInterval(cleanupTimer);
+      if (proseTimer !== null) clearInterval(proseTimer);
       // Stop admitting requests first, but keep ownership through handlers and
       // detached work. Closing a socket does not cancel its task launch/hook.
       const stopped = stopServer(closeActiveConnections);

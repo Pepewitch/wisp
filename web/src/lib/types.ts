@@ -426,6 +426,8 @@ export interface HarnessesResponse {
   features?: {
     /** /send accepts harness/model/effort/startFreshContext for a running task's NEXT turn. */
     taskAgentSwitching?: boolean;
+    /** GET /api/search answers cross-task text search (the sidebar's ⌘⇧F). */
+    taskSearch?: boolean;
   };
 }
 
@@ -524,4 +526,60 @@ export interface ActivityLogStreamFrames {
   append: { turn: number; activity: ActivityEvent[] }
   "turn-end": { turn: number; status: TurnStatus }
   state: { state: TaskState; state_detail: string | null }
+}
+
+/**
+ * GET /api/search — exact text across this daemon's tasks.
+ *
+ * The daemon searches five places and says which one answered: a task title, a
+ * turn's prompt, a turn's concluding result, a queued or steered message, and
+ * the agent's own prose from inside a turn (`prose`, projected into an index
+ * when the turn ends). Tool calls and reasoning are still outside; the sidebar
+ * states that scope rather than implying a whole-transcript index.
+ *
+ * Archived tasks are searched and flagged, never dropped: the sidebar shows
+ * them only when its own Show-archived switch is on, and says how many it is
+ * holding back when it is off.
+ */
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose"
+
+export interface SearchSnippet {
+  kind: SearchSnippetKind
+  /** the turn a prompt/result came from; null for a title or a message */
+  turn: number | null
+  text: string
+  /** the match's position inside `text` — the client highlights what it was given */
+  offset: number
+  length: number
+}
+
+export interface SearchTaskHit {
+  id: string
+  title: string
+  repo_path: string
+  updated_at: string
+  /**
+   * The task's own state and archived flag travel WITH the hit, so a result
+   * row renders from the response alone. Resolving hits against the client's
+   * task list instead had two holes: an archived task is not in that list at
+   * all while Show archived is off, and a task created since the last list
+   * fetch would be dropped from results without a word.
+   */
+  state: TaskState
+  archived: boolean
+  matches: number
+  snippets: SearchSnippet[]
+}
+
+export interface SearchResponse {
+  query: string
+  tasks: SearchTaskHit[]
+  /** a daemon scan cap was reached: this answer is not the whole ledger */
+  truncated: boolean
+  /**
+   * Present only while the agent-prose index is catching up on turns that
+   * ended before it existed. A miss during that window is not a definitive
+   * miss, and the pane says so instead of letting it read as one.
+   */
+  indexing?: { remainingTurns: number }
 }

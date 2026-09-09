@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import { Sidebar } from "./sidebar"
+import { inertProjectSearch } from "@/test/project-search"
 
 function mount(touch: boolean, onOpenSettings: () => void, updateControl?: ReactNode) {
   return render(
@@ -17,6 +18,7 @@ function mount(touch: boolean, onOpenSettings: () => void, updateControl?: React
       onShowArchivedChange={() => {}}
       onNewTask={() => {}}
       onConfigureProject={() => {}}
+      search={inertProjectSearch()}
       onOpenSettings={onOpenSettings}
       updateControl={updateControl}
       error={null}

@@ -158,6 +158,10 @@ vi.mock("@/hooks/queries", () => ({
   useTaskDetail: () => ({ data: undefined }),
   usePullRequests: () => ({ tasks: fixtures.pullRequests.tasks, selected: undefined }),
   useHarnesses: () => ({ data: fixtures.harnesses, error: null }),
+  // the daemon-level flags; `taskSearch` is what puts the sidebar's search
+  // control on screen (an older remote omits it)
+  useHarnessFeatures: () => ({ data: { taskSearch: true } }),
+  useTaskSearch: () => ({ data: undefined, isPending: false, error: null }),
   useUpdateStatus: () => ({ data: UPDATE }),
   useTaskSkills: () => ({ data: undefined }),
 }))

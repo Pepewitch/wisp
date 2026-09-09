@@ -186,6 +186,17 @@ the turn has settled. Use `wisp show`, `wisp log -f`, `wisp send`, `wisp
 interrupt`, `wisp push`, and `wisp archive` for the rest of the lifecycle.
 Run `wisp help` for the complete CLI.
 
+`wisp search <text>` is the terminal half of the app's cross-task search — the
+same exact-text scan over task titles, turn prompts, turn results, queued
+messages, and the agent's own prose, with the matched field and a snippet per
+hit:
+
+```sh
+wisp search "swallowing cmd-enter"      # live tasks
+wisp search reducer -a                  # include archived tasks
+wisp search reducer --json              # the daemon's answer, for scripts
+```
+
 Recorder-capable live turns do not fail merely because their activity stream
 outgrows the retained transcript budget. Wisp keeps draining the harness,
 checkpoints the outcome independently, and marks incomplete retained history;
@@ -252,6 +263,10 @@ hand the daemon's token to any other local service. The app provides:
   readiness for the original task branch, including glanceable sidebar status,
   when the daemon's `gh` can read it;
 - a Git diff pane and worktree terminal;
+- search in two scopes: `⌘F` finds exact text in the task you are reading, and
+  `⌘⇧F` searches every task from the projects sidebar — titles, prompts,
+  results, queued messages, and what the agent said inside a turn; archived
+  tasks are searched too, and shown when *Show archived* is on;
 - phone-specific chat, changes, and terminal tabs.
 
 The UI is one self-contained HTML bundle embedded in the binary. It loads no

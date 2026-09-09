@@ -831,6 +831,117 @@ word, because that is what someone searches for.
 On touch this cluster does not exist: there is no persistent top bar, so the
 gear and the update surface live in the drawer footer (§6b).
 
+## 5i. Search — two questions, two shapes
+
+"Where in this task did that happen" and "which task said that" are different
+questions, and one box cannot answer both without lying about its scope. So
+there are two surfaces, one chord each, and they hand off to each other.
+
+**⌘F — find in the task you are reading.** A bar in the top-right of the
+reading column (`components/find-in-task.tsx`), never a dialog: you are
+narrowing the thing you are looking at, and a modal would cover it. Box,
+`3/17` counter, the two steppers, dismiss. Enter and ⇧Enter step and wrap,
+Escape closes and gives focus back to the scroller, and pressing ⌘F again
+selects what is already typed rather than doing nothing.
+
+Two rules carry it:
+
+- **The DOM is the haystack.** `GET /api/tasks/:id` has every turn, but a
+  settled turn's activity is fetched on demand and dropped again (§5), so a
+  search over the task JSON would count matches nobody can see and miss the
+  ones inside a timeline just opened. Searching what is RENDERED is both
+  simpler and more truthful — and when it finds nothing it names the turns it
+  could not see (`data-activity="collapsed"`) instead of implying they were
+  empty.
+- **Highlighting never mutates the tree.** Matches are painted with the CSS
+  Custom Highlight API — `::highlight(wisp-find)` and
+  `::highlight(wisp-find-current)` in `index.css`, registered from
+  `lib/find.ts`. Wrapping hits in `<mark>` would mean rewriting a tree React
+  owns while a live turn appends to it, and would take the scroll contract's
+  pin threshold and `overflow-anchor` with it. A webview without the API still
+  counts and still walks; it says so in one muted line rather than pretending
+  to paint.
+
+**⌘⇧F — search every live task.** The box opens inside the sidebar and pushes
+the tree DOWN (`components/project-search.tsx`): the projects are the context
+for the answer, which is exactly why this is not a palette floating over the
+app. A result is TWO lines, because a 26px row cannot say why it matched — the
+task on the first, the daemon's own snippet on the second with the hit lit and
+the field that answered it (`prompt 2`, `result 1`, `queued`). Same argument as
+`TaskRowTouch`: the anatomy genuinely differs, so it is its own row rather than
+a prop on the one that carries the tree. ↑/↓ walk the results from the box and
+Enter opens one; the match count rides the right edge only when it is more than
+one (§5b's "one short fact", and the §2 chip ban forbids the pill).
+
+**Picking a result is ONE gesture.** It selects the task and issues the find
+intent with the same query, so the transcript opens already looking for the
+words. The two surfaces are one search, not two boxes that happen to rhyme.
+
+**The scope is stated, never implied.** The daemon searches five places —
+title, turn prompt, turn result, a queued or steered message, and the agent's
+own prose from inside a turn. The empty state says so; a summary line with
+results does not repeat it.
+
+That fifth one is an INDEX, not a log scan: prose lives only in the per-turn
+JSONL, which caps at 5 MB a turn and is the evidence ledger, so the daemon
+projects it into `turn_texts` when the turn ends (`wispd/src/turn-texts.ts`).
+Two consequences the UI owns:
+
+- A row's field label distinguishes them — `said 3` is what the agent wrote
+  mid-turn, `result 1` is how the turn concluded. A row shows ONE snippet, so
+  which one is ranked rather than first-come (`displaySnippet`): never the
+  `title`, which the row's own first line already says, and what was said
+  before how it ended.
+- While the daemon is catching up on turns older than the index, the response
+  carries `indexing` and the pane prints one muted line — beside results, and
+  INSTEAD of letting a miss read as final ("still indexing what the agent said
+  in 412 older turns"). A search that has not read half your history must not
+  look like one that has.
+
+Tool calls and reasoning are deliberately still out. They are the same index
+with another `kind`, which is what keeps adding them additive.
+
+**Archived tasks are searched, and the pane's own switch decides whether you
+see them.** They cost nothing to search (`LIKE '%x%'` cannot use an index, so
+the filter only discarded rows already read), so the daemon flags every hit
+instead of dropping it and the client chooses. With *Show archived* on they are
+one `Archived` section under the live projects; with it off the rows are held
+back and COUNTED — `· 1 archived task hidden` — because "no match" and "no
+match I am willing to show you" are different sentences and only one of them
+is true. When every hit is archived, the empty state names the switch.
+
+**One layout owns the render AND the keyboard.** `lib/search-sections.ts`
+returns the sections; ↑/↓ walk `searchOrder()` over the same layout. A ↓ that
+skips a row you can see, or stops on one the switch is hiding, is worse than
+no keyboard at all.
+
+**A result row renders from the response alone.** The hit carries the task's
+state and archived flag, so nothing resolves it against the client's task list
+— that list does not contain archived tasks while the switch is off, and it
+lags a task created since the last fetch, and both cases used to drop a real
+hit without a word.
+
+**Cross-version:** the daemon advertises `features.taskSearch` on
+`/api/harnesses`, the same mechanism `taskAgentSwitching` uses. Absent reads as
+unsupported: Wisp Desktop can hold a remote connection older than this route,
+and there the pane renders no search control and ⌘⇧F does nothing. ⌘F is
+client-side and always works.
+
+**Colour.** A match is a text RANGE, which is the family `::selection` already
+belongs to, so the resting hit is `--find-match` (the neutral the app spends on
+a selected row) and the current hit is `--find-match-current` (the selection's
+own hue, one step louder — a caret you can find in a 40-turn transcript). Both
+are paired in the two theme blocks; no app chrome takes either, so §1's five
+accent places are untouched.
+
+**The chords.** `hooks/useSearchShortcuts.ts` claims ⌘F and ⌘⇧F on the window,
+taking both from the browser: the native find sees only what is rendered at
+that instant and cannot say "none of the other twelve tasks either". This is
+§5e's rule rather than an exception to it — what may not be intercepted above
+the composer is a BARE key, because the textarea forwards ↑/↓/Home/End/↵ to
+cmdk and owns the rest of what it is typing. A ⌘ chord is never in that set,
+which is how `lib/desktop-zoom.tsx` already claims ⌘+/−/0.
+
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its

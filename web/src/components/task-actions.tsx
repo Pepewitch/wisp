@@ -6,10 +6,13 @@ import { More } from "@/components/icons"
 import { Menu, MenuItem } from "@/components/menu"
 import { RenameTaskDialog } from "@/components/rename-task-dialog"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
+import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
- * The task verbs that are not worth a permanent button: rename and archive.
+ * The task verbs that are not worth a permanent button: find, rename and
+ * archive.
  * Stop/steer lives in the composer; Push stays in the header because it has a
  * consequence at the moment you are reading a task. Fresh session is a slash
  * command in the composer (`/fresh`).
@@ -18,6 +21,7 @@ import type { ApiTask } from "@/lib/types"
  * reads the same here, on a sidebar row's hover control and behind `/archive`.
  */
 export function TaskActions({ task }: { task: ApiTask }) {
+  const runtime = useDaemonRuntime()
   const [menuOpen, setMenuOpen] = useState(false)
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
@@ -33,6 +37,17 @@ export function TaskActions({ task }: { task: ApiTask }) {
         open={menuOpen}
         onOpenChange={setMenuOpen}
       >
+        {/* The keyboard is the primary way in; the menu is how you FIND that
+            there is a keyboard way in, so the row carries the chord. */}
+        <MenuItem
+          hint="⌘F"
+          onClick={() => {
+            setMenuOpen(false)
+            uiIntentsFor(runtime.connectionId).openFind()
+          }}
+        >
+          Find in task
+        </MenuItem>
         <MenuItem
           onClick={() => {
             setMenuOpen(false)

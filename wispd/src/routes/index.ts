@@ -31,6 +31,7 @@ import { attachmentRoute, taskMessageRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
+import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
@@ -182,6 +183,9 @@ export function route(
 
   const suffixPromptResponse = suffixPromptRoutes(req, path, m);
   if (suffixPromptResponse !== null) return suffixPromptResponse;
+
+  const searchResponse = searchRoute(url, m);
+  if (searchResponse !== null) return searchResponse;
 
   if (path === "/api/harnesses" && m === "GET") return harnessesRoute(url, cfg, adapters, models);
 

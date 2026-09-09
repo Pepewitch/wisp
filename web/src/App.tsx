@@ -45,6 +45,8 @@ import {
 } from "@/hooks/queries"
 import { useAddProject } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
+import { useProjectSearch } from "@/hooks/useProjectSearch"
+import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -218,6 +220,26 @@ function useDaemonEventsBridge(
   )
 }
 
+/** Archived history is a per-connection preference, so it is stored per connection. */
+function useShowArchived(connectionId: string): readonly [boolean, (value: boolean) => void] {
+  const [showArchived, setShowArchived] = useState(
+    () =>
+      readConnectionStorage(connectionId, SHOW_ARCHIVED_SETTING, SHOW_ARCHIVED_KEY) === "1"
+  )
+  return [
+    showArchived,
+    (value: boolean) => {
+      writeConnectionStorage(
+        connectionId,
+        SHOW_ARCHIVED_SETTING,
+        SHOW_ARCHIVED_KEY,
+        value ? "1" : "0"
+      )
+      setShowArchived(value)
+    },
+  ] as const
+}
+
 function MainView({
   updateControls,
 }: {
@@ -234,14 +256,17 @@ function MainView({
     selectedRef.current = selectedId
   }, [selectedId])
 
-  const [showArchived, setShowArchived] = useState(
-    () =>
-      readConnectionStorage(
-        runtime.connectionId,
-        SHOW_ARCHIVED_SETTING,
-        SHOW_ARCHIVED_KEY
-      ) === "1"
+  const searchFeature = useHarnessFeatures()
+  const [showArchived, setShowArchived] = useShowArchived(runtime.connectionId)
+  // search can find an archived task whatever the switch says; the switch
+  // decides whether the pane shows the row (and whether ↑/↓ can reach it)
+  // A daemon that predates cross-task search omits the flag, and absent reads
+  // as unsupported (types.ts) rather than as a switch that quietly 404s.
+  const projectSearch = useProjectSearch(
+    showArchived,
+    searchFeature.data?.taskSearch === true
   )
+  useSearchShortcuts(uiIntentsFor(runtime.connectionId), projectSearch)
   // open state carries the project the sidebar's `+` preselected
   const [createFor, setCreateFor] = useState<{
     repoPath: string | null
@@ -334,15 +359,7 @@ function MainView({
         opts?.afterSelect?.()
       }}
       showArchived={showArchived}
-      onShowArchivedChange={(v) => {
-        writeConnectionStorage(
-          runtime.connectionId,
-          SHOW_ARCHIVED_SETTING,
-          SHOW_ARCHIVED_KEY,
-          v ? "1" : "0"
-        )
-        setShowArchived(v)
-      }}
+      onShowArchivedChange={setShowArchived}
       onNewTask={(repoPath) => {
         setCreateFor({ repoPath })
         opts?.afterSelect?.()
@@ -359,6 +376,7 @@ function MainView({
       }}
       // below `md` the drawer footer is the only app-chrome surface there is
       updateControl={opts?.touch ? updateControls.mobile : undefined}
+      search={projectSearch}
       onAddProject={projectAdd.onAddProject}
       addProjectPending={projectAdd.pending}
       error={sideError}
@@ -371,6 +389,7 @@ function MainView({
       task={detailQuery.data ?? null}
       stream={stream}
       note={stream.note}
+      touch={isMobile}
     />
   )
   const composerNode = (

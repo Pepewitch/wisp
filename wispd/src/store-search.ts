@@ -1,0 +1,219 @@
+/**
+ * Exact-text search across a daemon's tasks.
+ *
+ * Scope is deliberate and it is what the UI promises: everywhere a person's or
+ * an agent's WORDS are durable — a task title, a turn's prompt, a turn's
+ * concluding result, a queued or steered message, and the agent's prose
+ * BETWEEN its tool calls (`turn_texts`, projected once when the turn ends;
+ * turn-texts.ts explains why it is a table and not a log scan).
+ *
+ * What is still outside: tool calls and reasoning. They are the same table
+ * with another `kind` when they are asked for. The per-turn JSONL itself is
+ * never scanned here — 5 MB per turn is an evidence ledger, not an index — so
+ * a search that has not caught up says so (`indexing` on the response) rather
+ * than presenting a partial index as a whole one.
+ *
+ * Archived tasks ARE searched: the filter that used to exclude them cost
+ * nothing to remove, because `LIKE '%x%'` cannot use an index and both forms
+ * are the same full scan (measured at 18 000 turns: 27.0 ms with the filter,
+ * 26.8 ms without). Whether a client SHOWS them is the client's call — the web
+ * sidebar follows its own Show-archived switch — so every hit carries
+ * `archived` rather than being silently dropped here.
+ *
+ * Matching is literal substring, case-insensitive. SQL narrows with LIKE
+ * (ASCII-insensitive) and JS confirms and locates with toLowerCase(), so the
+ * one gap is non-ASCII case folding: searching "CAFÉ" does not find "café",
+ * because LIKE never offered the row. Add SQLite's ICU extension before
+ * promising otherwise — the daemon ships zero runtime dependencies (D10).
+ */
+import { db } from "./store-database";
+import type {
+  SearchResponse,
+  SearchSnippet,
+  SearchSnippetKind,
+  SearchTaskHit,
+  TaskState,
+} from "./types";
+
+/** One sidebar's worth of results. More than this is a different question. */
+export const SEARCH_TASK_LIMIT = 60;
+/**
+ * Live and archived are capped SEPARATELY out of that 60. A shared cap would
+ * let one deep archive push every live hit off the end of the answer, which is
+ * exactly backwards: history is context, the live tasks are the question.
+ */
+export const SEARCH_LIVE_LIMIT = 40;
+export const SEARCH_ARCHIVED_LIMIT = SEARCH_TASK_LIMIT - SEARCH_LIVE_LIMIT;
+/** Enough to say WHERE it matched without turning a row into a paragraph. */
+export const SEARCH_SNIPPETS_PER_TASK = 3;
+/** Per-source row cap. A hit past this is reported as truncation, never dropped silently. */
+export const SEARCH_ROW_LIMIT = 4000;
+export const SEARCH_QUERY_MAX_CHARS = 200;
+
+const WINDOW_BEFORE = 32;
+const WINDOW_AFTER = 96;
+
+/** `%`, `_` and the escape itself are literals in a person's search box. */
+export function escapeLike(query: string): string {
+  return query.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+const collapse = (text: string): string => text.replace(/\s+/g, " ");
+
+/** Every occurrence, case-insensitively, without allocating a match array. */
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return count;
+    count += 1;
+    from = at + needle.length;
+  }
+}
+
+/**
+ * One display line around a match. The window is cut from the ORIGINAL text so
+ * the offset is exact, then each side is whitespace-collapsed separately and
+ * the offset recomputed — collapsing first would let a newline inside the
+ * needle change what "exact" means.
+ */
+export function buildSnippet(
+  kind: SearchSnippetKind,
+  turn: number | null,
+  text: string,
+  at: number,
+  length: number,
+): SearchSnippet {
+  const from = Math.max(0, at - WINDOW_BEFORE);
+  const to = Math.min(text.length, at + length + WINDOW_AFTER);
+  const lead = (from > 0 ? "…" : "") + collapse(text.slice(from, at)).trimStart();
+  const match = collapse(text.slice(at, at + length));
+  const tail = collapse(text.slice(at + length, to)).trimEnd() + (to < text.length ? "…" : "");
+  return { kind, turn, text: `${lead}${match}${tail}`, offset: lead.length, length: match.length };
+}
+
+class Hits {
+  private readonly byTask = new Map<string, SearchTaskHit>();
+
+  constructor(private readonly needle: string) {}
+
+  /** Records a field's occurrences, keeping at most one snippet per field. */
+  add(
+    task: TaskColumns,
+    kind: SearchSnippetKind,
+    turn: number | null,
+    text: string | null,
+  ): void {
+    if (text === null || text === "") return;
+    const at = text.toLowerCase().indexOf(this.needle);
+    if (at === -1) return;
+    let hit = this.byTask.get(task.id);
+    if (!hit) {
+      hit = {
+        id: task.id,
+        title: task.title,
+        repo_path: task.repo_path,
+        updated_at: task.updated_at,
+        state: task.state,
+        archived: task.archived === 1,
+        matches: 0,
+        snippets: [],
+      };
+      this.byTask.set(task.id, hit);
+    }
+    hit.matches += countOccurrences(text.toLowerCase(), this.needle);
+    if (hit.snippets.length < SEARCH_SNIPPETS_PER_TASK) {
+      hit.snippets.push(buildSnippet(kind, turn, text, at, this.needle.length));
+    }
+  }
+
+  /**
+   * Newest task first — the sidebar's own order, so results read like the
+   * tree — with live and archived capped independently and live first.
+   */
+  tasks(): { tasks: SearchTaskHit[]; capped: boolean } {
+    const newestFirst = (a: SearchTaskHit, b: SearchTaskHit): number =>
+      a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0;
+    const live = [...this.byTask.values()].filter((hit) => !hit.archived).sort(newestFirst);
+    const archived = [...this.byTask.values()].filter((hit) => hit.archived).sort(newestFirst);
+    return {
+      tasks: [...live.slice(0, SEARCH_LIVE_LIMIT), ...archived.slice(0, SEARCH_ARCHIVED_LIMIT)],
+      capped: live.length > SEARCH_LIVE_LIMIT || archived.length > SEARCH_ARCHIVED_LIMIT,
+    };
+  }
+}
+
+interface TaskColumns {
+  id: string;
+  title: string;
+  repo_path: string;
+  updated_at: string;
+  state: TaskState;
+  archived: number;
+}
+
+export function searchTasks(query: string): SearchResponse {
+  const needle = query.toLowerCase();
+  const like = `%${escapeLike(query)}%`;
+  const hits = new Hits(needle);
+  let truncated = false;
+
+  const titles = db
+    .query(
+      `SELECT id, title, repo_path, updated_at, state, archived FROM tasks
+       WHERE title LIKE ? ESCAPE '\\'
+       ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(like, SEARCH_ROW_LIMIT) as TaskColumns[];
+  truncated ||= titles.length === SEARCH_ROW_LIMIT;
+  for (const row of titles) hits.add(row, "title", null, row.title);
+
+  const turns = db
+    .query(
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, n.prompt, n.result
+       FROM turns n JOIN tasks t ON t.id = n.task_id
+       WHERE n.prompt LIKE ? ESCAPE '\\' OR n.result LIKE ? ESCAPE '\\'
+       ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
+    )
+    .all(like, like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; prompt: string; result: string | null })[];
+  truncated ||= turns.length === SEARCH_ROW_LIMIT;
+  for (const row of turns) {
+    hits.add(row, "prompt", row.n, row.prompt);
+    hits.add(row, "result", row.n, row.result);
+  }
+
+  // A message whose delivery is 'started' BECAME its turn's prompt, so it is
+  // already searched above; counting it twice would inflate the total.
+  // The agent's own prose, projected at turn end. `state` travels no further
+  // than this: a partial row simply holds less text, and the honest thing to
+  // report is the BACKFILL's progress (the route adds it), not a per-row flag
+  // a person cannot act on.
+  const prose = db
+    .query(
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, x.text
+       FROM turn_texts x
+       JOIN turns n ON n.id = x.turn_id
+       JOIN tasks t ON t.id = x.task_id
+       WHERE x.kind = 'prose' AND x.text LIKE ? ESCAPE '\\'
+       ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
+    )
+    .all(like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; text: string })[];
+  truncated ||= prose.length === SEARCH_ROW_LIMIT;
+  for (const row of prose) hits.add(row, "prose", row.n, row.text);
+
+  const messages = db
+    .query(
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, m.text
+       FROM task_messages m JOIN tasks t ON t.id = m.task_id
+       WHERE (m.delivery IS NULL OR m.delivery <> 'started')
+         AND m.text LIKE ? ESCAPE '\\'
+       ORDER BY t.updated_at DESC, m.created_at DESC LIMIT ?`,
+    )
+    .all(like, SEARCH_ROW_LIMIT) as (TaskColumns & { text: string })[];
+  truncated ||= messages.length === SEARCH_ROW_LIMIT;
+  for (const row of messages) hits.add(row, "message", null, row.text);
+
+  const answer = hits.tasks();
+  return { query, tasks: answer.tasks, truncated: truncated || answer.capped };
+}
