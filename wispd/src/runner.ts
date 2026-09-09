@@ -77,6 +77,14 @@ export { finalizeTurn } from "./turn-finalize";
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
+/** Interrupt details written by force-archive, and the only reading of them. */
+const FORCE_ARCHIVE_DETAIL = "turn interrupted by force-archive";
+const FORCE_ARCHIVE_ESCALATED_DETAIL = `${FORCE_ARCHIVE_DETAIL} (escalated to SIGKILL after SIGTERM was trapped)`;
+
+/** Was this turn killed to clear the way for an archive? Then its queue stays put. */
+function killedForArchive(turnId: number): boolean {
+  return getTurn(turnId)?.interrupt_detail?.startsWith(FORCE_ARCHIVE_DETAIL) === true;
+}
 
 export { pidIdentity };
 export type { PidIdentity };
@@ -414,6 +422,7 @@ export async function submitTaskMessage(
     if (!running) {
       const started = startNextQueuedMessage(task.id, def, cfg);
       if (started?.id === id) return { disposition: "started", message: started };
+      warnIfNothingWillRun(task.id, id, started);
     }
     return { disposition: "queued-next", message };
   } catch (error) {
@@ -422,18 +431,31 @@ export async function submitTaskMessage(
   }
 }
 
-/** Start exactly one FIFO message when a task has no running turn. */
+/**
+ * "queued for the next turn" with no next turn coming is a wedge, and the
+ * client cannot tell the two apart. Say so in the daemon log — but only for
+ * the real thing, never for the ordinary FIFO case where an older message
+ * took the turn.
+ */
+function warnIfNothingWillRun(taskId: string, messageId: string, started: TaskMessage | null): void {
+  if (started || hasRunningTurn(taskId)) return;
+  console.warn(`[wisp] task ${taskId}: message ${messageId} stays queued with no turn running`);
+}
+
+/**
+ * Start exactly one FIFO message when a task has no running turn.
+ *
+ * Force-archive is judged on the killed TURN, never on the task's
+ * `state_detail`: that field also carries the harness's own last words, so a
+ * task whose summary happened to discuss archiving would wedge its queue
+ * forever. Archive flips `archived` before teardown kills anything, so the
+ * archived check already closes that window.
+ */
 export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: WispConfig): TaskMessage | null {
   if (homeIsDraining()) return null;
   if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
   const task = getTask(taskId);
-  if (
-    !task ||
-    task.archived ||
-    task.state_detail?.includes("force-archive") ||
-    !task.worktree_path ||
-    hasRunningTurn(taskId)
-  ) {
+  if (!task || task.archived || !task.worktree_path || hasRunningTurn(taskId)) {
     return null;
   }
   const message = nextQueuedMessage(taskId);
@@ -525,7 +547,7 @@ async function watchTurn(
   await waitForInterrupt(turnId);
   await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
   await processStop(taskId)?.catch(() => {});
-  if (!getTurn(turnId)?.interrupt_detail?.includes("force-archive")) startNextQueuedMessage(taskId, def, cfg);
+  if (!killedForArchive(turnId)) startNextQueuedMessage(taskId, def, cfg);
 }
 
 /**
@@ -566,9 +588,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
           await waitForInterrupt(turn.id);
           await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
           await processStop(task.id)?.catch(() => {});
-          if (!getTurn(turn.id)?.interrupt_detail?.includes("force-archive")) {
-            startNextQueuedMessage(task.id, def, cfg);
-          }
+          if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, def, cfg);
         },
       });
     } else {
@@ -579,9 +599,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
       console.error(`[wisp] finalizing task ${task.id} turn ${turn.n} (${why})`);
       await waitForInterrupt(turn.id);
       await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
-      if (!getTurn(turn.id)?.interrupt_detail?.includes("force-archive")) {
-        startNextQueuedMessage(task.id, def, cfg);
-      }
+      if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, def, cfg);
     }
   }
   // Messages survive a daemon restart independently of turn rows. Start any
@@ -708,12 +726,12 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     await assertTaskProcessesEnded(taskId);
     return;
   }
-  markInterrupted(turn.id, "turn interrupted by force-archive");
+  markInterrupted(turn.id, FORCE_ARCHIVE_DETAIL);
   await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");
   // wait on the turn ROW, not the process: finalize must have run before archive proceeds
   if (!(await turnFinalized(turn.id, graceMs))) {
-    markInterrupted(turn.id, "turn interrupted by force-archive (escalated to SIGKILL after SIGTERM was trapped)");
+    markInterrupted(turn.id, FORCE_ARCHIVE_ESCALATED_DETAIL);
     await signalTurn(turn, "SIGKILL");
     // re-adopted turns are finalized by a 3s poll, so allow at least one full tick
     if (!(await turnFinalized(turn.id, Math.max(graceMs, 4000)))) {
