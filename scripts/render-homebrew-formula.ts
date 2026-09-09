@@ -58,7 +58,7 @@ class Wisp < Formula
 
   def caveats
     <<~EOS
-      This Apple Silicon daemon is ad-hoc signed, not Developer ID
+      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is ad-hoc signed, not Developer ID
       signed or notarized. Gatekeeper may require explicit approval. Do not
       disable Gatekeeper globally.
 
