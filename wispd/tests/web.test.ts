@@ -161,8 +161,8 @@ describe("the web app", () => {
     const brandSvg = await Bun.file(join(import.meta.dir, "../../brand/favicon.svg")).text();
     expect(href![1]).toBe(faviconDataUri(brandSvg));
 
-    // and the theme colour matches the app's --background
-    expect(html).toContain('<meta name="theme-color" content="#0b0b0d" />');
+    // and the theme colour matches the app's top-bar surface
+    expect(html).toContain('<meta name="theme-color" content="#202124" />');
   });
 });
 

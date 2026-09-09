@@ -163,8 +163,8 @@ With no hue to spend, the stream separates the person's words from the agent's
 by *lightness alone*, so only one surface in a turn may be the lightest: the
 right-aligned prompt bubble, `--card`. A code block used to share that fill and
 the two became one shape when scanning for "where did I say something", so code
-blocks have their own surface — `--code` (`#101014`), one step above the reading
-column rather than four. Anything new inside a turn recedes toward `--background`;
+blocks have their own surface — `--code`, above the reading column and below
+the prompt bubble. Anything new inside a turn recedes toward `--background`;
 it never meets or passes `--card`.
 
 ### Two themes, and every token paired
