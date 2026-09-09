@@ -22,7 +22,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["-s", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-r", "{effort}"],
-    // Rechecked against droid 0.213.0's model-specific help. This is the
+    // Rechecked against droid 0.215.1's invalid-effort rejection. This is the
     // cross-model union; the valid subset still depends on the selected model.
     // `--help` only says "defaults per model", so the level is left unset by
     // default and droid picks per model — the menu offers, it does not force.
@@ -91,7 +91,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     auth: { check: ["auth", "status"], fix: "run 'claude auth login'" },
     // Required for the structured activity stream: without it claude emits
     // only the outer Task call/result and Wisp cannot show what the child did.
-    // Reverified against claude-code 2.1.258: print/stream-json, verbose,
+    // Reverified against claude-code 2.1.266: print/stream-json, verbose,
     // subagent forwarding, permission bypass, resume, model and effort retain
     // the same headless contract.
     exec: [
@@ -113,8 +113,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Verified against claude-code 2.1.258's baked catalog and a zero-token
-    // `/model` read. Fable 5.1 replaced legacy Fable 5 in the current lineup.
+    // Baked ids rechecked on claude-code 2.1.266; the zero-token `/model`
+    // read remains pinned to 2.1.258. Fable 5.1 replaced legacy Fable 5.
     staticModels: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
     // attaching turn the prompt positional is omitted and prompt + base64
@@ -274,6 +274,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the list is only ever read off the CLI). Deliberately static rather
     // than a `agent models` discovery strategy: the owner pinned this exact
     // list and default, and a probed default ("auto") would outrank it.
+    // Both ids still appear in 2026.09.08-6caf4ff's catalog; newly advertised
+    // Grok 4.5 and Muse variants do not change this owner-curated selection.
     staticModels: ["cursor-grok-4.6-high", "composer-2.5"],
     defaultModel: "cursor-grok-4.6-high", // owner-pinned default ("Grok 4.6")
     // A strategy, not a field mapping: cursor's result event carries the

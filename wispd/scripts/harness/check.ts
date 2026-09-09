@@ -90,6 +90,9 @@ function verdict(row: CheckRow): string {
   if (newer !== null && newer > 0) {
     lines.push(`upgrade the CLI first (${row.installed.version} → ${row.latest!.version}), then re-run`);
   }
+  if (newer === null && row.latest?.version && row.installed.version) {
+    lines.push(`upstream build differs (${row.installed.version} vs ${row.latest.version}); verify the CLI release channel before refreshing`);
+  }
   const unpinnedFree = group(row.surfaces, "free", "unpinned");
   if (behindFree.length + unpinnedFree.length > 0) {
     const n = behindFree.length + unpinnedFree.length;
