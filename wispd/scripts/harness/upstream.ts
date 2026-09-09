@@ -3,18 +3,18 @@
  *
  * **Probe before pin, same rule as the adapters.** Every source below was
  * confirmed by fetching it and matching the version it reports against the
- * locally installed CLI on 2026-09-06 — not taken from a README:
+ * locally probed CLI on 2026-09-09 — not taken from a README:
  *
- *  - claude  npm @anthropic-ai/claude-code → 2.1.261, and the package's own
+ *  - claude  npm @anthropic-ai/claude-code → 2.1.266, and the package's own
  *            `bin` entry is `claude`
  *  - codex   npm @openai/codex             → 0.153.4, `bin` entry `codex`
- *  - droid   formulae.brew.sh cask 'droid' → 0.213.0. Install-method
+ *  - droid   formulae.brew.sh cask 'droid' → 0.215.1. Install-method
  *            specific: it is the truth for a Homebrew install, which is how
  *            droid arrives on macOS, and honest noise otherwise.
- *  - cursor  NONE FOUND. cursor.com's agent-cli-download endpoint answers
- *            HTML, and the bundled CLI carries no version endpoint. Recorded
- *            as absent rather than guessed — a wrong "latest" is worse than a
- *            missing one, because it would report drift that does not exist.
+ *  - cursor  formulae.brew.sh cask 'cursor-cli' → 2026.09.08-6caf4ff.
+ *            Its version matches `cursor-agent --version` and the download
+ *            URL names that same build. Like droid, this is Homebrew's
+ *            published version, not a guarantee about other release channels.
  */
 import type { ModelProbeSpawnFn } from "../../src/adapters";
 
@@ -27,10 +27,7 @@ export const UPSTREAM_SOURCES: Record<string, UpstreamSource> = {
   claude: { kind: "npm", pkg: "@anthropic-ai/claude-code" },
   codex: { kind: "npm", pkg: "@openai/codex" },
   droid: { kind: "brew-cask", token: "droid" },
-  cursor: {
-    kind: "none",
-    why: "cursor publishes no machine-readable version endpoint (its download API answers HTML)",
-  },
+  cursor: { kind: "brew-cask", token: "cursor-cli" },
 };
 
 export function describeSource(source: UpstreamSource): string {

@@ -16,7 +16,7 @@ import {
   type CheckRow,
 } from "../scripts/harness/check";
 import type { HarnessFacts } from "../scripts/harness/facts";
-import { installedVersion, latestVersion, parseVersionOutput, UPSTREAM_SOURCES } from "../scripts/harness/upstream";
+import { describeSource, installedVersion, latestVersion, parseVersionOutput, UPSTREAM_SOURCES } from "../scripts/harness/upstream";
 
 const spawnOf =
   (result: { exitCode?: number; stdout?: string; stderr?: string } | Error): ModelProbeSpawnFn =>
@@ -116,10 +116,22 @@ describe("latestVersion", () => {
     });
   });
 
-  test("a harness with no published source says so instead of guessing", async () => {
-    const result = await latestVersion(UPSTREAM_SOURCES.cursor!, okFetch("{}"));
+  test("reads Cursor's date build from its verified Homebrew cask", async () => {
+    const source = UPSTREAM_SOURCES.cursor!;
+    expect(describeSource(source)).toBe("homebrew cask cursor-cli");
+    const result = await latestVersion(source, async (url) => {
+      expect(url).toBe("https://formulae.brew.sh/api/cask/cursor-cli.json");
+      return okFetch('{"version":"2026.09.08-6caf4ff"}')();
+    });
+    expect(result).toEqual({ version: "2026.09.08-6caf4ff", error: null });
+  });
+
+  test("a harness with no published source says so without fetching", async () => {
+    const result = await latestVersion({ kind: "none", why: "no verified source" }, async () => {
+      throw new Error("must not fetch");
+    });
     expect(result.version).toBeNull();
-    expect(result.error).toContain("no machine-readable version endpoint");
+    expect(result.error).toBe("no verified source");
   });
 
   test("network failure degrades to unknown rather than crashing the report", async () => {
@@ -172,6 +184,32 @@ describe("the report", () => {
   test("says to upgrade the CLI first when upstream is ahead", () => {
     const text = renderRow(row({ latest: { version: "0.160.0", error: null } })).join("\n");
     expect(text).toContain("upgrade the CLI first (0.153.4 → 0.160.0)");
+  });
+
+  test("different Cursor builds require checking the channel, not guessing their order", () => {
+    const text = renderRow(row({
+      harness: "cursor",
+      bin: "cursor-agent",
+      installed: { version: "2026.09.02-c22c1a3", error: null },
+      latest: { version: "2026.09.08-6caf4ff", error: null },
+      surfaces: [],
+    })).join("\n");
+    expect(text).toContain("upstream build differs");
+    expect(text).toContain("verify the CLI release channel");
+    expect(text).not.toContain("up to date");
+    expect(text).not.toContain("upgrade the CLI first");
+  });
+
+  test("matching Cursor builds are current", () => {
+    const text = renderRow(row({
+      harness: "cursor",
+      bin: "cursor-agent",
+      installed: { version: "2026.09.08-6caf4ff", error: null },
+      latest: { version: "2026.09.08-6caf4ff", error: null },
+      surfaces: [],
+    })).join("\n");
+    expect(text).toContain("up to date");
+    expect(text).not.toContain("upstream build differs");
   });
 
   test("an uninstalled harness is skipped, never a failure", () => {

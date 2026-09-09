@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "2.1.261",
+      "verifiedAgainst": "2.1.266",
       "source": "the '--effort <level>' line of 'claude --help'",
       "lists": {
         "observed": [
@@ -31,7 +31,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2.1.261",
+      "verifiedAgainst": "2.1.266",
       "source": "flag tokens parsed out of 'claude --help'",
       "lists": {
         "values": [
@@ -116,7 +116,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "2.1.261",
+      "verifiedAgainst": "2.1.266",
       "source": "case-insensitive fixed-string search of the installed claude binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -131,7 +131,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2.1.261",
+      "verifiedAgainst": "2.1.266",
       "source": "model ids matching /claude-(fable|opus|sonnet|haiku)-[0-9a-z.-]+/ in the installed claude binary",
       "note": "an unfiltered binary scan: it includes legacy, dated and vendor-suffixed ids the picker never offers. Sound for proving a pinned id still exists; NOT a list to add from.",
       "lists": {

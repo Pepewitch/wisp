@@ -47,6 +47,7 @@ files are the machine-readable half. **Prose explains; facts assert.**
 
 ```sh
 bun run harness:check              # what drifted, and is my CLI even current
+bun run harness:check --remote     # compare npm and Homebrew published versions
 bun run harness:snapshot           # re-read free surfaces, rewrite, grade the diff
 bun run harness:snapshot --check   # diff without writing; exit 1 on drift
 bun run --cwd wispd test -- tests/harness-facts.test.ts
@@ -54,3 +55,8 @@ bun run --cwd wispd test -- tests/harness-facts.test.ts
 
 A harness whose binary is not installed is skipped with a note, never a
 failure — the same posture as `wisp doctor`'s per-harness checks.
+
+The remote sources are npm for Claude Code and Codex, and Homebrew casks for
+Droid and Cursor CLI. Homebrew may lag another release channel. Cursor's date
+builds are compared for equality only; a mismatch asks you to check the channel
+rather than guessing which build is newer.
