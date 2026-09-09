@@ -39,8 +39,14 @@ export type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/w
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 /** Files per turn (a headless turn never needs more; bounds the base64 payload). */
 export const MAX_ATTACHMENTS_PER_TURN = 10;
-/** base64 inflates by 4/3 — reject oversize strings before decoding them. */
-const MAX_BASE64_CHARS = Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 8;
+/**
+ * base64 inflates by 4/3 — reject oversize strings before decoding them.
+ *
+ * Exported because the HTTP body ceiling has to be derived from it: a request
+ * limit below `MAX_ATTACHMENTS_PER_TURN * MAX_BASE64_CHARS` would answer 413
+ * to a payload this validator still calls valid (a review caught exactly that).
+ */
+export const MAX_BASE64_CHARS = Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 8;
 
 /** An attachments rejection; the message IS the API's named 400 reason. */
 export class AttachError extends Error {

@@ -1,4 +1,5 @@
 import { loadAdapters } from "./adapters";
+import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "./attachments";
 import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
@@ -67,8 +68,25 @@ export function parseTerminalSize(params: URLSearchParams): PtySize | null | str
   return { cols, rows };
 }
 
-/** 32 MiB: comfortably above the attachment caps, far below "allocate whatever arrives". */
-export const MAX_REQUEST_BODY_BYTES = 32 * 1024 * 1024;
+/**
+ * The largest body the daemon will read, DERIVED from what the attachment
+ * validator accepts rather than guessed.
+ *
+ * A create or send request carries its images as base64 inside the JSON, so a
+ * full turn is `MAX_ATTACHMENTS_PER_TURN` files at `MAX_BASE64_CHARS` each —
+ * about 67 MiB. A flat 32 MiB (the first version of this) was BELOW that: Bun
+ * would answer 413 to a payload `decodeAttachments` still calls valid, and the
+ * refusal would land before any validator could name a reason (a review caught
+ * it). The headroom covers the JSON envelope: keys, file names, the message
+ * text, the suffix prompt id.
+ *
+ * The point of the ceiling is unchanged — far below Bun's 128 MB default, and
+ * the only thing between "a request arrived" and "the daemon allocated
+ * whatever it claimed to be" (ENG-09).
+ */
+const JSON_ENVELOPE_HEADROOM_BYTES = 2 * 1024 * 1024;
+export const MAX_REQUEST_BODY_BYTES =
+  MAX_ATTACHMENTS_PER_TURN * MAX_BASE64_CHARS + JSON_ENVELOPE_HEADROOM_BYTES;
 
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
 /** Deadline timers for sockets still waiting to authenticate, so an unauthenticated one cannot linger. */
@@ -388,11 +406,9 @@ async function serveOwned(
       port,
       hostname,
       idleTimeout: 30,
-      // A deliberate ceiling rather than Bun's 128 MB default. The largest
-      // legitimate body is a create/send request carrying base64 attachments,
-      // which their own per-file and per-turn caps already bound well below
-      // this; anything larger is a mistake or an attempt to make the daemon
-      // allocate (ENG-09).
+      // A deliberate ceiling rather than Bun's 128 MB default, derived from
+      // the attachment caps so it can never refuse a payload the attachment
+      // validator accepts (ENG-09).
       maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       websocket: {
         data: {} as TerminalSocketData,

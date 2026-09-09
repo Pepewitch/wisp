@@ -16,6 +16,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { BUILTIN_ADAPTERS } from "../src/adapters";
+import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "../src/attachments";
+import { MAX_REQUEST_BODY_BYTES } from "../src/daemon";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
 import { createTask, freeSlot, getTask, listTasks, newTaskId, setTaskFields, transition } from "../src/store";
@@ -81,6 +83,28 @@ function readyTask(): string {
   return id;
 }
 
+/**
+ * The body ceiling is a limit on what the daemon will READ, so it has to be at
+ * least what the attachment validator will ACCEPT. The first version of it was
+ * a flat 32 MiB, justified by a claim that it sat "comfortably above the
+ * attachment caps" — it was below them, so Bun would have answered 413 to a
+ * ten-image turn that `decodeAttachments` calls valid, before any validator
+ * could name a reason (a review caught it). This is that arithmetic, as a test
+ * rather than a comment.
+ */
+describe("the request-body ceiling", () => {
+  test("admits a full turn of maximum-size attachments", () => {
+    const fullTurnOfImages = MAX_ATTACHMENTS_PER_TURN * MAX_BASE64_CHARS;
+    expect(MAX_REQUEST_BODY_BYTES).toBeGreaterThanOrEqual(fullTurnOfImages);
+    // …with room for the JSON around them: keys, file names, the message.
+    expect(MAX_REQUEST_BODY_BYTES - fullTurnOfImages).toBeGreaterThanOrEqual(1024 * 1024);
+  });
+
+  test("stays far below Bun's default, which is the point of having one", () => {
+    expect(MAX_REQUEST_BODY_BYTES).toBeLessThan(128 * 1024 * 1024);
+  });
+});
+
 describe("every mutating route answers a malformed body with a named 4xx", () => {
   const taskId = readyTask();
   const routes: { name: string; path: string; method: string }[] = [
@@ -104,8 +128,12 @@ describe("every mutating route answers a malformed body with a named 4xx", () =>
         const payload = (await response.json()) as { error?: unknown };
         expect(typeof payload.error).toBe("string");
         expect(payload.error).not.toBe("");
-        // Nothing was created on the way to the refusal.
+        // Nothing was created on the way to the refusal…
         expect({ tasks: listTasks(true).length, prompts: listSuffixPrompts().length }).toEqual(before);
+        // …and nothing was archived either. A row count cannot see an archive
+        // (`listTasks(true)` counts archived rows too), and archiving from a
+        // malformed body is exactly the side effect this matrix caught.
+        expect(getTask(taskId)!.archived).toBe(0);
       });
     }
   }
