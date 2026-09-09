@@ -279,7 +279,7 @@ function printTurn(
   task: ApiTask,
   turn: Turn & { attachments: { name: string; size: number }[]; usage: UsageSummary | null },
 ): void {
-  const model = turn.model ?? (task.model ? `${task.model} (requested)` : null);
+  const model = turn.model ?? (turn.requested_model ? `${turn.requested_model} (requested)` : null);
   console.log(
     `\n— turn ${turn.n} [${turn.status}]${model ? ` · ${model}` : ""} you: ${turn.prompt.slice(0, 120).replaceAll("\n", " ")}`,
   );

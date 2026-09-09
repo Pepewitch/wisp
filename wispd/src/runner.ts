@@ -5,33 +5,24 @@ import { join } from "node:path";
 import {
   buildArgv,
   hasIncrementalOutcomeReducer,
-  IMAGE_DELIVERY_STRATEGIES,
-  IMAGE_INPUT_STRATEGIES,
   type AdapterDef,
-  type ImageInputStrategy,
 } from "./adapters";
 import {
   attachmentManifest,
   formatAttachNote,
   parseAttachmentManifest,
   promoteMessageAttachments,
-  removeMessageAttachments,
   restoreMessageAttachments,
-  taskMessageAttachmentsFingerprint,
   type DecodedAttachment,
   type StoredAttachment,
-  writeMessageAttachments,
 } from "./attachments";
 import { LOG_DIR, transcriptBudgetBytes, type WispConfig } from "./config";
 import {
-  activeLiveInput,
-  clearPendingDelivery,
   closeLiveInput,
   configureLiveTurn,
   liveCommand,
   LiveTransportError,
   pendingDelivery,
-  setPendingDelivery,
   writeImageEnvelope,
   type LiveOutputSink,
 } from "./live-input";
@@ -44,17 +35,15 @@ import { processStartTime } from "./procid";
 import {
   db,
   createTurn,
-  createTaskMessage,
   claimTaskMessageForStart,
-  claimTaskMessageForSteering,
   creatingTasks,
   finishTurn,
   getTask,
+  getTaskContext,
   getTaskMessage,
   getTurn,
   listTasks,
   markTaskMessageDelivered,
-  newTaskMessageId,
   nextTurnNumber,
   nextQueuedMessage,
   releaseOrphanedTaskMessageClaims,
@@ -66,13 +55,17 @@ import {
   setTurnKillDetail,
   transition,
   turnForTask,
+  type TaskAgentSelection,
 } from "./store";
 import { TurnRecorder } from "./recording/turn-recorder";
+import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
+import { deliveredMessage, inputStrategyFor, taskEnv, taskPreamble } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
 export { startStuckLoop, stuckTick } from "./stuck";
 export { finalizeTurn } from "./turn-finalize";
+export { taskEnv } from "./turn-input";
 /** Live children by turn id — for interrupts. Re-adopted turns (post-restart) fall back to pid. */
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
@@ -101,46 +94,6 @@ export function markInterrupted(turnId: number, detail: string): void {
 /** Record why wisp itself killed a turn (e.g. log cap); finalize reports it over any exit code. */
 export function recordKillReason(turnId: number, reason: string): void {
   setTurnKillDetail(turnId, reason);
-}
-
-export function taskEnv(task: Task): Record<string, string> {
-  return {
-    WISP_TASK_ID: task.id,
-    WISP_TASK_SLOT: String(task.slot),
-    WISP_WORKTREE: task.worktree_path ?? "",
-    WISP_REPO: task.repo_path,
-  };
-}
-
-function preamble(task: Task): string {
-  return [
-    `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
-    `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
-    `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
-    ``,
-    `Task:`,
-  ].join("\n");
-}
-
-function deliveredMessage(def: AdapterDef, attachments: StoredAttachment[], message: string): string {
-  if (
-    attachments.length === 0 ||
-    !def.imageDelivery ||
-    def.liveInput === "droid-jsonrpc" ||
-    def.liveInput === "codex-app-server"
-  ) {
-    return message;
-  }
-  const delivery = IMAGE_DELIVERY_STRATEGIES[def.imageDelivery];
-  return delivery ? `${delivery.preamble(attachments.map((attachment) => attachment.path))}\n\n${message}` : message;
-}
-
-function inputStrategyFor(
-  def: AdapterDef,
-  hasImages: boolean,
-): ImageInputStrategy | undefined {
-  const name = def.liveInput === "claude-stream-json" ? def.liveInput : hasImages ? def.imageInput : undefined;
-  return name ? IMAGE_INPUT_STRATEGIES[name] : undefined;
 }
 
 interface StartedCapture {
@@ -190,6 +143,7 @@ export function startTurn(
   cfg: WispConfig,
   attachments: StoredAttachment[] = [],
   sourceMessageId?: string,
+  adapters: Readonly<Record<string, AdapterDef>> = { [task.harness]: def },
 ): void {
   assertTaskNotStopping(task.id);
   assertTaskCapacity(cfg, task.id);
@@ -198,7 +152,7 @@ export function startTurn(
   // prompt, so the strategy's sentence goes immediately before the user's
   // message — inside the first turn's task preamble, not in front of it.
   const body = deliveredMessage(def, attachments, message);
-  const prompt = n === 1 ? `${preamble(task)}\n${body}` : body;
+  const prompt = n === 1 ? `${taskPreamble(task)}\n${body}` : body;
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   const images = attachments.map((a) => a.path);
@@ -256,7 +210,17 @@ export function startTurn(
     });
   } catch (e) {
     closeDescriptors([outFd, errFd]);
-    const turnId = createTurn(task.id, n, message, null, outPath, null, attachmentManifest(attachments));
+    const turnId = createTurn(
+      task.id,
+      n,
+      message,
+      null,
+      outPath,
+      null,
+      attachmentManifest(attachments),
+      null,
+      { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort },
+    );
     finishTurn(turnId, "failed", null, null);
     setTaskFields(task.id, { turn_count: n });
     transition(task.id, "failed", `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
@@ -280,6 +244,7 @@ export function startTurn(
         // turn admits to owning
         attachmentManifest(attachments),
         recorderEligible ? "recorder-v1" : null,
+        { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort },
       );
       recordProcessGroup(id);
       return id;
@@ -335,6 +300,7 @@ export function startTurn(
     outputPump,
     stderrPump,
     recorder,
+    adapters,
   ));
 }
 
@@ -346,89 +312,31 @@ export async function submitTaskMessage(
   cfg: WispConfig,
   attachments: DecodedAttachment[] = [],
   clientMessageId?: string,
+  adapters: Readonly<Record<string, AdapterDef>> = { [task.harness]: def },
+  agent?: TaskAgentSelection,
 ): Promise<SendResult> {
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
   if (currentTask.state === "creating") throw new Error("task is still being created");
   assertTaskNotStopping(task.id);
   task = currentTask;
-  const id = clientMessageId ?? newTaskMessageId();
-  const attachmentHash = taskMessageAttachmentsFingerprint(attachments);
-  const existing = getTaskMessage(id);
-  let message: TaskMessage;
-  if (existing) {
-    if (
-      existing.task_id !== task.id ||
-      existing.text !== text ||
-      (existing.attachment_hash !== "" && existing.attachment_hash !== attachmentHash)
-    ) {
-      throw new Error(`message id ${id} was already used for different content`);
-    }
-    if (existing.status === "queued" && existing.claim !== null) {
-      await pendingDelivery(task.id);
-    }
-    const current = getTaskMessage(id)!;
-    if (current.status === "cancelled") {
-      throw new Error(`message id ${id} was cancelled`);
-    }
-    if (current.status !== "queued") {
-      return { disposition: current.delivery ?? "queued-next", message: current };
-    }
-    message = current;
-  } else {
-    assertTaskCapacity(cfg, task.id);
-    try {
-      // A daemon can die after staging bytes but before inserting the message
-      // row. No row owns that directory, so a stable-ID retry must replace it
-      // rather than suffixing every filename and changing the manifest.
-      removeMessageAttachments(task.id, id);
-      const stored = attachments.length > 0 ? writeMessageAttachments(task.id, id, attachments) : [];
-      message = createTaskMessage({
-        id,
-        taskId: task.id,
-        text,
-        attachmentHash,
-        attachmentsJson: attachmentManifest(stored),
-      });
-    } catch (error) {
-      if (!getTaskMessage(id)) removeMessageAttachments(task.id, id);
-      throw error;
-    }
+  const existing = clientMessageId ? getTaskMessage(clientMessageId) : null;
+  if (!existing) assertTaskCapacity(cfg, task.id);
+  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent);
+  task = persisted.task;
+  const message = persisted.message;
+  if (message.status !== "queued") {
+    return { disposition: message.delivery ?? "queued-next", message };
   }
-  try {
-    const running = hasRunningTurn(task.id);
-    assertTaskCapacity(cfg, task.id);
-    const live = activeLiveInput(task.id);
-    if (running && live?.turnId === running.id) {
-      const claimed = claimTaskMessageForSteering(message.id, task.id, live.turn);
-      if (!claimed) return { disposition: "queued-next", message: getTaskMessage(message.id)! };
-      const previous = pendingDelivery(task.id) ?? Promise.resolve();
-      const delivery = previous
-        .then(() => live.send(claimed))
-        .then(() => {
-          markTaskMessageDelivered(id, "steered", live.turn);
-        })
-        .catch((error) => {
-          releaseTaskMessageClaim(id, task.id, true);
-          console.warn(`[wisp] task ${task.id}: live delivery failed; keeping ${id} queued: ${String(error)}`);
-        });
-      setPendingDelivery(task.id, delivery);
-      await delivery;
-      clearPendingDelivery(task.id, delivery);
-      const delivered = getTaskMessage(id)!;
-      if (delivered.delivery === "steered") return { disposition: "steered", message: delivered };
-      return { disposition: "queued-next", message: delivered };
-    }
-    if (!running) {
-      const started = startNextQueuedMessage(task.id, def, cfg);
-      if (started?.id === id) return { disposition: "started", message: started };
-      warnIfNothingWillRun(task.id, id, started);
-    }
-    return { disposition: "queued-next", message };
-  } catch (error) {
-    if (!getTaskMessage(id)) removeMessageAttachments(task.id, id);
-    throw error;
+  assertTaskCapacity(cfg, task.id);
+  const delivery = await deliverToRunningTurn(task, message);
+  if (delivery.result) return delivery.result;
+  if (!delivery.running) {
+    const started = startNextQueuedMessage(task.id, adapters, cfg);
+    if (started?.id === message.id) return { disposition: "started", message: started };
+    warnIfNothingWillRun(task.id, message.id, started);
   }
+  return { disposition: "queued-next", message };
 }
 
 /**
@@ -451,7 +359,11 @@ function warnIfNothingWillRun(taskId: string, messageId: string, started: TaskMe
  * forever. Archive flips `archived` before teardown kills anything, so the
  * archived check already closes that window.
  */
-export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: WispConfig): TaskMessage | null {
+export function startNextQueuedMessage(
+  taskId: string,
+  adapters: Readonly<Record<string, AdapterDef>>,
+  cfg: WispConfig,
+): TaskMessage | null {
   if (homeIsDraining()) return null;
   if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
   const task = getTask(taskId);
@@ -460,16 +372,35 @@ export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: Wis
   }
   const message = nextQueuedMessage(taskId);
   if (!message) return null;
+  const def = adapters[message.harness];
+  if (!def) {
+    transition(taskId, "failed", `queued message names unknown harness: ${message.harness}`);
+    return null;
+  }
+  const context = getTaskContext(taskId, message.context_n);
+  if (!context) {
+    transition(taskId, "failed", `queued message names missing context ${message.context_n}`);
+    return null;
+  }
   // Recovery may find a legacy/incomplete row whose denormalized turn_count
   // lagged the actual turns table. Never reuse a turn number.
   const turn = nextTurnNumber(taskId, task.turn_count);
-  const current = turn === task.turn_count + 1 ? task : { ...task, turn_count: turn - 1 };
+  const current: Task = {
+    ...task,
+    turn_count: turn - 1,
+    context_n: message.context_n,
+    harness: message.harness,
+    model: message.model,
+    effort: message.effort,
+    session_id: context.session_id,
+    skills_json: context.skills_json,
+  };
   const claimed = claimTaskMessageForStart(message.id, task.id, turn);
   if (!claimed) return null;
   const records = parseAttachmentManifest(message.attachments_json);
   try {
     const attachments = promoteMessageAttachments(taskId, message.id, turn, records);
-    startTurn(current, message.text, def, cfg, attachments, message.id);
+    startTurn(current, message.text, def, cfg, attachments, message.id, adapters);
     if (!turnForTask(taskId, turn)) {
       restoreMessageAttachments(taskId, message.id, turn);
       releaseTaskMessageClaim(message.id, taskId);
@@ -500,6 +431,7 @@ async function watchTurn(
   outputPump: Promise<void> = Promise.resolve(),
   stderrPump: Promise<void> = Promise.resolve(),
   recorder: TurnRecorder | null = null,
+  adapters: Readonly<Record<string, AdapterDef>>,
 ): Promise<void> {
   let capTermAt: number | null = null;
   let capChecking = false;
@@ -547,7 +479,7 @@ async function watchTurn(
   await waitForInterrupt(turnId);
   await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
   await processStop(taskId)?.catch(() => {});
-  if (!killedForArchive(turnId)) startNextQueuedMessage(taskId, def, cfg);
+  if (!killedForArchive(turnId)) startNextQueuedMessage(taskId, adapters, cfg);
 }
 
 /**
@@ -567,11 +499,11 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
   for (const turn of runningTurns()) {
     const task = getTask(turn.task_id);
     if (!task) continue;
-    const def = adapters[task.harness];
+    const def = adapters[turn.harness];
     const errPath = turn.log_file.replace(/\.out\.log$/, ".err.log");
     if (!def) {
       finishTurn(turn.id, "failed", null, null);
-      transition(task.id, "failed", `unknown harness after restart: ${task.harness}`);
+      transition(task.id, "failed", `unknown harness after restart: ${turn.harness}`);
       continue;
     }
     const identity = turn.pid && !recordedGroupRebooted(turn.id) ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";
@@ -588,7 +520,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
           await waitForInterrupt(turn.id);
           await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
           await processStop(task.id)?.catch(() => {});
-          if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, def, cfg);
+          if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, adapters, cfg);
         },
       });
     } else {
@@ -599,14 +531,13 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
       console.error(`[wisp] finalizing task ${task.id} turn ${turn.n} (${why})`);
       await waitForInterrupt(turn.id);
       await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
-      if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, def, cfg);
+      if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, adapters, cfg);
     }
   }
   // Messages survive a daemon restart independently of turn rows. Start any
   // FIFO head that was waiting while the daemon was unavailable.
   for (const task of listTasks()) {
-    const def = adapters[task.harness];
-    if (def && !hasRunningTurn(task.id)) startNextQueuedMessage(task.id, def, cfg);
+    if (!hasRunningTurn(task.id)) startNextQueuedMessage(task.id, adapters, cfg);
   }
 }
 

@@ -5,7 +5,7 @@ import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
   DiffResponse,
-  HarnessInfo,
+  HarnessesResponse,
   PullRequestOverview,
   PullRequestStatus,
   RepoInfo,
@@ -147,9 +147,22 @@ export function useHarnesses(enabled: boolean) {
   const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.harnesses,
-    queryFn: () => transport.request<{ harnesses: HarnessInfo[] }>("/api/harnesses"),
+    queryFn: () => transport.request<HarnessesResponse>("/api/harnesses"),
     select: (data) => data.harnesses,
     enabled,
+  });
+}
+
+/**
+ * Daemon-level capability flags from the same /api/harnesses cache. A flag
+ * absent on an older daemon reads as unsupported — never optimistic.
+ */
+export function useHarnessFeatures() {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: qk.harnesses,
+    queryFn: () => transport.request<HarnessesResponse>("/api/harnesses"),
+    select: (data) => data.features ?? {},
   });
 }
 

@@ -4,8 +4,7 @@ import { emit } from "./events";
 import type {
   OutboxRow,
   Task,
-  TaskMessage,
-  TaskMessageDelivery,
+  TaskContext,
   TaskMode,
   TaskState,
   Turn,
@@ -24,7 +23,8 @@ export function newTaskId(): string {
   return randomId("t", 5);
 }
 
-function randomId(prefix: string, length: number): string {
+/** Shared with store-messages (task message ids); store re-exports that module. */
+export function randomId(prefix: string, length: number): string {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789";
   let s = prefix;
   for (let i = 0; i < length; i++) s += chars[Math.floor(Math.random() * chars.length)];
@@ -41,6 +41,8 @@ export function freeSlot(): number {
   return s;
 }
 
+// db.transaction is created at CALL time, never at module scope: store-database
+// keeps `db` undefined until the daemon owns the home and initializes it.
 export function createTask(t: {
   id: string;
   title: string;
@@ -53,12 +55,22 @@ export function createTask(t: {
   mode?: TaskMode;
   slot: number;
 }): Task {
-  db.run(
-    `INSERT INTO tasks (id, title, repo_path, harness, model, effort, mode, slot, state, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', ?, ?)`,
-    [t.id, t.title, t.repo_path, t.harness, t.model, t.effort ?? null, t.mode ?? "worktree", t.slot, now(), now()],
-  );
-  return getTask(t.id)!;
+  return db.transaction((input: typeof t): Task => {
+    const timestamp = now();
+    db.run(
+      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, mode, slot, state, context_n, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?)`,
+      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, input.mode ?? "worktree", input.slot, timestamp, timestamp],
+    );
+    // A task's first durable context is born with it — one row, one boundary.
+    db.run(
+      `INSERT INTO task_contexts
+         (task_id, n, harness, model, effort, session_id, skills_json, created_at, updated_at)
+       VALUES (?, 1, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [input.id, input.harness, input.model, input.effort ?? null, timestamp, timestamp],
+    );
+    return getTask(input.id)!;
+  })(t);
 }
 
 export function getTask(id: string): Task | null {
@@ -106,6 +118,114 @@ export function setTaskFields(id: string, fields: Partial<Pick<Task, (typeof TAS
   const sets = keys.map((k) => `${k} = ?`).join(", ");
   const vals = keys.map((k) => (fields as Record<string, unknown>)[k]);
   db.run(`UPDATE tasks SET ${sets}, updated_at = ? WHERE id = ?`, [...vals, now(), id] as never[]);
+  if (fields.session_id !== undefined || fields.skills_json !== undefined) {
+    const task = getTask(id);
+    if (task) {
+      const contextFields = {
+        ...(fields.session_id !== undefined ? { session_id: fields.session_id } : {}),
+        ...(fields.skills_json !== undefined ? { skills_json: fields.skills_json } : {}),
+      };
+      const contextKeys = Object.keys(contextFields);
+      const contextSets = contextKeys.map((key) => `${key} = ?`).join(", ");
+      const contextValues = contextKeys.map((key) => (contextFields as Record<string, unknown>)[key]);
+      db.run(
+        `UPDATE task_contexts SET ${contextSets}, updated_at = ? WHERE task_id = ? AND n = ?`,
+        [...contextValues, now(), id, task.context_n] as never[],
+      );
+    }
+  }
+}
+
+export function getTaskContext(taskId: string, n: number): TaskContext | null {
+  return (
+    (db.query(`SELECT * FROM task_contexts WHERE task_id = ? AND n = ?`).get(taskId, n) as TaskContext | null) ??
+    null
+  );
+}
+
+/** Transaction body, exported so store-messages can nest it inside its own transaction. */
+export function switchTaskAgentBody(
+  taskId: string,
+  harness: string,
+  model: string | null,
+  effort: string | null,
+  freshContext: boolean,
+): Task {
+  const task = getTask(taskId);
+  if (!task) throw new Error(`no such task: ${taskId}`);
+  const timestamp = now();
+  if (freshContext) {
+    const row = db.query(`SELECT MAX(n) AS max_n FROM task_contexts WHERE task_id = ?`).get(taskId) as {
+      max_n: number | null;
+    };
+    const contextN = (row.max_n ?? task.context_n) + 1;
+    db.run(
+      `INSERT INTO task_contexts
+         (task_id, n, harness, model, effort, session_id, skills_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [taskId, contextN, harness, model, effort, timestamp, timestamp],
+    );
+    db.run(
+      `UPDATE tasks
+       SET harness = ?, model = ?, effort = ?, context_n = ?, session_id = NULL, skills_json = NULL, updated_at = ?
+       WHERE id = ?`,
+      [harness, model, effort, contextN, timestamp, taskId],
+    );
+  } else {
+    db.run(
+      `UPDATE task_contexts SET model = ?, effort = ?, updated_at = ? WHERE task_id = ? AND n = ?`,
+      [model, effort, timestamp, taskId, task.context_n],
+    );
+    db.run(
+      `UPDATE tasks SET model = ?, effort = ?, updated_at = ? WHERE id = ?`,
+      [model, effort, timestamp, taskId],
+    );
+  }
+  return getTask(taskId)!;
+}
+
+/**
+ * Change the active requested agent. A fresh context is the durable boundary
+ * used for cross-harness switches and `/fresh`; same-harness model changes
+ * update the current context and preserve its provider session.
+ */
+export function switchTaskAgent(
+  taskId: string,
+  harness: string,
+  model: string | null,
+  effort: string | null,
+  freshContext: boolean,
+): Task {
+  // db.transaction at CALL time: `db` is undefined until the daemon initializes it.
+  return db.transaction(switchTaskAgentBody)(taskId, harness, model, effort, freshContext);
+}
+
+/** Persist provider-owned metadata on the context that produced it. */
+export function setTaskContextFields(
+  taskId: string,
+  contextN: number,
+  fields: { session_id?: string | null; skills_json?: string | null },
+): void {
+  db.transaction(
+    (id: string, n: number, updates: typeof fields): void => {
+      const keys = Object.keys(updates) as (keyof typeof updates)[];
+      if (keys.length === 0) return;
+      const timestamp = now();
+      const sets = keys.map((key) => `${key} = ?`).join(", ");
+      const values = keys.map((key) => updates[key]);
+      db.run(
+        `UPDATE task_contexts SET ${sets}, updated_at = ? WHERE task_id = ? AND n = ?`,
+        [...values, timestamp, id, n] as never[],
+      );
+      const active = getTask(id);
+      if (active?.context_n === n) {
+        db.run(
+          `UPDATE tasks SET ${sets}, updated_at = ? WHERE id = ?`,
+          [...values, timestamp, id] as never[],
+        );
+      }
+    },
+  )(taskId, contextN, fields);
 }
 
 /**
@@ -162,14 +282,41 @@ export function createTurn(
   /** the turn's attachment manifest (A1a); null = no images, and stays null for turns that predate the column */
   attachments_json: string | null = null,
   capture_mode: TurnCaptureMode | null = null,
+  agent?: {
+    context_n: number;
+    harness: string;
+    model: string | null;
+    effort: string | null;
+  },
 ): number {
   const captureState: TurnCaptureState = capture_mode === null ? "legacy" : "complete";
+  const task = getTask(task_id);
+  const contextN = agent?.context_n ?? task?.context_n ?? 1;
+  const harness = agent?.harness ?? task?.harness ?? "";
+  const requestedModel = agent?.model ?? task?.model ?? null;
+  const requestedEffort = agent?.effort ?? task?.effort ?? null;
   const res = db.run(
     `INSERT INTO turns
-       (task_id, n, prompt, status, pid, pid_start_time, log_file, started_at, attachments_json,
+       (task_id, n, context_n, harness, requested_model, requested_effort,
+        prompt, status, pid, pid_start_time, log_file, started_at, attachments_json,
         capture_mode, capture_state, captured_bytes, omitted_bytes, omitted_records, diagnostic_state)
-     VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
-    [task_id, n, prompt, pid, pid_start_time, log_file, now(), attachments_json, capture_mode, captureState],
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
+    [
+      task_id,
+      n,
+      contextN,
+      harness,
+      requestedModel,
+      requestedEffort,
+      prompt,
+      pid,
+      pid_start_time,
+      log_file,
+      now(),
+      attachments_json,
+      capture_mode,
+      captureState,
+    ],
   );
   emit({ type: "turn", taskId: task_id, n, status: "running" });
   return Number(res.lastInsertRowid);
@@ -319,186 +466,22 @@ export function nextTurnNumber(taskId: string, recordedCount = 0): number {
   return Math.max(recordedCount, row.max_n ?? 0) + 1;
 }
 
-export function newTaskMessageId(): string {
-  return randomId("m", 12);
-}
-
-export function createTaskMessage(input: {
-  id: string;
-  taskId: string;
-  text: string;
-  attachmentHash: string;
-  attachmentsJson?: string | null;
-}): TaskMessage {
-  const timestamp = now();
-  db.run(
-    `INSERT INTO task_messages
-      (id, task_id, text, status, delivery, turn_n, attachment_hash, attachments_json, created_at, updated_at)
-     VALUES (?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
-    [
-      input.id,
-      input.taskId,
-      input.text,
-      input.attachmentHash,
-      input.attachmentsJson ?? null,
-      timestamp,
-      timestamp,
-    ],
-  );
-  const message = getTaskMessage(input.id)!;
-  emit({ type: "message", taskId: input.taskId, messageId: input.id });
-  return message;
-}
-
-export function getTaskMessage(id: string): TaskMessage | null {
-  return (db.query(`SELECT * FROM task_messages WHERE id = ?`).get(id) as TaskMessage | null) ?? null;
-}
-
-export function messagesFor(taskId: string): TaskMessage[] {
-  return db
-    .query(`SELECT * FROM task_messages WHERE task_id = ? ORDER BY created_at ASC, rowid ASC`)
-    .all(taskId) as TaskMessage[];
-}
-
-export function nextQueuedMessage(taskId: string): TaskMessage | null {
-  return (
-    (db
-      .query(
-        `SELECT * FROM task_messages
-         WHERE task_id = ? AND status = 'queued' AND claim IS NULL
-         ORDER BY created_at ASC, rowid ASC LIMIT 1`,
-      )
-      .get(taskId) as TaskMessage | null) ?? null
-  );
-}
-
-export function updateQueuedTaskMessage(id: string, taskId: string, text: string): TaskMessage | null {
-  const result = db.run(
-    `UPDATE task_messages SET text = ?, updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL`,
-    [text, now(), id, taskId],
-  );
-  const updated = result.changes > 0 ? getTaskMessage(id) : null;
-  if (updated) emit({ type: "message", taskId, messageId: id });
-  return updated;
-}
-
-export function cancelQueuedTaskMessage(id: string, taskId: string): TaskMessage | null {
-  db.run(
-    `UPDATE task_messages SET status = 'cancelled', updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL`,
-    [now(), id, taskId],
-  );
-  const message = getTaskMessage(id);
-  const cancelled = message?.task_id === taskId && message.status === "cancelled" ? message : null;
-  if (cancelled) emit({ type: "message", taskId, messageId: id });
-  return cancelled;
-}
-
-/**
- * Reserve a queued row while a native channel is waiting for admission.
- * Keeping the claim in internal columns preserves the public three-state
- * model while blocking edit/cancel/FIFO drain.
- */
-export function claimTaskMessageForSteering(id: string, taskId: string, turnN: number): TaskMessage | null {
-  return claimTaskMessage(id, taskId, turnN, "steered");
-}
-
-function claimTaskMessage(
-  id: string,
-  taskId: string,
-  turnN: number,
-  delivery: Exclude<TaskMessageDelivery, null>,
-): TaskMessage | null {
-  const result = db.run(
-    `UPDATE task_messages
-     SET claim = ?, claim_turn_n = ?, updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL
-       AND id = (
-         SELECT queued.id FROM task_messages AS queued
-         WHERE queued.task_id = ? AND queued.status = 'queued'
-         ORDER BY queued.created_at ASC, queued.rowid ASC LIMIT 1
-       )`,
-    [delivery, turnN, now(), id, taskId, taskId],
-  );
-  return result.changes > 0 ? getTaskMessage(id) : null;
-}
-
-/** Reserve the FIFO head across attachment promotion, spawn, and turn-row creation. */
-export function claimTaskMessageForStart(id: string, taskId: string, turnN: number): TaskMessage | null {
-  return claimTaskMessage(id, taskId, turnN, "started");
-}
-
-/** Put an incomplete delivery back at its original FIFO position. */
-export function releaseTaskMessageClaim(
-  id: string,
-  taskId: string,
-  deliveryUncertain = false,
-): TaskMessage | null {
-  const result = db.run(
-    `UPDATE task_messages
-     SET claim = NULL, claim_turn_n = NULL,
-         delivery_uncertain = MAX(delivery_uncertain, ?), updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NOT NULL`,
-    [deliveryUncertain ? 1 : 0, now(), id, taskId],
-  );
-  const released = result.changes > 0 ? getTaskMessage(id) : null;
-  if (released && deliveryUncertain) emit({ type: "message", taskId, messageId: id });
-  return released;
-}
-
-/**
- * A daemon crash can strand an in-flight admission claim. A start is proven
- * by its turn row. Native steering cannot be made exactly-once across the
- * acknowledgement/SQLite boundary, so retry it at least once and preserve an
- * explicit uncertainty bit for API/UI disclosure.
- */
-export function releaseOrphanedTaskMessageClaims(): void {
-  const rows = db
-    .query(
-      `SELECT id, task_id, claim, claim_turn_n
-       FROM task_messages WHERE status = 'queued' AND claim IS NOT NULL`,
-    )
-    .all() as {
-      id: string;
-      task_id: string;
-      claim: Exclude<TaskMessageDelivery, null>;
-      claim_turn_n: number | null;
-    }[];
-  for (const row of rows) {
-    const turn =
-      row.claim_turn_n === null
-        ? null
-        : (db.query(`SELECT id FROM turns WHERE task_id = ? AND n = ?`).get(row.task_id, row.claim_turn_n) as
-            | { id: number }
-            | null);
-    if (row.claim === "started" && turn && row.claim_turn_n !== null) {
-      markTaskMessageDelivered(row.id, "started", row.claim_turn_n);
-    } else {
-      // Without a turn row, even a start claim could have crossed the spawn
-      // boundary before the daemon died. Conservatively disclose possible
-      // delivery rather than presenting a replay as certainly new.
-      releaseTaskMessageClaim(row.id, row.task_id, true);
-    }
-  }
-}
-
-export function markTaskMessageDelivered(
-  id: string,
-  delivery: Exclude<TaskMessageDelivery, null>,
-  turnN: number,
-): TaskMessage {
-  db.run(
-    `UPDATE task_messages
-     SET status = 'delivered', delivery = ?, turn_n = ?, claim = NULL, claim_turn_n = NULL, updated_at = ?
-     WHERE id = ? AND status = 'queued'`,
-    [delivery, turnN, now(), id],
-  );
-  const message = getTaskMessage(id);
-  if (!message || message.status !== "delivered") throw new Error(`queued message ${id} was no longer available`);
-  emit({ type: "message", taskId: message.task_id, messageId: id });
-  return message;
-}
+export {
+  cancelQueuedTaskMessage,
+  claimTaskMessageForStart,
+  claimTaskMessageForSteering,
+  createTaskMessage,
+  createTaskMessageWithAgent,
+  getTaskMessage,
+  markTaskMessageDelivered,
+  messagesFor,
+  newTaskMessageId,
+  nextQueuedMessage,
+  releaseOrphanedTaskMessageClaims,
+  releaseTaskMessageClaim,
+  updateQueuedTaskMessage,
+  type TaskAgentSelection,
+} from "./store-messages";
 
 export function runningTurns(taskId?: string): Turn[] {
   if (taskId) {

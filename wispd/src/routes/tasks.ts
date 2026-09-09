@@ -12,6 +12,7 @@ import {
   type DecodedAttachment,
 } from "../attachments";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
+import { emit } from "../events";
 import { pathExists, readSlice, readTailOf } from "../fsutil";
 import type { PullRequestCache } from "../pull-requests";
 import { isProjectRemovalInProgress } from "../project-removals";
@@ -28,7 +29,9 @@ import {
   listTasks,
   messagesFor,
   newTaskId,
+  setTaskContextFields,
   setTaskFields,
+  switchTaskAgent,
   transition,
   turnForTask,
   turnsFor,
@@ -65,6 +68,7 @@ async function launchTask(
   task: Task,
   prompt: string,
   def: AdapterDef,
+  adapters: Record<string, AdapterDef>,
   cfg: WispConfig,
   attachments: DecodedAttachment[] = [],
 ): Promise<void> {
@@ -90,7 +94,7 @@ async function launchTask(
     const fresh = getTask(task.id);
     if (!fresh || fresh.archived || homeIsDraining()) return;
     const stored = attachments.length > 0 ? writeTurnAttachments(task.id, fresh.turn_count + 1, attachments) : [];
-    startTurn(fresh, prompt, def, cfg, stored);
+    startTurn(fresh, prompt, def, cfg, stored, undefined, adapters);
   } catch (e) {
     if (getTask(task.id)?.archived) return;
     transition(task.id, "failed", String(e instanceof Error ? e.message : e).slice(0, 300));
@@ -238,7 +242,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     }
     if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
     const release = reserveTaskCapacity(task.id, cfg);
-    void trackHomeWork(launchTask(task, prompt, def, cfg, attachments).finally(release));
+    void trackHomeWork(launchTask(task, prompt, def, adapters, cfg, attachments).finally(release));
     return json(apiTask(task), 201);
   })();
 }
@@ -262,7 +266,7 @@ async function taskLogResponse(
   return json({
     turn: n,
     status: turn.status,
-    harness: task.harness,
+    harness: turn.harness,
     size: slice.size,
     out: slice.text,
     err: await readTailOf(turn.log_file.replace(/\.out\.log$/, ".err.log"), LOG_TAIL_BYTES),
@@ -276,6 +280,75 @@ function idleTaskError(task: Task, runningSuffix = ""): Response | null {
   return running ? err(`turn ${running.n} is still running${runningSuffix}`, 409) : null;
 }
 
+interface SendTaskBody {
+  message?: unknown;
+  suffixPromptId?: unknown;
+  attachments?: unknown;
+  clientMessageId?: unknown;
+  harness?: unknown;
+  model?: unknown;
+  effort?: unknown;
+  startFreshContext?: unknown;
+}
+
+function sendTaskBodyError(body: SendTaskBody): Response | null {
+  if (typeof body.message !== "string" || body.message.length === 0) return err("message is required", 400);
+  if (body.suffixPromptId !== undefined && typeof body.suffixPromptId !== "string") {
+    return err(`suffixPromptId must be a string, got ${typeName(body.suffixPromptId)}`, 400);
+  }
+  if (body.harness !== undefined && (typeof body.harness !== "string" || body.harness === "")) {
+    return err("harness must be a non-empty string", 400);
+  }
+  if (body.model !== undefined && (typeof body.model !== "string" || body.model === "")) {
+    return err("model must be a non-empty string", 400);
+  }
+  if (body.effort !== undefined && body.effort !== null && (typeof body.effort !== "string" || body.effort === "")) {
+    return err("effort must be a non-empty string or null", 400);
+  }
+  if (body.startFreshContext !== undefined && typeof body.startFreshContext !== "boolean") {
+    return err("startFreshContext must be a boolean", 400);
+  }
+  if (
+    body.clientMessageId !== undefined &&
+    (typeof body.clientMessageId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.clientMessageId))
+  ) {
+    return err("clientMessageId must be 8-80 letters, numbers, '_' or '-'", 400);
+  }
+  return null;
+}
+
+interface ResolvedSendAgent {
+  harness: string;
+  model: string | null;
+  effort: string | null;
+  harnessChanged: boolean;
+  def: AdapterDef;
+}
+
+function resolveSendAgent(
+  task: Task,
+  body: SendTaskBody,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+): ResolvedSendAgent | Response {
+  const harness = (body.harness as string | undefined) ?? task.harness;
+  const model = body.model === undefined ? task.model : (body.model as string);
+  const harnessChanged = harness !== task.harness;
+  if (harnessChanged && body.model === undefined) return err("model is required when changing harness", 400);
+  if (harnessChanged && body.startFreshContext !== true) {
+    return err("changing harness requires startFreshContext: true", 409);
+  }
+  const def = adapters[harness];
+  if (!def) return err(`unknown harness: ${harness}`, body.harness === undefined ? 500 : 400);
+  const effort =
+    body.effort !== undefined
+      ? (body.effort as string | null)
+      : harnessChanged
+        ? resolveHarnessDefaults(cfg, harness, model ?? undefined, undefined).effort
+        : task.effort;
+  return { harness, model, effort, harnessChanged, def };
+}
+
 async function sendTaskResponse(
   task: Task,
   req: Request,
@@ -284,34 +357,30 @@ async function sendTaskResponse(
 ): Promise<Response> {
   const parsed = await jsonObjectBody(req);
   if (parsed instanceof Response) return parsed;
-  const body = parsed as {
-    message?: string;
-    suffixPromptId?: unknown;
-    attachments?: unknown;
-    clientMessageId?: unknown;
-  };
+  const body = parsed as SendTaskBody;
   const current = getTask(task.id);
   if (!current) return err(`no such task: ${task.id}`, 404);
   task = current;
-  if (typeof body.message !== "string" || body.message.length === 0) return err("message is required", 400);
-  if (body.suffixPromptId !== undefined && typeof body.suffixPromptId !== "string") {
-    return err(`suffixPromptId must be a string, got ${typeName(body.suffixPromptId)}`, 400);
-  }
+  const invalid = sendTaskBodyError(body);
+  if (invalid) return invalid;
   if (task.archived) return err("task is archived — archived tasks are read-only", 409);
   if (task.state === "creating") return err("task is still being created", 409);
   if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
-  if (
-    body.clientMessageId !== undefined &&
-    (typeof body.clientMessageId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.clientMessageId))
-  ) {
-    return err("clientMessageId must be 8-80 letters, numbers, '_' or '-'", 400);
-  }
-  const def = adapters[task.harness];
-  if (!def) return err(`unknown harness: ${task.harness}`, 500);
-  const message = promptWithSuffix(body.message, body.suffixPromptId as string | undefined);
+  const resolved = resolveSendAgent(task, body, cfg, adapters);
+  if (resolved instanceof Response) return resolved;
+  const { harness, model, effort, harnessChanged, def } = resolved;
+  const message = promptWithSuffix(body.message as string, body.suffixPromptId as string | undefined);
   if (message === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
   try {
-    const decoded = decodeAttachments(task.harness, def, body.attachments);
+    const decoded = decodeAttachments(harness, def, body.attachments);
+    // The switch and the queue row commit in ONE transaction inside
+    // submitTaskMessage: a crash can expose neither a switched task without
+    // its first message nor a message attributed to an agent the task never
+    // adopted.
+    const agent =
+      harness !== task.harness || model !== task.model || effort !== task.effort
+        ? { harness, model, effort, freshContext: harnessChanged }
+        : undefined;
     const result = await submitTaskMessage(
       task,
       message,
@@ -319,6 +388,8 @@ async function sendTaskResponse(
       cfg,
       decoded,
       body.clientMessageId as string | undefined,
+      adapters,
+      agent,
     );
     return json({
       ...apiTask(getTask(task.id)!),
@@ -363,7 +434,8 @@ function basicTaskAction(
   if (action === "fresh-session" && method === "POST") {
     const unavailable = idleTaskError(task);
     if (unavailable) return unavailable;
-    const updated = updateTaskAndEmit(task.id, { session_id: null })!;
+    const updated = switchTaskAgent(task.id, task.harness, task.model, task.effort, true);
+    emit({ type: "task", taskId: task.id, state: task.state, stateDetail: task.state_detail, seq: task.seq });
     return json(apiTask(updated));
   }
   if (action === "push" && method === "POST") {
@@ -454,7 +526,7 @@ export function taskRoute(
         latest_turn_model: latest?.model ?? null,
         latest_turn_exit_code: latest?.exit_code ?? null,
         latest_turn_has_result: latest ? latest.result !== null : false,
-        turns: turns.map((t) => apiTurn(t, adapters[task.harness])),
+        turns: turns.map((t) => apiTurn(t, adapters[t.harness])),
         messages: messagesFor(task.id).map(apiTaskMessage),
         diffstat: stat,
         worktreeReason: health?.reason ?? null,
@@ -571,7 +643,7 @@ export function taskRoute(
         if (result.newSessionId) {
           // SP1: droid compaction MINTS the session that holds the summary —
           // a field update on an existing column, the freeze holds
-          updateTaskAndEmit(task.id, { session_id: result.newSessionId });
+          setTaskContextFields(task.id, task.context_n, { session_id: result.newSessionId });
         }
         return json({
           ok: true,

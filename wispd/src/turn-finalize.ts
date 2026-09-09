@@ -12,7 +12,7 @@ import {
 import {
   finishTurn,
   getTurn,
-  setTaskFields,
+  setTaskContextFields,
   setTurnModel,
   setTurnUsage,
   transition,
@@ -42,8 +42,13 @@ function emptyFailedOutcome(): ParsedTurn {
 }
 
 function persistOutcomeMetadata(taskId: string, turnId: number, parsed: ParsedTurn): void {
-  if (parsed.session) setTaskFields(taskId, { session_id: parsed.session });
-  if (parsed.skills !== null) setTaskFields(taskId, { skills_json: JSON.stringify(parsed.skills) });
+  const turn = getTurn(turnId);
+  if (turn) {
+    setTaskContextFields(taskId, turn.context_n, {
+      ...(parsed.session ? { session_id: parsed.session } : {}),
+      ...(parsed.skills !== null ? { skills_json: JSON.stringify(parsed.skills) } : {}),
+    });
+  }
   if (parsed.model) setTurnModel(turnId, parsed.model);
   if (parsed.usage != null) setTurnUsage(turnId, JSON.stringify(parsed.usage));
 }

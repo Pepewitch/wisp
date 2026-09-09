@@ -5,7 +5,17 @@ import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
-import { createTask, createTurn, freeSlot, getTask, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
+import {
+  createTask,
+  createTurn,
+  finishTurn,
+  freeSlot,
+  getTask,
+  newTaskId,
+  setTaskFields,
+  transition,
+  turnsFor,
+} from "../src/store";
 
 /**
  * POST /api/tasks/:id/fresh-session (S3, audit item 5): clears the stored
@@ -33,10 +43,11 @@ const bashResume: AdapterDef = {
   bin: "bash",
   exec: ["-c", 'printf "%s\\n" "$0" "$@"'], // one argv element per line
   resume: ["--resume", "{session}"],
+  model: ["--model", "{model}"],
   parse: { format: "text" },
   attach: null,
 };
-const adapters = { bashresume: bashResume };
+const adapters = { bashresume: bashResume, bashother: { ...bashResume } };
 
 function call(path: string, body?: unknown): Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
@@ -153,4 +164,89 @@ describe("POST /api/tasks/:id/fresh-session (S3)", () => {
     expect(log2).not.toContain("sess-1");
     expect(log2).toContain("second");
   }, 15_000);
+});
+
+describe("agent switching on send", () => {
+  test("same-harness model changes preserve the provider session without confirmation", async () => {
+    const id = readyTask("sess-1");
+    const res = await call(`/api/tasks/${id}/send`, {
+      message: "use the other model",
+      harness: "bashresume",
+      model: "model-b",
+      clientMessageId: "same-harness-model",
+    });
+    expect(res.status).toBe(200);
+    await untilSettled(id);
+
+    const task = getTask(id)!;
+    const turn = turnsFor(id)[0]!;
+    expect(task).toMatchObject({ harness: "bashresume", model: "model-b", context_n: 1 });
+    expect(turn).toMatchObject({
+      context_n: 1,
+      harness: "bashresume",
+      requested_model: "model-b",
+    });
+    const log = readFileSync(turn.log_file, "utf8");
+    expect(log).toContain("--resume\nsess-1\n");
+    expect(log).toContain("--model\nmodel-b\n");
+  });
+
+  test("cross-harness changes require confirmation and start a durable fresh context", async () => {
+    const id = readyTask("sess-1");
+    let res = await call(`/api/tasks/${id}/send`, {
+      message: "switch harness",
+      harness: "bashother",
+      model: "other-model",
+      clientMessageId: "cross-harness-model",
+    });
+    expect(res.status).toBe(409);
+    expect(await errorOf(res)).toBe("changing harness requires startFreshContext: true");
+    expect(getTask(id)).toMatchObject({ harness: "bashresume", context_n: 1, session_id: "sess-1" });
+
+    res = await call(`/api/tasks/${id}/send`, {
+      message: "switch harness",
+      harness: "bashother",
+      model: "other-model",
+      startFreshContext: true,
+      clientMessageId: "cross-harness-model",
+    });
+    expect(res.status).toBe(200);
+    await untilSettled(id);
+
+    const task = getTask(id)!;
+    const turn = turnsFor(id)[0]!;
+    expect(task).toMatchObject({ harness: "bashother", model: "other-model", context_n: 2 });
+    expect(turn).toMatchObject({
+      context_n: 2,
+      harness: "bashother",
+      requested_model: "other-model",
+    });
+    expect(readFileSync(turn.log_file, "utf8")).not.toContain("sess-1");
+  });
+
+  test("a confirmed switch during a running turn is queued with its target context", async () => {
+    const id = readyTask("sess-1");
+    const turnId = createTurn(id, 1, "still running", null, join(tmpdir(), "agent-switch-running.log"));
+
+    const res = await call(`/api/tasks/${id}/send`, {
+      message: "use the new harness next",
+      harness: "bashother",
+      model: "other-model",
+      startFreshContext: true,
+      clientMessageId: "queued-agent-switch",
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      disposition: string;
+      message: { context_n: number; harness: string; model: string };
+    };
+    expect(body.disposition).toBe("queued-next");
+    expect(body.message).toMatchObject({
+      context_n: 2,
+      harness: "bashother",
+      model: "other-model",
+    });
+    expect(getTask(id)).toMatchObject({ context_n: 2, harness: "bashother" });
+    finishTurn(turnId, "interrupted", null, null);
+  });
 });
