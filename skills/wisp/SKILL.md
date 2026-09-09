@@ -94,6 +94,14 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
   session (the harness remembers prior turns; send also re-arms a done task).
 - `wisp interrupt <id>` — stop a runaway turn. The session survives.
 - `wisp fresh <id>` — the next turn starts a fresh harness session.
+- Changing the harness, model, or effort of an EXISTING task is a browser and
+  Desktop composer control, not a CLI flag. A same-harness model or effort
+  change rides the next turn with the provider session intact. Switching
+  harness starts a fresh context under the same task id: the old history stays
+  readable behind a divider in the timeline, but the new harness sees none of
+  it, so the next message must restate the goal like a new prompt. Each turn
+  records the harness that actually ran it, so logs and `wisp show` report the
+  turn's own harness rather than the task's current one.
 
 ## 6. Image attachments
 

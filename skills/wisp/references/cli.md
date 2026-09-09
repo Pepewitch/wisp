@@ -71,6 +71,16 @@ The session survives, so a later `send` can continue the conversation.
 `fresh` clears the stored session id so the NEXT turn
 starts cold (the web palette's `/fresh`).
 
+There is no CLI verb for changing an existing task's harness, model, or
+effort. That is a composer control in the browser and Desktop app, and a
+`POST /tasks/<id>/send` field set (`harness`, `model`, `effort`,
+`startFreshContext`) on the API. Changing harness requires both an explicit
+`model` (`400` without it) and `startFreshContext: true` (`409` without it,
+because the new harness cannot inherit the previous provider session). A
+same-harness model or effort change keeps the session and applies to the next
+turn. The `harnesses` route advertises `taskAgentSwitching`, so a newer client
+hides the control against an older daemon instead of failing silently.
+
 ```
 wisp push <task>
 wisp archive <task> [-f|--force]
