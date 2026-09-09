@@ -9,9 +9,47 @@ Publishing a tag, GitHub release, or tap commit changes public state. Do it
 only when the owner explicitly authorizes that release. Preparation and local
 qualification do not imply permission to publish.
 
+## The short path
+
+These commands are the release. Everything after this section explains what
+they enforce, and is the manual fallback when something fails.
+
+```sh
+version=0.5.2                        # an unused regular version, or 0.0.0-alpha.N
+git switch -c "release/$version" origin/main
+bun install --frozen-lockfile
+
+bun run version:set "$version"       # writes every version site; refuses a bad version
+bun run release:notes "$version"     # scaffolds the notes; edit every TODO
+#                                      then update README/INSTALL wording that
+#                                      names the current release
+
+bun run check                        # includes version:check, docs, pins, lint, types, tests
+bun run brand:check && bun run smoke && bun run build && bun run test:evaluator
+```
+
+Open the release-preparation PR, land it on `main`, then publish from the
+merged commit:
+
+```sh
+git fetch origin && git switch --detach origin/main
+bun run build
+test -z "$(git status --porcelain=v1 --untracked-files=normal)"
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+git tag -a "v$version" -m "Wisp $version"
+git push origin "refs/tags/v$version"   # this is the publish authorization
+```
+
+The tag push is the only irreversible step, and nothing above it publishes
+anything. `.github/workflows/release.yml` then builds, signs, notarizes,
+publishes the immutable release, and promotes the tap. Record the outcome in
+the qualification ledger afterwards.
+
 ## Release invariants
 
-- A release is built from one clean commit carrying one synchronized version.
+- A release is built from one clean commit carrying one synchronized version,
+  written by `bun run version:set` and enforced by `bun run version:check`.
 - The exact commit has an annotated `v<version>` tag before release scripts run
   with `--require-tag`.
 - Linux and Apple Silicon assets are rebuilt twice and compared byte for byte.
@@ -64,17 +102,18 @@ three jobs:
 2. `publish` runs on arm64 macOS, builds and reproducibility-checks the Mac
    daemon and unsigned Desktop payloads the same way, then creates and verifies
    one trusted Desktop archive. It verifies all ten assets, renders and audits
-   both Homebrew recipes plus the Desktop update channel offline, creates the
+   both Homebrew recipes plus both update channels offline, creates the
    "Wisp <version>" GitHub release with the release notes as its body
    (a prerelease only for alpha tags),
    and verifies the ten public URLs and both Desktop trust chains anonymously.
    This is the immutable publication boundary.
 3. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
    and verifies the public assets again, renders and audits the Formula, Cask,
-   and update channel in an isolated Homebrew tap, pushes exactly those three
-   files to `Pepewitch/homebrew-tap` in one commit, waits for the fixed raw
-   channel URL to converge, then requires the full livecheck audit. It emits a
-   timing log and machine-readable promotion receipt.
+   Desktop update channel, and daemon update channel in an isolated Homebrew
+   tap, pushes exactly those four files to `Pepewitch/homebrew-tap` in one
+   commit, waits for both fixed raw channel URLs to converge, then requires the
+   full livecheck audit. It emits a timing log and machine-readable promotion
+   receipt.
 
 Promotion is deliberately a separate job. If it fails after the immutable
 GitHub release exists, rerun only the failed `promote` job. The workflow also
@@ -196,28 +235,44 @@ fi
 
 ## 2. Synchronize the version and claims
 
-For every release, update these direct pins:
-
-- `wispd/package.json`;
-- `wispd/src/version.ts`;
-- `desktop/src-tauri/Cargo.toml`, `Cargo.lock`, and `tauri.conf.json`;
-- the literal source-build expectations in `wispd/tests/version.test.ts`;
-- the default and help text in `scripts/install.sh`;
-- the default artifact paths in `wispd/scripts/test-install.sh` and
-  `wispd/scripts/test-activation.sh`;
-- `VERSION` in `wispd/scripts/evaluator/run.sh`; and
-- the new release notes plus README/install wording that truly
-  applies to this version.
-
-Search the old version before committing:
+The version lives in `wispd/package.json`. Every other file that repeats it is
+listed once in `scripts/release-versions.ts`, and one command writes them all:
 
 ```sh
-rg -n -F '<old-version>' \
-  wispd/package.json wispd/src wispd/tests wispd/scripts README.md docs skills
+bun run version:set "$version"
 ```
 
-Classify every match. Do not rewrite published release notes merely to make an
-old version look current.
+Do not edit those files by hand. `bun run version:check` reads each one back
+independently and fails if any disagrees, if a file changed shape so its
+pattern no longer matches, or if the site count moved — it runs inside
+`bun run check`, so a half-applied bump cannot reach a release branch. When a
+new file starts repeating the version, add it to the table and raise
+`EXPECTED_SITE_COUNT`; the tests in `tests/release-versions.test.ts` prove the
+gate still refuses each way a bump can go wrong.
+
+`version:set` also refuses anything the pipeline could not tag later, so a
+version like `0.5.2-beta` fails before nine files are rewritten rather than at
+`git tag`.
+
+Then write the parts that need judgment:
+
+```sh
+bun run release:notes "$version"
+```
+
+That scaffolds `docs/v<major>.<minor>/RELEASE-NOTES-<version>.md` with the
+required sections, the exact ten-asset list, install commands already carrying
+the new version, and one bullet per pull request merged since the previous tag.
+Every judgment call is a `TODO` marker: the summary paragraph, what each change
+means for a user, any database migration and which older daemon can no longer
+reopen the profile, and the limits specific to this release. Edit all of them —
+the notes become an immutable release body.
+
+Finally, update the prose that names the current release: the headline and
+install commands in `README.md`, `docs/INSTALL.md`, and `docs/INSTALL-MACOS.md`.
+Do not rewrite published release notes or a past release's qualification record
+merely to make an old version look current; a superseded release keeps its
+evidence and loses only claims that are now false, such as "latest".
 `web/package.json` has its own workspace version and is not a Wisp release
 pin.
 
@@ -234,7 +289,9 @@ assets. Before public verification, describe unrun gates as pending.
 
 ## 3. Run the source gates
 
-Run the complete repository gate and the release-specific checks:
+Run the complete repository gate and the release-specific checks. `bun run
+check` includes `version:check`, so a partially applied version bump fails
+here:
 
 ```sh
 bun run check
