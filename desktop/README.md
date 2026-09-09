@@ -113,7 +113,10 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 
 ## The webview content policy
 
-`tauri.conf.json` carries the packaged app's CSP. The daemon serves the
+`tauri.conf.json` carries the packaged app's CSP. HTTP(S) image sources are
+permitted for individually consented Markdown images; the shared prose renderer
+shows the URL and requires **Load image** before assigning an image source.
+Authenticated attachments continue to use the native media route. The daemon serves the
 identical bundle to a browser under a policy of its own now (SEC-04:
 hash-pinned inline script, `frame-ancestors 'none'`), so the two clients have
 DIFFERENT policies rather than one and none. Both keep `style-src` inline —

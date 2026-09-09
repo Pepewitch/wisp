@@ -1,5 +1,5 @@
 /** Separate daemon processes prove recovery does not depend on module memory. */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { renameSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ADAPTERS_PATH, CONFIG_PATH, loadConfig, WISP_HOME } from "../../src/config";
 import { serve } from "../../src/daemon";
@@ -25,4 +25,5 @@ if (process.argv[2] === "seed") {
   setTaskFields("tbgfixture", { worktree_path: worktree });
   startTurn(getTask("tbgfixture")!, "start watcher", def, loadConfig());
 }
-writeFileSync(join(WISP_HOME, "ready.json"), JSON.stringify({ port: server.port }));
+writeFileSync(join(WISP_HOME, "ready.tmp"), JSON.stringify({ port: server.port }));
+renameSync(join(WISP_HOME, "ready.tmp"), join(WISP_HOME, "ready.json"));

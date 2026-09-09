@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_PATH, loadConfig, WISP_HOME } from "../../src/config";
 import { acquireHomeOwnership } from "../../src/home-lock";
@@ -27,5 +27,6 @@ if (process.argv[2] === "seed") {
   owner.release();
 } else {
   const server = await serve({ port: 0 });
-  writeFileSync(join(WISP_HOME, "ready.json"), JSON.stringify({ port: server.port }));
+  writeFileSync(join(WISP_HOME, "ready.tmp"), JSON.stringify({ port: server.port }));
+  renameSync(join(WISP_HOME, "ready.tmp"), join(WISP_HOME, "ready.json"));
 }

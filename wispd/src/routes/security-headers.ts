@@ -105,8 +105,8 @@ export function contentSecurityPolicy(policy: PageSecurityPolicy, origin: string
     "font-src 'self' data:",
     // 'self' for the API, blob: for attachment media the browser fetched with
     // its bearer token (SEC-01), data: for the generated favicon. Remote
-    // http(s) images are what agent prose can reference today; narrowing that
-    // is a product decision, not a header change (SEC-03).
+    // http(s) images load only after explicit per-URL consent in agent prose.
+    // Static CSP allows that chosen request; the renderer owns the consent gate.
     "img-src 'self' data: blob: https: http:",
     `connect-src 'self' blob: ${socketOrigins.join(" ")}`.trim(),
     // The app never frames anything and must never BE framed: a framed Wisp is

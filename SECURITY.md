@@ -103,10 +103,19 @@ it is serving: `default-src 'none'`, the inline script's own sha256 hash (never
 xterm creates stylesheets after load, so it deliberately carries no hash — a
 hash would disable the allowance the terminal depends on.
 
-Agent-supplied remote images still load, which is an outbound request the
-reader did not ask for. They are fetched with `referrerPolicy="no-referrer"`,
-so the request does not disclose which Wisp page was open. Defaulting them to
-an explicit-consent placeholder is a product decision that has not been made.
+Agent-supplied remote images are placeholders until the reader explicitly
+chooses **Load image** for that URL. The destination and disclosure consequence
+are shown first, and changing the URL resets consent. This applies to internet,
+loopback, and internal-network URLs in both browser and Desktop. Consented images
+use `referrerPolicy="no-referrer"`; static image CSP permits their HTTP(S)
+requests. Wisp does not proxy arbitrary image URLs through the daemon.
+
+Attachment blob caches are scoped by connection and path. Task/message changes,
+reconnection, and browser credential changes invalidate affected entries and
+prevent old pending responses from repopulating them. Unmounted entries are
+evicted to targets of 32 images and 64 MiB; visible images remain pinned until
+released. This clears Wisp's display/cache, not screenshots, downloads, or copies
+made by older versions or other applications.
 
 Attachment responses are `Cache-Control: private, no-store`. Archive and cancel
 delete the bytes, and a long-lived cache entry meant a browser kept serving them

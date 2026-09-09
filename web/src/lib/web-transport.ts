@@ -1,3 +1,4 @@
+import { clearAssetCache } from "./asset-src"
 import { openFetchEventStream } from "./fetch-event-source"
 import {
   ApiError,
@@ -86,7 +87,7 @@ export const authStore = {
 /** 401 path: show the token modal once; every queued request resumes after a successful submit. */
 export function requireAuth(): Promise<void> {
   if (!gate) gate = new Promise((resolve) => (resolveGate = resolve))
-  if (!authState.open) setAuthState({ open: true })
+  if (!authState.open) { clearAssetCache(LOCAL_CONNECTION_ID); setAuthState({ open: true }) }
   return gate
 }
 
@@ -117,6 +118,7 @@ export async function verifyToken(token: string): Promise<void> {
 
 /** A minted session: remember the token, close the modal, and release parked requests. */
 export function completeAuth(token: string): void {
+  clearAssetCache(LOCAL_CONNECTION_ID)
   localStorage.setItem(TOKEN_KEY, token)
   setAuthState({ open: false })
   const done = resolveGate
@@ -223,4 +225,9 @@ export const sameOriginWebTransport: Readonly<DaemonTransport> = Object.freeze({
   fetchAsset,
   socketToken: () => getToken() || null,
   ensureReady,
+})
+
+// Another browser tab forgetting/replacing the credential invalidates displayed bytes too.
+if (typeof window !== "undefined") window.addEventListener("storage", event => {
+  if (event.key === TOKEN_KEY || event.key === null) clearAssetCache(LOCAL_CONNECTION_ID)
 })
