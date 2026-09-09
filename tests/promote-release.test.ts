@@ -5,14 +5,17 @@ import type { ReleaseManifest } from "../wispd/scripts/release-linux";
 import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import {
   assertDisposableAuditHost,
+  assertPromotableFixture,
   changedTapFiles,
   classifyTapState,
   expectedReleaseAssets,
   parsePromotionArgs,
+  promotionFixtureTag,
   releaseNotesPath,
   releaseVersion,
   renderTapFiles,
   TAP_FILES,
+  unpublishedTapFiles,
   validateReleaseMetadata,
 } from "../scripts/release-promotion";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
@@ -171,6 +174,47 @@ describe("release promotion", () => {
     expect(classifyTapState(changedTapFiles(porcelain))).toBe("prepared");
     expect(changedTapFiles(porcelain.trim())).toEqual([...TAP_FILES].sort());
     expect(() => classifyTapState(["README.md"])).toThrow("outside the tap contract");
+  });
+
+  test("derives the dry-run fixture from the release the tap serves", () => {
+    expect(promotionFixtureTag(JSON.stringify({ version: VERSION }))).toBe(tag);
+    expect(promotionFixtureTag(JSON.stringify({ version: "0.4.0-alpha.17" }))).toBe("v0.4.0-alpha.17");
+    expect(() => promotionFixtureTag("{")).toThrow("not readable JSON");
+    expect(() => promotionFixtureTag(JSON.stringify({}))).toThrow("does not record the promoted version");
+    expect(() => promotionFixtureTag(JSON.stringify({ version: 5 }))).toThrow("does not record the promoted version");
+    expect(() => promotionFixtureTag(JSON.stringify({ version: "0.5" }))).toThrow("release tag must match");
+  });
+
+  test("refuses a fixture whose tap does not publish the whole contract yet", () => {
+    expect(unpublishedTapFiles([...TAP_FILES])).toEqual([]);
+    expect(() => assertPromotableFixture(tag, [...TAP_FILES])).not.toThrow();
+    const withoutDaemonChannel = TAP_FILES.filter((file) => file !== "updates/wisp-daemon.json");
+    expect(unpublishedTapFiles(withoutDaemonChannel)).toEqual(["updates/wisp-daemon.json"]);
+    expect(() => assertPromotableFixture(tag, withoutDaemonChannel)).toThrow("updates/wisp-daemon.json");
+    expect(() => assertPromotableFixture(tag, withoutDaemonChannel)).toThrow("current tap contract");
+    expect(() => assertPromotableFixture(tag, [])).toThrow("does not publish");
+  });
+
+  test("names no release version in the promotion dry run, so it cannot go stale", () => {
+    const dryRun = readFileSync(new URL("../.github/workflows/release-promotion.yml", import.meta.url), "utf8");
+    // A pinned tag stops agreeing with the tap as soon as a later release is
+    // promoted, which is why the fixture is read out of the tap instead. Only
+    // the promotion script itself is checked, so pinned action versions and
+    // toolchain versions stay outside this rule.
+    const script = dryRun.split("run: |").at(-1)?.split("\n      - name:")[0] ?? "";
+    expect(script).toContain("release:promote");
+    expect(script).not.toMatch(/v\d+\.\d+\.\d+/);
+    expect(dryRun).toContain("scripts/promotion-fixture.ts");
+    expect(dryRun).toContain('--tag "$tag"');
+    for (const path of [
+      "scripts/promotion-fixture.ts",
+      "scripts/render-daemon-update-channel.ts",
+      "tests/daemon-update-channel.test.ts",
+    ]) {
+      // Both the push and the pull_request filter must list every input, or a
+      // change to one of them never reaches this job.
+      expect(dryRun.split(`- "${path}"`).length - 1).toBe(2);
+    }
   });
 
   test("refuses to create a colliding audit tap on an operator machine", () => {

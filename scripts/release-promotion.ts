@@ -134,6 +134,47 @@ export function classifyTapState(paths: string[]): "prepared" | "already-promote
   return "prepared";
 }
 
+// The dry run replays whichever release the tap currently serves, so the
+// fixture is derived rather than pinned. A pinned tag silently stops agreeing
+// with the tap the moment a later release is promoted, which turns the strong
+// reproducibility assertion into an unexplained red build.
+export function promotionFixtureTag(desktopChannel: string): string {
+  let version: unknown;
+  try {
+    ({ version } = JSON.parse(desktopChannel) as { version?: unknown });
+  } catch (error) {
+    throw new Error(
+      `tap desktop channel is not readable JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (typeof version !== "string" || version.length === 0) {
+    throw new Error("tap desktop channel does not record the promoted version");
+  }
+  const tag = `v${version}`;
+  releaseVersion(tag);
+  return tag;
+}
+
+// A contract file the tap has never served cannot be reproduced from a public
+// release, so the dry run has nothing to replay it against. That state means a
+// channel clients are told to poll is still unpublished, so it fails loudly
+// here instead of reaching users as a 404.
+export function unpublishedTapFiles(presentTapFiles: string[]): string[] {
+  const present = new Set(presentTapFiles);
+  return TAP_FILES.filter((file) => !present.has(file));
+}
+
+export function assertPromotableFixture(tag: string, presentTapFiles: string[]): void {
+  const unpublished = unpublishedTapFiles(presentTapFiles);
+  if (unpublished.length > 0) {
+    throw new Error(
+      `tap serving ${tag} does not publish ${JSON.stringify(unpublished)} yet; promote a release with the ` +
+        "current tap contract before the dry run can replay it",
+    );
+  }
+}
+
 export function assertDisposableAuditHost(
   installedFormula: string,
   installedCask: string,

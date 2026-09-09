@@ -93,10 +93,21 @@ source or public assets.
 
 Pull requests that change the promotion command, renderers, Homebrew/channel
 tests, or release workflow also trigger `.github/workflows/release-promotion.yml`.
-Its disposable macOS runner anonymously replays the published alpha.17 path,
-including all ten downloads, updater and Apple trust checks, actual Homebrew
-audits, exact-channel comparison, and safe temporary-tap cleanup. It records a
-dry-run receipt and has no tap write credential or `--publish` capability.
+Its disposable macOS runner anonymously replays whichever release the tap
+currently serves, including all ten downloads, updater and Apple trust checks,
+actual Homebrew audits, exact-channel comparison, and safe temporary-tap
+cleanup. It records a dry-run receipt and has no tap write credential or
+`--publish` capability.
+
+`scripts/promotion-fixture.ts` reads that fixture out of the cloned tap, so no
+release version is written down in the workflow and there is nothing to advance
+after a promotion. Because the fixture is by definition the release the tap
+already serves, re-rendering it must reproduce the tap byte for byte; the job
+asserts `tapState=already-promoted` and so fails on any change that would
+rewrite already-published tap files. If a file is added to `TAP_FILES` but no
+release has been promoted with it yet, the fixture resolver fails with the
+missing paths named: a channel clients are told to poll is unpublished, and
+promoting a release is what clears it.
 
 The workflow needs these repository secrets:
 
@@ -450,8 +461,12 @@ bun run scripts/render-desktop-update-channel.ts \
   --manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
   --notes "$notes" \
   --output "$tap/updates/wisp-desktop-alpha.json"
+bun run scripts/render-daemon-update-channel.ts \
+  --manifest "$release_dir/release-manifest.json" \
+  --desktop-manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
+  --output "$tap/updates/wisp-daemon.json"
 bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts \
-  tests/desktop-update-channel.test.ts
+  tests/desktop-update-channel.test.ts tests/daemon-update-channel.test.ts
 brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
 brew audit --strict Pepewitch/tap/wisp
 brew audit --strict --cask Pepewitch/tap/wisp-desktop
@@ -605,12 +620,12 @@ bun run release:promote -- \
 The command refuses a non-arm64 host, an installed Wisp Formula/Cask, a
 registered `Pepewitch/tap`, a non-annotated or non-main tag, any public asset
 inventory other than the exact ten files, mismatched manifest identities, a
-dirty or stale tap checkout, or changes outside the exact three promotion
+dirty or stale tap checkout, or changes outside the exact four promotion
 files. `--publish` is a separate explicit capability; omitting it never pushes.
 
 The following low-level sequence documents the gates owned by that command.
 Use it only on the disposable fallback host described above. Repeat the
-prepared recipe audits online and synchronize the three files in one tap
+prepared recipe audits online and synchronize the four files in one tap
 commit:
 
 ```sh
@@ -629,8 +644,12 @@ bun run scripts/render-desktop-update-channel.ts \
   --manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
   --notes "$notes" \
   --output "$tap/updates/wisp-desktop-alpha.json"
+bun run scripts/render-daemon-update-channel.ts \
+  --manifest "$release_dir/release-manifest.json" \
+  --desktop-manifest "$release_dir/release-manifest-desktop-darwin-arm64.json" \
+  --output "$tap/updates/wisp-daemon.json"
 bun test tests/homebrew-formula.test.ts tests/homebrew-cask.test.ts \
-  tests/desktop-update-channel.test.ts
+  tests/desktop-update-channel.test.ts tests/daemon-update-channel.test.ts
 brew style "$tap/Formula/wisp.rb" "$tap/Casks/wisp-desktop.rb"
 homebrew_api_token="$(gh auth token)" || {
   echo "GitHub authentication is required for Homebrew's online audits" >&2
@@ -648,7 +667,7 @@ HOMEBREW_GITHUB_API_TOKEN="$homebrew_api_token" \
     Pepewitch/tap/wisp-desktop
 git -C "$tap" diff --check
 git -C "$tap" diff -- Formula/wisp.rb Casks/wisp-desktop.rb \
-  updates/wisp-desktop-alpha.json
+  updates/wisp-daemon.json updates/wisp-desktop-alpha.json
 ```
 
 The Formula and Cask must pin immutable GitHub URLs and SHA-256 values and
@@ -671,10 +690,10 @@ Commit and push the tap only with explicit authorization:
 
 ```sh
 git -C "$tap" add Formula/wisp.rb Casks/wisp-desktop.rb \
-  updates/wisp-desktop-alpha.json
+  updates/wisp-daemon.json updates/wisp-desktop-alpha.json
 git -C "$tap" diff --cached --check
 git -C "$tap" diff --cached -- Formula/wisp.rb Casks/wisp-desktop.rb \
-  updates/wisp-desktop-alpha.json
+  updates/wisp-daemon.json updates/wisp-desktop-alpha.json
 git -C "$tap" commit -F - <<EOF
 release: update Wisp to $version
 
