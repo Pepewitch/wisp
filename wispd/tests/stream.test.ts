@@ -116,8 +116,11 @@ describe("POST /api/session (token verification for the browser auth dialog)", (
     );
     expect(nearMiss.status).toBe(401);
 
+    // A malformed body is a different mistake from a wrong token, and says so
+    // (ENG-09's body contract now covers this route too).
     const garbage = await postSession(new Request("http://wisp.test/api/session", { method: "POST", body: "{" }), cfg);
-    expect(garbage.status).toBe(401);
+    expect(garbage.status).toBe(400);
+    expect(((await garbage.json()) as { error: string }).error).toContain("not valid JSON");
   });
 
   /** SEC-01: the route no longer mints an ambient credential — it retires the one older releases minted. */
@@ -132,15 +135,22 @@ describe("POST /api/session (token verification for the browser auth dialog)", (
     expect(cookie).toContain("Max-Age=0");
   });
 
-  /** A body that is valid JSON but not an object must not become a 500 (ENG-09). */
-  test("a non-object JSON body is a 401, not a crash", async () => {
+  /** A body that is valid JSON but not an object is a named 400, never a 500 (ENG-09). */
+  test("a non-object JSON body is a named 400, not a crash and not 'unauthorized'", async () => {
     for (const body of ["null", "[]", '"testtoken"', "7"]) {
       const response = await postSession(
         new Request("http://wisp.test/api/session", { method: "POST", body }),
         cfg,
       );
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toContain("must be a JSON object");
     }
+  });
+
+  /** An empty body still means "no token given", which is unauthorized. */
+  test("an empty body is unauthorized, not malformed", async () => {
+    const response = await postSession(new Request("http://wisp.test/api/session", { method: "POST" }), cfg);
+    expect(response.status).toBe(401);
   });
 });
 

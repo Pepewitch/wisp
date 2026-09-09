@@ -121,6 +121,10 @@ class FetchEventStream implements DaemonEventStream {
         headers: { accept: "text/event-stream", ...(this.options.headers?.() ?? {}) },
         signal: controller.signal,
         cache: "no-store",
+        // The bearer header is the only credential this stream has, and it
+        // must not follow a redirect to somewhere we did not choose.
+        credentials: "omit",
+        redirect: "error",
       })
     } catch {
       // An abort from close() must not look like a network failure.

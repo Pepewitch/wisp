@@ -74,6 +74,26 @@ describe("inline script scanning", () => {
     ]);
   });
 
+  /**
+   * The scan searches the ORIGINAL bytes. Lowercasing the whole document first
+   * (the first version) desynchronizes the indices as soon as a character
+   * changes length when lowercased, and the hash of a wrong slice means the
+   * browser refuses the real script: a blank app, failing closed but blank.
+   */
+  test("a character that changes length when lowercased does not shift the slice", () => {
+    const script = 'boot("\u00df")';
+    // U+0130 (capital I with dot above) lowercases to TWO code units
+    // (i + combining dot), so every index after it would be off by one in a
+    // lowercased copy of the document.
+    const html = `<!doctype html><body><p>\u0130\u0130</p><script>${script}</script></body>`;
+    expect("\u0130".toLowerCase().length).toBe(2); // the premise of the test
+    expect(inlineScriptSources(html)).toEqual([script]);
+  });
+
+  test("an upper-case tag is still found", () => {
+    expect(inlineScriptSources("<SCRIPT>boot()</SCRIPT>")).toEqual(["boot()"]);
+  });
+
   test("skips a script with a src, which a hash cannot cover", () => {
     const html = '<script src="/app.js"></script><script>inline()</script>';
     expect(inlineScriptSources(html)).toEqual(["inline()"]);

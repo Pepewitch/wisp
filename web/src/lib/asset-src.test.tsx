@@ -82,6 +82,34 @@ describe("useAssetSrc", () => {
     expect(second.result.current).not.toBe(first.result.current)
   })
 
+  /**
+   * Eviction past the cap used to revoke the oldest URL unconditionally, which
+   * in a long transcript could blank a thumbnail that was still on screen (a
+   * review's note). A mounted asset is skipped instead.
+   */
+  it("never revokes an asset that a mounted component is still rendering", async () => {
+    const fetchAsset = vi.fn().mockImplementation(() => Promise.resolve(new Blob(["bytes"])))
+    const transport = fakeDaemonTransport("local", { fetchAsset })
+    const wrapper = runtimeWrapper(transport)
+
+    // one image stays mounted while far more than the cache cap scroll past
+    const held = renderHook(() => useAssetSrc("/api/tasks/t1/attachments/1/held.png"), { wrapper })
+    await waitFor(() => expect(held.result.current).toMatch(/^blob:/))
+    const heldSrc = held.result.current
+
+    for (let index = 0; index < 40; index++) {
+      const passing = renderHook(
+        () => useAssetSrc(`/api/tasks/t1/attachments/1/scrolled-${index}.png`),
+        { wrapper },
+      )
+      await waitFor(() => expect(passing.result.current).toMatch(/^blob:/))
+      passing.unmount()
+    }
+
+    expect(vi.mocked(URL.revokeObjectURL).mock.calls.flat()).not.toContain(heldSrc)
+    expect(held.result.current).toBe(heldSrc)
+  })
+
   it("renders nothing when the fetch is refused", async () => {
     const fetchAsset = vi.fn().mockRejectedValue(new Error("410"))
     const transport = fakeDaemonTransport("local", { fetchAsset })

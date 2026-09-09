@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { WispConfig } from "../config";
-import { err, json } from "./http";
+import { err, json, jsonObjectBody } from "./http";
 
 /**
  * Constant-time token comparison. Both sides are hashed first, so the
@@ -62,12 +62,18 @@ export type OriginVerdict = "absent" | "allowed" | "foreign";
 /**
  * Whose page sent this request.
  *
- * `url.origin` comes from the Host header, which a browser sets from the
- * address it actually connected to and page JavaScript cannot forge. So an
- * exact match means the request came from this daemon's own page; anything
- * else is another origin, INCLUDING another port on the same host. Absent
- * means no browser sent it: the CLI, and the desktop app's native proxy, which
- * strips Origin and injects its own credential.
+ * `url.origin` comes from the Host header, which a BROWSER sets from the
+ * address it actually connected to and page JavaScript cannot forge. So for a
+ * browser, an exact match means the request came from this daemon's own page,
+ * and anything else is another origin — including another port on the same
+ * host. Absent means no browser sent it: the CLI, and the desktop app's
+ * native proxy, which strips Origin and injects its own credential.
+ *
+ * What this is NOT: a network-level check. Anything that is not a browser can
+ * send a matching `Origin` and `Host` and be called `allowed`. That is fine
+ * and deliberate — it only buys the caller an UNAUTHENTICATED terminal
+ * upgrade, which attaches to nothing, spawns nothing, and does not answer
+ * whether the task exists until a valid token arrives.
  */
 export function originVerdict(req: Request, url: URL): OriginVerdict {
   const origin = req.headers.get("origin");
@@ -91,13 +97,20 @@ export function originVerdict(req: Request, url: URL): OriginVerdict {
  * every other service on the host; the one moment we know that browser is
  * talking to us is here.
  */
+/**
+ * The Set-Cookie that retires the pre-0.4 root-token cookie. Served by the
+ * page and by `/api/session`, so any browser that either loads the app or
+ * verifies a token stops carrying it.
+ */
+export const RETIRED_COOKIE = "wisp_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict";
+
 export async function postSession(req: Request, cfg: WispConfig): Promise<Response> {
-  // `null`, an array, and a number are all valid JSON. Only an object has a
-  // token, and this route may not turn a malformed body into a 500.
-  const body: unknown = await req.json().catch(() => null);
-  const token = typeof body === "object" && body !== null && !Array.isArray(body) ? (body as { token?: unknown }).token : null;
-  if (!tokenAuthorizes(token, cfg)) return err("unauthorized", 401);
-  return json({ ok: true }, 200, {
-    "set-cookie": "wisp_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict",
-  });
+  // The same body contract as every mutating route (ENG-09), so `null`, an
+  // array, and unparseable bytes are named 400s rather than "unauthorized" —
+  // a wrong token and a wrong body are different mistakes, and this was the
+  // last `req.json()` left in the daemon (a review's note).
+  const body = await jsonObjectBody(req);
+  if (body instanceof Response) return body;
+  if (!tokenAuthorizes(body.token, cfg)) return err("unauthorized", 401);
+  return json({ ok: true }, 200, { "set-cookie": RETIRED_COOKIE });
 }

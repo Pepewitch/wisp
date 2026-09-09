@@ -113,10 +113,13 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 
 ## The webview content policy
 
-`tauri.conf.json` carries the CSP, and the packaged app is the only client that
-has one — the daemon serves the identical bundle to a browser with no policy at
-all. So this file is where a shared-UI capability quietly becomes
-desktop-specific, and the terminal is the surface that proves it.
+`tauri.conf.json` carries the packaged app's CSP. The daemon serves the
+identical bundle to a browser under a policy of its own now (SEC-04:
+hash-pinned inline script, `frame-ancestors 'none'`), so the two clients have
+DIFFERENT policies rather than one and none. Both keep `style-src` inline —
+xterm creates stylesheets after load — so this file is still where a shared-UI
+capability quietly becomes desktop-specific, and the terminal is still the
+surface that proves it.
 
 `style-src` allows `'unsafe-inline'` because xterm.js has no other delivery
 mechanism: its DOM renderer sets the terminal's font family and size,
