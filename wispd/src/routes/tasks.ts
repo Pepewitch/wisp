@@ -1,3 +1,4 @@
+import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
 import { homeIsDraining, trackHomeWork } from "../home-lifetime";
@@ -188,7 +189,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     // Two local tasks in one repo means two agents editing the SAME files
     // with no isolation between them — the exact hazard worktrees exist to
     // remove. Refuse by name so the fix is obvious. (Worktree tasks are
-    // isolated by construction and stay unlimited.)
+    // isolated by construction; the global admission limit still applies.)
     if (mode === "local") {
       // a local: the string checks above narrowed body.repoPath, but not
       // inside this callback — bind it
@@ -217,6 +218,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     if (isProjectRemovalInProgress(repoPath)) {
       return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
     }
+    try { assertTaskCapacity(cfg); } catch (error) { if (error instanceof TaskCapacityError) return err(error.message, 429); throw error; }
     for (let attempt = 0; attempt < 5 && !task; attempt++) {
       try {
         task = createTask({
@@ -234,7 +236,8 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       }
     }
     if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
-    void trackHomeWork(launchTask(task, prompt, def, cfg, attachments));
+    const release = reserveTaskCapacity(task.id, cfg);
+    void trackHomeWork(launchTask(task, prompt, def, cfg, attachments).finally(release));
     return json(apiTask(task), 201);
   })();
 }
@@ -322,6 +325,7 @@ async function sendTaskResponse(
       message: apiTaskMessage(result.message),
     });
   } catch (error) {
+    if (error instanceof TaskCapacityError) return err(error.message, 429);
     if (error instanceof AttachError) return err(error.message, 400);
     if (error instanceof InterruptConflict) return err(error.message, 409);
     const detail = error instanceof Error ? error.message : String(error);

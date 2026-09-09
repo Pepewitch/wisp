@@ -430,3 +430,10 @@ without rebuilding, re-signing, notarizing, or changing public release assets.
 ## License
 
 [MIT](LICENSE) © 2026 pepewitch.
+
+Wisp admits up to 100 simultaneously running tasks by default, including tasks
+preparing a workspace. Set a positive integer `maxConcurrentTasks` in
+`config.json` and restart the daemon to change that ceiling. At capacity, finish
+or stop another task and retry; Wisp does not silently queue a new task. Steering
+an already running task keeps its slot. There is no limit on the accumulated
+number of turns in a task; harness iteration behavior remains harness-owned.
