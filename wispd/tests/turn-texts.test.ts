@@ -168,7 +168,11 @@ describe("the background backfill", () => {
     const first = settledTurn(id, 1, claudeText("older backfilled prose"), null);
     const second = settledTurn(id, 2, claudeText("newer backfilled prose"), null);
 
-    expect(pendingProseTurns().map((turn) => turn.id)).toEqual([second.id, first.id]);
+    // Relative order, not the whole queue: this suite shares its database
+    // with every other one, so what else is pending is not this test's claim.
+    const queued = pendingProseTurns(500).map((turn) => turn.id);
+    expect(queued).toContain(first.id);
+    expect(queued.indexOf(second.id)).toBeLessThan(queued.indexOf(first.id));
     expect(countPendingProseTurns()).toBeGreaterThanOrEqual(2);
 
     await backfillTurnTexts(BUILTIN_ADAPTERS);
@@ -195,7 +199,9 @@ describe("the background backfill", () => {
     const indexedAt = getTurnText(done.id)!.indexed_at;
     const fresh = settledTurn(id, 2, claudeText("not yet indexed"), null);
 
-    expect(pendingProseTurns().map((turn) => turn.id)).toEqual([fresh.id]);
+    const queued = pendingProseTurns(500).map((turn) => turn.id);
+    expect(queued).toContain(fresh.id);
+    expect(queued).not.toContain(done.id);
     await backfillTurnTexts(BUILTIN_ADAPTERS);
 
     expect(getTurnText(fresh.id)?.text).toBe("not yet indexed");
