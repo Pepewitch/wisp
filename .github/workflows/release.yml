@@ -309,7 +309,11 @@ jobs:
             --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
             --notes "${{ steps.version.outputs.notes }}" \
             --output "$tap/updates/wisp-desktop-alpha.json"
-          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb updates/wisp-desktop-alpha.json)"
+          bun run scripts/render-daemon-update-channel.ts \
+            --manifest "dist/release/$GITHUB_REF_NAME/release-manifest.json" \
+            --desktop-manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
+            --output "$tap/updates/wisp-daemon.json"
+          expected="$(printf '%s\n' Casks/wisp-desktop.rb Formula/wisp.rb updates/wisp-daemon.json updates/wisp-desktop-alpha.json)"
           actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
           test "$actual" = "$expected"
           brew tap-new --no-git Pepewitch/tap

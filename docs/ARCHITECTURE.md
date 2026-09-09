@@ -173,7 +173,8 @@ The public macOS distribution keeps the service and interface composable:
 Desktop application releases are Developer ID signed, notarized, and updater
 signed before the tag workflow can publish immutable assets. A separate
 serialized, resumable promotion job re-verifies those public bytes before it
-atomically advances the Homebrew Formula, Cask, and fixed Desktop channel. A
+atomically advances the Homebrew Formula, Cask, fixed Desktop channel, and
+daemon channel. A
 promotion-only retry never rebuilds or mutates the release. Homebrew bootstraps
 and repairs the app; the native Tauri updater owns normal in-app upgrades. The
 built-in Local daemon keeps its independent Homebrew-backed update lifecycle,

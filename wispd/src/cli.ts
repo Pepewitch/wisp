@@ -2,6 +2,7 @@ import { HELP } from "./cli-help";
 import { retentionCommand } from "./cli-retention";
 import { cleanupCommand } from "./cli-cleanup";
 import { doctorCommand } from "./cli-doctor";
+import { updateCommand } from "./cli-update";
 import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
 import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
@@ -543,6 +544,9 @@ export async function cli(args: string[]): Promise<void> {
       console.log(data.output || "pushed");
       break;
     }
+    case "update":
+      await updateCommand(positional, api);
+      break;
     case "cleanup":
       await cleanupCommand(positional[0], flags, api);
       break;

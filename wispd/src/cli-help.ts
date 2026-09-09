@@ -20,6 +20,7 @@ usage:
   ${COMMAND} interrupt <task>                        stop the running turn (session survives)
   ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)
   ${COMMAND} push <task>                             push the task branch to origin
+  ${COMMAND} update                                  check for and install the latest Wisp daemon
   ${COMMAND} cleanup <task> [--log|--retry|--confirm-complete|--rerun]  inspect or resolve cleanup
   ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work)
   ${COMMAND} export <task>                           print portable JSON (redirect to a private file)

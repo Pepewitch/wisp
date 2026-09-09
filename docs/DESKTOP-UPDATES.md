@@ -56,6 +56,27 @@ artifacts, non-newer versions, and any change between its bounded discovery
 request and Tauri's signed request. A confirmation is stale as soon as the
 pending candidate changes.
 
+The Local daemon has a separate, smaller channel:
+
+```text
+Check now or `wisp update`
+             |
+             v
+fixed daemon-channel URL ----------> version, API protocol, publication time
+in homebrew-tap                       (committed with the matching Formula)
+             |
+             v
+show the promoted version -> explicit update -> verified Homebrew upgrade
+```
+
+Daemon discovery does not depend on this Mac's cached Homebrew metadata and
+does not expose a GitHub release before its Formula is installable. Promotion
+advances `Formula/wisp.rb` and `updates/wisp-daemon.json` in the same tap
+commit. An explicit check cache-busts the fixed channel URL; routine polling
+retains conditional requests and the daemon's six-hour in-memory cache.
+Homebrew refresh happens only after an update is accepted, immediately before
+the Formula upgrade.
+
 The opt-out launch check covers Wisp Desktop and occurs once, two to six
 seconds after launch. There is no periodic background polling. **Check now**
 checks both rows in parallel: native code refreshes the fixed Desktop channel,
@@ -79,11 +100,12 @@ Desktop upgrades after the first self-update-capable release:
 - GitHub publishes the archive, updater signature, manifests, checksum sets,
   daemon artifacts, and release notes as immutable assets;
 - a separate serialized promotion job downloads and verifies those immutable
-  public assets again, renders the Homebrew Formula, Cask, and alpha update
-  channel from their manifests, and commits those three files together;
-- the channel is advanced only after anonymous downloads and Apple trust checks
-  pass for the public bytes, then the job waits for the fixed channel URL and
-  requires the full Homebrew livecheck audit.
+  public assets again, renders the Homebrew Formula, Cask, Desktop update
+  channel, and daemon update channel from their manifests, and commits all
+  four files together;
+- the channels advance only after anonymous downloads and Apple trust checks
+  pass for the public bytes, then the job waits for both fixed channel URLs
+  and requires the full Homebrew livecheck audit.
 
 Separating immutable publication from mutable channel promotion makes the
 second stage resumable. A failed promotion can be rerun for the existing tag,

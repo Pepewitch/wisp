@@ -22,8 +22,10 @@ import {
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY = "Pepewitch/wisp";
 const AUDIT_TAP = "Pepewitch/tap";
-const CHANNEL_URL =
+const DESKTOP_CHANNEL_URL =
   "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json";
+const DAEMON_CHANNEL_URL =
+  "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
 
 interface CommandOptions {
   cwd?: string;
@@ -48,6 +50,7 @@ interface PromotionReceipt {
   tapState: "prepared" | "already-promoted";
   tapCommit: string;
   channelUrl: string;
+  daemonChannelUrl: string;
   completedAt: string;
   stageDurationsMs: Record<string, number>;
 }
@@ -327,7 +330,7 @@ function publishTap(tapDir: string, state: "prepared" | "already-promoted"): str
       .filter(Boolean)
       .sort();
     if (JSON.stringify(staged) !== JSON.stringify([...TAP_FILES].sort())) {
-      throw new Error(`staged tap files do not match the three-file contract: ${JSON.stringify(staged)}`);
+      throw new Error(`staged tap files do not match the release contract: ${JSON.stringify(staged)}`);
     }
     command(["git", "-C", tapDir, "diff", "--quiet"], { quiet: true });
     command(["git", "-C", tapDir, "diff", "--cached", "--check"], { quiet: true });
@@ -339,7 +342,12 @@ function publishTap(tapDir: string, state: "prepared" | "already-promoted"): str
   return run(["git", "-C", tapDir, "rev-parse", "HEAD"], { quiet: true });
 }
 
-function waitForPublicChannel(expectedPath: string, destination: string): void {
+function waitForPublicFile(
+  expectedPath: string,
+  destination: string,
+  url: string,
+  label: string,
+): void {
   for (let attempt = 1; attempt <= 24; attempt++) {
     const result = command(
       [
@@ -351,7 +359,7 @@ function waitForPublicChannel(expectedPath: string, destination: string): void {
         "--silent",
         "--show-error",
         "--location",
-        CHANNEL_URL,
+        url,
         "--output",
         destination,
       ],
@@ -364,10 +372,25 @@ function waitForPublicChannel(expectedPath: string, destination: string): void {
     ) {
       return;
     }
-    console.log(`promotion: updater channel not converged (attempt ${attempt}/24)`);
+    console.log(`promotion: ${label} not converged (attempt ${attempt}/24)`);
     if (attempt < 24) command(["sleep", "15"], { quiet: true });
   }
-  throw new Error("public Desktop update channel did not converge");
+  throw new Error(`public ${label} did not converge`);
+}
+
+function waitForPublicChannels(tapDir: string, workDir: string): void {
+  waitForPublicFile(
+    join(tapDir, "updates/wisp-desktop-alpha.json"),
+    join(workDir, "public-desktop-channel.json"),
+    DESKTOP_CHANNEL_URL,
+    "Desktop update channel",
+  );
+  waitForPublicFile(
+    join(tapDir, "updates/wisp-daemon.json"),
+    join(workDir, "public-daemon-channel.json"),
+    DAEMON_CHANNEL_URL,
+    "daemon update channel",
+  );
 }
 
 function auditAfterPromotion(): void {
@@ -403,7 +426,8 @@ function appendStepSummary(receipt: PromotionReceipt): void {
       `- Public assets: ${receipt.releaseAssets}`,
       `- Tap state: ${receipt.tapState}`,
       `- Tap commit: \`${receipt.tapCommit}\``,
-      `- Update channel: ${receipt.channelUrl}`,
+      `- Desktop update channel: ${receipt.channelUrl}`,
+      `- Daemon update channel: ${receipt.daemonChannelUrl}`,
       "",
     ].join("\n"),
   );
@@ -465,10 +489,7 @@ export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): Promoti
     if (!args.publish) {
       if (tapState === "already-promoted") {
         stage("verify already-public channel", () => {
-          waitForPublicChannel(
-            join(args.tapDir, "updates/wisp-desktop-alpha.json"),
-            join(workDir, "public-channel.json"),
-          );
+          waitForPublicChannels(args.tapDir, workDir);
           auditAfterPromotion();
         });
       }
@@ -481,7 +502,8 @@ export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): Promoti
         releaseAssets: metadata.assets.length,
         tapState,
         tapCommit: run(["git", "-C", args.tapDir, "rev-parse", "HEAD"], { quiet: true }),
-        channelUrl: CHANNEL_URL,
+        channelUrl: DESKTOP_CHANNEL_URL,
+        daemonChannelUrl: DAEMON_CHANNEL_URL,
         completedAt: new Date().toISOString(),
         stageDurationsMs: durations,
       };
@@ -491,7 +513,7 @@ export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): Promoti
     }
     const tapCommit = stage("publish Homebrew tap", () => publishTap(args.tapDir, tapState));
     stage("wait for and audit public channel", () => {
-      waitForPublicChannel(join(args.tapDir, "updates/wisp-desktop-alpha.json"), join(workDir, "public-channel.json"));
+      waitForPublicChannels(args.tapDir, workDir);
       auditAfterPromotion();
     });
     const receipt: PromotionReceipt = {
@@ -503,7 +525,8 @@ export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): Promoti
       releaseAssets: metadata.assets.length,
       tapState,
       tapCommit,
-      channelUrl: CHANNEL_URL,
+      channelUrl: DESKTOP_CHANNEL_URL,
+      daemonChannelUrl: DAEMON_CHANNEL_URL,
       completedAt: new Date().toISOString(),
       stageDurationsMs: durations,
     };

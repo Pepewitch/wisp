@@ -161,10 +161,20 @@ to the new URL. Keep `host` set to `127.0.0.1`.
 ## Upgrade
 
 The browser header shows the running daemon version and an explicitly named
-daemon update action when its Homebrew service can update safely. Wisp asks
-Homebrew to refresh and upgrade the Formula, verifies the installed binary,
-exits, and lets launchd start the new daemon. The browser reloads only after the
-new daemon answers its health check.
+daemon update action when its Homebrew service can update safely. The
+equivalent terminal command is:
+
+```sh
+wisp update
+```
+
+Both paths refresh Wisp's fixed daemon channel, which is published in the same
+Homebrew tap commit as the matching Formula. The check therefore does not
+depend on whether this Mac has run `brew update`, and it cannot offer a GitHub
+release before Homebrew can install it. After you accept an update, Wisp runs
+the Homebrew refresh and Formula upgrade, verifies the installed binary,
+exits, and lets launchd start the new daemon. The browser reloads only after
+the new daemon answers its health check.
 
 Wisp Desktop has one **Updates** popover with two independent rows:
 

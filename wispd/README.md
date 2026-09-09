@@ -2,7 +2,8 @@
 
 `wispd/` owns the Wisp daemon and the `wisp` command-line client. They share
 `src/index.ts`: `wisp serve` starts the daemon, while the other commands enter
-the CLI.
+the CLI. `wisp update` refreshes the promoted daemon channel and delegates the
+verified installation and supervised restart to the running daemon.
 
 - `src/` contains daemon, API, persistence, worktree, runner, adapter, terminal,
   and CLI code.
