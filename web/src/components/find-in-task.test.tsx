@@ -20,6 +20,7 @@ function Harness({ collapsedTurns = 0, touch = false }: { collapsedTurns?: numbe
   const find = useFindInTask(scroller, intents)
   return (
     <div>
+      <span data-testid="reveal-turn">{String(find.revealTurn)}</span>
       {find.open && <FindBar state={find} touch={touch} />}
       <div ref={scroller} tabIndex={-1}>
         <article data-turn="1">
@@ -108,6 +109,26 @@ describe("find in task", () => {
     act(() => intents.openFind("reducer"))
 
     expect(screen.queryByText(/still collapsed/)).toBeNull()
+  })
+
+  it("carries the turn a cross-project hit matched in, and drops it when you retype", () => {
+    render(<Harness />)
+    // what a picked `said 3` result issues: the query AND the turn to open
+    act(() => intents.openFind("reducer", 3))
+
+    expect(screen.getByTestId("reveal-turn")).toHaveTextContent("3")
+
+    fireEvent.change(box(), { target: { value: "sidebar" } })
+    // their own query, their own turns
+    expect(screen.getByTestId("reveal-turn")).toHaveTextContent("null")
+  })
+
+  it("forgets the handed-over turn when the bar closes", () => {
+    render(<Harness />)
+    act(() => intents.openFind("reducer", 2))
+    fireEvent.keyDown(box(), { key: "Escape" })
+
+    expect(screen.getByTestId("reveal-turn")).toHaveTextContent("null")
   })
 
   it("takes 44px hit boxes on touch, where 26px is not tappable (§6b)", () => {

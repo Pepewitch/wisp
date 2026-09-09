@@ -189,10 +189,11 @@ export function ProjectSearchResults({
         selectedId={selectedId}
         activeId={activeId}
         touch={touch}
-        onSelect={(id) => {
+        onSelect={(id, turn) => {
           onSelect(id)
-          // one gesture: the transcript opens already looking for it
-          uiIntentsFor(runtime.connectionId).openFind(query)
+          // one gesture: the transcript opens already looking for it, and
+          // opens the turn the daemon matched so a prose hit is not 0/0
+          uiIntentsFor(runtime.connectionId).openFind(query, turn)
         }}
       />
     </div>
@@ -253,7 +254,7 @@ function SearchSections({
   repos: RepoInfo[] | undefined
   selectedId: string | null
   activeId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, turn: number | null) => void
   touch: boolean
 }) {
   return (
@@ -295,7 +296,7 @@ function ResultSection({
   label: string
   selectedId: string | null
   activeId: string | null
-  onSelect: (id: string) => void
+  onSelect: (id: string, turn: number | null) => void
   touch: boolean
 }) {
   return (
@@ -311,7 +312,7 @@ function ResultSection({
             selected={hit.id === selectedId}
             active={hit.id === activeId}
             touch={touch}
-            onSelect={() => onSelect(hit.id)}
+            onSelect={() => onSelect(hit.id, displaySnippet(hit)?.turn ?? null)}
           />
         ))}
       </div>

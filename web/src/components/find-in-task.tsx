@@ -144,6 +144,7 @@ export function FindBarSpecimen({
           position,
           collapsed,
           focusToken: 0,
+          revealTurn: null,
           setQuery: () => {},
           step: () => {},
           close: () => {},

@@ -397,5 +397,23 @@ wait_state "$ID17" done 30
 $WISP show "$ID17" | grep -q "harness: fake (fake-flag-9)" || fail "explicit --model did not win over the config default"
 $WISP show "$ID17" | grep -q '— turn 1 \[done\] · fake-flag-9' || fail "turn ran on the config default instead of the flag"
 
+echo "[21] search finds a task by what was asked, what the harness said, and hides archived until -a"
+# $ID17 is live ("flag wins task"); $ID was archived back in scenario 5.
+SEARCH=$($WISP search "flag wins task")
+grep -q "$ID17" <<< "$SEARCH" || fail "search did not find the live task by its prompt: $SEARCH"
+grep -q "prompt 1" <<< "$SEARCH" || fail "search did not say which field matched: $SEARCH"
+# the harness's own words, projected into the prose index when the turn ended
+$WISP search "echo(turn on" | grep -q "$ID17" || fail "search did not reach what the harness said"
+# the archived task is searched but held back, and named under -a
+SEARCH_LIVE=$($WISP search "hello wisp turn one")
+grep -q "$ID" <<< "$SEARCH_LIVE" && fail "an archived task must not show without -a: $SEARCH_LIVE"
+grep -q "archived task" <<< "$SEARCH_LIVE" || fail "search did not say it was holding an archived match back: $SEARCH_LIVE"
+$WISP search "hello wisp turn one" -a | grep -q "$ID" || fail "search -a did not include the archived task"
+# a miss is a miss, not an error and not everything
+$WISP search "no-such-needle-xyzzy" | grep -q "no match" || fail "a miss must say so"
+# --json is what a script reads
+$WISP search "flag wins task" --json | bun -e 'const b=JSON.parse(await Bun.stdin.text()); if(!b.tasks?.length) { console.error("empty --json"); process.exit(1) }' \
+  || fail "--json did not carry the answer"
+
 echo
 echo "SMOKE PASS ($SMOKE)"

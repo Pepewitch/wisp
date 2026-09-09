@@ -78,6 +78,19 @@ describe("the printed answer", () => {
     ]);
   });
 
+  test("says the prose index is still catching up — beside hits and instead of a miss", () => {
+    const catching = { ...answer([hit({ id: "taaaaa" })]), indexing: { remainingTurns: 12 } };
+    expect(searchLines(catching, { all: false }).at(-1)).toBe(
+      "still indexing what the agent said in 12 older turns",
+    );
+
+    const miss = { ...answer([]), indexing: { remainingTurns: 1 } };
+    expect(searchLines(miss, { all: false })).toEqual([
+      "no match for 'vacuum'",
+      "still indexing what the agent said in 1 older turn — try again shortly",
+    ]);
+  });
+
   test("confesses a capped answer", () => {
     expect(searchLines(answer([hit({ id: "taaaaa" })], true), { all: false }).at(-1)).toBe(
       "showing the most recent matches",

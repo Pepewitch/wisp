@@ -21,9 +21,15 @@ export interface TaskFocusRequest {
   readonly seq: number;
 }
 
-/** A request to open find-in-task. `query` seeds the box; null keeps what is there. */
+/**
+ * A request to open find-in-task. `query` seeds the box; null keeps what is
+ * there. `turn` is the one a cross-project result matched IN — a prose hit
+ * lives inside a timeline that is collapsed until someone opens it, so the
+ * request names the turn to open rather than landing the reader on 0/0.
+ */
 export interface FindRequest {
   readonly query: string | null;
+  readonly turn: number | null;
   readonly seq: number;
 }
 
@@ -34,7 +40,7 @@ export interface UiIntents {
   taskFocusRequest(): TaskFocusRequest | null;
   focusTask(taskId: string): void;
   findRequest(): FindRequest | null;
-  openFind(query?: string | null): void;
+  openFind(query?: string | null, turn?: number | null): void;
 }
 
 function createUiIntents(): UiIntents {
@@ -72,8 +78,8 @@ function createUiIntents(): UiIntents {
     findRequest(): FindRequest | null {
       return findRequest;
     },
-    openFind(query: string | null = null): void {
-      findRequest = { query, seq: (findRequest?.seq ?? 0) + 1 };
+    openFind(query: string | null = null, turn: number | null = null): void {
+      findRequest = { query, turn, seq: (findRequest?.seq ?? 0) + 1 };
       notify();
     },
   };

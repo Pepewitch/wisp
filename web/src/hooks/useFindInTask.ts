@@ -16,6 +16,13 @@ export interface FindState {
   collapsed: number
   /** bumped every time the box should take focus — the bar owns its own input */
   focusToken: number
+  /**
+   * The turn a cross-project result matched in. The conversation opens that
+   * turn's activity, because a prose match is inside a timeline nobody has
+   * expanded yet — and the count would otherwise read 0/0 for text the daemon
+   * just said was there.
+   */
+  revealTurn: number | null
   setQuery: (query: string) => void
   step: (delta: number) => void
   close: () => void
@@ -57,6 +64,7 @@ export function useFindInTask(scroller: RefObject<HTMLElement | null>, intents: 
   const [matches, setMatches] = useState<Matches>(NOTHING)
   const [current, setCurrent] = useState(0)
   const [focusToken, setFocusToken] = useState(0)
+  const [revealTurn, setRevealTurn] = useState<number | null>(null)
   const pendingJump = useRef(false)
   const answered = useRef(intents.findRequest()?.seq ?? 0)
   // The intent subscription must see the CURRENT box without re-subscribing on
@@ -76,6 +84,7 @@ export function useFindInTask(scroller: RefObject<HTMLElement | null>, intents: 
       setQuery(next)
       setCurrent(0)
       setFocusToken((token) => token + 1)
+      setRevealTurn(request.turn)
       // A seeded query usually arrives WITH a task switch, whose transcript is
       // still in flight; the observer below answers that one when it lands.
       pendingJump.current = true
@@ -122,9 +131,12 @@ export function useFindInTask(scroller: RefObject<HTMLElement | null>, intents: 
     position: matchPosition(matches.ranges.length, index),
     collapsed: matches.collapsed,
     focusToken,
+    revealTurn,
     setQuery: (next: string) => {
       setQuery(next)
       setCurrent(0)
+      // their own query, their own turns: the handed-over one stops applying
+      setRevealTurn(null)
       pendingJump.current = true
       setMatches(scan(scroller.current, next))
     },
@@ -137,6 +149,7 @@ export function useFindInTask(scroller: RefObject<HTMLElement | null>, intents: 
     },
     close: () => {
       setOpen(false)
+      setRevealTurn(null)
       clearMatches()
       scroller.current?.focus()
     },

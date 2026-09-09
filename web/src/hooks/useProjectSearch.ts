@@ -2,7 +2,7 @@ import { useState } from "react"
 
 import { useDebouncedValue } from "@/hooks/useDebouncedValue"
 
-import { searchOrder } from "@/lib/search-sections"
+import { displaySnippet, searchOrder } from "@/lib/search-sections"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { SearchTaskHit } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
@@ -90,7 +90,12 @@ export function useProjectSearch(showArchived: boolean, available: boolean): Pro
       const target = activeId ?? order[0]
       if (target === undefined) return
       onSelect(target)
-      uiIntentsFor(runtime.connectionId).openFind(daemonQuery)
+      // the same hand-over the mouse makes: query AND the turn that matched
+      const hit = hits.find((candidate) => candidate.id === target)
+      uiIntentsFor(runtime.connectionId).openFind(
+        daemonQuery,
+        hit === undefined ? null : (displaySnippet(hit)?.turn ?? null)
+      )
     },
   }
 }

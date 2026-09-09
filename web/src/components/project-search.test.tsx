@@ -257,6 +257,8 @@ describe("the sidebar's search", () => {
     expect(onSelect).toHaveBeenCalledWith(WISP.id)
     expect(intents.findRequest()?.seq).toBe(before + 1)
     expect(intents.findRequest()?.query).toBe("vacuum")
+    // the turn the daemon matched, so a prose hit does not land on 0/0
+    expect(intents.findRequest()?.turn).toBe(2)
   })
 
   it("commits the highlighted result from the keyboard", async () => {

@@ -66,6 +66,12 @@ export function searchLines(response: SearchResponse, options: { all: boolean })
         `${archived.length} archived ${archived.length === 1 ? "task matches" : "tasks match"} — add -a to include ${archived.length === 1 ? "it" : "them"}`,
       );
     }
+    if (response.indexing !== undefined) {
+      const turns = response.indexing.remainingTurns;
+      nothing.push(
+        `still indexing what the agent said in ${turns} older ${turns === 1 ? "turn" : "turns"} — try again shortly`,
+      );
+    }
     return nothing;
   }
 
@@ -79,6 +85,12 @@ export function searchLines(response: SearchResponse, options: { all: boolean })
     lines.push(`${archived.length} archived ${archived.length === 1 ? "task" : "tasks"} hidden — add -a to include ${archived.length === 1 ? "it" : "them"}`);
   }
   if (response.truncated) lines.push("showing the most recent matches");
+  if (response.indexing !== undefined) {
+    // Same honesty as the sidebar's muted line: during catch-up an answer is
+    // provisional, and a miss is not yet a miss.
+    const turns = response.indexing.remainingTurns;
+    lines.push(`still indexing what the agent said in ${turns} older ${turns === 1 ? "turn" : "turns"}`);
+  }
   return lines;
 }
 
