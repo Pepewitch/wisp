@@ -158,6 +158,17 @@ WISP_LAUNCH_POLICY=allow bun run test:wispd   # spends real provider quota
 provider CLI, a `..` climb, a symlink wearing a stand-in's name — and each one
 must stay refused.
 
+### The browser boundary is checked in a browser
+
+`bun run check:browser-security` drives headless Chrome against a throwaway
+daemon and asserts the things only a browser can answer: no cookie is stored
+for the daemon origin, another local port receives no credential, a
+cross-origin write creates nothing, a cross-origin terminal upgrade never
+opens, the page loads with no CSP violation, and framing is refused. CI runs it
+as its own job. Run it after any change to authentication, the served page's
+headers, the transport, or the terminal socket protocol — a green daemon suite
+cannot tell you a browser stopped attaching a credential.
+
 ## Find the owning surface
 
 | Concern | Primary source |
