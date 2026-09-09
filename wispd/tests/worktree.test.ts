@@ -436,6 +436,32 @@ describe("fullDiff (web UI diff pane)", () => {
     expect(r.truncated).toBe(true);
     expect(r.diff.length).toBe(512 * 1024);
   });
+
+  /**
+   * The case the byte budget exists for, and the one that broke when the
+   * budget started killing the producer: git is STILL WRITING when the cap is
+   * reached, so it dies by signal instead of exiting 0. A wrapper that reads
+   * `ok` from the exit code alone turns the biggest diff in the repository
+   * into `git diff failed` — an error where the pane used to show a labelled
+   * truncated diff. 16 MB of output against a 512 KiB budget makes the kill
+   * land mid-write rather than after a lucky clean exit.
+   */
+  test("a diff that is still being written when the cap hits is truncated, not failed", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tdif04", cfg);
+    // one long line per 1 KiB, 8 MiB total: the diff prints it twice (removed
+    // and added), so git has ~16 MiB to write and cannot finish first
+    writeFileSync(join(wt.path, "huge.txt"), `${"z".repeat(1023)}\n`.repeat(8 * 1024));
+    sh(["git", "add", "."], wt.path);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "huge"], wt.path);
+    writeFileSync(join(wt.path, "huge.txt"), `${"w".repeat(1023)}\n`.repeat(8 * 1024));
+
+    const r = await fullDiff(wt.path, wt.base_commit);
+
+    expect(r.truncated).toBe(true);
+    expect(r.diff.length).toBe(512 * 1024);
+    expect(r.diff).toContain("diff --git");
+  }, 30_000);
 });
 
 describe("statusSummary (web UI sidebar)", () => {

@@ -45,7 +45,15 @@ async function git(args: string[], cwd: string, options: GitRunOptions = {}): Pr
       truncated: false,
     };
   }
-  return { ok: result.exitCode === 0, out: result.out.trim(), err: result.err.trim(), truncated: result.truncated };
+  // A cap-truncated read is a SUCCESS with less data, not a failure. The child
+  // is killed on purpose once the budget is reached, so it exits by signal
+  // rather than 0 — and treating that as an error would turn the very case
+  // these budgets exist for (a generated diff far past the pane's 512 KiB)
+  // into `git diff failed` instead of the labelled truncated diff the old
+  // buffer-then-slice code returned. A deadline or a caller's cancellation
+  // stays a failure: there, we do not have the answer at all.
+  const ok = result.exitCode === 0 || result.truncated;
+  return { ok, out: result.out.trim(), err: result.err.trim(), truncated: result.truncated };
 }
 
 interface GitRunOptions {
