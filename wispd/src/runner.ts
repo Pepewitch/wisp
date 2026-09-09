@@ -35,7 +35,7 @@ import {
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
-import { processGroupEnded, signalProcessTree } from "./process-tree";
+import { assertGroupEnded, forgetOwnedGroupIfEmpty, ownsGroup, rememberOwnedGroup, signalProcessTree } from "./process-tree";
 import { processStartTime } from "./procid";
 import {
   createTurn,
@@ -71,17 +71,6 @@ export { startStuckLoop, stuckTick } from "./stuck";
 export { finalizeTurn } from "./turn-finalize";
 /** Live children by turn id — for interrupts. Re-adopted turns (post-restart) fall back to pid. */
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
-/**
- * Process groups this daemon created, kept for its lifetime.
- *
- * A finished turn can still have members in its group — a harness that exited
- * without waiting for something it started — and archive has to see them
- * before it deletes their worktree. Checking `kill(-pid, 0)` for an arbitrary
- * old pid would be unsafe, because that pid may since have been recycled by a
- * stranger who leads a group; a pid in this set was OUR leader in THIS
- * process, which is as much identity as a dead leader can offer.
- */
-const spawnedGroups = new Set<number>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
 
@@ -285,7 +274,7 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
-  spawnedGroups.add(child.pid);
+  rememberOwnedGroup(child.pid);
   const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
   const { recorder, sink, stderrPump } = capture;
   // stderr must be drained independently of the stdout protocol pump. A noisy
@@ -509,6 +498,9 @@ async function watchTurn(
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   liveChildren.delete(turnId);
+  // The common case: the harness took its children with it, so there is no
+  // group left to protect an archive from.
+  forgetOwnedGroupIfEmpty(child.pid);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
   await outputPump.catch(() => {});
@@ -741,7 +733,7 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     // is sitting in — the early return here used to let archive proceed (a
     // review asked for the missing test and the test found the hole).
     const latest = latestTurnForTask(taskId);
-    if (latest?.pid && spawnedGroups.has(latest.pid)) await refuseIfTreeSurvives(latest, graceMs);
+    if (latest?.pid && ownsGroup(latest.pid)) await assertGroupEnded(latest.pid, `turn ${latest.n}`, graceMs);
     return;
   }
   markInterrupted(turn.id, "turn interrupted by force-archive");
@@ -756,27 +748,6 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
       throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived SIGKILL; refusing to archive`);
     }
   }
-  await refuseIfTreeSurvives(turn, graceMs);
+  if (turn.pid) await assertGroupEnded(turn.pid, `turn ${turn.n}`, graceMs);
 }
 
-/**
- * The turn ROW is finalized — but a finalized row only proves the harness
- * exited, and archive is about to delete the worktree those processes are
- * sitting in (ENG-03/ENG-04). So the last thing checked is the process GROUP:
- * if anything the turn started is still in it, this refuses rather than
- * deleting files under a live process.
- *
- * It checks without signalling. The leader is gone by now, so its pid can no
- * longer be identity-checked, and a pid that has been recycled into a NEW
- * group leader would make a blind `kill(-pid)` hit a stranger. Escalation
- * already happened above, while the leader was alive and verified; what is
- * left here is a decision, and the safe decision is to keep the worktree and
- * say why.
- */
-async function refuseIfTreeSurvives(turn: Turn, graceMs: number): Promise<void> {
-  if (!turn.pid) return;
-  if (await processGroupEnded(turn.pid, graceMs)) return;
-  throw new Error(
-    `turn ${turn.n} exited but processes it started are still running (process group ${turn.pid}); refusing to archive — stop them and retry`,
-  );
-}
