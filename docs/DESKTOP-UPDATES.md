@@ -142,9 +142,9 @@ The public alpha.8 app predates this updater and is ad-hoc signed. It cannot
 self-update. Alpha.12 is the first published Developer ID signed release
 containing the embedded key and must be installed once through Homebrew with
 `--greedy`. Alpha.13 completed the first end-to-end public proof by discovering,
-verifying, installing, and relaunching from alpha.12. Wisp 0.5.0 follows the
-same trust pipeline and retains the compatible discovery endpoint. Its
-publication evidence and pending human-observed 0.4-to-0.5 updater journey are
+verifying, installing, and relaunching from alpha.12. The 0.5 releases follow
+the same trust pipeline and retain the compatible discovery endpoint. Their
+publication evidence and the pending human-observed updater journeys are
 recorded in the [0.5 qualification ledger](v0.5/QUALIFICATION.md).
 
 Treat the updater key as a long-lived release root. Before any app containing a
