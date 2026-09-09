@@ -10,9 +10,16 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   enters `wispd/src/cli.ts`.
 - `wispd/src/cli.ts` is primarily a bearer-authenticated HTTP client. Business logic
   belongs behind the API, not in a CLI-only path.
-- `wispd/src/daemon.ts` loads config and adapters, performs recovery, starts
-  background loops, serves the generated web bundle, owns browser auth and
-  terminal WebSocket upgrades, then delegates ordinary API requests.
+- `wispd/src/daemon.ts` takes exclusive ownership of the Wisp home, loads config
+  and adapters, performs recovery, starts background loops, serves the generated
+  web bundle, owns browser auth and terminal WebSocket upgrades, then delegates
+  ordinary API requests.
+- Ownership comes FIRST, before the port preflight and before any recovery: an
+  address being free says nothing about who owns a home, and two owners
+  reconcile each other's live state (ENG-02). It is an exclusive SQLite lock on
+  a file in the home, so the OS is the arbiter — a killed daemon leaves no
+  stale lock and there is no pid to trust. A losing daemon exits having changed
+  nothing. Port-conflict diagnostics stay a separate, later check.
 - `wispd/src/routes/index.ts` dispatches route families. Its order is behavior:
   specific stream and attachment paths must precede generic task paths.
 - `wispd/src/store.ts` owns SQLite rows and task transitions. `wispd/src/runner.ts` owns
