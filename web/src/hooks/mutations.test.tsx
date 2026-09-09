@@ -234,6 +234,35 @@ describe("task writes", () => {
     expect(invalidated(spy)).toEqual([qk.task("t5qmha")])
   })
 
+  it("sends the selected agent and explicit fresh-context confirmation", async () => {
+    const { wrapper } = harness()
+    const { result } = renderHook(() => useSendMessage(), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        id: "t5qmha",
+        message: "continue there",
+        clientMessageId: "client-message-switch",
+        harness: "claude",
+        model: "claude-opus",
+        effort: null,
+        startFreshContext: true,
+      })
+    })
+
+    expect(mocks.request).toHaveBeenCalledWith("/api/tasks/t5qmha/send", {
+      method: "POST",
+      body: {
+        message: "continue there",
+        clientMessageId: "client-message-switch",
+        harness: "claude",
+        model: "claude-opus",
+        effort: null,
+        startFreshContext: true,
+      },
+    })
+  })
+
   it("passes a selected suffix id on create and steer writes", async () => {
     mocks.request.mockResolvedValue({ id: "t5qmha" })
     const createHarness = harness()

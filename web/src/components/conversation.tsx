@@ -193,23 +193,27 @@ export function Conversation({
           <div className="flex min-h-full flex-col justify-end pt-6">
             {task.turns.length === 0 && note && <div className="pt-4 text-[12.5px] text-faint">{note}</div>}
             {task.turns.map((turn, i) => (
-              <TurnBlock
-                key={`${runtime.connectionId}:${task.id}:${turn.n}`}
-                taskId={task.id}
-                turn={turn}
-                messages={steeredMessages.get(turn.n) ?? []}
-                deliveryUncertain={uncertainStarts.has(turn.n)}
-                live={live[turn.n]}
-                first={i === 0}
-                latest={i === task.turns.length - 1}
-                // Why the task failed, on the turn that failed it. The harness's
-                // own last words often are the conclusion — droid, for one,
-                // pattern-matches its final message and exits 1 on a hit, so the
-                // real result ends up here and nowhere else.
-                failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
-                archived={task.archived && !task.attachmentsRetained}
-                onBeforeToggle={compensate}
-              />
+              <Fragment key={`${runtime.connectionId}:${task.id}:${turn.n}`}>
+                {i > 0 && task.turns[i - 1]?.context_n !== turn.context_n && (
+                  <ContextDivider turn={turn} />
+                )}
+                <TurnBlock
+                  taskId={task.id}
+                  turn={turn}
+                  messages={steeredMessages.get(turn.n) ?? []}
+                  deliveryUncertain={uncertainStarts.has(turn.n)}
+                  live={live[turn.n]}
+                  first={i === 0 || task.turns[i - 1]?.context_n !== turn.context_n}
+                  latest={i === task.turns.length - 1}
+                  // Why the task failed, on the turn that failed it. The harness's
+                  // own last words often are the conclusion — droid, for one,
+                  // pattern-matches its final message and exits 1 on a hit, so the
+                  // real result ends up here and nowhere else.
+                  failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
+                  archived={task.archived && !task.attachmentsRetained}
+                  onBeforeToggle={compensate}
+                />
+              </Fragment>
             ))}
             {queuedMessages.map((message) => (
               <QueuedMessage
@@ -240,6 +244,24 @@ export function Conversation({
         )}
       </div>
     </FileViewerProvider>
+  )
+}
+
+function ContextDivider({ turn }: { turn: Turn }) {
+  return (
+    <div data-context-divider={turn.context_n} className="flex items-center gap-3 pt-[30px] pb-1">
+      <span aria-hidden className="h-px flex-1 bg-border" />
+      <span className="shrink-0 text-[10.5px] text-faint">
+        Fresh context started with {turn.harness ?? "a new harness"}
+        {turn.requested_model && (
+          <>
+            {" · "}
+            <span className="font-mono">{turn.requested_model}</span>
+          </>
+        )}
+      </span>
+      <span aria-hidden className="h-px flex-1 bg-border" />
+    </div>
   )
 }
 

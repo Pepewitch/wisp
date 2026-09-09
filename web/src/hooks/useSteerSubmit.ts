@@ -12,7 +12,21 @@ interface PendingSend {
   suffixPromptId: string | null
   attachments: AttachmentPayload[] | undefined
   clientMessageId: string
+  agent: AgentSubmission | null
 }
+
+export interface AgentSubmission {
+  harness: string
+  model: string
+  effort: string | null
+  startFreshContext: boolean
+}
+
+const sameAgent = (a: AgentSubmission | null, b: AgentSubmission | null) =>
+  a?.harness === b?.harness &&
+  a?.model === b?.model &&
+  a?.effort === b?.effort &&
+  a?.startFreshContext === b?.startFreshContext
 
 function sameAttachments(a: AttachmentPayload[] | undefined, b: AttachmentPayload[] | undefined) {
   if (a === b) return true
@@ -41,7 +55,12 @@ export function useSteerSubmit({
   value: string
   suffixPromptId: string | null
   attachments: PendingAttachments
-  onSend?: (message: string, attachments?: AttachmentPayload[], suffixPromptId?: string) => Promise<void> | void
+  onSend?: (
+    message: string,
+    attachments?: AttachmentPayload[],
+    suffixPromptId?: string,
+    agent?: AgentSubmission,
+  ) => Promise<void> | void
   onInterrupt?: () => Promise<void> | void
   onSent: (taskId: string) => void
   setValue: Dispatch<SetStateAction<string>>
@@ -53,7 +72,7 @@ export function useSteerSubmit({
   const interruptTask = useInterruptTask()
   const pendingSend = useRef<PendingSend | null>(null)
 
-  const send = () => {
+  const send = (agent: AgentSubmission | null = null) => {
     if (!canSend || !task) return
     const id = task.id
     const message = value
@@ -63,10 +82,11 @@ export function useSteerSubmit({
       previous?.taskId === id &&
       previous.message === message &&
       previous.suffixPromptId === suffixPromptId &&
+      sameAgent(previous.agent, agent) &&
       sameAttachments(previous.attachments, payloads)
         ? previous.clientMessageId
         : crypto.randomUUID()
-    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId }
+    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent }
     setPalette(null)
     setNote(null)
     setSending(true)
@@ -101,11 +121,16 @@ export function useSteerSubmit({
           clientMessageId,
           ...(suffixPromptId ? { suffixPromptId } : {}),
           ...(payloads ? { attachments: payloads } : {}),
+          ...(agent ?? {}),
         })
       }
       try {
         return Promise.resolve(
-          suffixPromptId ? onSend(message, payloads, suffixPromptId) : onSend(message, payloads),
+          agent
+            ? onSend(message, payloads, suffixPromptId ?? undefined, agent)
+            : suffixPromptId
+              ? onSend(message, payloads, suffixPromptId)
+              : onSend(message, payloads),
         )
       } catch (error) {
         return Promise.reject(error)

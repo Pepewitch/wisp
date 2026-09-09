@@ -40,6 +40,8 @@ export interface Task {
   slot: number;
   state: TaskState;
   state_detail: string | null;
+  /** Active durable harness context. Existing tasks are migrated to context 1. */
+  context_n: number;
   session_id: string | null;
   /**
    * The skill names the session's init event announced (A4, claude), as a
@@ -54,6 +56,20 @@ export interface Task {
   purge_pending?: number;
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One durable harness session boundary inside a task. */
+export interface TaskContext {
+  id: number;
+  task_id: string;
+  n: number;
+  harness: string;
+  model: string | null;
+  effort: string | null;
+  session_id: string | null;
+  skills_json: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -105,6 +121,11 @@ export interface Turn {
   id: number;
   task_id: string;
   n: number;
+  /** The durable context and requested agent captured before this process started. */
+  context_n: number;
+  harness: string;
+  requested_model: string | null;
+  requested_effort: string | null;
   prompt: string;
   result: string | null;
   status: TurnStatus;
@@ -175,6 +196,11 @@ export type TaskMessageDelivery = "started" | "steered" | null;
 export interface TaskMessage {
   id: string;
   task_id: string;
+  /** Target configuration captured when the message was submitted. */
+  context_n: number;
+  harness: string;
+  model: string | null;
+  effort: string | null;
   text: string;
   status: TaskMessageStatus;
   delivery: TaskMessageDelivery;

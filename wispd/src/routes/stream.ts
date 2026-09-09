@@ -194,8 +194,6 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   if (activeLogStreams >= MAX_LOG_STREAMS) return err("too many log stream subscribers", 503);
   activeLogStreams++;
   const requested = turn;
-  const def = adapters[task.harness]; // unknown harness → formatEvent passes lines through, like the CLI
-
   const enc = new TextEncoder();
   let closed = false;
   let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -212,7 +210,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   let resumeDrain: (() => void) | null = null;
   let brokerSubscription: TurnBrokerSubscription | null = null;
   let brokerPump: Promise<void> | null = null;
-  const renderer = new TurnStreamRenderer(format, def);
+  let renderer = new TurnStreamRenderer(format, adapters[task.harness]);
 
   const cleanup = (): void => {
     if (closed) return;
@@ -264,7 +262,9 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     brokerSubscription?.close();
     brokerSubscription = format === "raw" ? null : subscribeTurnBroker(turn.id);
     brokerPump = null;
-    renderer.reset(); // formatter state and lifecycle correlation belong to exactly one turn
+    // Formatter state, lifecycle correlation, and adapter semantics belong to
+    // exactly one turn. A task may cross a harness boundary between turns.
+    renderer = new TurnStreamRenderer(format, adapters[turn.harness]);
     // From the START of the turn, offset-tracked so the append stream continues
     // exactly where the backlog stopped (no gap, no overlap). Anything past the
     // first-read budget is picked up by the ordinary append loop.

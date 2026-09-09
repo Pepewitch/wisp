@@ -2,18 +2,27 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { ArrowUp, Stop } from "@/components/icons"
+import { FreshContextDialog } from "@/components/fresh-context-dialog"
 import {
   AttachButton,
   PendingAttachmentRows,
 } from "@/components/pending-attachments"
 import { TaskIdentity, SteerOverlays } from "@/components/steer-box-overlays"
+import {
+  TaskAgentPicker,
+  type TaskAgentChoice,
+} from "@/components/task-agent-picker"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import {
   useSteerCommands,
   type ReportState,
   type SteerNote,
 } from "@/hooks/useSteerCommands"
-import { useSteerSubmit } from "@/hooks/useSteerSubmit"
+import {
+  useSteerSubmit,
+  type AgentSubmission,
+} from "@/hooks/useSteerSubmit"
+import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
 import {
   useDesktopPendingAttachments,
   useRememberedDraft,
@@ -37,6 +46,7 @@ import {
 import type {
   ApiTask,
   HarnessCompact,
+  HarnessInfo,
   ProbeCommandName,
   StatusEntry,
   TaskSkills,
@@ -64,6 +74,29 @@ import { cn } from "@/lib/utils"
  * use one dismissible panel. Both are keyed to the task that produced them, so
  * switching tasks never shows task A's answer under task B.
  */
+interface SteerBoxProps {
+  task: ApiTask | null
+  hasImage?: boolean
+  imageNote?: string
+  status?: StatusEntry
+  turns?: Turn[]
+  probeCommands?: ProbeCommandName[]
+  skills?: TaskSkills
+  compact?: HarnessCompact | null
+  harnesses?: HarnessInfo[]
+  /** Daemon feature flag; absent on an older daemon, whose /send would ignore a switch. */
+  canSwitchAgent?: boolean
+  onSend?: (
+    message: string,
+    attachments?: AttachmentPayload[],
+    suffixPromptId?: string,
+    agent?: AgentSubmission
+  ) => Promise<void> | void
+  onInterrupt?: () => Promise<void> | void
+  runningSince?: string | null
+  touch?: boolean
+}
+
 export function SteerBox({
   task,
   hasImage = true,
@@ -73,55 +106,13 @@ export function SteerBox({
   probeCommands,
   skills,
   compact,
+  harnesses = [],
+  canSwitchAgent = false,
   onSend,
   onInterrupt,
   runningSince = null,
   touch = false,
-}: {
-  task: ApiTask | null
-  hasImage?: boolean
-  /** the harness's delivery caveat, shown while images are pending (A1c) */
-  imageNote?: string
-  /** the task's /api/status entry — the git half of `/status`'s note */
-  status?: StatusEntry
-  /** the task's turns — the numbers `/tokens` reports from (Theme B) */
-  turns?: Turn[]
-  /**
-   * The task's harness's declared out-of-turn reads (A3) — the palette's
-   * Tier 2. Undefined/empty renders no Tier-2 group, which is also the honest
-   * state while /api/harnesses is still loading.
-   */
-  probeCommands?: ProbeCommandName[]
-  /**
-   * The harness's own skill registry (A4) — the palette's Tier 3. Undefined
-   * while loading or after a refusal (a running turn), and the group is
-   * absent rather than populated with anything stale or invented.
-   */
-  skills?: TaskSkills
-  /**
-   * The task's harness's compaction (A5) — one entry in the harness's group:
-   * a prefill when the harness compacts as an ordinary turn (claude), an
-   * out-of-band dispatch when the daemon runs it (droid/codex), absent when
-   * the harness honestly has none.
-   */
-  compact?: HarnessCompact | null
-  /**
-   * Injectable send, for tests and the gallery. Left out, the box posts through
-   * `useSendMessage` itself, which is what lets a refusal land in its own note
-   * instead of nowhere.
-   */
-  onSend?: (
-    message: string,
-    attachments?: AttachmentPayload[],
-    suffixPromptId?: string
-  ) => Promise<void> | void
-  /** Injectable interrupt for tests and the gallery; production posts through useInterruptTask. */
-  onInterrupt?: () => Promise<void> | void
-  /** started_at of the turn running right now; null when nothing is running */
-  runningSince?: string | null
-  /** thumb-sized controls and larger type below the md breakpoint */
-  touch?: boolean
-}) {
+}: SteerBoxProps) {
   const [value, setValue] = useRememberedDraft(task?.id ?? null)
   const [sending, setSending] = useState(false)
   const [note, setNote] = useState<SteerNote | null>(null)
@@ -130,6 +121,7 @@ export function SteerBox({
     taskId: initialTaskId,
     value: null,
   })
+  const agent = useTaskAgentSelection(task, harnesses)
   const { taskId, suffixPromptId, disabled, blocked, canSend, canStop, shown } =
     steerState({
       task,
@@ -162,9 +154,9 @@ export function SteerBox({
 
   const attachments = useDesktopPendingAttachments({
     taskId,
-    harness: task?.harness ?? null,
-    hasImage,
-    imageNote,
+    harness: agent.choice?.harness ?? task?.harness ?? null,
+    hasImage: agent.selectedHarness?.hasImage ?? hasImage,
+    imageNote: agent.selectedHarness?.imageNote ?? imageNote,
   })
   const commands = useSteerCommands({ task, status, setNote, setReport })
   const archive = commands.archive
@@ -177,7 +169,7 @@ export function SteerBox({
     box.current?.setSelectionRange(pos, pos)
   })
 
-  const { send, stop } = useSteerSubmit({
+  const { send: submit, stop } = useSteerSubmit({
     task,
     canSend,
     canStop,
@@ -192,6 +184,7 @@ export function SteerBox({
     setNote,
     setPalette,
   })
+  const send = () => agent.requestSend(submit)
 
   /** Recompute what the caret is sitting in. The one place the palette opens. */
   const track = (value: string, at: number | null) => {
@@ -290,6 +283,9 @@ export function SteerBox({
           caretRef={caret}
           commandRef={command}
           attachments={attachments}
+          harnesses={harnesses}
+          canSwitchAgent={canSwitchAgent}
+          agentChoice={agent.choice}
           onValueChange={setValue}
           onTrack={track}
           onDismissPalette={dismiss}
@@ -297,19 +293,31 @@ export function SteerBox({
           onSuffixPromptChange={(value) =>
             setSuffixSelection({ taskId, value })
           }
+          onAgentChange={agent.setChoice}
           onSend={send}
           onStop={stop}
         />
       </div>
 
       {task && (
-        <ArchiveConfirmDialog
-          task={task}
-          reason={archive.reason}
-          pending={archive.pending}
-          onCancel={archive.dismiss}
-          onForce={() => archive.request(true)}
-        />
+        <>
+          <ArchiveConfirmDialog
+            task={task}
+            reason={archive.reason}
+            pending={archive.pending}
+            onCancel={archive.dismiss}
+            onForce={() => archive.request(true)}
+          />
+          {agent.choice && (
+            <FreshContextDialog
+              choice={agent.choice}
+              open={agent.confirmFresh}
+              pending={sending}
+              onCancel={agent.cancel}
+              onConfirm={() => agent.confirm(submit)}
+            />
+          )}
+        </>
       )}
     </div>
   )
@@ -393,11 +401,15 @@ function SteerComposer({
   caretRef,
   commandRef,
   attachments,
+  harnesses,
+  canSwitchAgent,
+  agentChoice,
   onValueChange,
   onTrack,
   onDismissPalette,
   onDismissReport,
   onSuffixPromptChange,
+  onAgentChange,
   onSend,
   onStop,
 }: {
@@ -417,11 +429,15 @@ function SteerComposer({
   caretRef: RefObject<number | null>
   commandRef: RefObject<HTMLDivElement | null>
   attachments: PendingAttachments
+  harnesses: HarnessInfo[]
+  canSwitchAgent: boolean
+  agentChoice: TaskAgentChoice | null
   onValueChange: (value: string) => void
   onTrack: (value: string, caret: number | null) => void
   onDismissPalette: () => void
   onDismissReport: () => void
   onSuffixPromptChange: (value: string | null) => void
+  onAgentChange: (choice: TaskAgentChoice) => void
   onSend: () => void
   onStop: () => void
 }) {
@@ -514,7 +530,11 @@ function SteerComposer({
         canStop={canStop}
         touch={touch}
         attachments={attachments}
+        harnesses={harnesses}
+        canSwitchAgent={canSwitchAgent}
+        agentChoice={agentChoice}
         onSuffixPromptChange={onSuffixPromptChange}
+        onAgentChange={onAgentChange}
         onSend={onSend}
         onStop={onStop}
       />
@@ -534,7 +554,11 @@ function ComposerControls({
   canStop,
   touch,
   attachments,
+  harnesses,
+  canSwitchAgent,
+  agentChoice,
   onSuffixPromptChange,
+  onAgentChange,
   onSend,
   onStop,
 }: {
@@ -548,7 +572,11 @@ function ComposerControls({
   canStop: boolean
   touch: boolean
   attachments: PendingAttachments
+  harnesses: HarnessInfo[]
+  canSwitchAgent: boolean
+  agentChoice: TaskAgentChoice | null
   onSuffixPromptChange: (value: string | null) => void
+  onAgentChange: (choice: TaskAgentChoice) => void
   onSend: () => void
   onStop: () => void
 }) {
@@ -571,12 +599,21 @@ function ComposerControls({
     <div className="mt-2 flex flex-col gap-1">
       {note && <span className="px-0.5 text-[11px] text-faint @2xl:hidden">{note}</span>}
       <div className="flex items-center gap-2">
-        {task && (
+        {task && agentChoice && canSwitchAgent && harnesses.length > 0 ? (
+          <span className="flex min-w-0 items-center gap-1">
+            <TaskAgentPicker
+              harnesses={harnesses}
+              value={agentChoice}
+              disabled={disabled || sending}
+              onChange={onAgentChange}
+            />
+          </span>
+        ) : task ? (
           <span className="hidden min-w-0 @lg:flex">
             <TaskIdentity task={task} />
           </span>
-        )}
-        <span aria-hidden className="hidden h-3 w-px shrink-0 bg-border-strong @lg:block" />
+        ) : null}
+        <span aria-hidden className="h-3 w-px shrink-0 bg-border-strong" />
         <AttachButton pending={attachments} touch={touch} />
         <SuffixPromptPicker
           key={taskId ?? "no-task"}

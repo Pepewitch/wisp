@@ -74,6 +74,7 @@ export interface ApiTask {
   slot: number;
   state: TaskState;
   state_detail: string | null;
+  context_n?: number;
   session_id: string | null;
   seq: number;
   turn_count: number;
@@ -120,6 +121,10 @@ export interface Turn {
   id: number;
   task_id: string;
   n: number;
+  context_n?: number;
+  harness?: string;
+  requested_model?: string | null;
+  requested_effort?: string | null;
   prompt: string;
   result: string | null;
   status: TurnStatus;
@@ -155,6 +160,10 @@ export interface Turn {
 export interface TaskMessage {
   id: string
   task_id: string
+  context_n?: number
+  harness?: string
+  model?: string | null
+  effort?: string | null
   text: string
   status: "queued" | "delivered" | "cancelled"
   delivery: "started" | "steered" | null
@@ -406,6 +415,19 @@ export interface HarnessInfo {
 }
 /** A5: the two honest shapes compaction takes (SP1). */
 export type HarnessCompact = { kind: "action"; recordsTurn: boolean } | { kind: "prompt"; prompt: string };
+
+/**
+ * GET /api/harnesses response envelope. `features` carries daemon-level
+ * capability flags; a daemon that predates a flag omits it, and the client
+ * reads absent as unsupported rather than offering a silently ignored switch.
+ */
+export interface HarnessesResponse {
+  harnesses: HarnessInfo[];
+  features?: {
+    /** /send accepts harness/model/effort/startFreshContext for a running task's NEXT turn. */
+    taskAgentSwitching?: boolean;
+  };
+}
 
 /** A3: the only out-of-turn reads any harness has proven to have (SP1). */
 export type ProbeCommandName = "context" | "usage";

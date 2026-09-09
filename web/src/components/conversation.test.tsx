@@ -188,6 +188,72 @@ describe("Conversation top fade", () => {
   })
 })
 
+describe("Conversation context boundaries", () => {
+  it("keeps old turns visible and labels the first turn in a fresh harness context", () => {
+    const turn = (n: number, context: number, harness: string, model: string) => ({
+      id: n,
+      task_id: "tcontexts",
+      n,
+      context_n: context,
+      harness,
+      requested_model: model,
+      requested_effort: null,
+      prompt: `prompt ${n}`,
+      result: `result ${n}`,
+      status: "done" as const,
+      model,
+      usage: null,
+      attachments: [],
+      log_file: `/tmp/turn-${n}.log`,
+      started_at: `2026-09-09T00:00:0${n}Z`,
+      ended_at: `2026-09-09T00:00:1${n}Z`,
+    })
+    const task = {
+      id: "tcontexts",
+      title: "Switch harnesses",
+      repo_path: "/tmp/repo",
+      worktree_path: "/tmp/worktree",
+      branch: "wisp/tcontexts-switch",
+      base_commit: "abc123",
+      harness: "claude",
+      model: "claude-opus",
+      effort: null,
+      context_n: 2,
+      slot: 0,
+      state: "done",
+      state_detail: null,
+      session_id: "claude-session",
+      seq: 3,
+      turn_count: 2,
+      archived: false,
+      mode: "worktree",
+      created_at: "2026-09-09T00:00:00Z",
+      updated_at: "2026-09-09T00:00:20Z",
+      diffstat: null,
+      worktreeReason: null,
+      messages: [],
+      turns: [
+        turn(1, 1, "codex", "gpt-5"),
+        turn(2, 2, "claude", "claude-opus"),
+      ],
+    } as TaskDetail
+
+    const { container } = render(
+      <Conversation task={task} stream={initialStreamState} />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport()) },
+    )
+
+    expect(screen.getByText("prompt 1")).toBeVisible()
+    expect(screen.getByText("prompt 2")).toBeVisible()
+    expect(
+      screen.getByText(/Fresh context started with claude/),
+    ).toHaveTextContent("claude-opus")
+    const divider = container.querySelector("[data-context-divider='2']")
+    expect(divider?.previousElementSibling).toHaveAttribute("data-turn", "1")
+    expect(divider?.nextElementSibling).toHaveAttribute("data-turn", "2")
+  })
+})
+
 describe("the reading column's axis", () => {
   const task = {
     id: "twrap",

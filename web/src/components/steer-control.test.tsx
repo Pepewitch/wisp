@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { api } from "@/lib/api"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { sameOriginWebTransport } from "@/lib/web-transport"
-import type { ApiTask } from "@/lib/types"
+import type { ApiTask, HarnessInfo } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { StateDot } from "./primitives"
@@ -36,6 +36,24 @@ const task = (state: ApiTask["state"] = "running"): ApiTask =>
     worktree_path: "/tmp/wt",
     repo_path: "/tmp/repo",
   }) as ApiTask
+
+const harness = (name: string, models: string[]): HarnessInfo => ({
+  name,
+  hasModel: true,
+  hasEffort: false,
+  hasImage: true,
+  defaults: { model: models[0] },
+  models: {
+    list: models,
+    defaultModel: models[0] ?? null,
+    probedAt: "2026-09-09T00:00:00.000Z",
+  },
+})
+
+const harnesses = [
+  harness("codex", ["gpt-5", "gpt-6"]),
+  harness("claude", ["claude-opus"]),
+]
 
 describe("the running-turn composer control", () => {
   it.each([
@@ -151,6 +169,102 @@ describe("the running-turn composer control", () => {
 
     await waitFor(() => expect(bodies).toHaveLength(2))
     expect(bodies[1]!.clientMessageId).toBe(bodies[0]!.clientMessageId)
+  })
+})
+
+describe("changing the task agent", () => {
+  it("sends a same-harness model change without confirmation", async () => {
+    const onSend = vi.fn()
+    mount(
+      <SteerBox
+        task={{ ...task("done"), context_n: 1 }}
+        harnesses={harnesses}
+        canSwitchAgent
+        onSend={onSend}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /codex.*gpt-5/ }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "gpt-6" }))
+    fireEvent.change(
+      screen.getByPlaceholderText("Ask for changes, or / for commands"),
+      { target: { value: "continue with the new model" } },
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Send" }))
+
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith(
+        "continue with the new model",
+        undefined,
+        undefined,
+        {
+          harness: "codex",
+          model: "gpt-6",
+          effort: null,
+          startFreshContext: false,
+        },
+      ),
+    )
+    expect(screen.queryByText("Start with fresh context?")).toBeNull()
+  })
+
+  it("confirms a cross-harness change and cancel keeps the draft", async () => {
+    const onSend = vi.fn()
+    mount(
+      <SteerBox
+        task={{ ...task("done"), context_n: 1 }}
+        harnesses={harnesses}
+        canSwitchAgent
+        onSend={onSend}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: /codex.*gpt-5/ }))
+    fireEvent.click(
+      await screen.findByRole("menuitemradio", { name: /claude-opus/ }),
+    )
+    const box = screen.getByPlaceholderText(
+      "Ask for changes, or / for commands",
+    )
+    fireEvent.change(box, { target: { value: "continue in Claude" } })
+    fireEvent.click(screen.getByRole("button", { name: "Send" }))
+
+    expect(await screen.findByText("Start with fresh context?")).toBeVisible()
+    expect(onSend).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(box).toHaveValue("continue in Claude")
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }))
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Start fresh" }),
+    )
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith(
+        "continue in Claude",
+        undefined,
+        undefined,
+        {
+          harness: "claude",
+          model: "claude-opus",
+          effort: null,
+          startFreshContext: true,
+        },
+      ),
+    )
+  })
+
+  it("hides the picker when the daemon predates agent switching", () => {
+    mount(
+      <SteerBox
+        task={{ ...task("done"), context_n: 1 }}
+        harnesses={harnesses}
+        onSend={() => {}}
+      />,
+    )
+
+    // No flag, no picker: an older daemon's /send would silently ignore the
+    // switch, so the composer shows the read-only identity instead.
+    expect(screen.queryByRole("button", { name: /codex.*gpt-5/ })).toBeNull()
   })
 })
 

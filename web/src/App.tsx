@@ -35,6 +35,7 @@ import { TaskHeader } from "@/components/task-header"
 import { TerminalSection } from "@/components/terminal-pane"
 import {
   useHarnesses,
+  useHarnessFeatures,
   usePullRequestOverview,
   usePullRequestStatus,
   useRepos,
@@ -574,12 +575,15 @@ function TaskComposer({
   turns: Turn[] | undefined
   touch: boolean
 }) {
+  const features = useHarnessFeatures()
   const harness = task
     ? harnesses?.find((candidate) => candidate.name === task.harness)
     : undefined
   return (
     <SteerBox
       task={task}
+      harnesses={harnesses}
+      canSwitchAgent={features.data?.taskAgentSwitching === true}
       hasImage={harness?.hasImage}
       imageNote={harness?.imageNote}
       probeCommands={harness?.probeCommands}

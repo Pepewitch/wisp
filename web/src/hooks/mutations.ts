@@ -115,12 +115,20 @@ export function useSendMessage() {
       suffixPromptId,
       attachments,
       clientMessageId,
+      harness,
+      model,
+      effort,
+      startFreshContext,
     }: {
       id: string;
       message: string;
       suffixPromptId?: string;
       attachments?: AttachmentPayload[];
       clientMessageId: string;
+      harness?: string;
+      model?: string;
+      effort?: string | null;
+      startFreshContext?: boolean;
     }) =>
       // the field is OMITTED rather than sent empty: the daemon rejects
       // attachments on a harness without the capability, and an empty array
@@ -132,10 +140,18 @@ export function useSendMessage() {
           clientMessageId,
           ...(suffixPromptId ? { suffixPromptId } : {}),
           ...(attachments ? { attachments } : {}),
+          ...(harness ? { harness } : {}),
+          ...(model ? { model } : {}),
+          ...(effort !== undefined ? { effort } : {}),
+          ...(startFreshContext ? { startFreshContext: true } : {}),
         },
       }),
-    onSuccess: (_data, { id }) => {
+    onSuccess: (_data, { id, harness }) => {
       void client.invalidateQueries({ queryKey: qk.task(id) });
+      if (harness) {
+        void client.invalidateQueries({ queryKey: qk.tasks });
+        void client.invalidateQueries({ queryKey: qk.skills(id) });
+      }
     },
   });
 }

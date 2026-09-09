@@ -310,6 +310,79 @@ FROM turns JOIN tasks ON tasks.id = turns.task_id WHERE turns.pid > 1;
       if (!cols.includes("purge_pending")) db.exec("ALTER TABLE tasks ADD COLUMN purge_pending INTEGER NOT NULL DEFAULT 0");
     },
   },
+  {
+    id: 6,
+    name: "task-agent-contexts",
+    up: (db) => {
+      // Durable harness-session boundaries inside a task. Before contexts, a
+      // task had exactly one active provider session, so context 1 is the
+      // only boundary an upgrade can backfill honestly.
+      db.exec(`
+CREATE TABLE IF NOT EXISTS task_contexts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  n INTEGER NOT NULL,
+  harness TEXT NOT NULL,
+  model TEXT,
+  effort TEXT,
+  session_id TEXT,
+  skills_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(task_id, n)
+);
+`);
+
+      const addMissingColumns = (table: string, definitions: Record<string, string>) => {
+        const columns = new Set(
+          (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((column) => column.name),
+        );
+        for (const [name, definition] of Object.entries(definitions)) {
+          if (!columns.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+        }
+      };
+
+      addMissingColumns("tasks", {
+        context_n: "INTEGER NOT NULL DEFAULT 1",
+      });
+      // Snapshot of the agent a turn/message was launched under, so history
+      // and recovery read the turn's own harness instead of the task's
+      // current one. NULL = written before the column existed; readers fall
+      // back to the task row.
+      addMissingColumns("turns", {
+        context_n: "INTEGER NOT NULL DEFAULT 1",
+        harness: "TEXT",
+        requested_model: "TEXT",
+        requested_effort: "TEXT",
+      });
+      addMissingColumns("task_messages", {
+        context_n: "INTEGER NOT NULL DEFAULT 1",
+        harness: "TEXT",
+        model: "TEXT",
+        effort: "TEXT",
+      });
+
+      db.exec(`
+INSERT OR IGNORE INTO task_contexts
+  (task_id, n, harness, model, effort, session_id, skills_json, created_at, updated_at)
+SELECT id, context_n, harness, model, effort, session_id,
+       skills_json, created_at, updated_at
+FROM tasks;
+
+UPDATE turns
+SET harness = COALESCE(harness, (SELECT harness FROM tasks WHERE tasks.id = turns.task_id)),
+    requested_model = COALESCE(requested_model, (SELECT model FROM tasks WHERE tasks.id = turns.task_id)),
+    requested_effort = COALESCE(requested_effort, (SELECT effort FROM tasks WHERE tasks.id = turns.task_id));
+
+UPDATE task_messages
+SET harness = COALESCE(harness, (SELECT harness FROM tasks WHERE tasks.id = task_messages.task_id)),
+    model = COALESCE(model, (SELECT model FROM tasks WHERE tasks.id = task_messages.task_id)),
+    effort = COALESCE(effort, (SELECT effort FROM tasks WHERE tasks.id = task_messages.task_id));
+
+CREATE INDEX IF NOT EXISTS idx_task_contexts_task_id ON task_contexts(task_id, n);
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */
