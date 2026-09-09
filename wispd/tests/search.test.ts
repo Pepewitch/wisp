@@ -15,8 +15,15 @@ import {
   newTaskId,
   newTaskMessageId,
   setTaskFields,
+  transition,
 } from "../src/store";
-import { buildSnippet, escapeLike, searchTasks } from "../src/store-search";
+import {
+  buildSnippet,
+  escapeLike,
+  searchTasks,
+  SEARCH_ARCHIVED_LIMIT,
+  SEARCH_LIVE_LIMIT,
+} from "../src/store-search";
 
 function task(title: string): string {
   const id = newTaskId();
@@ -69,12 +76,55 @@ describe("searchTasks", () => {
     expect(searchTasks("reduce r").tasks.some((candidate) => candidate.id === id)).toBe(false);
   });
 
-  test("skips archived tasks", () => {
+  test("keeps searching a task after it is archived, and says so on the hit", () => {
     const id = task("archived haystack");
     turn(id, 1, "haystack", null);
-    expect(hit("haystack", id).id).toBe(id);
+    expect(hit("haystack", id).archived).toBe(false);
+
     setTaskFields(id, { archived: 1 });
-    expect(searchTasks("haystack").tasks.some((candidate) => candidate.id === id)).toBe(false);
+
+    // Still found — hiding an archived hit is the client's call, made against
+    // its own Show-archived switch, and it needs the flag to make it.
+    expect(hit("haystack", id).archived).toBe(true);
+  });
+
+  test("carries the task's own state so a row renders without a second fetch", () => {
+    const id = task("stateful needle-state");
+    transition(id, "needs-input", "which key wins?");
+    expect(hit("needle-state", id).state).toBe("needs-input");
+  });
+
+  test("puts live hits before archived ones, newest first inside each", () => {
+    const oldLive = task("bucket-needle old live");
+    Bun.sleepSync(2);
+    const archived = task("bucket-needle archived");
+    Bun.sleepSync(2);
+    const newLive = task("bucket-needle new live");
+    setTaskFields(archived, { archived: 1 });
+
+    expect(searchTasks("bucket-needle").tasks.map((candidate) => candidate.id)).toEqual([
+      newLive,
+      oldLive,
+      archived,
+    ]);
+  });
+
+  test("caps live and archived independently so history cannot starve the answer", () => {
+    const live: string[] = [];
+    for (let n = 0; n < SEARCH_LIVE_LIMIT + 3; n++) live.push(task(`cap-needle live ${n}`));
+    const archived: string[] = [];
+    for (let n = 0; n < SEARCH_ARCHIVED_LIMIT + 3; n++) {
+      const id = task(`cap-needle archived ${n}`);
+      setTaskFields(id, { archived: 1 });
+      archived.push(id);
+    }
+
+    const answer = searchTasks("cap-needle");
+    const shown = answer.tasks;
+    expect(shown.filter((candidate) => !candidate.archived)).toHaveLength(SEARCH_LIVE_LIMIT);
+    expect(shown.filter((candidate) => candidate.archived)).toHaveLength(SEARCH_ARCHIVED_LIMIT);
+    // over a cap is not the whole ledger, and the client must be able to say so
+    expect(answer.truncated).toBe(true);
   });
 
   test("treats LIKE wildcards as literal text", () => {
@@ -178,13 +228,13 @@ const get = (base: string, path: string): Promise<Response> =>
 describe("GET /api/search", () => {
   test("answers hits for the live tasks and echoes the query", async () => {
     const base = await startServer();
-    const id = task("Route level needle");
-    turn(id, 1, "the needle is in the prompt", null);
+    const id = task("Route level routeword");
+    turn(id, 1, "the routeword is in the prompt", null);
 
-    const response = await get(base, "/api/search?q=needle");
+    const response = await get(base, "/api/search?q=routeword");
     expect(response.status).toBe(200);
     const body = (await response.json()) as { query: string; truncated: boolean; tasks: { id: string }[] };
-    expect(body.query).toBe("needle");
+    expect(body.query).toBe("routeword");
     expect(body.truncated).toBe(false);
     expect(body.tasks.some((candidate) => candidate.id === id)).toBe(true);
   });
@@ -220,6 +270,15 @@ describe("GET /api/search", () => {
     const body = (await response.json()) as { query: string; tasks: { id: string }[] };
     expect(body.query).toBe("trimmed-needle");
     expect(body.tasks.map((candidate) => candidate.id)).toEqual([id]);
+  });
+
+  test("advertises itself, so a client can tell an older daemon apart", async () => {
+    const base = await startServer();
+    const response = await get(base, "/api/harnesses");
+    const body = (await response.json()) as { features?: { taskSearch?: boolean } };
+    // Wisp Desktop can hold a remote connection that predates this route; the
+    // web app reads an absent flag as unsupported and offers no control.
+    expect(body.features?.taskSearch).toBe(true);
   });
 
   test("rejects a write to the search route", async () => {

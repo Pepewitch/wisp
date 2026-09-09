@@ -880,8 +880,34 @@ words. The two surfaces are one search, not two boxes that happen to rhyme.
 **The scope is stated, never implied.** The daemon searches four durable
 columns — title, turn prompt, turn result, and a queued or steered message —
 and not the per-turn JSONL transcripts, which cap at 5 MB each and are the
-evidence ledger rather than an index. Archived tasks are out. The empty state
-says both out loud; a summary line with results does not repeat it.
+evidence ledger rather than an index. The empty state says so; a summary line
+with results does not repeat it.
+
+**Archived tasks are searched, and the pane's own switch decides whether you
+see them.** They cost nothing to search (`LIKE '%x%'` cannot use an index, so
+the filter only discarded rows already read), so the daemon flags every hit
+instead of dropping it and the client chooses. With *Show archived* on they are
+one `Archived` section under the live projects; with it off the rows are held
+back and COUNTED — `· 1 archived task hidden` — because "no match" and "no
+match I am willing to show you" are different sentences and only one of them
+is true. When every hit is archived, the empty state names the switch.
+
+**One layout owns the render AND the keyboard.** `lib/search-sections.ts`
+returns the sections; ↑/↓ walk `searchOrder()` over the same layout. A ↓ that
+skips a row you can see, or stops on one the switch is hiding, is worse than
+no keyboard at all.
+
+**A result row renders from the response alone.** The hit carries the task's
+state and archived flag, so nothing resolves it against the client's task list
+— that list does not contain archived tasks while the switch is off, and it
+lags a task created since the last fetch, and both cases used to drop a real
+hit without a word.
+
+**Cross-version:** the daemon advertises `features.taskSearch` on
+`/api/harnesses`, the same mechanism `taskAgentSwitching` uses. Absent reads as
+unsupported: Wisp Desktop can hold a remote connection older than this route,
+and there the pane renders no search control and ⌘⇧F does nothing. ⌘F is
+client-side and always works.
 
 **Colour.** A match is a text RANGE, which is the family `::selection` already
 belongs to, so the resting hit is `--find-match` (the neutral the app spends on

@@ -176,13 +176,19 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
  * up. The swatch itself is painted from the TOKEN, so it always tells the
  * truth about the theme on screen; the hex beside it is that theme's value.
  */
-/** Two hits for the search entry: the daemon located each match, so offsets are its own. */
+/**
+ * Three hits for the search entry: two live and one archived, because the
+ * archived section is exactly the part of the layout worth documenting. The
+ * daemon located every match, so the offsets are its own.
+ */
 export const SEARCH_HITS: SearchTaskHit[] = [
   {
     id: "t5qmha",
     title: "Fix the steer box swallowing cmd-enter",
     repo_path: "/Users/dev/work/wisp",
     updated_at: new Date().toISOString(),
+    state: "running",
+    archived: false,
     matches: 3,
     snippets: [
       { kind: "prompt", turn: 2, text: "…the composer should vacuum its draft before…", offset: 22, length: 6 },
@@ -193,8 +199,20 @@ export const SEARCH_HITS: SearchTaskHit[] = [
     title: "Port the projects API to config write-back",
     repo_path: "/Users/dev/work/wisp",
     updated_at: new Date().toISOString(),
+    state: "needs-input",
+    archived: false,
     matches: 1,
     snippets: [{ kind: "result", turn: 1, text: "vacuum pass left 4 files changed", offset: 0, length: 6 }],
+  },
+  {
+    id: "tk3wqa",
+    title: "Vacuum the SSE bridge",
+    repo_path: "/Users/dev/work/wisp",
+    updated_at: new Date(Date.now() - 9 * 86_400_000).toISOString(),
+    state: "done",
+    archived: true,
+    matches: 2,
+    snippets: [{ kind: "message", turn: null, text: "also vacuum the reconnect path", offset: 5, length: 6 }],
   },
 ]
 

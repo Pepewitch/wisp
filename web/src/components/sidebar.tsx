@@ -92,8 +92,10 @@ export function Sidebar({
         <Eyebrow className="flex-1">Projects</Eyebrow>
         {/* Search sits LEFT of add-project: reading a task is the common act
             and registering one is the rare one, so the pair reads
-            most-used-first toward the edge. */}
-        <Button
+            most-used-first toward the edge. A daemon that cannot answer
+            `/api/search` gets no control at all — an icon that can only fail
+            is worse than a missing one. */}
+        {search.available && <Button
           size={touch ? "lg" : "sm"}
           icon
           aria-label="Search tasks"
@@ -102,7 +104,7 @@ export function Sidebar({
           className={cn(search.open && "bg-hover text-foreground")}
         >
           <Search />
-        </Button>
+        </Button>}
         {/* the <span> carries the tooltip: a disabled button fires no mouse
             events, so a `title` on it would never show on hover */}
         <span title={onAddProject ? "Add project" : ADD_PROJECT_HINT}>
@@ -127,8 +129,8 @@ export function Sidebar({
           focusToken={search.focusToken}
           onQueryChange={search.setQuery}
           onClose={search.close}
-          onCommit={() => search.commit(groups, onSelect)}
-          onMove={(delta) => search.move(delta, groups)}
+          onCommit={() => search.commit(onSelect)}
+          onMove={search.move}
           touch={touch}
         />
       )}
@@ -139,7 +141,7 @@ export function Sidebar({
         {search.open && search.query.trim() !== "" ? (
           <ProjectSearchResults
             query={search.daemonQuery}
-            groups={groups}
+            showArchived={showArchived}
             selectedId={selectedId}
             activeId={search.activeId}
             onSelect={onSelect}

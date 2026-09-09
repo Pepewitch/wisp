@@ -426,6 +426,8 @@ export interface HarnessesResponse {
   features?: {
     /** /send accepts harness/model/effort/startFreshContext for a running task's NEXT turn. */
     taskAgentSwitching?: boolean;
+    /** GET /api/search answers cross-task text search (the sidebar's ⌘⇧F). */
+    taskSearch?: boolean;
   };
 }
 
@@ -527,12 +529,16 @@ export interface ActivityLogStreamFrames {
 }
 
 /**
- * GET /api/search — exact text across this daemon's live tasks.
+ * GET /api/search — exact text across this daemon's tasks.
  *
  * The daemon searches four durable columns and says which one answered:
  * a task title, a turn's prompt, a turn's concluding result, and a queued or
  * steered message. Per-turn transcripts are NOT searched, so the sidebar
  * states that scope rather than implying a whole-history index.
+ *
+ * Archived tasks are searched and flagged, never dropped: the sidebar shows
+ * them only when its own Show-archived switch is on, and says how many it is
+ * holding back when it is off.
  */
 export type SearchSnippetKind = "title" | "prompt" | "result" | "message"
 
@@ -551,6 +557,15 @@ export interface SearchTaskHit {
   title: string
   repo_path: string
   updated_at: string
+  /**
+   * The task's own state and archived flag travel WITH the hit, so a result
+   * row renders from the response alone. Resolving hits against the client's
+   * task list instead had two holes: an archived task is not in that list at
+   * all while Show archived is off, and a task created since the last list
+   * fetch would be dropped from results without a word.
+   */
+  state: TaskState
+  archived: boolean
   matches: number
   snippets: SearchSnippet[]
 }

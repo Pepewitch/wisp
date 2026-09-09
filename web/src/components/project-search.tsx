@@ -2,11 +2,16 @@ import { useEffect, useMemo, useRef } from "react"
 
 import { Dismiss, Search } from "@/components/icons"
 import { Button, Eyebrow, StateDot } from "@/components/primitives"
-import { useTaskSearch } from "@/hooks/queries"
+import { useRepos, useTaskSearch } from "@/hooks/queries"
 import { snippetParts } from "@/lib/find"
-import type { ProjectGroup } from "@/lib/projects"
+import { pathBasename } from "@/lib/projects"
 import { useDaemonRuntime } from "@/lib/runtime"
-import type { ApiTask, SearchSnippet, SearchTaskHit } from "@/lib/types"
+import {
+  layoutSearchHits,
+  type SearchLayout,
+  type SearchSection,
+} from "@/lib/search-sections"
+import type { RepoInfo, SearchSnippet, SearchTaskHit } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 
@@ -27,7 +32,7 @@ import { cn } from "@/lib/utils"
  */
 
 const SCOPE_NOTE =
-  "Exact text in task titles, prompts, results and queued messages. Archived tasks are not searched."
+  "Exact text in task titles, prompts, results and queued messages."
 
 /** What the daemon matched, in the fewest words that are still true. */
 const WHERE: Record<SearchSnippet["kind"], string> = {
@@ -63,7 +68,12 @@ export function ProjectSearchInput({
   }, [focusToken])
 
   return (
-    <div className={cn("flex shrink-0 items-center gap-1.5 pr-2 pl-3.5", touch ? "h-12" : "h-8")}>
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 pr-2 pl-3.5",
+        touch ? "h-12" : "h-8"
+      )}
+    >
       <Search aria-hidden className="size-3.5 shrink-0 text-faint" />
       <input
         ref={input}
@@ -88,7 +98,7 @@ export function ProjectSearchInput({
         }}
         className={cn(
           "min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-faint",
-          touch ? "h-9 text-[13px]" : "h-[22px] text-[12.5px]",
+          touch ? "h-9 text-[13px]" : "h-[22px] text-[12.5px]"
         )}
       />
       {/* 44px hit box on touch (§6b); the shared `lg` control is 32 */}
@@ -107,7 +117,7 @@ export function ProjectSearchInput({
 
 export function ProjectSearchResults({
   query,
-  groups,
+  showArchived,
   selectedId,
   activeId,
   onSelect,
@@ -116,7 +126,8 @@ export function ProjectSearchResults({
 }: {
   /** the DEBOUNCED query — what these results are an answer to */
   query: string
-  groups: ProjectGroup[]
+  /** the pane's own switch: archived hits are shown only when it is on */
+  showArchived: boolean
   selectedId: string | null
   /** the keyboard's cursor, which is not the app's selection */
   activeId: string | null
@@ -129,75 +140,184 @@ export function ProjectSearchResults({
   // and the previous answer stays on screen while the next is in flight
   // (queries.ts), so the list narrows instead of blinking.
   const search = useTaskSearch(query)
+  const repos = useRepos()
   const hits = useMemo(() => search.data?.tasks ?? [], [search.data])
 
   useEffect(() => {
     onHitsChange(hits)
   }, [hits, onHitsChange])
 
-  const byProject = useMemo(() => {
-    const index = new Map(hits.map((hit) => [hit.id, hit]))
-    return groups
-      .map((group) => ({
-        group,
-        rows: group.tasks
-          .map((task) => ({ task, hit: index.get(task.id) }))
-          .filter((row): row is { task: ApiTask; hit: SearchTaskHit } => row.hit !== undefined),
-      }))
-      .filter((entry) => entry.rows.length > 0)
-  }, [groups, hits])
-
-  const total = hits.reduce((sum, hit) => sum + hit.matches, 0)
+  // ONE layout for the render and for ↑/↓ (lib/search-sections.ts)
+  const layout = useMemo(
+    () => layoutSearchHits(hits, showArchived),
+    [hits, showArchived]
+  )
 
   if (search.isPending) return <Note>Searching…</Note>
   if (search.error instanceof Error) {
-    return <div className="px-2.5 py-2 text-[11.5px] text-destructive">search: {search.error.message}</div>
-  }
-  if (byProject.length === 0) {
     return (
-      <div className="flex flex-col gap-1.5 px-2.5 py-2">
-        <span className="text-[11.5px] text-muted-foreground">No match in your live tasks.</span>
-        <span className="text-[10.5px] leading-relaxed text-faint">{SCOPE_NOTE}</span>
+      <div className="px-2.5 py-2 text-[11.5px] text-destructive">
+        search: {search.error.message}
       </div>
     )
+  }
+  if (layout.sections.length === 0) {
+    return <NoResults hiddenArchived={layout.hiddenArchived} />
   }
 
   return (
     <div className="flex flex-col">
-      <div className="px-2.5 pt-1 pb-1.5 text-[10.5px] text-faint">
-        {total} {total === 1 ? "match" : "matches"} in {hits.length} {hits.length === 1 ? "task" : "tasks"}
-        {search.data?.truncated && " · showing the most recent"}
-      </div>
-      {byProject.map(({ group, rows }) => (
-        <section key={group.path} className="mt-1.5 first:mt-0">
-          <div className="flex h-6 items-center px-2">
-            <Eyebrow>{group.name}</Eyebrow>
-          </div>
-          <div className="mt-px flex flex-col gap-px pl-0.5">
-            {rows.map(({ task, hit }) => (
-              <SearchResultRow
-                key={task.id}
-                task={task}
-                hit={hit}
-                selected={task.id === selectedId}
-                active={task.id === activeId}
-                touch={touch}
-                onSelect={() => {
-                  onSelect(task.id)
-                  // one gesture: the transcript opens already looking for it
-                  uiIntentsFor(runtime.connectionId).openFind(query)
-                }}
-              />
-            ))}
-          </div>
-        </section>
+      <ResultsSummary
+        layout={layout}
+        truncated={search.data?.truncated === true}
+      />
+      <SearchSections
+        layout={layout}
+        repos={repos.data}
+        selectedId={selectedId}
+        activeId={activeId}
+        touch={touch}
+        onSelect={(id) => {
+          onSelect(id)
+          // one gesture: the transcript opens already looking for it
+          uiIntentsFor(runtime.connectionId).openFind(query)
+        }}
+      />
+    </div>
+  )
+}
+
+/** What the answer is, in one muted line — including what it is holding back. */
+function ResultsSummary({
+  layout,
+  truncated,
+}: {
+  layout: SearchLayout
+  truncated: boolean
+}) {
+  return (
+    <div className="px-2.5 pt-1 pb-1.5 text-[10.5px] leading-relaxed text-faint">
+      {layout.matches} {layout.matches === 1 ? "match" : "matches"} in{" "}
+      {layout.shown} {layout.shown === 1 ? "task" : "tasks"}
+      {/* "no match" and "no match I am willing to show you" are different
+          sentences, and only one of them is true while the switch is off */}
+      {layout.hiddenArchived > 0 &&
+        ` · ${layout.hiddenArchived} archived ${layout.hiddenArchived === 1 ? "task" : "tasks"} hidden`}
+      {truncated && " · showing the most recent"}
+    </div>
+  )
+}
+
+/** The laid-out answer. Shared with the gallery entry, so they cannot drift. */
+function SearchSections({
+  layout,
+  repos,
+  selectedId,
+  activeId,
+  onSelect,
+  touch,
+}: {
+  layout: SearchLayout
+  repos: RepoInfo[] | undefined
+  selectedId: string | null
+  activeId: string | null
+  onSelect: (id: string) => void
+  touch: boolean
+}) {
+  return (
+    <>
+      {layout.sections.map((section) => (
+        <ResultSection
+          key={section.path ?? "archived"}
+          section={section}
+          label={sectionLabel(section, repos)}
+          selectedId={selectedId}
+          activeId={activeId}
+          touch={touch}
+          onSelect={onSelect}
+        />
       ))}
+    </>
+  )
+}
+
+/** A project's configured name, else its basename; the archived pile says so. */
+function sectionLabel(
+  section: SearchSection,
+  repos: RepoInfo[] | undefined
+): string {
+  if (section.kind === "archived") return "Archived"
+  const path = section.path ?? ""
+  return repos?.find((repo) => repo.path === path)?.name ?? pathBasename(path)
+}
+
+function ResultSection({
+  section,
+  label,
+  selectedId,
+  activeId,
+  onSelect,
+  touch,
+}: {
+  section: SearchSection
+  label: string
+  selectedId: string | null
+  activeId: string | null
+  onSelect: (id: string) => void
+  touch: boolean
+}) {
+  return (
+    <section className="mt-1.5 first:mt-0">
+      <div className="flex h-6 items-center px-2">
+        <Eyebrow>{label}</Eyebrow>
+      </div>
+      <div className="mt-px flex flex-col gap-px pl-0.5">
+        {section.hits.map((hit) => (
+          <SearchResultRow
+            key={hit.id}
+            hit={hit}
+            selected={hit.id === selectedId}
+            active={hit.id === activeId}
+            touch={touch}
+            onSelect={() => onSelect(hit.id)}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * Nothing to show — which is two different facts. A miss is a miss; a miss
+ * with archived matches behind the switch is a miss plus a way forward.
+ */
+function NoResults({ hiddenArchived }: { hiddenArchived: number }) {
+  return (
+    <div className="flex flex-col gap-1.5 px-2.5 py-2">
+      <span className="text-[11.5px] text-muted-foreground">
+        {hiddenArchived === 0
+          ? "No match in your tasks."
+          : "No match in your live tasks."}
+      </span>
+      {hiddenArchived > 0 && (
+        <span className="text-[10.5px] leading-relaxed text-faint">
+          {hiddenArchived === 1
+            ? "One archived task matches"
+            : `${hiddenArchived} archived tasks match`}{" "}
+          — turn on Show archived to see {hiddenArchived === 1 ? "it" : "them"}.
+        </span>
+      )}
+      <span className="text-[10.5px] leading-relaxed text-faint">
+        {SCOPE_NOTE}
+      </span>
     </div>
   )
 }
 
 function Note({ children }: { children: string }) {
-  return <div className="px-2.5 py-1.5 text-[11.5px] text-faint">{children}</div>
+  return (
+    <div className="px-2.5 py-1.5 text-[11.5px] text-faint">{children}</div>
+  )
 }
 
 /**
@@ -206,14 +326,12 @@ function Note({ children }: { children: string }) {
  * every row is not a fact anybody wanted (§5b).
  */
 function SearchResultRow({
-  task,
   hit,
   selected,
   active,
   onSelect,
   touch,
 }: {
-  task: ApiTask
   hit: SearchTaskHit
   selected: boolean
   active: boolean
@@ -225,19 +343,28 @@ function SearchResultRow({
     <button
       type="button"
       onClick={onSelect}
-      data-search-result={task.id}
+      data-search-result={hit.id}
       aria-current={active ? "true" : undefined}
       className={cn(
         "flex w-full flex-col gap-0.5 rounded-md px-2 text-left transition-colors",
         touch ? "min-h-[44px] py-2" : "py-1.5",
-        selected ? "bg-accent" : active ? "bg-hover" : "hover:bg-hover",
+        selected ? "bg-accent" : active ? "bg-hover" : "hover:bg-hover"
       )}
     >
       <span className="flex min-w-0 items-center gap-2">
-        <StateDot state={task.state} background={task.background} />
-        <span className={cn("min-w-0 flex-1 truncate", touch ? "text-[13px]" : "text-[12.5px]")}>{task.title}</span>
+        <StateDot state={hit.state} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            touch ? "text-[13px]" : "text-[12.5px]"
+          )}
+        >
+          {hit.title}
+        </span>
         {hit.matches > 1 && (
-          <span className="shrink-0 font-mono text-[10.5px] text-faint">{hit.matches}</span>
+          <span className="shrink-0 font-mono text-[10.5px] text-faint">
+            {hit.matches}
+          </span>
         )}
       </span>
       {snippet && (
@@ -255,7 +382,11 @@ function SearchResultRow({
 
 /** The daemon located the match, so nothing here searches the string again. */
 function Snippet({ snippet }: { snippet: SearchSnippet }) {
-  const { before, match, after } = snippetParts(snippet.text, snippet.offset, snippet.length)
+  const { before, match, after } = snippetParts(
+    snippet.text,
+    snippet.offset,
+    snippet.length
+  )
   return (
     <span className="min-w-0 truncate text-[11px] text-muted-foreground">
       {before}
@@ -266,18 +397,20 @@ function Snippet({ snippet }: { snippet: SearchSnippet }) {
 }
 
 /**
- * Gallery specimen (`#/gallery`). The rows only — the live results component
- * asks the daemon, and a gallery entry never does.
+ * Gallery specimen (`#/gallery`). It renders through the SAME summary line and
+ * section list the pane uses, so the entry cannot drift from the surface; only
+ * the daemon call is missing, because a gallery entry never makes one.
  */
 export function ProjectSearchSpecimen({
-  tasks,
   hits,
-  projectName,
+  repos,
+  showArchived,
 }: {
-  tasks: ApiTask[]
   hits: SearchTaskHit[]
-  projectName: string
+  repos: RepoInfo[]
+  showArchived: boolean
 }) {
+  const layout = layoutSearchHits(hits, showArchived)
   return (
     // the REAL pane width, so the entry shows what truncates and what does not
     <div className="w-[268px] rounded-lg border border-border bg-sidebar p-1.5">
@@ -289,30 +422,15 @@ export function ProjectSearchSpecimen({
         onCommit={() => {}}
         onMove={() => {}}
       />
-      <div className="px-2.5 pt-1 pb-1.5 text-[10.5px] text-faint">
-        {hits.reduce((sum, hit) => sum + hit.matches, 0)} matches in {hits.length} tasks
-      </div>
-      <div className="flex h-6 items-center px-2">
-        <Eyebrow>{projectName}</Eyebrow>
-      </div>
-      <div className="mt-px flex flex-col gap-px pl-0.5">
-        {hits.map((hit, index) => {
-          const task = tasks.find((candidate) => candidate.id === hit.id)
-          return (
-            task && (
-              <SearchResultRow
-                key={hit.id}
-                task={task}
-                hit={hit}
-                selected={index === 0}
-                active={index === 1}
-                touch={false}
-                onSelect={() => {}}
-              />
-            )
-          )
-        })}
-      </div>
+      <ResultsSummary layout={layout} truncated={false} />
+      <SearchSections
+        layout={layout}
+        repos={repos}
+        selectedId={hits[0]?.id ?? null}
+        activeId={hits[1]?.id ?? null}
+        touch={false}
+        onSelect={() => {}}
+      />
     </div>
   )
 }

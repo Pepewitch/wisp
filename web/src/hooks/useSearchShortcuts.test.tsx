@@ -69,6 +69,18 @@ describe("the search chords", () => {
     expect(search.request).not.toHaveBeenCalled()
   })
 
+  it("leaves ⌘⇧F alone where the daemon cannot answer it", () => {
+    const search = mount(inertProjectSearch({ available: false, request: vi.fn() }))
+    const before = intents.findRequest()?.seq ?? 0
+
+    press({ key: "F", metaKey: true, shiftKey: true })
+    expect(search.request).not.toHaveBeenCalled()
+
+    // ⌘F is client-side, so it still works against any daemon
+    press({ key: "f", metaKey: true })
+    expect(intents.findRequest()?.seq).toBe(before + 1)
+  })
+
   it("stops listening once the shell unmounts", () => {
     function Harness() {
       useSearchShortcuts(intents, inertProjectSearch())

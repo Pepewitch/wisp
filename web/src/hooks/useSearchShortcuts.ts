@@ -20,15 +20,20 @@ import type { UiIntents } from "@/lib/ui-intents"
 export function useSearchShortcuts(intents: UiIntents, search: ProjectSearch): void {
   const openFind = intents.openFind
   const requestSearch = search.request
+  const available = search.available
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return
       if (event.key !== "f" && event.key !== "F") return
       event.preventDefault()
-      if (event.shiftKey) requestSearch()
-      else openFind()
+      // ⌘F is client-side and always works; ⌘⇧F needs a daemon that answers
+      if (event.shiftKey) {
+        if (available) requestSearch()
+        return
+      }
+      openFind()
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [openFind, requestSearch])
+  }, [available, openFind, requestSearch])
 }

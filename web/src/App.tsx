@@ -251,14 +251,22 @@ function MainView({
   const [selectedId, selectTask] = useConnectionTaskSelection(
     runtime.connectionId
   )
-  const projectSearch = useProjectSearch()
-  useSearchShortcuts(uiIntentsFor(runtime.connectionId), projectSearch)
   const selectedRef = useRef<string | null>(null)
   useLayoutEffect(() => {
     selectedRef.current = selectedId
   }, [selectedId])
 
+  const searchFeature = useHarnessFeatures()
   const [showArchived, setShowArchived] = useShowArchived(runtime.connectionId)
+  // search can find an archived task whatever the switch says; the switch
+  // decides whether the pane shows the row (and whether ↑/↓ can reach it)
+  // A daemon that predates cross-task search omits the flag, and absent reads
+  // as unsupported (types.ts) rather than as a switch that quietly 404s.
+  const projectSearch = useProjectSearch(
+    showArchived,
+    searchFeature.data?.taskSearch === true
+  )
+  useSearchShortcuts(uiIntentsFor(runtime.connectionId), projectSearch)
   // open state carries the project the sidebar's `+` preselected
   const [createFor, setCreateFor] = useState<{
     repoPath: string | null

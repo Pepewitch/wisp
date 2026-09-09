@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { Sidebar } from "./sidebar"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
-import type { ApiTask, SearchResponse } from "@/lib/types"
+import type { ApiTask, SearchResponse, SearchTaskHit } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -46,41 +46,56 @@ const GROUPS = [
   { path: "/repos/other", name: "other", exists: true, unlisted: false, tasks: [OTHER] },
 ]
 
+function hitFor(task: ApiTask, over: Partial<SearchTaskHit> = {}): SearchTaskHit {
+  return {
+    id: task.id,
+    title: task.title,
+    repo_path: task.repo_path,
+    updated_at: task.updated_at,
+    state: task.state,
+    archived: task.archived,
+    matches: 1,
+    snippets: [{ kind: "result", turn: 1, text: "vacuumed 4 files", offset: 0, length: 6 }],
+    ...over,
+  }
+}
+
+const ARCHIVED = { ...task("tccccc", "Vacuum the old bridge", "/repos/wisp"), archived: true }
+
 const ANSWER: SearchResponse = {
   query: "vacuum",
   truncated: false,
   tasks: [
-    {
-      id: WISP.id,
-      title: WISP.title,
-      repo_path: WISP.repo_path,
-      updated_at: WISP.updated_at,
+    hitFor(WISP, {
       matches: 3,
       snippets: [{ kind: "prompt", turn: 2, text: "…please vacuum the reducer", offset: 8, length: 6 }],
-    },
-    {
-      id: OTHER.id,
-      title: OTHER.title,
-      repo_path: OTHER.repo_path,
-      updated_at: OTHER.updated_at,
-      matches: 1,
-      snippets: [{ kind: "result", turn: 1, text: "vacuumed 4 files", offset: 0, length: 6 }],
-    },
+    }),
+    hitFor(OTHER),
   ],
 }
 
-function mount(answer: SearchResponse | Error = ANSWER, onSelect = vi.fn()) {
+/** The same answer plus one archived hit — what the switch governs. */
+const WITH_ARCHIVED: SearchResponse = {
+  ...ANSWER,
+  tasks: [...ANSWER.tasks, hitFor(ARCHIVED, { matches: 2 })],
+}
+
+function mount(answer: SearchResponse | Error = ANSWER, onSelect = vi.fn(), showArchived = false) {
   const requests: string[] = []
   const transport = fakeDaemonTransport(CONNECTION, {
     request: async <T,>(path: string) => {
       requests.push(path)
+      if (path.startsWith("/api/repos")) return [] as T
+      if (path.startsWith("/api/harnesses")) {
+        return { harnesses: [], features: { taskSearch: true } } as T
+      }
       if (answer instanceof Error) throw answer
       return answer as T
     },
   })
 
   function Harness() {
-    const search = useProjectSearch()
+    const search = useProjectSearch(showArchived, true)
     return (
       <Sidebar
         groups={GROUPS}
@@ -89,7 +104,7 @@ function mount(answer: SearchResponse | Error = ANSWER, onSelect = vi.fn()) {
         pullRequests={{}}
         selectedId={null}
         onSelect={onSelect}
-        showArchived={false}
+        showArchived={showArchived}
         onShowArchivedChange={() => {}}
         onNewTask={() => {}}
         onConfigureProject={() => {}}
@@ -114,6 +129,33 @@ const type = (text: string) => {
 }
 
 describe("the sidebar's search", () => {
+  it("offers no control at all against a daemon that cannot answer", () => {
+    function Harness() {
+      // the flag absent — an older remote in a Desktop connection tab
+      const search = useProjectSearch(false, false)
+      return (
+        <Sidebar
+          groups={GROUPS}
+          archivedTasks={[]}
+          status={{}}
+          pullRequests={{}}
+          selectedId={null}
+          onSelect={() => {}}
+          showArchived={false}
+          onShowArchivedChange={() => {}}
+          onNewTask={() => {}}
+          onConfigureProject={() => {}}
+          search={search}
+          error={null}
+          loading={false}
+        />
+      )
+    }
+    render(<Harness />, { wrapper: runtimeWrapper(fakeDaemonTransport(CONNECTION)) })
+
+    expect(screen.queryByRole("button", { name: "Search tasks" })).toBeNull()
+  })
+
   it("opens from the header icon, focused, with the tree still showing", () => {
     mount()
 
@@ -144,6 +186,53 @@ describe("the sidebar's search", () => {
     await waitFor(() => expect(requests).toContain("/api/search?q=100%25%20done"))
   })
 
+  it("holds archived hits back while Show archived is off — and counts them", async () => {
+    mount(WITH_ARCHIVED)
+    openBox()
+    type("vacuum")
+
+    expect(await screen.findByText(/4 matches in 2 tasks · 1 archived task hidden/)).toBeInTheDocument()
+    expect(screen.queryByText("Vacuum the old bridge")).toBeNull()
+    expect(screen.queryByText("Archived")).toBeNull()
+  })
+
+  it("shows them in their own section under the live ones once it is on", async () => {
+    mount(WITH_ARCHIVED, vi.fn(), true)
+    openBox()
+    type("vacuum")
+
+    expect(await screen.findByText("6 matches in 3 tasks")).toBeInTheDocument()
+    const headings = screen.getAllByText(/^(wisp|other|Archived)$/).map((node) => node.textContent)
+    expect(headings[headings.length - 1]).toBe("Archived")
+    expect(screen.getByText("Vacuum the old bridge")).toBeInTheDocument()
+  })
+
+  it("keeps the keyboard on the rows that are visible", async () => {
+    const onSelect = vi.fn()
+    mount(WITH_ARCHIVED, onSelect)
+    const box = openBox()
+    type("vacuum")
+    await screen.findByText(/1 archived task hidden/)
+
+    // three ↓ over two visible rows wraps back to the first, never onto the
+    // archived row the switch is hiding
+    fireEvent.keyDown(box, { key: "ArrowDown" })
+    fireEvent.keyDown(box, { key: "ArrowDown" })
+    fireEvent.keyDown(box, { key: "ArrowDown" })
+    fireEvent.keyDown(box, { key: "Enter" })
+
+    expect(onSelect).toHaveBeenCalledWith(WISP.id)
+  })
+
+  it("points at the switch when every match is archived", async () => {
+    mount({ query: "vacuum", truncated: false, tasks: [hitFor(ARCHIVED, { matches: 2 })] })
+    openBox()
+    type("vacuum")
+
+    expect(await screen.findByText("No match in your live tasks.")).toBeInTheDocument()
+    expect(screen.getByText(/One archived task matches — turn on Show archived/)).toBeInTheDocument()
+  })
+
   it("asks once for a burst of keystrokes, not once per character", async () => {
     const { requests } = mount()
     openBox()
@@ -151,7 +240,9 @@ describe("the sidebar's search", () => {
     type("va")
     type("vacuum")
 
-    await waitFor(() => expect(requests).toEqual(["/api/search?q=vacuum"]))
+    await waitFor(() =>
+      expect(requests.filter((path) => path.startsWith("/api/search"))).toEqual(["/api/search?q=vacuum"]),
+    )
   })
 
   it("picks a result: the task is selected and the transcript is already looking", async () => {
@@ -198,8 +289,8 @@ describe("the sidebar's search", () => {
     openBox()
     type("zzz")
 
-    expect(await screen.findByText("No match in your live tasks.")).toBeInTheDocument()
-    expect(screen.getByText(/Archived tasks are not searched/)).toBeInTheDocument()
+    expect(await screen.findByText("No match in your tasks.")).toBeInTheDocument()
+    expect(screen.getByText(/Exact text in task titles, prompts, results and queued messages/)).toBeInTheDocument()
   })
 
   it("shows a failed search as a failure rather than as no results", async () => {

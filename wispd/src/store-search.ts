@@ -1,5 +1,5 @@
 /**
- * Exact-text search across a daemon's LIVE tasks (non-archived).
+ * Exact-text search across a daemon's tasks.
  *
  * Scope is deliberate and it is what the UI promises: the four places a
  * person's or an agent's WORDS are durable columns — a task title, a turn's
@@ -10,6 +10,13 @@
  * about its scope would be worse than one that states it, so the client says
  * so out loud.
  *
+ * Archived tasks ARE searched: the filter that used to exclude them cost
+ * nothing to remove, because `LIKE '%x%'` cannot use an index and both forms
+ * are the same full scan (measured at 18 000 turns: 27.0 ms with the filter,
+ * 26.8 ms without). Whether a client SHOWS them is the client's call — the web
+ * sidebar follows its own Show-archived switch — so every hit carries
+ * `archived` rather than being silently dropped here.
+ *
  * Matching is literal substring, case-insensitive. SQL narrows with LIKE
  * (ASCII-insensitive) and JS confirms and locates with toLowerCase(), so the
  * one gap is non-ASCII case folding: searching "CAFÉ" does not find "café",
@@ -17,6 +24,7 @@
  * promising otherwise — the daemon ships zero runtime dependencies (D10).
  */
 import { db } from "./store-database";
+import type { TaskState } from "./types";
 
 export type SearchSnippetKind = "title" | "prompt" | "result" | "message";
 
@@ -36,6 +44,9 @@ export interface SearchTaskHit {
   title: string;
   repo_path: string;
   updated_at: string;
+  /** the task's own state, so a result row renders without a second fetch */
+  state: TaskState;
+  archived: boolean;
   /** total occurrences across every searched field of this task */
   matches: number;
   snippets: SearchSnippet[];
@@ -50,6 +61,13 @@ export interface SearchResult {
 
 /** One sidebar's worth of results. More than this is a different question. */
 export const SEARCH_TASK_LIMIT = 60;
+/**
+ * Live and archived are capped SEPARATELY out of that 60. A shared cap would
+ * let one deep archive push every live hit off the end of the answer, which is
+ * exactly backwards: history is context, the live tasks are the question.
+ */
+export const SEARCH_LIVE_LIMIT = 40;
+export const SEARCH_ARCHIVED_LIMIT = SEARCH_TASK_LIMIT - SEARCH_LIVE_LIMIT;
 /** Enough to say WHERE it matched without turning a row into a paragraph. */
 export const SEARCH_SNIPPETS_PER_TASK = 3;
 /** Per-source row cap. A hit past this is reported as truncation, never dropped silently. */
@@ -106,7 +124,7 @@ class Hits {
 
   /** Records a field's occurrences, keeping at most one snippet per field. */
   add(
-    task: { id: string; title: string; repo_path: string; updated_at: string },
+    task: TaskColumns,
     kind: SearchSnippetKind,
     turn: number | null,
     text: string | null,
@@ -121,6 +139,8 @@ class Hits {
         title: task.title,
         repo_path: task.repo_path,
         updated_at: task.updated_at,
+        state: task.state,
+        archived: task.archived === 1,
         matches: 0,
         snippets: [],
       };
@@ -132,11 +152,19 @@ class Hits {
     }
   }
 
-  /** Newest task first — the sidebar's own order, so results read like the tree. */
-  tasks(): SearchTaskHit[] {
-    return [...this.byTask.values()]
-      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0))
-      .slice(0, SEARCH_TASK_LIMIT);
+  /**
+   * Newest task first — the sidebar's own order, so results read like the
+   * tree — with live and archived capped independently and live first.
+   */
+  tasks(): { tasks: SearchTaskHit[]; capped: boolean } {
+    const newestFirst = (a: SearchTaskHit, b: SearchTaskHit): number =>
+      a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0;
+    const live = [...this.byTask.values()].filter((hit) => !hit.archived).sort(newestFirst);
+    const archived = [...this.byTask.values()].filter((hit) => hit.archived).sort(newestFirst);
+    return {
+      tasks: [...live.slice(0, SEARCH_LIVE_LIMIT), ...archived.slice(0, SEARCH_ARCHIVED_LIMIT)],
+      capped: live.length > SEARCH_LIVE_LIMIT || archived.length > SEARCH_ARCHIVED_LIMIT,
+    };
   }
 }
 
@@ -145,6 +173,8 @@ interface TaskColumns {
   title: string;
   repo_path: string;
   updated_at: string;
+  state: TaskState;
+  archived: number;
 }
 
 export function searchTasks(query: string): SearchResult {
@@ -155,8 +185,8 @@ export function searchTasks(query: string): SearchResult {
 
   const titles = db
     .query(
-      `SELECT id, title, repo_path, updated_at FROM tasks
-       WHERE archived = 0 AND title LIKE ? ESCAPE '\\'
+      `SELECT id, title, repo_path, updated_at, state, archived FROM tasks
+       WHERE title LIKE ? ESCAPE '\\'
        ORDER BY updated_at DESC LIMIT ?`,
     )
     .all(like, SEARCH_ROW_LIMIT) as TaskColumns[];
@@ -165,9 +195,9 @@ export function searchTasks(query: string): SearchResult {
 
   const turns = db
     .query(
-      `SELECT t.id, t.title, t.repo_path, t.updated_at, n.n, n.prompt, n.result
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, n.prompt, n.result
        FROM turns n JOIN tasks t ON t.id = n.task_id
-       WHERE t.archived = 0 AND (n.prompt LIKE ? ESCAPE '\\' OR n.result LIKE ? ESCAPE '\\')
+       WHERE n.prompt LIKE ? ESCAPE '\\' OR n.result LIKE ? ESCAPE '\\'
        ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
     )
     .all(like, like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; prompt: string; result: string | null })[];
@@ -181,9 +211,9 @@ export function searchTasks(query: string): SearchResult {
   // already searched above; counting it twice would inflate the total.
   const messages = db
     .query(
-      `SELECT t.id, t.title, t.repo_path, t.updated_at, m.text
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, m.text
        FROM task_messages m JOIN tasks t ON t.id = m.task_id
-       WHERE t.archived = 0 AND (m.delivery IS NULL OR m.delivery <> 'started')
+       WHERE (m.delivery IS NULL OR m.delivery <> 'started')
          AND m.text LIKE ? ESCAPE '\\'
        ORDER BY t.updated_at DESC, m.created_at DESC LIMIT ?`,
     )
@@ -191,6 +221,6 @@ export function searchTasks(query: string): SearchResult {
   truncated ||= messages.length === SEARCH_ROW_LIMIT;
   for (const row of messages) hits.add(row, "message", null, row.text);
 
-  const tasks = hits.tasks();
-  return { query, tasks, truncated: truncated || tasks.length === SEARCH_TASK_LIMIT };
+  const answer = hits.tasks();
+  return { query, tasks: answer.tasks, truncated: truncated || answer.capped };
 }

@@ -3,6 +3,7 @@ import type { ProjectSearch } from "@/hooks/useProjectSearch"
 /** A closed search, for the many Sidebar tests that are not about searching. */
 export function inertProjectSearch(overrides: Partial<ProjectSearch> = {}): ProjectSearch {
   return {
+    available: true,
     open: false,
     query: "",
     daemonQuery: "",

@@ -2,7 +2,7 @@ import { Eyebrow } from "@/components/primitives"
 import { FindBarSpecimen } from "@/components/find-in-task"
 import { SEARCH_HITS } from "@/components/gallery-fixtures"
 import { ProjectSearchSpecimen } from "@/components/project-search"
-import { TASKS } from "@/lib/fixtures"
+import { REPOS } from "@/lib/fixtures"
 
 /**
  * The gallery's search entry (`#/gallery`) — the law rendered on the real
@@ -39,12 +39,12 @@ export function SearchSpecimens() {
         </p>
       </div>
       <div>
-        <Eyebrow>⌘⇧F · across every live task</Eyebrow>
+        <Eyebrow>⌘⇧F · across every task</Eyebrow>
         <div className="mt-2.5">
           <ProjectSearchSpecimen
-            tasks={TASKS}
             hits={SEARCH_HITS}
-            projectName="wisp"
+            repos={REPOS}
+            showArchived
           />
         </div>
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
@@ -57,9 +57,15 @@ export function SearchSpecimens() {
           <span className="font-mono">result 1</span>,{" "}
           <span className="font-mono">queued</span>). The match count appears
           only above one, and picking a row is one gesture: the task opens with
-          ⌘F already looking for the same words. Archived tasks and per-turn
-          tool activity are outside the scope, and the empty state says so
-          rather than letting you conclude the text is nowhere.
+          ⌘F already looking for the same words. Archived tasks are searched too
+          and land in their own section under the live ones — but only while the
+          footer&apos;s <span className="text-fg-secondary">Show archived</span>{" "}
+          switch is on. With it off the rows are held back and COUNTED (
+          <span className="text-fg-secondary">· 1 archived task hidden</span>),
+          because &ldquo;no match&rdquo; and &ldquo;no match I am willing to
+          show you&rdquo; are different sentences. Per-turn tool activity stays
+          outside the scope, and the empty state says so rather than letting you
+          conclude the text is nowhere.
         </p>
       </div>
     </div>
