@@ -266,8 +266,9 @@ export function startTurn(
       recorderEligible ? "recorder-v1" : null,
     );
   } catch (error) {
-    // No turn row exists for a watcher to reconcile or escalate this child.
-    child.kill("SIGKILL");
+    // No turn row exists for a watcher to reconcile or escalate this child, so
+    // this is the only chance to stop it — and the group is what it started.
+    killChildTree(child, "SIGKILL");
     closeDescriptors([outFd, errFd]);
     throw error;
   }
@@ -475,12 +476,16 @@ async function watchTurn(
         capTermAt = Date.now();
         console.error(`[wisp] task ${taskId}: log cap exceeded (${hit}), killing turn`);
         recordKillReason(turnId, `log cap exceeded (${budget} bytes)`);
-        child.kill();
+        // The whole group, for the same reason the re-adoption poll's cap kill
+        // signals one: the harness's own children are what filled this log, and
+        // killing only the leader leaves them writing to it (ENG-03). This is
+        // the common path — a non-recorder turn owned by THIS daemon.
+        killChildTree(child, "SIGTERM");
       } else if (Date.now() - capTermAt >= KILL_GRACE_MS && childRunning(child)) {
         // M3: a harness that traps SIGTERM must not keep the turn alive forever
         console.error(`[wisp] task ${taskId}: turn survived SIGTERM, escalating to SIGKILL`);
         recordKillReason(turnId, `log cap exceeded (${budget} bytes); escalated to SIGKILL after SIGTERM was trapped`);
-        child.kill("SIGKILL");
+        killChildTree(child, "SIGKILL");
       }
     } finally {
       capChecking = false;

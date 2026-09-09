@@ -190,6 +190,29 @@ describe("interrupting a turn stops its descendants", () => {
   }, 30_000);
 
   /**
+   * The log-cap kill, which is the stop path that runs while THIS daemon owns
+   * the child — the common case for a non-recorder turn. It was the one stop
+   * path still signalling only the leader after the rest were fixed (a review
+   * caught it): the harness's own children are what filled the log, so killing
+   * the leader alone leaves them writing to the log it was killed for.
+   */
+  test("a cap kill stops the children that filled the log", async () => {
+    const task = makeTask("cap");
+    const pidFile = join(task.worktree_path!, "child.pid");
+    // Over the budget in one write, then a descendant that would outlive a
+    // leader-only kill. `capTick` polls every 5s, so this waits for one tick.
+    const harness = bashAdapter(
+      `head -c 4000 /dev/zero | tr '\\0' 'x'; sleep 30 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+    );
+    startTurn(task, "fill the log", harness, { ...cfg, logMaxBytes: 1_000, turnTranscriptBytes: 1_000 });
+    await until(() => hasRunningTurn(task.id) !== null);
+    const grandchild = await recordedPid(pidFile);
+
+    await until(() => !alive(grandchild), 20_000);
+    expect(getTask(task.id)?.state_detail ?? "").toContain("log cap exceeded");
+  }, 40_000);
+
+  /**
    * The case that used to hang rather than leak: the harness exits but leaves
    * a child holding the turn's stdout. The pump never sees EOF, so the turn
    * cannot finalize until that child is gone — which is exactly why the stop
