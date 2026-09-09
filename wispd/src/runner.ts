@@ -1,3 +1,4 @@
+import { assertTaskCapacity } from "./task-admission";
 import { homeIsDraining, trackHomeWork } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -183,6 +184,7 @@ export function startTurn(
   sourceMessageId?: string,
 ): void {
   assertTaskNotStopping(task.id);
+  assertTaskCapacity(cfg, task.id);
   const n = task.turn_count + 1;
   // A1c: a delivery adapter gets its images by having their paths named in the
   // prompt, so the strategy's sentence goes immediately before the user's
@@ -366,6 +368,7 @@ export async function submitTaskMessage(
     }
     message = current;
   } else {
+    assertTaskCapacity(cfg, task.id);
     try {
       // A daemon can die after staging bytes but before inserting the message
       // row. No row owns that directory, so a stable-ID retry must replace it
@@ -386,6 +389,7 @@ export async function submitTaskMessage(
   }
   try {
     const running = hasRunningTurn(task.id);
+    assertTaskCapacity(cfg, task.id);
     const live = activeLiveInput(task.id);
     if (running && live?.turnId === running.id) {
       const claimed = claimTaskMessageForSteering(message.id, task.id, live.turn);

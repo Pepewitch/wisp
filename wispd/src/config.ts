@@ -63,6 +63,8 @@ export interface WispConfig {
   /** repos offered in the web UI's new-task form (merged with the repo_paths of existing tasks by GET /api/repos) */
   repos: (string | RepoConfig)[];
   stuckMinutes: number;
+  /** Simultaneously running tasks, including setup; never a conversation-turn budget. */
+  maxConcurrentTasks?: number;
   /**
    * Permanent primary-transcript budget for one turn. Reaching this budget is
    * non-fatal for recorder-owned turns; legacy turns retain their old cap
@@ -123,6 +125,7 @@ const DEFAULTS: WispConfig = {
   webhooks: [],
   repos: [],
   stuckMinutes: 10,
+  maxConcurrentTasks: 100,
   turnTranscriptBytes: 5_000_000,
   logMaxBytes: 5_000_000,
   diagnosticEnabled: true,
@@ -141,6 +144,7 @@ const CONFIG_KEYS = [
   "webhooks",
   "repos",
   "stuckMinutes",
+  "maxConcurrentTasks",
   "turnTranscriptBytes",
   "logMaxBytes",
   "diagnosticEnabled",
@@ -251,6 +255,12 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   if (raw.webhooks !== undefined) out.webhooks = stringArray(raw.webhooks, "config.json: webhooks");
   if (raw.repos !== undefined) out.repos = validateRepos(raw.repos);
   num("stuckMinutes");
+  if (raw.maxConcurrentTasks !== undefined) {
+    if (!Number.isSafeInteger(raw.maxConcurrentTasks) || (raw.maxConcurrentTasks as number) < 1) {
+      throw new Error("config.json: maxConcurrentTasks must be a positive integer");
+    }
+    out.maxConcurrentTasks = raw.maxConcurrentTasks as number;
+  }
   num("turnTranscriptBytes");
   num("logMaxBytes");
   if (
