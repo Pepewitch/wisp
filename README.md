@@ -18,13 +18,15 @@ creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
 `cursor-agent` one turn at a time, records what actually happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
-**Wisp 0.5.0** brings the daemon and Desktop app together after the 0.4 alpha
-series. Desktop is now a usable daily interface for local and remote tasks,
-with a real terminal, clearer background-work status, and actionable recovery.
-A substantial engineering and security review led to fixes across process
-cleanup, database ownership, authenticated media, and task data retention.
+**Wisp 0.5.1** adds harness, model, and effort switching on an existing task,
+reads daemon updates from the promoted Homebrew channel, and adds
+`wisp update`. The 0.5 series brought the daemon and Desktop app together after
+the 0.4 alpha series. Desktop is a usable daily interface for local and remote
+tasks, with a real terminal, clearer background-work status, and actionable
+recovery. A substantial engineering and security review led to fixes across
+process cleanup, database ownership, authenticated media, and task retention.
 
-See [0.5.0 release notes](docs/v0.5/RELEASE-NOTES-0.5.0.md) and the
+See [0.5.1 release notes](docs/v0.5/RELEASE-NOTES-0.5.1.md) and the
 [qualification ledger](docs/v0.5/QUALIFICATION.md) for evidence and remaining
 limits. This is a pre-1.0 release for single-user, self-hosted use; the review
 is not a guarantee that no security issues remain.
@@ -54,7 +56,7 @@ only here” does not enforce anything.
 
 ## Supported release targets
 
-| Platform | 0.5.0 scope |
+| Platform | 0.5.1 scope |
 |---|---|
 | Ubuntu 24.04 LTS, x86_64, glibc | CLI/daemon and browser UI; automated install and activation gates |
 | Apple Silicon arm64, macOS 12.3+ configured minimum | CLI/daemon and Desktop; Desktop publication requires Developer ID signing and notarization |
@@ -76,7 +78,7 @@ repository and the harness's credentials.
 The public Linux release command is:
 
 ```sh
-version=0.5.0 # replace with the current published release
+version=0.5.1 # replace with the current published release
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/install.sh" |
   sh
@@ -86,7 +88,7 @@ Maintainers can instead install a locally built candidate:
 
 ```sh
 bun run release:linux
-artifact=dist/release/v0.5.0/wisp-v0.5.0-linux-x86_64
+artifact=dist/release/v0.5.1/wisp-v0.5.1-linux-x86_64
 WISP_ARTIFACT_PATH="$artifact" \
 WISP_SHA256="$(sha256sum "$artifact" | awk '{print $1}')" \
 WISP_COMMIT="$(git rev-parse HEAD)" \
@@ -331,7 +333,7 @@ number of turns in a task; harness iteration behavior remains harness-owned.
 For a Linux installation:
 
 ```sh
-version=0.5.0 # replace with the installed version
+version=0.5.1 # replace with the installed version
 curl --proto '=https' --tlsv1.2 -fsSL \
   "https://raw.githubusercontent.com/Pepewitch/wisp/v${version}/scripts/uninstall.sh" |
   sh
@@ -414,6 +416,7 @@ without rebuilding, re-signing, notarizing, or changing public release assets.
 - [Secure remote access](docs/REMOTE-ACCESS.md)
 - [Desktop transport contract](docs/DESKTOP-TRANSPORT.md)
 - [Desktop updates](docs/DESKTOP-UPDATES.md)
+- [0.5.1 release notes](docs/v0.5/RELEASE-NOTES-0.5.1.md)
 - [0.5.0 release notes](docs/v0.5/RELEASE-NOTES-0.5.0.md)
 - [v0.5 release qualification](docs/v0.5/QUALIFICATION.md)
 - [Historical v0.4 qualification](docs/v0.4/QUALIFICATION.md)
