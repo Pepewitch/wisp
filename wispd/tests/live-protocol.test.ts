@@ -420,7 +420,32 @@ describe("bounded inlined tool output", () => {
 });
 
 describe("Droid live tool results", () => {
-  test("an inlined tool result is bounded before it reaches the log", async () => {
+  const resultNotifications: [string, (output: string) => Record<string, unknown>][] = [
+    [
+      "standalone result notification",
+      (output) => ({
+        type: "tool_result",
+        toolUseId: "tool-1",
+        messageId: "message-1",
+        content: output,
+        isError: false,
+      }),
+    ],
+    [
+      "legacy result message block",
+      (output) => ({
+        type: "create_message",
+        message: {
+          id: "message-1",
+          role: "user",
+          createdAt: 1_788_959_128_142,
+          content: [{ type: "tool_result", toolUseId: "tool-1", content: output }],
+        },
+      }),
+    ],
+  ];
+
+  test.each(resultNotifications)("%s is bounded before it reaches the log", async (_name, notification) => {
     const sink = new MemorySink();
     const events: Record<string, any>[] = [];
     const driver = new DroidLiveDriver({
@@ -447,18 +472,17 @@ describe("Droid live tool results", () => {
     driver.handle({
       method: "droid.session_notification",
       params: {
-        notification: {
-          type: "create_message",
-          message: {
-            id: "message-1",
-            role: "user",
-            content: [{ type: "tool_result", toolUseId: "tool-1", content: output }],
-          },
-        },
+        notification: notification(output),
       },
     });
 
     const result = events.find((event) => event.type === "tool_result")!;
+    expect(result).toMatchObject({
+      id: "tool-1",
+      isError: false,
+      session_id: "droid-session",
+      timestamp: expect.any(Number),
+    });
     const value = result.value as string;
     expect(value.length).toBeLessThan(output.length);
     expect(value).toStartWith("line");
