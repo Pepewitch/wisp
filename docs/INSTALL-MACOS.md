@@ -1,16 +1,14 @@
 # Install Wisp Desktop and the daemon on Apple Silicon
 
-Alpha.12 was the first Wisp Desktop prerelease to ship with Developer ID
-signing, Apple notarization, and signed in-app updates. Alpha.13 is the second
-signed release and completed the first public alpha.12-to-alpha.13 in-app
-update. Alpha.17 is the current fourth signed release: its immutable assets and
-Homebrew/update channel passed the automated release gates, while its
-alpha.16-to-alpha.17 human updater receipt is pending. Apple Silicon support
-remains experimental and has only limited single-machine qualification.
+This guide covers Wisp **0.5.0**, the daemon and Desktop release following the
+0.4 alpha series. Public Desktop artifacts require Developer ID signing,
+Apple notarization, stapling, and signed in-app updates. See the
+[release notes](v0.5/RELEASE-NOTES-0.5.0.md) and
+[qualification ledger](v0.5/QUALIFICATION.md) for the current evidence.
 
 ## Scope and security notice
 
-The experimental v0.4 target is:
+The 0.5 release target is:
 
 - Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
 - qualified on a limited Apple Silicon test environment;
@@ -38,7 +36,7 @@ You need:
 - Git and a repository with `user.name` and `user.email`;
 - at least one installed and authenticated harness: `droid`, `claude`,
   `codex`, or `cursor-agent`; and
-- permission to approve the alpha explicitly if Gatekeeper prompts.
+- permission to install applications and manage your user service.
 
 Wisp runs as your user so it can access your repositories and harness
 credentials. Its state stays in `~/.wisp`, outside Homebrew's versioned prefix.
@@ -202,7 +200,7 @@ If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
 After alpha.12 is installed, later signed Desktop upgrades, including
-alpha.16-to-alpha.17, use the Tauri updater. Homebrew remains the recovery path:
+0.5.0, use the Tauri updater. Homebrew remains the recovery path:
 
 ```sh
 brew update
@@ -238,9 +236,10 @@ brew services restart wisp
 
 The public alpha.12-to-alpha.13 in-app update, subsequent Cask receipt sync,
 and daemon Formula restart preserved config, history, branches, worktrees, and
-repository work in one test environment. Alpha.17 has passed publication and
-channel promotion, but its alpha.16-to-alpha.17 human updater receipt remains pending.
-Neither result is broad Apple Silicon support.
+repository work in one test environment. That historical result does not
+qualify the 0.4-to-0.5 update automatically. See the
+[0.5 qualification ledger](v0.5/QUALIFICATION.md) for publication results and
+the pending human updater receipt. OS coverage remains limited.
 
 ## Develop beside the installed service
 

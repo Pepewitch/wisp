@@ -9,13 +9,13 @@ Start with the repository-wide [architecture](../docs/ARCHITECTURE.md), then
 use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
-The alpha requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
+Wisp Desktop requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
 builds are ad-hoc signed. Starting with alpha.12, public Desktop releases
 require Developer ID signing, notarization, stapling, and updater signing
-before immutable publication. Alpha.17 is the current signed public release;
+before immutable publication. The 0.5.0 release follows the same trust pipeline;
 the historical alpha.8 predates that pipeline and remains ad-hoc signed.
 
-Status: working alpha. The shared React application selects the desktop runtime
+Status: usable pre-1.0 Desktop, released with the 0.5.0 daemon. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned
 operation and client record to an immutable connection ID.
 
@@ -318,7 +318,7 @@ the Cargo, Tauri, plist, and compiled user-agent versions agree, verifies the
 arm64-only Mach-O deployment minimum and complete signature, rejects an
 unexpected bundle member or builder path, and produces a deterministic
 `Wisp.app` archive plus manifest and checksums. The tag workflow first rebuilds
-the ad-hoc payload with a second isolated Cargo target and requires byte-identical
+the ad-hoc payload from a clean Cargo target at the same normalized path and requires byte-identical
 output. It then creates one timestamped, Developer ID signed and notarized
 archive, updater-signs those exact bytes, independently verifies both trust
 chains, and publishes ten immutable assets. A separate serialized promotion

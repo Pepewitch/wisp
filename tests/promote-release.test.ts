@@ -105,23 +105,39 @@ describe("release promotion", () => {
     expect(releaseVersion(tag)).toBe(VERSION);
     expect(expectedReleaseAssets(VERSION)).toHaveLength(10);
     expect(new Set(expectedReleaseAssets(VERSION)).size).toBe(10);
-    const prerelease = VERSION.split("-").at(-1);
-    expect(releaseNotesPath("/source", tag)).toBe(`/source/docs/v0.4/RELEASE-NOTES-${prerelease}.md`);
+    expect(releaseNotesPath("/source", "v0.5.0")).toBe("/source/docs/v0.5/RELEASE-NOTES-0.5.0.md");
+    expect(releaseNotesPath("/source", "v0.5.1")).toBe("/source/docs/v0.5/RELEASE-NOTES-0.5.1.md");
+    expect(releaseNotesPath("/source", "v0.4.0-alpha.17")).toBe("/source/docs/v0.4/RELEASE-NOTES-alpha.17.md");
+    for (const invalid of ["v00.5.0", "v0.5.0-alpha.01", "v0.5.0/../main", "v0.5.0-beta.1"]) {
+      expect(() => releaseVersion(invalid)).toThrow("release tag must match");
+    }
     expect(() => releaseVersion("main")).toThrow("release tag must match");
   });
 
-  test("requires the exact public prerelease inventory", () => {
+  test("requires the exact public release inventory", () => {
     const metadata = {
       tagName: tag,
       isDraft: false,
-      isPrerelease: true,
+      isPrerelease: VERSION.includes("-"),
       assets: expectedReleaseAssets(VERSION).map((name) => ({ name })),
     };
     expect(() => validateReleaseMetadata(metadata, tag)).not.toThrow();
-    expect(() => validateReleaseMetadata({ ...metadata, isDraft: true }, tag)).toThrow("non-draft prerelease");
+    expect(() => validateReleaseMetadata({ ...metadata, isDraft: true }, tag)).toThrow("non-draft release");
     expect(() => validateReleaseMetadata({ ...metadata, assets: metadata.assets.slice(1) }, tag)).toThrow(
       "asset inventory mismatch",
     );
+  });
+
+  test("promotes stable and historical alpha releases only with matching GitHub status", () => {
+    for (const version of ["0.5.0", "0.4.0-alpha.17"]) {
+      const metadata = {
+        tagName: `v${version}`, isDraft: false, isPrerelease: version.includes("-"),
+        assets: expectedReleaseAssets(version).map((name) => ({ name })),
+      };
+      expect(() => validateReleaseMetadata(metadata, metadata.tagName)).not.toThrow();
+      expect(() => validateReleaseMetadata({ ...metadata, isPrerelease: !metadata.isPrerelease }, metadata.tagName))
+        .toThrow("tag-matching prerelease status");
+    }
   });
 
   test("renders exactly three tap files from manifests bound to one tag commit", () => {
@@ -181,7 +197,7 @@ describe("release promotion", () => {
     expect(workflow).toContain("promotion-receipt.json");
     expect(workflow).toContain("if: always()");
     expect(workflow).toContain('test "$GITHUB_REF" = refs/heads/main');
-    expect(workflow.indexOf("publish the GitHub prerelease")).toBeLessThan(workflow.indexOf("promote:"));
+    expect(workflow.indexOf("publish the GitHub release")).toBeLessThan(workflow.indexOf("promote:"));
     expect(workflow.indexOf("secrets.HOMEBREW_TAP_TOKEN")).toBeGreaterThan(workflow.indexOf("promote:"));
     expect(dryRun).toContain("public-promotion-dry-run:");
     expect(dryRun).toContain("--release-root");

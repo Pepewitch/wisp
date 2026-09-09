@@ -137,7 +137,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 120
     permissions:
-      contents: write # create the GitHub prerelease
+      contents: write # create the GitHub release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -247,9 +247,15 @@ jobs:
       - name: resolve version and require release notes
         id: version
         run: |
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          echo "notes=docs/v0.4/RELEASE-NOTES-${GITHUB_REF_NAME##*-}.md" >> "$GITHUB_OUTPUT"
-          test -f "docs/v0.4/RELEASE-NOTES-${GITHUB_REF_NAME##*-}.md"
+          bun -e '
+            import { existsSync, appendFileSync } from "node:fs";
+            import { releaseVersion, releaseNotesPath } from "./scripts/release-promotion";
+            const version = releaseVersion(process.env.GITHUB_REF_NAME);
+            const notes = releaseNotesPath(process.cwd(), process.env.GITHUB_REF_NAME);
+            if (!existsSync(notes)) throw new Error("missing release notes");
+            appendFileSync(process.env.GITHUB_OUTPUT,
+              `version=${version}\nnotes=${notes}\nprerelease=${version.includes("-")}\n`);
+          '
 
       - name: collect the Linux assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -316,15 +322,15 @@ jobs:
           brew audit --strict --cask Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
 
-      # releasing.md step 6: one prerelease, the exact ten assets, and the
+      # releasing.md step 6: one release, the exact ten assets, and the
       # release notes as the body. Never clobber or mutate after publishing.
-      - name: publish the GitHub prerelease
+      - name: publish the GitHub release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           name: "Wisp ${{ steps.version.outputs.version }}"
           body_path: ${{ steps.version.outputs.notes }}
-          prerelease: true
-          make_latest: false
+          prerelease: ${{ steps.version.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.version.outputs.prerelease == 'false' }}
           fail_on_unmatched_files: true
           overwrite_files: false
           files: |

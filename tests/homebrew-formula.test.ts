@@ -51,7 +51,7 @@ describe("Homebrew Formula rendering", () => {
     expect(formula).not.toMatch(/API_KEY|TOKEN|PASSWORD|credential/i);
   });
 
-  test("rejects a manifest outside the approved alpha posture", () => {
+  test("rejects a manifest outside the approved signing posture", () => {
     expect(() => renderHomebrewFormula(manifest({ apiProtocolVersion: 0 }))).toThrow(
       "invalid API protocol version",
     );
@@ -61,7 +61,7 @@ describe("Homebrew Formula rendering", () => {
           target: { os: "darwin", arch: "x86_64" as "arm64" },
         }),
       ),
-    ).toThrow("not the approved ad-hoc Apple Silicon alpha");
+    ).toThrow("not the approved ad-hoc Apple Silicon daemon");
     expect(() => renderHomebrewFormula(manifest({ artifact: { ...manifest().artifact, sha256: "bad" } }))).toThrow(
       "invalid artifact SHA-256",
     );

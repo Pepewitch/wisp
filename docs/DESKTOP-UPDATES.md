@@ -39,7 +39,12 @@ Tauri updater fetches the same document again
 replace /Applications/Wisp.app -> relaunch only after successful install
 ```
 
-The alpha endpoint and updater public key are compiled into the native app.
+The endpoint and updater public key are compiled into the native app.
+The URL `updates/wisp-desktop-alpha.json` and wire value `channel: "alpha"`
+remain unchanged for compatibility with installed 0.4 clients. They also carry
+regular releases such as 0.5.0; the legacy channel name does not make that
+version a GitHub prerelease. Both clients compare semantic versions, so 0.5.0
+is newer than every 0.4 alpha. Desktop and Local daemon still update separately.
 The webview may request a check, confirm the exact displayed version, and ask
 for relaunch. It cannot supply an endpoint, URL, signature, key, download path,
 or installation path. It receives only status and bounded release notes.
@@ -189,5 +194,5 @@ Alpha.17's publication, public channel, and package audits have passed, but do
 not describe alpha.16-to-alpha.17 as qualified until that human-observed
 replacement, relaunch, state-preservation, Apple trust, and Homebrew receipt
 reconciliation record exists. Record the sanitized result in the
-[v0.4 qualification ledger](v0.4/QUALIFICATION.md); keep raw machine evidence
+[v0.5 qualification ledger](v0.5/QUALIFICATION.md); keep raw machine evidence
 private.
