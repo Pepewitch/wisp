@@ -76,7 +76,8 @@ alpha.17's alpha.16-to-alpha.17 human updater receipt is still pending.
 Before Wisp stops calling itself alpha, these are the numbers it has to be able
 to show rather than assert: a first task that succeeds on a clean install, no
 message whose delivery is uncertain after a daemon restart, a Stop that leaves
-no process behind, a restore from backup that produces the same task list, and
+nothing running in the process group Wisp owns, a restore from backup that
+produces the same task list, and
 an in-app update that recovers on both platforms. Each of those is a measurable
 claim; none of them is “it feels stable”.
 
@@ -313,9 +314,11 @@ worktrees, and refuses unmarked install directories.
 
 ## Build and contribute
 
-The release binary has no runtime package dependency. The source workspace uses
-Bun 1.3.14; the React/Vite/Tailwind/shadcn frontend builds into one ignored,
-derived HTML file that CI embeds in the daemon and Desktop artifacts.
+The release binary is self-contained: nothing is installed alongside it and it
+resolves no packages at runtime. That is not the same as dependency-free — see
+the inventory above. The source workspace uses Bun 1.3.14; the
+React/Vite/Tailwind/shadcn frontend builds into one ignored, derived HTML file
+that CI embeds in the daemon and Desktop artifacts.
 
 ```sh
 bun install --frozen-lockfile
