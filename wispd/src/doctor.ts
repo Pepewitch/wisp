@@ -1,8 +1,10 @@
+import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { arch, platform } from "node:os";
 import { BUILTIN_ADAPTERS, loadAdapters, validateAdapters, type AdapterDef } from "./adapters";
 import { wispCommand, type WispCommand } from "./command";
-import { ADAPTERS_PATH, CONFIG_PATH, loadConfig, validateConfig, type WispConfig } from "./config";
+import { ADAPTERS_PATH, CONFIG_PATH, DB_PATH, loadConfig, validateConfig, type WispConfig } from "./config";
+import { integrityProblems, SCHEMA_VERSION } from "./migrations";
 import { trunc } from "./text";
 import { readUserJson } from "./validate";
 import { BUILD_COMMIT, BUILD_DIRTY, VERSION } from "./version";
@@ -198,6 +200,54 @@ export function checkAdaptersFile(path: string = ADAPTERS_PATH): DoctorCheck {
   return warnings.length > 0
     ? warn("adapters.json", warnings.join("; "))
     : ok("adapters.json", `valid (${Object.keys(merged).join(", ")})`);
+}
+
+/**
+ * The task database: what schema it is at, whether its pages are readable, and
+ * whether foreign keys can be enforced (ENG-06).
+ *
+ * Opened READ-ONLY and separately from the daemon's own connection, because
+ * `doctor` can run while a daemon is serving this home and must not take
+ * ownership of it or migrate anything. A profile from a newer Wisp is the
+ * interesting answer here: it is the state where the daemon would refuse to
+ * start, and knowing that before restarting is the point of a diagnostic.
+ */
+export function checkDatabase(path: string = DB_PATH): DoctorCheck {
+  if (!existsSync(path)) return ok("database", `not created yet — run '${COMMAND} serve' once`);
+  let db: Database;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch (error) {
+    return fail("database", `cannot open ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const problems = integrityProblems(db);
+    if (problems.length > 0) {
+      return fail("database", `integrity check failed: ${problems.slice(0, 3).join("; ")} — restore a backup`);
+    }
+    const applied = (db.query("SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1").get() ?? null) as
+      | { id: number }
+      | null;
+    const version = applied?.id ?? 0;
+    if (version > SCHEMA_VERSION) {
+      return fail(
+        "database",
+        `schema ${version} was written by a newer Wisp; this build understands up to ${SCHEMA_VERSION} — upgrade Wisp or restore a pre-upgrade backup`,
+      );
+    }
+    const violations = (db.query("PRAGMA foreign_key_check").all() as unknown[]).length;
+    if (violations > 0) {
+      return warn(
+        "database",
+        `schema ${version}, integrity ok, but ${violations} row(s) would violate a foreign key, so enforcement stays off`,
+      );
+    }
+    return ok("database", `schema ${version} of ${SCHEMA_VERSION}, integrity ok, foreign keys enforceable`);
+  } catch (error) {
+    return fail("database", error instanceof Error ? error.message : String(error));
+  } finally {
+    db.close();
+  }
 }
 
 export function checkProject(repoPath: string | undefined, spawn: SpawnFn): DoctorCheck {
@@ -402,6 +452,7 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
     checkPlatform(deps.currentPlatform ?? platform(), deps.currentArch ?? arch()),
     checkConfigFile(configFile),
     checkAdaptersFile(deps.adaptersPath),
+    checkDatabase(),
     checkGitBinary(spawn),
   ];
 

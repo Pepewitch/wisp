@@ -22,6 +22,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   nothing. Port-conflict diagnostics stay a separate, later check.
 - `wispd/src/routes/index.ts` dispatches route families. Its order is behavior:
   specific stream and attachment paths must precede generic task paths.
+- `wispd/src/migrations.ts` owns the schema: numbered migrations applied once
+  inside a transaction and recorded in `schema_migrations`, with a profile from
+  a newer Wisp refused rather than read with unknown columns (ENG-06). Add a
+  migration by appending a new id; never renumber a released one. Foreign-key
+  enforcement is turned on only after `PRAGMA foreign_key_check` says this
+  profile can survive it.
 - `wispd/src/store.ts` owns SQLite rows and task transitions. `wispd/src/runner.ts` owns
   one-shot harness processes, persisted logs, finalization, interruption,
   restart recovery, and stuck detection.

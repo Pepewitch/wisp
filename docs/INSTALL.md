@@ -220,8 +220,63 @@ are reconciled by the new daemon. Foreground and custom-supervisor processes
 show the available version but update manually because Wisp cannot guarantee
 their restart.
 
-The complete Linux upgrade and rollback matrix is not yet qualified. Back up
-`~/.wisp` before changing alpha versions.
+The complete Linux upgrade and rollback matrix is not yet qualified. Take a
+backup before changing alpha versions — the procedure below, not a plain `cp`
+of a live profile.
+
+## Back up and restore a Wisp home
+
+`~/.wisp` is a live SQLite database plus the files that belong to it. Copying
+it while the daemon runs can capture a database whose write-ahead log is
+missing, which is a backup that restores to a state no daemon ever had.
+
+Wisp records the schema version it wrote, so a restore into an older build is
+refused loudly rather than read with columns that build does not know about.
+That is what makes a backup taken **before** an upgrade the thing that lets you
+roll one back.
+
+The safe procedure, with the daemon stopped:
+
+```sh
+systemctl --user stop wisp.service     # or stop your foreground `wisp serve`
+tar -czf "wisp-backup-$(date +%Y%m%d-%H%M).tar.gz" -C "$HOME" .wisp
+systemctl --user start wisp.service
+```
+
+If stopping the daemon is not an option, take a consistent snapshot of the
+database first and copy the rest normally:
+
+```sh
+sqlite3 ~/.wisp/wisp.db "VACUUM INTO '/tmp/wisp-db-snapshot.db'"
+```
+
+`VACUUM INTO` writes a single consistent file including the WAL contents. It is
+the one supported way to copy the database of a running daemon.
+
+What a complete backup contains, and why:
+
+| Path | Why it is needed |
+| --- | --- |
+| `wisp.db` (+ `-wal`, `-shm` when the daemon is stopped) | tasks, turns, messages, outbox, schema ledger |
+| `config.json` | port, token, projects, webhooks, harness defaults |
+| `instance-id` | the identity clients use to recognize this daemon |
+| `adapters.json`, `suffix-prompts.json` | user-defined harnesses and prompts, when present |
+| `tasks/` | per-turn image attachments referenced by turn manifests |
+| `logs/` | turn transcripts the UI replays |
+| `worktrees/` | live task checkouts (large; excludable if you accept losing uncommitted work in them) |
+
+To restore, stop the daemon, move the existing home aside rather than deleting
+it, unpack the backup, and start the daemon. Check the result before trusting
+it:
+
+```sh
+wisp doctor      # reports the schema version, integrity, and foreign keys
+wisp ls          # the tasks you expect, with their branches
+```
+
+Two things a restore does not do: it does not recreate worktrees you excluded,
+and it does not roll back a schema. Rolling back a Wisp binary across a
+migration needs the backup you took before the upgrade.
 
 ## Remove binaries and service
 
