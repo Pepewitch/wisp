@@ -30,6 +30,14 @@ qualification do not imply permission to publish.
   a mutable upstream tag is an unreviewed dependency of all four (SEC-06). Pin
   the SHA and leave the human-readable version in a trailing comment; bump both
   together, deliberately.
+- The advisory gate runs against the whole locked tree, including build-time
+  tooling. `shadcn` (a build input: `web/src/index.css` imports its Tailwind
+  layer) drags in a CLI's own server dependencies, and those are where every
+  advisory so far has come from — `qs`, `hono`, `js-yaml`, none of which the
+  shipped binary or the browser bundle runs. Clear them with a root
+  `overrides` entry pinning the patched floor, which UPGRADES the dependency;
+  reach for `bun audit --ignore <CVE>` only when no compatible floor exists,
+  and say why in the same commit.
 - Top-level workflow permissions stay `contents: read`. A job that needs more
   declares it next to the step that uses it, so a job added later cannot
   inherit publication rights by existing.
