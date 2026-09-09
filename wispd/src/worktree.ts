@@ -313,7 +313,7 @@ async function runScriptStep(
 }
 
 /** Timeout for a teardown hook when the caller carries no config (tests, CLI paths). */
-const TEARDOWN_TIMEOUT_MINUTES = 5;
+export const TEARDOWN_TIMEOUT_MINUTES = 5;
 
 /**
  * A teardown step: the same timeout and SIGKILL escalation as a setup step,

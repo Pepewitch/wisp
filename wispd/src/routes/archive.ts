@@ -1,10 +1,19 @@
 import { removeTaskAttachments } from "../attachments";
-import type { WispConfig } from "../config";
+import { loadConfig, repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn, killTurnForArchive } from "../runner";
+import {
+  advanceArchiveCleanup,
+  archiveTaskWithCleanup,
+  clearArchiveCleanup,
+  failArchiveCleanup,
+  pendingArchiveCleanups,
+  type ArchiveCleanupJob,
+  type ArchiveStage,
+} from "../archive-jobs";
 import { getTask } from "../store";
 import { killForTask } from "../terminal";
 import { taskMode, type Task } from "../types";
-import { archivePreflight, removeWorktree } from "../worktree";
+import { archivePreflight, removeWorktree, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
 import { updateTaskAndEmit } from "./task-update";
 
 const STATE_DETAIL_CAP = 300;
@@ -34,39 +43,147 @@ function noteOnTask(taskId: string, detail: string): void {
 }
 
 /**
- * Archive's destructive half, run after the response. Everything here either
- * takes unbounded time or cannot refuse, so teardown failures are recorded on
- * the already-archived task rather than delaying the API response.
+ * Archive's destructive half.
+ *
+ * Two properties this has to have, and did not:
+ *
+ * 1. **Fail closed.** Stopping the turn and the task's shells came first but
+ *    their failures were only collected, so `git worktree remove --force` ran
+ *    anyway — deleting files under a live process. A stop that did not stop is
+ *    now the end of the attempt: nothing after it runs.
+ *
+ * 2. **Be resumable.** The whole thing was a detached promise, so a daemon
+ *    that died mid-teardown left a worktree and attachment bytes that no row
+ *    admitted to owning. Each stage now checkpoints, and the next daemon (or
+ *    the retry loop) picks the job up where it stopped.
+ *
+ * The stages are ordered so that everything destructive is behind everything
+ * that stops a process, and each one is idempotent — a resumed job may repeat
+ * the stage it was interrupted in.
  */
-async function teardownArchive(
-  task: Task,
-  force: boolean,
-  wasRunning: boolean,
-  removable: boolean,
-  cfg: WispConfig,
-): Promise<void> {
-  const failures: string[] = [];
-  const attempt = async (what: string, run: () => Promise<void>): Promise<void> => {
+/** The sentence a stopped teardown leaves on the task; matched to replace it. */
+const INCOMPLETE_PREFIX = "Archived. Cleanup is incomplete";
+
+async function runCleanupStages(job: ArchiveCleanupJob): Promise<void> {
+  const stages: { stage: ArchiveStage; what: string; run: () => Promise<void> }[] = [
+    {
+      stage: "stop-turn",
+      what: "could not stop the running turn",
+      run: async () => {
+        if (job.stop_turn && job.force) await killTurnForArchive(job.task_id);
+      },
+    },
+    {
+      stage: "stop-shells",
+      what: "could not stop the task's shells",
+      run: () => killForTask(job.task_id),
+    },
+    {
+      stage: "remove-worktree",
+      what: "worktree teardown failed",
+      run: async () => {
+        if (!job.removable) return;
+        await removeWorktree(
+          job.repo_path,
+          job.worktree_path!,
+          job.branch!,
+          job.force,
+          teardownConfig(job),
+          job.task_id,
+        );
+      },
+    },
+    {
+      stage: "remove-attachments",
+      what: "could not remove the task's attachments",
+      run: () => removeTaskAttachments(job.task_id),
+    },
+  ];
+
+  const from = stages.findIndex((candidate) => candidate.stage === job.stage);
+  for (const { stage, what, run } of stages.slice(from === -1 ? 0 : from)) {
+    advanceArchiveCleanup(job.task_id, stage);
     try {
       await run();
     } catch (error) {
-      failures.push(`${what}: ${error instanceof Error ? error.message : String(error)}`);
+      const detail = `${what}: ${error instanceof Error ? error.message : String(error)}`;
+      failArchiveCleanup(job.task_id, detail);
+      console.error(`[wisp] task ${job.task_id}: archive cleanup stopped at ${stage} — ${detail}`);
+      // Deliberately no further stages: the next one deletes files, and the
+      // reason we are here is that something is still using them.
+      noteOnTask(job.task_id, `${INCOMPLETE_PREFIX} and will be retried — ${detail}`);
+      return;
     }
+  }
+  clearArchiveCleanup(job.task_id);
+  // Replace the "incomplete" sentence, and only that one: leaving it behind
+  // after a successful retry is the same lie in the other direction. A
+  // first-attempt success keeps whatever the archive itself said — the "files
+  // left behind" note, for instance.
+  if ((getTask(job.task_id)?.state_detail ?? "").startsWith(INCOMPLETE_PREFIX)) {
+    noteOnTask(job.task_id, "Archived. The teardown that failed earlier has now finished.");
+  }
+}
+
+/**
+ * The teardown context a job carries, rather than whatever the config says
+ * now: a project can be removed between the archive and its cleanup, and the
+ * archive script configured when the user asked is the one that must run.
+ */
+function teardownConfig(job: ArchiveCleanupJob): WispConfig {
+  const base = loadConfig();
+  return {
+    ...base,
+    setupTimeoutMinutes: job.timeout_minutes,
+    repos: job.archive_script === null ? [] : [{ path: job.repo_path, archiveScript: job.archive_script }],
   };
-  if (wasRunning && force) {
-    await attempt("could not stop the running turn", () => killTurnForArchive(task.id));
+}
+
+/** In-flight jobs, so a retry tick never runs one twice. */
+const runningCleanups = new Set<string>();
+
+async function runCleanup(job: ArchiveCleanupJob): Promise<void> {
+  if (runningCleanups.has(job.task_id)) return;
+  runningCleanups.add(job.task_id);
+  try {
+    await runCleanupStages(job);
+  } finally {
+    runningCleanups.delete(job.task_id);
   }
-  await attempt("could not stop the task's shells", () => killForTask(task.id));
-  if (removable) {
-    await attempt("worktree teardown failed", () =>
-      removeWorktree(task.repo_path, task.worktree_path!, task.branch!, force, cfg, task.id),
-    );
+}
+
+/**
+ * Resume every unfinished teardown. Called at startup — before the port opens,
+ * a job whose daemon died mid-stage is exactly as urgent as a turn that needs
+ * finalizing — and on a slow timer, which is the automatic half of "retain a
+ * retry action with a precise reason".
+ */
+export async function resumeArchiveCleanups(): Promise<void> {
+  for (const job of pendingArchiveCleanups()) {
+    // A resumed job's task may have been purged from the database entirely;
+    // the row is then the only thing left, and the stages are all no-ops.
+    await runCleanup(job).catch((error) => {
+      console.error(`[wisp] task ${job.task_id}: archive cleanup failed — ${String(error)}`);
+    });
   }
-  await attempt("could not remove the task's attachments", () => removeTaskAttachments(task.id));
-  if (failures.length > 0) {
-    console.error(`[wisp] task ${task.id}: archive teardown failed — ${failures.join("; ")}`);
-    noteOnTask(task.id, `Archived, but the teardown failed — ${failures.join("; ")}`);
-  }
+}
+
+/** How often an incomplete teardown is retried while the daemon runs. */
+export const CLEANUP_RETRY_MS = 60_000;
+
+export function startArchiveCleanupLoop(): ReturnType<typeof setInterval> {
+  let running = false;
+  const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      await resumeArchiveCleanups();
+    } finally {
+      running = false;
+    }
+  }, CLEANUP_RETRY_MS);
+  timer.unref?.();
+  return timer;
 }
 
 async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedArchive | ArchiveRefusal> {
@@ -128,11 +245,30 @@ export async function archiveTaskRows(
   }
 
   const archived = prepared.map(({ task, running, removable, preflight }) => {
-    updateTaskAndEmit(task.id, {
-      archived: 1,
-      ...(preflight?.leftBehind ? { state_detail: preflight.leftBehind } : {}),
-    });
-    void teardownArchive(task, force, running !== null, removable, teardownCfg);
+    const job: ArchiveCleanupJob = {
+      task_id: task.id,
+      stage: "stop-turn",
+      force,
+      stop_turn: running !== null,
+      removable,
+      repo_path: task.repo_path,
+      worktree_path: task.worktree_path,
+      branch: task.branch,
+      // Resolved NOW: project removal can take the configured hook away
+      // between this flip and the teardown that has to run it.
+      archive_script: repoConfigFor(teardownCfg, task.repo_path)?.archiveScript?.trim() ?? null,
+      timeout_minutes: teardownCfg.setupTimeoutMinutes ?? TEARDOWN_TIMEOUT_MINUTES,
+      attempts: 0,
+      last_error: null,
+      created_at: "",
+      updated_at: "",
+    };
+    // One transaction: the flip the user sees and the job that owns its
+    // teardown. The emit follows the commit, so no client can observe an
+    // archived task whose cleanup nothing is responsible for.
+    archiveTaskWithCleanup(task.id, preflight?.leftBehind ?? null, job);
+    updateTaskAndEmit(task.id, {});
+    void runCleanup(job);
     return { task, branch: task.branch, note: preflight?.leftBehind ?? null };
   });
   return { archived };
