@@ -8,6 +8,11 @@ const STRATEGY_DEFS: Record<string, AdapterDef> = {
     exec: [],
     parse: { format: "json", strategy: "cursor-stream-json" },
   },
+  "opencode-json": {
+    bin: "opencode",
+    exec: [],
+    parse: { format: "json", strategy: "opencode-json" },
+  },
 };
 
 /**

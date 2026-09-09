@@ -145,7 +145,7 @@ harmless preferences.
 `wisp models` prints, per harness, the effective model for new tasks
 (`--model` > `harnessDefaults` > harness default) and the model list the
 installed CLI exposes. Builtin harnesses: `droid`, `claude`, `codex`,
-`cursor`.
+`cursor`, `opencode`.
 
 `--effort <level>` sets reasoning effort; unset means the harness picks per
 model. Levels per harness:
@@ -155,6 +155,9 @@ model. Levels per harness:
 - codex: none, minimal, low, medium, high, xhigh, max
 - cursor: no effort flag — effort is a bracket override on the model id
   (`claude-opus-4-8[effort=high]`), so pass it via `--model`
+- opencode: minimal, low, medium, high, xhigh, max — opencode calls these
+  model *variants*, and which ones exist depends on the model; ids are
+  `provider/model` (e.g. `google/gemini-3.6-flash`)
 
 ## The HTTP API (for scripts; the CLI covers normal use)
 

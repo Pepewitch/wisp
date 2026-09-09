@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, type AdapterDef } from "../src/adapters";
+import { envForCwd } from "../src/turn-input";
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
@@ -1314,5 +1315,29 @@ describe("startup sweep for stale 'creating' tasks (a prior audit)", () => {
 
     expect(getTask(running.id)!.state).toBe("running");
     expect(getTask(done.id)!.state).toBe("done");
+  });
+});
+
+/**
+ * PWD is not decoration. Caught live during the opencode bring-up: opencode
+ * resolves its project root as `process.env.PWD ?? process.cwd()` — PWD first
+ * — so a turn spawned with cwd=<worktree> but an inherited PWD read the
+ * DAEMON'S launch directory, silently defeating worktree isolation.
+ */
+describe("envForCwd (spawned children see a PWD that matches their cwd)", () => {
+  test("an inherited PWD from the daemon's launch directory is overwritten", () => {
+    const env = envForCwd({ PATH: "/usr/bin", PWD: "/where/the/daemon/started" }, "/wt/task-1");
+    expect(env.PWD).toBe("/wt/task-1");
+    expect(env.PATH).toBe("/usr/bin"); // everything else is passed through
+  });
+
+  test("a child spawned somewhere other than the worktree gets THAT directory", () => {
+    // the value is derived from the cwd passed to the same spawn, so a hook
+    // that runs outside the worktree cannot be handed the worktree's path
+    expect(envForCwd({ PWD: "/stale" }, "/repo/root").PWD).toBe("/repo/root");
+  });
+
+  test("PWD is set even when the environment carried none", () => {
+    expect(envForCwd({ PATH: "/usr/bin" }, "/wt/task-2")).toEqual({ PATH: "/usr/bin", PWD: "/wt/task-2" });
   });
 });

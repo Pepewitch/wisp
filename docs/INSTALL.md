@@ -17,7 +17,7 @@ You need:
 - `curl`, `git`, `sha256sum`, and the standard `install` utility;
 - a Git repository with a configured `user.name` and `user.email`;
 - at least one installed and authenticated harness: `droid`, `claude`,
-  `codex`, or `cursor-agent`.
+  `codex`, `cursor-agent`, or `opencode`.
 
 Wisp must run on the same host and as the same user that can access the
 repositories and harness authentication. It does not put a harness or its

@@ -69,6 +69,54 @@ export const USAGE_FORMATTERS: Record<string, (blob: unknown) => UsageSummary | 
       reasoningTokens: num(b, "reasoning_output_tokens"),
     });
   },
+  /**
+   * opencode 1.18.29 is the one harness that reports usage PER STEP instead of
+   * once per turn: every `step_finish` carries its own
+   * `tokens{total, input, output, reasoning, cache{write, read}}`, and a turn
+   * with two tool calls emits three of them. The parse strategy therefore
+   * persists `{steps:[{tokens, cost}, …]}` — each entry byte-for-byte as
+   * emitted — and this formatter adds the steps up.
+   *
+   * That addition is not the "no summing" rule being broken, it is the rule's
+   * reason being honoured. The rule forbids synthesising a `total` the harness
+   * did not report (a judgment the renderer owns), and no `total` is emitted
+   * here. Adding per-step counts is a different operation: each step is its
+   * own billed API call, so the sum IS the turn's input/output, and it is
+   * exactly what claude's and codex's own blobs already hand over
+   * pre-aggregated. The alternatives were both worse than arithmetic —
+   * reporting the last step alone understates a long turn by however many
+   * steps preceded it, and dropping usage entirely would discard a fact the
+   * harness plainly does report.
+   *
+   * opencode's own per-step `total` is deliberately NOT read: it is the
+   * renderer's judgment, and re-deriving it from parts wisp does not normalize
+   * (it includes reasoning) would put two disagreeing totals on one screen.
+   * `cost` stays in the raw blob and never normalizes — money rots, and
+   * droid's factory_credits set that precedent.
+   */
+  "opencode-tokens": (blob) => {
+    if (typeof blob !== "object" || blob === null) return null;
+    const steps = (blob as Record<string, unknown>).steps;
+    if (!Array.isArray(steps)) return null;
+    const totals: Record<string, number | undefined> = {};
+    const add = (key: string, value: number | undefined): void => {
+      if (value === undefined) return;
+      totals[key] = (totals[key] ?? 0) + value;
+    };
+    for (const step of steps) {
+      if (typeof step !== "object" || step === null) continue;
+      const tokens = (step as Record<string, unknown>).tokens;
+      if (typeof tokens !== "object" || tokens === null) continue;
+      const t = tokens as Record<string, unknown>;
+      const cache = typeof t.cache === "object" && t.cache !== null ? (t.cache as Record<string, unknown>) : {};
+      add("inputTokens", num(t, "input"));
+      add("outputTokens", num(t, "output"));
+      add("reasoningTokens", num(t, "reasoning"));
+      add("cachedInputTokens", num(cache, "read"));
+      add("cacheWriteTokens", num(cache, "write"));
+    }
+    return summary(totals);
+  },
 };
 
 /**

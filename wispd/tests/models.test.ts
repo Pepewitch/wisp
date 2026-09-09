@@ -280,7 +280,7 @@ describe("modelsReport", () => {
 describe("modelDiscovery validation (adapters.json merge contract)", () => {
   test("an unknown strategy name is rejected at load, naming the known ones", async () => {
     expect(() => validateAdapters({ droid: { modelDiscovery: "typo-models" } }, () => {})).toThrow(
-      /adapter 'droid'\.modelDiscovery must name a builtin model-discovery strategy \(known: droid-models, codex-models\)/,
+      /adapter 'droid'\.modelDiscovery must name a builtin model-discovery strategy \(known: droid-models, codex-models, opencode-models\)/,
     );
   });
 

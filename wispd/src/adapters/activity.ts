@@ -436,11 +436,75 @@ function cursor(event: Record<string, any>, context: NormalizeContext): Activity
   return [];
 }
 
+/**
+ * opencode 1.18.29 `run --format json`: `{type, timestamp, sessionID, part}`
+ * with the payload one level down. Ids are the harness's own — `part.id` for
+ * text and reasoning, `part.callID` for tools — so a replay is idempotent.
+ *
+ * Two deliberate absences:
+ *
+ *  - **No "started" tool phase.** opencode's writer emits a tool event only
+ *    once its state is already `completed` or `error` (bundle-verified), so
+ *    claiming a start would be inventing a lifecycle the wire never sent.
+ *  - **No subagent card.** opencode DOES have a delegating `task` tool, but no
+ *    capture of one exists yet, and its input/output shape is what a subagent
+ *    card is built from. It renders as an ordinary tool row until a real
+ *    `task` transcript is captured — a truthful tool row beats a card whose
+ *    fields were guessed. That capture is the first thing to add here.
+ */
+function opencode(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+  const at = timestamp(event);
+  const part = record(event.part);
+  switch (event.type) {
+    case "text": {
+      const value = string(part.text);
+      return value
+        ? [{ kind: "text", id: eventId(part.id, context, "text"), parentId: null, timestamp: at, text: trunc(value, 4_000) }]
+        : [];
+    }
+    case "reasoning": {
+      const value = string(part.text);
+      return value
+        ? [{ kind: "thinking", id: eventId(part.id, context, "thinking"), parentId: null, timestamp: at, text: trunc(value, 4_000) }]
+        : [];
+    }
+    case "tool_use": {
+      const state = record(part.state);
+      const failed = state.status === "error";
+      const output = text(state.output);
+      return [{
+        kind: "tool",
+        id: eventId(part.callID ?? part.id, context, "tool"),
+        parentId: null,
+        timestamp: at,
+        phase: "completed",
+        name: string(part.tool) ?? "tool",
+        input: boundedInput(state.input),
+        output: failed ? null : output,
+        error: failed ? text(state.error) ?? output ?? "Tool failed" : null,
+      }];
+    }
+    case "error": {
+      const detail = string(record(event.error).data?.message) ?? string(record(event.error).name);
+      return [{
+        kind: "text",
+        id: context.id("error"),
+        parentId: null,
+        timestamp: at,
+        text: `Error: ${detail ?? "Unknown error"}`,
+      }];
+    }
+    default:
+      return []; // step_start / step_finish are turn structure, not activity
+  }
+}
+
 export const ACTIVITY_NORMALIZERS: Record<string, ActivityNormalizer> = {
   "claude-stream-json": claude,
   "droid-stream-json": droid,
   "cursor-stream-json": cursor,
   "codex-jsonl": codex,
+  "opencode-json": opencode,
 };
 
 /**

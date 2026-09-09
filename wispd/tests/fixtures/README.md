@@ -147,6 +147,76 @@ signal plus the session/usage carrier. Also pinned: `model` (the displayName)
 arrives on the init event, thinking streams as `delta`/`completed` subtypes,
 and the usage blob is camelCase (`inputTokens`, `cacheReadTokens`, …).
 
+## opencode — opencode 1.18.29, model `google/gemini-3.6-flash`, 2026-09-10
+
+Run in a throwaway git repo outside any Wisp worktree. Sanitized: session,
+message, part and tool-call ids were replaced consistently, git snapshot
+hashes zeroed, timestamps flattened, the workspace path replaced with
+`/work/repo`, and the provider's opaque `thoughtSignature` blobs replaced with
+a placeholder (they are multi-KB base64 and carry no shape Wisp reads).
+
+| file | command | exit |
+|---|---|---|
+| `opencode-tool-turn.jsonl` | `opencode run --format json --thinking --auto -m google/gemini-3.6-flash "Read the file a.txt, then create b.txt containing the word mango. Then tell me what a.txt said."` | 0 |
+| `opencode-thinking-turn.jsonl` | same, `--variant high`, "What is 17 times 23? Think it through, then give the number." | 0 |
+| `opencode-unknown-model.jsonl` | same, `-m google/gemini-2.5-flash` (a model the provider has retired) | 1 |
+| `opencode-quota-exhausted.jsonl` | a real free-tier quota exhaustion, hit during the live bring-up | 1 |
+
+What these prove, and why opencode needs its own parse strategy:
+
+- **The conclusion and the settlement signal are different events.** The
+  turn's prose arrives as `text` parts; the terminal `step_finish` carries no
+  text at all. Neither the flat field mapping nor any existing strategy can
+  express that pair.
+- **A turn is many steps, and only one of them ends it.** Each tool round trip
+  is its own `step_start` / `tool_use` / `step_finish` triple with its own
+  assistant `messageID`. Every step but the last finishes with
+  `reason: "tool-calls"` — opencode's "the agent loop continues" signal — and
+  the last one finishes `"stop"`. The tool-turn fixture has three
+  `step_finish` events for one turn.
+- **Usage is reported PER STEP, never per turn.** Each `step_finish` carries
+  its own `tokens{total, input, output, reasoning, cache{write, read}}` and
+  `cost`. Wisp persists every step verbatim under `{steps:[…]}` and the
+  `opencode-tokens` formatter adds the token counts up; `cost` is money and
+  never normalizes.
+- **One tool event, already terminal.** `tool_use` is emitted only once a call
+  has `completed` or `error`d, so there is no started phase to report and the
+  activity stream does not invent one.
+- **A failed turn writes the cause to STDOUT and nothing to stderr**, then
+  exits 1: `{"type":"error","error":{"name":…,"data":{"message":…}}}`. The
+  stderr-tail fallback would surface nothing at all here, which is why
+  opencode has an error strategy. Its message-else-name precedence is copied
+  from opencode's own renderer.
+- **The model is absent on purpose.** `--format json` never reports the
+  resolved model id — the line that prints it is gated on the non-JSON format
+  — so opencode turns fall back to the requested model, marked "(requested)".
+
+The complete `--format json` event vocabulary is `step_start`, `step_finish`,
+`text`, `tool_use`, `reasoning` and `error`: the run command's JSON writer is
+one helper, called from exactly six places in the shipped 1.18.29 bundle.
+`reasoning` requires `--thinking`, which is why the adapter's exec passes it.
+
+`opencode-quota-exhausted.jsonl` deserves its own note: it is a genuine
+quota-exhaustion capture, not the usual cheap stand-in. The provider's free
+tier ran out partway through the live verification, so Wisp's limit
+classification was exercised for real — the failure carried
+"Quota exceeded for metric: …", matched the `quota exceeded` marker, and the
+task was recorded `limit: …` rather than as a generic failure. The marker set
+had been derived from the shipped binary *before* this happened, which makes
+this the one opencode marker confirmed from both directions. Note also that
+the provider's own payload says `isRetryable: true` while the failure is a
+hard quota wall — a reminder that the wire's retry hint is not Wisp's
+limit/transient distinction.
+
+Limit and transient wording for opencode was otherwise taken from the installed
+CLI's own strings rather than induced live: its "Usage limit reached. It will
+reset in …" message, the Vercel AI Gateway error class it ships (message
+"Rate limit exceeded", type `rate_limit_exceeded`, name
+`GatewayRateLimitError` — three spellings of one failure, hence three
+markers), its 429 quota mapper, and its own "Provider is overloaded"
+rendering. `bun run harness:snapshot` re-checks that all nine still exist in
+the shipped binary.
+
 ## droid / claude init events — captured 2026-08-22 from real Wisp-run turns
 
 | file | harness | model field |

@@ -14,6 +14,7 @@ const claude = BUILTIN_ADAPTERS.claude!;
 const droid = BUILTIN_ADAPTERS.droid!;
 const codex = BUILTIN_ADAPTERS.codex!;
 const cursor = BUILTIN_ADAPTERS.cursor!;
+const opencode = BUILTIN_ADAPTERS.opencode!;
 
 /** What `wisp log` would print for a whole captured turn. */
 function renderTurn(name: string, def: AdapterDef): string[] {
@@ -243,6 +244,54 @@ describe("formatEvent", () => {
     test("codex events mean nothing to the other formatters", () => {
       expect(formatEvent(fixtureLine("codex-first-turn.jsonl", 0), claude)).toBeNull();
       expect(formatEvent(fixtureLine("codex-first-turn.jsonl", 2), droid)).toBeNull();
+    });
+  });
+
+  // Real opencode 1.18.29 output (wispd/tests/fixtures/README.md). Its wire is
+  // unlike the other four: no init line, payloads nested under `part`, and one
+  // already-terminal event per tool call rather than a started/completed pair.
+  describe("opencode", () => {
+    test("a whole captured tool turn reads as an activity feed", () => {
+      const lines = renderTurn("opencode-tool-turn.jsonl", opencode);
+      // opencode sends the call and its result in ONE event, so a tool renders
+      // as one two-line entry (the → and ← pair) rather than two feed lines
+      expect(lines).toEqual([
+        `→ read({"filePath":"/work/repo/a.txt"})\n` +
+          "← <path>/work/repo/a.txt</path> <type>file</type> <content> 1: hello  (End of file - total 1 lines) </content>",
+        `→ write({"filePath":"/work/repo/b.txt","content":"mango"})\n← Wrote file successfully.`,
+        "`a.txt` said: `hello`",
+        "✓ turn complete",
+      ]);
+    });
+
+    // The intermediate step_finish events say "tool-calls" — the agent loop
+    // continues. Only the terminal one settles, so the feed says "complete" once.
+    test("only the terminal step_finish prints a settlement line", () => {
+      const lines = renderTurn("opencode-tool-turn.jsonl", opencode);
+      expect(lines.filter((l) => l === "✓ turn complete")).toHaveLength(1);
+    });
+
+    test("reasoning renders behind the thinking marker, every line of it", () => {
+      const lines = renderTurn("opencode-thinking-turn.jsonl", opencode);
+      // EVERY line carries the marker, including the blank one — that is what
+      // keeps the whole block behind the web reducer's Thinking row
+      expect(lines[0]).toBe(
+        "~ **Calculating the Answer**\n~\n~ I broke 17 * 23 into 17 * 20 and 17 * 3, then summed.",
+      );
+      expect(lines[1]).toBe("17 × 23 = 17 × (20 + 3) = 340 + 51 = 391");
+      expect(lines[2]).toBe("✓ turn complete");
+    });
+
+    test("an error event prints its cause, and step_start is dropped as structure", () => {
+      expect(renderTurn("opencode-unknown-model.jsonl", opencode)).toEqual([
+        "✗ This model models/gemini-2.5-flash is no longer available to new users. Please update your code to use models/gemini-3.6-flash for the latest features and improvements.",
+      ]);
+      expect(formatEvent(`{"type":"step_start","part":{"type":"step-start"}}`, opencode)).toBeNull();
+    });
+
+    test("a failed tool call shows the failure, not an empty result", () => {
+      const line = `{"type":"tool_use","part":{"type":"tool","tool":"bash","callID":"c1","state":{"status":"error","input":{"command":"false"},"error":"exit status 1"}}}`;
+      expect(formatEvent(line, opencode)).toBe(`→ bash({"command":"false"})\n✗ exit status 1`);
     });
   });
 

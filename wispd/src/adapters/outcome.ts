@@ -3,7 +3,7 @@ import { isRecord } from "../validate";
 import { boundJsonRecord, truncateUtf8 } from "../recording/bounds";
 
 export type OutcomePolicy = "legacy" | "recorder-v1";
-type ReducerKind = "codex-jsonl" | "cursor-stream-json" | "mapped-json";
+type ReducerKind = "codex-jsonl" | "cursor-stream-json" | "opencode-json" | "mapped-json";
 
 export interface OutcomeReducerOptions {
   /** Omitted for exact legacy folds; recorder checkpoints always set it. */
@@ -29,6 +29,11 @@ export interface OutcomeCheckpointV1 {
   droidAgentLoopError: string | null;
   droidOtherError: string | null;
   droidCompletionError: string | null;
+  opencodeError: string | null;
+  /** The assistant message the accumulated candidateResult belongs to. */
+  opencodeMessage: string | null;
+  /** One verbatim `{tokens, cost}` per step_finish; opencode reports no turn total. */
+  opencodeSteps: unknown[];
   firstStderr: string | null;
   stderrTail: string[];
 }
@@ -57,8 +62,14 @@ function textParts(event: Record<string, any>): string | null {
 function reducerKind(def: AdapterDef): ReducerKind | null {
   if (def.parse.strategy === "codex-jsonl") return "codex-jsonl";
   if (def.parse.strategy === "cursor-stream-json") return "cursor-stream-json";
+  if (def.parse.strategy === "opencode-json") return "opencode-json";
   if (!def.parse.strategy && def.parse.format === "json") return "mapped-json";
   return null;
+}
+
+/** opencode nests every payload one level under `part`. */
+function opencodePart(event: Record<string, any>): Record<string, any> {
+  return isRecord(event.part) ? event.part : {};
 }
 
 /**
@@ -84,6 +95,9 @@ export class IncrementalOutcomeReducer {
   private droidAgentLoopError: string | null = null;
   private droidOtherError: string | null = null;
   private droidCompletionError: string | null = null;
+  private opencodeError: string | null = null;
+  private opencodeMessage: string | null = null;
+  private opencodeSteps: unknown[] = [];
   private firstStderr: string | null = null;
   private stderrTail: string[] = [];
 
@@ -135,6 +149,7 @@ export class IncrementalOutcomeReducer {
 
     if (this.kind === "codex-jsonl") this.pushCodex(event);
     else if (this.kind === "cursor-stream-json") this.pushCursor(event);
+    else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
     this.pushErrorEvent(event);
   }
@@ -161,6 +176,8 @@ export class IncrementalOutcomeReducer {
         skills: null,
       };
     }
+
+    if (this.kind === "opencode-json") return this.opencodeOutcome(policy);
 
     if (this.kind === "cursor-stream-json") {
       if (!this.resultEvent) {
@@ -217,6 +234,23 @@ export class IncrementalOutcomeReducer {
     };
   }
 
+  private opencodeOutcome(policy: OutcomePolicy): ParsedTurn {
+    const positivelySettled = policy === "legacy" || this.settled;
+    const isError = this.failed || !positivelySettled;
+    return {
+      result: isError ? null : this.candidateResult,
+      session: this.earlySession,
+      // run mode denies the `question` permission outright, so an opencode
+      // turn has no way to stop and ask — this is never true by design.
+      needsInput: false,
+      isError,
+      // opencode reports no model under --format json; see builtins.ts.
+      model: null,
+      usage: this.opencodeSteps.length > 0 ? { steps: [...this.opencodeSteps] } : null,
+      skills: null,
+    };
+  }
+
   errorDetail(): string | null {
     let detail: string | null = null;
     if (this.def.errors === "claude-stream-json") detail = this.claudeError;
@@ -224,6 +258,8 @@ export class IncrementalOutcomeReducer {
       detail = this.codexTerminalError ?? this.codexEventError ?? this.codexWarningError;
     } else if (this.def.errors === "droid-stream-json") {
       detail = this.droidAgentLoopError ?? this.droidOtherError ?? this.droidCompletionError ?? this.firstStderr;
+    } else if (this.def.errors === "opencode-json") {
+      detail = this.opencodeError;
     }
     return detail?.trim() || this.stderrTail.join(" | ") || null;
   }
@@ -248,6 +284,9 @@ export class IncrementalOutcomeReducer {
       droidAgentLoopError: this.droidAgentLoopError,
       droidOtherError: this.droidOtherError,
       droidCompletionError: this.droidCompletionError,
+      opencodeError: this.opencodeError,
+      opencodeMessage: this.opencodeMessage,
+      opencodeSteps: [...this.opencodeSteps],
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
     };
@@ -273,6 +312,9 @@ export class IncrementalOutcomeReducer {
     this.droidAgentLoopError = checkpoint.droidAgentLoopError;
     this.droidOtherError = checkpoint.droidOtherError;
     this.droidCompletionError = checkpoint.droidCompletionError;
+    this.opencodeError = checkpoint.opencodeError ?? null;
+    this.opencodeMessage = checkpoint.opencodeMessage ?? null;
+    this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
   }
@@ -316,6 +358,66 @@ export class IncrementalOutcomeReducer {
     }
   }
 
+  /**
+   * opencode 1.18.29 `run --format json`. Three shapes force a strategy here
+   * rather than the flat field mapping, all observed on real turns:
+   *
+   *  - **The conclusion and the settlement signal are different events.** The
+   *    turn's prose arrives as `text` parts; the turn ends on a `step_finish`
+   *    that carries no text at all.
+   *  - **A turn is many steps.** Each tool round trip is its own
+   *    step_start/tool_use/step_finish triple with its OWN assistant message
+   *    id, and every step but the last finishes with reason "tool-calls" —
+   *    that reason is precisely opencode's "the loop continues" signal, so
+   *    settlement is any other reason. A captured 2-tool turn ran
+   *    step_finish("tool-calls") twice before step_finish("stop").
+   *  - **Usage is per step, never per turn.** See `opencodeSteps`.
+   *
+   * The conclusion is the last MESSAGE's text, not the last text event and not
+   * every text event concatenated: a multi-step turn narrates ("I'll read the
+   * file…") in earlier messages, and that narration is already in the activity
+   * stream. Parts of one message are joined; a new message id resets the
+   * buffer. cursor's fixture is the cautionary tale for concatenating blindly.
+   */
+  private pushOpencode(event: Record<string, any>): void {
+    // sessionID rides EVERY event (the run command's JSON writer injects it),
+    // so a turn that dies before its first step still reports its session.
+    if (typeof event.sessionID === "string" && this.earlySession === null) {
+      this.earlySession = this.factString(event.sessionID);
+    }
+    const part = opencodePart(event);
+    switch (event.type) {
+      case "text": {
+        if (typeof part.text !== "string" || !part.text.trim()) break;
+        const message = typeof part.messageID === "string" ? part.messageID : null;
+        if (message !== this.opencodeMessage) {
+          this.opencodeMessage = message;
+          this.candidateResult = null;
+        }
+        const joined = this.candidateResult ? `${this.candidateResult}\n${part.text}` : part.text;
+        this.candidateResult = this.factString(joined);
+        break;
+      }
+      case "step_finish": {
+        // Keep each step's numbers exactly as emitted, and keep `cost` with
+        // the step it belongs to — it is money and never normalizes, but
+        // dropping it here would lose a fact the harness did report.
+        if (part.tokens !== undefined || part.cost !== undefined) {
+          this.opencodeSteps.push(this.factValue({ tokens: part.tokens, cost: part.cost }));
+        }
+        // "tool-calls" means the agent loop continues; anything else is the
+        // end of the turn. Not keyed on "stop" alone: length/content-filter/
+        // other are terminal too, and treating one as mid-turn would hang a
+        // turn that really had finished.
+        if (part.reason !== "tool-calls") this.settled = true;
+        break;
+      }
+      case "error":
+        this.failed = true;
+        break;
+    }
+  }
+
   private pushMapped(event: Record<string, any>): void {
     if (!this.def.parse.resultType || event.type === this.def.parse.resultType) {
       this.resultEvent = this.resultFields(event, [
@@ -335,6 +437,25 @@ export class IncrementalOutcomeReducer {
     if (this.def.errors === "claude-stream-json") this.pushClaudeError(event);
     else if (this.def.errors === "codex-jsonl") this.pushCodexError(event);
     else if (this.def.errors === "droid-stream-json") this.pushDroidError(event);
+    else if (this.def.errors === "opencode-json") this.pushOpencodeError(event);
+  }
+
+  /**
+   * opencode reports failures as `{type:"error", error:{name, data:{message}}}`
+   * on STDOUT (stderr stays empty), then exits 1. The message-else-name
+   * precedence is not a guess — it is exactly what opencode's own renderer
+   * does for the same event, so Wisp names a failure the way opencode does.
+   * Captured live: an unavailable model gave name "APIError" with the
+   * provider's 404 prose in `data.message`; a failed command gave name
+   * "UnknownError" with a generic message.
+   */
+  private pushOpencodeError(event: Record<string, any>): void {
+    if (event.type !== "error" || !isRecord(event.error)) return;
+    const data = isRecord(event.error.data) ? event.error.data : {};
+    const message = typeof data.message === "string" && data.message.trim() ? data.message.trim() : null;
+    const name = typeof event.error.name === "string" && event.error.name.trim() ? event.error.name.trim() : null;
+    const detail = message ?? name;
+    if (detail) this.opencodeError = this.factString(detail);
   }
 
   private pushClaudeError(event: Record<string, any>): void {

@@ -232,6 +232,80 @@ async function cursorModels(ctx: ExtractCtx): Promise<Record<string, Surface>> {
   };
 }
 
+/**
+ * Walk `provider/model\n{…json…}` pairs out of `opencode models --verbose`,
+ * yielding each model record. A brace-depth scan rather than a line split: the
+ * records are pretty-printed across many lines, and depth-tracking is what
+ * makes the walk immune to the id lines between them.
+ */
+function opencodeCatalog(text: string): Record<string, any>[] {
+  const out: Record<string, any>[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j]!;
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (inString) {
+        if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}" && --depth === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (end < 0) break;
+    try {
+      const parsed: unknown = JSON.parse(text.slice(i, end + 1));
+      if (parsed && typeof parsed === "object") out.push(parsed as Record<string, any>);
+    } catch {
+      // not a model record; the scan continues past it
+    }
+    i = end;
+  }
+  return out;
+}
+
+/**
+ * opencode's reasoning effort is a model VARIANT, and each catalog entry
+ * carries its own `variants` map — so, like codex, the union across the
+ * catalog is what the picker may legitimately offer.
+ *
+ * Deliberately NOT `rejectedEffort`: opencode does not reject an unknown
+ * `--variant` pre-flight, so probing with the sentinel would start a REAL turn
+ * and spend tokens. Reading the catalog cannot (claude's extractor documents
+ * the same trap for the same reason).
+ */
+async function opencodeVariants(ctx: ExtractCtx): Promise<Record<string, Surface>> {
+  const res = await ctx.spawn([ctx.def.bin, "models", "--verbose"]);
+  const values = new Set<string>();
+  for (const model of opencodeCatalog(res.stdout)) {
+    for (const variant of Object.keys(model.variants ?? {})) {
+      if (/^[a-z][a-z0-9_-]*$/i.test(variant)) values.add(variant);
+    }
+  }
+  if (values.size === 0) return {};
+  return {
+    effortLevels: {
+      cost: "free",
+      verifiedAgainst: null,
+      source: "union of the 'variants' keys across 'opencode models --verbose'",
+      note: "opencode's effort is a per-model variant; this union is what the picker may offer",
+      lists: { observed: [...values].sort() },
+    },
+  };
+}
+
 export const EXTRACTORS: Record<string, Extractor> = {
   droid: async (ctx) => ({
     models: await discoveredModels(ctx, "'droid exec --help' default plus droid's invalid-model error text"),
@@ -257,6 +331,15 @@ export const EXTRACTORS: Record<string, Extractor> = {
   cursor: async (ctx) => ({
     ...(await cursorModels(ctx)),
     flags: await helpFlags(ctx, [ctx.def.bin, "--help"]),
+    ...(await markerSurface(ctx)),
+  }),
+
+  opencode: async (ctx) => ({
+    models: await discoveredModels(ctx, "'opencode models' — the configured providers' catalog"),
+    ...(await opencodeVariants(ctx)),
+    // `opencode run --help`: the flags Wisp passes are run's, not the TUI's.
+    // Going through def.exec keeps an exec override on the right help page.
+    flags: await helpFlags(ctx, [ctx.def.bin, ctx.def.exec[0]!, "--help"]),
     ...(await markerSurface(ctx)),
   }),
 };

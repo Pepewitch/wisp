@@ -8,6 +8,7 @@ import { pathExists } from "./fsutil";
 import { assertWorkingDirectoryAllowed } from "./launch-policy";
 import { signalProcessTree } from "./process-tree";
 import { READ_TIMEOUT_MS, runBounded, WRITE_TIMEOUT_MS } from "./subprocess";
+import { envForCwd } from "./turn-input";
 
 interface GitResult {
   ok: boolean;
@@ -288,7 +289,7 @@ async function runScript(
       stdout: fd,
       stderr: fd,
       stdin: "ignore",
-      env: { ...process.env, ...env },
+      env: envForCwd({ ...process.env, ...env }, cwd),
       detached: true,
     });
     const killTree = (sig: "SIGTERM" | "SIGKILL"): void => {
