@@ -555,13 +555,18 @@ describe("GET /api/tasks/:id/attachments/:turn/:name (A1a)", () => {
     return task.id;
   }
 
-  test("serves the bytes with the SNIFFED type and an immutable private cache", async () => {
+  /**
+   * SEC-08: these bytes are deleted on archive or cancel, so the browser must
+   * not be told it may keep serving them for a year. The old header was
+   * `immutable, max-age=31536000`, which outlived the deletion it was supposed
+   * to respect.
+   */
+  test("serves the bytes with the SNIFFED type and no browser-side storage", async () => {
     const id = await taskWithImages();
     const res = await get(cfg, adapters, `/api/tasks/${id}/attachments/1/red.png`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
-    expect(res.headers.get("cache-control")).toContain("private");
-    expect(res.headers.get("cache-control")).toContain("immutable");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(PNG));
   });

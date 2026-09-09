@@ -79,6 +79,23 @@ Tokens in URL query parameters are not accepted. Treat any script running in
 the Wisp origin as able to read the bearer token; the self-contained bundle and
 private encrypted transport remain part of the security boundary.
 
+The daemon-served page carries a content security policy built from the bundle
+it is serving: `default-src 'none'`, the inline script's own sha256 hash (never
+`'unsafe-inline'` for scripts), `frame-ancestors 'none'` alongside
+`X-Frame-Options: DENY`, `object-src`/`base-uri`/`form-action` at `'none'`, and
+`Referrer-Policy: no-referrer`. `style-src` keeps `'unsafe-inline'` because
+xterm creates stylesheets after load, so it deliberately carries no hash — a
+hash would disable the allowance the terminal depends on.
+
+Agent-supplied remote images still load, which is an outbound request the
+reader did not ask for. They are fetched with `referrerPolicy="no-referrer"`,
+so the request does not disclose which Wisp page was open. Defaulting them to
+an explicit-consent placeholder is a product decision that has not been made.
+
+Attachment responses are `Cache-Control: private, no-store`. Archive and cancel
+delete the bytes, and a long-lived cache entry meant a browser kept serving them
+from its own profile after the daemon began answering 410.
+
 Wisp Desktop keeps remote tokens in the macOS Keychain and reads Local's token
 from the standard Wisp profile into native process memory. The webview receives
 neither. Its native proxy is bound to loopback, requires a per-launch

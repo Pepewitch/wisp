@@ -11,6 +11,7 @@ import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./
 import { route } from "./routes";
 import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
 import { err, json } from "./routes/http";
+import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask } from "./store";
 import type { PtySize } from "./pty";
 import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
@@ -277,6 +278,9 @@ function bindFailure(host: string, port: number): unknown | undefined {
 
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
   const appHtml = await bundledAppHtml();
+  // Hashing 2 MB of bundle is startup work, not per-request work; the policy
+  // itself is assembled per response because it names this daemon's origin.
+  const securityPolicy = pageSecurityPolicy(appHtml);
   const cfg = loadConfig();
   const hostname = process.env.WISP_HOST ?? cfg.host;
   const port = options.port ?? cfg.port;
@@ -350,7 +354,12 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
         const path = url.pathname;
         if (path === "/" || path === "/index.html") {
           // typed as HTMLBundle by @types/bun, but `with { type: "text" }` yields a string at runtime
-          return new Response(appHtml as unknown as string, { headers: { "content-type": "text/html; charset=utf-8" } });
+          return new Response(appHtml as unknown as string, {
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              ...pageSecurityHeaders(securityPolicy, url.origin),
+            },
+          });
         }
         if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
         // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
