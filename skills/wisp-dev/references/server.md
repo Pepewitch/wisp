@@ -29,9 +29,18 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 
 ### State and process lifecycle
 
-- Each turn is one short-lived headless harness process. Output is written
-  directly to persisted log files so daemon restart recovery can re-adopt or
-  finalize the turn.
+- Each turn is one short-lived headless harness process, spawned as its own
+  process-GROUP leader. Output is written directly to persisted log files so
+  daemon restart recovery can re-adopt or finalize the turn.
+- Stopping a turn signals that group, not just the leader: a harness is a
+  supervisor, and killing only it left builds, servers, and sub-agents running
+  (ENG-03). A descendant that calls `setsid` itself leaves the group by design
+  and is out of scope; nothing walks the process tree, because that races pid
+  reuse. Repository hooks own a group for the same reason — their real work is
+  in children.
+- The group is also the last gate before destructive cleanup: force-archive
+  refuses when processes the turn started are still in it, rather than deleting
+  a worktree out from under them.
 - Task state changes go through `store.transition()`. It advances the sequence
   and writes notify-worthy outbox rows atomically, then emits realtime news
   only after commit.

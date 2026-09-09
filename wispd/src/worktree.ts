@@ -6,6 +6,7 @@ import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
 import { pathExists } from "./fsutil";
 import { assertWorkingDirectoryAllowed } from "./launch-policy";
+import { signalProcessTree } from "./process-tree";
 
 interface GitResult {
   ok: boolean;
@@ -245,7 +246,21 @@ async function runScript(
   // fd-direct log setup, once per script at spawn time — allowed to stay sync (M1)
   const fd = openSync(logPath, "a");
   try {
-    const child = Bun.spawn({ cmd, cwd, stdout: fd, stderr: fd, stdin: "ignore", env: { ...process.env, ...env } });
+    // Its own process group: a hook is a shell script, so its real work
+    // (`bun install`, a build) happens in CHILDREN, and killing only the shell
+    // left those running against the worktree (ENG-03).
+    const child = Bun.spawn({
+      cmd,
+      cwd,
+      stdout: fd,
+      stderr: fd,
+      stdin: "ignore",
+      env: { ...process.env, ...env },
+      detached: true,
+    });
+    const killTree = (sig: "SIGTERM" | "SIGKILL"): void => {
+      signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
+    };
     let timedOut = false;
     let escalated = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -253,13 +268,13 @@ async function runScript(
       () => {
         timedOut = true;
         console.error(`[wisp] task ${taskId}: ${what} exceeded ${timeoutMinutes} min, killing it`);
-        child.kill();
+        killTree("SIGTERM");
         // M3: a script that traps SIGTERM must not wedge the task in 'creating'
         killTimer = setTimeout(() => {
           if (child.exitCode === null && child.signalCode === null) {
             escalated = true;
             console.error(`[wisp] task ${taskId}: ${what} survived SIGTERM, escalating to SIGKILL`);
-            child.kill("SIGKILL");
+            killTree("SIGKILL");
           }
         }, 5000);
       },

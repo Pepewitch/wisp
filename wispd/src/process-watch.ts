@@ -1,6 +1,7 @@
 import { closeSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { processStartTimeAsync } from "./procid";
+import { signalProcessTree } from "./process-tree";
 
 export type PidIdentity = "alive" | "dead" | "gone";
 
@@ -87,7 +88,9 @@ export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
       // recycled pid to an unrelated process.
       if ((await pidIdentity(options.pid, options.pidStartTime)) !== "alive") return;
       try {
-        process.kill(options.pid, sig);
+        // The whole group, so a cap kill does not leave the harness's own
+        // children writing into the log it just exceeded (ENG-03).
+        signalProcessTree(options.pid, sig, (signal) => process.kill(options.pid, signal));
       } catch {
         /* already gone; the next tick finalizes */
       }
