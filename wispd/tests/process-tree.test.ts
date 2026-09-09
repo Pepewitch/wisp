@@ -27,6 +27,7 @@ import {
 import { db, createTask, createTurn, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, setTurnInterrupt, transition, turnsFor } from "../src/store";
 import { processStartTime } from "../src/procid";
 import { STOPPING } from "../src/interrupt-state";
+import { assertTaskNotStopping } from "../src/turn-interrupt";
 import { archiveTaskRows } from "../src/routes/archive";
 import { route } from "../src/routes";
 import { backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
@@ -428,6 +429,33 @@ describe("interrupting a turn stops its descendants", () => {
     expect(alive(unrelated.pid)).toBe(true);
     expect(backgroundWork(task.id).state).toBe("unknown");
     await expect(assertTaskProcessesEnded(task.id)).rejects.toThrow("unverified");
+    signalProcessGroup(unrelated.pid, "SIGKILL");
+    await unrelated.exited;
+  }, 10_000);
+
+  test("an upgrade record releases a reused group id without signalling its new owner", async () => {
+    const task = makeTask("upgrade-reused-group");
+    const unrelated = Bun.spawn({ cmd: ["sh", "-c", "sleep 30"], stdout: "ignore", stderr: "ignore", detached: true });
+    fixtureGroups.push(unrelated.pid);
+    const turnId = createTurn(task.id, 1, "historical turn", unrelated.pid, "/dev/null", "old-start-time");
+    recordProcessGroup(turnId);
+    finishTurn(turnId, "done", 0, "historical result");
+    transition(task.id, "done", "historical result");
+    db.query("UPDATE turns SET started_at = ?, ended_at = ? WHERE id = ?")
+      .run(new Date(Date.now() - 120_000).toISOString(), new Date(Date.now() - 60_000).toISOString(), turnId);
+    // Migration 3 seeds historical rows without a boot id. A failed Stop on
+    // the false-positive row also leaves this durable admission barrier.
+    db.query("UPDATE turn_process_groups SET boot_id = NULL, members_json = ?, state = 'unknown', stop_requested = 1 WHERE turn_id = ?")
+      .run(JSON.stringify([{ pid: unrelated.pid, started: "old-start-time" }]), turnId);
+
+    await refreshProcessGroups(task.id);
+
+    expect(db.query("SELECT state, stop_requested FROM turn_process_groups WHERE turn_id = ?").get(turnId))
+      .toEqual({ state: "none", stop_requested: 0 });
+    expect(backgroundWork(task.id)).toEqual({ state: "none", groups: 0 });
+    expect(() => assertTaskNotStopping(task.id)).not.toThrow();
+    await expect(assertTaskProcessesEnded(task.id)).resolves.toBeUndefined();
+    expect(alive(unrelated.pid)).toBe(true);
     signalProcessGroup(unrelated.pid, "SIGKILL");
     await unrelated.exited;
   }, 10_000);

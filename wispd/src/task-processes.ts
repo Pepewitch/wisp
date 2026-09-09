@@ -1,7 +1,7 @@
 import { PROCESS_BOOT_ID } from "./process-boot";
 import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
-import { processSnapshot, sameProcess, type ProcessMember } from "./process-snapshot";
+import { processSnapshot, sameProcess, type GroupMember, type ProcessMember } from "./process-snapshot";
 
 export interface BackgroundWork {
   state: "none" | "running" | "unknown" | "stopping";
@@ -14,6 +14,7 @@ interface GroupRow {
 const localGroups = new Set<number>();
 const stops = new Map<string, Promise<void>>();
 let refreshing: Promise<void> = Promise.resolve();
+const TURN_LAUNCH_CLOCK_SLOP_MS = 10_000;
 
 function rows(taskId?: string): GroupRow[] {
   return db.query(`SELECT * FROM turn_process_groups WHERE state != 'none'${taskId ? " AND task_id = ?" : ""}`)
@@ -22,6 +23,38 @@ function rows(taskId?: string): GroupRow[] {
 function notify(taskId: string): void {
   const task = getTask(taskId);
   if (task) emit({ type: "task", taskId, state: task.state, stateDetail: task.state_detail, seq: task.seq });
+}
+
+/**
+ * A pre-registry migration row has no boot identity. If its old numeric group
+ * id now has a new leader, preserve that process unless chronology proves the
+ * old group ended first. lstart is rendered in the daemon's current timezone,
+ * so compare its parsed instant with the ISO turn timestamps instead of the
+ * old timezone-sensitive identity token.
+ */
+function groupLeaderReplacedAfterTurn(leader: GroupMember, turn: NonNullable<ReturnType<typeof getTurn>>): boolean {
+  if (leader.observedStartedAt === null || turn.ended_at === null) return false;
+  const launchedAt = Date.parse(turn.started_at);
+  const endedAt = Date.parse(turn.ended_at);
+  if (!Number.isFinite(launchedAt) || !Number.isFinite(endedAt)) return false;
+  // If the host clock moved backwards during the turn, its original process
+  // can appear newer than ended_at. It will still be near the durable launch.
+  if (Math.abs(leader.observedStartedAt - launchedAt) <= TURN_LAUNCH_CLOCK_SLOP_MS) return false;
+  return leader.observedStartedAt > endedAt;
+}
+
+function historicalGroupIdentity(
+  row: Pick<GroupRow, "boot_id" | "pgid">,
+  leader: GroupMember | undefined,
+  turn: ReturnType<typeof getTurn>,
+): { reused: boolean; ended: boolean } {
+  const reused = Boolean(
+    leader?.started && turn?.pid_start_time && !sameProcess(leader, { pid: row.pgid, started: turn.pid_start_time }),
+  );
+  return {
+    reused,
+    ended: Boolean(row.boot_id === null && reused && leader && turn && groupLeaderReplacedAfterTurn(leader, turn)),
+  };
 }
 
 /** Written next to turn creation, before the event loop can observe the spawn. */
@@ -64,10 +97,13 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
     let inventory: Awaited<ReturnType<typeof processSnapshot>>;
     try { inventory = await processSnapshot(new Set(pending.map(row => row.pgid))); }
     catch {
+      const changedTasks = new Set<string>();
       for (const row of pending) {
+        if (row.state === "unknown") continue;
         db.query("UPDATE turn_process_groups SET state = 'unknown' WHERE turn_id = ?").run(row.turn_id);
-        notify(row.task_id);
+        changedTasks.add(row.task_id);
       }
+      for (const changedTask of changedTasks) notify(changedTask);
       return;
     }
     for (const row of pending) {
@@ -84,19 +120,21 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
       // Never adopt a group whose leader has a different identity. Even an
       // apparent start-time mismatch can be a locale/timezone change in old ps
       // timestamps, so preserve files instead of assuming the old work ended.
-      const reused = leader?.started && original?.pid_start_time && !sameProcess(leader, { pid: row.pgid, started: original.pid_start_time });
+      const identity = historicalGroupIdentity(row, leader, original);
       let state: GroupRow["state"];
       const sameBoot = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id === PROCESS_BOOT_ID;
       const rebooted = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id !== PROCESS_BOOT_ID;
-      if (!members.length || rebooted) { state = "none"; localGroups.delete(row.turn_id); }
-      else if (reused || !sameBoot) state = "unknown";
+      if (!members.length || rebooted || identity.ended) { state = "none"; localGroups.delete(row.turn_id); }
+      else if (identity.reused || !sameBoot) state = "unknown";
       else if (known.some(old => members.some(member => sameProcess(old, member))) ||
         (row.turn_id === exitedTurnId && localGroups.has(row.turn_id))) state = "running";
       else state = "unknown";
       if (row.turn_id === exitedTurnId) localGroups.delete(row.turn_id);
       const identities = state === "running" ? JSON.stringify(members.map(({ pid, started }) => ({ pid, started }))) : row.members_json;
-      db.query("UPDATE turn_process_groups SET state = ?, members_json = ?, stop_requested = CASE WHEN ? = 'none' THEN 0 ELSE stop_requested END WHERE turn_id = ?")
-        .run(state, identities, state, row.turn_id);
+      if (state !== row.state || identities !== row.members_json) {
+        db.query("UPDATE turn_process_groups SET state = ?, members_json = ?, stop_requested = CASE WHEN ? = 'none' THEN 0 ELSE stop_requested END WHERE turn_id = ?")
+          .run(state, identities, state, row.turn_id);
+      }
       if (state !== row.state || state === "none") notify(row.task_id);
     }
   });

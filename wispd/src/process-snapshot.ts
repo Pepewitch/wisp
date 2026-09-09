@@ -1,7 +1,11 @@
 import { processStartTimeAsync } from "./procid";
 
 export interface ProcessMember { pid: number; started: string | null }
-export interface GroupMember extends ProcessMember { pgid: number }
+export interface GroupMember extends ProcessMember {
+  pgid: number;
+  /** Current wall-clock interpretation of ps(1)'s lstart column. */
+  observedStartedAt: number | null;
+}
 
 export function sameProcess(a: ProcessMember, b: ProcessMember): boolean {
   return a.pid === b.pid && a.started !== null && b.started !== null &&
@@ -37,8 +41,9 @@ export async function processSnapshot(groups: Set<number>): Promise<GroupMember[
       const pid = Number(match[1]); const pgid = Number(match[2]);
       // Zombies have exited and cannot write files, even before they are reaped.
       if (!groups.has(pgid) || match[3]!.startsWith("Z")) continue;
+      const observedStartedAt = pid === pgid ? Date.parse(match[4]!) : Number.NaN;
       const started = process.platform === "linux" ? await processStartTimeAsync(pid) : match[4]!;
-      members.push({ pid, pgid, started });
+      members.push({ pid, pgid, started, observedStartedAt: Number.isNaN(observedStartedAt) ? null : observedStartedAt });
     }
     return members;
   } finally {
