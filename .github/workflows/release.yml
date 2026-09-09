@@ -25,13 +25,18 @@ concurrency:
 env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
+# Least privilege by default: a job that needs more says so itself, so a new
+# job cannot inherit release or publication rights by being added here.
+permissions:
+  contents: read
+
 jobs:
   release-linux:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           fetch-depth: 0 # full history for Gitleaks and --require-tag
           fetch-tags: true
@@ -43,7 +48,7 @@ jobs:
           git fetch --force origin \
             "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
@@ -61,7 +66,7 @@ jobs:
         run: |
           docker run --rm --platform linux/amd64 \
             --mount "type=bind,source=$PWD,target=$PWD,readonly" \
-            zricethezav/gitleaks:v8.28.0 git "$PWD" \
+            zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 git "$PWD" \
             --gitleaks-ignore-path "$PWD/.gitleaksignore" \
             --redact
 
@@ -80,7 +85,7 @@ jobs:
           }
           (cd "$stage" && sha256sum index.html > SHA256SUMS)
       - name: stage the shared UI bundle for macOS packaging
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-ui-bundle
           path: |
@@ -116,7 +121,7 @@ jobs:
           WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:activation
 
       - name: stage Linux assets for the publish job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-release-assets
           path: dist/release/${{ github.ref_name }}/*
@@ -134,7 +139,7 @@ jobs:
     permissions:
       contents: write # create the GitHub prerelease
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -143,15 +148,15 @@ jobs:
           git fetch --force origin \
             "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
           test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
       - name: require Desktop release credentials
@@ -180,7 +185,7 @@ jobs:
           printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
       - name: collect and verify the shared UI bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-ui-bundle
           path: ${{ runner.temp }}/release-ui
@@ -247,7 +252,7 @@ jobs:
           test -f "docs/v0.4/RELEASE-NOTES-${GITHUB_REF_NAME##*-}.md"
 
       - name: collect the Linux assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: linux-release-assets
           path: dist/release/${{ github.ref_name }}
@@ -403,7 +408,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           # Recovery uses the current workflow implementation from the chosen
           # branch; a separate checkout below supplies immutable tag inputs.
@@ -414,7 +419,7 @@ jobs:
         run: test "$GITHUB_REF" = refs/heads/main
       - name: checkout the immutable release source for recovery
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -429,19 +434,19 @@ jobs:
           git -C "$release_root" fetch --force origin \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           test "$(git -C "$release_root" cat-file -t "refs/tags/$RELEASE_TAG")" = tag
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
       - name: checkout the Homebrew tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           repository: Pepewitch/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -467,7 +472,7 @@ jobs:
             --publish 2>&1 | tee dist/promotion/promotion.log
       - name: retain promotion diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-promotion-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

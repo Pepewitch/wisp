@@ -39,6 +39,11 @@ on:
       - "package.json"
       - "bun.lock"
 
+# Least privilege by default: a job that needs more says so itself, so a new
+# job cannot inherit release or publication rights by being added here.
+permissions:
+  contents: read
+
 jobs:
   public-promotion-dry-run:
     runs-on: macos-15
@@ -46,19 +51,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
         with:
           fetch-depth: 0
           fetch-tags: true
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
       - name: exercise the public promotion path without publishing
@@ -85,7 +90,7 @@ jobs:
           test "$(jq -r .tapState "$receipt")" = already-promoted
       - name: retain promotion diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-promotion-dry-run-${{ github.run_attempt }}
           path: dist/promotion-check/promotion-receipt.json

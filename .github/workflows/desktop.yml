@@ -22,6 +22,14 @@ on:
       - "wispd/scripts/release-macos.ts"
       - "wispd/tests/release-linux.test.ts"
       - "wispd/tests/release-macos.test.ts"
+      # The native proxy implements the daemon's auth, route, header, SSE,
+      # WebSocket, and media contract, so a daemon-side change to any of those
+      # can break it without touching desktop/ (ENG-10).
+      - "wispd/src/daemon.ts"
+      - "wispd/src/routes/**"
+      - "wispd/src/types.ts"
+      - "wispd/tests/helpers/**"
+      - "wispd/tests/desktop-transport.test.ts"
       - "package.json"
       - "bun.lock"
       - "tsconfig.json"
@@ -45,11 +53,24 @@ on:
       - "wispd/scripts/release-macos.ts"
       - "wispd/tests/release-linux.test.ts"
       - "wispd/tests/release-macos.test.ts"
+      # The native proxy implements the daemon's auth, route, header, SSE,
+      # WebSocket, and media contract, so a daemon-side change to any of those
+      # can break it without touching desktop/ (ENG-10).
+      - "wispd/src/daemon.ts"
+      - "wispd/src/routes/**"
+      - "wispd/src/types.ts"
+      - "wispd/tests/helpers/**"
+      - "wispd/tests/desktop-transport.test.ts"
       - "package.json"
       - "bun.lock"
       - "tsconfig.json"
       - ".github/workflows/desktop.yml"
       - ".github/workflows/release.yml"
+
+# Least privilege by default: a job that needs more says so itself, so a new
+# job cannot inherit release or publication rights by being added here.
+permissions:
+  contents: read
 
 jobs:
   native-core:
@@ -58,8 +79,8 @@ jobs:
       run:
         working-directory: desktop/src-tauri
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
@@ -67,12 +88,12 @@ jobs:
       - name: build shared UI bundle
         run: bun run build:ui
         working-directory: .
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           components: clippy, rustfmt
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
       - name: formatting
