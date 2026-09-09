@@ -36,8 +36,7 @@ import { TerminalSection } from "@/components/terminal-pane"
 import {
   useHarnesses,
   useHarnessFeatures,
-  usePullRequestOverview,
-  usePullRequestStatus,
+  usePullRequests,
   useRepos,
   useStatus,
   useTaskDetail,
@@ -259,8 +258,9 @@ function MainView({
   const statusQuery = useStatus()
   const reposQuery = useRepos()
   const detailQuery = useTaskDetail(selectedId)
-  const pullRequestQuery = usePullRequestStatus(selectedId)
-  const pullRequestOverviewQuery = usePullRequestOverview()
+  // one record, two surfaces: the sidebar row and the task header can no
+  // longer disagree about what a PR has become (see `usePullRequests`)
+  const pullRequests = usePullRequests(selectedId)
   const harnessesQuery = useHarnesses(true)
 
   // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
@@ -327,7 +327,7 @@ function MainView({
       groups={groups}
       archivedTasks={archivedTasks}
       status={statusQuery.data ?? {}}
-      pullRequests={pullRequestOverviewQuery.data?.tasks ?? {}}
+      pullRequests={pullRequests.tasks}
       selectedId={selectedId}
       onSelect={(id) => {
         selectTask(id)
@@ -431,7 +431,7 @@ function MainView({
       mobile={isMobile}
       desktop={desktop !== null}
       task={header}
-      pullRequest={pullRequestQuery.data}
+      pullRequest={pullRequests.selected}
       sidebar={sidebarNode}
       conversation={conversationNode}
       changes={changesNode}
@@ -440,7 +440,7 @@ function MainView({
       taskHeader={
         <TaskHeader
           task={header}
-          pullRequest={pullRequestQuery.data}
+          pullRequest={pullRequests.selected}
           worktreeReason={detailQuery.data?.worktreeReason ?? null}
         />
       }

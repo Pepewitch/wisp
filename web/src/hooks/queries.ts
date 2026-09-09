@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 
 import { ApiError } from "@/lib/api";
+import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
@@ -100,6 +102,38 @@ export function usePullRequestOverview() {
     refetchInterval: PULL_REQUEST_OVERVIEW_POLL_MS,
     refetchIntervalInBackground: false,
   });
+}
+
+/**
+ * The app's ONE reading of pull-request state, for the sidebar and the header
+ * alike. Each used to read its own query and they drifted apart between ticks;
+ * see `reconcilePullRequests` for what that looked like on screen and why
+ * folding both responses into one record is the whole fix.
+ *
+ * Both queries still run — the selected task is worth watching twice as often
+ * as the rest — but neither is read on its own any more.
+ */
+export function usePullRequests(selectedId: string | null) {
+  const overview = usePullRequestOverview();
+  const selected = usePullRequestStatus(selectedId);
+  const tasks = useMemo(
+    () =>
+      reconcilePullRequests(overview.data?.tasks, selectedId, selected.data, {
+        selected: selected.dataUpdatedAt,
+        overview: overview.dataUpdatedAt,
+      }),
+    [
+      overview.data,
+      overview.dataUpdatedAt,
+      selectedId,
+      selected.data,
+      selected.dataUpdatedAt,
+    ],
+  );
+  return {
+    tasks,
+    selected: selectedId === null ? undefined : tasks[selectedId]?.status,
+  };
 }
 
 /**
