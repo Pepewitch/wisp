@@ -46,11 +46,20 @@ describe("the default test environment fails closed on real launches", () => {
     expect(launchPolicyDescription()).toStartWith("fixtures:");
   });
 
-  /** The stand-ins the suite allows must stay generic — a provider CLI there would defeat the gate. */
-  test("no builtin harness binary is a permitted stand-in", () => {
+  /**
+   * The stand-ins the suite allows must stay generic AND minimal. `env` used
+   * to be on this list, which was a hole rather than a stand-in: the policy
+   * judges `cmd[0]`, so `env claude …` resolves to `env` and would have been
+   * permitted (a review caught it).
+   */
+  test("the stand-in list is interpreters only — no harness, no argv wrapper", () => {
     const policy = launchPolicyDescription() ?? "";
     const shims = /;shims:([^;]*)/.exec(policy)?.[1]?.split(",") ?? [];
     for (const def of Object.values(BUILTIN_ADAPTERS)) expect(shims).not.toContain(def.bin);
+    for (const wrapper of ["env", "xargs", "nice", "timeout", "sudo", "nohup"]) {
+      expect(shims).not.toContain(wrapper);
+    }
+    expect(shims.every((shim) => ["bash", "sh", "true", "false"].includes(shim))).toBe(true);
   });
 
   /**
@@ -62,6 +71,28 @@ describe("the default test environment fails closed on real launches", () => {
     for (const [id, def] of Object.entries(BUILTIN_ADAPTERS)) {
       expect(() => assertExecutableAllowed([def.bin], `builtin ${id}`)).toThrow(LaunchBlocked);
     }
+  });
+
+  /**
+   * The OTHER ambient fact from the ENG-12 incident, which had no test: a bare
+   * temporary fixture directory was discovered as part of THIS checkout, so
+   * "an empty directory" became a worktree of the real project and its
+   * `.wisp/setup.sh` ran. `GIT_CEILING_DIRECTORIES` is what stops the upward
+   * walk; this asserts the walk actually stops.
+   */
+  test("git cannot discover a repository above a bare temp fixture", () => {
+    const fixture = mkdtempSync(join(tmpdir(), "wisp-ceiling-"));
+    const probe = Bun.spawnSync({
+      cmd: ["git", "rev-parse", "--show-toplevel"],
+      cwd: fixture,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(process.env.GIT_CEILING_DIRECTORIES ?? "").not.toBe("");
+    expect(probe.exitCode).not.toBe(0);
+    expect(probe.stdout.toString()).not.toContain("wisp");
+    expect(probe.stderr.toString()).toContain("not a git repository");
   });
 
   test("the checkout's own repository hooks are refused", () => {
