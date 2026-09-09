@@ -330,7 +330,12 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     ownership = acquireHomeOwnership();
   } catch (error) {
     if (error instanceof HomeBusyError) {
-      throw new Error(await homeConflictMessage(hostname, cfg.port, error.message), { cause: error });
+      // The owner is on the port THIS process was asked to use when there is
+      // one (tests pass `port: 0`, production uses the persisted port), so the
+      // probe names the daemon that actually answered instead of reporting "a
+      // non-Wisp service" about an address nobody is on (a review's note).
+      const probePort = options.port !== undefined && options.port > 0 ? options.port : cfg.port;
+      throw new Error(await homeConflictMessage(hostname, probePort, error.message), { cause: error });
     }
     throw error;
   }

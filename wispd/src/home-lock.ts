@@ -77,9 +77,15 @@ export function acquireHomeOwnership(): HomeOwnership {
     );
   } catch (error) {
     db.close();
-    throw new HomeBusyError(
-      `${WISP_HOME} is already owned by another Wisp daemon (${error instanceof Error ? error.message : String(error)})`,
-    );
+    const detail = error instanceof Error ? error.message : String(error);
+    // Only a BUSY lock means "someone else owns this home". CANTOPEN, a
+    // permissions problem, a full disk, or a corrupt lock file are none of
+    // those, and reporting them as an owner sends the operator hunting a
+    // daemon that is not there (a review's note).
+    if (!/busy|locked/i.test(detail)) {
+      throw new Error(`${WISP_HOME}: could not take the daemon ownership lock (${detail})`, { cause: error });
+    }
+    throw new HomeBusyError(`${WISP_HOME} is already owned by another Wisp daemon (${detail})`);
   }
   held = db;
   return {

@@ -306,7 +306,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     if (applied.has(migration.id)) continue;
     db.transaction(() => {
       migration.up(db);
-      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
+      // OR IGNORE, because two daemons can reach an unmigrated home at the
+      // same time: schema work still happens before the ownership lock, so the
+      // loser of that race would otherwise crash on the primary key at import
+      // rather than losing the lock a moment later (a review's note). Safe
+      // only while every `up()` stays idempotent, which is the rule this file
+      // already states — the baseline is guarded statement by statement.
+      db.query("INSERT OR IGNORE INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
         migration.id,
         migration.name,
         new Date().toISOString(),
