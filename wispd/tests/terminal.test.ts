@@ -9,6 +9,7 @@ import {
   DISPLACED_MESSAGE,
   killAll,
   killForTask,
+  openSession,
   loginShell,
   loginShellArgv,
   sessionKey,
@@ -468,6 +469,45 @@ describe("terminal size on the upgrade", () => {
       expect(typeof parseTerminalSize(new URLSearchParams(query))).toBe("string");
     }
   });
+});
+
+/**
+ * What happens to a session that has been ASKED to die.
+ *
+ * A shell that outlives SIGKILL (a loaded host, a process blocked in the
+ * kernel) used to keep `finished === false` and stay in the reusable map,
+ * because the bookkeeping only ran when `kill()` returned normally. The next
+ * client was then handed that undead session and its first resize threw — seen
+ * in CI as a terminal that errored the instant it opened. It also has to stay
+ * TRACKED, or archive's fail-closed gate would report success while a process
+ * was still sitting in the worktree.
+ */
+describe("retiring a killed shell", () => {
+  test("a shell being killed is never handed to an arriving client", async () => {
+    const { task, worktree } = terminalFixture("retire");
+    const first = openSession(task.id, 0, worktree);
+
+    // Not awaited: the kill is in flight, which is exactly the window where
+    // the old code would hand this same session to the next client.
+    const killing = killForTask(task.id);
+    const second = openSession(task.id, 0, worktree);
+    expect(second).not.toBe(first);
+    expect(first.isLive()).toBe(false);
+
+    await killing;
+    await killAll();
+  }, 30_000);
+
+  test("a killed shell is replaced, not reused, by the next attach", async () => {
+    const { task, worktree } = terminalFixture("replace");
+    const first = openSession(task.id, 0, worktree);
+    await killForTask(task.id);
+
+    const second = openSession(task.id, 0, worktree);
+    expect(second).not.toBe(first);
+    expect(second.isLive()).toBe(true);
+    await killAll();
+  }, 30_000);
 });
 
 describe("sessionKey", () => {
