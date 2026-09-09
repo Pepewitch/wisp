@@ -8,6 +8,9 @@ import { sameOriginWebTransport } from "@/lib/web-transport"
 import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
+import { StateDot } from "./primitives"
+import { stateWord } from "@/lib/state"
+
 import { SteerBox } from "./steer-box"
 
 afterEach(() => vi.unstubAllGlobals())
@@ -184,5 +187,44 @@ describe("the composer control bar answers its own width", () => {
     mount(<SteerBox task={task("done")} />)
 
     expect(screen.getByTitle("Enter sends · Shift+Enter for a new line").className).toContain("@2xl:block")
+  })
+})
+
+
+describe("completed work with a background process", () => {
+  it.each(["browser", "desktop"] as const)("keeps Stop available and steering non-destructive through %s", async (runtime) => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
+    vi.stubGlobal("fetch", fetcher)
+    const transport = runtime === "browser" ? sameOriginWebTransport
+      : createDesktopTransport("http://127.0.0.1:45678/fixture-capability", "remote-fixture", 1)
+    const backgroundTask: ApiTask = { ...task("done"), background: { state: "running", groups: 1 } }
+    const send = vi.fn()
+    const view = render(<><StateDot state={backgroundTask.state} background={backgroundTask.background} />
+      <SteerBox task={backgroundTask} onSend={send} /></>, { wrapper: runtimeWrapper(transport) })
+    expect(screen.getByRole("img", { name: "Done · Background work running" })).toHaveClass("border-state-background")
+    expect(stateWord(backgroundTask)).toBe("Done · Background work running")
+    const box = screen.getByPlaceholderText("Ask for changes, or / for commands")
+    fireEvent.change(box, { target: { value: "continue working" } })
+    fireEvent.keyDown(box, { key: "Enter" })
+    await waitFor(() => expect(send).toHaveBeenCalledWith("continue working", undefined))
+    expect(fetcher).not.toHaveBeenCalled()
+    await waitFor(() => expect(box).toHaveValue(""))
+    fireEvent.click(screen.getByRole("button", { name: "Stop background work" }))
+    await waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    expect(fetcher.mock.calls[0]?.[0]).toBe(runtime === "browser" ? "/api/tasks/tk9zdy/interrupt"
+      : "http://127.0.0.1:45678/fixture-capability/connections/remote-fixture/1/api/tasks/tk9zdy/interrupt")
+    await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent("Stopped"))
+    view.rerender(<><StateDot state="done" background={{ state: "none", groups: 0 }} />
+      <SteerBox task={{ ...backgroundTask, background: { state: "none", groups: 0 } }} onSend={send} /></>)
+    expect(screen.getByRole("img", { name: "Done" })).toHaveClass("bg-state-done")
+    expect(screen.queryByRole("button", { name: "Stop background work" })).toBeNull()
+  })
+
+  it.each(["unknown", "stopping"] as const)("uses an amber square and an explicit label for %s background work", (state) => {
+    render(<StateDot state="done" background={{ state, groups: 1 }} />)
+    const dot = screen.getByRole("img")
+    expect(dot).toHaveClass("rounded-[1px]", "bg-state-stuck")
+    expect(dot).not.toHaveClass("bg-state-done")
+    expect(dot).toHaveAccessibleName(state === "unknown" ? "Done · Background status unknown" : "Done · Stopping background work")
   })
 })

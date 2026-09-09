@@ -58,6 +58,11 @@ describe("stateWord (the honest failure word, Theme B)", () => {
     expect(stateWord(task({ latest_turn_has_result: true, latest_turn_exit_code: 143 }))).toBe("Exited 143")
   })
 
+  it("background work does not hide a nonzero exit after a delivered result", () => {
+    expect(stateWord(task({ latest_turn_has_result: true, latest_turn_exit_code: 1,
+      background: { state: "running", groups: 1 } }))).toBe("Exited 1 · Background work running")
+  })
+
   it("a result-less failure stays Failed — it really did not deliver", () => {
     expect(stateWord(task({ latest_turn_exit_code: 1 }))).toBe("Failed")
     expect(stateWord(task({ latest_turn_has_result: true }))).toBe("Failed") // exit unknown

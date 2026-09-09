@@ -54,7 +54,7 @@ export function TaskHeader({
             {task.id}
           </span>,
           <span key="state" className="flex items-center gap-1.5">
-            <StateDot state={task.state} />
+            <StateDot state={task.state} background={task.background} />
             <span className="text-fg-secondary">{stateWord(task)}</span>
           </span>,
           task.archived && <span key="arch">Archived</span>,

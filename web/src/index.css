@@ -86,6 +86,7 @@
   --color-state-creating: var(--state-creating);
   --color-state-running: var(--primary);
   --color-state-done: var(--state-done);
+  --color-state-background: var(--state-background);
   --color-state-needs-input: var(--state-needs-input);
   --color-state-stuck: var(--state-stuck);
   --color-state-failed: var(--state-failed);
@@ -217,6 +218,7 @@
   /* task states and diff, the two families that keep their hue */
   --state-creating: #74747f;
   --state-done: #57b983;
+  --state-background: #6aaed6;
   --state-needs-input: #ddb055;
   --state-stuck: #c4844f;
   --state-failed: #df605c;
@@ -318,6 +320,7 @@
   /* the two hue families, darkened until each is a text colour on paper */
   --state-creating: #6c6c78;
   --state-done: #1f8a52;
+  --state-background: #26739f;
   --state-needs-input: #8a600c;
   --state-stuck: #9a5a1c;
   --state-failed: #c0332e;

@@ -31,7 +31,11 @@ There is no production-supported release yet.
   builds, servers, and sub-agents a harness started; it does not reach a
   descendant that deliberately left the group by calling `setsid`, and Wisp
   does not walk the process tree to hunt one down, because that races pid
-  reuse.
+  reuse. Group membership and PID/start-time identities are persisted across
+  turns and daemon restarts, bound to the host's boot identity so Linux start
+  ticks cannot be reused across reboots. A matching living member is required to recover
+  ownership; uncertain ownership blocks signalling and workspace deletion.
+  The indicator describes tracked groups, not every process on the machine.
 - The worktree file viewer (`GET /api/tasks/:id/file`) checks the requested
   path against the worktree and then FOLLOWS symlinks, so a symlink inside a
   worktree can display a file outside it. Under the trust model above — a

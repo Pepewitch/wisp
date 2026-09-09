@@ -24,11 +24,12 @@ import {
   startTurn,
   submitTaskMessage,
 } from "../src/runner";
-import { createTask, createTurn, freeSlot, getTask, newTaskId, setTaskFields, setTurnInterrupt, transition, turnsFor } from "../src/store";
+import { db, createTask, createTurn, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, setTurnInterrupt, transition, turnsFor } from "../src/store";
 import { processStartTime } from "../src/procid";
 import { STOPPING } from "../src/interrupt-state";
 import { archiveTaskRows } from "../src/routes/archive";
 import { route } from "../src/routes";
+import { backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -368,16 +369,15 @@ describe("interrupting a turn stops its descendants", () => {
     const grandchild = await recordedPid(pidFile);
 
     await until(() => !alive(grandchild), 20_000);
+    await until(() => hasRunningTurn(task.id) === null);
     expect(getTask(task.id)?.state_detail ?? "").toContain("log cap exceeded");
   }, 40_000);
 
   /**
-   * The fail-closed gate itself: the harness exits cleanly, but something it
-   * started is still in its group. `killTurnForArchive` has to refuse rather
-   * than let the caller delete a worktree with a live process in it — and
-   * nothing tested the refusal, only the happy path (a review's note).
+   * A finished turn can leave verified background work. Force-archive must
+   * stop that work before deleting files, even without a live harness.
    */
-  test("force-archive refuses while the turn's group still has members", async () => {
+  test("force-archive stops a finished turn's verified surviving group", async () => {
     const task = makeTask("survivor");
     const pidFile = join(task.worktree_path!, "child.pid");
     // The harness exits immediately; its child keeps the GROUP alive, having
@@ -392,16 +392,82 @@ describe("interrupting a turn stops its descendants", () => {
     await until(() => hasRunningTurn(task.id) === null, 15_000);
     expect(alive(grandchild)).toBe(true);
 
-    const refusal = await killTurnForArchive(task.id, 500).then(
-      () => null,
-      (error: unknown) => (error instanceof Error ? error.message : String(error)),
-    );
-
-    // The turn is finished, so there is nothing left to interrupt — the gate
-    // that must fire is the group check.
-    expect(refusal ?? "").toContain("processes it started are still running");
-    expect(alive(grandchild)).toBe(true);
+    await killTurnForArchive(task.id, 500);
+    expect(alive(grandchild)).toBe(false);
   }, 40_000);
+
+  test("a host reboot invalidates old process identities even when PID and start ticks match", async () => {
+    const task = makeTask("previous-boot");
+    const unrelated = Bun.spawn({ cmd: ["sh", "-c", "sleep 30"], stdout: "ignore", stderr: "ignore", detached: true });
+    fixtureGroups.push(unrelated.pid);
+    const log = join(task.worktree_path!, "turn.out.log");
+    writeFileSync(log, "old result");
+    const turnId = createTurn(task.id, 1, "old turn", unrelated.pid, log, processStartTime(unrelated.pid));
+    recordProcessGroup(turnId);
+    db.query("UPDATE turn_process_groups SET boot_id = 'previous-boot' WHERE turn_id = ?").run(turnId);
+    setTurnInterrupt(turnId, STOPPING);
+    transition(task.id, "running", STOPPING);
+    await recoverOrphanedTurns({ fake: bashAdapter("true") }, cfg);
+    expect(hasRunningTurn(task.id)).toBeNull();
+    await interruptTurn(task.id, 50);
+    expect(alive(unrelated.pid)).toBe(true);
+    expect(backgroundWork(task.id).state).toBe("none");
+    signalProcessGroup(unrelated.pid, "SIGKILL");
+    await unrelated.exited;
+  }, 10_000);
+
+  test("a mismatched process-group leader is not signalled or treated as safe for deletion", async () => {
+    const task = makeTask("reused-group");
+    const unrelated = Bun.spawn({ cmd: ["sh", "-c", "sleep 30"], stdout: "ignore", stderr: "ignore", detached: true });
+    fixtureGroups.push(unrelated.pid);
+    const turnId = createTurn(task.id, 1, "old turn", unrelated.pid, "/dev/null", "old-start-time");
+    recordProcessGroup(turnId);
+    finishTurn(turnId, "done", 0, "old result");
+    transition(task.id, "done", "old result");
+    await expect(interruptTurn(task.id, 50)).rejects.toThrow("ownership is uncertain");
+    expect(alive(unrelated.pid)).toBe(true);
+    expect(backgroundWork(task.id).state).toBe("unknown");
+    await expect(assertTaskProcessesEnded(task.id)).rejects.toThrow("unverified");
+    signalProcessGroup(unrelated.pid, "SIGKILL");
+    await unrelated.exited;
+  }, 10_000);
+
+  test("unverified background ownership refuses Stop and archive without signalling the group", async () => {
+    const task = makeTask("unverified-background");
+    const def = bashAdapter('sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid; exit 0');
+    startTurn(task, "start watcher", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    await until(() => hasRunningTurn(task.id) === null);
+    expect(backgroundWork(task.id).state).toBe("running");
+    // Simulate a persisted identity that no longer matches any living member.
+    db.query("UPDATE turn_process_groups SET members_json = ? WHERE turn_id = ?")
+      .run(JSON.stringify([{ pid: descendant, started: "different-start-time" }]), turn.id);
+    await refreshProcessGroups(task.id);
+    expect(backgroundWork(task.id).state).toBe("unknown");
+    const kill = process.kill.bind(process);
+    const signals: number[] = [];
+    const observed = spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (signal !== 0) signals.push(pid);
+      return kill(pid, signal);
+    });
+    try {
+      await expect(interruptTurn(task.id, 50)).rejects.toThrow("ownership is uncertain");
+      await expect(assertTaskProcessesEnded(task.id)).rejects.toThrow("unverified");
+      expect(await archiveTaskRows([getTask(task.id)!], true, cfg)).toMatchObject({ status: 409 });
+      await expect(submitTaskMessage(getTask(task.id)!, "must wait", def, cfg)).rejects.toThrow("Stop is incomplete");
+      expect(signals).toEqual([]);
+      expect(alive(descendant)).toBe(true);
+      expect(getTask(task.id)?.archived).toBe(0);
+    } finally { observed.mockRestore(); }
+    // Once independently stopped, retry confirms absence and reopens sending.
+    signalProcessGroup(turn.pid!, "SIGKILL");
+    await until(() => !alive(descendant));
+    await interruptTurn(task.id, 50);
+    expect(backgroundWork(task.id).state).toBe("none");
+    expect(getTask(task.id)?.state).toBe("done");
+  }, 10_000);
 
   /**
    * The case that used to hang rather than leak: the harness exits but leaves

@@ -130,7 +130,7 @@ export function MobileShell({
                   className="mt-1"
                   items={[
                     <span key="state" className="flex shrink-0 items-center gap-1.5">
-                      <StateDot state={task.state} />
+                      <StateDot state={task.state} background={task.background} />
                       <span className="text-fg-secondary">{stateWord(task)}</span>
                     </span>,
                     // Worktree is the default and says so on its own branch;

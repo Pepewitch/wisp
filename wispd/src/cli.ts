@@ -7,7 +7,7 @@ import { wispCommand } from "./command";
 import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
 import { bunSpawn, runDoctor } from "./doctor";
 import { modelsReport } from "./models";
-import { displayStateWord, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
+import { backgroundSummary, displayStateWord, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
@@ -223,7 +223,7 @@ function printTasks(tasks: ListedTask[]): void {
     const icon = STATE_ICON[t.state] ?? "·";
     // the honest word (Theme B): "exited 1" when the work landed but the
     // harness CLI exited nonzero; "failed" is reserved for no-result failures
-    const word = displayStateWord(t.state, t.latest_turn_exit_code, t.latest_turn_has_result);
+    const word = displayStateWord(t.state, t.latest_turn_exit_code, t.latest_turn_has_result) + backgroundSummary(t);
     const detail = t.state_detail ? `  — ${t.state_detail.slice(0, 60)}` : "";
     // the model the LATEST turn actually ran on; "(requested)" when the
     // harness never reported one — the distinction P5b exists for
@@ -295,7 +295,7 @@ async function showCommand(positional: string[]): Promise<void> {
     latest?.exit_code ?? null,
     latest !== undefined && latest.result !== null,
   );
-  console.log(`${task.id}  ${word}${task.state_detail ? ` (${task.state_detail})` : ""}`);
+  console.log(`${task.id}  ${word}${backgroundSummary(task)}${task.state_detail ? ` (${task.state_detail})` : ""}`);
   console.log(
     `harness: ${task.harness}${task.model ? ` (${task.model})` : ""}   session: ${task.session_id ?? "-"}`,
   );

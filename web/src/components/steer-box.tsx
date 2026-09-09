@@ -342,9 +342,10 @@ function steerState({
   const blocked = task?.state === "running" || task?.state === "stuck"
   const hasMessage = value.trim().length > 0
   const canSend = hasMessage && !disabled && !sending
-  const canStop = blocked && !hasMessage && !disabled && !sending
+  const hasBackground = task?.background && task.background.state !== "none"
+  const canStop = (blocked || hasBackground) && !hasMessage && !disabled && !sending
   const shown = note && task && note.taskId === task.id ? note : null
-  return { taskId, suffixPromptId, disabled, blocked, canSend, canStop, shown }
+  return { taskId, suffixPromptId, disabled, blocked, canSend, canStop: Boolean(canStop), shown }
 }
 
 function slashGroups(
@@ -564,7 +565,8 @@ function ComposerControls({
   // The note takes a line of its own rather than wrapping four words deep
   // between the suffix picker and the send button, which is what a bar with no
   // opinion about its width did.
-  const note = blocked ? "running · send won't interrupt" : null
+  const backgroundOnly = !blocked && task?.background && task.background.state !== "none"
+  const note = blocked ? "running · send won't interrupt" : backgroundOnly ? "background work · send won't stop it" : null
   return (
     <div className="mt-2 flex flex-col gap-1">
       {note && <span className="px-0.5 text-[11px] text-faint @2xl:hidden">{note}</span>}
@@ -598,10 +600,10 @@ function ComposerControls({
           type="button"
           onClick={canStop ? onStop : onSend}
           disabled={!canStop && !canSend}
-          aria-label={canStop ? "Stop turn" : blocked ? "Send safely" : "Send"}
+          aria-label={canStop ? backgroundOnly ? "Stop background work" : "Stop turn" : blocked ? "Send safely" : "Send"}
           title={
             canStop
-              ? "Stop the running turn; the session is kept"
+              ? backgroundOnly ? "Stop this task's background work; keep the completed result" : "Stop the running turn and background work; the session is kept"
               : blocked
                 ? "Send at a safe boundary, or queue for the next turn"
                 : "Send"

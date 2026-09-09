@@ -79,7 +79,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             task.archived && "opacity-55",
           )}
         >
-          <StateDot state={task.state} />
+          <StateDot state={task.state} background={task.background} />
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-[12.5px]",
@@ -201,7 +201,7 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
         task.archived && "opacity-55",
       )}
     >
-      <StateDot state={task.state} className="mt-px" />
+      <StateDot state={task.state} background={task.background} className="mt-px" />
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
           {task.title}
@@ -346,7 +346,7 @@ export function TaskCard({
       <div className="text-[12.5px] leading-snug font-medium text-foreground">{task.title}</div>
 
       <div className="mt-2 flex items-center gap-1.5">
-        <StateDot state={task.state} className="size-1.5" />
+        <StateDot state={task.state} background={task.background} className="size-1.5" />
         <span className={cn("text-[11.5px]", STATE_TEXT[task.state])}>{stateWord(task)}</span>
         {task.archived && <span className="text-[11.5px] text-faint">· archived</span>}
       </div>

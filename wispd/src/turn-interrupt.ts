@@ -1,9 +1,10 @@
 import { closeLiveInput } from "./live-input";
 import { INTERRUPTED, isUnresolvedInterrupt, STOP_FAILED, STOPPING } from "./interrupt-state";
 import { pidIdentity } from "./process-watch";
-import { forgetOwnedGroupIfEmpty, processGroupAlive, processGroupEnded, signalProcessGroup } from "./process-tree";
+import { processGroupAlive, processGroupEnded, signalProcessGroup } from "./process-tree";
 import { getTask, getTurn, latestTurnForTask, runningTurn, setTurnInterrupt, transition } from "./store";
 import type { Turn } from "./types";
+import { hasRecordedGroup, recordedGroupRebooted, processStop, processStopPending, stopRecordedGroups } from "./task-processes";
 
 /** A stop's process phase must finish before either watcher can finalize. */
 const interruptBarriers = new Map<number, Promise<void>>();
@@ -18,10 +19,11 @@ function unresolvedInterrupt(taskId: string): Turn | null {
 }
 
 /** Persisted refusals also protect callers after a failed Stop or daemon restart. */
-export function assertTaskNotStopping(taskId: string): void {
+export function assertTaskNotStopping(taskId: string, retryBackgroundStop = false): void {
   const turn = unresolvedInterrupt(taskId);
   if (turn) throw new InterruptConflict(`${turn.interrupt_detail}; retry Stop before sending or archiving`);
   if (interruptBarriers.has(latestTurnForTask(taskId)?.id ?? -1)) throw new InterruptConflict(STOPPING);
+  if (processStop(taskId) || (!retryBackgroundStop && processStopPending(taskId))) throw new InterruptConflict("Background work is stopping or its Stop is incomplete; retry Stop before sending or archiving.");
 }
 
 /** Wait up to ms for the turn ROW to leave 'running' — i.e. finalize has run. */
@@ -83,11 +85,21 @@ async function stopTurnProcesses(
 ): Promise<void> {
   if (!turn.pid) throw new Error("running turn has no pid to signal");
   const pid = turn.pid;
+  if (!child && recordedGroupRebooted(turn.id)) {
+    setTurnInterrupt(turn.id, INTERRUPTED);
+    return;
+  }
   const identity = await pidIdentity(pid, turn.pid_start_time);
-  // No authority is recovered from an old numeric PID. A failed/interrupted
-  // stop from another daemon can only confirm an empty group once its leader
-  // is gone; unresolved survivors require operator cleanup, not blind signals.
+  // An old numeric PID alone conveys no authority. Once its leader is gone,
+  // require a verified descendant in the durable registry or an empty group.
   if (identity !== "alive" && !child) {
+    if (identity === "dead" && hasRecordedGroup(turn.id)) {
+      // A previous daemon may have recorded a surviving descendant before the
+      // leader exited. The durable registry revalidates that living identity.
+      await stopRecordedGroups(turn.task_id, graceMs);
+      setTurnInterrupt(turn.id, INTERRUPTED);
+      return;
+    }
     if (identity === "dead" && unresolvedInterrupt(turn.task_id) && !processGroupAlive(pid)) {
       setTurnInterrupt(turn.id, INTERRUPTED);
       return;
@@ -136,7 +148,6 @@ async function stopTurnProcesses(
         throw new Error(`processes in turn ${turn.n} (pid ${pid}) survived SIGKILL`);
       }
     }
-    forgetOwnedGroupIfEmpty(pid);
     setTurnInterrupt(turn.id, detail);
   } catch (error) {
     const detail = `${STOP_FAILED}: ${error instanceof Error ? error.message : String(error)}`;

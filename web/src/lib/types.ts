@@ -51,6 +51,8 @@ export type ActivityEvent =
 
 /** Task as GET /api/tasks serializes it (archived is a boolean at the boundary). */
 export interface ApiTask {
+  /** Absent on older daemons; the turn outcome remains in state. */
+  background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
   id: string;
   title: string;
   repo_path: string;

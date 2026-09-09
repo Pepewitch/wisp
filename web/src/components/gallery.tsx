@@ -249,6 +249,14 @@ function FoundationSpecimens() {
               </div>
             ))}
           </div>
+          <div className="mt-4 grid gap-2.5">
+            {(["running", "stopping", "unknown"] as const).map((state) => (
+              <div key={state} className="flex items-center gap-2.5 text-[12px] text-fg-secondary">
+                <StateDot state="done" background={{ state, groups: 1 }} />
+                <span>Done · {state === "running" ? "Background work running" : state === "stopping" ? "Stopping background work" : "Background status unknown"}</span>
+              </div>
+            ))}
+          </div>
           <p className="mt-5 border-t border-border pt-4 text-[11.5px] leading-relaxed text-muted-foreground">
             <span className="text-state-failed">Failed</span> and{" "}
             <span className="text-state-needs-input">needs input</span> are the only two states allowed to tint

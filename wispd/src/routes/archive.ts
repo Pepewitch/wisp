@@ -2,6 +2,7 @@ import { removeTaskAttachments } from "../attachments";
 import { repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn, killTurnForArchive } from "../runner";
 import { assertTaskNotStopping } from "../turn-interrupt";
+import { assertTaskProcessesEnded, backgroundWork, refreshProcessGroups } from "../task-processes";
 import {
   advanceArchiveCleanup,
   archiveTaskWithCleanup,
@@ -88,6 +89,7 @@ async function runCleanupStages(job: ArchiveCleanupJob): Promise<void> {
       what: "worktree teardown failed",
       run: async () => {
         if (!job.removable) return;
+        await assertTaskProcessesEnded(job.task_id);
         await removeWorktree(
           job.repo_path,
           job.worktree_path!,
@@ -101,7 +103,7 @@ async function runCleanupStages(job: ArchiveCleanupJob): Promise<void> {
     {
       stage: "remove-attachments",
       what: "could not remove the task's attachments",
-      run: () => removeTaskAttachments(job.task_id),
+      run: async () => { await assertTaskProcessesEnded(job.task_id); await removeTaskAttachments(job.task_id); },
     },
   ];
 
@@ -205,12 +207,16 @@ export function startArchiveCleanupLoop(): ReturnType<typeof setInterval> {
 
 async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedArchive | ArchiveRefusal> {
   const task = getTask(snapshot.id) ?? snapshot;
+  await refreshProcessGroups(task.id);
   try {
     assertTaskNotStopping(task.id);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error), status: 409, task };
   }
   const running = hasRunningTurn(task.id);
+  if (!force && backgroundWork(task.id).state !== "none") {
+    return { error: "Background work is still running or unverified — stop it first, or force-archive to stop verified processes", status: 409, task };
+  }
   if (running && !force) {
     return {
       error: `turn ${running.n} is still running — interrupt it first, or force-archive to kill it`,

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 
-import { STATE_DOT } from "@/lib/state"
-import type { TaskState } from "@/lib/types"
+import { backgroundLabel, STATE_DOT, STATE_LABEL } from "@/lib/state"
+import type { ApiTask, TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /* ── the row of small parts every screen is built from ──────────────────── */
@@ -10,14 +10,21 @@ import { cn } from "@/lib/utils"
  * The state marker. 6px, hue on the dot and nowhere else; `running` gets a
  * violet halo so a live task is findable in a list of thirty.
  */
-export function StateDot({ state, className }: { state: TaskState; className?: string }) {
+export function StateDot({ state, background, className }: { state: TaskState; background?: ApiTask["background"]; className?: string }) {
+  const label = backgroundLabel(background)
+  const backgroundOnly = label && state === "done"
   return (
     <span
       data-state={state}
-      aria-hidden
+      data-background={background?.state ?? "none"}
+      role="img"
+      aria-label={label ? `${STATE_LABEL[state]} · ${label}` : STATE_LABEL[state]}
+      title={label ? `${STATE_LABEL[state]} · ${label}` : STATE_LABEL[state]}
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        STATE_DOT[state],
+        backgroundOnly
+          ? background?.state === "running" ? "border-2 border-state-background bg-transparent" : "rounded-[1px] bg-state-stuck"
+          : STATE_DOT[state],
         state === "running" && "shadow-[0_0_0_3px_var(--accent-wash)]",
         className,
       )}

@@ -35,6 +35,9 @@ import {
   setTaskFields,
   transition,
 } from "../src/store";
+import { processStartTime } from "../src/procid";
+import { recordProcessGroup } from "../src/task-processes";
+import { signalProcessGroup } from "../src/process-tree";
 import { createWorktree } from "../src/worktree";
 
 const token = "archive-cleanup-token";
@@ -142,6 +145,37 @@ describe("a successful archive owns its teardown and then lets go of it", () => 
     expect(existsSync(fixture.attachmentDir)).toBe(false);
     // the branch is user work and is never part of teardown
     expect(sh(["git", "branch", "--list", fixture.branch], fixture.repo)).toContain(fixture.branch);
+  }, 20_000);
+});
+
+describe("resumed deletion checks older background groups", () => {
+  test.each(["remove-worktree", "remove-attachments"] as const)("%s preserves files while an older turn has background work", async (stage) => {
+    const fixture = await finishedTask();
+    const child = Bun.spawn({ cmd: ["sh", "-c", "sleep 30"], cwd: fixture.worktree,
+      stdout: "ignore", stderr: "ignore", detached: true });
+    try {
+      const older = createTurn(fixture.id, 1, "older background", child.pid, "/dev/null", processStartTime(child.pid));
+      recordProcessGroup(older);
+      finishTurn(older, "done", 0, "older result");
+      const latest = createTurn(fixture.id, 2, "newer work", null, "/dev/null");
+      finishTurn(latest, "done", 0, "newer result");
+      archiveTaskWithCleanup(fixture.id, null, {
+        task_id: fixture.id, stage, force: true, stop_turn: false, removable: true,
+        repo_path: fixture.repo, worktree_path: fixture.worktree, branch: fixture.branch,
+        archive_script: null, timeout_minutes: 5,
+      });
+      await resumeArchiveCleanups();
+      expect(archiveCleanup(fixture.id)?.last_error).toContain("Background work");
+      expect(existsSync(fixture.worktree)).toBe(true);
+      expect(existsSync(fixture.attachmentDir)).toBe(true);
+      signalProcessGroup(child.pid, "SIGKILL");
+      await child.exited;
+      await resumeArchiveCleanups();
+      expect(archiveCleanup(fixture.id)).toBeNull();
+      expect(existsSync(fixture.attachmentDir)).toBe(false);
+    } finally {
+      if (child.exitCode === null) { signalProcessGroup(child.pid, "SIGKILL"); await child.exited; }
+    }
   }, 20_000);
 });
 
