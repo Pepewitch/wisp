@@ -87,6 +87,11 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   change touches auth, headers, SSE, WebSockets, media, redirects, identity, or
   daemon update/restart behavior.
 - Expected refusals are named HTTP errors, not guessed client-side state.
+- Every mutating route reads its body through `jsonObjectBody()`. `null`, `[]`,
+  `7`, and `"text"` are all valid JSON, so a `req.json().catch(() => ({}))`
+  cast dereferences a non-object (ENG-09); an empty body still means "no
+  options", because a caller with nothing to send is making a request. Query
+  integers go through `integerQueryParam()`.
 - SQLite is authoritative. `/api/events` drives query invalidation; the
   per-task log stream carries append-oriented transcript/activity data.
 - Nothing authenticates ambiently. Browser SSE carries the bearer header over

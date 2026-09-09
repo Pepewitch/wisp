@@ -41,7 +41,7 @@ import {
   worktreeHealth,
 } from "../worktree";
 import { archiveTaskRows } from "./archive";
-import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json } from "./http";
+import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json, jsonObjectBody } from "./http";
 import { updateTaskAndEmit } from "./task-update";
 
 /** Bytes served per log tail — positioned reads only, never whole files (a prior audit). */
@@ -144,7 +144,9 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
 /** POST /api/tasks */
 export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<string, AdapterDef>): Promise<Response> {
   return (async () => {
-    const body = (await req.json().catch(() => ({}))) as CreateTaskBody;
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const body = parsed as CreateTaskBody;
     const invalid = createTaskBodyError(body);
     if (invalid) return invalid;
     // createTaskBodyError establishes these required string fields at the
@@ -271,7 +273,9 @@ async function sendTaskResponse(
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
 ): Promise<Response> {
-  const body = (await req.json()) as {
+  const parsed = await jsonObjectBody(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as {
     message?: string;
     suffixPromptId?: unknown;
     attachments?: unknown;
@@ -403,7 +407,9 @@ export function taskRoute(
 
   if (!action && m === "PATCH") {
     return (async () => {
-      const body = (await req.json().catch(() => ({}))) as { title?: unknown };
+      const parsed = await jsonObjectBody(req);
+      if (parsed instanceof Response) return parsed;
+      const body = parsed as { title?: unknown };
       if (body.title === undefined) return err("title is required", 400);
       if (typeof body.title !== "string") {
         return err(`title must be a string, got ${typeName(body.title)}`, 400);
@@ -462,7 +468,9 @@ export function taskRoute(
   // event — routing a read through /send would lie about the task's state.
   if (action === "probe" && m === "POST") {
     return (async () => {
-      const body = (await req.json().catch(() => ({}))) as { command?: unknown };
+      const parsed = await jsonObjectBody(req);
+      if (parsed instanceof Response) return parsed;
+      const body = parsed as { command?: unknown };
       if (typeof body.command !== "string" || body.command.length === 0) return err("command is required", 400);
       // a probe opens the harness's session OUTSIDE the turn loop; running one
       // while a turn holds that session is the one combination neither the
@@ -569,8 +577,10 @@ export function taskRoute(
 
   if (action === "archive" && m === "POST") {
     return (async () => {
-      const body = (await req.json().catch(() => ({}))) as { force?: boolean };
-      const force = body.force ?? false;
+      const parsed = await jsonObjectBody(req);
+      if (parsed instanceof Response) return parsed;
+      const force = parsed.force ?? false;
+      if (typeof force !== "boolean") return err(`force must be a boolean, got ${typeName(force)}`, 400);
       const archiveTask = getTask(task.id) ?? task;
       const result = await archiveTaskRows([archiveTask], force, cfg);
       if ("error" in result) return err(result.error, result.status);

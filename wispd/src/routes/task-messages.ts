@@ -12,7 +12,7 @@ import {
   turnForTask,
   updateQueuedTaskMessage,
 } from "../store";
-import { apiTaskMessage, err, json } from "./http";
+import { apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
  * Serve turn or message image bytes. The requested name is first matched
@@ -117,7 +117,9 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
   }
   if (method === "PATCH") {
     return (async () => {
-      const body = (await req.json().catch(() => ({}))) as { message?: unknown };
+      const parsed = await jsonObjectBody(req);
+      if (parsed instanceof Response) return parsed;
+      const body = parsed as { message?: unknown };
       if (typeof body.message !== "string" || body.message.trim() === "") {
         return err("message must be a non-empty string", 400);
       }
