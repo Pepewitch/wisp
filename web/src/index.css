@@ -1,6 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "./styles/shadcn.css";
 
 /* Geist Sans + Geist Mono, bundled from the fontsource variable packages —
    zero CDN, OFL 1.1 text rides along in web/licenses/. Two faces, and no
