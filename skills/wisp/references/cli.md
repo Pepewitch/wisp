@@ -74,6 +74,7 @@ starts cold (the web palette's `/fresh`).
 ```
 wisp push <task>
 wisp archive <task> [-f|--force]
+wisp cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopped]
 wisp attach <task>
 ```
 
@@ -84,7 +85,12 @@ branch holds commits nothing else holds — a merged or pushed branch archives
 clean. `-f` overrides: kills the turn, commits leftovers onto the branch as
 `wisp: uncommitted work at archive`. Teardown runs in the background after the
 response; watch for a `note` line naming anything left behind, and for
-failures in `state_detail`. Archiving a `--local` task is bookkeeping only —
+failures in `state_detail`. `cleanup` shows the current step and remedy. `--retry`
+retries safe steps after their cause is fixed. For an uncertain script, inspect
+its effects and `--log`, then use `--confirm-complete` to skip that script or
+`--rerun` to explicitly repeat it. For a cleanup from an older Wisp, verify both
+scripts and their children stopped and add `--verified-stopped`. See
+[Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md). Archiving a `--local` task is bookkeeping only —
 nothing is removed. `attach` opens the harness's own interactive UI on the
 task's session (claude/codex/cursor; droid declares no attach command).
 
@@ -133,7 +139,7 @@ wisp project set <path> [--name <n>] [--setup <cmd>] [--archive <cmd>]
 The project registry feeds the web UI's pickers and per-project automation.
 `set` edits the same fields as the web gear dialog: a setup script (runs at
 task creation, after the repo's own `.wisp/setup.sh`), an archive script
-(teardown hook; its failure never blocks an archive), and copy globs (files
+(teardown hook; failure pauses workspace deletion for review), and copy globs (files
 copied from the repo into each new worktree, e.g. `.env`). `--copy` repeats
 and the flags REPLACE the stored list. Task history survives `project rm`. An
 unregistered project remains in the Projects list only while it has active

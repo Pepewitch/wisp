@@ -18,7 +18,7 @@ const ADD_PROJECT_HINT = "Add a project from the CLI: wisp project add <path>"
 
 interface SidebarProps {
   groups: ProjectGroup[]
-  /** present only when the footer toggle fetched ?archived=1 */
+  /** Unfinished cleanup is always included; the footer toggle adds completed archives. */
   archivedTasks: ApiTask[]
   status: Record<string, StatusEntry>
   pullRequests: Record<string, PullRequestOverviewEntry>
@@ -126,22 +126,15 @@ export function Sidebar({
               />
             ))}
 
-            {archivedTasks.length > 0 && (
-              <section className="mt-3">
-                <div className="flex h-6 items-center px-2">
-                  <Eyebrow>Archived</Eyebrow>
-                </div>
-                <div className="mt-px flex flex-col gap-px pl-0.5">
-                  {archivedTasks.map((t) =>
-                    touch ? (
-                      <TaskRowTouch key={t.id} task={t} selected={t.id === selectedId} onSelect={onSelect} />
-                    ) : (
-                      <TaskRow key={t.id} task={t} selected={t.id === selectedId} onSelect={onSelect} />
-                    ),
-                  )}
-                </div>
+            {[true, false].map(incomplete => {
+              const rows = archivedTasks.filter(t => Boolean(t.cleanup && t.cleanup.state !== "complete") === incomplete)
+              return rows.length > 0 && <section key={String(incomplete)} className="mt-3">
+                <div className="flex h-6 items-center px-2"><Eyebrow>{incomplete ? "Cleanup" : "Archived"}</Eyebrow></div>
+                <div className="mt-px flex flex-col gap-px pl-0.5">{rows.map(t => touch
+                  ? <TaskRowTouch key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />
+                  : <TaskRow key={t.id} task={t} selected={selectedId === t.id} onSelect={onSelect} />)}</div>
               </section>
-            )}
+            })}
           </div>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { CLEANUP_LABEL } from "@/lib/state"
 import { useState } from "react"
 import { PreviewCard } from "@base-ui/react/preview-card"
 
@@ -18,6 +19,12 @@ interface TaskRowProps {
   pullRequest?: PullRequestOverviewEntry
   selected: boolean
   onSelect: (id: string) => void
+}
+
+function TaskStateDot({ task, className }: { task: ApiTask; className?: string }) {
+  return task.cleanup && task.cleanup.state !== "complete"
+    ? <span role="img" aria-label={CLEANUP_LABEL[task.cleanup.state]} title={CLEANUP_LABEL[task.cleanup.state]} className={cn("size-1.5 shrink-0", task.cleanup.state === "needs-attention" ? "rounded-[1px] bg-state-stuck" : "rounded-full border-2 border-state-background", className)} />
+    : <StateDot state={task.state} background={task.background} className={className} />
 }
 
 /**
@@ -76,10 +83,10 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             "flex h-[26px] w-full items-center gap-2.5 rounded-md pr-2 pl-2.5 text-left transition-colors",
             "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             selected ? "bg-accent" : "hover:bg-hover",
-            task.archived && "opacity-55",
+            task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
           )}
         >
-          <StateDot state={task.state} background={task.background} />
+          <TaskStateDot task={task} />
           <span
             className={cn(
               "min-w-0 flex-1 truncate text-[12.5px]",
@@ -198,10 +205,10 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
       className={cn(
         "flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors",
         selected ? "bg-accent" : "active:bg-hover",
-        task.archived && "opacity-55",
+        task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
       )}
     >
-      <StateDot state={task.state} background={task.background} className="mt-px" />
+      <TaskStateDot task={task} className="mt-px" />
       <span className="min-w-0 flex-1">
         <span className={cn("block truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
           {task.title}

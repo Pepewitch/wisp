@@ -76,13 +76,15 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   adopts the caller's checkout, skips worktree hooks, and never removes it.
 - Archive separates synchronous safety/refusal checks from background
   teardown. Preserve branches and user work.
-- That teardown is a DURABLE JOB (`archive_cleanups`), written in the same
-  transaction as the archived flip and resumed at startup and on a slow timer.
-  It fails closed: a stage that could not stop a process ends the attempt, so
-  nothing destructive runs behind a failed stop, and the reason lands in
-  `state_detail`. Stages are idempotent because a resumed job may repeat the
-  one it was interrupted in, and the job carries the archive hook that was
-  configured when the user asked — a project can be removed in between.
+- Teardown is a durable job (`archive_cleanups` plus `archive_cleanup_progress`),
+  written with the archive flip. A two-worker queue starts after the listener;
+  safe stages retry with backoff and eventually require intervention. Scripts
+  have separate checkpoints and an uncertain result pauses deletion. Never
+  infer exactly-once external effects from a SQLite checkpoint. Hook processes
+  wait behind a launch gate until their group is recorded, and recovery actions
+  refuse while that group may still be present. Older combined hook stages
+  require explicit operator verification. See `archive-worker.ts`,
+  `archive-hooks.ts`, and [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md).
 
 ### API and realtime
 

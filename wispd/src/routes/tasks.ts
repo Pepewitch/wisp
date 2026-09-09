@@ -1,3 +1,5 @@
+import { cleanupRoute } from "./cleanup";
+import { cleanupProgress } from "../archive-progress";
 import { homeIsDraining, trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
 import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
@@ -100,7 +102,8 @@ export function listTasksRoute(url: URL): Response {
   // "failed" when the work landed but the harness CLI exited badly (Theme B)
   const outcomes = latestTurnOutcomes();
   return json(
-    listTasks(url.searchParams.get("archived") === "1").map((t) => ({
+    listTasks(url.searchParams.get("archived") === "1" || url.searchParams.get("cleanup") === "1")
+      .filter(t => !t.archived || url.searchParams.get("archived") === "1" || cleanupProgress(t.id) !== null).map((t) => ({
       ...apiTask(t),
       latest_turn_model: outcomes.get(t.id)?.model ?? null,
       latest_turn_exit_code: outcomes.get(t.id)?.exitCode ?? null,
@@ -577,6 +580,8 @@ export function taskRoute(
       }
     })();
   }
+
+  if (action === "cleanup") return cleanupRoute(req, task.id);
 
   if (action === "archive" && m === "POST") {
     return (async () => {

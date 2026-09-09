@@ -237,6 +237,15 @@ message, it keeps the message queued and marks the delivery uncertain rather
 than risking data loss. Recovery may therefore replay that stable-ID message
 at least once, and the UI says so.
 
+Archive cleanup runs in the background without delaying daemon startup. Unfinished
+archives stay visible under **Cleanup**, even with **Show archived** off. Safe
+steps retry with backoff; repeated failures show a reason and **Retry cleanup**.
+A failed or interrupted cleanup script pauses deletion: verify its effects,
+then confirm completion or explicitly rerun it. Completed scripts are not replayed
+because a later removal failed. Use `wisp cleanup <task> --log` for the same
+status and last script output from the CLI. See [Archive cleanup](docs/ARCHIVE-CLEANUP.md)
+for recovery actions and the API contract.
+
 ## Web and phone UI
 
 Run `wisp token` and open the URL it prints. A new home prefers

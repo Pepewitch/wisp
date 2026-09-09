@@ -17,12 +17,12 @@ import type {
   WorktreeFileResponse,
 } from "@/lib/types";
 
-/** GET /api/tasks — archived rows are only present when the sidebar toggle fetched ?archived=1. */
+/** GET /api/tasks — unfinished cleanup stays visible even with archived history hidden. */
 export function useTasks(showArchived: boolean) {
   const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.tasksList(showArchived),
-    queryFn: () => transport.request<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : ""}`),
+    queryFn: () => transport.request<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : "?cleanup=1"}`),
   });
 }
 

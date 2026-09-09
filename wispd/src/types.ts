@@ -92,6 +92,7 @@ export function displayStateWord(
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
 export type ApiTask = Omit<Task, "archived"> & {
+  cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
   background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
 };

@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react"
 import { Drawer } from "@base-ui/react/drawer"
+import { CleanupPanel } from "./cleanup-panel"
 
 import { Hamburger, Local, WispMark } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
@@ -180,6 +181,7 @@ export function MobileShell({
           </div>
         )}
       </header>
+      {task?.cleanup && <div className="scroll-slim max-h-[40dvh] shrink-0 overflow-y-auto border-b border-border px-3 pb-3 [&_button]:min-h-11"><CleanupPanel task={task} /></div>}
 
       <div
         role="tablist"

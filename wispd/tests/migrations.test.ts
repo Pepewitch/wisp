@@ -66,6 +66,24 @@ describe("the ledger", () => {
     db.close();
   });
 
+  test("upgrading unfinished archives preserves jobs but pauses only the ambiguous script stage", () => {
+    const db = freshDatabase("cleanup-upgrade");
+    migrate(db);
+    db.exec("DROP TABLE archive_cleanup_progress; DELETE FROM schema_migrations WHERE id = 4");
+    for (const [id, stage] of [["tfixture1", "remove-worktree"], ["tfixture2", "remove-attachments"]]) {
+      db.query(`INSERT INTO archive_cleanups (task_id, stage, force, stop_turn, removable, repo_path, archive_script, timeout_minutes, created_at, updated_at)
+        VALUES (?, ?, 1, 0, 1, '/fixture', 'echo fixture', 5, 'now', 'now')`).run(id!, stage!);
+    }
+    expect(migrate(db).applied).toEqual([4]);
+    expect(db.query("SELECT task_id, phase, status, hook_pgid FROM archive_cleanup_progress ORDER BY task_id").all()).toEqual([
+      { task_id: "tfixture1", phase: "legacy-hooks", status: "needs-attention", hook_pgid: null },
+      { task_id: "tfixture2", phase: "remove-attachments", status: "pending", hook_pgid: null },
+    ]);
+    expect(db.query("SELECT archive_script FROM archive_cleanups").all()).toEqual([{ archive_script: "echo fixture" }, { archive_script: "echo fixture" }]);
+    expect(migrate(db).applied).toEqual([]);
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);

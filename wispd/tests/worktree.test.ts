@@ -275,38 +275,7 @@ describe("removeWorktree on a worktree git has forgotten", () => {
   });
 });
 
-/** The teardown hooks get the setup path's timeout and SIGKILL escalation (H4/M3, Q11). */
-describe("archive teardown hooks", () => {
-  test("both hooks run in the worktree, repo's own first", async () => {
-    const repo = makeRepo();
-    const marker = join(mkdtempSync(join(tmpdir(), "wisp-teardown-")), "order.txt");
-    const withScript = { ...cfg, repos: [{ path: repo, archiveScript: `echo project >> ${marker}` }] };
-    const wt = await createWorktree(repo, "ttd001", withScript);
-    mkdirSync(join(wt.path, ".wisp"), { recursive: true });
-    writeFileSync(join(wt.path, ".wisp", "cleanup.sh"), `#!/usr/bin/env bash\necho repo >> ${marker}\n`);
-    await removeWorktree(repo, wt.path, wt.branch, true, withScript, "ttd001");
-    expect(readFileSync(marker, "utf8")).toBe("repo\nproject\n");
-    expect(existsSync(wt.path)).toBe(false);
-  });
-
-  test("a hung hook is killed at the timeout and the worktree is still removed", async () => {
-    const repo = makeRepo();
-    const impatient = { ...cfg, setupTimeoutMinutes: 0.02, repos: [{ path: repo, archiveScript: "sleep 60" }] };
-    const wt = await createWorktree(repo, "ttd002", impatient);
-    const started = Date.now();
-    await removeWorktree(repo, wt.path, wt.branch, true, impatient, "ttd002");
-    expect(Date.now() - started).toBeLessThan(20_000); // nowhere near the 60s sleep
-    expect(existsSync(wt.path)).toBe(false);
-  });
-
-  test("a failing hook never strands the worktree — teardown stays best effort", async () => {
-    const repo = makeRepo();
-    const withScript = { ...cfg, repos: [{ path: repo, archiveScript: "exit 9" }] };
-    const wt = await createWorktree(repo, "ttd003", withScript);
-    await removeWorktree(repo, wt.path, wt.branch, false, withScript, "ttd003");
-    expect(existsSync(wt.path)).toBe(false);
-  });
-});
+// Hook ordering and failure/timeout preservation are covered by archive-recovery.test.ts.
 
 /**
  * The file viewer's reader. The point of the containment cases is that the

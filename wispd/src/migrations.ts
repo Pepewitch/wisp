@@ -284,6 +284,23 @@ FROM turns JOIN tasks ON tasks.id = turns.task_id WHERE turns.pid > 1;
 `);
     },
   },
+  {
+    id: 4,
+    name: "archive-cleanup-progress",
+    up: db => {
+      db.exec(`CREATE TABLE IF NOT EXISTS archive_cleanup_progress (
+        task_id TEXT PRIMARY KEY REFERENCES archive_cleanups(task_id) ON DELETE CASCADE,
+        phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+        repo_script TEXT, prepared INTEGER NOT NULL DEFAULT 0,
+        next_retry_at TEXT, revision INTEGER NOT NULL DEFAULT 1,
+        hook_pgid INTEGER, hook_boot TEXT
+      );
+      INSERT OR IGNORE INTO archive_cleanup_progress (task_id, phase, status)
+        SELECT task_id, CASE WHEN stage = 'remove-worktree' THEN 'legacy-hooks' ELSE stage END,
+          CASE WHEN stage = 'remove-worktree' THEN 'needs-attention' ELSE 'pending' END
+        FROM archive_cleanups;`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

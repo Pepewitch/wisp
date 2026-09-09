@@ -1,3 +1,4 @@
+import { CleanupPanel } from "./cleanup-panel"
 import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
@@ -89,6 +90,8 @@ export function TaskHeader({
           </span>,
         ]}
       />
+
+      {task.cleanup && <CleanupPanel task={task} />}
 
       {/* ONE muted line, the same register the archived-task placeholders use.
           Capped here as well as at the daemon: nothing about a git failure gets

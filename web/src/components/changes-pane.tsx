@@ -113,7 +113,7 @@ function Body({
   onSelect: (path: string | null) => void
 }) {
   if (taskId === null) return <Note>No task selected</Note>
-  if (archived) return <Note>The worktree is gone — an archived task has no diff to read</Note>
+  if (archived) return <Note>Diff viewing is unavailable for archived tasks.</Note>
   // oneLine() on both: the daemon already sanitizes git's stderr, and the pane
   // caps what it renders REGARDLESS, so no future git failure can put a manpage
   // in this pane again (D1)

@@ -50,7 +50,14 @@ export type ActivityEvent =
     })
 
 /** Task as GET /api/tasks serializes it (archived is a boolean at the boundary). */
+export interface CleanupSummary {
+  state: "pending" | "running" | "needs-attention" | "complete";
+  step: string; error: string | null; retryAt: string | null; revision: number;
+  uncertain: boolean; confirmStopped: boolean;
+}
+
 export interface ApiTask {
+  cleanup?: CleanupSummary;
   /** Absent on older daemons; the turn outcome remains in state. */
   background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
   id: string;
