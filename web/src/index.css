@@ -26,7 +26,7 @@
 /* ────────────────────────────────────────────────────────────────────────
    GRAPHITE & VIOLET
 
-   A neutral scale — near-black by default, near-white in light mode — four
+   A neutral scale — charcoal by default, near-white in light mode — four
    levels of gray text, and one violet that only ever means "this is live" or
    "this is the one action".
 
@@ -178,24 +178,24 @@
   color-scheme: dark;
 
   /* surfaces */
-  --background: #0d0d10;        /* reading column — brighter, still below the sidebar */
-  --surface: #0f0f12;           /* sidebar, right pane, top bar, inputs */
-  --code: #101014;              /* code blocks in prose — a step BELOW the bubble */
-  --card: #15151a;              /* prompt bubbles, raised chrome */
-  --popover: #131317;           /* hover cards, menus, the command palette */
-  --hover: #1a1a20;             /* row hover — never a resting state */
-  --accent: #1f1f26;            /* SELECTED. background only, no rail, no hue */
-  --secondary: #1a1a20;         /* quiet button surface */
-  --muted: #1a1a20;
-  --border: #212128;            /* pane dividers, hairlines */
-  --border-strong: #2b2b34;     /* input and button edges, drag grips */
-  --input: #2b2b34;
+  --background: #141418;        /* reading column — charcoal, below the sidebar */
+  --surface: #19191d;           /* sidebar, right pane, top bar, inputs */
+  --code: #1b1b20;              /* code blocks in prose — a step BELOW the bubble */
+  --card: #222228;              /* prompt bubbles, raised chrome */
+  --popover: #1f1f25;           /* hover cards, menus, the command palette */
+  --hover: #292930;             /* row hover — never a resting state */
+  --accent: #303038;            /* SELECTED. background only, no rail, no hue */
+  --secondary: #292930;         /* quiet button surface */
+  --muted: #292930;
+  --border: #2d2d35;            /* pane dividers, hairlines */
+  --border-strong: #3f3f48;     /* input and button edges, drag grips */
+  --input: #3f3f48;
 
   /* text — four levels, and four is enough */
   --foreground: #eaeaee;        /* titles, prose, the thing you read */
-  --fg-secondary: #a2a2ad;      /* labels, tab text, tool verbs */
-  --muted-foreground: #74747f;  /* branches, harness · model, paths, counts */
-  --faint: #55555f;             /* eyebrows, separators, timings, placeholders */
+  --fg-secondary: #b5b5bf;      /* labels, tab text, tool verbs */
+  --muted-foreground: #a0a0ab;  /* branches, harness · model, paths, counts */
+  --faint: #80808c;             /* eyebrows, separators, timings, placeholders */
 
   --card-foreground: var(--foreground);
   --popover-foreground: var(--foreground);
@@ -216,7 +216,7 @@
   --destructive-foreground: #1b1010;
 
   /* task states and diff, the two families that keep their hue */
-  --state-creating: #74747f;
+  --state-creating: #a0a0ab;
   --state-done: #57b983;
   --state-background: #6aaed6;
   --state-needs-input: #ddb055;
@@ -234,12 +234,12 @@
      colour in a code block must not out-compete the one violet the app spends
      on the send button and the running dot. Comments are grey and italic,
      names stay plain — most of a line is names, and if everything is coloured
-     nothing is. Contrast on `--code`: 9.3 / 9.8 / 9.5 / 9.6, comments 4.8. */
+     nothing is. Every role, including comments, clears 4.5:1 on `--code`. */
   --syntax-keyword: #c0abe9;    /* oklch(0.78 0.09 300) — the app's own hue */
   --syntax-string: #8ec899;     /* oklch(0.78 0.09 150) */
   --syntax-number: #d0b477;     /* oklch(0.78 0.085 85) */
   --syntax-entity: #7cc1e9;     /* oklch(0.78 0.09 235) — functions and types */
-  --syntax-comment: #827e8a;    /* oklch(0.60 0.018 300) */
+  --syntax-comment: #a09ca8;    /* quiet, readable on the raised code surface */
 
   /* elevation and the modal veil — black, because the page is already near it */
   --elevation-float: 0 8px 24px rgb(0 0 0 / 0.5);
@@ -266,11 +266,11 @@
   --z-menu: 80;            /* menus and popovers — must clear any open modal */
 
   /* sidebar surface family */
-  --sidebar: #0f0f12;
+  --sidebar: var(--surface);
   --sidebar-foreground: var(--foreground);
-  --sidebar-accent: #1f1f26;
+  --sidebar-accent: var(--accent);
   --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: #212128;
+  --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
 }
 
@@ -291,8 +291,7 @@
   --border-strong: #cdcdd8;     /* input and button edges, drag grips */
   --input: #cdcdd8;
 
-  /* text — the same four levels, held at the same contrast as dark's, so a
-     line that was readable does not become decoration in the other theme */
+  /* text — the same four levels, tuned for reading on paper */
   --foreground: #1a1a1f;        /* titles, prose, the thing you read */
   --fg-secondary: #4f4f5a;      /* labels, tab text, tool verbs */
   --muted-foreground: #6c6c78;  /* branches, harness · model, paths, counts */

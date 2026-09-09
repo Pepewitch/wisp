@@ -73,7 +73,7 @@ describe("the platform's own chrome", () => {
 
     applyTheme("dark")
     expect(meta("color-scheme")).toBe("dark")
-    expect(meta("theme-color")).toBe("#0b0b0d")
+    expect(meta("theme-color")).toBe("#19191d")
   })
 })
 

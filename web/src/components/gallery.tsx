@@ -47,7 +47,7 @@ export function Gallery() {
           <div className="flex-1">
             <h1 className="text-[22px] font-semibold tracking-[-0.018em]">Graphite &amp; violet</h1>
             <p className="mt-1.5 max-w-[640px] text-[13px] text-fg-secondary">
-              A neutral scale — near-black by default, near-white in light mode — four levels of gray text, and
+              A neutral scale — charcoal by default, near-white in light mode — four levels of gray text, and
               one violet that only ever means{" "}
               <em className="text-foreground not-italic">this is live</em> or{" "}
               <em className="text-foreground not-italic">this is the one action</em>.

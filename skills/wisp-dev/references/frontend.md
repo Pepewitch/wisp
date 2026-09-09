@@ -166,8 +166,8 @@ With no hue to spend, the stream separates the person's words from the agent's
 by *lightness alone*, so only one surface in a turn may be the lightest: the
 right-aligned prompt bubble, `--card`. A code block used to share that fill and
 the two became one shape when scanning for "where did I say something", so code
-blocks have their own surface — `--code` (`#101014`), one step above the reading
-column rather than four. Anything new inside a turn recedes toward `--background`;
+blocks have their own surface — `--code`, above the reading column and below
+the prompt bubble. Anything new inside a turn recedes toward `--background`;
 it never meets or passes `--card`.
 
 ### Two themes, and every token paired
@@ -213,7 +213,7 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   meaning: the prompt bubble is still the surface furthest from the background
   inside a turn, code still sits between the two, row hover is still stronger
   than a resting card, selection is still the strongest neutral, and the four
-  text levels hold the same contrast ratios they held on graphite.
+  text levels preserve their reading hierarchy.
 - **A colour that needs both themes is a token pair, never a `dark:`
   utility.** Every family is paired: surfaces, text, the accent, the six state
   dots, diff add/del, destructive, the three elevations, and the modal veil.

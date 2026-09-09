@@ -68,11 +68,11 @@ export function resolveTheme(preference: ThemePreference, system: Theme): Theme 
  * matters here because the bundle is one file and its <style> follows 1.8 MB
  * of inlined module. Both are written from one place so they cannot disagree.
  *
- * `theme-color` tints a mobile browser's OWN toolbar above the app; the dark
- * value is the one scripts/brand/build.ts writes into index.html, and light
- * is the top bar's surface.
+ * `theme-color` tints a mobile browser's OWN toolbar above the app; both
+ * values match the top bar's surface. scripts/brand/build.ts writes the dark
+ * value into index.html too.
  */
-const CHROME_COLOR: Record<Theme, string> = { dark: "#0b0b0d", light: "#f6f6f9" }
+const CHROME_COLOR: Record<Theme, string> = { dark: "#19191d", light: "#f6f6f9" }
 
 function setMeta(name: string, content: string): void {
   const existing = document.head.querySelector(`meta[name="${name}"]`)

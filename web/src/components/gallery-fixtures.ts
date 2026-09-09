@@ -176,15 +176,15 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
  * truth about the theme on screen; the hex beside it is that theme's value.
  */
 export const SURFACES = [
-  { name: "Void", token: "--background", dark: "#0D0D10", light: "#FBFBFD", note: "Reading column, stream, diff body" },
-  { name: "Surface", token: "--surface", dark: "#0F0F12", light: "#F6F6F9", note: "Sidebar, right pane, top bar, inputs" },
-  { name: "Code", token: "--code", dark: "#101014", light: "#F1F1F5", note: "Code blocks — a step below the bubble" },
-  { name: "Popover", token: "--popover", dark: "#131317", light: "#FFFFFF", note: "Hover cards, menus, palette" },
-  { name: "Card", token: "--card", dark: "#15151A", light: "#EDEDF2", note: "Prompt bubbles, raised chrome" },
-  { name: "Hover", token: "--hover", dark: "#1A1A20", light: "#E9E9F0", note: "Row hover — never a resting state" },
-  { name: "Selected", token: "--accent", dark: "#1F1F26", light: "#E2E2EA", note: "Background alone. No rail, no hue" },
-  { name: "Border", token: "--border", dark: "#212128", light: "#E4E4EB", note: "Pane dividers, hairlines" },
-  { name: "Border strong", token: "--border-strong", dark: "#2B2B34", light: "#CDCDD8", note: "Input edges, drag grips" },
+  { name: "Void", token: "--background", dark: "#141418", light: "#FBFBFD", note: "Reading column, stream, diff body" },
+  { name: "Surface", token: "--surface", dark: "#19191D", light: "#F6F6F9", note: "Sidebar, right pane, top bar, inputs" },
+  { name: "Code", token: "--code", dark: "#1B1B20", light: "#F1F1F5", note: "Code blocks — a step below the bubble" },
+  { name: "Popover", token: "--popover", dark: "#1F1F25", light: "#FFFFFF", note: "Hover cards, menus, palette" },
+  { name: "Card", token: "--card", dark: "#222228", light: "#EDEDF2", note: "Prompt bubbles, raised chrome" },
+  { name: "Hover", token: "--hover", dark: "#292930", light: "#E9E9F0", note: "Row hover — never a resting state" },
+  { name: "Selected", token: "--accent", dark: "#303038", light: "#E2E2EA", note: "Background alone. No rail, no hue" },
+  { name: "Border", token: "--border", dark: "#2D2D35", light: "#E4E4EB", note: "Pane dividers, hairlines" },
+  { name: "Border strong", token: "--border-strong", dark: "#3F3F48", light: "#CDCDD8", note: "Input edges, drag grips" },
 ] as const
 
 /** The one hue, at the lightness each theme needs to keep it a word. */
