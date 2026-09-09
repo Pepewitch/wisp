@@ -1,3 +1,4 @@
+import { ownsHome } from "../src/home-lock";
 /**
  * The browser's authentication boundary, exercised over real sockets against a
  * real listener (SEC-01 / SEC-02).
@@ -41,6 +42,11 @@ let server: Awaited<ReturnType<typeof serve>> | null = null;
 afterEach(async () => {
   await killAll();
   void server?.stop(true);
+  // Socket drain can hang in Bun, but the daemon's stateful shutdown must
+  // finish before the next test takes ownership of this fixture home.
+  const deadline = Date.now() + 5000;
+  while (ownsHome() && Date.now() < deadline) await Bun.sleep(10);
+  expect(ownsHome()).toBe(false);
   server = null;
 }, 30_000);
 

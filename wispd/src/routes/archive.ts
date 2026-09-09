@@ -1,3 +1,4 @@
+import { trackHomeWork } from "../home-lifetime";
 import { removeTaskAttachments } from "../attachments";
 import { repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn, killTurnForArchive } from "../runner";
@@ -196,7 +197,7 @@ export function startArchiveCleanupLoop(): ReturnType<typeof setInterval> {
     if (running) return;
     running = true;
     try {
-      await resumeArchiveCleanups();
+      await trackHomeWork(resumeArchiveCleanups());
     } finally {
       running = false;
     }
@@ -301,7 +302,7 @@ export async function archiveTaskRows(
     // archived task whose cleanup nothing is responsible for.
     archiveTaskWithCleanup(task.id, preflight?.leftBehind ?? null, job);
     updateTaskAndEmit(task.id, {});
-    void runCleanup(job);
+    void trackHomeWork(runCleanup(job));
     return { task, branch: task.branch, note: preflight?.leftBehind ?? null };
   });
   return { archived };

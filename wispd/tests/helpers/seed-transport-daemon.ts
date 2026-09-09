@@ -2,7 +2,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { attachmentManifest, writeTurnAttachments } from "../../src/attachments";
 import { LOG_DIR } from "../../src/config";
-import { createTask, createTurn, finishTurn, setTaskFields, transition } from "../../src/store";
+import { acquireHomeOwnership } from "../../src/home-lock";
+import { initializeStore, createTask, createTurn, finishTurn, setTaskFields, transition } from "../../src/store";
+
+const ownership = acquireHomeOwnership();
+initializeStore();
 
 const TASK_ID = "tspike";
 const ATTACHMENT_NAME = "transport.png";
@@ -49,3 +53,5 @@ console.log(
     attachmentBase64: attachmentBytes.toString("base64"),
   }),
 );
+
+ownership.release();

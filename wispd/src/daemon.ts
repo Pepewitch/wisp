@@ -12,11 +12,12 @@ import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./
 import { resumeArchiveCleanups, startArchiveCleanupLoop } from "./routes/archive";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
+import { HomeLifetime } from "./home-lifetime";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
 import { err, json } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
-import { getTask } from "./store";
+import { getTask, initializeStore } from "./store";
 import type { PtySize } from "./pty";
 import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
@@ -300,57 +301,42 @@ function bindFailure(host: string, port: number): unknown | undefined {
   }
 }
 
-/**
- * The sentence a losing daemon exits with. The health probe is what makes it
- * useful when the owner is reachable at the address being probed: it names the
- * daemon that answered rather than asserting something about a pid, and says
- * plainly that nothing was changed — the whole point of taking ownership
- * before recovery runs. An owner on an ephemeral port cannot be named from
- * here, so the sentence degrades to "a non-Wisp service"; the refusal itself
- * comes from the lock either way.
- */
-async function homeConflictMessage(host: string, port: number, reason: string): Promise<string> {
-  const owner = await occupiedListener(host, port);
+/** Do not load config to diagnose a rejected start: it can persist upgrades too. */
+function homeConflictMessage(reason: string): string {
   return [
-    `${process.env.WISP_HOME ?? "~/.wisp"} is already being served by ${owner}.`,
+    `${process.env.WISP_HOME ?? "~/.wisp"} is already being served by another Wisp daemon (or it is still shutting down).`,
     "This process changed no tasks, claims, schema, or outbox rows and is exiting.",
-    "Stop the running daemon before starting another, or point this one at a different WISP_HOME.",
+    "Keep using the running instance. To upgrade, stop its service first (brew services stop wisp on macOS, systemctl --user stop wisp on Linux), or press Ctrl-C in the terminal running it; then start the updated service.",
+    "If it is shutting down, wait for it to exit and retry. The lock releases automatically when that process exits; do not delete the lock file.",
+    "To run a separate instance, use a different WISP_HOME and port.",
     `(${reason})`,
-  ].join(" ");
+  ].join("\n");
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
-  const appHtml = await bundledAppHtml();
-  const cfg = loadConfig();
-  const hostname = process.env.WISP_HOST ?? cfg.host;
-  const port = options.port ?? cfg.port;
-  // OWNERSHIP FIRST — before the port preflight, before recovery, before any
-  // loop. An address being free says nothing about who owns this home: the
-  // persisted port can change, WISP_HOST can point elsewhere, and the old
-  // check's probe listener was released before recovery ran anyway. A second
-  // daemon must lose here, having touched nothing (ENG-02).
   let ownership;
   try {
     ownership = acquireHomeOwnership();
   } catch (error) {
     if (error instanceof HomeBusyError) {
-      // Probe the port this process was asked to use when it is a real one,
-      // otherwise the persisted port. With an ephemeral request (`port: 0`,
-      // which only tests use) the owner's actual port is not knowable from
-      // here — it is chosen at bind, and the lock is taken before that — so
-      // the probe can report "a non-Wisp service" about an address nobody is
-      // on. The lock still holds; only the diagnostic sentence is weaker.
-      const probePort = options.port !== undefined && options.port > 0 ? options.port : cfg.port;
-      throw new Error(await homeConflictMessage(hostname, probePort, error.message), { cause: error });
+      throw new Error(homeConflictMessage(error.message), { cause: error });
     }
     throw error;
   }
-  // Every failure from here on releases ownership: a daemon that could not
-  // start must not leave the home unopenable.
+  // Importing store/query helpers is inert. Only the owner may load or upgrade
+  // config and initialize the database. Every failed start releases the lock.
+  const lifetime = new HomeLifetime();
   try {
-    return await serveOwned(options, cfg, hostname, port, appHtml, ownership);
+    const appHtml = await bundledAppHtml();
+    const cfg = loadConfig();
+    const hostname = process.env.WISP_HOST ?? cfg.host;
+    const port = options.port ?? cfg.port;
+    return await lifetime.run(() => serveOwned(options, cfg, hostname, port, appHtml, ownership, lifetime));
   } catch (error) {
-    ownership.release();
+    // Report startup failure immediately. If recovery already started work,
+    // retain ownership until it settles (or the process exits), not until the
+    // error is reported. A retry meanwhile gets the normal ownership remedy.
+    void lifetime.drain().then(() => ownership.release());
     throw error;
   }
 }
@@ -362,6 +348,7 @@ async function serveOwned(
   port: number,
   appHtml: string,
   ownership: { release(): void },
+  lifetime: HomeLifetime,
 ): Promise<Bun.Server<TerminalSocketData>> {
   // Hashing 2 MB of bundle is startup work, not per-request work; the policy
   // itself is assembled per response because it names this daemon's origin.
@@ -374,6 +361,7 @@ async function serveOwned(
     throw preflightFailure;
   }
   const adapters = loadAdapters();
+  initializeStore();
   const modelCache = new ModelProbeCache(adapters, {
     spawn: options.modelProbeSpawn,
     timeoutMs: options.modelProbeTimeoutMs,
@@ -411,6 +399,7 @@ async function serveOwned(
   // the port opens, for the same reason orphaned turns are (ENG-04).
   await resumeArchiveCleanups();
 
+  let stopping = false;
   let server: Bun.Server<TerminalSocketData>;
   try {
     server = Bun.serve({
@@ -424,9 +413,11 @@ async function serveOwned(
       websocket: {
         data: {} as TerminalSocketData,
         open(ws) {
+          if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
           openTerminal(ws);
         },
         message(ws, message) {
+          if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
           terminalMessage(ws, message, cfg);
         },
         close(ws) {
@@ -438,6 +429,7 @@ async function serveOwned(
         },
       },
       fetch(req: Request, server: Bun.Server<TerminalSocketData>): Response | Promise<Response> | undefined {
+        if (stopping) return err("Wisp is shutting down; retry after it restarts.", 503);
         const url = new URL(req.url);
         const path = url.pathname;
         if (path === "/" || path === "/index.html") {
@@ -503,11 +495,9 @@ async function serveOwned(
           return undefined;
         }
         if (!authorized(req, cfg)) return err("unauthorized", 401);
-        return Promise.resolve()
-          .then(() =>
-            route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates),
-          )
-          .catch((e) => err(String(e instanceof Error ? e.message : e), 500));
+        return lifetime.run(() => lifetime.track(Promise.resolve()
+          .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates))
+          .catch((e) => err(String(e instanceof Error ? e.message : e), 500))));
       },
     });
   } catch (error) {
@@ -521,17 +511,25 @@ async function serveOwned(
   const cleanupTimer = startArchiveCleanupLoop();
   const processLoop = startProcessGroupLoop();
   const stopServer = server.stop.bind(server);
-  server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
-    clearInterval(outboxTimer);
-    clearInterval(stuckTimer);
-    clearInterval(cleanupTimer);
-    await processLoop.stop();
-    // Ownership ends when this daemon decides to stop, not when its last
-    // socket drains: the loops are already cancelled, so nothing here will
-    // touch persisted state again, and a shutdown that stalls on a connection
-    // must not leave the home unopenable.
-    ownership.release();
-    await stopServer(closeActiveConnections);
+  let stopPromise: Promise<void> | undefined;
+  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
+    return stopPromise ??= (async () => {
+      stopping = true;
+      lifetime.draining = true;
+      clearInterval(outboxTimer);
+      clearInterval(stuckTimer);
+      clearInterval(cleanupTimer);
+      // Stop admitting requests first, but keep ownership through handlers and
+      // detached work. Closing a socket does not cancel its task launch/hook.
+      const stopped = stopServer(closeActiveConnections);
+      await processLoop.stop();
+      await lifetime.drain();
+      // Bun can leave a closed WebSocket's stop promise pending indefinitely.
+      // Admission is closed and all stateful work has settled, so socket drain
+      // alone must not retain ownership. Its callbacks also refuse new work.
+      ownership.release();
+      await stopped;
+    })();
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.

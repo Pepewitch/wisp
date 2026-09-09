@@ -1,3 +1,4 @@
+import { doctorCommand } from "./cli-doctor";
 import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
 import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
@@ -5,7 +6,7 @@ import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
 import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
-import { bunSpawn, runDoctor } from "./doctor";
+import { bunSpawn } from "./doctor";
 import { modelsReport } from "./models";
 import { backgroundSummary, displayStateWord, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
@@ -50,6 +51,7 @@ usage:
                                                model list the installed CLI exposes, when it exposes one
   ${COMMAND} version [--json] | --version [--json]   print the Wisp version and build commit
   ${COMMAND} doctor [--harness <name>]               activation check; optionally require one harness
+  ${COMMAND} doctor --database                       read-only database check; no harness probes
 `;
 
 interface Parsed {
@@ -644,21 +646,9 @@ export async function cli(args: string[]): Promise<void> {
       console.log((await modelsReport(loadAdapters(), loadConfig().harnessDefaults, bunSpawn)).join("\n"));
       break;
     }
-    case "doctor": {
-      if (flags.harness !== undefined && typeof flags.harness !== "string") {
-        console.error("--harness requires a name (e.g. --harness droid)");
-        process.exit(1);
-      }
-      let failed = false;
-      for (const c of await runDoctor({
-        selectedHarness: typeof flags.harness === "string" ? flags.harness : undefined,
-      })) {
-        console.log(`${c.status.padEnd(4)} ${c.name}: ${c.message}`);
-        if (c.status === "fail") failed = true;
-      }
-      if (failed) process.exit(1);
+    case "doctor":
+      await doctorCommand(flags);
       break;
-    }
     case undefined:
     case "help":
     case "--help":

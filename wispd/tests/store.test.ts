@@ -76,7 +76,9 @@ describe("task message migrations", () => {
     legacy.close();
 
     const migrated = Bun.spawnSync({
-      cmd: [process.execPath, "-e", `await import("./src/store.ts")`],
+      cmd: [process.execPath, "-e", `const { acquireHomeOwnership } = await import("./src/home-lock.ts");
+        const owner = acquireHomeOwnership();
+        try { (await import("./src/store.ts")).initializeStore(); } finally { owner.release(); }`],
       cwd: process.cwd(),
       env: { ...process.env, WISP_HOME: home },
       stdout: "pipe",
@@ -124,7 +126,9 @@ describe("turn recorder migrations", () => {
     legacy.close();
 
     const migrated = Bun.spawnSync({
-      cmd: [process.execPath, "-e", `await import("./src/store.ts")`],
+      cmd: [process.execPath, "-e", `const { acquireHomeOwnership } = await import("./src/home-lock.ts");
+        const owner = acquireHomeOwnership();
+        try { (await import("./src/store.ts")).initializeStore(); } finally { owner.release(); }`],
       cwd: process.cwd(),
       env: { ...process.env, WISP_HOME: home },
       stdout: "pipe",

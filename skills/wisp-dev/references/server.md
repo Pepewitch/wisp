@@ -28,6 +28,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   migration by appending a new id; never renumber a released one. Foreign-key
   enforcement is turned on only after `PRAGMA foreign_key_check` says this
   profile can survive it.
+- `wispd/src/store-database.ts` initializes the database explicitly under home
+  ownership; importing store/query helpers never opens or migrates it. Offline
+  mutating tools must take the same lock; `doctor --database` opens read-only.
+  In-process shutdown holds ownership until requests and detached stateful work
+  settle. Register such work with `trackHomeWork`; ordinary process exit releases
+  the OS lock and restart recovery handles interrupted work.
 - `wispd/src/store.ts` owns SQLite rows and task transitions. `wispd/src/runner.ts` owns
   one-shot harness processes, persisted logs, finalization, interruption,
   restart recovery, and stuck detection.

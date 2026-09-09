@@ -163,6 +163,21 @@ Fix the first `fail` line from doctor and rerun it. The final receipt must say:
 ok   activation: ready for a first task with droid
 ```
 
+If startup says the profile is already being served, keep using that instance.
+Before upgrading, stop its service (`brew services stop wisp` on macOS or
+`systemctl --user stop wisp` on Linux), then start the updated service. For a
+foreground daemon, use Ctrl-C in its terminal. Ownership releases automatically
+when the process exits; never delete `daemon-owner.lock.db` to bypass it. A
+separate daemon needs both a different `WISP_HOME` and a different port.
+
+Wisp takes ownership before opening or migrating the task database. A rejected
+start leaves its schema and task data unchanged. Failed migration steps roll
+back; after fixing the reported cause, restart to retry the remaining steps.
+For a database startup error, run `wisp doctor --database` with the same
+`WISP_HOME`: it checks the database read-only without probing installed harnesses.
+A newer schema requires the same or a newer Wisp version. For damaged files,
+preserve a copy before repair or restore; deleting the database discards tasks.
+
 Then create a task:
 
 ```sh
