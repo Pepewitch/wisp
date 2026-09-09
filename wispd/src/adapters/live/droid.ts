@@ -85,6 +85,8 @@ function messageParams(
  *
  * Session start, completion, actual-model and usage shapes plus the versioned
  * transport envelope were live-reverified on Droid 0.213.0 with gpt-6-astra.
+ * Tool results were reverified on 0.215.1: they are standalone `tool_result`
+ * notifications rather than content blocks on `create_message`.
  * Steering was last live-probed on 0.205.0. Admission is the
  * response to droid.add_user_message. Completion is agent_turn_completed
  * (any reason) or an AskUser tool_use — both close stdin immediately, the
@@ -184,13 +186,18 @@ export class DroidLiveDriver {
   handle(frame: RpcFrame): void {
     if (this.peer.handle(frame)) return;
     if (frame.method !== "droid.session_notification") return;
-    this.handleNotification(record(record(frame.params).notification));
+    this.handleNotification(record(record(frame.params).notification), Date.now());
   }
 
-  private handleNotification(notification: Record<string, any>): void {
+  private handleNotification(notification: Record<string, any>, receivedAt: number): void {
     switch (notification.type) {
       case "create_message":
         this.handleMessage(record(notification.message));
+        return;
+      case "tool_result":
+        // Standalone results carry no source timestamp, so preserve their
+        // receipt time for subagent durations and terminal event ordering.
+        this.emitToolResult(notification, receivedAt);
         return;
       case "agent_turn_completed": {
         if (this.terminal) return;
@@ -210,6 +217,17 @@ export class DroidLiveDriver {
         if (notification.newState === "idle" && this.terminal) this.options.onTerminal();
         return;
     }
+  }
+
+  private emitToolResult(result: Record<string, any>, timestamp?: unknown): void {
+    this.options.emit({
+      type: "tool_result",
+      id: result.toolUseId,
+      value: boundedOutput(result.content),
+      isError: result.isError === true,
+      ...(timestamp !== undefined ? { timestamp } : {}),
+      session_id: this.sessionId,
+    });
   }
 
   /** Last assistant prose is the conclusion; error copy lives on the error event, not here. */
@@ -269,14 +287,7 @@ export class DroidLiveDriver {
           this.emitCompletion({ usage: null, isError: false, needsInput: ["AskUser"] });
         }
       } else if (block.type === "tool_result") {
-        this.options.emit({
-          type: "tool_result",
-          id: block.toolUseId,
-          value: boundedOutput(block.content),
-          isError: block.isError === true,
-          timestamp: message.createdAt,
-          session_id: this.sessionId,
-        });
+        this.emitToolResult(block, message.createdAt);
       } else if (
         (block.type === "reasoning" || block.type === "thinking") &&
         typeof block.text === "string"
