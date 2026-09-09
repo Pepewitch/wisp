@@ -6,13 +6,14 @@ import { updateCommand } from "./cli-update";
 import { basename, resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
 import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
+import { searchCommand } from "./cli-search";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
 import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
 import { bunSpawn } from "./doctor";
 import { modelsReport } from "./models";
-import { backgroundSummary, displayStateWord, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
+import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
@@ -125,16 +126,6 @@ function ago(iso: string): string {
   if (min < 60 * 24) return `${Math.round(min / 60)}h`;
   return `${Math.round(min / 1440)}d`;
 }
-
-// Keys derive from TaskState (types.ts) — adding a state without an icon is a compile error.
-const STATE_ICON: Record<TaskState, string> = {
-  creating: "◌",
-  running: "●",
-  done: "✓",
-  "needs-input": "?",
-  stuck: "⏸",
-  failed: "✗",
-};
 
 /**
  * `wisp wait` exit codes, one per settled state. 'creating'/'running' are
@@ -501,6 +492,10 @@ export async function cli(args: string[]): Promise<void> {
     case "ls":
     case "list": {
       printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ListedTask[]);
+      break;
+    }
+    case "search": {
+      await searchCommand(positional, flags, api);
       break;
     }
     case "result": {

@@ -97,6 +97,58 @@ export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled
  * outbox keep "failed"; only the WORD changes, derived from facts the store
  * already holds (the latest turn's exit_code and result presence).
  */
+/**
+ * GET /api/search — the shapes the daemon answers with, shared by the store
+ * that builds them (store-search.ts) and the CLI that prints them
+ * (cli-search.ts). One definition, so a field cannot mean two things.
+ */
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message";
+
+export interface SearchSnippet {
+  kind: SearchSnippetKind;
+  /** the turn a prompt/result snippet came from; null for a title or a message */
+  turn: number | null;
+  /** one collapsed line around the first match, ellipsised at either end */
+  text: string;
+  /** where the match sits inside `text`, so a client highlights what it was given */
+  offset: number;
+  length: number;
+}
+
+export interface SearchTaskHit {
+  id: string;
+  title: string;
+  repo_path: string;
+  updated_at: string;
+  /** the task's own state, so a result row renders without a second fetch */
+  state: TaskState;
+  archived: boolean;
+  /** total occurrences across every searched field of this task */
+  matches: number;
+  snippets: SearchSnippet[];
+}
+
+export interface SearchResponse {
+  query: string;
+  tasks: SearchTaskHit[];
+  /** a daemon scan cap was reached: this answer is not the whole ledger */
+  truncated: boolean;
+}
+
+/**
+ * The CLI's one glyph per state. It lives here rather than in cli.ts because
+ * two commands print it now (`ls` and `search`) and the keys derive from
+ * TASK_STATES above — adding a state without an icon is a compile error.
+ */
+export const STATE_ICON: Record<TaskState, string> = {
+  creating: "◌",
+  running: "●",
+  done: "✓",
+  "needs-input": "?",
+  stuck: "⏸",
+  failed: "✗",
+};
+
 export function displayStateWord(
   state: TaskState,
   latestTurnExitCode: number | null | undefined,

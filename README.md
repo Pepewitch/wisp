@@ -186,6 +186,16 @@ the turn has settled. Use `wisp show`, `wisp log -f`, `wisp send`, `wisp
 interrupt`, `wisp push`, and `wisp archive` for the rest of the lifecycle.
 Run `wisp help` for the complete CLI.
 
+`wisp search <text>` is the terminal half of the app's cross-task search — the
+same exact-text scan over task titles, turn prompts, turn results, and queued
+messages, with the matched field and a snippet per hit:
+
+```sh
+wisp search "swallowing cmd-enter"      # live tasks
+wisp search reducer -a                  # include archived tasks
+wisp search reducer --json              # the daemon's answer, for scripts
+```
+
 Recorder-capable live turns do not fail merely because their activity stream
 outgrows the retained transcript budget. Wisp keeps draining the harness,
 checkpoints the outcome independently, and marks incomplete retained history;

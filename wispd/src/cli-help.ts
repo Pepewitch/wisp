@@ -14,6 +14,8 @@ usage:
   ${COMMAND} show <task>                             task detail: turns, attachments, diffstat
   ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)
   ${COMMAND} log <task> [turn] [-f] [--raw] [--diagnostic]  activity feed; --diagnostic exports retained JSONL
+  ${COMMAND} search <text> [-a] [--json]             exact text in titles, prompts, results and queued messages
+                                                    (-a includes archived tasks)
   ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout
   ${COMMAND} send <task> "message" [--image <path>]…  send safely; active tasks steer or queue without stopping

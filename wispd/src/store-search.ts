@@ -24,40 +24,13 @@
  * promising otherwise — the daemon ships zero runtime dependencies (D10).
  */
 import { db } from "./store-database";
-import type { TaskState } from "./types";
-
-export type SearchSnippetKind = "title" | "prompt" | "result" | "message";
-
-export interface SearchSnippet {
-  kind: SearchSnippetKind;
-  /** the turn a prompt/result snippet came from; null for a title or a message */
-  turn: number | null;
-  /** one collapsed line around the first match, ellipsised at either end */
-  text: string;
-  /** where the match sits inside `text`, so the client highlights bytes it was given */
-  offset: number;
-  length: number;
-}
-
-export interface SearchTaskHit {
-  id: string;
-  title: string;
-  repo_path: string;
-  updated_at: string;
-  /** the task's own state, so a result row renders without a second fetch */
-  state: TaskState;
-  archived: boolean;
-  /** total occurrences across every searched field of this task */
-  matches: number;
-  snippets: SearchSnippet[];
-}
-
-export interface SearchResult {
-  query: string;
-  tasks: SearchTaskHit[];
-  /** a scan cap was reached, so this answer is not the whole ledger */
-  truncated: boolean;
-}
+import type {
+  SearchResponse,
+  SearchSnippet,
+  SearchSnippetKind,
+  SearchTaskHit,
+  TaskState,
+} from "./types";
 
 /** One sidebar's worth of results. More than this is a different question. */
 export const SEARCH_TASK_LIMIT = 60;
@@ -177,7 +150,7 @@ interface TaskColumns {
   archived: number;
 }
 
-export function searchTasks(query: string): SearchResult {
+export function searchTasks(query: string): SearchResponse {
   const needle = query.toLowerCase();
   const like = `%${escapeLike(query)}%`;
   const hits = new Hits(needle);
