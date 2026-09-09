@@ -45,7 +45,7 @@ when a remote tab is selected. Update saved remote daemons on their own host. Pu
 self-update; bootstrap a current signed release through Homebrew with
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. The public
 alpha.12-to-alpha.13 in-app path is qualified on one Apple Silicon Mac. The
-0.5.0 release follows the same signing and promotion gates, with its release
+0.5 releases follow the same signing and promotion gates, with their release
 evidence and pending human updater journey recorded in
 [the qualification ledger](../../docs/v0.5/QUALIFICATION.md).
 
