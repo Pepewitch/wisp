@@ -128,6 +128,30 @@ Daemon tests isolate `WISP_HOME` through `wispd/tests/setup.ts`; server and smok
 use dynamically allocated ports so they can run while the installed daemon
 remains active.
 
+### The test suite may not launch a real harness
+
+`wispd/tests/setup.ts` also fails the suite closed on process execution, because
+`WISP_HOME` isolation is not process isolation. It sets
+`GIT_CEILING_DIRECTORIES` so a bare temporary fixture directory can never be
+discovered as part of a real checkout, and `WISP_LAUNCH_POLICY` so
+`wispd/src/launch-policy.ts` refuses any harness executable outside the
+temporary fixture tree along with the generic stand-ins the fixtures name
+(`bash -c "…"`, `true`), and refuses repository hooks whose working directory
+is outside it.
+
+A test that needs harness behavior injects it (`probeSpawnOnce`, `openRpc`,
+`modelProbeSpawn`) or writes a fake executable into its own fixture directory.
+Real-provider qualification is a separate, deliberate act on a disposable host
+with disposable credentials:
+
+```sh
+WISP_LAUNCH_POLICY=allow bun run test:wispd   # spends real provider quota
+```
+
+`wispd/tests/launch-policy.test.ts` holds the escape attempts — a PATH-resolved
+provider CLI, a `..` climb, a symlink wearing a stand-in's name — and each one
+must stay refused.
+
 ## Find the owning surface
 
 | Concern | Primary source |

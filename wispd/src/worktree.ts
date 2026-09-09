@@ -5,6 +5,7 @@ import { branchFor } from "./branch-name";
 import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
 import { pathExists } from "./fsutil";
+import { assertWorkingDirectoryAllowed } from "./launch-policy";
 
 interface GitResult {
   ok: boolean;
@@ -237,6 +238,10 @@ async function runScript(
   timeoutMinutes: number,
   logPath: string,
 ): Promise<ScriptOutcome> {
+  // Repository code, about to run. Under a fixtures-only launch policy this
+  // refuses anything outside the fixture tree, so a test can never execute the
+  // contributor's own `.wisp/setup.sh` (a prior review: it ran `bun install`).
+  assertWorkingDirectoryAllowed(cwd, `task ${taskId} ${what}`);
   // fd-direct log setup, once per script at spawn time — allowed to stay sync (M1)
   const fd = openSync(logPath, "a");
   try {

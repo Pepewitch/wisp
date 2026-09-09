@@ -22,6 +22,7 @@ import {
   type RpcSession,
 } from "./adapters";
 import type { SpawnResult } from "./doctor";
+import { assertExecutableAllowed } from "./launch-policy";
 import type { Task } from "./types";
 
 export const PROBE_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
@@ -39,6 +40,7 @@ export const FACTORY_PROTOCOL_VERSION = "1.204.0";
 
 /** Production one-shot process runner: spawn with a cwd, collect everything. */
 export const bunProbeSpawn: ProbeSpawnFn = async (cmd, opts): Promise<SpawnResult> => {
+  assertExecutableAllowed(cmd, "harness probe", opts.cwd);
   const child = Bun.spawn({ cmd, cwd: opts.cwd, stdout: "pipe", stderr: "pipe" });
   let aborted = false;
   const kill = (): void => {
@@ -83,6 +85,7 @@ function safeMatch(match: (p: unknown) => boolean, params: unknown): boolean {
 }
 
 export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
+  assertExecutableAllowed(cmd, "harness rpc session", opts.cwd);
   const child = Bun.spawn({ cmd, cwd: opts.cwd, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   const waiters: {

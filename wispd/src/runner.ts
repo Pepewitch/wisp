@@ -33,6 +33,7 @@ import {
   writeImageEnvelope,
   type LiveOutputSink,
 } from "./live-input";
+import { assertExecutableAllowed } from "./launch-policy";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { processStartTime } from "./procid";
 import {
@@ -215,6 +216,10 @@ export function startTurn(
     // Recorder-owned pipes are not drained until after the row/recorder exists,
     // so their note can be written immediately afterward and still lead output.
     if (!recorderEligible && attachments.length > 0) writeSync(outFd, `${formatAttachNote(attachments)}\n`);
+    // Fails closed under a fixtures-only launch policy: an ordinary test must
+    // not reach the operator's installed harness. The throw lands in the catch
+    // below, which is already the "this turn never started" path.
+    assertExecutableAllowed(argv, `task ${task.id} turn ${n} harness '${task.harness}'`, task.worktree_path ?? undefined);
     child = Bun.spawn({
       cmd: argv,
       cwd: task.worktree_path!,

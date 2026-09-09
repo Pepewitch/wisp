@@ -1,10 +1,12 @@
 import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
 import type { SpawnResult } from "./doctor";
+import { assertExecutableAllowed } from "./launch-policy";
 
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
 
 /** Production async process runner; unlike bunSpawn it never blocks the event loop. */
 export const bunModelProbeSpawn: ModelProbeSpawnFn = async (cmd, signal): Promise<SpawnResult> => {
+  assertExecutableAllowed(cmd, "model discovery probe");
   const child = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
   let aborted = false;
   const kill = (): void => {
