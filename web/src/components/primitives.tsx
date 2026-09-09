@@ -9,6 +9,27 @@ import { cn } from "@/lib/utils"
 /**
  * The state marker. 6px, hue on the dot and nowhere else; `running` gets a
  * violet halo so a live task is findable in a list of thirty.
+ *
+ * ONE shape, two axes (D-dot). Every marker in the app is a circle — there is
+ * no square variant, because a 6px square at a glance reads as a different
+ * KIND of object rather than a different state:
+ *
+ *  - FILL says whose state it is. A filled dot is the agent's own outcome;
+ *    a RING is ambient work attached to the task but outside the turn —
+ *    background processes here, archive cleanup in `TaskStateDot`.
+ *  - HUE says how that work is going, and it is the same hue family either
+ *    way, so a ring never needs a colour the filled dots do not already own.
+ *
+ * `unknown` takes the neutral rather than a warm hue on purpose. It means
+ * Wisp could not inventory the process group — no data, nothing to act on —
+ * and the two warm hues are 24° apart in OKLCH (`needs-input` 83°, `stuck`
+ * 59°): at 6px they are one colour, so spending either here would have said
+ * "this task wants you" about a fact that wants nothing.
+ *
+ * `stopping` keeps the live ring because that is the truth — the work is
+ * still there until it is gone — and because `animate-breathe` is reserved
+ * for the running indicator (see index.css: a second blinking thing competes
+ * with the one that means "this task is alive").
  */
 export function StateDot({ state, background, className }: { state: TaskState; background?: ApiTask["background"]; className?: string }) {
   const label = backgroundLabel(background)
@@ -23,7 +44,9 @@ export function StateDot({ state, background, className }: { state: TaskState; b
       className={cn(
         "size-1.5 shrink-0 rounded-full",
         backgroundOnly
-          ? background?.state === "running" ? "border-2 border-state-background bg-transparent" : "rounded-[1px] bg-state-stuck"
+          ? background?.state === "unknown"
+            ? "border-2 border-state-creating bg-transparent"
+            : "border-2 border-state-background bg-transparent"
           : STATE_DOT[state],
         state === "running" && "shadow-[0_0_0_3px_var(--accent-wash)]",
         className,

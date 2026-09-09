@@ -21,9 +21,17 @@ interface TaskRowProps {
   onSelect: (id: string) => void
 }
 
+/**
+ * Cleanup outranks the task's own state while it is unfinished, and wears the
+ * RING for the same reason background work does (see `StateDot`): it is
+ * ambient work outside the turn. Hue carries how it is going — the ambient
+ * blue while it runs, the `stuck` hue once it wants a person. Warm-on-a-ring
+ * is unambiguous against a warm filled dot, so this one keeps its hue where
+ * `unknown` background work gave its up.
+ */
 function TaskStateDot({ task, className }: { task: ApiTask; className?: string }) {
   return task.cleanup && task.cleanup.state !== "complete"
-    ? <span role="img" aria-label={CLEANUP_LABEL[task.cleanup.state]} title={CLEANUP_LABEL[task.cleanup.state]} className={cn("size-1.5 shrink-0", task.cleanup.state === "needs-attention" ? "rounded-[1px] bg-state-stuck" : "rounded-full border-2 border-state-background", className)} />
+    ? <span role="img" aria-label={CLEANUP_LABEL[task.cleanup.state]} title={CLEANUP_LABEL[task.cleanup.state]} className={cn("size-1.5 shrink-0 rounded-full border-2", task.cleanup.state === "needs-attention" ? "border-state-stuck" : "border-state-background", className)} />
     : <StateDot state={task.state} background={task.background} className={className} />
 }
 

@@ -220,11 +220,22 @@ describe("completed work with a background process", () => {
     expect(screen.queryByRole("button", { name: "Stop background work" })).toBeNull()
   })
 
-  it.each(["unknown", "stopping"] as const)("uses an amber square and an explicit label for %s background work", (state) => {
+  it.each(["unknown", "stopping"] as const)("stays a ring, never a square, and labels %s background work", (state) => {
     render(<StateDot state="done" background={{ state, groups: 1 }} />)
     const dot = screen.getByRole("img")
-    expect(dot).toHaveClass("rounded-[1px]", "bg-state-stuck")
-    expect(dot).not.toHaveClass("bg-state-done")
+    expect(dot).toHaveClass("rounded-full", "border-2", "bg-transparent")
+    expect(dot).not.toHaveClass("rounded-[1px]", "bg-state-done")
     expect(dot).toHaveAccessibleName(state === "unknown" ? "Done · Background status unknown" : "Done · Stopping background work")
+  })
+
+  // The two warm hues sit 24° apart in OKLCH, so neither may stand for a fact
+  // that asks nothing of the reader: `unknown` means Wisp could not inventory
+  // the process group, and `stopping` still has live work behind it.
+  it("keeps the neutral for unknown and the live hue for stopping", () => {
+    const view = render(<StateDot state="done" background={{ state: "unknown", groups: 1 }} />)
+    expect(screen.getByRole("img")).toHaveClass("border-state-creating")
+    expect(screen.getByRole("img")).not.toHaveClass("border-state-stuck", "border-state-needs-input")
+    view.rerender(<StateDot state="done" background={{ state: "stopping", groups: 1 }} />)
+    expect(screen.getByRole("img")).toHaveClass("border-state-background")
   })
 })

@@ -27,7 +27,7 @@ import {
   HeaderClusterSpecimen,
   UpdateGallerySpecimen,
 } from "@/components/update-gallery-specimen"
-import { STATE_LABEL } from "@/lib/state"
+import { backgroundLabel, STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { useTheme } from "@/lib/theme"
 import { TASK_STATES } from "@/lib/types"
@@ -253,14 +253,17 @@ function FoundationSpecimens() {
             {(["running", "stopping", "unknown"] as const).map((state) => (
               <div key={state} className="flex items-center gap-2.5 text-[12px] text-fg-secondary">
                 <StateDot state="done" background={{ state, groups: 1 }} />
-                <span>Done · {state === "running" ? "Background work running" : state === "stopping" ? "Stopping background work" : "Background status unknown"}</span>
+                <span>Done · {backgroundLabel({ state, groups: 1 })}</span>
               </div>
             ))}
           </div>
           <p className="mt-5 border-t border-border pt-4 text-[11.5px] leading-relaxed text-muted-foreground">
-            <span className="text-state-failed">Failed</span> and{" "}
-            <span className="text-state-needs-input">needs input</span> are the only two states allowed to tint
-            their own line of text — they are the only two a person has to act on.
+            Every marker is a circle. A FILLED dot is the agent's own outcome; a RING is ambient work
+            outside the turn — background processes above, archive cleanup in the sidebar. Unknown takes the
+            neutral because it means no data, and the two warm hues are reserved for the two states a
+            person has to act on: <span className="text-state-failed">failed</span> and{" "}
+            <span className="text-state-needs-input">needs input</span>, the only two allowed to tint their
+            own line of text.
           </p>
       </Section>
 
