@@ -1,12 +1,50 @@
 # Wisp 0.5 qualification
 
-This ledger separates release evidence from the version label. 0.5.0 is a
-regular pre-1.0 release, not a claim of exhaustive security or platform coverage.
+This ledger separates release evidence from the version label. The 0.5 releases
+are regular pre-1.0 releases, not a claim of exhaustive security or platform
+coverage. 0.5.1 is the current release; 0.5.0's record is retained below.
+
+## 0.5.1 publication
+
+**Published and promoted on 2026-09-09.**
+[Wisp 0.5.1](https://github.com/Pepewitch/wisp/releases/tag/v0.5.1) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+17:26:39 UTC with ten assets. The annotated tag resolves to clean main commit
+[`c81c04e9a92bb2a88c2a941ce5756a64c476c1b1`](https://github.com/Pepewitch/wisp/commit/c81c04e9a92bb2a88c2a941ce5756a64c476c1b1),
+landed through [PR #114](https://github.com/Pepewitch/wisp/pull/114).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34381686733)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | 47 root, 1,036 daemon, 641 UI tests; lint/types, docs, workflow pins, browser and supply-chain checks, and the native core gate passed on the release commit |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks over 53.43 MB; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and the clean tagged source |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, fixed-URL convergence for both channels, and post-promotion livecheck passed |
+
+The promotion receipt records completion at **17:31:10 UTC**, with Homebrew tap
+commit [`e46bb5ded3595c653747674a9739139bafd27dd0`](https://github.com/Pepewitch/homebrew-tap/commit/e46bb5ded3595c653747674a9739139bafd27dd0).
+
+0.5.1 is the first release promoted under the four-file tap contract, so it
+published `updates/wisp-daemon.json` for the first time. That URL returned
+`404` for the whole 0.5.0 period, which meant the daemon update discovery and
+`wisp update` shipped in 0.5.0 could not resolve a version. Both channel URLs
+now return `200` and serve 0.5.1, verified anonymously after promotion. The
+[promotion dry run](https://github.com/Pepewitch/wisp/actions/runs/34381614758)
+independently re-derived v0.5.1 from the tap and reproduced all four files
+byte for byte (`tapState=already-promoted`).
+
+No installed daemon service or production Desktop profile was upgraded for
+these checks. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## 0.5.0 publication
 
 **Published and promoted on 2026-09-09.**
-[Wisp 0.5.0](https://github.com/Pepewitch/wisp/releases/tag/v0.5.0) is the latest
+[Wisp 0.5.0](https://github.com/Pepewitch/wisp/releases/tag/v0.5.0) was published as a
 regular GitHub release (`draft: false`, `prerelease: false`), with ten assets.
 The annotated tag resolves to clean main commit
 [`6cd3cef4587fe0570d3737f5061e73f8f3b58c23`](https://github.com/Pepewitch/wisp/commit/6cd3cef4587fe0570d3737f5061e73f8f3b58c23),
@@ -54,9 +92,13 @@ ledger records the completed outcome separately.
 
 ## Still unqualified or outside scope
 
-- Human-observed 0.4-to-0.5 in-app installation, relaunch, state preservation,
-  and Homebrew receipt reconciliation. The historical alpha.12-to-alpha.13
-  journey passed on one Mac; it does not qualify 0.5.0 automatically.
+- Human-observed in-app installation, relaunch, state preservation, and
+  Homebrew receipt reconciliation for 0.4-to-0.5 and for 0.5.0-to-0.5.1. The
+  historical alpha.12-to-alpha.13 journey passed on one Mac; it does not
+  qualify either 0.5 release automatically.
+- A human-observed cross-harness switch on every supported harness, and the
+  0.5.1 database migration 6 upgrade against a large production profile.
+  Migration 6 is covered by automated tests only.
 - Complete fresh-machine real-provider activation, Linux upgrade/rollback,
   every macOS version above the configured minimum, and cross-machine restore.
 - Multi-user authorization, agent sandboxing, forensic data deletion, and an
