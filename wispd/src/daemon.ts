@@ -10,6 +10,7 @@ import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { resumeArchiveCleanups, startArchiveCleanupLoop } from "./routes/archive";
+import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
@@ -518,11 +519,13 @@ async function serveOwned(
   const outboxTimer = startOutboxLoop(cfg);
   const stuckTimer = startStuckLoop(cfg);
   const cleanupTimer = startArchiveCleanupLoop();
+  const processLoop = startProcessGroupLoop();
   const stopServer = server.stop.bind(server);
   server.stop = async (closeActiveConnections?: boolean): Promise<void> => {
     clearInterval(outboxTimer);
     clearInterval(stuckTimer);
     clearInterval(cleanupTimer);
+    await processLoop.stop();
     // Ownership ends when this daemon decides to stop, not when its last
     // socket drains: the loops are already cancelled, so nothing here will
     // touch persisted state again, and a shutdown that stalls on a connection

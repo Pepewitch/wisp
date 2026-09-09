@@ -204,8 +204,14 @@ before delivery. During a running turn it uses the verified native steering
 channel for Claude, Droid, and Codex; other harnesses keep the message visibly
 queued and start it as the next turn. Sending never stops current work.
 `wisp interrupt` and the UI's Stop control are the explicit destructive path.
-Stop waits for the turn's process group to exit, escalating if necessary,
-before reporting success or starting queued work. While stopping, new sends
+Stop waits for the active turn and its task's tracked background process groups
+to exit, escalating if necessary, before reporting success or starting queued work.
+A completed agent result stays Done when a watcher or server remains: the sidebar
+shows a blue ring and “Background work running”; green means no tracked work
+remains. Stop stays available with an empty composer and preserves that result.
+Amber indicates stopping or unverified background work. Tracking covers older
+turns and daemon restarts. Plain archive refuses surviving background work;
+force-archive stops verified groups before deleting files. While stopping, new sends
 and archive requests are refused. An incomplete stop keeps those operations
 blocked until Stop can confirm completion; the conversation session is kept.
 If the daemon loses durable proof while starting or natively admitting a

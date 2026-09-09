@@ -262,6 +262,28 @@ CREATE TABLE IF NOT EXISTS archive_cleanups (
 `);
     },
   },
+  {
+    id: 3,
+    name: "durable-turn-process-groups",
+    up: (db) => {
+      db.exec(`
+CREATE TABLE IF NOT EXISTS turn_process_groups (
+  turn_id INTEGER PRIMARY KEY REFERENCES turns(id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  pgid INTEGER NOT NULL,
+  boot_id TEXT,
+  members_json TEXT NOT NULL,
+  state TEXT NOT NULL,
+  stop_requested INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_turn_process_groups_task ON turn_process_groups(task_id, state);
+INSERT OR IGNORE INTO turn_process_groups (turn_id, task_id, pgid, members_json, state)
+SELECT turns.id, turns.task_id, turns.pid,
+       json_array(json_object('pid', turns.pid, 'started', turns.pid_start_time)), 'unknown'
+FROM turns JOIN tasks ON tasks.id = turns.task_id WHERE turns.pid > 1;
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

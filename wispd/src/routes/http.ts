@@ -2,10 +2,11 @@ import { formatUsage, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
 import { typeName } from "../validate";
+import { backgroundWork } from "../task-processes";
 
 /** SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit). */
 export function apiTask(t: Task): ApiTask {
-  return { ...t, archived: t.archived !== 0 };
+  return { ...t, archived: t.archived !== 0, background: backgroundWork(t.id) };
 }
 
 export type ApiTaskMessage = Omit<

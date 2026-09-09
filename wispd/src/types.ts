@@ -91,7 +91,10 @@ export function displayStateWord(
 }
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived"> & { archived: boolean };
+export type ApiTask = Omit<Task, "archived"> & {
+  archived: boolean;
+  background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
+};
 
 export interface Turn {
   id: number;
@@ -200,4 +203,13 @@ export interface OutboxRow {
   delivered_at: string | null;
   last_error: string | null;
   created_at: string;
+}
+
+export function backgroundSummary(task: ApiTask): string {
+  switch (task.background?.state) {
+    case "running": return " · background work running";
+    case "unknown": return " · background status unknown";
+    case "stopping": return " · stopping background work";
+    default: return "";
+  }
 }

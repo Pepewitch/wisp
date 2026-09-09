@@ -411,7 +411,7 @@ describe("daemon API contracts", () => {
     const base = await startServer();
 
     const noTurn = makeTask();
-    await expectError(base, `/api/tasks/${noTurn.id}/interrupt`, 409, "no running turn to interrupt", "POST");
+    await expectError(base, `/api/tasks/${noTurn.id}/interrupt`, 409, "no running turn or background work to interrupt", "POST");
 
     // interrupt and push refuse an archived task the way send, diff and
     // fresh-session already did — the archived answer, not a side effect

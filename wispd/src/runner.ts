@@ -35,10 +35,12 @@ import {
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
 import { assertTaskNotStopping, interruptTaskTurn, isTaskStopping, turnFinalized, waitForInterrupt } from "./turn-interrupt";
+import { assertTaskProcessesEnded, backgroundWork, processStop, processStopPending, recordProcessGroup, recordedGroupRebooted, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
-import { assertGroupEnded, forgetOwnedGroupIfEmpty, ownsGroup, rememberOwnedGroup, signalProcessTree } from "./process-tree";
+import { signalProcessTree } from "./process-tree";
 import { processStartTime } from "./procid";
 import {
+  db,
   createTurn,
   createTaskMessage,
   claimTaskMessageForStart,
@@ -48,7 +50,6 @@ import {
   getTask,
   getTaskMessage,
   getTurn,
-  latestTurnForTask,
   listTasks,
   markTaskMessageDelivered,
   newTaskMessageId,
@@ -255,19 +256,23 @@ export function startTurn(
   // exited before ps could see it) degrades to bare-liveness re-adoption.
   let turnId: number;
   try {
-    turnId = createTurn(
-      task.id,
-      n,
-      message,
-      child.pid,
-      outPath,
-      processStartTime(child.pid),
-      // the manifest is written with the turn row, in the same sync block as the
-      // spawn: a crash between them would otherwise leave bytes on disk that no
-      // turn admits to owning
-      attachmentManifest(attachments),
-      recorderEligible ? "recorder-v1" : null,
-    );
+    turnId = db.transaction(() => {
+      const id = createTurn(
+        task.id,
+        n,
+        message,
+        child.pid,
+        outPath,
+        processStartTime(child.pid),
+        // the manifest is written with the turn row, in the same sync block as the
+        // spawn: a crash between them would otherwise leave bytes on disk that no
+        // turn admits to owning
+        attachmentManifest(attachments),
+        recorderEligible ? "recorder-v1" : null,
+      );
+      recordProcessGroup(id);
+      return id;
+    })();
   } catch (error) {
     // No turn row exists for a watcher to reconcile or escalate this child, so
     // this is the only chance to stop it — and the group is what it started.
@@ -276,7 +281,6 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
-  rememberOwnedGroup(child.pid);
   const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
   const { recorder, sink, stderrPump } = capture;
   // stderr must be drained independently of the stdout protocol pump. A noisy
@@ -415,7 +419,7 @@ export async function submitTaskMessage(
 
 /** Start exactly one FIFO message when a task has no running turn. */
 export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: WispConfig): TaskMessage | null {
-  if (isTaskStopping(taskId)) return null;
+  if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
   const task = getTask(taskId);
   if (
     !task ||
@@ -501,11 +505,9 @@ async function watchTurn(
   const capTimer = recorder ? null : setInterval(() => void capTick(), 5000);
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
+  await refreshProcessGroups(taskId, turnId);
   await waitForInterrupt(turnId);
   liveChildren.delete(turnId);
-  // The common case: the harness took its children with it, so there is no
-  // group left to protect an archive from.
-  forgetOwnedGroupIfEmpty(child.pid);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
   await outputPump.catch(() => {});
@@ -516,6 +518,7 @@ async function watchTurn(
   }
   await waitForInterrupt(turnId);
   await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
+  await processStop(taskId)?.catch(() => {});
   if (!getTurn(turnId)?.interrupt_detail?.includes("force-archive")) startNextQueuedMessage(taskId, def, cfg);
 }
 
@@ -531,6 +534,7 @@ async function watchTurn(
  * half-finished sweep.
  */
 export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>, cfg: WispConfig): Promise<void> {
+  await refreshProcessGroups();
   releaseOrphanedTaskMessageClaims();
   for (const turn of runningTurns()) {
     const task = getTask(turn.task_id);
@@ -542,7 +546,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
       transition(task.id, "failed", `unknown harness after restart: ${task.harness}`);
       continue;
     }
-    const identity = turn.pid ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";
+    const identity = turn.pid && !recordedGroupRebooted(turn.id) ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";
     if (identity === "alive") {
       console.error(`[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`);
       startReAdoptionPoll({
@@ -555,6 +559,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
         onEnded: async () => {
           await waitForInterrupt(turn.id);
           await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
+          await processStop(task.id)?.catch(() => {});
           if (!getTurn(turn.id)?.interrupt_detail?.includes("force-archive")) {
             startNextQueuedMessage(task.id, def, cfg);
           }
@@ -665,7 +670,16 @@ function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SI
 
 /** Explicit interruption; normal message delivery never calls this operation. */
 export function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
-  return interruptTaskTurn(taskId, graceMs, (turnId) => liveChildren.get(turnId));
+  const hadBackground = backgroundWork(taskId).groups > 0;
+  return withProcessStop(taskId, async () => {
+    await refreshProcessGroups(taskId);
+    if (hasRunningTurn(taskId) || isTaskStopping(taskId)) {
+      await interruptTaskTurn(taskId, graceMs, (turnId) => liveChildren.get(turnId));
+    } else if (!hadBackground && backgroundWork(taskId).groups === 0) {
+      throw new Error("no running turn or background work to interrupt");
+    }
+    await stopRecordedGroups(taskId, graceMs);
+  });
 }
 
 /**
@@ -676,7 +690,7 @@ export function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<
  * or the turn row would stay 'running' forever.
  */
 export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
-  assertTaskNotStopping(taskId);
+  assertTaskNotStopping(taskId, true);
   const turn = hasRunningTurn(taskId);
   if (!turn) {
     // No LIVE turn is not the same as nothing running. A harness that exited
@@ -684,8 +698,8 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     // turn's group, and this is the gate in front of deleting the worktree it
     // is sitting in — the early return here used to let archive proceed (a
     // review asked for the missing test and the test found the hole).
-    const latest = latestTurnForTask(taskId);
-    if (latest?.pid && ownsGroup(latest.pid)) await assertGroupEnded(latest.pid, `turn ${latest.n}`, graceMs);
+    await stopRecordedGroups(taskId, graceMs);
+    await assertTaskProcessesEnded(taskId);
     return;
   }
   markInterrupted(turn.id, "turn interrupted by force-archive");
@@ -700,5 +714,6 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
       throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived SIGKILL; refusing to archive`);
     }
   }
-  if (turn.pid) await assertGroupEnded(turn.pid, `turn ${turn.n}`, graceMs);
+  await stopRecordedGroups(taskId, graceMs);
+  await assertTaskProcessesEnded(taskId);
 }

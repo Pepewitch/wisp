@@ -62,7 +62,9 @@ wisp fresh <task>
 
 `send` steers a supported live harness or queues the message for the next turn;
 it does not stop current work. On an idle task it starts the next turn in the
-same session. `interrupt` explicitly stops the turn's process group and waits
+same session. Completed turns can retain background work; list/show report it
+separately from the agent outcome. Normal sending leaves that work running.
+`interrupt` explicitly stops the active turn and all tracked task groups and waits
 for completion, escalating if needed. Sending and archiving are refused while
 Stop is pending or incomplete; retry Stop after resolving the reported failure.
 The session survives, so a later `send` can continue the conversation.

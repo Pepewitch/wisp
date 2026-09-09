@@ -58,10 +58,17 @@ export const TURN_STATUS_TEXT: Record<TurnStatus, string> = {
  * hue stays the failure hue either way: the word is the fix, not the color.
  */
 export function stateWord(task: ApiTask): string {
-  if (task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code) {
-    return `Exited ${task.latest_turn_exit_code}`
-  }
-  return STATE_LABEL[task.state]
+  const background = backgroundLabel(task.background);
+  const outcome = task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code
+    ? `Exited ${task.latest_turn_exit_code}` : STATE_LABEL[task.state]
+  return background ? `${outcome} · ${background}` : outcome
+}
+
+export function backgroundLabel(background: ApiTask["background"]): string | null {
+  if (background?.state === "running") return "Background work running";
+  if (background?.state === "unknown") return "Background status unknown";
+  if (background?.state === "stopping") return "Stopping background work";
+  return null;
 }
 
 /**

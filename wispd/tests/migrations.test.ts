@@ -52,6 +52,20 @@ describe("the ledger", () => {
     db.close();
   });
 
+  test("upgrading preserves older turns and seeds their process identity conservatively", () => {
+    const db = freshDatabase("background-upgrade");
+    migrate(db);
+    db.exec("DROP TABLE turn_process_groups; DELETE FROM schema_migrations WHERE id = 3");
+    db.query("INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES ('tfixture', 'fixture', '/fixture', 'fake', 'done', 'now', 'now')").run();
+    db.query("INSERT INTO turns (task_id, n, prompt, result, status, pid, pid_start_time, log_file, started_at) VALUES ('tfixture', 1, 'work', 'kept result', 'done', 12345, 'old-start', '/fixture/log', 'now')").run();
+    expect(migrate(db).applied).toEqual([3]);
+    expect(db.query("SELECT pgid, boot_id, members_json, state FROM turn_process_groups").get()).toEqual({
+      pgid: 12345, boot_id: null, members_json: '[{"pid":12345,"started":"old-start"}]', state: "unknown",
+    });
+    expect(db.query("SELECT result FROM turns").get()).toEqual({ result: "kept result" });
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);
