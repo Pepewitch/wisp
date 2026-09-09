@@ -226,57 +226,107 @@ of a live profile.
 
 ## Back up and restore a Wisp home
 
-`~/.wisp` is a live SQLite database plus the files that belong to it. Copying
-it while the daemon runs can capture a database whose write-ahead log is
-missing, which is a backup that restores to a state no daemon ever had.
+A backup must exist **outside the machine or disk you might lose** before a
+failure. Choose what you need to recover:
 
-Wisp records the schema version it wrote, so a restore into an older build is
-refused loudly rather than read with columns that build does not know about.
-That is what makes a backup taken **before** an upgrade the thing that lets you
-roll one back.
+| Purpose | What to preserve |
+| --- | --- |
+| Roll back a Wisp upgrade on the same machine | A pre-upgrade Wisp home, with the original repositories still intact at their existing paths |
+| Recover after losing a VM or disk | The Wisp home **and every source repository its tasks use**, including Git metadata and any task worktrees stored elsewhere |
 
-The safe procedure, with the daemon stopped:
+A copy of `~/.wisp` alone is not a complete machine-loss backup. Linked task
+worktrees share objects, branches, and administrative data with their source
+repository's Git directory. An unpublished task commit may exist only there;
+a fresh clone from GitHub cannot recover commits that were never pushed.
+See [Git's worktree storage details](https://git-scm.com/docs/git-worktree#_details).
+
+### Take an offline backup
+
+1. Stop submitting work. Let task setup and cleanup scripts settle. Finish or
+   explicitly **Stop** active turns and background watchers; close task
+   terminals and stop other tools writing to these repositories. Check any
+   **Cleanup needs attention** tasks using the [cleanup guide](ARCHIVE-CLEANUP.md).
+   Stopping the daemon alone does not guarantee its detached children stopped.
+2. Stop the daemon and keep it stopped until the copy finishes. For the managed
+   Linux service, use `systemctl --user stop wisp.service`; for foreground or
+   other service managers, stop that instance and prevent automatic restart.
+   Verify no task, setup, cleanup, or external process is still writing the files.
+3. Copy the entire Wisp home and the repositories needed for your recovery goal.
+   Include hidden Git directories, uncommitted/untracked files, local-task
+   checkouts, and worktrees outside the default home. If a repository itself is
+   a linked worktree or uses external Git storage, include that shared storage
+   too. Record the original absolute paths, Wisp version, and configured
+   `WISP_HOME` with the backup.
+4. Check the copy succeeded before restarting Wisp, then transfer it off the
+   machine. Restrict access and encrypt it in storage/transit: config, logs,
+   attachments, and copied project files can contain credentials and private data.
+
+For example, **after completing steps 1–2**, a default home and one ordinary
+repository under `~/projects/example-app` can be copied together:
 
 ```sh
-systemctl --user stop wisp.service     # or stop your foreground `wisp serve`
-tar -czf "wisp-backup-$(date +%Y%m%d-%H%M).tar.gz" -C "$HOME" .wisp
-systemctl --user start wisp.service
+umask 077
+backup_file="$HOME/wisp-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+# Use your service manager if different; restart only if tar succeeds:
+tar -czf "$backup_file" -C "$HOME" .wisp projects/example-app &&
+  systemctl --user start wisp.service
+# Transfer the archive to protected storage outside this machine.
 ```
 
-If stopping the daemon is not an option, take a consistent snapshot of the
-database first and copy the rest normally:
+Replace the example repository and include **all** required paths. A custom
+`WISP_HOME` replaces `.wisp` in this example. The local archive is only a staging
+copy, and the commands do not stop task processes or upload it for you. If tar
+fails, fix the reported cause and retry with a new filename; discard the partial
+archive only after a successful replacement exists.
 
-```sh
-sqlite3 ~/.wisp/wisp.db "VACUUM INTO '/tmp/wisp-db-snapshot.db'"
-```
-
-`VACUUM INTO` writes a single consistent file including the WAL contents. It is
-the one supported way to copy the database of a running daemon.
-
-What a complete backup contains, and why:
+The Wisp home includes these recovery inputs; copy the whole directory rather
+than using this table as a file allowlist:
 
 | Path | Why it is needed |
 | --- | --- |
-| `wisp.db` (+ `-wal`, `-shm` when the daemon is stopped) | tasks, turns, messages, outbox, schema ledger |
-| `config.json` | port, token, projects, webhooks, harness defaults |
-| `instance-id` | the identity clients use to recognize this daemon |
+| `wisp.db` and any accompanying `-wal`, `-shm` files | tasks, turns, messages, cleanup jobs, outbox, schema ledger |
+| `config.json`, `instance-id` | settings, credentials, projects, and daemon identity |
 | `adapters.json`, `suffix-prompts.json` | user-defined harnesses and prompts, when present |
-| `tasks/` | per-turn image attachments referenced by turn manifests |
-| `logs/` | turn transcripts the UI replays |
-| `worktrees/` | live task checkouts (large; excludable if you accept losing uncommitted work in them) |
+| `tasks/`, `logs/` | image attachments and transcripts |
+| `worktrees/` | task files, including uncommitted/untracked work; Git history also needs the source repositories |
 
-To restore, stop the daemon, move the existing home aside rather than deleting
-it, unpack the backup, and start the daemon. Check the result before trusting
-it:
+A live [SQLite `VACUUM INTO` snapshot](https://www.sqlite.org/lang_vacuum.html#vacuuminto)
+is consistent **for the database only**. Copying attachments, logs, or worktrees
+while tasks or cleanup jobs modify them does not give a consistent whole-Wisp
+backup. Use the offline procedure above for recovery; a database-only snapshot
+is not a substitute for it.
 
-```sh
-wisp doctor      # reports the schema version, integrity, and foreign keys
-wisp ls          # the tasks you expect, with their branches
-```
+### Restore and verify
 
-Two things a restore does not do: it does not recreate worktrees you excluded,
-and it does not roll back a schema. Rolling back a Wisp binary across a
-migration needs the backup you took before the upgrade.
+1. Keep the destination daemon stopped and preserve any existing files separately.
+   Install the backed-up Wisp version first: a newer build may migrate the
+   database, while an older build refuses a schema it does not understand.
+2. Restore the Wisp home **and the source repositories** with their permissions,
+   preferably to the same absolute paths under the same account. Reinstall
+   harness CLIs and restore their credentials/session data separately if needed;
+   their own homes are outside this backup's scope. Keep the old machine's Wisp
+   stopped so both copies do not resume the same work or webhook deliveries.
+3. If paths changed, do not start Wisp yet. Git's
+   [`worktree repair`](https://git-scm.com/docs/git-worktree#_commands)
+   can reconnect moved repositories/worktrees, but it does **not** update Wisp's
+   stored paths. Wisp has no automatic profile-relocation command. Restoring the
+   original paths is the simplest option; relocation needs separate review of
+   configuration and database paths before startup.
+4. Run `wisp doctor` against the restored home while the daemon is stopped.
+   Also check each source repository with `git -C <repo> worktree list`, and
+   each task worktree with `git -C <worktree> log -1` and `git -C <worktree> status`.
+   Confirm an expected unpublished commit and any uncommitted files survived.
+   Database integrity alone does not establish that Git data or attachments exist.
+5. Start Wisp, then use `wisp ls` and the UI to check task history, attachments,
+   and logs. Review queued messages and cleanup status: startup resumes recovery
+   and delivery work. If checks fail, stop Wisp and retain the original backup
+   while investigating; do not delete branches or archive tasks to hide the error.
+
+Use the restored `WISP_HOME` for these commands if it is not the default.
+An upgrade rollback requires the backup taken **before** the migration; restoring
+a newer database does not undo its schema. Excluded files or repositories cannot
+be recreated by Wisp. A full fresh-machine restore drill is not yet qualified;
+verify your own backup before relying on it for disaster recovery.
 
 ## Remove binaries and service
 
