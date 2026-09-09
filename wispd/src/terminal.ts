@@ -116,6 +116,8 @@ class TerminalSession {
   private client: TerminalClient | null = null;
   private detachedAt = Date.now();
   private finished = false;
+  /** Set the moment a kill is asked for, so no new client can be given this shell. */
+  private killRequested = false;
   private inputQueue: Promise<void> = Promise.resolve();
 
   private constructor(
@@ -202,8 +204,24 @@ class TerminalSession {
     return this.screen.snapshot();
   }
 
+  /**
+   * Whether this session may still be handed to an arriving client.
+   *
+   * A requested kill counts as dead even while the process lingers. A shell
+   * that outlives SIGKILL (a loaded host, a process blocked in the kernel)
+   * used to keep `finished === false`, so `openSession` would hand that undead
+   * session to the next client and its first `resizeForAttach` would throw —
+   * observed as a terminal that errored the instant it opened. The next client
+   * gets a FRESH shell instead; the lingering process is still tracked (see
+   * `dying`) so archive keeps refusing to delete the worktree under it.
+   */
   isLive(): boolean {
-    return !this.finished;
+    return !this.finished && !this.killRequested;
+  }
+
+  /** True once the process is genuinely gone, not merely asked to go. */
+  hasExited(): boolean {
+    return this.finished || this.child.exitCode !== null || this.child.signalCode !== null;
   }
 
   isIdle(now = Date.now()): boolean {
@@ -325,6 +343,7 @@ class TerminalSession {
 
   async kill(): Promise<void> {
     if (this.finished) return;
+    this.killRequested = true;
     try {
       // SIGHUP, not SIGTERM: an interactive shell IGNORES SIGTERM, and it used
       // to be script(1) — which does not — that received this. Signalling the
@@ -454,6 +473,17 @@ function drained(reader: ReadStream | null): Promise<void> {
 }
 
 const sessions = new Map<string, TerminalSession>();
+/**
+ * Shells that were asked to die and did not (yet).
+ *
+ * They are out of `sessions`, so no arriving client can be handed one, but
+ * they are still processes sitting in a task's worktree — and archive's
+ * fail-closed gate has to keep refusing while they are. Removing them from
+ * both places on a failed kill, which is what the old code effectively did by
+ * skipping its `delete`, would have let a retry report success and delete the
+ * worktree out from under a live shell.
+ */
+const dying = new Map<string, TerminalSession>();
 let idleTimer: ReturnType<typeof setInterval> | null = null;
 
 function keepIdleGcAlive(): void {
@@ -462,7 +492,7 @@ function keepIdleGcAlive(): void {
 }
 
 function stopIdleGcIfEmpty(): void {
-  if (sessions.size !== 0 || idleTimer === null) return;
+  if (sessions.size !== 0 || dying.size !== 0 || idleTimer === null) return;
   clearInterval(idleTimer);
   idleTimer = null;
 }
@@ -472,11 +502,14 @@ async function idleGc(): Promise<void> {
   for (const [key, session] of victims) {
     console.error(`[wisp] terminal ${key}: idle shell exceeded 30 minutes; killing it`);
     try {
-      await session.kill();
+      await killAndRetire(key, session);
     } catch (error) {
       console.error(`[wisp] terminal ${key}: idle GC failed: ${messageOf(error)}`);
     }
-    if (!session.isLive() || sessions.get(key) === session) sessions.delete(key);
+  }
+  // A shell that lingered past its kill may have gone since; stop tracking it.
+  for (const [key, session] of [...dying.entries()]) {
+    if (session.hasExited()) dying.delete(key);
   }
   stopIdleGcIfEmpty();
 }
@@ -520,24 +553,48 @@ export function openSession(
   return session;
 }
 
+/**
+ * Kill one shell and retire it: out of the reusable map either way, and into
+ * `dying` only while its process is still there.
+ *
+ * The bookkeeping is in a `finally` on purpose. A kill that throws still means
+ * "this shell must never be reused", and the old code's `delete`-after-await
+ * skipped that, leaking the session AND leaving it reusable.
+ */
+async function killAndRetire(key: string, session: TerminalSession): Promise<void> {
+  try {
+    await session.kill();
+  } finally {
+    if (sessions.get(key) === session) sessions.delete(key);
+    if (session.hasExited()) dying.delete(key);
+    else dying.set(key, session);
+  }
+}
+
 /** Kill EVERY shell a task holds before its worktree is removed. */
 export async function killForTask(taskId: string): Promise<void> {
   const prefix = `${taskId}:`;
-  const owned = [...sessions.entries()].filter(([key]) => key.startsWith(prefix));
+  // Dying shells from an earlier attempt are re-checked, so a retried archive
+  // stage sees the process that is still there rather than an empty map.
+  const owned = [...sessions.entries(), ...dying.entries()].filter(([key]) => key.startsWith(prefix));
   for (const [key, session] of owned) {
-    await session.kill();
-    if (sessions.get(key) === session) sessions.delete(key);
+    if (session.hasExited()) {
+      sessions.delete(key);
+      dying.delete(key);
+      continue;
+    }
+    await killAndRetire(key, session);
   }
   stopIdleGcIfEmpty();
 }
 
 /** Kill every shell during daemon shutdown. */
 export async function killAll(): Promise<void> {
-  const entries = [...sessions.entries()];
+  const entries = [...sessions.entries(), ...dying.entries()];
   await Promise.all(
     entries.map(async ([key, session]) => {
       try {
-        await session.kill();
+        await killAndRetire(key, session);
       } catch (error) {
         console.error(`[wisp] terminal ${key}: shutdown kill failed: ${messageOf(error)}`);
       }

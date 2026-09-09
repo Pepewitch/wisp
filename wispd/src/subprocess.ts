@@ -67,33 +67,44 @@ export interface RunResult {
 async function readCapped(
   stream: ReadableStream<Uint8Array> | undefined,
   maxBytes: number,
-  onCap: () => void,
+  onCap: (() => void) | null,
 ): Promise<{ text: string; truncated: boolean }> {
   if (!stream) return { text: "", truncated: false };
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let text = "";
   let bytes = 0;
+  let truncated = false;
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      if (done || !value) return { text: text + decoder.decode(), truncated: false };
+      if (done || !value) return { text: text + decoder.decode(), truncated };
+      if (truncated) continue; // draining: read and discard so the child never blocks
       const room = maxBytes - bytes;
       if (value.byteLength >= room) {
-        text += decoder.decode(value.subarray(0, room));
-        // Stop the child from HERE, not after both readers resolve: the other
-        // stream only reaches EOF when the process dies, so waiting would sit
-        // out the whole deadline on a producer that already exceeded its
-        // budget (measured: 19s instead of 200ms).
-        onCap();
-        return { text: text + decoder.decode(), truncated: true };
+        text += decoder.decode(value.subarray(0, room)) + decoder.decode();
+        truncated = true;
+        if (onCap) {
+          // stdout: nothing beyond the budget can be used, so stop the child
+          // from HERE — not after both readers resolve. The other stream only
+          // reaches EOF when the process dies, so waiting would sit out the
+          // whole deadline on a producer that already exceeded its budget
+          // (measured: 19s instead of 200ms).
+          onCap();
+          return { text, truncated };
+        }
+        // stderr: keep draining. A hook or credential helper that writes more
+        // than the budget to stderr is noisy, not failing, and killing an
+        // otherwise-succeeding `git worktree add` or `push` over it would turn
+        // chatter into a failed task (a review's note).
+        continue;
       }
       bytes += value.byteLength;
       text += decoder.decode(value, { stream: true });
     }
   } catch {
     // A killed child's pipe reads as an error; whatever arrived is the answer.
-    return { text: text + decoder.decode(), truncated: false };
+    return { text: text + decoder.decode(), truncated };
   } finally {
     reader.releaseLock();
   }
@@ -150,10 +161,17 @@ export async function runBounded(options: RunOptions): Promise<RunResult> {
   try {
     const [stdout, stderr] = await Promise.all([
       readCapped(child.stdout as ReadableStream<Uint8Array> | undefined, maxBytes, stop),
+      // stderr keeps its budget but does NOT stop the child. A hook or a
+      // credential helper that writes more than the budget to stderr is noisy,
+      // not failing, and killing a `git worktree add` or a `push` over it would
+      // turn chatter into a failed task (a review's note). Past the budget the
+      // extra bytes are simply dropped: the reader stops storing, the child
+      // keeps writing into a pipe nobody reads, and the deadline still bounds
+      // the whole run.
       readCapped(
         child.stderr as ReadableStream<Uint8Array> | undefined,
         options.maxErrorBytes ?? DEFAULT_MAX_ERROR_BYTES,
-        stop,
+        null,
       ),
     ]);
     const exitCode = await child.exited;

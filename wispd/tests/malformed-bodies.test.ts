@@ -20,7 +20,18 @@ import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "../src/attachments";
 import { MAX_REQUEST_BODY_BYTES } from "../src/daemon";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
-import { createTask, freeSlot, getTask, listTasks, newTaskId, setTaskFields, transition } from "../src/store";
+import {
+  createTask,
+  createTaskMessage,
+  freeSlot,
+  getTask,
+  getTaskMessage,
+  listTasks,
+  newTaskId,
+  newTaskMessageId,
+  setTaskFields,
+  transition,
+} from "../src/store";
 import { listSuffixPrompts } from "../src/suffix-prompts";
 
 const token = "malformed-body-token";
@@ -67,6 +78,13 @@ const MALFORMED = [
   { label: "a truncated object", body: '{"message":' },
 ];
 
+/** A queued message on `taskId`, so the PATCH route has something to refuse to edit. */
+function queuedMessage(taskId: string): string {
+  const id = newTaskMessageId();
+  createTaskMessage({ id, taskId, text: "the original text", attachmentHash: "" });
+  return id;
+}
+
 /** A task that exists and can accept a mutation, so a 404/409 cannot mask the 400. */
 function readyTask(): string {
   const id = newTaskId();
@@ -107,6 +125,7 @@ describe("the request-body ceiling", () => {
 
 describe("every mutating route answers a malformed body with a named 4xx", () => {
   const taskId = readyTask();
+  const messageId = queuedMessage(taskId);
   const routes: { name: string; path: string; method: string }[] = [
     { name: "create a task", path: "/api/tasks", method: "POST" },
     { name: "send a message", path: `/api/tasks/${taskId}/send`, method: "POST" },
@@ -114,6 +133,9 @@ describe("every mutating route answers a malformed body with a named 4xx", () =>
     { name: "archive a task", path: `/api/tasks/${taskId}/archive`, method: "POST" },
     { name: "create a suffix prompt", path: "/api/suffix-prompts", method: "POST" },
     { name: "add a project", path: "/api/repos", method: "POST" },
+    // A route that EDITS rather than creates, so "no side effect" means more
+    // than an unchanged row count (a review's note).
+    { name: "edit a queued message", path: `/api/tasks/${taskId}/messages/${messageId}`, method: "PATCH" },
   ];
 
   for (const { name, path, method } of routes) {
@@ -134,6 +156,8 @@ describe("every mutating route answers a malformed body with a named 4xx", () =>
         // (`listTasks(true)` counts archived rows too), and archiving from a
         // malformed body is exactly the side effect this matrix caught.
         expect(getTask(taskId)!.archived).toBe(0);
+        // …and no queued message was rewritten by a body that never parsed.
+        expect(getTaskMessage(messageId)!.text).toBe("the original text");
       });
     }
   }
@@ -173,6 +197,25 @@ describe("the messages name what arrived", () => {
     const response = await call("/api/suffix-prompts", "POST", JSON.stringify({ name: 7, prompt: "x" }));
     expect(response.status).toBe(400);
     expect(((await response.json()) as { error: string }).error).toBe("name must be a string, got number");
+  });
+
+  /**
+   * `null` means "not provided" here, deliberately: JSON's null is how a
+   * client says a field is absent, and `{"force": null}` asking for a plain
+   * archive is the reading that surprises nobody. Every OTHER wrong type is
+   * named (a review asked which way this went).
+   */
+  test("force: null means absent, while a wrong type is named", async () => {
+    const nullTask = readyTask();
+    const nulled = await call(`/api/tasks/${nullTask}/archive`, "POST", JSON.stringify({ force: null }));
+    expect(nulled.status).toBe(200);
+    expect(getTask(nullTask)!.archived).toBe(1);
+
+    const numeric = readyTask();
+    const wrong = await call(`/api/tasks/${numeric}/archive`, "POST", JSON.stringify({ force: 0 }));
+    expect(wrong.status).toBe(400);
+    expect(((await wrong.json()) as { error: string }).error).toBe("force must be a boolean, got number");
+    expect(getTask(numeric)!.archived).toBe(0);
   });
 
   test("archive's force flag must be a boolean", async () => {

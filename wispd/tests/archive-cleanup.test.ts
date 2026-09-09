@@ -9,7 +9,7 @@
  * So: a failing stage must STOP the sequence and leave the job behind, and a
  * job resumed from any stage must converge without destroying anything else.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,12 +21,33 @@ import {
   ARCHIVE_STAGES,
   archiveCleanup,
   archiveTaskWithCleanup,
+  clearArchiveCleanup,
+  pendingArchiveCleanups,
   type ArchiveStage,
 } from "../src/archive-jobs";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import {
+  createTask,
+  createTurn,
+  finishTurn,
+  freeSlot,
+  getTask,
+  newTaskId,
+  setTaskFields,
+  transition,
+} from "../src/store";
 import { createWorktree } from "../src/worktree";
 
 const token = "archive-cleanup-token";
+
+/**
+ * Each case owns its own jobs. Without this, the fail-closed case leaves a
+ * pending row and every later `resumeArchiveCleanups()` retries it — CI logged
+ * the same git failure dozens of times during unrelated cases (a review's
+ * note), which makes the suite's output lie about what is failing.
+ */
+afterEach(() => {
+  for (const job of pendingArchiveCleanups()) clearArchiveCleanup(job.task_id);
+});
 
 function cfg(repos: WispConfig["repos"] = []): WispConfig {
   return {
@@ -150,6 +171,47 @@ describe("a failing stage stops the sequence", () => {
     expect(getTask(fixture.id)!.state_detail).toContain("Cleanup is incomplete and will be retried");
   }, 20_000);
 
+  /**
+   * The ORIGINAL defect, which the repo_path case only proves by proxy: the
+   * stop failed and the deletion ran anyway. Here the stop itself fails — the
+   * job says a turn must be killed, and the turn's row says it is running with
+   * a pid nothing can signal — so `killTurnForArchive` throws and every
+   * destructive stage after it must be skipped (a review's note).
+   */
+  test("a stop that fails keeps the worktree and the attachments", async () => {
+    const fixture = await finishedTask();
+    // A running turn whose pid cannot be signalled: force-archive will try to
+    // kill it, fail, and must not proceed to the removals.
+    const turnId = createTurn(fixture.id, 1, "unstoppable", 0x7fffffff, "/dev/null", null, null);
+    transition(fixture.id, "running", "turn 1");
+
+    archiveTaskWithCleanup(fixture.id, null, {
+      task_id: fixture.id,
+      stage: "stop-turn",
+      force: true,
+      stop_turn: true,
+      removable: true,
+      repo_path: fixture.repo,
+      worktree_path: fixture.worktree,
+      branch: fixture.branch,
+      archive_script: null,
+      timeout_minutes: 5,
+    });
+
+    await resumeArchiveCleanups();
+
+    const job = archiveCleanup(fixture.id);
+    expect(job).not.toBeNull();
+    expect(job!.stage).toBe("stop-turn");
+    expect(job!.last_error).toContain("could not stop the running turn");
+    // Fail-closed: nothing destructive ran behind the failed stop.
+    expect(existsSync(fixture.worktree)).toBe(true);
+    expect(existsSync(fixture.attachmentDir)).toBe(true);
+    expect(getTask(fixture.id)!.state_detail).toContain("Cleanup is incomplete");
+
+    finishTurn(turnId, "failed", null, null);
+  }, 30_000);
+
   test("a retry after the cause is fixed converges and clears the job", async () => {
     const notARepo = mkdtempSync(join(tmpdir(), "wisp-cleanup-fixable-"));
     const fixture = await finishedTask(notARepo);
@@ -228,7 +290,7 @@ describe("a job resumed after a crash converges from whatever stage it reached",
     expect(archiveCleanup(fixture.id)).toBeNull();
   }, 20_000);
 
-  test("a job whose task row is gone settles instead of retrying forever", async () => {
+  test("a job with nothing left to remove settles instead of retrying forever", async () => {
     const fixture = await finishedTask();
     archiveTaskWithCleanup(fixture.id, null, {
       task_id: fixture.id,

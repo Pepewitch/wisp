@@ -95,6 +95,28 @@ describe("runBounded", () => {
     });
     expect(result.err.length).toBeLessThanOrEqual(8 * 1024);
   }, 30_000);
+
+  /**
+   * A chatty stderr is noise, not failure. Killing an otherwise-succeeding
+   * command over it would turn a verbose hook into a failed task (a review's
+   * note) — and simply stopping the read would be worse, because the child
+   * then blocks forever on a pipe nobody drains. Past the budget the reader
+   * keeps reading and discards.
+   */
+  test("a command that over-writes stderr still succeeds, with a stderr prefix", async () => {
+    const before = Date.now();
+    const result = await runBounded({
+      cmd: ["bash", "-c", "for i in $(seq 1 4000); do echo 'chatty hook line' >&2; done; echo done"],
+      maxErrorBytes: 4 * 1024,
+      timeoutMs: 15_000,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(false);
+    expect(result.out.trim()).toBe("done");
+    expect(result.err.length).toBeLessThanOrEqual(4 * 1024);
+    expect(Date.now() - before).toBeLessThan(10_000);
+  }, 30_000);
 });
 
 describe("Semaphore", () => {

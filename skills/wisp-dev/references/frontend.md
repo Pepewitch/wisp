@@ -40,7 +40,8 @@ Every UI change must classify its impact on both clients:
   stay behind their runtime boundaries. Any intentional difference is named in
   the change and covered without regressing the other client.
 - Styling is only runtime-neutral when it ships **in the bundle**. The daemon
-  serves the page with no CSP; the packaged app has one, so anything that
+  serves the page under its own hash-based CSP and the packaged app has a
+  separate one, so anything that
   reaches the DOM as a `<style>` element created after load — the terminal
   pane, and xterm's own renderer — depends on the desktop policy keeping
   inline stylesheets allowed. See `desktop/README.md`; a blocked stylesheet

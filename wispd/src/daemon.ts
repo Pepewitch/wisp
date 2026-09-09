@@ -301,9 +301,12 @@ function bindFailure(host: string, port: number): unknown | undefined {
 
 /**
  * The sentence a losing daemon exits with. The health probe is what makes it
- * useful: it names the daemon that actually answered rather than asserting
- * something about a pid, and says plainly that nothing was changed — the whole
- * point of taking ownership before recovery runs.
+ * useful when the owner is reachable at the address being probed: it names the
+ * daemon that answered rather than asserting something about a pid, and says
+ * plainly that nothing was changed — the whole point of taking ownership
+ * before recovery runs. An owner on an ephemeral port cannot be named from
+ * here, so the sentence degrades to "a non-Wisp service"; the refusal itself
+ * comes from the lock either way.
  */
 async function homeConflictMessage(host: string, port: number, reason: string): Promise<string> {
   const owner = await occupiedListener(host, port);
@@ -330,7 +333,14 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     ownership = acquireHomeOwnership();
   } catch (error) {
     if (error instanceof HomeBusyError) {
-      throw new Error(await homeConflictMessage(hostname, cfg.port, error.message), { cause: error });
+      // Probe the port this process was asked to use when it is a real one,
+      // otherwise the persisted port. With an ephemeral request (`port: 0`,
+      // which only tests use) the owner's actual port is not knowable from
+      // here — it is chosen at bind, and the lock is taken before that — so
+      // the probe can report "a non-Wisp service" about an address nobody is
+      // on. The lock still holds; only the diagnostic sentence is weaker.
+      const probePort = options.port !== undefined && options.port > 0 ? options.port : cfg.port;
+      throw new Error(await homeConflictMessage(hostname, probePort, error.message), { cause: error });
     }
     throw error;
   }

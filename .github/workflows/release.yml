@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0 # full history for Gitleaks and --require-tag
           fetch-tags: true
@@ -139,7 +139,7 @@ jobs:
     permissions:
       contents: write # create the GitHub prerelease
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -408,7 +408,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Recovery uses the current workflow implementation from the chosen
           # branch; a separate checkout below supplies immutable tag inputs.
@@ -419,7 +419,7 @@ jobs:
         run: test "$GITHUB_REF" = refs/heads/main
       - name: checkout the immutable release source for recovery
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -446,7 +446,7 @@ jobs:
         with:
           workspaces: desktop/src-tauri
       - name: checkout the Homebrew tap
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: Pepewitch/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

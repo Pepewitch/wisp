@@ -14,6 +14,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { checkDatabase } from "../src/doctor";
 import {
   enforceForeignKeys,
   integrityProblems,
@@ -199,6 +200,77 @@ CREATE TABLE turns (
     });
     expect(db.query("SELECT state FROM tasks WHERE id = 'tpre01'").get()).toEqual({ state: "needs-input" });
     db.close();
+  });
+});
+
+/**
+ * `wisp doctor`'s database check, which had no cases of its own: the existing
+ * doctor receipts pass because a missing file reports "not created yet" (a
+ * review's note). These are the three answers an operator acts on.
+ */
+describe("the doctor database check", () => {
+  test("a migrated profile reports its schema and clean integrity", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-doctor-ok-"));
+    const path = join(dir, "wisp.db");
+    const db = new Database(path, { create: true });
+    migrate(db);
+    db.close();
+
+    const check = checkDatabase(path);
+    expect(check.status).toBe("ok");
+    expect(check.message).toContain(`schema ${SCHEMA_VERSION} of ${SCHEMA_VERSION}`);
+  });
+
+  /** The state the INSTALL copy describes: never opened by a ledger-aware build. */
+  test("a pre-ledger profile is schema 0, not an error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-doctor-preledger-"));
+    const path = join(dir, "wisp.db");
+    const db = new Database(path, { create: true });
+    db.exec("CREATE TABLE tasks (id TEXT PRIMARY KEY)");
+    db.close();
+
+    const check = checkDatabase(path);
+    expect(check.status).toBe("ok");
+    expect(check.message).toContain("schema 0 of");
+  });
+
+  test("a profile from a newer Wisp fails with the remedy", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-doctor-future-"));
+    const path = join(dir, "wisp.db");
+    const db = new Database(path, { create: true });
+    migrate(db);
+    db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
+      SCHEMA_VERSION + 3,
+      "from-the-future",
+      "now",
+    );
+    db.close();
+
+    const check = checkDatabase(path);
+    expect(check.status).toBe("fail");
+    expect(check.message).toContain("newer Wisp");
+    expect(check.message).toContain("restore");
+  });
+
+  test("an unopened profile says so instead of failing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-doctor-missing-"));
+    expect(checkDatabase(join(dir, "wisp.db")).status).toBe("ok");
+  });
+
+  /** The read-only claim: doctor must be usable while a daemon serves the home. */
+  test("the check does not migrate or write the profile it reads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-doctor-readonly-"));
+    const path = join(dir, "wisp.db");
+    const db = new Database(path, { create: true });
+    db.exec("CREATE TABLE tasks (id TEXT PRIMARY KEY)");
+    db.close();
+
+    checkDatabase(path);
+
+    const after = new Database(path, { readonly: true });
+    const ledger = after.query("SELECT name FROM sqlite_master WHERE name = 'schema_migrations'").get();
+    after.close();
+    expect(ledger).toBeNull();
   });
 });
 

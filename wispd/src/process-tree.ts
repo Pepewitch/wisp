@@ -46,6 +46,11 @@ function errorCode(error: unknown): string | undefined {
  * (`pidIdentity`); this adds no new way to signal a stranger.
  */
 export function signalProcessGroup(pid: number, signal: NodeJS.Signals): TreeSignalOutcome {
+  // `kill(-1)` signals every process the user may signal and `kill(0)` the
+  // caller's own group. Neither can be reached from a real child pid, and a
+  // guard is cheaper than reasoning about it (a review's note): treating every
+  // throw as `gone` otherwise hides EINVAL from a nonsense pid too.
+  if (!Number.isInteger(pid) || pid <= 1) return "gone";
   try {
     process.kill(-pid, signal);
     return "group";
@@ -85,6 +90,7 @@ export function signalProcessTree(
  * follows it; a `gone` group is the only safe answer for archive.
  */
 export function processGroupAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
     process.kill(-pid, 0);
     return true;
@@ -102,4 +108,56 @@ export async function processGroupEnded(pid: number, ms: number): Promise<boolea
     await Bun.sleep(50);
   }
   return !processGroupAlive(pid);
+}
+
+/**
+ * The process groups this daemon created, so a check made after the leader is
+ * gone still has some notion of identity.
+ *
+ * A finished turn can leave members in its group — a harness that exited
+ * without waiting for something it started — and archive has to see them
+ * before deleting their worktree. Calling `kill(-pid, 0)` for an arbitrary old
+ * pid would be unsafe, because that pid may since have been recycled by a
+ * stranger who leads a group; a pid remembered here was OUR leader in THIS
+ * process, which is as much identity as a dead leader can offer. Entries are
+ * dropped as soon as the group is empty, so the set does not grow with every
+ * turn the daemon has ever run.
+ */
+const ownedGroups = new Set<number>();
+
+export function rememberOwnedGroup(pid: number): void {
+  ownedGroups.add(pid);
+}
+
+export function ownsGroup(pid: number): boolean {
+  return ownedGroups.has(pid);
+}
+
+/** Stop tracking a group once there is nothing left in it to find. */
+export function forgetOwnedGroupIfEmpty(pid: number): boolean {
+  if (processGroupAlive(pid)) return false;
+  ownedGroups.delete(pid);
+  return true;
+}
+
+/**
+ * Refuse when a group still has members, WITHOUT signalling it.
+ *
+ * This is the last gate in front of deleting a task's worktree. A finalized
+ * turn row only proves the harness exited; anything it started and did not
+ * wait for is still in this group, sitting in the directory about to be
+ * removed. It only checks, because by now the leader is gone and its pid can
+ * no longer be identity-checked — a blind `kill(-pid)` could hit a stranger
+ * that inherited the pid. Escalation already happened while the leader was
+ * alive and verified; what is left is a decision, and the safe decision is to
+ * keep the files and say why.
+ */
+export async function assertGroupEnded(pid: number, label: string, graceMs: number): Promise<void> {
+  if (await processGroupEnded(pid, graceMs)) {
+    forgetOwnedGroupIfEmpty(pid);
+    return;
+  }
+  throw new Error(
+    `${label} exited but processes it started are still running (process group ${pid}); refusing to archive — stop them and retry`,
+  );
 }

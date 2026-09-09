@@ -189,6 +189,11 @@ async function fetchAsset(path: string): Promise<Blob> {
   const response = await fetch(path, {
     headers: authHeaders(),
     cache: "no-store",
+    // Explicit about both, the way the desktop transport already is: nothing
+    // ambient may travel with this request, and a redirect must not carry the
+    // Authorization header somewhere we did not choose (a review's note).
+    credentials: "omit",
+    redirect: "error",
   }).catch(() => null)
   if (!response) throw new ApiError("Could not reach the daemon", 0)
   if (!response.ok) {

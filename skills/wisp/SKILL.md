@@ -1,15 +1,20 @@
 ---
 name: wisp
-description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor) through a Wisp daemon — isolated worktree per task, honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
+description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor) through a Wisp daemon — a separate worktree per task (checkout separation, not a sandbox), honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
 ---
 
 # Wisp — driving the task daemon
 
-Wisp runs coding agents in isolated git worktrees (one per task) behind a
+Wisp runs coding agents in separate git worktrees (one per task) behind a
 daemon, wispd. Drive agent automation through the `wisp` CLI; the daemon owns
 all state. The browser and desktop app are operator interfaces over that same
 authority, not alternate task stores. Never edit a task worktree yourself
 except to review and merge.
+
+A worktree is checkout separation, **not a sandbox**: the harness runs as the
+daemon's user with its credentials and its network, and can read and write
+outside the worktree. For a repository you do not trust, use a separate OS
+account or a disposable VM — a prompt saying "work only here" enforces nothing.
 
 ## The core loop
 

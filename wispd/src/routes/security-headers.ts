@@ -16,6 +16,8 @@
  */
 import { createHash } from "node:crypto";
 
+import { RETIRED_COOKIE } from "./auth";
+
 /**
  * The contents of every inline `<script>` in `html`, scanned the way a browser
  * parses one.
@@ -33,21 +35,38 @@ import { createHash } from "node:crypto";
  */
 export function inlineScriptSources(html: string): string[] {
   const sources: string[] = [];
-  const lower = html.toLowerCase();
   let cursor = 0;
   for (;;) {
-    const open = lower.indexOf("<script", cursor);
+    const open = indexOfInsensitive(html, "<script", cursor);
     if (open === -1) return sources;
     const tagEnd = html.indexOf(">", open);
     if (tagEnd === -1) return sources;
     const attributes = html.slice(open + "<script".length, tagEnd);
-    const close = lower.indexOf("</script", tagEnd + 1);
+    const close = indexOfInsensitive(html, "</script", tagEnd + 1);
     const contentEnd = close === -1 ? html.length : close;
     if (!/\ssrc\s*=/i.test(attributes)) sources.push(html.slice(tagEnd + 1, contentEnd));
     if (close === -1) return sources;
     const closeEnd = html.indexOf(">", close);
     cursor = closeEnd === -1 ? html.length : closeEnd + 1;
   }
+}
+
+/**
+ * Case-insensitive search over the ORIGINAL bytes.
+ *
+ * The first version of this lowercased the whole document and then used those
+ * indices to slice the original — which desynchronizes the moment a character
+ * changes length when lowercased (`ß` → `ss`, and the Turkish dotted capital
+ * I). The document is agent-authored prose in places, so that is reachable,
+ * and the consequence is a hash of the wrong slice: the browser refuses the
+ * real script and the app is blank. Fails closed, but blank (a review's note).
+ */
+function indexOfInsensitive(haystack: string, needle: string, from: number): number {
+  const lowerNeedle = needle.toLowerCase();
+  for (let index = from; index <= haystack.length - needle.length; index++) {
+    if (haystack.slice(index, index + needle.length).toLowerCase() === lowerNeedle) return index;
+  }
+  return -1;
 }
 
 /** A CSP hash source expression, the form a browser compares against. */
@@ -121,6 +140,13 @@ function socketFormsOf(origin: string): string[] {
  */
 export function pageSecurityHeaders(policy: PageSecurityPolicy, origin: string): Record<string, string> {
   return {
+    // The pre-0.4 `wisp_token` cookie carried the root token and was sent to
+    // every other service on this host. An upgraded daemon ignores it, but the
+    // browser keeps volunteering it elsewhere until something expires it —
+    // `POST /api/session` does, and so does this, which is the ONE response
+    // every browser that opens the app receives (a review's note: a browser
+    // that never reaches the auth dialog was still carrying it).
+    "set-cookie": RETIRED_COOKIE,
     "content-security-policy": contentSecurityPolicy(policy, origin),
     "x-frame-options": "DENY",
     "referrer-policy": "no-referrer",

@@ -48,13 +48,20 @@ process.env.GIT_CEILING_DIRECTORIES = [...TMP_ROOTS, process.env.GIT_CEILING_DIR
   .join(":");
 
 /**
- * The generic stand-ins existing fixtures already use AS a fake harness: an
- * adapter whose `bin` is `bash` and whose exec is `["-c", "<script the test
- * wrote>"]`, or `true` for "a harness that exits 0 immediately". They are
- * interpreters and coreutils, never a provider CLI — `claude`, `droid`,
- * `codex`, and `cursor` are deliberately absent and stay refused.
+ * The generic stand-ins existing fixtures actually use AS a fake harness: an
+ * adapter whose `bin` is `bash` with `["-c", "<script the test wrote>"]`, or
+ * `true` for "a harness that exits 0 immediately". Interpreters and nothing
+ * else — `claude`, `droid`, `codex`, and `cursor` are deliberately absent and
+ * stay refused.
+ *
+ * Kept to the shortest list that passes: a review pointed out that `env` in
+ * particular was a hole rather than a stand-in, because the policy judges
+ * `cmd[0]` and `env claude …` resolves to `env`. `cat`, `printf`, `echo`, and
+ * `sleep` were never spawned as a harness either — the fixtures call them
+ * INSIDE a bash script, where they are children of a permitted launch rather
+ * than launches themselves. Add one back only with a fixture that needs it.
  */
-const HARNESS_STAND_INS = ["bash", "sh", "true", "false", "echo", "cat", "printf", "sleep", "env"];
+const HARNESS_STAND_INS = ["bash", "sh", "true", "false"];
 
 if ((process.env[LAUNCH_POLICY_ENV] ?? "") === "") {
   process.env[LAUNCH_POLICY_ENV] = `fixtures:${TMP_ROOTS.join(":")};shims:${HARNESS_STAND_INS.join(",")}`;

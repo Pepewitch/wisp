@@ -4,6 +4,7 @@ import { arch, platform } from "node:os";
 import { BUILTIN_ADAPTERS, loadAdapters, validateAdapters, type AdapterDef } from "./adapters";
 import { wispCommand, type WispCommand } from "./command";
 import { ADAPTERS_PATH, CONFIG_PATH, DB_PATH, loadConfig, validateConfig, type WispConfig } from "./config";
+import { assertExecutableAllowed } from "./launch-policy";
 import { integrityProblems, SCHEMA_VERSION } from "./migrations";
 import { trunc } from "./text";
 import { readUserJson } from "./validate";
@@ -38,6 +39,13 @@ export interface SpawnResult {
 export type SpawnFn = (cmd: string[]) => SpawnResult;
 
 export const bunSpawn: SpawnFn = (cmd) => {
+  // `wisp doctor` and `wisp models` run the installed harness (`claude
+  // --version`, auth probes), so this is a provider-CLI launch and belongs
+  // behind the same gate as the runner's and the probes' (a review: the
+  // launch-policy header claimed to cover "every provider CLI" while this one
+  // was ungated). Daemon tests inject a fake `spawn`, so nothing in the suite
+  // depended on it being open.
+  assertExecutableAllowed(cmd, "doctor harness probe");
   const res = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
   return { exitCode: res.exitCode, stdout: res.stdout.toString().trim(), stderr: res.stderr.toString().trim() };
 };
@@ -225,9 +233,18 @@ export function checkDatabase(path: string = DB_PATH): DoctorCheck {
     if (problems.length > 0) {
       return fail("database", `integrity check failed: ${problems.slice(0, 3).join("; ")} — restore a backup`);
     }
-    const applied = (db.query("SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1").get() ?? null) as
-      | { id: number }
-      | null;
+    // A profile that has never been opened by a ledger-aware build has no
+    // `schema_migrations` table at all. That is schema 0 — the state the
+    // INSTALL copy describes — not a failure (a review's note); the next
+    // `serve` migrates it.
+    const hasLedger =
+      (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() ??
+        null) !== null;
+    const applied = hasLedger
+      ? ((db.query("SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1").get() ?? null) as
+          | { id: number }
+          | null)
+      : null;
     const version = applied?.id ?? 0;
     if (version > SCHEMA_VERSION) {
       return fail(

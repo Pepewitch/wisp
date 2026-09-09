@@ -21,7 +21,16 @@
  *      scopes: a job that needs one says so itself.
  *
  * Local actions (`uses: ./…`) are exempt: they are this repository's own code,
- * already reviewed as part of the commit.
+ * already reviewed as part of the commit. A same-repo REUSABLE WORKFLOW
+ * (`uses: .github/workflows/x.yml@ref`) is not exempt — its ref is as mutable
+ * as any other, and a review pointed out the first version let it through on
+ * the `.github/` prefix.
+ *
+ * It stays a line scanner rather than a YAML parser, which is the right size
+ * for four rules but has to be honest about its edges: container detection
+ * covers `image:`, `container:`, and the `docker`/`podman` verbs that pull or
+ * run, and `write-all` is matched as a permissions VALUE rather than anywhere
+ * in a line, so a comment mentioning it is not a failure.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,7 +38,8 @@ import { join } from "node:path";
 const WORKFLOW_DIR = join(import.meta.dir, "..", ".github", "workflows");
 const SHA = /^[0-9a-f]{40}$/;
 /** `image: name@sha256:…` or a `docker run` argument in a shell step. */
-const IMAGE_REFERENCE = /(?:^\s*image:\s*|\bdocker\s+run\b[^\n]*?\s)([a-z0-9][a-z0-9._/-]*(?::[\w.-]+|@sha256:[0-9a-f]{64}))/gim;
+const IMAGE_REFERENCE =
+  /(?:^\s*(?:image|container):\s*|\b(?:docker|podman)\s+(?:run|pull|create)\b[^\n]*?\s)([a-z0-9][a-z0-9._/-]*(?::[\w.-]+|@sha256:[0-9a-f]{64}))/gim;
 /** Words that appear in a docker-run line but are not images. */
 const NOT_AN_IMAGE = /^(--|-)/;
 
@@ -47,8 +57,9 @@ export function checkWorkflow(file: string, source: string): PolicyProblem[] {
     const uses = /^\s*(?:-\s*)?uses:\s*(\S+)/.exec(line);
     if (uses) {
       const reference = uses[1]!;
-      // this repository's own composite actions and reusable workflows
-      if (!reference.startsWith("./") && !reference.startsWith(".github/")) {
+      // Only a path-relative local action is exempt. A same-repo reusable
+      // workflow referenced by tag or branch is still a mutable identity.
+      if (!reference.startsWith("./")) {
         const at = reference.lastIndexOf("@");
         const pin = at === -1 ? "" : reference.slice(at + 1);
         if (!SHA.test(pin)) {
@@ -60,7 +71,9 @@ export function checkWorkflow(file: string, source: string): PolicyProblem[] {
         }
       }
     }
-    if (/write-all/.test(line)) {
+    // As a VALUE (`permissions: write-all`), not as any occurrence of the word:
+    // a comment that mentions it is documentation, not a grant.
+    if (/^\s*permissions:\s*write-all\s*$/.test(line)) {
       problems.push({ file, line: index + 1, problem: "write-all grants every scope; name the ones the job needs" });
     }
   });

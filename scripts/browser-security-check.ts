@@ -139,8 +139,10 @@ async function startDaemon(home: string, entry: string): Promise<{ daemon: Bun.S
   const daemon = Bun.spawn({
     cmd: ["bun", entry, "serve"],
     env: { ...process.env, WISP_HOME: home },
-    stdout: "pipe",
-    stderr: "pipe",
+    // Ignored, not piped: nothing here reads them, and a full pipe buffer
+    // would stall the very daemon under test (a review's note).
+    stdout: "ignore",
+    stderr: "ignore",
   });
   const origin = `http://127.0.0.1:${port}`;
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -182,7 +184,20 @@ function startOtherLocalService(port: number, daemonOrigin: string): Bun.Server<
 }
 
 async function startBrowser(profile: string, token: string): Promise<{ chrome: Bun.Subprocess; page: Page }> {
-  const chrome = Bun.spawn({
+  const chrome = spawnBrowser(profile);
+  try {
+    return { chrome, page: await attachToBrowser(chrome, profile, token) };
+  } catch (error) {
+    // Anything between spawn and a working DevTools session would otherwise
+    // leave a headless Chrome running until the job ends (a review's note).
+    chrome.kill();
+    await chrome.exited;
+    throw error;
+  }
+}
+
+function spawnBrowser(profile: string): Bun.Subprocess {
+  return Bun.spawn({
     cmd: [
       findBrowser(),
       "--headless=new",
@@ -194,8 +209,14 @@ async function startBrowser(profile: string, token: string): Promise<{ chrome: B
     stdout: "ignore",
     stderr: "ignore",
   });
+}
+
+async function attachToBrowser(chrome: Bun.Subprocess, profile: string, token: string): Promise<Page> {
   let endpoint = "";
-  for (let attempt = 0; attempt < 150; attempt++) {
+  // 60s rather than 15s: a first launch on a cold CI runner has taken longer
+  // than the old window, which failed the job with "never published a
+  // DevTools endpoint" (observed) rather than anything about the daemon.
+  for (let attempt = 0; attempt < 600; attempt++) {
     const lines = await readFile(join(profile, "DevToolsActivePort"), "utf8").catch(() => "");
     const [portLine, path] = lines.trim().split("\n");
     if (portLine && path) {
@@ -204,7 +225,11 @@ async function startBrowser(profile: string, token: string): Promise<{ chrome: B
     }
     await sleep(100);
   }
-  if (!endpoint) throw new Error("the browser never published a DevTools endpoint");
+  if (!endpoint) {
+    throw new Error(
+      `the browser never published a DevTools endpoint (exited: ${chrome.exitCode !== null}); is ${findBrowser()} runnable here?`,
+    );
+  }
 
   const client = await Cdp.connect(endpoint);
   const created = await client.send("Target.createTarget", { url: "about:blank" });
@@ -229,7 +254,7 @@ async function startBrowser(profile: string, token: string): Promise<{ chrome: B
     },
     session,
   );
-  const page: Page = {
+  return {
     client,
     session,
     evaluate: async (expression) =>
@@ -238,13 +263,27 @@ async function startBrowser(profile: string, token: string): Promise<{ chrome: B
           .result as { value?: unknown } | undefined
       )?.value,
   };
-  return { chrome, page };
+}
+
+/**
+ * Wait for a page to satisfy `predicate` (a JS expression), instead of
+ * sleeping at it. The old fixed sleeps were fine while CI was fast and are
+ * exactly what makes a check like this flake later (a review's note).
+ */
+async function waitInPage(page: Page, predicate: string, what: string, ms = 20_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if ((await page.evaluate(predicate)) === true) return;
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+    await sleep(100);
+  }
 }
 
 /** 1: the app loads and renders under the content policy, with a clean console. */
 async function checkTheAppLoads(page: Page, origin: string): Promise<void> {
   await page.client.send("Page.navigate", { url: `${origin}/` }, page.session);
-  await sleep(5_000);
+  // The sidebar heading is the app's own render, not the shell's HTML.
+  await waitInPage(page, 'document.body.innerText.includes("PROJECTS")', "the app to render");
   const rendered = String(await page.evaluate("document.body.innerText"));
   check("the app renders", rendered.includes("PROJECTS"), `body text was ${JSON.stringify(rendered.slice(0, 200))}`);
   const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
@@ -270,6 +309,20 @@ async function checkNoAmbientCredential(page: Page, origin: string): Promise<voi
       String((event.params.request as { url?: string }).url).endsWith("/api/events"),
   );
   check("the app opened its event stream", streams.length > 0, "no /api/events request was observed");
+  // The header itself, not just "nothing was refused": an EventSource
+  // authenticated by a cookie would satisfy the weaker check, which is the
+  // regression this file exists to catch (a review's note).
+  const authorized = streams.some((event) => {
+    const headers = (event.params.request as { headers?: Record<string, string> }).headers ?? {};
+    return Object.entries(headers).some(
+      ([name, value]) => name.toLowerCase() === "authorization" && value.startsWith("Bearer "),
+    );
+  });
+  check(
+    "the event stream carries a bearer header",
+    authorized,
+    `no Authorization header on any /api/events request (${streams.length} seen)`,
+  );
   const refused = page.client.events.filter(
     (event) =>
       event.method === "Network.responseReceived" &&
@@ -326,7 +379,7 @@ async function checkTerminalHandshake(page: Page): Promise<void> {
 /** 5: what a page on another local port can get out of the daemon. */
 async function checkOtherLocalPort(page: Page, origin: string, attackerOrigin: string, token: string): Promise<void> {
   await page.client.send("Page.navigate", { url: `${attackerOrigin}/` }, page.session);
-  await sleep(1_000);
+  await waitInPage(page, 'document.body.innerText.includes("another local service")', "the other service's page");
   const attack = JSON.parse(
     String(
       await page.evaluate(`(async () => {
@@ -378,7 +431,10 @@ async function checkOtherLocalPort(page: Page, origin: string, attackerOrigin: s
 async function checkFraming(page: Page, attackerOrigin: string): Promise<void> {
   const before = page.client.events.length;
   await page.client.send("Page.navigate", { url: `${attackerOrigin}/frame` }, page.session);
-  await sleep(2_500);
+  // The frame either loads or is refused; either way the decision is made once
+  // the iframe element exists and the browser has had a turn at it.
+  await waitInPage(page, '!!document.getElementById("f")', "the framing attempt");
+  await sleep(1_000);
   const framed = String(
     await page.evaluate(`(() => {
       try {

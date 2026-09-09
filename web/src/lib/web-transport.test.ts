@@ -118,6 +118,8 @@ describe("the same-origin web transport", () => {
       accept: "text/event-stream",
       authorization: "Bearer synthetic-browser-token",
     })
+    expect(fetchMock.mock.calls[0]?.[1]?.credentials).toBe("omit")
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("error")
   })
 
   it("fetches media with the bearer header", async () => {
@@ -133,9 +135,15 @@ describe("the same-origin web transport", () => {
     const blob = await sameOriginWebTransport.fetchAsset!(path)
     expect(await blob.text()).toBe("bytes")
 
+    // `credentials: "omit"` and `redirect: "error"` are asserted, not
+    // incidental: the bearer header is the only credential this request may
+    // carry, and it must not follow a redirect somewhere we did not choose
+    // (a review's note; the desktop transport already did both).
     expect(fetchMock).toHaveBeenCalledWith(path, {
       headers: { authorization: "Bearer synthetic-browser-token" },
       cache: "no-store",
+      credentials: "omit",
+      redirect: "error",
     })
   })
 

@@ -35,7 +35,7 @@ import {
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
-import { processGroupEnded, signalProcessTree } from "./process-tree";
+import { assertGroupEnded, forgetOwnedGroupIfEmpty, ownsGroup, rememberOwnedGroup, signalProcessTree } from "./process-tree";
 import { processStartTime } from "./procid";
 import {
   createTurn,
@@ -47,6 +47,7 @@ import {
   getTask,
   getTaskMessage,
   getTurn,
+  latestTurnForTask,
   listTasks,
   markTaskMessageDelivered,
   newTaskMessageId,
@@ -273,6 +274,7 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
+  rememberOwnedGroup(child.pid);
   const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
   const { recorder, sink, stderrPump } = capture;
   // stderr must be drained independently of the stdout protocol pump. A noisy
@@ -496,6 +498,9 @@ async function watchTurn(
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   liveChildren.delete(turnId);
+  // The common case: the harness took its children with it, so there is no
+  // group left to protect an archive from.
+  forgetOwnedGroupIfEmpty(child.pid);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
   await outputPump.catch(() => {});
@@ -721,7 +726,16 @@ async function escalateIfNotFinalized(turn: Turn, graceMs: number, detail: strin
  */
 export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
   const turn = hasRunningTurn(taskId);
-  if (!turn) return;
+  if (!turn) {
+    // No LIVE turn is not the same as nothing running. A harness that exited
+    // without waiting for something it started leaves that process in the
+    // turn's group, and this is the gate in front of deleting the worktree it
+    // is sitting in — the early return here used to let archive proceed (a
+    // review asked for the missing test and the test found the hole).
+    const latest = latestTurnForTask(taskId);
+    if (latest?.pid && ownsGroup(latest.pid)) await assertGroupEnded(latest.pid, `turn ${latest.n}`, graceMs);
+    return;
+  }
   markInterrupted(turn.id, "turn interrupted by force-archive");
   await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");
@@ -734,27 +748,6 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
       throw new Error(`turn ${turn.n} (pid ${turn.pid ?? "unknown"}) survived SIGKILL; refusing to archive`);
     }
   }
-  await refuseIfTreeSurvives(turn, graceMs);
+  if (turn.pid) await assertGroupEnded(turn.pid, `turn ${turn.n}`, graceMs);
 }
 
-/**
- * The turn ROW is finalized — but a finalized row only proves the harness
- * exited, and archive is about to delete the worktree those processes are
- * sitting in (ENG-03/ENG-04). So the last thing checked is the process GROUP:
- * if anything the turn started is still in it, this refuses rather than
- * deleting files under a live process.
- *
- * It checks without signalling. The leader is gone by now, so its pid can no
- * longer be identity-checked, and a pid that has been recycled into a NEW
- * group leader would make a blind `kill(-pid)` hit a stranger. Escalation
- * already happened above, while the leader was alive and verified; what is
- * left here is a decision, and the safe decision is to keep the worktree and
- * say why.
- */
-async function refuseIfTreeSurvives(turn: Turn, graceMs: number): Promise<void> {
-  if (!turn.pid) return;
-  if (await processGroupEnded(turn.pid, graceMs)) return;
-  throw new Error(
-    `turn ${turn.n} exited but processes it started are still running (process group ${turn.pid}); refusing to archive — stop them and retry`,
-  );
-}

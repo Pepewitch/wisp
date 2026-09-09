@@ -31,15 +31,40 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 const pending = new Map<string, Promise<string>>()
+/**
+ * How many mounted components are rendering each asset. Kept separately from
+ * the cache because a component mounts (and must be protected) BEFORE its
+ * fetch resolves and creates the entry.
+ */
+const mountedAssets = new Map<string, number>()
 
+/**
+ * Evict past the cap — but never revoke a URL something is still rendering.
+ *
+ * The first version revoked the oldest entry unconditionally, which in a long
+ * transcript could blank a thumbnail that was still on screen (a review's
+ * note). A mounted entry is skipped and stays cached; the cap is therefore a
+ * target rather than a hard bound, which is the right trade: the alternative
+ * is a visibly broken image.
+ */
 function evictIfNeeded(): void {
-  while (cache.size > MAX_CACHED_ASSETS) {
-    const oldest = cache.keys().next()
-    if (oldest.done) return
-    const entry = cache.get(oldest.value)
-    cache.delete(oldest.value)
-    if (entry) URL.revokeObjectURL(entry.url)
+  for (const [key, entry] of cache) {
+    if (cache.size <= MAX_CACHED_ASSETS) return
+    if ((mountedAssets.get(key) ?? 0) > 0) continue
+    cache.delete(key)
+    URL.revokeObjectURL(entry.url)
   }
+}
+
+/** Hold an asset while a component renders it, so eviction cannot revoke it. */
+function retain(key: string): void {
+  mountedAssets.set(key, (mountedAssets.get(key) ?? 0) + 1)
+}
+
+function release(key: string): void {
+  const next = (mountedAssets.get(key) ?? 0) - 1
+  if (next > 0) mountedAssets.set(key, next)
+  else mountedAssets.delete(key)
 }
 
 /** Test seam: drop every cached blob URL. */
@@ -47,6 +72,7 @@ export function clearAssetCache(): void {
   for (const entry of cache.values()) URL.revokeObjectURL(entry.url)
   cache.clear()
   pending.clear()
+  mountedAssets.clear()
 }
 
 async function loadAsset(
@@ -87,19 +113,26 @@ export function useAssetSrc(path: string | null): string | null {
   const [loaded, setLoaded] = useState<{ key: string; url: string } | null>(null)
 
   useEffect(() => {
-    if (path === null || key === null || direct !== null || cached !== null) return
+    if (path === null || key === null || direct !== null) return
+    // Retained for as long as this component renders it — before the fetch
+    // resolves, too, since that is when the entry appears. Eviction may drop
+    // an unmounted entry; it may not revoke one that is on screen.
+    retain(key)
     let live = true
-    void loadAsset(transport, key, path).then(
-      (url) => {
-        if (live) setLoaded({ key, url })
-      },
-      () => {
-        // A refused or missing attachment renders as its alt text. The
-        // manifest, not the bytes, is what tells the user it existed.
-      }
-    )
+    if (cached === null) {
+      void loadAsset(transport, key, path).then(
+        (url) => {
+          if (live) setLoaded({ key, url })
+        },
+        () => {
+          // A refused or missing attachment renders as its alt text. The
+          // manifest, not the bytes, is what tells the user it existed.
+        }
+      )
+    }
     return () => {
       live = false
+      release(key)
     }
   }, [transport, path, key, direct, cached])
 

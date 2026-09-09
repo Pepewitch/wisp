@@ -72,7 +72,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 `,
     );
     expect(problems.map((problem) => problem.problem)).toEqual([
@@ -94,12 +94,57 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 `,
     );
     expect(problems).toHaveLength(2);
     expect(problems[0]!.problem).toContain("contents: write");
     expect(problems[1]!.problem).toContain("id-token: write");
+  });
+
+  test("a same-repo reusable workflow referenced by tag", () => {
+    const problems = checkWorkflow(
+      "reusable.yml",
+      `name: example
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  call:
+    uses: .github/workflows/shared.yml@v1
+`,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.problem).toContain("must be pinned to a 40-character commit SHA");
+  });
+
+  test("a tag-pinned image pulled rather than run, and a container: key", () => {
+    expect(
+      checkWorkflow("pull.yml", `${PINNED_HEADER}      - run: docker pull zricethezav/gitleaks:v8.28.0\n`),
+    ).toHaveLength(1);
+    expect(
+      checkWorkflow("podman.yml", `${PINNED_HEADER}      - run: podman run --rm alpine:3.20 true\n`),
+    ).toHaveLength(1);
+    expect(
+      checkWorkflow(
+        "containerkey.yml",
+        `name: example
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: node:22
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+`,
+      ),
+    ).toHaveLength(1);
   });
 
   test("write-all anywhere", () => {
@@ -116,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: write-all
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 `,
     );
     expect(problems).toHaveLength(1);
@@ -142,7 +187,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: ./.github/actions/local-thing
       - run: |
           docker run --rm \\
@@ -152,9 +197,31 @@ jobs:
     ).toEqual([]);
   });
 
+  /** A comment that merely mentions the word is documentation, not a grant. */
+  test("a comment mentioning write-all is not a failure", () => {
+    expect(
+      checkWorkflow(
+        "comment.yml",
+        `name: example
+on: push
+
+# Never use write-all here; name the scopes a job needs.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+`,
+      ),
+    ).toEqual([]);
+  });
+
   test("a directory of clean workflows", () => {
     const dir = workflowDir("clean", {
-      "one.yml": `${PINNED_HEADER}      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.1\n`,
+      "one.yml": `${PINNED_HEADER}      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n`,
       "notes.md": "not a workflow",
     });
     expect(checkAllWorkflows(dir)).toEqual([]);
