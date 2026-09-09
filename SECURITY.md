@@ -27,6 +27,18 @@ There is no production-supported release yet.
   hooks, and copied allowlisted files are trusted operator inputs.
 - Harness output may repeat source code, prompts, command output, or secrets.
   Wisp size-caps logs, but it does not make their contents non-sensitive.
+- Stopping a turn signals the process group Wisp owns. That reaches the
+  builds, servers, and sub-agents a harness started; it does not reach a
+  descendant that deliberately left the group by calling `setsid`, and Wisp
+  does not walk the process tree to hunt one down, because that races pid
+  reuse.
+- The worktree file viewer (`GET /api/tasks/:id/file`) checks the requested
+  path against the worktree and then FOLLOWS symlinks, so a symlink inside a
+  worktree can display a file outside it. Under the trust model above — a
+  full-control token and operator-trusted repository contents — that is not a
+  privilege boundary being crossed, but it does mean the viewer is not a
+  containment guarantee. Do not treat it as one, and do not reuse its path
+  check as a sandbox.
 
 ## Safe deployment
 
