@@ -43,7 +43,7 @@ Wisp has one authoritative daemon and several clients:
 | Change daemon, CLI, API, persistence, lifecycle, worktrees, SSE, or terminal behavior | [Server architecture and development](references/server.md) | The owning `wispd/src/` module and its nearest tests |
 | Change shared React UI, styling, responsive behavior, or frontend data flow | [Architecture](../../docs/ARCHITECTURE.md) then [Frontend conventions](references/frontend.md) | `web/README.md`, both runtime paths, the owning component/hook, and its tests |
 | Change the desktop shell's native core, proxy, connections, credentials, or updater | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md), [Desktop updates](../../docs/DESKTOP-UPDATES.md), then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
-| Prepare, publish, recover, or promote a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) | Release scripts, promotion receipt, release notes, evaluator guide, and both repository diffs |
+| Prepare, publish, recover, or promote a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) — start at its **short path** section; read further only for the reasoning or a manual fallback | Release scripts, promotion receipt, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
 | Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
 | Change the mark or generated brand assets | `brand/README.md` | `scripts/brand/`; never hand-edit generated assets |
@@ -98,13 +98,19 @@ publication surfaces.
 6. `web/ui-dist/index.html` is derived and Git-ignored. Never edit, stage, or
    commit it. Supported test/build commands generate the bundle they exercise;
    tag CI owns the canonical release copy consumed by both clients.
-7. Keep this entry point thin. Put durable workflow or rationale in the
+7. The release version has one source, `wispd/package.json`. Every file that
+   repeats it is listed in `scripts/release-versions.ts` and written by
+   `bun run version:set <version>`; never edit those files by hand.
+   `bun run version:check` runs inside `bun run check` and fails on a
+   half-applied bump, a file whose shape drifted, or a changed site count. Add
+   a new repeat to that table rather than to a checklist.
+8. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.
-8. Keep investigation notes and implementation plans in `.context/` by
+9. Keep investigation notes and implementation plans in `.context/` by
    default. Commit one only when it serves a durable repository-level purpose,
    and sanitize it to the standard required for any public artifact.
-9. Treat immutable GitHub release publication and mutable Homebrew/update-channel
+10. Treat immutable GitHub release publication and mutable Homebrew/update-channel
    promotion as separate states. Recover a valid published release through the
    idempotent promotion path; never rebuild, replace assets, or create a new
    version solely because promotion failed. Run promotion audits only on the

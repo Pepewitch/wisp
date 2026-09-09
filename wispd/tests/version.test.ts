@@ -6,15 +6,17 @@ import { BUILD_COMMIT, BUILD_DIRTY, BUILD_INFO, VERSION, versionLine } from "../
 
 describe("build identity", () => {
   test("the source tree is explicit about not being a release artifact", () => {
+    // The number is asserted against package.json by the next test, so this
+    // one owns the shape a source run reports. Keeping the literal here as
+    // well made it a tenth place to edit for every release.
     expect(BUILD_INFO).toEqual({
-      version: "0.5.1",
+      version: VERSION,
       commit: "unknown",
       dirty: true,
     });
     expect(BUILD_COMMIT).toBe("unknown");
     expect(BUILD_DIRTY).toBe(true);
-    expect(VERSION).toBe("0.5.1");
-    expect(versionLine()).toBe("0.5.1 (commit unknown, dirty)");
+    expect(versionLine()).toBe(`${VERSION} (commit unknown, dirty)`);
   });
 
   test("package.json carries the same release version", async () => {
