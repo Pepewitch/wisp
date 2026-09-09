@@ -91,7 +91,46 @@ export interface WispConfig {
   harnessDefaults: Record<string, HarnessDefaults>;
 }
 
-export const WISP_HOME = process.env.WISP_HOME ?? join(homedir(), ".wisp");
+/**
+ * `~/.wisp`, unless WISP_HOME overrides it — with one refusal, for tests.
+ *
+ * `tests/setup.ts` isolates WISP_HOME into a throwaway directory, but it is a
+ * `preload`, and a preload only runs when Bun reads the bunfig that declares
+ * it. `wispd/bunfig.toml` declares it; the repository-root `bunfig.toml` does
+ * not. So `bun test ./wispd/tests/api-contracts.test.ts` from the REPOSITORY
+ * ROOT loads the daemon suite with no isolation at all, and every path below
+ * resolves against the operator's real home.
+ *
+ * That is not hypothetical. It happened on a dogfood machine: the fixture in
+ * api-contracts.test.ts writes CONFIG_PATH directly, so it overwrote a live
+ * ~/.wisp/config.json with `repos: []`, `harnessDefaults: {}`, and a fixture
+ * instanceId. Because that instanceId no longer matched ~/.wisp/instance-id,
+ * the no-clobber guard in loadConfig then refused every restart, and launchd
+ * KeepAlive turned that into a crash loop — the daemon was down until the file
+ * was rebuilt by hand. The same run wrote 77 fixture tasks into the production
+ * database.
+ *
+ * The preload is the isolation; this is the check that the preload actually
+ * ran. It has to live here rather than in tests/setup.ts, because the failure
+ * being caught is precisely "tests/setup.ts never ran". `bun test` sets
+ * NODE_ENV=test, and the daemon never runs that way in production — the two
+ * fixtures that spawn a real `wisp` binary to exercise production startup
+ * scrub NODE_ENV from the child's environment, which is what production is.
+ */
+function resolveWispHome(): string {
+  const configured = process.env.WISP_HOME;
+  if (configured !== undefined) return configured;
+  if (process.env.NODE_ENV === "test") {
+    throw new Error(
+      `refusing to run tests against ${join(homedir(), ".wisp")}: WISP_HOME is unset, so wispd/tests/setup.ts ` +
+        "never isolated it. Run the daemon suite from the wispd directory — 'bun run --cwd wispd test' — " +
+        "whose bunfig preloads that isolation. Running it from the repository root does not.",
+    );
+  }
+  return join(homedir(), ".wisp");
+}
+
+export const WISP_HOME = resolveWispHome();
 export const LOG_DIR = join(WISP_HOME, "logs");
 /** Short-lived, quota-managed raw event archives for incident diagnosis. */
 export const DIAGNOSTIC_DIR = join(WISP_HOME, "diagnostics");
