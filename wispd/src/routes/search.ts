@@ -2,11 +2,13 @@
  * `GET /api/search?q=…` — exact text across this daemon's live tasks.
  *
  * The scope, the caps and the one case-folding gap belong to store-search.ts;
- * this file is only the contract at the edge. An empty `q` is a 400 rather
+ * this file is only the contract at the edge, plus the one fact the store does
+ * not own: whether the prose index has caught up. An empty `q` is a 400 rather
  * than "every task", because a search box that answers a blank query with the
  * whole ledger has answered a question nobody asked.
  */
 import { searchTasks, SEARCH_QUERY_MAX_CHARS } from "../store-search";
+import { turnTextIndexStatus } from "../turn-text-backfill";
 import { err, json } from "./http";
 
 export function searchRoute(url: URL, method: string): Response | null {
@@ -21,5 +23,11 @@ export function searchRoute(url: URL, method: string): Response | null {
   if (query.length > SEARCH_QUERY_MAX_CHARS) {
     return err(`q must be at most ${SEARCH_QUERY_MAX_CHARS} characters, got ${query.length}`, 400);
   }
-  return json(searchTasks(query));
+  // Two facts, one answer: what matched, and whether the agent-prose index has
+  // finished catching up on turns older than it (turn-text-backfill.ts).
+  const remainingTurns = turnTextIndexStatus().remaining;
+  return json({
+    ...searchTasks(query),
+    ...(remainingTurns > 0 ? { indexing: { remainingTurns } } : {}),
+  });
 }

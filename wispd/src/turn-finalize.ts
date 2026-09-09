@@ -19,7 +19,26 @@ import {
 } from "./store";
 import { summarize } from "./text";
 import { isUnresolvedInterrupt } from "./interrupt-state";
+import { indexTurnProse } from "./turn-texts";
 import type { RecorderOutcome } from "./recording/turn-recorder";
+
+/**
+ * Project this turn's prose for search (turn-texts.ts). Derived data: a
+ * failure here costs a search hit, never a turn, so it is logged and dropped.
+ */
+async function indexProse(
+  taskId: string,
+  turnId: number,
+  def: AdapterDef,
+  logFile: string,
+  result: string | null,
+): Promise<void> {
+  try {
+    await indexTurnProse({ turnId, taskId, logFile, result, def });
+  } catch (error) {
+    console.error(`[wisp] turn ${turnId} prose index: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 async function safeRead(path: string): Promise<string> {
   try {
@@ -127,6 +146,11 @@ export async function finalizeTurn(
   }
 
   persistOutcomeMetadata(taskId, turnId, parsed);
+  // The turn's log is complete now, whatever the outcome turns out to be, so
+  // the prose index is written HERE — before the three branches below, each of
+  // which returns. An interrupted or failed turn said things worth finding
+  // too, and indexing must never be the reason a turn fails to settle.
+  await indexProse(taskId, turnId, def, outPath, parsed.result);
 
   const currentTurn = getTurn(turnId);
   const interruptDetail = currentTurn?.interrupt_detail ?? null;

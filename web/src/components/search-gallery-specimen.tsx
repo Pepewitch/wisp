@@ -55,9 +55,10 @@ export function SearchSpecimens() {
           with the hit lit and the field that answered (
           <span className="font-mono">prompt 2</span>,{" "}
           <span className="font-mono">result 1</span>,{" "}
-          <span className="font-mono">queued</span>). The match count appears
-          only above one, and picking a row is one gesture: the task opens with
-          ⌘F already looking for the same words. Archived tasks are searched too
+          <span className="font-mono">queued</span>,{" "}
+          <span className="font-mono">said</span>). The match count appears only
+          above one, and picking a row is one gesture: the task opens with ⌘F
+          already looking for the same words. Archived tasks are searched too
           and land in their own section under the live ones — but only while the
           footer&apos;s <span className="text-fg-secondary">Show archived</span>{" "}
           switch is on. With it off the rows are held back and COUNTED (

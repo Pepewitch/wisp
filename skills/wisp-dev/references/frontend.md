@@ -877,11 +877,29 @@ one (§5b's "one short fact", and the §2 chip ban forbids the pill).
 intent with the same query, so the transcript opens already looking for the
 words. The two surfaces are one search, not two boxes that happen to rhyme.
 
-**The scope is stated, never implied.** The daemon searches four durable
-columns — title, turn prompt, turn result, and a queued or steered message —
-and not the per-turn JSONL transcripts, which cap at 5 MB each and are the
-evidence ledger rather than an index. The empty state says so; a summary line
-with results does not repeat it.
+**The scope is stated, never implied.** The daemon searches five places —
+title, turn prompt, turn result, a queued or steered message, and the agent's
+own prose from inside a turn. The empty state says so; a summary line with
+results does not repeat it.
+
+That fifth one is an INDEX, not a log scan: prose lives only in the per-turn
+JSONL, which caps at 5 MB a turn and is the evidence ledger, so the daemon
+projects it into `turn_texts` when the turn ends (`wispd/src/turn-texts.ts`).
+Two consequences the UI owns:
+
+- A row's field label distinguishes them — `said 3` is what the agent wrote
+  mid-turn, `result 1` is how the turn concluded. A row shows ONE snippet, so
+  which one is ranked rather than first-come (`displaySnippet`): never the
+  `title`, which the row's own first line already says, and what was said
+  before how it ended.
+- While the daemon is catching up on turns older than the index, the response
+  carries `indexing` and the pane prints one muted line — beside results, and
+  INSTEAD of letting a miss read as final ("still indexing what the agent said
+  in 412 older turns"). A search that has not read half your history must not
+  look like one that has.
+
+Tool calls and reasoning are deliberately still out. They are the same index
+with another `kind`, which is what keeps adding them additive.
 
 **Archived tasks are searched, and the pane's own switch decides whether you
 see them.** They cost nothing to search (`LIKE '%x%'` cannot use an index, so

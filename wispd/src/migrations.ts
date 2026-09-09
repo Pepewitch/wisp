@@ -383,6 +383,34 @@ CREATE INDEX IF NOT EXISTS idx_task_contexts_task_id ON task_contexts(task_id, n
 `);
     },
   },
+  {
+    id: 7,
+    name: "turn-text-index",
+    up: (db) => {
+      // The agent's prose BETWEEN tool calls, extracted from a turn's JSONL so
+      // search can reach it without scanning logs (see turn-texts.ts). Derived
+      // data: the log stays the evidence ledger, and a row can be rebuilt from
+      // it at any time, which is why no upgrade tries to backfill here — the
+      // daemon does that in the background, resumably, after it is listening.
+      //
+      // (turn_id, kind) rather than turn_id alone: `thinking` and `tool` are
+      // the same table with another kind when they are asked for, so adding
+      // them stays additive.
+      db.exec(`
+CREATE TABLE IF NOT EXISTS turn_texts (
+  turn_id INTEGER NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('complete','partial','unavailable')),
+  indexed_at TEXT NOT NULL,
+  PRIMARY KEY (turn_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_turn_texts_task_id ON turn_texts(task_id);
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 
+import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
+import { backfillTurnTexts } from "../src/turn-text-backfill";
 
 import { taskMessageAttachmentsFingerprint } from "../src/attachments";
 import {
@@ -218,7 +220,9 @@ async function startServer(): Promise<string> {
     harnessDefaults: {},
   };
   writeFileSync(CONFIG_PATH, JSON.stringify(config));
-  server = await serve({ port: 0 });
+  // No background prose indexing: these tests assert what IS and IS NOT
+  // indexed, and a catch-up pass would answer the question under them.
+  server = await serve({ port: 0, proseBackfill: false });
   return `http://127.0.0.1:${server.port}`;
 }
 
@@ -270,6 +274,29 @@ describe("GET /api/search", () => {
     const body = (await response.json()) as { query: string; tasks: { id: string }[] };
     expect(body.query).toBe("trimmed-needle");
     expect(body.tasks.map((candidate) => candidate.id)).toEqual([id]);
+  });
+
+  test("says when the agent-prose index is still catching up, and stops saying it", async () => {
+    const base = await startServer();
+    const id = task("indexing progress task");
+    // a settled turn with no prose row yet is exactly what the backfill is for
+    const turn = createTurn(id, 1, "indexword prompt", null, "/tmp/no-such-log.jsonl");
+    finishTurn(turn, "done", 0, "done");
+
+    const pending = (await (await get(base, "/api/search?q=indexword")).json()) as {
+      indexing?: { remainingTurns: number };
+    };
+    expect(pending.indexing?.remainingTurns).toBeGreaterThan(0);
+
+    // the daemon's own background pass writes a row for every settled turn,
+    // including one whose log is gone — so the note goes away rather than
+    // sticking forever on a log nobody can read
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+
+    const caught = (await (await get(base, "/api/search?q=indexword")).json()) as {
+      indexing?: { remainingTurns: number };
+    };
+    expect(caught.indexing).toBeUndefined();
   });
 
   test("advertises itself, so a client can tell an older daemon apart", async () => {

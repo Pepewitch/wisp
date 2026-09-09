@@ -201,8 +201,12 @@ export const SEARCH_HITS: SearchTaskHit[] = [
     updated_at: new Date().toISOString(),
     state: "needs-input",
     archived: false,
-    matches: 1,
-    snippets: [{ kind: "result", turn: 1, text: "vacuum pass left 4 files changed", offset: 0, length: 6 }],
+    matches: 2,
+    snippets: [
+      { kind: "result", turn: 1, text: "vacuum pass left 4 files changed", offset: 0, length: 6 },
+      // what the agent said INSIDE the turn — the index turn-texts.ts fills
+      { kind: "prose", turn: 1, text: "…I will vacuum the reducer before…", offset: 12, length: 6 },
+    ],
   },
   {
     id: "tk3wqa",

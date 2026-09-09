@@ -1,4 +1,4 @@
-import type { SearchTaskHit } from "./types"
+import type { SearchSnippet, SearchTaskHit } from "./types"
 
 /**
  * How a search answer is laid out, in ONE place, because the rendered order
@@ -66,6 +66,29 @@ export function layoutSearchHits(
     shown: shownHits.length,
     matches: shownHits.reduce((sum, hit) => sum + hit.matches, 0),
   }
+}
+
+/**
+ * Which of a task's snippets the ROW shows. A 260px row has one line for it,
+ * and the daemon may have matched in several places, so the choice is ranked
+ * rather than first-come:
+ *
+ * - `title` is LAST, because the title is already the row's first line — a
+ *   snippet repeating it spends the one line saying nothing.
+ * - what was SAID ranks above how a turn concluded: `turn.result` is the tail
+ *   of the transcript you are about to open anyway, while prose from inside a
+ *   turn is exactly the thing you would otherwise have to hunt for.
+ */
+const SNIPPET_RANK: Record<SearchSnippet["kind"], number> = {
+  prompt: 0,
+  prose: 1,
+  result: 2,
+  message: 3,
+  title: 4,
+}
+
+export function displaySnippet(hit: SearchTaskHit): SearchSnippet | undefined {
+  return [...hit.snippets].sort((a, b) => SNIPPET_RANK[a.kind] - SNIPPET_RANK[b.kind])[0]
 }
 
 /** The ids the keyboard walks — exactly what is on screen, in that order. */

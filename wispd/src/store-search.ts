@@ -1,14 +1,17 @@
 /**
  * Exact-text search across a daemon's tasks.
  *
- * Scope is deliberate and it is what the UI promises: the four places a
- * person's or an agent's WORDS are durable columns — a task title, a turn's
- * prompt, a turn's concluding result, and a queued or steered message. The
- * per-turn JSONL transcripts under ~/.wisp/logs are NOT searched: they cap at
- * 5 MB per turn, they are the evidence ledger rather than an index, and
- * scanning them would turn a keystroke into a disk sweep. A search that lied
- * about its scope would be worse than one that states it, so the client says
- * so out loud.
+ * Scope is deliberate and it is what the UI promises: everywhere a person's or
+ * an agent's WORDS are durable — a task title, a turn's prompt, a turn's
+ * concluding result, a queued or steered message, and the agent's prose
+ * BETWEEN its tool calls (`turn_texts`, projected once when the turn ends;
+ * turn-texts.ts explains why it is a table and not a log scan).
+ *
+ * What is still outside: tool calls and reasoning. They are the same table
+ * with another `kind` when they are asked for. The per-turn JSONL itself is
+ * never scanned here — 5 MB per turn is an evidence ledger, not an index — so
+ * a search that has not caught up says so (`indexing` on the response) rather
+ * than presenting a partial index as a whole one.
  *
  * Archived tasks ARE searched: the filter that used to exclude them cost
  * nothing to remove, because `LIKE '%x%'` cannot use an index and both forms
@@ -182,6 +185,23 @@ export function searchTasks(query: string): SearchResponse {
 
   // A message whose delivery is 'started' BECAME its turn's prompt, so it is
   // already searched above; counting it twice would inflate the total.
+  // The agent's own prose, projected at turn end. `state` travels no further
+  // than this: a partial row simply holds less text, and the honest thing to
+  // report is the BACKFILL's progress (the route adds it), not a per-row flag
+  // a person cannot act on.
+  const prose = db
+    .query(
+      `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, x.text
+       FROM turn_texts x
+       JOIN turns n ON n.id = x.turn_id
+       JOIN tasks t ON t.id = x.task_id
+       WHERE x.kind = 'prose' AND x.text LIKE ? ESCAPE '\\'
+       ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
+    )
+    .all(like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; text: string })[];
+  truncated ||= prose.length === SEARCH_ROW_LIMIT;
+  for (const row of prose) hits.add(row, "prose", row.n, row.text);
+
   const messages = db
     .query(
       `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, m.text

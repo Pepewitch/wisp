@@ -19,12 +19,17 @@ import {
  * both, it says how many it is holding back instead of implying none matched.
  */
 
-/** `queued` reads better than `message` on a line that already says `turn 2`. */
+/**
+ * What answered, in one word. `queued` reads better than `message` on a line
+ * that already says `turn 2`, and `said` is the agent's own prose from inside
+ * the turn — distinct from `result`, which is how it concluded.
+ */
 const WHERE: Record<SearchSnippet["kind"], string> = {
   title: "title",
   prompt: "prompt",
   result: "result",
   message: "queued",
+  prose: "said",
 };
 
 /** The last path segment — a project name in the width a terminal can spare. */

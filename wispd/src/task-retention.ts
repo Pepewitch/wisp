@@ -123,6 +123,10 @@ export async function purgeTask(task: Task): Promise<void> {
       db.query("DELETE FROM outbox WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM turn_process_groups WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM task_messages WHERE task_id = ?").run(task.id);
+      // Derived search index (turn-texts.ts). The foreign key would cascade,
+      // but permanent deletion states what it deletes rather than relying on
+      // a pragma being on.
+      db.query("DELETE FROM turn_texts WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM turns WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM tasks WHERE id = ?").run(task.id);
     })();

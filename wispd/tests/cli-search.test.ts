@@ -148,7 +148,7 @@ async function run(args: string[]): Promise<{ stdout: string; exitCode: number }
 describe("wisp search, end to end", () => {
   test("finds a live task's prompt and hides an archived match until -a", async () => {
     writeConfig(18710);
-    server = await serve({ port: 0 });
+    server = await serve({ port: 0, proseBackfill: false });
     writeConfig(server.port);
 
     const live = newTaskId();
@@ -173,7 +173,7 @@ describe("wisp search, end to end", () => {
 
   test("prints the daemon's own refusal for an empty query", async () => {
     writeConfig(18710);
-    server = await serve({ port: 0 });
+    server = await serve({ port: 0, proseBackfill: false });
     writeConfig(server.port);
 
     const out = await run(["search", "   "]);

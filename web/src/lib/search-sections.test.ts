@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { layoutSearchHits, searchOrder } from "./search-sections"
+import { displaySnippet, layoutSearchHits, searchOrder } from "./search-sections"
 import type { SearchTaskHit } from "./types"
 
 function hit(over: Partial<SearchTaskHit> & Pick<SearchTaskHit, "id">): SearchTaskHit {
@@ -60,5 +60,32 @@ describe("searchOrder", () => {
     expect(searchOrder([LIVE_A, OLD, LIVE_B], true)).toEqual(["a", "b", "z"])
     // the archived row cannot be reached while it is not rendered
     expect(searchOrder([LIVE_A, OLD, LIVE_B], false)).toEqual(["a", "b"])
+  })
+})
+
+describe("displaySnippet", () => {
+  const snippet = (kind: SearchTaskHit["snippets"][number]["kind"]) => ({
+    kind,
+    turn: 1,
+    text: kind,
+    offset: 0,
+    length: 1,
+  })
+
+  it("never spends the row's one line repeating the title above it", () => {
+    expect(displaySnippet(hit({ id: "a", snippets: [snippet("title"), snippet("result")] }))?.kind).toBe("result")
+  })
+
+  it("prefers what was said over how the turn concluded", () => {
+    expect(displaySnippet(hit({ id: "a", snippets: [snippet("result"), snippet("prose")] }))?.kind).toBe("prose")
+    expect(displaySnippet(hit({ id: "a", snippets: [snippet("prose"), snippet("prompt")] }))?.kind).toBe("prompt")
+  })
+
+  it("has nothing to show when the daemon sent nothing", () => {
+    expect(displaySnippet(hit({ id: "a", snippets: [] }))).toBeUndefined()
+  })
+
+  it("shows a title snippet when it is all there is", () => {
+    expect(displaySnippet(hit({ id: "a", snippets: [snippet("title")] }))?.kind).toBe("title")
   })
 })

@@ -102,7 +102,7 @@ export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled
  * that builds them (store-search.ts) and the CLI that prints them
  * (cli-search.ts). One definition, so a field cannot mean two things.
  */
-export type SearchSnippetKind = "title" | "prompt" | "result" | "message";
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose";
 
 export interface SearchSnippet {
   kind: SearchSnippetKind;
@@ -133,6 +133,12 @@ export interface SearchResponse {
   tasks: SearchTaskHit[];
   /** a daemon scan cap was reached: this answer is not the whole ledger */
   truncated: boolean;
+  /**
+   * Present only while the agent-prose index is still catching up on turns
+   * that ended before it existed. A client says so out loud: a search that
+   * has not read half your history must not look like one that has.
+   */
+  indexing?: { remainingTurns: number };
 }
 
 /**

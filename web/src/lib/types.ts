@@ -531,16 +531,17 @@ export interface ActivityLogStreamFrames {
 /**
  * GET /api/search — exact text across this daemon's tasks.
  *
- * The daemon searches four durable columns and says which one answered:
- * a task title, a turn's prompt, a turn's concluding result, and a queued or
- * steered message. Per-turn transcripts are NOT searched, so the sidebar
- * states that scope rather than implying a whole-history index.
+ * The daemon searches five places and says which one answered: a task title, a
+ * turn's prompt, a turn's concluding result, a queued or steered message, and
+ * the agent's own prose from inside a turn (`prose`, projected into an index
+ * when the turn ends). Tool calls and reasoning are still outside; the sidebar
+ * states that scope rather than implying a whole-transcript index.
  *
  * Archived tasks are searched and flagged, never dropped: the sidebar shows
  * them only when its own Show-archived switch is on, and says how many it is
  * holding back when it is off.
  */
-export type SearchSnippetKind = "title" | "prompt" | "result" | "message"
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose"
 
 export interface SearchSnippet {
   kind: SearchSnippetKind
@@ -575,4 +576,10 @@ export interface SearchResponse {
   tasks: SearchTaskHit[]
   /** a daemon scan cap was reached: this answer is not the whole ledger */
   truncated: boolean
+  /**
+   * Present only while the agent-prose index is catching up on turns that
+   * ended before it existed. A miss during that window is not a definitive
+   * miss, and the pane says so instead of letting it read as one.
+   */
+  indexing?: { remainingTurns: number }
 }

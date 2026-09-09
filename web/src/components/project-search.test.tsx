@@ -284,13 +284,52 @@ describe("the sidebar's search", () => {
     expect(onSelect).toHaveBeenCalledWith(WISP.id)
   })
 
+  it("labels a prose hit as what the agent said, not as its result", async () => {
+    mount({
+      query: "coalescer",
+      truncated: false,
+      tasks: [
+        hitFor(WISP, {
+          snippets: [
+            { kind: "prose", turn: 3, text: "I rewired the coalescer first", offset: 12, length: 10 },
+          ],
+        }),
+      ],
+    })
+    openBox()
+    type("coalescer")
+
+    expect(await screen.findByText("said 3")).toBeInTheDocument()
+  })
+
+  it("says the index is still catching up, beside the results and instead of a miss", async () => {
+    mount({ ...ANSWER, indexing: { remainingTurns: 412 } })
+    openBox()
+    type("vacuum")
+
+    expect(
+      await screen.findByText(/still indexing what the agent said in 412 older turns/),
+    ).toBeInTheDocument()
+  })
+
+  it("does not let a miss read as final while the index is catching up", async () => {
+    mount({ query: "vacuum", truncated: false, tasks: [], indexing: { remainingTurns: 1 } })
+    openBox()
+    type("vacuum")
+
+    expect(await screen.findByText("No match in your tasks.")).toBeInTheDocument()
+    expect(
+      screen.getByText(/Still indexing what the agent said in 1 older turn — try again shortly/),
+    ).toBeInTheDocument()
+  })
+
   it("states its scope when there is nothing to show", async () => {
     mount({ query: "zzz", truncated: false, tasks: [] })
     openBox()
     type("zzz")
 
     expect(await screen.findByText("No match in your tasks.")).toBeInTheDocument()
-    expect(screen.getByText(/Exact text in task titles, prompts, results and queued messages/)).toBeInTheDocument()
+    expect(screen.getByText(/Tool calls and reasoning are not searched/)).toBeInTheDocument()
   })
 
   it("shows a failed search as a failure rather than as no results", async () => {

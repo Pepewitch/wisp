@@ -7,6 +7,7 @@ import { snippetParts } from "@/lib/find"
 import { pathBasename } from "@/lib/projects"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
+  displaySnippet,
   layoutSearchHits,
   type SearchLayout,
   type SearchSection,
@@ -32,14 +33,19 @@ import { cn } from "@/lib/utils"
  */
 
 const SCOPE_NOTE =
-  "Exact text in task titles, prompts, results and queued messages."
+  "Exact text in titles, prompts, results, queued messages, and what the agent said. Tool calls and reasoning are not searched."
 
-/** What the daemon matched, in the fewest words that are still true. */
+/**
+ * What the daemon matched, in the fewest words that are still true. `said` is
+ * the agent's prose from inside the turn, which is not the same fact as
+ * `result` — that one is how the turn concluded.
+ */
 const WHERE: Record<SearchSnippet["kind"], string> = {
   title: "title",
   prompt: "prompt",
   result: "result",
   message: "queued",
+  prose: "said",
 }
 
 export function ProjectSearchInput({
@@ -162,7 +168,12 @@ export function ProjectSearchResults({
     )
   }
   if (layout.sections.length === 0) {
-    return <NoResults hiddenArchived={layout.hiddenArchived} />
+    return (
+      <NoResults
+        hiddenArchived={layout.hiddenArchived}
+        indexing={search.data?.indexing?.remainingTurns ?? 0}
+      />
+    )
   }
 
   return (
@@ -170,6 +181,7 @@ export function ProjectSearchResults({
       <ResultsSummary
         layout={layout}
         truncated={search.data?.truncated === true}
+        indexing={search.data?.indexing?.remainingTurns ?? 0}
       />
       <SearchSections
         layout={layout}
@@ -191,9 +203,11 @@ export function ProjectSearchResults({
 function ResultsSummary({
   layout,
   truncated,
+  indexing,
 }: {
   layout: SearchLayout
   truncated: boolean
+  indexing: number
 }) {
   return (
     <div className="px-2.5 pt-1 pb-1.5 text-[10.5px] leading-relaxed text-faint">
@@ -204,7 +218,25 @@ function ResultsSummary({
       {layout.hiddenArchived > 0 &&
         ` · ${layout.hiddenArchived} archived ${layout.hiddenArchived === 1 ? "task" : "tasks"} hidden`}
       {truncated && " · showing the most recent"}
+      <IndexingNote remaining={indexing} />
     </div>
+  )
+}
+
+/**
+ * The daemon is still projecting the prose of turns that ended before the
+ * index existed (turn-text-backfill.ts). Said out loud, because during that
+ * window an answer is provisional — and a search that has not read half your
+ * history must not look like one that has.
+ */
+function IndexingNote({ remaining }: { remaining: number }) {
+  if (remaining === 0) return null
+  return (
+    <>
+      <br />
+      still indexing what the agent said in {remaining} older{" "}
+      {remaining === 1 ? "turn" : "turns"}
+    </>
   )
 }
 
@@ -291,7 +323,13 @@ function ResultSection({
  * Nothing to show — which is two different facts. A miss is a miss; a miss
  * with archived matches behind the switch is a miss plus a way forward.
  */
-function NoResults({ hiddenArchived }: { hiddenArchived: number }) {
+function NoResults({
+  hiddenArchived,
+  indexing,
+}: {
+  hiddenArchived: number
+  indexing: number
+}) {
   return (
     <div className="flex flex-col gap-1.5 px-2.5 py-2">
       <span className="text-[11.5px] text-muted-foreground">
@@ -299,6 +337,13 @@ function NoResults({ hiddenArchived }: { hiddenArchived: number }) {
           ? "No match in your tasks."
           : "No match in your live tasks."}
       </span>
+      {/* A miss while the index is catching up is not a definitive miss. */}
+      {indexing > 0 && (
+        <span className="text-[10.5px] leading-relaxed text-faint">
+          Still indexing what the agent said in {indexing} older{" "}
+          {indexing === 1 ? "turn" : "turns"} — try again shortly.
+        </span>
+      )}
       {hiddenArchived > 0 && (
         <span className="text-[10.5px] leading-relaxed text-faint">
           {hiddenArchived === 1
@@ -338,7 +383,7 @@ function SearchResultRow({
   onSelect: () => void
   touch: boolean
 }) {
-  const snippet = hit.snippets[0]
+  const snippet = displaySnippet(hit)
   return (
     <button
       type="button"
@@ -422,7 +467,7 @@ export function ProjectSearchSpecimen({
         onCommit={() => {}}
         onMove={() => {}}
       />
-      <ResultsSummary layout={layout} truncated={false} />
+      <ResultsSummary layout={layout} truncated={false} indexing={0} />
       <SearchSections
         layout={layout}
         repos={repos}
