@@ -1,3 +1,4 @@
+import { trackHomeWork } from "./home-lifetime";
 import { closeSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { processStartTimeAsync } from "./procid";
@@ -61,6 +62,8 @@ interface ReAdoptionPollOptions {
  * or filesystem check from overlapping the next interval callback.
  */
 export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
+  let finish!: () => void;
+  trackHomeWork(new Promise<void>(resolve => { finish = resolve; }));
   let capTermAt: number | null = null;
   let polling = false;
   let settled = false;
@@ -71,7 +74,7 @@ export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
       if ((await pidIdentity(options.pid, options.pidStartTime)) !== "alive") {
         settled = true;
         clearInterval(timer);
-        await options.onEnded();
+        try { await options.onEnded(); } finally { finish(); }
         return;
       }
       const hit = options.maxBytes === null ? null : await fileOverCap(options.paths, options.maxBytes);

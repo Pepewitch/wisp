@@ -1,6 +1,5 @@
-import { Database } from "bun:sqlite";
-import { DB_PATH } from "./config";
-import { enforceForeignKeys, migrate } from "./migrations";
+import { db } from "./store-database";
+export { db, initializeStore } from "./store-database";
 import { emit } from "./events";
 import type {
   OutboxRow,
@@ -15,16 +14,6 @@ import type {
   TurnDiagnosticState,
   TurnStatus,
 } from "./types";
-
-export const db = new Database(DB_PATH, { create: true });
-
-/**
- * Schema first, then enforcement — both through the ledger (ENG-06), so an
- * upgrade is recorded, and a profile written by a newer Wisp is refused rather
- * than read with columns this build does not know exist.
- */
-migrate(db);
-enforceForeignKeys(db);
 
 const now = () => new Date().toISOString();
 
@@ -122,7 +111,7 @@ export function setTaskFields(id: string, fields: Partial<Pick<Task, (typeof TAS
  * publish it to the event bus AFTER commit (an event for a rolled-back
  * transition would be a lie).
  */
-const transitionTx = db.transaction((id: string, state: TaskState, detail?: string | null): number => {
+function transitionBody(id: string, state: TaskState, detail?: string | null): number {
   const task = getTask(id);
   if (!task) throw new Error(`transition on unknown task ${id}`);
   const seq = task.seq + 1;
@@ -148,7 +137,7 @@ const transitionTx = db.transaction((id: string, state: TaskState, detail?: stri
     );
   }
   return seq;
-});
+}
 
 /**
  * Atomic state transition: bumps seq, and for notify-worthy states writes the
@@ -157,7 +146,7 @@ const transitionTx = db.transaction((id: string, state: TaskState, detail?: stri
  * for EVERY state — NOTIFY_STATES only gates the webhook outbox.
  */
 export function transition(id: string, state: TaskState, detail?: string | null): void {
-  const seq = transitionTx(id, state, detail);
+  const seq = db.transaction(transitionBody)(id, state, detail);
   emit({ type: "task", taskId: id, state, stateDetail: detail ?? null, seq });
 }
 

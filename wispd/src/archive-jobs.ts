@@ -56,12 +56,12 @@ function readCleanup(row: ArchiveCleanupRow): ArchiveCleanupJob {
  * caller emits after this returns, so no client observes the flip before the
  * job exists.
  */
-export const archiveTaskWithCleanup = db.transaction(
-  (
-    taskId: string,
-    detail: string | null,
-    job: Omit<ArchiveCleanupJob, "attempts" | "last_error" | "created_at" | "updated_at">,
-  ): void => {
+export function archiveTaskWithCleanup(
+  taskId: string,
+  detail: string | null,
+  job: Omit<ArchiveCleanupJob, "attempts" | "last_error" | "created_at" | "updated_at">,
+): void {
+  db.transaction(() => {
     setTaskFields(taskId, { archived: 1, ...(detail === null ? {} : { state_detail: detail }) });
     const stamp = now();
     db.query(
@@ -89,8 +89,8 @@ export const archiveTaskWithCleanup = db.transaction(
       $created_at: stamp,
       $updated_at: stamp,
     });
-  },
-);
+  })();
+}
 
 /** Every unfinished teardown, oldest first — the startup resume list. */
 export function pendingArchiveCleanups(): ArchiveCleanupJob[] {

@@ -70,3 +70,12 @@ if ((process.env[LAUNCH_POLICY_ENV] ?? "") === "") {
     `[wisp tests] ${LAUNCH_POLICY_ENV}=allow — real harnesses and repository hooks CAN run. Only do this on a disposable host with disposable credentials.`,
   );
 }
+
+// Unit tests also exercise store operations without a listening daemon. Make
+// that fixture initialization explicit, after isolation, under the real lock.
+// The fixture connection remains shared; daemon ownership tests take their own
+// lock and subprocess tests exercise production startup without this preload.
+const { acquireHomeOwnership } = await import("../src/home-lock");
+const { initializeStore } = await import("../src/store");
+const fixtureOwnership = acquireHomeOwnership();
+try { initializeStore(); } finally { fixtureOwnership.release(); }

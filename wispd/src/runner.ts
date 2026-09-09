@@ -1,3 +1,4 @@
+import { homeIsDraining, trackHomeWork } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -312,7 +313,7 @@ export function startTurn(
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
-  void watchTurn(
+  void trackHomeWork(watchTurn(
     child,
     task.id,
     turnId,
@@ -324,7 +325,7 @@ export function startTurn(
     outputPump,
     stderrPump,
     recorder,
-  );
+  ));
 }
 
 /** Persist first, then deliver without ever interrupting the active process. */
@@ -419,6 +420,7 @@ export async function submitTaskMessage(
 
 /** Start exactly one FIFO message when a task has no running turn. */
 export function startNextQueuedMessage(taskId: string, def: AdapterDef, cfg: WispConfig): TaskMessage | null {
+  if (homeIsDraining()) return null;
   if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
   const task = getTask(taskId);
   if (
@@ -502,7 +504,7 @@ async function watchTurn(
     }
   };
   // detached tick, same idiom as `void watchTurn`: interval callbacks can't be awaited
-  const capTimer = recorder ? null : setInterval(() => void capTick(), 5000);
+  const capTimer = recorder ? null : setInterval(() => void trackHomeWork(capTick()), 5000);
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   await refreshProcessGroups(taskId, turnId);

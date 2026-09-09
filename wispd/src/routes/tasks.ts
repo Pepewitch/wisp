@@ -1,3 +1,4 @@
+import { homeIsDraining, trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
 import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
 import {
@@ -83,7 +84,7 @@ async function launchTask(
     // Archive may have completed while setup yielded. Its read-only flip wins;
     // never start a child in a worktree teardown is already removing.
     const fresh = getTask(task.id);
-    if (!fresh || fresh.archived) return;
+    if (!fresh || fresh.archived || homeIsDraining()) return;
     const stored = attachments.length > 0 ? writeTurnAttachments(task.id, fresh.turn_count + 1, attachments) : [];
     startTurn(fresh, prompt, def, cfg, stored);
   } catch (e) {
@@ -230,7 +231,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       }
     }
     if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
-    void launchTask(task, prompt, def, cfg, attachments);
+    void trackHomeWork(launchTask(task, prompt, def, cfg, attachments));
     return json(apiTask(task), 201);
   })();
 }

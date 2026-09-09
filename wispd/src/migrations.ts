@@ -309,6 +309,12 @@ export class SchemaTooNewError extends Error {
  * will not change it inside one.
  */
 export function migrate(db: Database): { applied: number[]; version: number } {
+  // Refuse a future schema before journal-mode changes or any DDL.
+  const hasLedger = db.query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get();
+  if (hasLedger) {
+    const highest = (db.query("SELECT MAX(id) AS id FROM schema_migrations").get() as { id: number | null }).id ?? 0;
+    if (highest > SCHEMA_VERSION) throw new SchemaTooNewError(highest);
+  }
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(`
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -328,13 +334,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     if (applied.has(migration.id)) continue;
     db.transaction(() => {
       migration.up(db);
-      // OR IGNORE, because two daemons can reach an unmigrated home at the
-      // same time: schema work still happens before the ownership lock, so the
-      // loser of that race would otherwise crash on the primary key at import
-      // rather than losing the lock a moment later (a review's note). Safe
-      // only while every `up()` stays idempotent, which is the rule this file
-      // already states — the baseline is guarded statement by statement.
-      db.query("INSERT OR IGNORE INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, ?)").run(
         migration.id,
         migration.name,
         new Date().toISOString(),

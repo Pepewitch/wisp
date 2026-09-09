@@ -66,8 +66,9 @@ export function acquireHomeOwnership(): HomeOwnership {
       `this process is already serving ${WISP_HOME}; stop that daemon before starting another`,
     );
   }
-  const db = new Database(HOME_LOCK_PATH, { create: true });
+  let db: Database | undefined;
   try {
+    db = new Database(HOME_LOCK_PATH, { create: true });
     db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     db.exec("PRAGMA locking_mode = EXCLUSIVE");
     db.exec("CREATE TABLE IF NOT EXISTS ownership (id INTEGER PRIMARY KEY, pid INTEGER, acquired_at TEXT)");
@@ -76,23 +77,24 @@ export function acquireHomeOwnership(): HomeOwnership {
       new Date().toISOString(),
     );
   } catch (error) {
-    db.close();
+    db?.close();
     const detail = error instanceof Error ? error.message : String(error);
     // Only a BUSY lock means "someone else owns this home". CANTOPEN, a
     // permissions problem, a full disk, or a corrupt lock file are none of
     // those, and reporting them as an owner sends the operator hunting a
     // daemon that is not there (a review's note).
     if (!/busy|locked/i.test(detail)) {
-      throw new Error(`${WISP_HOME}: could not take the daemon ownership lock (${detail})`, { cause: error });
+      throw new Error(`${WISP_HOME}: could not take the daemon ownership lock (${detail}). Check free disk space and permissions on this WISP_HOME, then retry. Do not delete the lock file while a Wisp process may still be using it`, { cause: error });
     }
     throw new HomeBusyError(`${WISP_HOME} is already owned by another Wisp daemon (${detail})`);
   }
-  held = db;
+  const acquired = db;
+  held = acquired;
   return {
     release: () => {
-      if (held !== db) return;
+      if (held !== acquired) return;
       held = null;
-      db.close();
+      acquired.close();
     },
   };
 }
