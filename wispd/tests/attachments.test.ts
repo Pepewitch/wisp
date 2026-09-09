@@ -593,25 +593,13 @@ describe("GET /api/tasks/:id/attachments/:turn/:name (A1a)", () => {
     expect((await get(cfg, adapters, `/api/tasks/tnope9/attachments/1/red.png`)).status).toBe(404);
   });
 
-  test("archiving deletes the bytes, keeps the manifest, and the route says so with 410", async () => {
+  test("archiving keeps image bytes and manifests available", async () => {
     const id = await taskWithImages();
-    const dir = join(TASKS_DIR, id, "attachments");
-    expect(existsSync(dir)).toBe(true);
-
     const archived = await call(cfg, adapters, `/api/tasks/${id}/archive`, {});
     expect(archived.status).toBe(200);
-    const hidden = await get(cfg, adapters, `/api/tasks/${id}/attachments/1/red.png`);
-    expect(hidden.status).toBe(410); // the read boundary closes at the archive flip, before background deletion
-    // the teardown is deliberately backgrounded (Q11), so wait for its effect
-    for (const deadline = Date.now() + 8000; existsSync(dir); ) {
-      if (Date.now() > deadline) throw new Error("attachments were never removed");
-      await Bun.sleep(25);
-    }
-
-    // the record outlives the bytes: the conversation can still say what was there
     expect(JSON.parse(turnsFor(id)[0]!.attachments_json!)).toHaveLength(2);
     const res = await get(cfg, adapters, `/api/tasks/${id}/attachments/1/red.png`);
-    expect(res.status).toBe(410);
-    expect(await errorOf(res)).toBe("red.png was removed when this task was archived");
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(PNG));
   });
 });

@@ -57,6 +57,8 @@ export interface CleanupSummary {
 }
 
 export interface ApiTask {
+  attachmentsRetained?: boolean;
+  deletionPending?: boolean;
   cleanup?: CleanupSummary;
   /** Absent on older daemons; the turn outcome remains in state. */
   background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };

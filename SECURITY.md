@@ -117,8 +117,8 @@ evicted to targets of 32 images and 64 MiB; visible images remain pinned until
 released. This clears Wisp's display/cache, not screenshots, downloads, or copies
 made by older versions or other applications.
 
-Attachment responses are `Cache-Control: private, no-store`. Archive and cancel
-delete the bytes, and a long-lived cache entry meant a browser kept serving them
+Attachment responses are `Cache-Control: private, no-store`. Permanent deletion and message cancellation
+remove bytes, and a long-lived cache entry meant a browser kept serving them
 from its own profile after the daemon began answering 410.
 
 Wisp Desktop keeps remote tokens in the macOS Keychain and reads Local's token

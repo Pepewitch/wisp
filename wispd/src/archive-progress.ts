@@ -18,7 +18,7 @@ export const isHook = (phase: string): boolean => ["repo-hook", "project-hook", 
 const LABELS: Record<CleanupPhase, string> = {
   "stop-turn": "Stop task processes", "stop-shells": "Stop task terminals", "save-work": "Save uncommitted work",
   "repo-hook": "Repository cleanup script", "project-hook": "Project archive script",
-  "legacy-hooks": "Cleanup scripts from an earlier Wisp version", "remove-worktree": "Remove workspace", "remove-attachments": "Remove attachments",
+  "legacy-hooks": "Cleanup scripts from an earlier Wisp version", "remove-worktree": "Remove workspace", "remove-attachments": "Finalize archive",
 };
 export function cleanupProgress(id: string): CleanupProgress | null {
   return db.query("SELECT * FROM archive_cleanup_progress WHERE task_id = ?").get(id) as CleanupProgress | null;

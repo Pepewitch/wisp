@@ -62,7 +62,7 @@ export function archiveTaskWithCleanup(
   job: Omit<ArchiveCleanupJob, "attempts" | "last_error" | "created_at" | "updated_at">,
 ): void {
   db.transaction(() => {
-    setTaskFields(taskId, { archived: 1, ...(detail === null ? {} : { state_detail: detail }) });
+    setTaskFields(taskId, { archived: 1, archive_assets_retained: 1, ...(detail === null ? {} : { state_detail: detail }) });
     const stamp = now();
     db.query(
       `INSERT INTO archive_cleanups

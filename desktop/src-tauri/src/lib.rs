@@ -33,6 +33,7 @@ pub mod random;
 pub mod registry;
 pub mod secrets;
 pub mod setup;
+pub mod task_export;
 pub mod updater;
 pub mod urls;
 
@@ -95,6 +96,7 @@ pub fn run() {
             commands::remove_connection,
             commands::reset_desktop_data,
             commands::pick_local_project,
+            commands::save_task_export,
             commands::setup_local_wisp,
             commands::apply_local_wisp_setup,
             commands::open_external_url,

@@ -230,3 +230,34 @@ pub fn reveal_worktree_file(
 ) -> Result<(), CoreError> {
     core.reveal_local_file(&connection_id, &worktree_path, &path)
 }
+
+/// Save a bounded conversation snapshot only to a destination the user picks.
+#[tauri::command]
+pub async fn save_task_export(
+    app: tauri::AppHandle,
+    task_id: String,
+    data: String,
+) -> Result<bool, String> {
+    crate::task_export::validate(&task_id, &data)?;
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(format!("wisp-task-{task_id}.json"))
+        .add_filter("Task export", &["json"])
+        .save_file(move |picked| {
+            let _ = send.send(picked);
+        });
+    let Some(path) = receive
+        .await
+        .map_err(|_| "The Save panel closed unexpectedly. Retry export.".to_string())?
+    else {
+        return Ok(false);
+    };
+    let path = path
+        .into_path()
+        .map_err(|_| "Choose a local file destination.".to_string())?;
+    tokio::task::spawn_blocking(move || crate::task_export::save(&path, &data))
+        .await
+        .map_err(|_| "Export could not finish. Retry saving.".to_string())??;
+    Ok(true)
+}

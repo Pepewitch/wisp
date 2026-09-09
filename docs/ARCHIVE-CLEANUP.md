@@ -3,7 +3,7 @@
 Archiving hides a task from active work immediately. Its cleanup job then stops
 task processes and terminals, saves uncommitted work on the kept branch, runs the
 repository cleanup script followed by the configured project archive script,
-removes the worktree, and removes attachments. Local tasks skip worktree scripts
+removes the worktree, and preserves the conversation and attachments. Local tasks skip worktree scripts
 and worktree removal. The existing archive preflight and process checks still
 protect files; a cleanup failure leaves the remaining files in place.
 
@@ -22,7 +22,7 @@ cause (for example, free disk space, restore repository access, or finish the
 process using the workspace), then select **Retry cleanup**.
 
 Each successful script is checkpointed separately. A failure in later Git or
-attachment removal never deliberately reruns a checkpointed script.
+archive finalization never deliberately reruns a checkpointed script.
 
 ## A script may have already run
 
@@ -95,3 +95,45 @@ advertises `archiveCleanup: true`; this is additive within protocol version 1.
 
 Task events invalidate cleanup status as well as ordinary task data. Desktop
 requests and late callbacks remain bound to their initiating connection.
+
+## Retention, export, and permanent deletion
+
+Archive is not deletion: conversations, attachment bytes and retained logs stay
+in Wisp. Older archives whose attachments were already deleted show that loss;
+upgrading cannot recreate them. Interrupted legacy archive jobs finish under
+their previous attachment-removal policy.
+
+After cleanup finishes, select **More actions → Export or delete task data…**
+in the browser or Desktop. The dialog estimates task file storage (excluding
+SQLite overhead) and offers a portable JSON export. Desktop uses a native Save
+panel; the browser uses Downloads. Exports contain task/turn/message metadata,
+retained transcripts, diagnostics and attachments encoded as base64, plus a
+`missing` list. They are snapshots for inspection, not an import/restore format.
+Repository code, Git history, provider session files and credentials are excluded.
+Exports may contain sensitive conversation content; store them privately.
+
+Portable exports are limited to 5,000 files, 32 MiB of file bytes and 8 MiB of
+metadata. For larger tasks or complete recovery, use [the offline backup and
+restore procedure](INSTALL.md#back-up-and-restore-a-wisp-home). Logs already pruned by retention and
+cancelled-message attachments cannot be recovered by exporting.
+
+**Delete permanently** requires the displayed task ID. It removes Wisp's task,
+turn, message and webhook records and their managed files. It preserves the
+original repository, Git branches, provider sessions, external backups and any
+workspace explicitly left behind by archive cleanup. Deletion requires completed
+cleanup and no tracked live processes or active webhook delivery. If interrupted,
+the task stays archived with a deletion-pending notice; retry the same action.
+Some files may already be gone. This is logical deletion, not forensic erasure
+of SQLite pages, filesystem snapshots or copies outside Wisp.
+
+```sh
+# Run with a private umask; stdout is JSON and notices go to stderr.
+umask 077
+wisp export <task> > task-export.json
+wisp purge <task> --confirm <task>
+```
+
+Authenticated API: `GET /api/tasks/:id/storage`, `GET /api/tasks/:id/export`, and
+`DELETE /api/tasks/:id/purge` with `{"confirmTaskId":"<task>"}`. Export validation
+is shared by CLI and UI. Task responses add `attachmentsRetained` and
+`deletionPending`; clients hide the new actions for older daemons.

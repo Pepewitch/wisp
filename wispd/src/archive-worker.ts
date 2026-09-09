@@ -38,7 +38,7 @@ async function stage(job: ArchiveCleanupJob, p: CleanupProgress): Promise<void> 
       if (job.removable && p.prepared !== 2) await runCleanupHook(job, p.phase === "repo-hook" ? p.repo_script : job.archive_script);
     } else if (p.phase === "remove-worktree" && job.removable) {
       await removeWorktree(job.repo_path, job.worktree_path!, job.branch!, job.force, { save: false });
-    } else if (p.phase === "remove-attachments") {
+    } else if (p.phase === "remove-attachments" && !getTask(job.task_id)?.archive_assets_retained) {
       const { removeTaskAttachments } = await import("./attachments");
       await removeTaskAttachments(job.task_id);
     }

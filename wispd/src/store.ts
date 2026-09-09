@@ -95,6 +95,8 @@ const TASK_FIELDS = [
   "skills_json",
   "turn_count",
   "archived",
+  "archive_assets_retained",
+  "purge_pending",
   "state_detail",
 ] as const;
 

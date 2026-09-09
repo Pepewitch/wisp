@@ -39,7 +39,8 @@ function messageAttachment(match: RegExpMatchArray, method: string): Response | 
   if (name instanceof Response) return name;
   const record = parseAttachmentManifest(message.attachments_json).find((candidate) => candidate.name === name);
   if (!record) return err(`message ${message.id} has no attachment named ${name}`, 404);
-  if (task.archived) return err(`${record.name} was removed when this task was archived`, 410);
+  if (task.purge_pending) return err("Permanent deletion is in progress. Retry Delete permanently to finish.", 410);
+  if (task.archived && !task.archive_assets_retained) return err(`${record.name} was removed when this task was archived`, 410);
   if (message.status === "cancelled") {
     return err(`${record.name} was removed when this message was cancelled`, 410);
   }
@@ -62,7 +63,8 @@ function turnAttachment(match: RegExpMatchArray, method: string): Response | Pro
   if (name instanceof Response) return name;
   const record = parseAttachmentManifest(turn.attachments_json).find((candidate) => candidate.name === name);
   if (!record) return err(`turn ${turn.n} has no attachment named ${name}`, 404);
-  if (task.archived) return err(`${record.name} was removed when this task was archived`, 410);
+  if (task.purge_pending) return err("Permanent deletion is in progress. Retry Delete permanently to finish.", 410);
+  if (task.archived && !task.archive_assets_retained) return err(`${record.name} was removed when this task was archived`, 410);
   const missing = `${record.name} is recorded on turn ${turn.n} but its file is missing`;
   return serveAttachment(turnAttachmentPath(task.id, turn.n, record.name), record.name, missing);
 }

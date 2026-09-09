@@ -143,7 +143,7 @@ describe("a successful archive owns its teardown and then lets go of it", () => 
 
     await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
     expect(existsSync(fixture.worktree)).toBe(false);
-    expect(existsSync(fixture.attachmentDir)).toBe(false);
+    expect(existsSync(fixture.attachmentDir)).toBe(true);
     // the branch is user work and is never part of teardown
     expect(sh(["git", "branch", "--list", fixture.branch], fixture.repo)).toContain(fixture.branch);
   }, 20_000);
@@ -175,7 +175,7 @@ describe("resumed deletion checks older background groups", () => {
       expect(retry.status).toBe(202);
       await resumeArchiveCleanups();
       expect(archiveCleanup(fixture.id)).toBeNull();
-      expect(existsSync(fixture.attachmentDir)).toBe(false);
+      expect(existsSync(fixture.attachmentDir)).toBe(true);
     } finally {
       if (child.exitCode === null) { signalProcessGroup(child.pid, "SIGKILL"); await child.exited; }
     }
@@ -263,7 +263,7 @@ describe("a failing stage stops the sequence", () => {
 
     expect(archiveCleanup(fixture.id)).toBeNull();
     expect(existsSync(fixture.worktree)).toBe(false);
-    expect(existsSync(fixture.attachmentDir)).toBe(false);
+    expect(existsSync(fixture.attachmentDir)).toBe(true);
     expect(getTask(fixture.id)!.state_detail).toContain("has now finished");
   }, 20_000);
 });
@@ -297,8 +297,8 @@ describe("a job resumed after a crash converges from whatever stage it reached",
       // stage does not go back for it — the point is convergence to "no job
       // left", not repeating work a previous daemon finished.
       if (stage !== "remove-attachments") expect(existsSync(fixture.worktree)).toBe(false);
-      // …and the LAST stage always runs, whichever one the job resumed at
-      expect(existsSync(fixture.attachmentDir)).toBe(false);
+      // New archives keep task assets, including after a resumed cleanup
+      expect(existsSync(fixture.attachmentDir)).toBe(true);
       expect(getTask(fixture.id)!.archived).toBe(1);
     }, 20_000);
   }
