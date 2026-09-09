@@ -24,10 +24,10 @@
  * job; a contributor runs `bun run check:browser-security`.
  *
  * Everything it touches is disposable: a temporary WISP_HOME, an ephemeral
- * port, a fresh Chrome profile, and no repository or harness of any kind.
+ * port, a fresh Chrome profile, and a synthetic checkout, attachment, and shell; no provider harness is called.
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -136,9 +136,18 @@ async function startDaemon(home: string, entry: string): Promise<{ daemon: Bun.S
   });
   if (!init.success) throw new Error(`wisp init failed: ${init.stderr.toString()}`);
   const token = (JSON.parse(await readFile(join(home, "config.json"), "utf8")) as { token: string }).token;
+  const checkout = join(home, "checkout");
+  await mkdir(checkout);
+  const seed = Bun.spawnSync([process.execPath, join(import.meta.dir, "../wispd/tests/helpers/seed-transport-daemon.ts"), "browser", checkout], {
+    env: { ...process.env, WISP_HOME: home }, stdout: "pipe", stderr: "pipe",
+  });
+  if (seed.exitCode !== 0) throw new Error(`browser fixture failed: ${seed.stderr.toString()}`);
+  const shell = join(home, "fixture-shell");
+  await writeFile(shell, '#!/bin/sh\necho started >> "$WISP_HOME/shell-starts"\nexec /bin/bash --noprofile --norc\n');
+  await chmod(shell, 0o700);
   const daemon = Bun.spawn({
     cmd: ["bun", entry, "serve"],
-    env: { ...process.env, WISP_HOME: home },
+    env: { ...process.env, WISP_HOME: home, SHELL: shell },
     // Ignored, not piped: nothing here reads them, and a full pipe buffer
     // would stall the very daemon under test (a review's note).
     stdout: "ignore",
@@ -340,40 +349,49 @@ async function checkNoAmbientCredential(page: Page, origin: string): Promise<voi
   );
 }
 
-/** 4: the terminal socket proves itself in-band before it is attached. */
-async function checkTerminalHandshake(page: Page): Promise<void> {
-  const handshake = JSON.parse(
-    String(
-      await page.evaluate(`new Promise((resolve) => {
-        const frames = [];
-        const socket = new WebSocket(location.origin.replace("http", "ws") + "/api/tasks/tnothere/terminal?shell=0");
-        const done = (why) => resolve(JSON.stringify({ why, frames }));
-        socket.onmessage = (event) => {
-          const frame = JSON.parse(event.data);
-          frames.push(frame.type);
-          if (frame.type === "auth_required") {
-            socket.send(JSON.stringify({ type: "auth", token: localStorage.getItem("wisp_token") }));
-          }
-          if (frame.type === "error" || frame.type === "hello") { socket.close(); done(frame.type); }
-        };
-        socket.onclose = () => done("closed");
-        socket.onerror = () => done("error");
-        setTimeout(() => done("timeout"), 6000);
-      })`),
-    ),
-  ) as { why: string; frames: string[] };
-  check(
-    "the terminal socket is asked to authenticate first",
-    handshake.frames[0] === "auth_required",
-    JSON.stringify(handshake),
-  );
-  // No such task, so the answer AFTER a good token is a named error — which is
-  // what proves the token was accepted rather than the socket refused.
-  check(
-    "the handshake is accepted, then the request is answered",
-    handshake.frames.includes("error") || handshake.frames.includes("hello"),
-    JSON.stringify(handshake),
-  );
+/** Real browser terminal: refusal must never count as positive acceptance. */
+async function checkTerminalHandshake(page: Page, origin: string, home: string): Promise<void> {
+  // Same-origin document without mounting the app (which auto-attaches a terminal).
+  await page.client.send("Page.navigate", { url: `${origin}/api/health` }, page.session);
+  await waitInPage(page, 'location.pathname === "/api/health"', "terminal test origin");
+  async function attempt(mode: "valid" | "invalid" | "preauth") {
+    return await page.evaluate(`new Promise((resolve) => {
+      const frames = []; let output = ""; let settled = false;
+      const socket = new WebSocket(location.origin.replace("http", "ws") + "/api/tasks/tspike/terminal?shell=0");
+      const done = (code) => { if (settled) return; settled = true; clearTimeout(timer); socket.close(); resolve({ frames, output, code }); };
+      const timer = setTimeout(() => done("timeout"), 6000);
+      socket.onmessage = (event) => {
+        const frame = JSON.parse(event.data); frames.push(frame);
+        if (frame.type === "auth_required") {
+          socket.send(JSON.stringify(${JSON.stringify(mode)} === "preauth" ? { type: "in", data: "echo forbidden\\n" } :
+            { type: "auth", token: ${JSON.stringify(mode)} === "invalid" ? "invalid-fixture-token" : localStorage.getItem("wisp_token") }));
+        }
+        if (frame.type === "hello") socket.send(JSON.stringify({ type: "in", data: "printf 'browser-%s-%s\\n' terminal verified\\n" }));
+        if (frame.type === "out") { output += frame.data; if (output.includes("browser-terminal-verified")) done(1000); }
+      };
+      socket.onclose = event => done(event.code);
+      socket.onerror = () => done("error");
+    })`) as { frames: { type: string; message?: string }[]; output: string; code: number | string };
+  }
+  for (const mode of ["preauth", "invalid"] as const) {
+    const result = await attempt(mode);
+    check(`${mode} terminal input is rejected without starting a shell`,
+      result.frames[0]?.type === "auth_required" && result.code === 1008 &&
+      result.frames.some(f => f.type === "error" && f.message === (mode === "invalid" ? "unauthorized" : "terminal protocol: this socket must authenticate first")) &&
+      !result.frames.some(f => f.type === "hello") && !existsSync(join(home, "shell-starts")), JSON.stringify(result));
+  }
+  const result = await attempt("valid");
+  check("valid terminal authentication produces hello and actual shell output",
+    result.frames[0]?.type === "auth_required" && result.frames.some(f => f.type === "hello") &&
+    !result.frames.some(f => f.type === "error") && result.output.includes("browser-terminal-verified") &&
+    existsSync(join(home, "shell-starts")), JSON.stringify(result));
+  const media = await page.evaluate(`(async () => {
+    const response = await fetch('/api/tasks/tspike/attachments/1/transport.png', { headers: { Authorization: 'Bearer ' + localStorage.getItem('wisp_token') } });
+    const url = URL.createObjectURL(await response.blob());
+    try { const image = new Image(); image.src = url; await image.decode(); return { status: response.status, width: image.naturalWidth, cache: response.headers.get('cache-control') }; }
+    finally { URL.revokeObjectURL(url); }
+  })()`) as { status: number; width: number; cache: string };
+  check("authenticated attachment bytes decode in the browser without HTTP caching", media.status === 200 && media.width === 1 && media.cache === "private, no-store", JSON.stringify(media));
 }
 
 /** 5: what a page on another local port can get out of the daemon. */
@@ -478,9 +496,15 @@ async function main(): Promise<void> {
     chrome = browser.chrome;
     page = browser.page;
 
+    await checkTerminalHandshake(page, started.origin, home);
+    const archived = await fetch(`${started.origin}/api/tasks/tspike/archive`, {
+      method: "POST", headers: { authorization: `Bearer ${started.token}`, "content-type": "application/json" }, body: JSON.stringify({ force: true }),
+    });
+    if (!archived.ok) throw new Error(`fixture archive failed: ${await archived.text()}`);
+    // App-load assertions concern its own navigation, not the JSON document's favicon.
+    page.client.events.length = 0;
     await checkTheAppLoads(page, started.origin);
     await checkNoAmbientCredential(page, started.origin);
-    await checkTerminalHandshake(page);
     await checkOtherLocalPort(page, started.origin, attackerOrigin, started.token);
     await checkFraming(page, attackerOrigin);
   } finally {
