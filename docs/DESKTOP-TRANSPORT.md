@@ -1,6 +1,6 @@
 # Desktop transport contract
 
-Status: implemented transport boundary for the Wisp desktop alpha. Installation
+Status: implemented transport boundary for Wisp Desktop 0.5.0. Installation
 and release mechanics are documented separately from this security contract.
 See [Architecture](ARCHITECTURE.md) first for the system-wide ownership and
 shared-client model.

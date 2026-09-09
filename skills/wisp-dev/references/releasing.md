@@ -65,7 +65,8 @@ three jobs:
    daemon and unsigned Desktop payloads the same way, then creates and verifies
    one trusted Desktop archive. It verifies all ten assets, renders and audits
    both Homebrew recipes plus the Desktop update channel offline, creates the
-   "Wisp <version>" GitHub prerelease with the release notes as its body,
+   "Wisp <version>" GitHub release with the release notes as its body
+   (a prerelease only for alpha tags),
    and verifies the ten public URLs and both Desktop trust chains anonymously.
    This is the immutable publication boundary.
 3. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
@@ -125,7 +126,7 @@ external evaluator panel, the exact-credential scan of step 5, local
 qualification in step 9, and the step 10 close-out records remain private
 maintainer records.
 Steps 4-8 below remain the manual fallback and the source of the automated
-gates. If the workflow fails before the prerelease is created, delete the tag,
+gates. If the workflow fails before the release is created, delete the tag,
 fix, and re-tag: an unpublished tag is still mutable. Once assets are public,
 never mutate them and do not create a new version merely because channel
 promotion failed. Rerun the promotion job or manually dispatch the existing
@@ -136,7 +137,7 @@ tag after fixing the promotion implementation on `main`.
 Start from a fresh `origin/main` worktree and install the locked dependencies:
 
 ```sh
-version=0.0.0-alpha.N
+version=0.0.0 # replace with an unused regular version, or 0.0.0-alpha.N
 git fetch origin --tags
 git worktree add ".worktrees/release-$version" \
   -b "release/$version" origin/main
@@ -150,7 +151,10 @@ Set the values used below:
 tag="v$version"
 repo="$(git rev-parse --show-toplevel)"
 release_dir="$repo/dist/release/$tag"
-notes="$repo/docs/v0.N/RELEASE-NOTES-alpha.N.md"
+notes="$(RELEASE_TAG="$tag" bun -e '
+  import { releaseNotesPath } from "./scripts/release-promotion";
+  console.log(releaseNotesPath(process.cwd(), process.env.RELEASE_TAG));
+')"
 tap="$(brew --repository Pepewitch/tap)"
 ```
 
@@ -428,7 +432,7 @@ headers, query strings, and unsupported claims. Compiled binaries disable
 automatic `.env` and `bunfig` loading in `wispd/scripts/build-binary.ts`; keep that
 boundary.
 
-## 6. Publish the GitHub prerelease
+## 6. Publish the GitHub release
 
 Reconfirm explicit authorization, GitHub authentication, repository
 visibility, the tag target, and the asset list. Before pushing the tag, render
@@ -656,8 +660,8 @@ Keychain credentials unless the user removes connections or resets Desktop
 data first. The channel must name the same archive and updater signature bound
 by the release manifest.
 
-`github_prerelease_version` is the persistent audit exception for the
-custom-tap alpha. `livecheck_version` and `livecheck_https_availability` are
+`github_prerelease_version` remains an audit exception to permit promotion
+recovery for historical custom-tap alphas. `livecheck_version` and `livecheck_https_availability` are
 deferred only before channel promotion, because both invoke the circular
 version comparison while the staged Cask is necessarily newer than the
 still-public channel. The post-push audit restores both. Do not exclude
