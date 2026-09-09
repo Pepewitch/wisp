@@ -13,6 +13,9 @@ describe("wisp init", () => {
     const run = (port = initialPort) => {
       const env = { ...process.env, HOME: home };
       delete env.WISP_HOME;
+      // This child IS production startup, so it must not claim to be a test:
+      // config.ts refuses an unset WISP_HOME under NODE_ENV=test.
+      delete env.NODE_ENV;
       return Bun.spawnSync({
         cmd: ["bun", "src/index.ts", "init", "--port", String(port)],
         cwd: resolve(import.meta.dir, ".."),

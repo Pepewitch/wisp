@@ -27,6 +27,8 @@ describe("build identity", () => {
     chmodSync(home, 0o500);
     const env = { ...process.env, HOME: home };
     delete env.WISP_HOME;
+    // Production startup, not a test process — see the note in init.test.ts.
+    delete env.NODE_ENV;
     try {
       const result = Bun.spawnSync({
         cmd: ["bun", "src/index.ts", "version", "--json"],

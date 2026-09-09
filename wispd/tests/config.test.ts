@@ -509,3 +509,41 @@ describe("resolveHarnessDefaults (P5b: default-applied vs flag-wins)", () => {
     expect(resolveHarnessDefaults(cfg, "codex", undefined)).toEqual({ model: null, effort: null });
   });
 });
+
+describe("WISP_HOME isolation under bun test", () => {
+  /**
+   * Importing config.ts is enough to decide the home, so the assertion runs in
+   * a child: this process is already isolated by tests/setup.ts. HOME points at
+   * a throwaway directory so a regression here cannot touch a real ~/.wisp.
+   */
+  function importConfig(env: Record<string, string | undefined>) {
+    const configModule = new URL("../src/config.ts", import.meta.url).href;
+    return Bun.spawnSync({
+      cmd: [process.execPath, "-e", `import(${JSON.stringify(configModule)}).then(m => console.log(m.WISP_HOME))`],
+      env: { ...process.env, HOME: mkdtempSync(join(tmpdir(), "wisp-home-guard-")), ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  }
+
+  test("an unset WISP_HOME under NODE_ENV=test is refused, not silently resolved to ~/.wisp", () => {
+    const result = importConfig({ WISP_HOME: undefined, NODE_ENV: "test" });
+    expect(result.exitCode).not.toBe(0);
+    const stderr = Buffer.from(result.stderr).toString("utf8");
+    expect(stderr).toContain("WISP_HOME is unset");
+    expect(stderr).toContain("bun run --cwd wispd test");
+  });
+
+  test("production startup with an unset WISP_HOME still resolves the real home", () => {
+    const result = importConfig({ WISP_HOME: undefined, NODE_ENV: undefined });
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.from(result.stdout).toString("utf8").trim()).toEndWith("/.wisp");
+  });
+
+  test("an explicit WISP_HOME is honored under NODE_ENV=test", () => {
+    const home = mkdtempSync(join(tmpdir(), "wisp-home-guard-explicit-"));
+    const result = importConfig({ WISP_HOME: home, NODE_ENV: "test" });
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.from(result.stdout).toString("utf8").trim()).toBe(home);
+  });
+});
