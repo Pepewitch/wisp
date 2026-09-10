@@ -112,7 +112,12 @@ gh pr merge <number> --squash --delete-branch
 
 Current distribution targets are Ubuntu 24.04 LTS x86_64/glibc, an
 experimental Apple Silicon arm64 daemon archive, and an Apple Silicon desktop
-`.app` configured for macOS 12.3 or newer. `wispd/scripts/release-macos.ts` keeps the
+`.app` configured for macOS 12.3 or newer. Ubuntu 24.04 is the gated and
+qualified Linux target, not the range the binary runs on: README.md and
+`docs/INSTALL.md` state a separate glibc floor, `MINIMUM_GLIBC` in
+`wispd/scripts/release-linux.ts` owns that number, and both CI and the release
+build re-derive it from the artifact. A Bun upgrade that raises the floor
+fails there — update the constant and both documents rather than the gate. `wispd/scripts/release-macos.ts` keeps the
 standalone daemon archive ad-hoc signed. Local and reproducibility Desktop
 builds are also ad-hoc, but a publishable Desktop archive must use the
 `--signed` path: Developer ID Application signature, trusted timestamp,

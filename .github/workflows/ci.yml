@@ -31,6 +31,11 @@ jobs:
         run: bun run build:binary
       - name: build linux-x64 deploy artifact
         run: bun build --compile --target=bun-linux-x64 wispd/src/index.ts --outfile dist/wisp-linux-x64
+      # The documented glibc floor is a property of the pinned Bun runtime, so
+      # a toolchain bump that raises it fails here rather than in a published
+      # install guide.
+      - name: the artifact still meets the documented glibc floor
+        run: bun -e 'import { assertGlibcFloor } from "./wispd/scripts/release-linux"; assertGlibcFloor("dist/wisp-linux-x64");'
 
   # Cookie scope, CSP enforcement, and framing refusal are BROWSER policies.
   # The daemon suite cannot exercise any of them and no amount of raw HTTP can,

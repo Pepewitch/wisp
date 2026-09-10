@@ -5,10 +5,19 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
+import { glibcFloor } from "./glibc-floor";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const LINUX_TARGET = "linux-x86_64";
 export const SUPPORTED_BASELINE = "Ubuntu 24.04 LTS (x86_64)";
+/**
+ * Oldest glibc the artifact links against, quoted by README.md and
+ * docs/INSTALL.md as the difference between "runs" and "supported". It comes
+ * from the pinned Bun runtime, not from Wisp's source, so the release build
+ * re-derives it and fails rather than let a toolchain upgrade quietly raise
+ * the floor under a published install guide.
+ */
+export const MINIMUM_GLIBC = "2.17";
 
 export interface ReleaseManifest {
   schemaVersion: 1;
@@ -70,6 +79,16 @@ function assertReleaseSource(root: string, identity: SourceIdentity, requireTag:
   }
 }
 
+export function assertGlibcFloor(artifactPath: string): void {
+  const floor = glibcFloor(artifactPath);
+  if (floor !== MINIMUM_GLIBC) {
+    throw new Error(
+      `artifact requires glibc ${floor}, not the documented floor ${MINIMUM_GLIBC}; ` +
+        "update MINIMUM_GLIBC and the floor stated in README.md and docs/INSTALL.md",
+    );
+  }
+}
+
 export function releaseLinux(options: ReleaseLinuxOptions = {}): ReleaseManifest {
   const root = options.root ?? SCRIPT_ROOT;
   const identity = options.identity ?? sourceIdentity(root);
@@ -81,6 +100,7 @@ export function releaseLinux(options: ReleaseLinuxOptions = {}): ReleaseManifest
   const artifactPath = resolve(outDir, artifactName);
   buildBinary({ target: "linux-x64", outfile: artifactPath, root, identity });
   chmodSync(artifactPath, 0o755);
+  assertGlibcFloor(artifactPath);
 
   const manifest: ReleaseManifest = {
     schemaVersion: 1,

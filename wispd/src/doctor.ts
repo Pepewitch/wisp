@@ -77,7 +77,7 @@ export function checkPlatform(
   }
   return fail(
     "platform",
-    `${currentPlatform} ${currentArch} is unsupported; use Ubuntu 24.04 LTS x86_64 or Apple Silicon macOS`,
+    `${currentPlatform} ${currentArch} is unsupported; use Linux x86_64 or Apple Silicon macOS`,
   );
 }
 
