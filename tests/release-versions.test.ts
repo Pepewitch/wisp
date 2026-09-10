@@ -11,7 +11,9 @@ import {
   VERSION_SITES,
   writeVersionSites,
 } from "../scripts/release-versions";
-import { parseMergedChanges, renderReleaseNotes } from "../scripts/release-notes";
+import { addedMigrations, isInternalChange, migrationIds, parseMergedChanges, renderReleaseNotes } from "../scripts/release-notes";
+import { expectedReleaseAssets, releaseAssetsInReadingOrder } from "../scripts/release-promotion";
+import { BUILTIN_ADAPTERS } from "../wispd/src/adapters/builtins";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -125,9 +127,9 @@ describe("release notes scaffold", () => {
       ["fix: something real (#110)", "Add a feature (#111)", "chore: no pull request"].join("\n"),
     );
     expect(changes).toEqual([
-      { subject: "fix: something real", pull: "110" },
-      { subject: "Add a feature", pull: "111" },
-      { subject: "chore: no pull request", pull: null },
+      { subject: "fix: something real", pull: "110", internal: false },
+      { subject: "Add a feature", pull: "111", internal: false },
+      { subject: "chore: no pull request", pull: null, internal: false },
     ]);
   });
 
@@ -152,5 +154,68 @@ describe("release notes scaffold", () => {
   test("still scaffolds when nothing merged since the previous tag", () => {
     const notes = renderReleaseNotes("0.9.0", "v0.9.0-alpha.1", []);
     expect(notes).toContain("TODO no merged changes were found");
+  });
+});
+
+describe("release notes derivation", () => {
+  test("derives which migrations a release adds", () => {
+    const before = "    id: 5,\n    id: 6,\n";
+    const after = "    id: 5,\n    id: 6,\n    id: 7,\n";
+    expect(migrationIds(before)).toEqual([5, 6]);
+    expect(addedMigrations(before, after)).toEqual([7]);
+    expect(addedMigrations(after, after)).toEqual([]);
+    // Ids are appended, never renumbered, so two in one release is possible.
+    expect(addedMigrations(before, after + "    id: 8,\n")).toEqual([7, 8]);
+    expect(migrationIds("no migrations here")).toEqual([]);
+  });
+
+  test("states the migration consequence, or says there is none", () => {
+    const withMigration = renderReleaseNotes("0.6.0", "v0.5.9", [], [7]);
+    expect(withMigration).toContain("adds database migration 7");
+    // The warning only matters if it names which older daemon is locked out.
+    expect(withMigration).toContain("a 0.5.9 daemon cannot reopen a profile that 0.6.0 has opened");
+    expect(renderReleaseNotes("0.6.0", "v0.5.9", [], [])).toContain("adds no database migration");
+    expect(renderReleaseNotes("0.6.0", "v0.5.9", [], [])).not.toContain("TODO state any database");
+  });
+
+  test("flags a change users cannot observe, without deciding for the author", () => {
+    expect(isInternalChange(["docs/INSTALL.md", "skills/wisp/SKILL.md"])).toBe(true);
+    expect(isInternalChange([".github/workflows/ci.yml", "tests/a.test.ts"])).toBe(true);
+    expect(isInternalChange(["wispd/src/daemon.ts"])).toBe(false);
+    expect(isInternalChange(["docs/INSTALL.md", "wispd/src/daemon.ts"])).toBe(false);
+    // Unknown paths must not be guessed as internal.
+    expect(isInternalChange([])).toBe(false);
+
+    const changes = parseMergedChanges("docs: only docs (#1)\nfeat: real thing (#2)", (subject) =>
+      subject.startsWith("docs:") ? ["docs/x.md"] : ["wispd/src/y.ts"],
+    );
+    expect(changes[0]).toMatchObject({ pull: "1", internal: true });
+    expect(changes[1]).toMatchObject({ pull: "2", internal: false });
+    const notes = renderReleaseNotes("0.6.0", "v0.5.9", changes);
+    expect(notes).toContain("probably internal");
+    expect(notes).toContain("TODO describe for users: feat: real thing (#2)");
+  });
+
+  test("lists assets in reading order while still matching the promotion inventory", () => {
+    const ordered = releaseAssetsInReadingOrder("0.6.0");
+    expect(ordered[0]).toBe("wisp-v0.6.0-linux-x86_64");
+    expect(ordered).toHaveLength(10);
+    // Same release, different order: the gate compares sorted, humans read grouped.
+    expect([...ordered].sort()).toEqual(expectedReleaseAssets("0.6.0"));
+    expect(renderReleaseNotes("0.6.0", "v0.5.9", []).indexOf("wisp-v0.6.0-linux-x86_64")).toBeLessThan(
+      renderReleaseNotes("0.6.0", "v0.5.9", []).indexOf("SHA256SUMS-desktop-darwin-arm64"),
+    );
+  });
+});
+
+describe("public claims stay true as the product grows", () => {
+  test("README names every built-in harness", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8").toLowerCase();
+    const builtins = Object.keys(BUILTIN_ADAPTERS);
+    expect(builtins.length).toBeGreaterThan(1);
+    // opencode shipped as a fifth harness while README still advertised four.
+    // A harness users can run but never see mentioned is a false public claim.
+    const missing = builtins.filter((harness) => !readme.includes(harness));
+    expect(missing).toEqual([]);
   });
 });

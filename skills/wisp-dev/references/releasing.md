@@ -15,7 +15,7 @@ These commands are the release. Everything after this section explains what
 they enforce, and is the manual fallback when something fails.
 
 ```sh
-version=0.5.2                        # an unused regular version, or 0.0.0-alpha.N
+version=0.0.0                        # an unused regular version, or 0.0.0-alpha.N
 git switch -c "release/$version" origin/main
 bun install --frozen-lockfile
 
@@ -28,8 +28,28 @@ bun run check                        # includes version:check, docs, pins, lint,
 bun run brand:check && bun run smoke && bun run build && bun run test:evaluator
 ```
 
-Open the release-preparation PR, land it on `main`, then publish from the
-merged commit:
+`main` does not hold still while the gates run. If something lands, take it
+before opening the PR, so the release describes what it actually ships:
+
+```sh
+git fetch origin
+git rebase origin/main
+```
+
+Re-run the gates after a rebase, and edit the notes by hand if what landed
+changes what this release ships — `release:notes` refuses to overwrite a file
+that already exists. A change that lands after the tag is pushed belongs to the
+next release.
+
+Open the release-preparation PR and land it with a squash, so the release
+commit is one commit that carries one synchronized version:
+
+```sh
+gh pr merge <number> --squash --delete-branch
+```
+
+Then publish from the merged commit. `main` is normally checked out in the
+primary worktree, so `git switch main` fails here; detach instead:
 
 ```sh
 git fetch origin && git switch --detach origin/main
@@ -43,8 +63,20 @@ git push origin "refs/tags/v$version"   # this is the publish authorization
 
 The tag push is the only irreversible step, and nothing above it publishes
 anything. `.github/workflows/release.yml` then builds, signs, notarizes,
-publishes the immutable release, and promotes the tap. Record the outcome in
-the qualification ledger afterwards.
+publishes the immutable release, and promotes the tap.
+
+Then record the outcome. The release notes describe the artifact gates as
+pending, so the qualification ledger is where the result actually lands:
+
+```sh
+git switch -c "release/$version-closeout" origin/main
+# add a "## <version> publication" section to docs/v<major>.<minor>/QUALIFICATION.md:
+# the workflow run and its three job outcomes, the tag's commit and its PR,
+# the promotion receipt time and tap commit, and anything the gates do NOT
+# prove. A superseded release keeps its evidence and loses only claims that
+# are now false, such as "latest".
+gh pr merge <number> --squash --delete-branch
+```
 
 ## Release invariants
 
