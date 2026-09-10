@@ -12,6 +12,12 @@ It shows storage by directory, largest and orphan worktrees, live/archived log
 bytes, estimated growth, and potential reclaim. Archive age uses last update;
 estimates exclude SQLite overhead and do not bypass cleanup safety checks.
 
+`wisp purge --archived-before <30d|YYYY-MM-DD>` lists archived tasks and bytes
+without deleting anything. Repeat with `--confirm-count <n>` only after reviewing
+the list and exporting what you need. A stale count refuses. Failed deletions
+are named while the rest continue; any failure exits nonzero.
+`wisp purge <task> --confirm <task>` remains the single-task form.
+
 ## Tasks
 
 ```

@@ -150,7 +150,28 @@ of SQLite pages, filesystem snapshots or copies outside Wisp.
 umask 077
 wisp export <task> > task-export.json
 wisp purge <task> --confirm <task>
+# Preview every matching archive, including exact task IDs and file bytes.
+wisp purge --archived-before 30d
+# Only after reviewing the preview: n must match its count.
+wisp purge --archived-before 30d --confirm-count <n>
 ```
+
+Bulk purge accepts a positive age (`30d`) or a UTC date (`YYYY-MM-DD`).
+Without confirmation it deletes nothing and exits successfully. Confirmation
+must match the current count; the daemon also checks the preview's selection
+fingerprint and fixed cutoff before deleting. A changed selection refuses.
+Only archived tasks qualify, using their last update (not creation date).
+Each deletion uses the same cleanup, process, export-busy and webhook guards as
+single-task purge. One failure does not stop the rest: the receipt names failed
+IDs and reclaimed file bytes, and the CLI exits nonzero if any failed. Bytes
+exclude SQLite pages and unmeasurable partial failures. A same-count replacement
+between separate CLI invocations cannot be detected by count alone: review the
+list printed on confirmation too.
+
+Authenticated bulk API: `GET /api/purge?archivedBefore=30d` returns `tasks`,
+`bytes`, `cutoff` and `fingerprint`; `DELETE /api/purge` requires that `cutoff`,
+`fingerprint` and `confirmCount`. The response lists `purged`, `failed` and
+`reclaimedBytes`. `GET /api/capabilities` advertises `bulkPurge`.
 
 Authenticated API: `GET /api/tasks/:id/storage`, `GET /api/tasks/:id/export`, and
 `DELETE /api/tasks/:id/purge` with `{"confirmTaskId":"<task>"}`. Export validation

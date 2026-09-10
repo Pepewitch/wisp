@@ -27,6 +27,8 @@ usage:
   ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work)
   ${COMMAND} export <task>                           print portable JSON (redirect to a private file)
   ${COMMAND} purge <task> --confirm <task>          permanently delete archived Wisp data; keep Git branches
+  ${COMMAND} purge --archived-before <30d|YYYY-MM-DD> [--confirm-count <n>]
+                                               dry run by default; count must match to delete archives
   ${COMMAND} project add <path> [--name <name>]      register a repo for the web project picker
   ${COMMAND} project rm <path>                       remove a configured project (task history stays)
   ${COMMAND} project ls                              list configured and historical repo paths

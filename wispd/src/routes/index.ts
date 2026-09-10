@@ -33,6 +33,7 @@ import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
 import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
+import { bulkPurgeRoute } from "./bulk-purge";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -171,6 +172,7 @@ export function route(
   const updates = updateManager ?? updateManagerFor(cfg);
 
   if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
+  if (path === "/api/purge") return bulkPurgeRoute(req, url);
 
   const updateResponse = updateRoute(req, path, m, updates);
   if (updateResponse !== null) return updateResponse;

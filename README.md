@@ -177,6 +177,11 @@ rate, and potential reclaim. `--archived-before 30d` (the default) or a UTC
 `YYYY-MM-DD` changes the archive estimate. It scans logical file bytes without
 following symlinks or initializing the home. See [storage and retention](docs/ARCHIVE-CLEANUP.md#storage-report).
 
+`wisp purge --archived-before 30d` previews permanent deletion of archived
+tasks. It deletes nothing unless repeated with `--confirm-count <n>` matching
+the preview. Export anything to keep first. Cleanup and process safety checks
+still apply; failures are named without stopping the remaining deletions.
+
 Then create a task:
 
 ```sh
