@@ -5,7 +5,7 @@
  *   bun run scripts/brand/build.ts            # write brand/ + patch index.html
  *   bun run scripts/brand/build.ts --check    # fail if anything is stale (CI)
  *
- * SVGs need nothing but bun. The two PNGs (social preview, apple touch icon)
+ * SVGs need nothing but bun. PNGs (social preview, desktop and home-screen icons)
  * are rasterised with headless Chrome, the same binary scripts/capture-app.ts
  * already depends on; without it the SVGs still regenerate and the PNGs are
  * left alone, with a warning, so this never becomes a hard dependency of the
@@ -13,13 +13,14 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import { faviconDataUri, faviconSvg, lanternSvg, lockupSvg, markFacets, markSvg, PALETTE } from "./mark";
 import { GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
 const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
@@ -154,6 +155,7 @@ if (!existsSync(CHROME)) {
 
   /** Render an HTML string to a PNG with headless Chrome, at an absolute path. */
   async function shootTo(html: string, out: string, width: number, height: number, scale: number) {
+    const profile = await mkdtemp(join(tmpdir(), "wisp-brand-"));
     const tmp = join(BRAND, ".render.html");
     await writeFile(tmp, html);
     const png = join(BRAND, ".render.png");
@@ -162,6 +164,7 @@ if (!existsSync(CHROME)) {
       [
         CHROME,
         "--headless",
+        `--user-data-dir=${profile}`,
         "--disable-gpu",
         "--hide-scrollbars",
         "--default-background-color=00000000",
@@ -173,6 +176,7 @@ if (!existsSync(CHROME)) {
       { stdout: "ignore", stderr: "ignore" },
     );
     await proc.exited;
+    await rm(profile, { recursive: true, force: true });
     await rm(tmp, { force: true });
     if (!existsSync(png)) throw new Error(`Chrome produced no PNG for ${out}`);
     const bytes = await readFile(png);
@@ -185,12 +189,21 @@ if (!existsSync(CHROME)) {
     shootTo(html, join(BRAND, out), width, height, scale);
 
   /** The mark on its opaque plate, at any size. Shared by the two app icons. */
-  const plate = (size: number, bloom: number, id: string) =>
+  const plate = (size: number, bloom: number, id: string, ratio = 0.8) =>
     `<!doctype html><meta charset="utf-8"><style>
 html,body{margin:0;width:${size}px;height:${size}px;background:${PALETTE.ink};overflow:hidden}
 div{display:grid;place-items:center;width:100%;height:100%}
-svg{width:${Math.round(size * 0.8)}px;height:${Math.round(size * 0.8)}px;display:block}
+svg{width:${Math.round(size * ratio)}px;height:${Math.round(size * ratio)}px;display:block}
 </style><div>${lanternSvg({ size: Math.round(size * 0.71), bloom, id })}</div>`;
+
+  // One opaque, mask-safe plate for Android launchers. The complete lantern
+  // fits inside the central 80%-diameter circle, including a round mask.
+  for (const size of [192, 512]) {
+    await shoot(plate(size, 0.055, "pwa", 0.64), `pwa-icon-${size}.png`, size, size, 1);
+  }
+
+  // Regenerate PWA icons on Linux without changing legacy macOS-rendered PNGs.
+  if (!process.argv.includes("--pwa-only")) {
 
   // apple touch icon: the mark inset on an opaque plate
   await shoot(plate(TOUCH_ICON, 0.055, "ti"), "apple-touch-icon.png", TOUCH_ICON, TOUCH_ICON, 1);
@@ -278,6 +291,7 @@ p{font-size:21px;line-height:1.5;letter-spacing:-0.008em;color:#74747f;margin:18
     OG.height,
     OG.scale,
   );
+  }
 }
 
 /** The wordmark alone, for the social preview's text column. */

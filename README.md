@@ -332,6 +332,11 @@ SSH tunnel. Never publish the configured Wisp port directly to the internet.
 Follow [Secure remote and phone access](docs/REMOTE-ACCESS.md) and
 [Security](SECURITY.md).
 
+On a phone, install the web UI from your private HTTPS address for a Wisp
+home-screen icon and a standalone window. See
+[Install Wisp on your phone](docs/REMOTE-ACCESS.md#install-wisp-on-your-phone)
+for iPhone and Android steps, keyboard support, and connection recovery.
+
 ## How it works
 
 Each turn is one headless process using the harness's own session contract.

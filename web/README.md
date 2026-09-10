@@ -41,12 +41,20 @@ get; `#/gallery` is the one route that renders standalone, off
 
 ## The one-file rule
 
-`bunx vite build` writes exactly one artifact to `web/ui-dist/`. Everything is
-inlined — xterm.js, the Geist fonts, the favicon — because **the daemon serves
-that file and nothing else**: there are no asset routes, and `wispd/tests/web.test.ts`
-asserts both halves (a 404 on `/vendor/*`, and no `src=`/`href=` in the built
-`<head>` except the `data:` favicon). That is what makes Wisp work over
-tailscale with nothing else reachable, and it is a hard invariant (D1, D12).
+`bunx vite build` writes exactly one artifact to `web/ui-dist/`. Scripts,
+styles, xterm.js, Geist fonts, and the favicon are inlined. The daemon embeds
+this file, so running the UI requires neither a CDN nor a sibling directory.
+`wispd/tests/web.test.ts` asserts the self-contained bundle and rejects the old
+`/vendor/*` asset paths.
+
+PWA installation adds a precise exception: `wispd/src/pwa.ts` serves an embedded
+allowlist of `/manifest.webmanifest`, `/sw.js`, `/apple-touch-icon.png`, and
+two `/icons/wisp-*.png` images. There is no general static-file route. The
+browser entry point attaches the manifest/icon links and registers the worker
+only in secure production contexts; Desktop neither attaches these links nor
+registers a worker. `web/pwa/` owns the standalone offline document and the
+stateless navigation worker. The worker never caches application/API responses
+and never reloads an active client. See [phone installation](../docs/REMOTE-ACCESS.md#install-wisp-on-your-phone).
 
 `web/ui-dist/index.html` is deliberately **not committed**. Supported test,
 development, Desktop, and release commands generate it before anything consumes

@@ -66,7 +66,25 @@ class FetchEventStream implements DaemonEventStream {
   constructor(url: string, options: FetchEventStreamOptions) {
     this.url = url
     this.options = options
+    window.addEventListener("online", this.resume)
+    document.addEventListener("visibilitychange", this.resume)
     void this.run()
+  }
+
+  /** Mobile can keep a dead TCP connection looking open after suspension. */
+  private resume = (): void => {
+    if (this.closed || this.state === CLOSED || document.visibilityState === "hidden") return
+    this.controller?.abort()
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer)
+    this.retryTimer = null
+    this.state = CONNECTING
+    this.onerror?.()
+    if (!this.closed) void this.run()
+  }
+
+  private detachLifecycle(): void {
+    window.removeEventListener("online", this.resume)
+    document.removeEventListener("visibilitychange", this.resume)
   }
 
   get readyState(): number {
@@ -83,6 +101,7 @@ class FetchEventStream implements DaemonEventStream {
   }
 
   close(): void {
+    this.detachLifecycle()
     this.closed = true
     this.state = CLOSED
     if (this.retryTimer !== null) clearTimeout(this.retryTimer)
@@ -106,6 +125,7 @@ class FetchEventStream implements DaemonEventStream {
   /** A refusal: CLOSED first, so an onerror handler sees a state that will not change. */
   private fail(): void {
     if (this.closed) return
+    this.detachLifecycle()
     this.state = CLOSED
     this.onerror?.()
   }
@@ -128,10 +148,13 @@ class FetchEventStream implements DaemonEventStream {
       })
     } catch {
       // An abort from close() must not look like a network failure.
-      if (!this.closed) this.retryLater()
+      if (!this.closed && this.controller === controller) this.retryLater()
       return
     }
-    if (this.closed) return
+    if (this.closed || this.controller !== controller) {
+      void response.body?.cancel().catch(() => undefined)
+      return
+    }
     if (!response.ok || response.body === null) {
       // Drain the refusal so the connection can be reused rather than reset.
       void response.body?.cancel().catch(() => undefined)
@@ -142,23 +165,23 @@ class FetchEventStream implements DaemonEventStream {
     this.state = OPEN
     this.onopen?.()
     try {
-      await this.pump(response.body)
+      await this.pump(response.body, controller)
     } catch {
       // a torn stream reads exactly like a dropped one
     }
     // The daemon closed the stream (restart, sleep, proxy hangup): reconnect,
     // which is what EventSource would have done.
-    this.retryLater()
+    if (this.controller === controller) this.retryLater()
   }
 
-  private async pump(body: ReadableStream<Uint8Array>): Promise<void> {
+  private async pump(body: ReadableStream<Uint8Array>, controller: AbortController): Promise<void> {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ""
     try {
       for (;;) {
         const { value, done } = await reader.read()
-        if (done || this.closed) return
+        if (done || this.closed || this.controller !== controller) return
         buffer += decoder.decode(value, { stream: true })
         // Frames are separated by a blank line. \r\n is legal in the wire
         // format even though this daemon writes \n.

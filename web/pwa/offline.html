@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#19191d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Reconnect · Wisp</title>
+  <style>
+    :root { color-scheme: dark; --background: #19191d; --foreground: #eaeaee; --muted: #aaaab5; --border: #45454d; }
+    :root.light { color-scheme: light; --background: #f6f6f9; --foreground: #1a1a1f; --muted: #6c6c78; --border: #d0d0d8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--foreground); font: 16px/1.6 system-ui, sans-serif; }
+    main { min-height: 100dvh; display: flex; flex-direction: column; justify-content: center; max-width: 440px; margin: auto; padding: max(28px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left)); }
+    svg { width: 48px; height: 48px; margin-bottom: 24px; }
+    h1 { font-size: 24px; line-height: 1.25; letter-spacing: -.025em; margin: 0 0 12px; }
+    p { color: var(--muted); margin: 0 0 24px; }
+    button { align-self: flex-start; min-height: 48px; padding: 8px 20px; border: 1px solid var(--border); border-radius: 8px; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #status { margin: 16px 0 0; min-height: 3.2em; font-size: 14px; }
+  </style>
+  <script>
+    try {
+      const theme = localStorage.getItem("wisp_theme");
+      if (theme === "light" || (theme === "system" && !matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("light");
+        document.querySelector('meta[name="theme-color"]').content = "#f6f6f9";
+        document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]').content = "default";
+      }
+    } catch { /* Default appearance when storage is unavailable. */ }
+  </script>
+</head>
+<body>
+  <main>
+    <span role="img" aria-label="Wisp">__WISP_MARK__</span>
+    <h1>Let’s get you reconnected</h1>
+    <p>Wisp can’t reach your server. Check your connection and make sure Tailscale is on. Your tasks keep running on the server.</p>
+    <button id="retry" type="button">Try again</button>
+    <p id="status" role="status" aria-live="polite">We’ll also retry when you return to Wisp.</p>
+  </main>
+  <script>
+    const button = document.getElementById("retry");
+    const status = document.getElementById("status");
+    async function reconnect() {
+      if (button.disabled || document.visibilityState === "hidden") return;
+      button.disabled = true;
+      status.textContent = "Connecting to your server…";
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const response = await fetch("/api/health", { cache: "no-store", credentials: "omit", redirect: "error", signal: controller.signal });
+        if (response.ok && (await response.json()).ok === true) { location.reload(); return; }
+      } catch { /* Leave recovery available when the tailnet is still down. */ }
+      finally { clearTimeout(timeout); button.disabled = false; }
+      status.textContent = "Still unreachable. Check Tailscale and that Wisp is running, then try again.";
+    }
+    button.addEventListener("click", reconnect);
+    window.addEventListener("online", reconnect);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reconnect(); });
+    setInterval(reconnect, 15000);
+  </script>
+</body>
+</html>

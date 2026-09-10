@@ -25,6 +25,7 @@ import type { PtySize } from "./pty";
 import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
+import { pwaResponse } from "./pwa";
 // The generated single-file app is loaded only when the daemon starts. That
 // keeps source-only CLI commands usable before a checkout has built ui-dist;
 // supported serve/test/build entry points generate it first. Bun embeds this
@@ -444,10 +445,13 @@ async function serveOwned(
           return new Response(appHtml as unknown as string, {
             headers: {
               "content-type": "text/html; charset=utf-8",
+              "cache-control": "no-store",
               ...pageSecurityHeaders(securityPolicy, url.origin),
             },
           });
         }
+        const pwa = pwaResponse(req);
+        if (pwa) return pwa;
         if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
         // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
         if (path === "/api/session" && req.method === "POST") return postSession(req, cfg);

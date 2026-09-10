@@ -97,8 +97,8 @@ const TONE: Record<ButtonTone, string> = {
 }
 
 /**
- * 22 / 26 / 32 are the only control heights. `icon` is the square variant —
- * same heights, no horizontal padding.
+ * 22 / 26 / 32 are the pointer heights; `touch` reserves a 44px hit target.
+ * `icon` is the square variant — same heights, no horizontal padding.
  */
 export function Button({
   tone = "quiet",
@@ -110,7 +110,7 @@ export function Button({
   ...rest
 }: {
   tone?: ButtonTone
-  size?: "sm" | "md" | "lg"
+  size?: "sm" | "md" | "lg" | "touch"
   icon?: boolean
   children?: ReactNode
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -126,6 +126,7 @@ export function Button({
         size === "sm" && (icon ? "size-[22px]" : "h-[22px] px-2"),
         size === "md" && (icon ? "size-[26px]" : "h-[26px] px-2.5"),
         size === "lg" && (icon ? "size-8" : "h-8 px-3 text-[13px]"),
+        size === "touch" && (icon ? "size-11" : "h-11 px-3 text-[13px]"),
         "[&>svg]:size-3.5 [&>svg]:shrink-0",
         TONE[tone],
         className,

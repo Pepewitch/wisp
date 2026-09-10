@@ -20,6 +20,7 @@ import { Conversation } from "@/components/conversation"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
+import { MobileConnectionStatus } from "@/components/conn-indicator"
 import {
   AddProjectDialog,
   ProjectPickerErrorDialog,
@@ -516,6 +517,7 @@ function AppShell({
           changes={changes}
           terminal={terminal}
           composer={composer}
+          connectionStatus={!desktop ? <MobileConnectionStatus /> : undefined}
           desktop={desktop}
           connectionSwitcher={
             desktop ? <DesktopConnectionChrome mobile /> : undefined

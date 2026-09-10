@@ -64,6 +64,13 @@ desktop app's packaged frontend. It is ignored by Git: PRs review and validate
 the source, while release CI builds one canonical copy for both products. There
 is no separate desktop fork of the React application.
 
+Browser installation uses a fixed set of manifest, icon, and service-worker
+routes embedded in the daemon. These are the only static-resource exception;
+they do not add a filesystem asset server or change the shared UI artifact.
+Desktop does not initialize PWA installation. The worker fetches current HTML
+on every navigation and supplies only a standalone recovery document when the
+daemon cannot be reached. It never caches daemon data or reloads active clients.
+
 ## Browser request path
 
 The daemon serves the generated UI bundle. The browser keeps the token in

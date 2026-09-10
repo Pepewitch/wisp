@@ -972,6 +972,11 @@ not squeezed**: `MobileShell` renders a header, ONE tab strip (Chat · Changes �
 Terminal), and a pinned composer. No resizable group mounts there at all, so
 desktop pane geometry is neither applied nor overwritten by phone dimensions.
 
+Short landscape phones also keep this shell: coarse input, at most 1023px
+wide and 500px tall. Browser mobile windows follow the visual viewport when
+the keyboard opens; Desktop keeps native window sizing. The browser's PWA
+installation section lives in Settings, with its specimen in the gallery.
+
 ### The header is BANDED, and each band answers one question
 
 This shell covers 320px to 767px — a phone AND a narrow Wisp Desktop window,

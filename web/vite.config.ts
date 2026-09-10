@@ -37,6 +37,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": { target: daemonTarget(), ws: true },
+      "/manifest.webmanifest": { target: daemonTarget() },
+      "/apple-touch-icon.png": { target: daemonTarget() },
+      "/icons/": { target: daemonTarget() },
     },
   },
   resolve: {

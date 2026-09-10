@@ -23,6 +23,32 @@
    the resting state is only hidden where a pointer can bring it back. */
 @custom-variant pointer (@media (hover: hover));
 
+/* A phone's keyboard changes its visual viewport in Safari. The app keeps
+   one scroll owner per pane, with the composer above the keyboard. */
+.mobile-shell {
+  --mobile-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.mobile-browser-shell {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--mobile-top, 0px);
+  height: var(--mobile-height, 100dvh);
+  overscroll-behavior: none;
+}
+.mobile-task-drawer {
+  /* The sidebar already owns its top and bottom safe areas. */
+  padding-left: env(safe-area-inset-left);
+}
+@media (pointer: coarse) {
+  /* iOS zooms focused fields smaller than 16px and moves the composer away. */
+  input:not([type="checkbox"]):not([type="radio"]), textarea {
+    font-size: max(16px, 1em);
+  }
+  .settings-content button { min-height: 44px; }
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    GRAPHITE & VIOLET
 

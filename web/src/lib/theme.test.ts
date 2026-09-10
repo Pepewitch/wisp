@@ -60,10 +60,12 @@ describe("applying a theme", () => {
     applyTheme("light")
     expect(document.documentElement.classList.contains("light")).toBe(true)
     expect(document.documentElement.classList.contains("dark")).toBe(false)
+    expect(document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.getAttribute("content")).toBe("default")
 
     applyTheme("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
     expect(document.documentElement.classList.contains("light")).toBe(false)
+    expect(document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.getAttribute("content")).toBe("black-translucent")
   })
 })
 

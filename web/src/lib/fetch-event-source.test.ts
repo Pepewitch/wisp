@@ -32,6 +32,43 @@ function eventStreamResponse(body: ReadableStream<Uint8Array>): Response {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe("the fetch-based event stream", () => {
+  it("replaces suspended streams on foregrounding without an old stream scheduling another retry", async () => {
+    const first = pushable()
+    const second = pushable()
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(eventStreamResponse(first.body))
+      .mockResolvedValueOnce(eventStreamResponse(second.body))
+    const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 1 })
+    const messages: string[] = []
+    source.onmessage = (event) => messages.push(event.data)
+    await settle()
+    document.dispatchEvent(new Event("visibilitychange"))
+    await settle()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[0]![1].signal.aborted).toBe(true)
+    first.push("data: stale\n\n")
+    second.push("data: current\n\n")
+    await settle()
+    await settle()
+    expect(messages).toEqual(["current"])
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    source.close()
+    window.dispatchEvent(new Event("online"))
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not revive a refused stream when the device comes online", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 }))
+    const source = openFetchEventStream("/api/events", { fetchImpl })
+    await settle()
+    window.dispatchEvent(new Event("online"))
+    document.dispatchEvent(new Event("visibilitychange"))
+    await settle()
+    expect(source.readyState).toBe(2)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    source.close()
+  })
+
   it("carries the authorization header the browser cannot put on an EventSource", async () => {
     const stream = pushable()
     const fetchImpl = vi.fn().mockResolvedValue(eventStreamResponse(stream.body))

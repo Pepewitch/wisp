@@ -79,11 +79,14 @@ describe("the web app", () => {
     expect(html).toContain('id="root"');
   });
 
-  test("/index.html is the same page, and nothing else is served off the API", async () => {
+  test("/index.html is the same page, with only explicit PWA resources off the API", async () => {
     writeConfig();
     server = await serve({ port: 0 });
     const base = `http://127.0.0.1:${server.port}`;
     expect((await fetch(`${base}/index.html`)).status).toBe(200);
+    expect((await fetch(`${base}/manifest.webmanifest`)).headers.get("content-type")).toBe("application/manifest+json");
+    expect((await fetch(`${base}/sw.js`)).headers.get("service-worker-allowed")).toBe("/");
+    expect((await fetch(`${base}/apple-touch-icon.png`)).headers.get("content-type")).toBe("image/png");
     // the old page and its vendored assets are gone; the app inlines xterm
     for (const path of ["/app", "/vendor/xterm.js", "/vendor/xterm.css", "/vendor/addon-fit.js"]) {
       expect((await fetch(`${base}${path}`)).status).toBe(404);
@@ -91,7 +94,7 @@ describe("the web app", () => {
   });
 
   /**
-   * The daemon serves ONE file and no assets, so the bundle has to be truly
+   * The core UI stays in ONE file, so the bundle has to be truly
    * self-contained: a CDN reference or an un-inlined chunk would 404 in the
    * browser and there is no static handler left to catch it.
    */
