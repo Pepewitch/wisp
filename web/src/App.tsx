@@ -48,6 +48,7 @@ import { useAddProject } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
+import { useTaskSwitchPerformance } from "@/hooks/useTaskSwitchPerformance"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -285,6 +286,7 @@ function MainView({
   const statusQuery = useStatus()
   const reposQuery = useRepos()
   const detailQuery = useTaskDetail(selectedId)
+  useTaskSwitchPerformance(selectedId, detailQuery.data?.id, detailQuery.dataUpdatedAt)
   // one record, two surfaces: the sidebar row and the task header can no
   // longer disagree about what a PR has become (see `usePullRequests`)
   const pullRequests = usePullRequests(selectedId)
@@ -318,6 +320,8 @@ function MainView({
   // the detail row wins once loaded — it carries the turns
   const header = detailQuery.data ?? task
   const archived = task?.archived ?? false
+  // Status owns Git health for both sidebar and header. It may arrive after
+  // conversation paint, but a slow or failed Git sweep never blocks Chat.
   const status = task ? statusQuery.data?.[task.id] : undefined
   const stream = useLogStream(selectedId, "activity", logGeneration)
   // the harness's own skill registry for Tier 3 (A4) — absent while the
@@ -455,7 +459,7 @@ function MainView({
         <TaskHeader
           task={header}
           pullRequest={pullRequests.selected}
-          worktreeReason={detailQuery.data?.worktreeReason ?? null}
+          worktreeReason={status?.worktreeReason ?? null}
         />
       }
       updateControl={updateControls.desktop}

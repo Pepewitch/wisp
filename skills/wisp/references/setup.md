@@ -202,9 +202,11 @@ it; it mints no credential. Every other API route requires
 - `POST /api/session` — verify a token (mints nothing)
 - `GET /api/tasks?archived=1` · `POST /api/tasks` (`{repoPath, prompt,
   harness, model?, effort?, mode?, attachments?, suffixPromptId?}`)
-- `GET /api/tasks/:id` · `POST /api/tasks/:id/send` (`{message, attachments?,
-  suffixPromptId?}`) · `…/interrupt` · `…/fresh-session` · `…/push` ·
-  `…/archive` (`{force?}`)
+- `GET /api/tasks/:id/conversation` — SQLite-only task history. Protocol-1
+  clients fall back to the legacy Git-aware `GET /api/tasks/:id` when an older
+  daemon does not provide this additive route
+- `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?}`) ·
+  `…/interrupt` · `…/fresh-session` · `…/push` · `…/archive` (`{force?}`)
 - `GET /api/tasks/:id/log?turn=N&offset=B` — pollable log bytes
 - `GET /api/tasks/:id/attachments/:turn/:name` — image bytes (410 after
   archive)

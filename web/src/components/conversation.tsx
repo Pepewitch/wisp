@@ -37,7 +37,8 @@ import {
 } from "@/lib/activity"
 import { duration } from "@/lib/state"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
-import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
+import { scheduleConversationPaint } from "@/lib/task-switch-performance"
+import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import type { StreamState } from "@/stream/reducer"
@@ -45,8 +46,9 @@ import type { StreamState } from "@/stream/reducer"
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
 
-   1. ONE scroller owns the whole task. Every turn from GET /api/tasks/:id
-      renders eagerly — no clamp, no nested overflow, no pagination.
+   1. ONE scroller owns the whole task. Every turn from
+      GET /api/tasks/:id/conversation renders eagerly — no clamp, no nested
+      overflow, no pagination.
    2. Activity rows are SUMMARY LINES, in the order the harness emitted them:
       a tool call, the prose that explains the next one, the next call. A live
       turn's timeline comes from the log stream; a settled turn's is fetched on
@@ -71,7 +73,7 @@ export function Conversation({
   note,
   touch = false,
 }: {
-  task: TaskDetail | null
+  task: ConversationDetail | null
   /** the live log follow; its blocks belong to the newest turn(s) */
   stream: StreamState
   /** "connecting…" / "select a task" — the stream's own placeholder */
@@ -144,6 +146,11 @@ export function Conversation({
     if (node.getBoundingClientRect().top >= el.getBoundingClientRect().top) return
     el.scrollTop += el.scrollHeight - before
   }, [])
+
+  const taskId = task?.id
+  useEffect(() => (
+    taskId ? scheduleConversationPaint() : undefined
+  ), [taskId])
 
   if (!task) {
     return (

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { connectionStore } from "./conn";
 import { createConnectionQueryKeys, qk, type ConnectionQueryKeys } from "./query";
 import { connectEventsBridge, SSE_CLOSED, type SseLike } from "./sse";
-import type { TaskDetail, WispEvent } from "./types";
+import type { ConversationDetail, WispEvent } from "./types";
 
 /** A scriptable EventSource: emit frames, flip readyState, watch lifecycle. */
 class FakeSse implements SseLike {
@@ -141,7 +141,7 @@ describe("the /api/events → queryClient bridge", () => {
     expect(invalidated(h.client, qk.task("t1"))).toBe(true);
     expect(invalidated(h.client, qk.diff("t1"))).toBe(true);
     // the optimistic echo: the header flips before the refetch lands
-    const detail = h.client.getQueryData<TaskDetail>(qk.task("t1"));
+    const detail = h.client.getQueryData<ConversationDetail>(qk.task("t1"));
     expect(detail?.state).toBe("running");
     expect(detail?.state_detail).toBe("turn 2 running");
     h.close();
@@ -159,7 +159,7 @@ describe("the /api/events → queryClient bridge", () => {
     // no echo onto a task the event wasn't about
     h.client.setQueryData(qk.task("t1"), { id: "t1", state: "creating", state_detail: null });
     h.sources[0]!.emit({ type: "task", taskId: "t9", state: "running", stateDetail: null, seq: 4 });
-    expect(h.client.getQueryData<TaskDetail>(qk.task("t1"))?.state).toBe("creating");
+    expect(h.client.getQueryData<ConversationDetail>(qk.task("t1"))?.state).toBe("creating");
     h.close();
   });
 
@@ -179,7 +179,7 @@ describe("the /api/events → queryClient bridge", () => {
     });
 
     expect(h.client.getQueryData<Array<{ title: string }>>(qk.tasksList(false))?.[0]?.title).toBe("After");
-    expect(h.client.getQueryData<TaskDetail>(qk.task("t1"))?.title).toBe("After");
+    expect(h.client.getQueryData<ConversationDetail>(qk.task("t1"))?.title).toBe("After");
     expect(invalidated(h.client, qk.tasksList(false))).toBe(false);
     expect(invalidated(h.client, qk.status)).toBe(false);
     expect(invalidated(h.client, qk.task("t1"))).toBe(false);
