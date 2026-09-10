@@ -2,12 +2,51 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.2 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.3 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.3 publication
+
+**Published and promoted on 2026-09-10.**
+[Wisp 0.5.3](https://github.com/Pepewitch/wisp/releases/tag/v0.5.3) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+07:28:11 UTC with ten assets. The annotated tag resolves to clean main commit
+[`e75ba0a74a35206e71f6f3b3f303f009e11a3a6b`](https://github.com/Pepewitch/wisp/commit/e75ba0a74a35206e71f6f3b3f303f009e11a3a6b),
+landed through [PR #129](https://github.com/Pepewitch/wisp/pull/129).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34448556586)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | 64 root, 1,137 daemon, 721 UI tests; lint/types, docs, workflow pins, browser and supply-chain checks, the native core gate, and the promotion dry run all passed on the release commit |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and the clean tagged source |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+Promotion completed at **07:33:58 UTC**, with Homebrew tap commit
+[`c6d87c71af7d39a667f07e6a4128246c9973778f`](https://github.com/Pepewitch/homebrew-tap/commit/c6d87c71af7d39a667f07e6a4128246c9973778f).
+Both update channels serve 0.5.3, verified anonymously after promotion.
+
+0.5.3 adds database migration 8, so a 0.5.2 daemon cannot reopen a profile
+that 0.5.3 has opened.
+
+This record was written separately from the release. The agent driving the
+release published and promoted it successfully, then its harness lost network
+access (`getaddrinfo ENOTFOUND api2.cursor.sh`) before recording the outcome,
+so the ledger entry was completed by hand from the workflow run, the promotion
+receipt, and the public release. Nothing about the published artifacts changed;
+the gap was in the evidence record, which is exactly what this ledger is for.
+
+No installed daemon service or production Desktop profile was upgraded for
+these checks. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## 0.5.2 publication
 
 **Published and promoted on 2026-09-10.**
-[Wisp 0.5.2](https://github.com/Pepewitch/wisp/releases/tag/v0.5.2) is the latest
+[Wisp 0.5.2](https://github.com/Pepewitch/wisp/releases/tag/v0.5.2) was published as a
 regular GitHub release (`draft: false`, `prerelease: false`), published at
 03:57:43 UTC with ten assets. The annotated tag resolves to clean main commit
 [`4d54ae762714e28216f6996484e2413951b597bf`](https://github.com/Pepewitch/wisp/commit/4d54ae762714e28216f6996484e2413951b597bf),
