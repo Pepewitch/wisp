@@ -10,13 +10,36 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertTaggableVersion } from "./release-versions";
-import { expectedReleaseAssets, releaseNotesPath } from "./release-promotion";
+import { releaseAssetsInReadingOrder, releaseNotesPath } from "./release-promotion";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "../..");
 
 interface MergedChange {
   subject: string;
   pull: string | null;
+  /** Touched only docs, skills, workflows or tests, so probably not user-facing. */
+  internal: boolean;
+}
+
+// Paths whose changes users never observe in the products. A pull request that
+// touched only these is offered as "probably internal" so the judgment is
+// prompted, not rediscovered from a previous release's precedent.
+const INTERNAL_PREFIXES = ["docs/", "skills/", ".github/", "tests/", "wispd/tests/", "web/tests/"];
+
+export function isInternalChange(paths: string[]): boolean {
+  return paths.length > 0 && paths.every((path) => INTERNAL_PREFIXES.some((prefix) => path.startsWith(prefix)));
+}
+
+// Migrations are numbered and appended, so the release adds every id that is
+// present now and was not present at the previous tag. Deriving this stops the
+// upgrade warning from depending on someone remembering to diff migrations.ts.
+export function migrationIds(source: string): number[] {
+  return [...source.matchAll(/^\s*id: (\d+),/gm)].map((match) => Number(match[1])).sort((a, b) => a - b);
+}
+
+export function addedMigrations(before: string, after: string): number[] {
+  const had = new Set(migrationIds(before));
+  return migrationIds(after).filter((id) => !had.has(id));
 }
 
 function run(args: string[]): string {
@@ -36,7 +59,7 @@ export function previousReleaseTag(): string {
   return previous;
 }
 
-export function parseMergedChanges(log: string): MergedChange[] {
+export function parseMergedChanges(log: string, pathsFor?: (subject: string) => string[]): MergedChange[] {
   return log
     .split(/\r?\n/)
     .filter(Boolean)
@@ -45,19 +68,34 @@ export function parseMergedChanges(log: string): MergedChange[] {
       return {
         subject: line.replace(/\s*\(#\d+\)\s*$/, ""),
         pull: pull ? pull[1]! : null,
+        internal: isInternalChange(pathsFor?.(line) ?? []),
       };
     });
 }
 
-export function renderReleaseNotes(version: string, since: string, changes: MergedChange[]): string {
+export function renderReleaseNotes(
+  version: string,
+  since: string,
+  changes: MergedChange[],
+  migrations: number[] = [],
+): string {
   const bullets = changes.length
     ? changes
-        .map((change) => `- TODO describe for users: ${change.subject}${change.pull ? ` (#${change.pull})` : ""}`)
+        .map((change) => {
+          const reference = change.pull ? ` (#${change.pull})` : "";
+          return change.internal
+            ? `- TODO probably internal, so drop this or fold it into one hygiene bullet: ${change.subject}${reference}`
+            : `- TODO describe for users: ${change.subject}${reference}`;
+        })
         .join("\n")
     : "- TODO no merged changes were found since the previous tag";
-  const assets = expectedReleaseAssets(version)
+  const assets = releaseAssetsInReadingOrder(version)
     .map((asset) => `- \`${asset}\``)
     .join("\n");
+  const migrationLine =
+    migrations.length === 0
+      ? "This release adds no database migration."
+      : `This release adds database migration ${migrations.join(" and ")}, so a ${since.replace(/^v/, "")} daemon cannot reopen a profile that ${version} has opened.`;
   return `# Wisp ${version}
 
 TODO one paragraph: what this release is, and the two or three things a user
@@ -100,8 +138,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \\
 Back up task state **and the original Git repositories** before upgrading.
 Follow [backup and restore](https://github.com/Pepewitch/wisp/blob/v${version}/docs/INSTALL.md#back-up-and-restore-a-wisp-home); copying \`.wisp\`
 alone does not preserve linked worktrees or unpublished Git objects.
-TODO state any database migration this release adds, and which older daemon
-version can no longer reopen the profile. Delete this line if there is none.
+${migrationLine}
 
 ## Scope and known limits
 
@@ -144,12 +181,31 @@ if (import.meta.main) {
     const since = previousReleaseTag();
     const changes = parseMergedChanges(
       run(["git", "log", "--no-merges", "--format=%s", `${since}..HEAD`]),
+      (subject) => {
+        // One `git log` per subject is fine here: a release has a handful of
+        // commits, and this only decides which bullets get flagged.
+        const found = run(["git", "log", "--no-merges", "--format=%H", "--fixed-strings", `--grep=${subject}`, `${since}..HEAD`])
+          .split(/\r?\n/)
+          .filter(Boolean);
+        if (found.length !== 1) return [];
+        return run(["git", "show", "--name-only", "--format=", found[0]!]).split(/\r?\n/).filter(Boolean);
+      },
+    );
+    const MIGRATIONS = "wispd/src/migrations.ts";
+    const migrations = addedMigrations(
+      run(["git", "show", `${since}:${MIGRATIONS}`]),
+      run(["git", "show", `HEAD:${MIGRATIONS}`]),
     );
     const path = releaseNotesPath(ROOT, `v${version}`);
     if (existsSync(path)) throw new Error(`release notes already exist: ${path}`);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, renderReleaseNotes(version, since, changes));
-    console.log(`wrote ${path} with ${changes.length} change(s) since ${since}`);
+    writeFileSync(path, renderReleaseNotes(version, since, changes, migrations));
+    const internal = changes.filter((change) => change.internal).length;
+    console.log(
+      `wrote ${path} with ${changes.length} change(s) since ${since}` +
+        `${internal > 0 ? `, ${internal} flagged as probably internal` : ""}` +
+        `${migrations.length > 0 ? `, adding migration ${migrations.join(" and ")}` : ", adding no migration"}`,
+    );
     console.log("Edit every TODO before committing; the notes become an immutable release body.");
   } catch (error) {
     console.error(`release-notes: ${error instanceof Error ? error.message : String(error)}`);

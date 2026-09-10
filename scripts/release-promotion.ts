@@ -50,6 +50,32 @@ export function releaseNotesPath(root: string, tag: string): string {
   return resolve(root, `docs/v${match![1]}.${match![2]}/RELEASE-NOTES-${match![4] ?? releaseVersion(tag)}.md`);
 }
 
+// Reading order for humans: each platform's payload, then its manifest, then
+// its checksums. expectedReleaseAssets() sorts instead, because it is compared
+// against a sorted GitHub inventory; using that order in the release notes put
+// SHA256SUMS above the binaries it describes.
+export function releaseAssetsInReadingOrder(version: string): string[] {
+  const ordered = [
+    `wisp-v${version}-linux-x86_64`,
+    "release-manifest.json",
+    "SHA256SUMS",
+    `wisp-v${version}-darwin-arm64.tar.gz`,
+    "release-manifest-darwin-arm64.json",
+    "SHA256SUMS-darwin-arm64",
+    `wisp-desktop-v${version}-darwin-arm64.tar.gz`,
+    `wisp-desktop-v${version}-darwin-arm64.tar.gz.sig`,
+    "release-manifest-desktop-darwin-arm64.json",
+    "SHA256SUMS-desktop-darwin-arm64",
+  ];
+  // The two lists must describe the same release, or the notes would advertise
+  // assets the promotion gate does not require.
+  const expected = expectedReleaseAssets(version);
+  if (JSON.stringify([...ordered].sort()) !== JSON.stringify(expected)) {
+    throw new Error("the reading order and the expected asset inventory disagree");
+  }
+  return ordered;
+}
+
 export function expectedReleaseAssets(version: string): string[] {
   return [
     "SHA256SUMS",
