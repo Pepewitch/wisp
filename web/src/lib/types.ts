@@ -56,12 +56,28 @@ export interface CleanupSummary {
   uncertain: boolean; confirmStopped: boolean;
 }
 
+/** One tracked process group that outlived its turn — see wispd/src/types.ts. */
+export interface BackgroundGroup {
+  turn: number
+  pgid: number
+  processes: number
+  since: string | null
+  state: "running" | "unknown"
+  stopRequested: boolean
+  names: string[]
+}
+
 export interface ApiTask {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: CleanupSummary;
   /** Absent on older daemons; the turn outcome remains in state. */
-  background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
+  background?: {
+    state: "none" | "running" | "unknown" | "stopping"
+    groups: number
+    /** Absent on daemons before background detail; render the bare state then. */
+    details?: BackgroundGroup[]
+  }
   id: string;
   title: string;
   repo_path: string;

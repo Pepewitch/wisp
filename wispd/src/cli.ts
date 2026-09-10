@@ -264,12 +264,40 @@ async function showCommand(positional: string[]): Promise<void> {
   if (task.effort) console.log(`effort: ${task.effort}`);
   console.log(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
   if (task.worktreeReason) console.log(task.worktreeReason);
+  printBackground(task);
   for (const turn of task.turns) printTurn(task, turn);
   for (const message of task.messages ?? []) {
     const summary = taskMessageSummary(message, task.archived);
     if (summary) console.log(`\n${summary}`);
   }
   if (task.diffstat) console.log(`\ndiff:\n${task.diffstat}`);
+}
+
+/**
+ * The tracked process groups behind the one-line status word.
+ *
+ * `show` is where an operator lands after reading "background work running"
+ * and wanting to know whether Stop is safe, so the answer belongs here rather
+ * than in a command they would have to know exists. Silent when there is
+ * nothing running, which is almost always.
+ */
+function printBackground(task: ApiTask): void {
+  const background = task.background;
+  if (!background || background.state === "none") return;
+  const groups = background.details.length || background.groups;
+  console.log(`\nbackground: ${background.state} · ${groups} ${groups === 1 ? "group" : "groups"}`);
+  for (const group of background.details) {
+    const age = group.since ? ago(group.since) : null;
+    const parts = [
+      `turn ${group.turn}`,
+      `pgid ${group.pgid}`,
+      `${group.processes} ${group.processes === 1 ? "process" : "processes"}${group.names.length ? ` (${group.names.join(", ")})` : ""}`,
+      age === null ? "the turn has not ended" : age === "now" ? "the turn just ended" : `${age} past the turn`,
+    ];
+    if (group.state === "unknown") parts.push("ownership unverified — Stop will refuse");
+    if (group.stopRequested) parts.push("stop requested");
+    console.log(`  ${parts.join(" · ")}`);
+  }
 }
 
 function printTurn(
