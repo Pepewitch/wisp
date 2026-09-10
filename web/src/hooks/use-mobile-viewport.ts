@@ -14,6 +14,10 @@ export function useMobileViewport(enabled: boolean) {
       element.style.setProperty("--mobile-top", `${viewport.offsetTop}px`)
       const keyboard = window.innerHeight - viewport.height > 150
       element.style.setProperty("--mobile-bottom", keyboard ? "0px" : "env(safe-area-inset-bottom)")
+      // Installed iOS apps need the bottom safe-area extension while resting,
+      // but it must not extend the shell behind an open keyboard.
+      if (keyboard) element.style.setProperty("--mobile-viewport-extension", "0px")
+      else element.style.removeProperty("--mobile-viewport-extension")
     }
     update()
     viewport.addEventListener("resize", update)
@@ -21,7 +25,7 @@ export function useMobileViewport(enabled: boolean) {
     return () => {
       viewport.removeEventListener("resize", update)
       viewport.removeEventListener("scroll", update)
-      for (const name of ["--mobile-height", "--mobile-top", "--mobile-bottom"]) element.style.removeProperty(name)
+      for (const name of ["--mobile-height", "--mobile-top", "--mobile-bottom", "--mobile-viewport-extension"]) element.style.removeProperty(name)
     }
   }, [enabled])
   return ref
