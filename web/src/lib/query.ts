@@ -9,6 +9,10 @@ import { ApiError, LOCAL_CONNECTION_ID } from "./transport"
  */
 export const queryClient = new QueryClient({
   defaultOptions: {
+    // A phone may lose its route while a command is being composed. Attempt
+    // writes immediately and report failure; never hold one for later replay.
+    // Desktop's loopback proxy also must not depend on browser online status.
+    mutations: { networkMode: "always", retry: false },
     queries: {
       refetchOnWindowFocus: true,
       retry: (failureCount, error) => {
