@@ -77,7 +77,7 @@ wisp init
 
 On a normal Ubuntu user session, the installer enables and starts
 `wisp.service`. Otherwise, keep `wisp serve` in a foreground terminal or use a
-restart-capable supervisor.
+restart-capable supervisor — see [Run without systemd](#run-without-systemd).
 
 Register one repository after the daemon is reachable:
 
@@ -206,6 +206,48 @@ For an always-on host, decide deliberately whether the user service should
 continue after logout. An administrator can enable that with
 `loginctl enable-linger <user>`.
 
+## Run without systemd
+
+When the installer cannot enable a systemd user session, keep `wisp serve` in
+a foreground terminal or run it under another supervisor. Reproduce these
+semantics from the managed unit in `scripts/install.sh`:
+
+- Restart the daemon whenever it exits (`Restart=always`, `RestartSec=2`).
+- Create daemon files with umask `0077` (`UMask=0077`).
+- Give the process the installing user's `HOME` and a `PATH` that reaches
+  both `~/.local/bin/wisp` and the harness binaries.
+- Signal only the daemon process on stop (`KillMode=process`).
+
+The KillMode row is the sharp one. A supervisor that kills the whole process
+group tears down harness children behind the daemon.
+
+A worked supervisord program uses supervisord's own environment expansion, so
+the snippet needs no path editing:
+
+```ini
+[program:wisp]
+command=%(ENV_HOME)s/.local/bin/wisp serve
+directory=%(ENV_HOME)s
+umask=077
+autostart=true
+autorestart=true
+startsecs=5
+stopasgroup=false
+killasgroup=false
+environment=HOME="%(ENV_HOME)s",PATH="%(ENV_HOME)s/.local/bin:/usr/local/bin:/usr/bin:/bin"
+```
+
+`stopasgroup=false` and `killasgroup=false` are that KillMode row.
+
+supervisord `environment=` supplements the supervisord process environment,
+not the operator's interactive shell. Harness credentials (`FACTORY_API_KEY`
+and similar) and `WISP_ALLOWED_ORIGINS` must be in the program's environment,
+or the equivalent for another supervisor. Exporting them in a login shell is
+not enough. See
+[Harness credentials under systemd](#harness-credentials-under-systemd) for
+the systemd EnvironmentFile recipe, and
+[REMOTE-ACCESS.md](REMOTE-ACCESS.md) for `WISP_ALLOWED_ORIGINS`.
+
 ## Upgrade and reinstall
 
 Rerunning the installer for the same version is idempotent. Installing a later
@@ -241,7 +283,7 @@ The restart is immediate. Open web terminal shells stop, and an in-progress
 task setup may need to be retried. Running turns retain their durable logs and
 are reconciled by the new daemon. Foreground and custom-supervisor processes
 show the available version but update manually because Wisp cannot guarantee
-their restart.
+their restart. See [Run without systemd](#run-without-systemd).
 
 The complete Linux upgrade and rollback matrix is not yet qualified. Take a
 backup before changing versions — the procedure below, not a plain `cp`
@@ -272,7 +314,8 @@ See [Git's worktree storage details](https://git-scm.com/docs/git-worktree#_deta
    Stopping the daemon alone does not guarantee its detached children stopped.
 2. Stop the daemon and keep it stopped until the copy finishes. For the managed
    Linux service, use `systemctl --user stop wisp.service`; for foreground or
-   other service managers, stop that instance and prevent automatic restart.
+   other service managers, stop that instance and prevent automatic restart
+   (see [Run without systemd](#run-without-systemd)).
    Verify no task, setup, cleanup, or external process is still writing the files.
 3. Copy the entire Wisp home and the repositories needed for your recovery goal.
    Include hidden Git directories, uncommitted/untracked files, local-task
@@ -381,7 +424,8 @@ delete preserved data manually only after confirming no work remains.
 | Git identity fails | Configure `user.name` and `user.email` globally or in the registered repository. |
 | project fails | Register an existing Git working tree by absolute path. |
 | daemon build skew warns | Restart the service so the daemon and CLI run the same binary. |
-| systemd is unavailable | Reinstall with `--no-service` and use a foreground process or another restart-capable supervisor. |
+| systemd is unavailable | Reinstall with `--no-service` and use a foreground process or another restart-capable supervisor. See [Run without systemd](#run-without-systemd). |
+| `warn supervisor: wisp.service is not enabled — keep 'wisp serve' in the foreground or configure a restart-capable supervisor` | Expected when another supervisor or a foreground `wisp serve` is in use. Doctor only recognizes the systemd user unit `wisp.service` on Linux (and Homebrew launchd on macOS). It does not inspect supervisord or similar. See [Run without systemd](#run-without-systemd). |
 
 `GET /api/health` is the liveness endpoint. It includes the Wisp version,
 commit, and dirty-build state. It deliberately excludes installation identity

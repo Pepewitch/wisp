@@ -8,6 +8,7 @@ web/ui-dist/
 
 # main-session-only context (HANDOFF etc.) — never ships, never read by wisp task worktrees
 .context/
+.agent-team/
 *.bun-build
 __pycache__/
 *.py[cod]
