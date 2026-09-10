@@ -27,6 +27,7 @@
    one scroll owner per pane, with the composer above the keyboard. */
 .mobile-shell {
   --mobile-bottom: env(safe-area-inset-bottom, 0px);
+  --mobile-viewport-extension: 0px;
   padding-left: env(safe-area-inset-left);
   padding-right: env(safe-area-inset-right);
 }
@@ -34,8 +35,19 @@
   position: fixed;
   inset-inline: 0;
   top: var(--mobile-top, 0px);
-  height: var(--mobile-height, 100dvh);
+  height: calc(var(--mobile-height, 100dvh) + var(--mobile-viewport-extension));
   overscroll-behavior: none;
+}
+/* Installed iOS apps report viewport height without the bottom safe area even
+   with viewport-fit=cover. Extend only the app shell into that omitted area;
+   its composer still pads its controls above the home indicator. */
+@media (display-mode: standalone) {
+  .mobile-browser-shell {
+    --mobile-viewport-extension: env(safe-area-inset-bottom, 0px);
+  }
+  .mobile-task-drawer {
+    bottom: calc(-1 * env(safe-area-inset-bottom, 0px));
+  }
 }
 .mobile-task-drawer {
   /* The sidebar already owns its top and bottom safe areas. */

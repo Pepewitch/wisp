@@ -16,6 +16,7 @@ it("keeps the composer within the keyboard viewport, respects zoom and cleans up
   const view = render(<Shell />)
   const shell = view.getByTestId("shell")
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("800px")
+  expect(shell.style.getPropertyValue("--mobile-viewport-extension")).toBe("")
   act(() => {
     viewport.height = 460
     viewport.offsetTop = 30
@@ -24,8 +25,15 @@ it("keeps the composer within the keyboard viewport, respects zoom and cleans up
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("460px")
   expect(shell.style.getPropertyValue("--mobile-top")).toBe("30px")
   expect(shell.style.getPropertyValue("--mobile-bottom")).toBe("0px")
+  expect(shell.style.getPropertyValue("--mobile-viewport-extension")).toBe("0px")
+  act(() => {
+    viewport.height = 800
+    viewport.offsetTop = 0
+    viewport.dispatchEvent(new Event("resize"))
+  })
+  expect(shell.style.getPropertyValue("--mobile-viewport-extension")).toBe("")
   act(() => { viewport.scale = 2; viewport.height = 230; viewport.dispatchEvent(new Event("resize")) })
-  expect(shell.style.getPropertyValue("--mobile-height")).toBe("460px")
+  expect(shell.style.getPropertyValue("--mobile-height")).toBe("800px")
   view.unmount()
   act(() => { viewport.scale = 1; viewport.dispatchEvent(new Event("resize")) })
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("")
