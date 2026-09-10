@@ -98,7 +98,17 @@ last line says:
 ok   activation: ready for a first task with droid
 ```
 
-Create a first task:
+Doctor is a local self-check. It probes the harness binary and its
+authentication in the environment of the shell that ran the command, not in
+the environment of the daemon that will spawn that harness. When the daemon
+runs under a service manager those two environments can differ, so a green
+`harness <name> auth` line — and the `activation` receipt built on it — does
+not by itself prove the daemon can authenticate that harness. Read
+[Harness credentials under a service manager](#harness-credentials-under-a-service-manager)
+before trusting a green receipt on a supervised daemon.
+
+Create a first task. It is also the cheapest confirmation that the daemon's
+own environment can authenticate:
 
 ```sh
 wisp new /absolute/path/to/repository \
@@ -175,12 +185,43 @@ and ignores a globally exported `WISP_HOME`. Use `wisp-dev token`,
 `wisp-dev doctor`, and the other ordinary subcommands against the development
 daemon while production continues under its installed service.
 
-## Harness credentials under systemd
+## Harness credentials under a service manager
 
-A harness login stored in that harness's normal per-user files is available to
-the user service. A credential exported only in an interactive shell is not.
-For example, a headless Droid API key needs an explicit systemd environment
-file:
+A supervised daemon does not inherit your interactive shell's environment, and
+the shell you later run `wisp` from does not inherit the daemon's. Two
+consequences follow, and they hold for every supervisor — as well as for a
+foreground `wisp serve` started from a shell that differs from the one you
+test from:
+
+- A harness login stored in that harness's normal per-user files is available
+  to the daemon, because the daemon runs as the same user.
+- A credential exported only in an interactive shell is not. It must be placed
+  in the daemon's own environment by whatever mechanism its supervisor
+  provides.
+
+### A green doctor line does not prove the daemon can authenticate
+
+`wisp doctor` spawns its harness and auth probes in the CLI's own process, so
+
+```text
+ok   harness droid auth: authenticated
+```
+
+is evidence about the shell that ran the command. Only the `daemon` check
+reaches the running daemon. Where the two environments differ, doctor can
+report a fully green activation, up to `ok activation: ready for a first
+task`, while a real turn fails to authenticate. The documented install order —
+the installer enables and starts the service, then you run `wisp doctor` — is
+precisely the case where the daemon's environment is not the shell's.
+
+The operator-side confirmation is to run one real task and watch it
+authenticate, with `wisp new` followed by `wisp log -f <task>` as in
+[Activate](#activate). That turn is spawned by the daemon, so it exercises the
+environment that actually matters.
+
+### Worked example: a systemd environment file
+
+A headless Droid API key needs an explicit systemd environment file:
 
 ```sh
 mkdir -p "$HOME/.config/wisp" "$HOME/.config/systemd/user/wisp.service.d"
@@ -201,6 +242,10 @@ wisp doctor --harness droid
 
 Do not commit that environment file. Prefer the harness's own secure login
 storage where it supports unattended use.
+
+Under another supervisor, use its equivalent: supervisord's `environment=`, a
+container env file, or an export in the wrapper script that execs
+`wisp serve`. See [Run without systemd](#run-without-systemd).
 
 For an always-on host, decide deliberately whether the user service should
 continue after logout. An administrator can enable that with
@@ -243,10 +288,11 @@ supervisord `environment=` supplements the supervisord process environment,
 not the operator's interactive shell. Harness credentials (`FACTORY_API_KEY`
 and similar) and `WISP_ALLOWED_ORIGINS` must be in the program's environment,
 or the equivalent for another supervisor. Exporting them in a login shell is
-not enough. See
-[Harness credentials under systemd](#harness-credentials-under-systemd) for
-the systemd EnvironmentFile recipe, and
-[REMOTE-ACCESS.md](REMOTE-ACCESS.md) for `WISP_ALLOWED_ORIGINS`.
+not enough, and `wisp doctor` run from that login shell cannot detect the
+gap. See
+[Harness credentials under a service manager](#harness-credentials-under-a-service-manager)
+for the general rule, the doctor caveat, and the systemd `EnvironmentFile`
+recipe, and [REMOTE-ACCESS.md](REMOTE-ACCESS.md) for `WISP_ALLOWED_ORIGINS`.
 
 ## Upgrade and reinstall
 
@@ -421,6 +467,7 @@ delete preserved data manually only after confirming no work remains.
 | daemon reports its configured port is occupied | Inspect the listener, then stop the unintended process or change `port` in `~/.wisp/config.json`; never expose the replacement port publicly. |
 | harness binary fails | Install that harness and verify its own `--version` command. |
 | harness auth fails | Follow the exact login/API-key action printed by doctor. |
+| doctor reports `ok harness <name> auth` but a real turn fails to authenticate | Doctor probed the shell's environment, not the supervised daemon's. Put the credential in the daemon's environment and restart it. See [Harness credentials under a service manager](#harness-credentials-under-a-service-manager). |
 | Git identity fails | Configure `user.name` and `user.email` globally or in the registered repository. |
 | project fails | Register an existing Git working tree by absolute path. |
 | daemon build skew warns | Restart the service so the daemon and CLI run the same binary. |

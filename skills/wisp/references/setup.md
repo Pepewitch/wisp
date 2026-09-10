@@ -15,8 +15,12 @@ unsupervised daemon dies with its shell or container. Any of:
 
 Liveness: `GET /api/health`. `wisp doctor` is the full self-check (harness
 CLIs and their auth, git identity, config files, daemon reachability) and
-exits 1 naming what failed. Crash recovery (re-adopting running tasks) is the
-daemon's job; process restart is the supervisor's.
+exits 1 naming what failed. Its harness and auth probes are spawned in the
+CLI's own process, so they describe the invoking shell's environment; only the
+`daemon` check reaches the daemon. Under a supervisor whose environment
+differs, a green harness line can accompany a turn that fails to authenticate
+— confirm with one real task. Crash recovery (re-adopting running tasks) is
+the daemon's job; process restart is the supervisor's.
 
 ## Browser and desktop clients
 
