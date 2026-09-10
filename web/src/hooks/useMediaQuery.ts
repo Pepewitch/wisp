@@ -24,6 +24,23 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
+export const COARSE_POINTER_MEDIA_QUERY = "(pointer: coarse)";
+
+/**
+ * Whether the primary input is a finger. Read once, not watched: a device does
+ * not grow a mouse mid-session, and this is deliberately NOT a width — the
+ * mobile shell also covers a 720px Desktop window, which has a real keyboard
+ * and must keep the shortcuts that go with one. Guarded, because a headless
+ * DOM has no `matchMedia` at all.
+ */
+export function hasCoarsePointer(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(COARSE_POINTER_MEDIA_QUERY).matches
+  );
+}
+
 /** The mobile shell replaces the grid on narrow windows and landscape phones. */
 export function useIsMobile(): boolean {
   return useMediaQuery(MOBILE_MEDIA_QUERY);

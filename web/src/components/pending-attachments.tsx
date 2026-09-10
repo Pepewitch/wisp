@@ -13,7 +13,14 @@ import { cn } from "@/lib/utils"
  * client-side rejection (capability, caps, type) in the same muted register —
  * the daemon's named 400 remains the authority on submit.
  */
-export function PendingAttachmentRows({ pending }: { pending: PendingAttachments }) {
+export function PendingAttachmentRows({
+  pending,
+  touch = false,
+}: {
+  pending: PendingAttachments
+  /** A thumb needs a real target to drop an image again, and a bigger thumbnail to recognise it by. */
+  touch?: boolean
+}) {
   if (pending.list.length === 0 && !pending.note) return null
   const notes = [pending.deliveryNote, pending.note].filter((n): n is string => Boolean(n))
   return (
@@ -24,7 +31,7 @@ export function PendingAttachmentRows({ pending }: { pending: PendingAttachments
             <img
               src={a.url}
               alt=""
-              className="size-6 shrink-0 rounded-sm object-cover"
+              className={cn("shrink-0 rounded-sm object-cover", touch ? "size-8" : "size-6")}
             />
           )}
           <span className="truncate font-mono">{a.name}</span>
@@ -33,10 +40,14 @@ export function PendingAttachmentRows({ pending }: { pending: PendingAttachments
           <button
             type="button"
             aria-label={`Remove ${a.name}`}
-            className="ml-auto shrink-0 cursor-pointer rounded-sm p-0.5 text-faint hover:text-foreground"
+            className={cn(
+              "ml-auto flex shrink-0 cursor-pointer items-center justify-center rounded-md text-faint hover:text-foreground",
+              // the negative margin keeps a 40px target from making the row 40px tall
+              touch ? "-my-2 size-10 active:bg-hover" : "size-4",
+            )}
             onClick={() => pending.remove(a.id)}
           >
-            <Dismiss className="size-3" />
+            <Dismiss className={touch ? "size-4" : "size-3"} />
           </button>
         </div>
       ))}

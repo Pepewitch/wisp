@@ -1,18 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
-import { ArrowUp, Stop } from "@/components/icons"
 import { FreshContextDialog } from "@/components/fresh-context-dialog"
-import {
-  AttachButton,
-  PendingAttachmentRows,
-} from "@/components/pending-attachments"
-import { TaskIdentity, SteerOverlays } from "@/components/steer-box-overlays"
-import {
-  TaskAgentPicker,
-  type TaskAgentChoice,
-} from "@/components/task-agent-picker"
-import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
+import { PendingAttachmentRows } from "@/components/pending-attachments"
+import { SteerOverlays } from "@/components/steer-box-overlays"
+import { ComposerControls } from "@/components/steer-controls"
+import { type TaskAgentChoice } from "@/components/task-agent-picker"
 import {
   useSteerCommands,
   type ReportState,
@@ -22,6 +15,8 @@ import {
   useSteerSubmit,
   type AgentSubmission,
 } from "@/hooks/useSteerSubmit"
+import { useAutosizeTextarea } from "@/hooks/useAutosizeTextarea"
+import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
 import {
   useDesktopPendingAttachments,
@@ -31,7 +26,6 @@ import {
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
-import { backgroundNames } from "@/lib/state"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   compactEntry,
@@ -56,9 +50,9 @@ import type {
 import { cn } from "@/lib/utils"
 
 /**
- * The centre column's footer. Grows with the text, caps at 40% of the pane, and
- * keeps the send affordance on one quiet row: which agent will answer, the
- * paperclip, the shortcut, and the one violet button on the screen.
+ * The centre column's footer. Grows with the text, caps at 40% of the pane,
+ * and keeps the send affordance on one quiet row — `steer-controls.tsx` owns
+ * that row and how it answers its own width and a thumb.
  *
  * It owns three things beyond the textarea:
  *
@@ -443,10 +437,16 @@ function SteerComposer({
   onStop: () => void
 }) {
   const [focused, setFocused] = useState(false)
+  // The mobile shell also covers a narrow Desktop window, so "is this sized
+  // for a thumb" and "is the Return key a soft one" are two questions.
+  const softKeyboard = touch && hasCoarsePointer()
+  useAutosizeTextarea(boxRef, value)
   return (
     <div
       className={cn(
-        "rounded-xl border bg-surface px-3 pt-2.5 pb-2 transition-colors",
+        "border bg-surface transition-colors",
+        // a softer, roomier sheet under a thumb; the pointer box is unchanged
+        touch ? "rounded-2xl px-2.5 pt-2 pb-1.5" : "rounded-xl px-3 pt-2.5 pb-2",
         focused
           ? "border-accent-dim ring-2 ring-ring/15"
           : "border-border-strong"
@@ -454,7 +454,7 @@ function SteerComposer({
     >
       <textarea
         ref={boxRef}
-        rows={3}
+        rows={touch ? 2 : 3}
         value={value}
         disabled={disabled}
         onChange={(event) => {
@@ -506,6 +506,11 @@ function SteerComposer({
             !(event.metaKey || event.ctrlKey)
           )
             return
+          // A soft keyboard's Return is a newline: there is no Shift to hold,
+          // the send is a 44px button an inch away, and a stray Return firing
+          // a half-written prompt costs a turn. ⌘/Ctrl+Return still sends, for
+          // a phone with a keyboard attached.
+          if (softKeyboard && !(event.metaKey || event.ctrlKey)) return
           event.preventDefault()
           onSend()
         }}
@@ -514,10 +519,15 @@ function SteerComposer({
             ? "This task is read-only"
             : "Ask for changes, or / for commands"
         }
+        // the Return key draws itself as what it does here
+        enterKeyHint={softKeyboard ? "enter" : undefined}
         className={cn(
           "max-h-[40vh] w-full resize-none scroll-slim bg-transparent leading-relaxed",
           "text-foreground placeholder:text-faint focus:outline-none",
-          touch ? "min-h-[60px] text-[15px]" : "min-h-[52px] text-[12.5px]"
+          // A short floor on touch: the box grows into the draft, and the room
+          // it does not need yet belongs to the transcript, which the keyboard
+          // has already taken half of.
+          touch ? "min-h-11 text-[15px]" : "min-h-[52px] text-[12.5px]"
         )}
       />
       <ComposerControls
@@ -539,141 +549,7 @@ function SteerComposer({
         onSend={onSend}
         onStop={onStop}
       />
-      <PendingAttachmentRows pending={attachments} />
-    </div>
-  )
-}
-
-/** The one line under the composer: what a send will and will not do here. */
-function composerNote(blocked: boolean, backgroundOnly: boolean, running: string | null): string | null {
-  if (blocked) return "running · send won't interrupt"
-  if (!backgroundOnly) return null
-  return `background work${running ? ` (${running})` : ""} · send won't stop it`
-}
-
-function ComposerControls({
-  task,
-  taskId,
-  suffixPromptId,
-  blocked,
-  sending,
-  disabled,
-  canSend,
-  canStop,
-  touch,
-  attachments,
-  harnesses,
-  canSwitchAgent,
-  agentChoice,
-  onSuffixPromptChange,
-  onAgentChange,
-  onSend,
-  onStop,
-}: {
-  task: ApiTask | null
-  taskId: string | null
-  suffixPromptId: string | null
-  blocked: boolean
-  sending: boolean
-  disabled: boolean
-  canSend: boolean
-  canStop: boolean
-  touch: boolean
-  attachments: PendingAttachments
-  harnesses: HarnessInfo[]
-  canSwitchAgent: boolean
-  agentChoice: TaskAgentChoice | null
-  onSuffixPromptChange: (value: string | null) => void
-  onAgentChange: (choice: TaskAgentChoice) => void
-  onSend: () => void
-  onStop: () => void
-}) {
-  // Five things want one row, and the row is often not wide enough: a phone, a
-  // dragged-in centre pane, and — the case a media query would never catch —
-  // Desktop's zoom, which leaves the window alone and shrinks every pane in CSS
-  // pixels. So the bar answers ITS OWN width (§5c), in two steps, and both
-  // things that yield are things the task header two rows up still says.
-  //
-  //   always       attach · suffix · send, and the running note on its own line
-  //   @lg  512px   + harness · model · effort, which truncates before it wraps
-  //   @2xl 672px   + the note or the ↵ hint inline, and the stacked note goes
-  //
-  // The note takes a line of its own rather than wrapping four words deep
-  // between the suffix picker and the send button, which is what a bar with no
-  // opinion about its width did.
-  const backgroundOnly = !blocked && task?.background && task.background.state !== "none"
-  // Name the programs here too: this note sits beside the Stop button, which
-  // is the moment the reader has to decide whether stopping is safe.
-  const running = backgroundNames(task?.background)
-  const note = composerNote(blocked, Boolean(backgroundOnly), running)
-  return (
-    <div className="mt-2 flex flex-col gap-1">
-      {note && <span className="px-0.5 text-[11px] text-faint @2xl:hidden">{note}</span>}
-      <div className="flex items-center gap-2">
-        {task && agentChoice && canSwitchAgent && harnesses.length > 0 ? (
-          <span className="flex min-w-0 items-center gap-1">
-            <TaskAgentPicker
-              harnesses={harnesses}
-              value={agentChoice}
-              disabled={disabled || sending}
-              onChange={onAgentChange}
-            />
-          </span>
-        ) : task ? (
-          <span className="hidden min-w-0 @lg:flex">
-            <TaskIdentity task={task} />
-          </span>
-        ) : null}
-        <span aria-hidden className="h-3 w-px shrink-0 bg-border-strong" />
-        <AttachButton pending={attachments} touch={touch} />
-        <SuffixPromptPicker
-          key={taskId ?? "no-task"}
-          value={suffixPromptId}
-          onValueChange={onSuffixPromptChange}
-          disabled={disabled || sending}
-          touch={touch}
-        />
-        <span className="flex-1" />
-        {note ? (
-          <span className="hidden shrink-0 whitespace-nowrap text-[10.5px] text-faint @2xl:block">{note}</span>
-        ) : (
-          <span
-            className="hidden shrink-0 font-mono text-[10.5px] text-faint @2xl:block"
-            title="Enter sends · Shift+Enter for a new line"
-          >
-            ↵
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={canStop ? onStop : onSend}
-          disabled={!canStop && !canSend}
-          aria-label={canStop ? backgroundOnly ? "Stop background work" : "Stop turn" : blocked ? "Send safely" : "Send"}
-          title={
-            canStop
-              ? backgroundOnly ? `Stop this task's background work${running ? ` (${running})` : ""}; keep the completed result` : "Stop the running turn and background work; the session is kept"
-              : blocked
-                ? "Send at a safe boundary, or queue for the next turn"
-                : "Send"
-          }
-          className={cn(
-            "flex shrink-0 items-center justify-center rounded-full transition-all",
-            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-            touch ? "size-10" : "size-[26px]",
-            canSend
-              ? "bg-primary text-primary-foreground hover:bg-primary-hover"
-              : canStop
-                ? "border border-border-strong bg-card text-foreground hover:bg-hover"
-                : "bg-border-strong text-muted-foreground"
-          )}
-        >
-          {canStop ? (
-            <Stop className={touch ? "size-5" : "size-3.5"} />
-          ) : (
-            <ArrowUp className={touch ? "size-5" : "size-3.5"} />
-          )}
-        </button>
-      </div>
+      <PendingAttachmentRows pending={attachments} touch={touch} />
     </div>
   )
 }

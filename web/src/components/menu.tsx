@@ -21,6 +21,7 @@ export function Menu({
   side = "bottom",
   disabled = false,
   iconOnly = false,
+  touch = false,
   "aria-label": ariaLabel,
   className,
   open,
@@ -36,6 +37,12 @@ export function Menu({
   disabled?: boolean
   /** square glyph trigger, no text and no chevron — for an overflow menu */
   iconOnly?: boolean
+  /**
+   * Thumb sizing: the trigger fills the 44px touch floor (§6b) and answers a
+   * press with `active:`, because a finger reveals nothing by hovering. The
+   * one place a menu trigger changes size, so no call site rolls its own.
+   */
+  touch?: boolean
   /**
    * The trigger's accessible name when its own text is the VALUE rather than
    * the field — a settings row's `Dark` needs to announce itself as `Theme`.
@@ -57,12 +64,14 @@ export function Menu({
         // shows its value, so `Theme` hovering over `Dark` is noise
         title={iconOnly && typeof label === "string" ? label : undefined}
         className={cn(
-          "flex h-[26px] shrink-0 items-center gap-1.5 rounded-md text-[12px] transition-colors",
-          iconOnly ? "w-[26px] justify-center px-0" : "px-2",
+          "flex shrink-0 items-center rounded-md transition-colors",
+          touch ? "h-11 gap-1 text-[13px] active:bg-hover" : "h-[26px] gap-1.5 text-[12px]",
+          iconOnly ? cn("justify-center px-0", touch ? "w-11" : "w-[26px]") : "px-2",
           "text-fg-secondary hover:bg-hover hover:text-foreground",
           "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
           "disabled:pointer-events-none disabled:opacity-45",
-          "[&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-muted-foreground",
+          "[&>svg]:shrink-0 [&>svg]:text-muted-foreground",
+          touch ? "[&>svg]:size-[17px]" : "[&>svg]:size-3.5",
           className,
         )}
       >
@@ -70,7 +79,11 @@ export function Menu({
         {!iconOnly && (
           <>
             <span className="truncate">{label}</span>
-            <ChevronDown className="size-3 text-faint" />
+            {/* wrapped, so the trigger's own `[&>svg]` sizing lands on the
+                leading glyph alone: the chevron is a mark, not a second icon */}
+            <span className="flex shrink-0 items-center">
+              <ChevronDown className="size-3 text-faint" />
+            </span>
           </>
         )}
       </Base.Trigger>
@@ -145,7 +158,8 @@ export function MenuAction({
 }
 
 const ROW = [
-  "flex h-[26px] cursor-default items-center gap-2 rounded-md px-2 text-[12.5px] outline-none select-none",
+  // `menu-row` is where a coarse pointer takes the 44px floor (index.css)
+  "menu-row flex h-[26px] cursor-default items-center gap-2 rounded-md px-2 text-[12.5px] outline-none select-none",
   "text-fg-secondary data-[highlighted]:bg-hover data-[highlighted]:text-foreground",
   "data-[disabled]:pointer-events-none data-[disabled]:opacity-45",
 ].join(" ")
