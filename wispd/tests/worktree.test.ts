@@ -736,3 +736,228 @@ describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", 
     expect(await resolveDiffBase(wt.path, forkPoint)).toBe(forkPoint);
   });
 });
+
+/**
+ * Where a new worktree forks FROM.
+ *
+ * Before this, `git worktree add -b <branch> <path>` took no start-point, so
+ * a task forked from whatever the checkout's HEAD happened to be: a local
+ * `main` two weeks behind origin, or — if the user was mid-experiment — a
+ * feature branch, carrying their uncommitted-work commit into the agent's
+ * PR. The diff pane hid it, because `resolveDiffBase` re-anchors to the fork
+ * point and so showed a clean one-file diff for a PR that contained two.
+ */
+describe("worktree base", () => {
+  /**
+   * Built per test, unlike the shared `beforeAll` scenario in the
+   * resolveDiffBase block above: almost every test here MUTATES the repo —
+   * new branches, new commits, a rewritten remote URL, a different project
+   * config — so sharing one would couple them through execution order. The
+   * directories are tracked, which is the part that has to stay.
+   */
+
+  /**
+   * A repo with an `origin` whose main has moved ahead of the local clone.
+   *
+   * Every branch name is forced rather than inherited: `init.defaultBranch`
+   * is `master` on a stock git and `main` on most developer machines, and
+   * letting the fixture take the host's answer is what made these four tests
+   * pass locally and fail on CI with "src refspec main does not match any".
+   */
+  function makeRepoWithRemote(): { repo: string; origin: string } {
+    const root = fixtureDir("wisp-base-");
+    const origin = join(root, "origin.git");
+    sh(["git", "init", "-q", "--bare", origin], root);
+    // the bare repo's HEAD decides what a fresh clone checks out
+    sh(["git", "symbolic-ref", "HEAD", "refs/heads/main"], origin);
+    const repo = join(root, "clone");
+    sh(["git", "clone", "-q", origin, repo], root);
+    writeFileSync(join(repo, "README.md"), "v1\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "A"], repo);
+    // a clone of an EMPTY repo takes its branch name from the local config,
+    // not from the bare HEAD above — rename before the first push
+    sh(["git", "branch", "-M", "main"], repo);
+    sh(["git", "push", "-q", "-u", "origin", "main"], repo);
+    return { repo, origin };
+  }
+
+  /** Push a commit to origin/main from a throwaway clone — the teammate. */
+  function pushToOrigin(origin: string, file: string): string {
+    const root = fixtureDir("wisp-other-");
+    const work = join(root, "clone");
+    sh(["git", "clone", "-q", origin, work], root);
+    writeFileSync(join(work, file), "from origin\n");
+    sh(["git", "add", "-A"], work);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", `add ${file}`], work);
+    sh(["git", "push", "-q", "origin", "main"], work);
+    return shOut(["git", "rev-parse", "HEAD"], work).trim();
+  }
+
+  test("forks from origin/main even when the checkout is on another branch", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    const remoteHead = pushToOrigin(origin, "teammate.txt");
+    // the user is mid-experiment on their own branch, and never fetched
+    sh(["git", "checkout", "-q", "-b", "my-experiment"], repo);
+    writeFileSync(join(repo, "scratch.txt"), "wip\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "D"], repo);
+
+    const wt = await createWorktree(repo, "tbase3", cfg);
+    expect(wt.base_ref).toBe("origin/main");
+    expect(wt.base_commit).toBe(remoteHead); // the fetch happened, so this is current
+    expect(existsSync(join(wt.path, "teammate.txt"))).toBe(true);
+    expect(existsSync(join(wt.path, "scratch.txt"))).toBe(false); // the user's WIP stayed out
+    // and the user's own checkout is exactly where they left it
+    expect(shOut(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).trim()).toBe("my-experiment");
+  });
+
+  test("no upstream is set — a bare push can never land on main", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    pushToOrigin(origin, "teammate.txt");
+    const wt = await createWorktree(repo, "tbase4", cfg);
+    // With tracking, `git push` under push.default=upstream would push the
+    // task branch's commits onto main, skipping review entirely.
+    const upstream = Bun.spawnSync({
+      cmd: ["git", "rev-parse", "--abbrev-ref", "@{u}"],
+      cwd: wt.path,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(upstream.exitCode).not.toBe(0);
+  });
+
+  test("an explicit base wins, and an unresolvable one fails loudly", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    pushToOrigin(origin, "teammate.txt");
+    sh(["git", "checkout", "-q", "-b", "stacked"], repo);
+    writeFileSync(join(repo, "stack.txt"), "stacked work\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "stacked"], repo);
+
+    const wt = await createWorktree(repo, "tbase5", cfg, "stacked");
+    expect(wt.base_ref).toBe("stacked");
+    expect(existsSync(join(wt.path, "stack.txt"))).toBe(true);
+
+    // typed seconds ago: substituting a different commit is the defect, so throw
+    await expect(createWorktree(repo, "tbase6", cfg, "origin/nope")).rejects.toThrow(/does not resolve/);
+  });
+
+  test("a project's configured base is used; a broken one degrades loudly", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    pushToOrigin(origin, "teammate.txt");
+    sh(["git", "fetch", "-q", "origin"], repo);
+    sh(["git", "branch", "-q", "develop", "origin/main"], repo);
+    sh(["git", "checkout", "-q", "develop"], repo);
+    writeFileSync(join(repo, "dev.txt"), "integration branch\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "dev"], repo);
+    sh(["git", "checkout", "-q", "main"], repo);
+
+    const configured = { ...cfg, repos: [{ path: repo, baseBranch: "develop" }] } as unknown as WispConfig;
+    const wt = await createWorktree(repo, "tbase7", configured, undefined);
+    expect(wt.base_ref).toBe("develop");
+    expect(wt.base_note).toBeNull();
+    expect(existsSync(join(wt.path, "dev.txt"))).toBe(true);
+
+    // renamed upstream, or typed wrong: fall back rather than making every
+    // task in the project unstartable — but say so, never silently
+    const broken = { ...cfg, repos: [{ path: repo, baseBranch: "gone" }] } as unknown as WispConfig;
+    const fell = await createWorktree(repo, "tbase8", broken, undefined);
+    expect(fell.base_ref).toBe("origin/main");
+    expect(fell.base_note).toContain("'gone' does not resolve");
+  });
+
+  /**
+   * The settings field's placeholder reads `origin/HEAD`, so "main" is an
+   * easy thing to type into it — and resolving that literally would fork
+   * from the stale LOCAL main, reintroducing this PR's defect through the
+   * UI meant to control it. A bare name is the integration branch.
+   */
+  test("a bare configured name prefers origin/<name> over a stale local branch", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    const remoteHead = pushToOrigin(origin, "teammate.txt");
+    const localMain = shOut(["git", "rev-parse", "main"], repo).trim();
+    expect(localMain).not.toBe(remoteHead); // local main is behind, unfetched
+
+    const configured = { ...cfg, repos: [{ path: repo, baseBranch: "main" }] } as unknown as WispConfig;
+    const wt = await createWorktree(repo, "tbaseA", configured);
+    expect(wt.base_ref).toBe("origin/main");
+    expect(wt.base_commit).toBe(remoteHead);
+
+    // ...but a name that exists only locally is still a legitimate base
+    sh(["git", "branch", "local-only"], repo);
+    const localOnly = { ...cfg, repos: [{ path: repo, baseBranch: "local-only" }] } as unknown as WispConfig;
+    expect((await createWorktree(repo, "tbaseB", localOnly)).base_ref).toBe("local-only");
+
+    // and a qualified ref is taken verbatim — the escape hatch for insisting
+    // on the local copy of a name that also exists on the remote
+    const qualified = { ...cfg, repos: [{ path: repo, baseBranch: "refs/heads/main" }] } as unknown as WispConfig;
+    const local = await createWorktree(repo, "tbaseC", qualified);
+    expect(local.base_ref).toBe("refs/heads/main");
+    expect(local.base_commit).toBe(localMain);
+  });
+
+  test("an explicit base is taken literally — stacking on a local branch is the point", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    pushToOrigin(origin, "teammate.txt");
+    // a branch name that ALSO exists on the remote: --base must not silently
+    // prefer origin/, or `--base <my pushed branch>` would skip local work
+    sh(["git", "checkout", "-q", "-b", "shared"], repo);
+    writeFileSync(join(repo, "local-work.txt"), "not pushed yet\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "local only"], repo);
+    sh(["git", "push", "-q", "origin", "shared"], repo);
+    writeFileSync(join(repo, "newer.txt"), "still local\n");
+    sh(["git", "add", "-A"], repo);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "newer local"], repo);
+
+    const wt = await createWorktree(repo, "tbaseD", cfg, "shared");
+    expect(wt.base_ref).toBe("shared");
+    expect(existsSync(join(wt.path, "newer.txt"))).toBe(true); // the local tip, not origin's
+  });
+
+  test("a ref beginning with - is a ref, never an option", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    pushToOrigin(origin, "teammate.txt");
+    // rev-parse would otherwise read this as a flag; --end-of-options is what
+    // turns it into an honest "does not resolve" instead of a git usage error
+    await expect(createWorktree(repo, "tbaseE", cfg, "--upload-pack=touch /tmp/x")).rejects.toThrow(
+      /does not resolve/,
+    );
+  });
+
+  /**
+   * "Best effort" has to mean it. `git()` THROWS on its deadline rather than
+   * returning !ok, so an unreachable origin would otherwise fail the create
+   * outright — strictly worse than the behaviour this change replaced, and a
+   * direct contradiction of "offline is not a reason to refuse a task".
+   */
+  test("an unreachable origin degrades to the refs on disk instead of failing the task", async () => {
+    const { repo, origin } = makeRepoWithRemote();
+    const remoteHead = pushToOrigin(origin, "teammate.txt");
+    sh(["git", "fetch", "-q", "origin"], repo); // one good fetch, then the remote dies
+    sh(["git", "remote", "set-url", "origin", join(origin, "..", "vanished.git")], repo);
+
+    const wt = await createWorktree(repo, "tbaseF", cfg);
+    expect(wt.base_ref).toBe("origin/main");
+    expect(wt.base_commit).toBe(remoteHead); // the last-known remote ref, not a failure
+    expect(existsSync(wt.path)).toBe(true);
+  });
+
+  test("a repo with no remote keeps the old behaviour: the checkout's HEAD", async () => {
+    const repo = makeRepo();
+    const head = shOut(["git", "rev-parse", "HEAD"], repo).trim();
+    const wt = await createWorktree(repo, "tbase9", cfg);
+    expect(wt.base_ref).toBeNull();
+    expect(wt.base_commit).toBe(head);
+  });
+
+  test("a local task forks from nothing — it adopts the branch you are on", async () => {
+    const repo = makeRepo();
+    sh(["git", "checkout", "-q", "-b", "my-experiment"], repo);
+    const wt = await localWorktree(repo);
+    expect(wt.base_ref).toBeNull();
+    expect(wt.branch).toBe("my-experiment");
+  });
+});

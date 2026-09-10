@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
@@ -13,6 +13,7 @@ const repo: RepoInfo = {
   setupScript: "",
   archiveScript: "",
   copyFiles: [],
+  baseBranch: "",
   configured: true,
 }
 
@@ -54,5 +55,46 @@ describe("create task dialog layout", () => {
     const bar = rightCluster.parentElement as HTMLElement
     expect(bar).toHaveClass("flex", "@min-[640px]:flex-wrap")
     expect(bar.firstElementChild).toHaveClass("min-w-0", "grow", "flex-col", "@min-[640px]:flex-row")
+  })
+})
+
+/**
+ * The composer's per-task base. It exists for the deliberate case — stack
+ * this task on a feature branch, target a release line — so its resting
+ * state has to read as "the project decides", not as an empty required field.
+ */
+describe("create task dialog base", () => {
+  function mount() {
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={[harness]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport()) },
+    )
+  }
+
+  it("rests on the project's base and offers an override", async () => {
+    mount()
+    // labelled "Base", never a resolved ref: the composer cannot know what
+    // origin/HEAD points at, and the daemon only resolves it after fetching
+    const picker = await screen.findByRole("button", { name: /Base/ })
+    fireEvent.click(picker)
+    expect(await screen.findByRole("menuitemradio", { name: /Project default/ })).toBeInTheDocument()
+    // an action inside a radio group is itself a radio item — see MENU_ACTION
+    expect(screen.getByRole("menuitemradio", { name: "Start from another ref…" })).toBeInTheDocument()
+  })
+
+  it("is absent for a local task, which has nothing to fork", async () => {
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "Worktree" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "This repo" }))
+    await screen.findByRole("button", { name: "This repo" })
+    expect(screen.queryByRole("button", { name: /^Base$/ })).toBeNull()
   })
 })

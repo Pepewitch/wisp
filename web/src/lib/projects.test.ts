@@ -35,6 +35,7 @@ const repo = (path: string, name: string | null = null, exists = true): RepoInfo
   setupScript: "",
   archiveScript: "",
   copyFiles: [],
+  baseBranch: "",
   configured: true,
 });
 

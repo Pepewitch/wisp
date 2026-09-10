@@ -296,6 +296,7 @@ describe("S1 create-modal and project APIs", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: true,
     });
 
@@ -365,7 +366,13 @@ describe("S1 create-modal and project APIs", () => {
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-    type Row = { setupScript: string; archiveScript: string; copyFiles: string[]; name?: string };
+    type Row = {
+      setupScript: string;
+      archiveScript: string;
+      copyFiles: string[];
+      baseBranch: string;
+      name?: string;
+    };
 
     const created = (await (await post({ path: repo, setupScript: "pnpm install" })).json()) as Row;
     expect(created.setupScript).toBe("pnpm install");
@@ -386,6 +393,19 @@ describe("S1 create-modal and project APIs", () => {
     const cleared = (await (await post({ path: repo, setupScript: "" })).json()) as Row;
     expect(cleared.setupScript).toBe("");
     expect(cleared.archiveScript).toBe("rm -rf node_modules"); // untouched by the clear
+
+    // baseBranch rides the same patch semantics, which is what the settings
+    // modal's Reset depends on: "" drops the key, and the project goes back
+    // to Wisp resolving the remote default on its own.
+    const based = (await (await post({ path: repo, baseBranch: " origin/develop " })).json()) as Row;
+    expect(based.baseBranch).toBe("origin/develop"); // trimmed
+    expect(based.archiveScript).toBe("rm -rf node_modules"); // still preserved
+    const reset = (await (await post({ path: repo, baseBranch: "" })).json()) as Row;
+    expect(reset.baseBranch).toBe("");
+    expect(
+      (JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: Array<Record<string, unknown>> }).repos[0]!
+        .baseBranch,
+    ).toBeUndefined();
 
     // and it all survives a reload from disk
     const onDisk = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: Array<Record<string, unknown>> };

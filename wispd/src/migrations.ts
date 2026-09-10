@@ -411,6 +411,22 @@ CREATE INDEX IF NOT EXISTS idx_turn_texts_task_id ON turn_texts(task_id);
 `);
     },
   },
+  {
+    id: 8,
+    name: "task-base-ref",
+    up: (db) => {
+      // Which ref a worktree forked from, alongside the commit it forked at.
+      // base_commit alone cannot distinguish "started from origin/main" from
+      // "started from whatever happened to be checked out", and that is the
+      // question a task's base needs to answer.
+      //
+      // No backfill: rows written before this column forked from the
+      // checkout's HEAD, and NULL says exactly that — the honest answer for
+      // a local task too, which forks from nothing.
+      const cols = (db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map((c) => c.name);
+      if (!cols.includes("base_ref")) db.exec("ALTER TABLE tasks ADD COLUMN base_ref TEXT");
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

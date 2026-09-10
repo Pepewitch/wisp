@@ -412,12 +412,13 @@ describe("project writes", () => {
         setupScript: "bun install",
         archiveScript: "",
         copyFiles: [".env*"],
+        baseBranch: "",
       })
     })
 
     expect(mocks.request).toHaveBeenCalledWith("/api/projects", {
       method: "POST",
-      body: { path: "/repo", setupScript: "bun install", archiveScript: "", copyFiles: [".env*"] },
+      body: { path: "/repo", setupScript: "bun install", archiveScript: "", copyFiles: [".env*"], baseBranch: "" },
     })
     expect(invalidated(spy)).toEqual([qk.repos])
   })

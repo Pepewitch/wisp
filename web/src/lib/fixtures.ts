@@ -122,6 +122,7 @@ export const REPOS: RepoInfo[] = [
     setupScript: "bun install\nbun run build",
     archiveScript: "rm -rf node_modules",
     copyFiles: [".env*"],
+    baseBranch: "",
     configured: true,
   },
   {
@@ -131,6 +132,7 @@ export const REPOS: RepoInfo[] = [
     setupScript: "",
     archiveScript: "",
     copyFiles: [],
+    baseBranch: "",
     configured: false,
   },
 ]

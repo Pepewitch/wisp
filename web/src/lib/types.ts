@@ -68,6 +68,12 @@ export interface ApiTask {
   worktree_path: string | null;
   branch: string | null;
   base_commit: string | null;
+  /**
+   * Ref the worktree forked from — `origin/main`, the project's configured
+   * base, or a per-task override. null for a local task (it adopts the
+   * checkout's branch) and for a repo with no remote to name.
+   */
+  base_ref?: string | null;
   harness: string;
   model: string | null;
   effort: string | null;
@@ -343,6 +349,8 @@ export interface RepoInfo {
   archiveScript: string;
   /** globs for untracked files copied into each new worktree (the .env problem) */
   copyFiles: string[];
+  /** ref new worktrees fork from; "" = let Wisp resolve the remote default */
+  baseBranch: string;
   /** false for a repo wisp only knows from task history — it has no config entry to edit */
   configured: boolean;
 }

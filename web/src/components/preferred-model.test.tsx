@@ -13,6 +13,7 @@ const repo: RepoInfo = {
   setupScript: "",
   archiveScript: "",
   copyFiles: [],
+  baseBranch: "",
   configured: true,
 }
 

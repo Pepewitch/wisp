@@ -26,7 +26,7 @@ interface Parsed {
 type Flags = Parsed["flags"];
 
 /** Flags that take a value; everything else is boolean (so `-f`/`--force` never eat arguments). */
-const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "port", "confirm"]);
+const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm"]);
 /**
  * Value flags that ACCUMULATE instead of overwriting (A1b). `--image a.png
  * --image b.png` is two images, not the second one: a turn takes up to ten, and
@@ -199,7 +199,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--image <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--image <path>]…`,
     );
     process.exit(1);
   }
@@ -212,6 +212,10 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     console.error("--effort requires a value");
     process.exit(1);
   }
+  if (flags.base !== undefined && typeof flags.base !== "string") {
+    console.error("--base requires a value (e.g. --base origin/develop)");
+    process.exit(1);
+  }
   const task = (await api("/api/tasks", "POST", {
     repoPath: resolve(repo),
     prompt,
@@ -219,6 +223,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     model: typeof flags.model === "string" ? flags.model : undefined,
     effort: typeof flags.effort === "string" ? flags.effort : undefined,
     mode: flags.local ? "local" : undefined,
+    base: typeof flags.base === "string" ? flags.base : undefined,
     attachments: await readImageFlags(flags.image),
   })) as ApiTask;
   const where = task.mode === "local" ? ", local" : "";
@@ -421,6 +426,7 @@ async function showProject(path: string | undefined): Promise<void> {
       setupScript: string;
       archiveScript: string;
       copyFiles: string[];
+      baseBranch: string;
     }[];
   };
   const repo = data.repos.find((candidate) => candidate.path === resolved);
@@ -433,17 +439,21 @@ async function showProject(path: string | undefined): Promise<void> {
   console.log(`exists: ${repo.exists ? "yes" : "no (missing)"}`);
   console.log(`setup: ${repo.setupScript || "-"}`);
   console.log(`archive: ${repo.archiveScript || "-"}`);
+  // "-" here is not "unset and broken": an empty base means Wisp resolves the
+  // remote default itself, which is the right answer for almost every project
+  console.log(`base: ${repo.baseBranch || "- (origin/HEAD)"}`);
   console.log(`copy: ${repo.copyFiles.length > 0 ? repo.copyFiles.join(", ") : "-"}`);
 }
 
 async function setProject(path: string | undefined, flags: Flags): Promise<void> {
   if (!path) {
     console.error(
-      `usage: ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--copy <glob>]… [--clear-setup] [--clear-archive] [--clear-copy]`,
+      `usage: ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]… ` +
+        `[--clear-setup] [--clear-archive] [--clear-base] [--clear-copy]`,
     );
     process.exit(1);
   }
-  for (const key of ["name", "setup", "archive"] as const) {
+  for (const key of ["name", "setup", "archive", "base"] as const) {
     if (flags[key] !== undefined && typeof flags[key] !== "string") {
       console.error(`--${key} requires a value`);
       process.exit(1);
@@ -458,6 +468,7 @@ async function setProject(path: string | undefined, flags: Flags): Promise<void>
   for (const [flag, field, clear] of [
     ["setup", "setupScript", "clear-setup"],
     ["archive", "archiveScript", "clear-archive"],
+    ["base", "baseBranch", "clear-base"],
   ] as const) {
     if (typeof flags[flag] === "string" && flags[clear] === true) {
       console.error(`--${flag} and --${clear} are mutually exclusive`);

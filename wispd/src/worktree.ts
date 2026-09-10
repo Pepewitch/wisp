@@ -35,6 +35,17 @@ async function git(args: string[], cwd: string, options: GitRunOptions = {}): Pr
   const result = await runBounded({
     cmd: ["git", ...args],
     cwd,
+    // Never wait on a terminal prompt. The deadline already stops a hung
+    // one, but stopping it costs the full timeout and reports as "git timed
+    // out" rather than the auth failure it is. Task creation fetches from
+    // origin now, so this went from theoretical to the common case for
+    // anyone whose remote wants a passphrase.
+    //
+    // GIT_TERMINAL_PROMPT only. Blanking GIT_ASKPASS/SSH_ASKPASS would also
+    // apply to `git push` and the archive commit on this shared helper, and
+    // an empty askpass is a DIFFERENT contract from an unset one — it would
+    // break a user whose push authenticates through an askpass helper.
+    env: { GIT_TERMINAL_PROMPT: "0" },
     maxBytes: options.maxBytes,
     timeoutMs: options.timeoutMs ?? READ_TIMEOUT_MS,
   });
@@ -139,32 +150,176 @@ export interface WorktreeInfo {
   path: string;
   branch: string;
   base_commit: string;
+  /**
+   * The ref the worktree forked from, e.g. `origin/main` — null when nothing
+   * but the checkout's own HEAD was available to fork from. Recorded because
+   * `base_commit` alone cannot answer "did this start where I meant it to".
+   */
+  base_ref: string | null;
+  /** One sentence for the creating-state detail when the base was NOT the one asked for; null when it was. */
+  base_note: string | null;
 }
 
-export async function createWorktree(repoPath: string, taskId: string, cfg: WispConfig): Promise<WorktreeInfo> {
+/** Where a new worktree forks from, and how that answer was reached. */
+export interface BaseChoice {
+  /** the ref that named the commit; null when only the checkout's HEAD was available */
+  ref: string | null;
+  commit: string;
+  /** set when this is NOT what the project asked for, so callers can say so */
+  note: string | null;
+}
+
+/**
+ * Refresh remote-tracking refs so `resolveBase` below resolves `origin/HEAD`
+ * to what origin actually has, not to whatever the last `git pull` left
+ * behind. Without this, forking from `origin/main` fixes only half the
+ * problem: the ref is as stale as the checkout that never fetched it.
+ *
+ * Best effort by construction. Offline, an unreachable host, and a repo with
+ * no `origin` at all are ordinary states, and none of them is a reason to
+ * refuse to start a task — the base simply resolves against the refs already
+ * on disk, which is still no worse than the old behaviour.
+ */
+async function fetchBaseRefs(repo: string): Promise<void> {
+  try {
+    // `git fetch` against a repo with no origin is a failure with a scary
+    // message and a DNS timeout's worth of latency; ask first, it is one cheap
+    // read. --no-tags because a base is a branch: tags are megabytes of refs
+    // on a big repo and nothing here resolves through them.
+    if ((await git(["remote"], repo)).out.split("\n").every((name) => name.trim() !== "origin")) return;
+    await git(["fetch", "--no-tags", "--quiet", "origin"], repo, { timeoutMs: FETCH_TIMEOUT_MS });
+  } catch {
+    // A non-zero fetch is already a no-op here, but `git()` THROWS on its
+    // deadline — so without this catch a black-holed origin would fail the
+    // create outright after the timeout, which is strictly worse than the
+    // behaviour this change replaced. Swallow it: the refs already on disk
+    // are a worse base than a fresh fetch and a better one than no task.
+  }
+}
+
+/**
+ * Deadline for the create-path fetch. Deliberately far below
+ * WRITE_TIMEOUT_MS: this runs before every worktree task, a slow origin must
+ * not hold creation for two minutes, and the fallback (resolve against the
+ * refs already on disk) is cheap and correct.
+ */
+const FETCH_TIMEOUT_MS = 20_000;
+
+/** Resolve a ref to a commit, or null when this repo cannot name it. */
+async function commitFor(repo: string, ref: string): Promise<string | null> {
+  // --end-of-options, not "--": in rev-parse a "--" would make the next
+  // argument a PATH rather than a rev. Guards a ref that starts with "-".
+  const r = await git(["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], repo);
+  return r.ok && r.out !== "" ? r.out : null;
+}
+
+/**
+ * Pick the commit a new worktree forks from.
+ *
+ * The rule, in order:
+ *   1. an explicit per-task base — a hard failure if it does not resolve,
+ *      because someone typed it seconds ago and silently using a different
+ *      commit is the bug this whole path exists to remove;
+ *   2. the project's configured `baseBranch`, for a repo that integrates on
+ *      `develop` rather than the remote default;
+ *   3. `origin/HEAD`, then `origin/main` / `origin/master`;
+ *   4. the checkout's HEAD — every release before this one, kept for a repo
+ *      with no remote at all.
+ *
+ * (2) degrades to (3) rather than failing: a project setting typed once and
+ * later renamed upstream must not make every task in that repo unstartable.
+ * It degrades LOUDLY — the returned `note` carries the swap to the caller —
+ * because a silently substituted base is exactly the original defect.
+ *
+ * Assumes remote-tracking refs are already fresh; `fetchBaseRefs` is what
+ * makes (3) mean "what origin has" rather than "what it had last pull".
+ */
+export async function resolveBase(
+  repo: string,
+  requested: string | undefined,
+  configured: string | undefined,
+): Promise<BaseChoice> {
+  if (requested !== undefined && requested.trim() !== "") {
+    const ref = requested.trim();
+    const commit = await commitFor(repo, ref);
+    if (commit === null) throw new Error(`base '${ref}' does not resolve in ${repo}`);
+    return { ref, commit, note: null };
+  }
+  const fallback = async (note: string | null): Promise<BaseChoice> => {
+    const ref = await upstreamRef(repo);
+    const commit = ref === null ? null : await commitFor(repo, ref);
+    if (ref !== null && commit !== null) return { ref, commit, note };
+    // No remote, or a remote whose default branch this clone cannot name:
+    // the checkout's HEAD, which is what every release before this one used.
+    const head = must(await git(["rev-parse", "HEAD"], repo), `repo has no commits: ${repo}`);
+    return { ref: null, commit: head, note };
+  };
+  if (configured !== undefined && configured.trim() !== "") {
+    const asked = configured.trim();
+    // A BARE branch name in the project setting means the integration branch,
+    // not one checkout's copy of it. Typing "main" into a field whose
+    // placeholder reads `origin/HEAD` is easy, and resolving it literally
+    // would fork from the stale local `main` — reintroducing, through the
+    // settings UI, the exact defect this ordering exists to remove. So a name
+    // with no "/" prefers `origin/<name>` when that remote-tracking ref
+    // exists, and falls back to the local branch when it does not (a branch
+    // that only exists locally is still a legitimate base).
+    //
+    // An explicit per-task base above is deliberately NOT treated this way:
+    // it is typed for one task, and `--base my-experiment` meaning the local
+    // branch is the whole point of stacking work on it.
+    const candidates = asked.includes("/") ? [asked] : [`origin/${asked}`, asked];
+    for (const ref of candidates) {
+      const commit = await commitFor(repo, ref);
+      if (commit !== null) return { ref, commit, note: null };
+    }
+    return fallback(`this project's base branch '${asked}' does not resolve — check the project's settings`);
+  }
+  return fallback(null);
+}
+
+export async function createWorktree(
+  repoPath: string,
+  taskId: string,
+  cfg: WispConfig,
+  base?: string,
+): Promise<WorktreeInfo> {
   const repo = resolve(repoPath);
   must(await git(["rev-parse", "--git-dir"], repo), `not a git repository: ${repo}`);
-  const base_commit = must(await git(["rev-parse", "HEAD"], repo), `repo has no commits: ${repo}`);
   if ((await git(["submodule", "status"], repo)).out !== "") {
     throw new Error("repos with submodules are not supported yet (failing loudly rather than half-working)");
   }
+  await fetchBaseRefs(repo);
+  const chosen = await resolveBase(repo, base, repoConfigFor(cfg, repo)?.baseBranch);
+  const base_commit = chosen.commit;
   const branch = branchFor(taskId);
   const path = join(WORKTREE_ROOT, `${basename(repo)}-${taskId}`);
   // Prune stale admin entries first: a manually deleted worktree dir leaves one
   // behind, and `git worktree add` at that path then fails confusingly (a prior audit).
   await git(["worktree", "prune"], repo, { timeoutMs: WRITE_TIMEOUT_MS });
+  // The start-point is passed as the RESOLVED COMMIT, never the ref name: it
+  // is the same object `base_commit` records, so the row and the worktree
+  // cannot disagree even if origin/main moves between these two lines.
+  //
+  // --no-track is load-bearing, not tidiness. Given a remote-tracking
+  // start-point, git would set the new branch's upstream to origin/main —
+  // and an agent running a bare `git push` under push.default=upstream then
+  // pushes its task branch's commits straight onto main, review skipped.
+  // Passing a commit rather than a ref already suppresses tracking; the flag
+  // states the requirement so a later edit back to a ref cannot reintroduce it.
+  const add = ["worktree", "add", "--no-track", "-b", branch, path, base_commit];
   // A concurrent git process can hold index.lock — retry with backoff before failing.
   // The backoff sleep is async too: sleepSync would freeze the whole daemon (M1).
   // Checking out a large tree is real work, so these mutating calls get the
   // write budget rather than the short deadline a status probe uses.
-  let r = await git(["worktree", "add", "-b", branch, path], repo, { timeoutMs: WRITE_TIMEOUT_MS });
+  let r = await git(add, repo, { timeoutMs: WRITE_TIMEOUT_MS });
   for (let attempt = 0; !r.ok && r.err.includes("index.lock") && attempt < 3; attempt++) {
     await Bun.sleep(500 * 2 ** attempt);
-    r = await git(["worktree", "add", "-b", branch, path], repo, { timeoutMs: WRITE_TIMEOUT_MS });
+    r = await git(add, repo, { timeoutMs: WRITE_TIMEOUT_MS });
   }
   must(r, "git worktree add failed");
   await copyIntoWorktree(repo, path, cfg);
-  return { path, branch, base_commit };
+  return { path, branch, base_commit, base_ref: chosen.ref, base_note: chosen.note };
 }
 
 /**
@@ -181,7 +336,10 @@ export async function localWorktree(repoPath: string): Promise<WorktreeInfo> {
   const base_commit = must(await git(["rev-parse", "HEAD"], repo), `repo has no commits: ${repo}`);
   const branch = must(await git(["rev-parse", "--abbrev-ref", "HEAD"], repo), "could not read the current branch");
   if (branch === "HEAD") throw new Error(`${repo} is in detached HEAD — check out a branch before running a local task`);
-  return { path: repo, branch, base_commit };
+  // No base_ref: a local task did not fork from anything. It adopts the
+  // branch the user is on, which is the entire point of the mode — choosing
+  // a base for it would mean moving their checkout.
+  return { path: repo, branch, base_commit, base_ref: null, base_note: null };
 }
 
 /** Directories never worth walking for copy patterns, however the glob is written. */
@@ -412,7 +570,16 @@ export async function hasUnpushedWork(worktree: string, branch: string, base_com
  */
 const UPSTREAM_FALLBACK_REFS = ["origin/main", "origin/master"];
 
-/** The repo's default branch as a remote ref, or null if it cannot be named. */
+/**
+ * The repo's default branch as a remote ref, or null if it cannot be named.
+ *
+ * Serves both ends of a task now: which commit a new worktree forks FROM
+ * (`resolveBase`) and which one its diff is measured AGAINST
+ * (`resolveDiffBase`). Those used to disagree — creation took the checkout's
+ * HEAD while the diff pane re-anchored to this — and one answer for both is
+ * what stops a task from being based on one commit and reviewed against
+ * another. Takes any path inside the repo, worktree or checkout alike.
+ */
 async function upstreamRef(worktree: string): Promise<string | null> {
   const head = await git(["rev-parse", "--abbrev-ref", "origin/HEAD"], worktree);
   if (head.ok && head.out !== "" && head.out !== "origin/HEAD") return head.out;

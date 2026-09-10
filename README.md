@@ -50,8 +50,11 @@ self-hosted, no account, harness-independent, separate worktrees, truthful
 lifecycle state, and phone-capable steering.
 
 “Isolated worktree” means one thing precisely: each task gets its own checkout
-and branch, so parallel agents do not edit the same files. It is **not** a
-sandbox. A harness runs as your user with your credentials and your network,
+and branch, so parallel agents do not edit the same files. That branch starts
+from the project's base branch — Wisp fetches and resolves the remote default,
+so a task does not inherit whatever your project directory happens to have
+checked out. Per project you can name another base, and `wisp new --base <ref>`
+overrides it for one task. It is **not** a sandbox. A harness runs as your user with your credentials and your network,
 and it can read and write outside its worktree. For a repository you do not
 trust, use a separate OS account or a disposable VM — a prompt that says “work
 only here” does not enforce anything.

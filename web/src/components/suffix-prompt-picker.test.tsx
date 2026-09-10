@@ -202,6 +202,7 @@ describe("create-task suffix integration", () => {
     setupScript: "",
     archiveScript: "",
     copyFiles: [],
+    baseBranch: "",
     configured: true,
   }
   const harness: HarnessInfo = {

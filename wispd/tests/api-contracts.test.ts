@@ -585,6 +585,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === missing)).toEqual({
@@ -594,6 +595,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === repo.path)).toEqual({
@@ -603,6 +605,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: false,
     });
   });
@@ -813,6 +816,39 @@ describe("daemon API contracts", () => {
       `repoPath does not exist: ${missingRepo}`,
       "POST",
       { repoPath: missingRepo, prompt: "make a task", harness: "claude" },
+    );
+
+    // `base` at the boundary. The whitespace case matters on its own: a
+    // `=== ""` check passes "   " through, and resolveBase then discards it
+    // as "no override" — a base the caller asked for and silently did not
+    // get, which is the class of failure this whole change removes.
+    await expectError(base, "/api/tasks", 400, "base must be a string, got number", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "claude",
+      base: 42,
+    });
+    await expectError(base, "/api/tasks", 400, "base must not be empty", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "claude",
+      base: "",
+    });
+    await expectError(base, "/api/tasks", 400, "base must not be empty", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "claude",
+      base: "   ",
+    });
+    // a local task adopts the branch the checkout is on; honouring a base
+    // would mean moving the user's own working copy
+    await expectError(
+      base,
+      "/api/tasks",
+      400,
+      "base applies to worktree tasks only — a local task runs on the checkout's current branch",
+      "POST",
+      { repoPath: repo, prompt: "make a task", harness: "claude", mode: "local", base: "origin/main" },
     );
   });
 });
