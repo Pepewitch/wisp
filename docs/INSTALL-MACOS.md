@@ -93,6 +93,13 @@ wisp token
 wisp doctor --harness droid
 ```
 
+`brew services` runs the daemon under launchd, which does not inherit this
+shell's environment. Doctor's `harness` and `harness auth` lines describe the
+shell that ran the command, so a green line does not on its own prove the
+managed daemon can authenticate a harness whose credential you exported
+interactively. The rule and its confirmation step are in
+[Harness credentials under a service manager](INSTALL.md#harness-credentials-under-a-service-manager).
+
 The desktop Add Project action uses the native folder picker while Local is
 active. You can still open the URL printed by `wisp token` to use the browser
 UI. Do not assume the URL ends in `:8710`; use the persisted URL printed by
