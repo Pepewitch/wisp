@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +25,22 @@ import {
 const cfg = { envAllowlist: {}, setupTimeoutMinutes: 5 } as WispConfig;
 
 // test-local shell helper: sync is fine here (tests are not the daemon's thread)
+// Every fixture directory this file creates, removed once at the end. These
+// used to leak: a single machine had 15,744 stale wisp-wt-*, wisp-origin-* and
+// wisp-fork-wt-* directories from repeated runs.
+const FIXTURE_DIRS: string[] = [];
+
+function fixtureDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  FIXTURE_DIRS.push(dir);
+  return dir;
+}
+
+afterAll(() => {
+  for (const dir of FIXTURE_DIRS) rmSync(dir, { recursive: true, force: true });
+  FIXTURE_DIRS.length = 0;
+});
+
 function sh(cmd: string[], cwd: string): void {
   const p = Bun.spawnSync({ cmd, cwd, stdout: "pipe", stderr: "pipe" });
   if (p.exitCode !== 0) throw new Error(`${cmd.join(" ")}: ${p.stderr.toString()}`);
@@ -36,7 +52,7 @@ function shOut(cmd: string[], cwd: string): string {
 }
 
 function makeRepo(): string {
-  const repo = mkdtempSync(join(tmpdir(), "wisp-wt-"));
+  const repo = fixtureDir("wisp-wt-");
   sh(["git", "init", "-q"], repo);
   writeFileSync(join(repo, "README.md"), "hi\n");
   sh(["git", "add", "."], repo);
@@ -61,7 +77,7 @@ describe("worktree lifecycle", () => {
   });
 
   test("non-repo fails loudly", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "wisp-notrepo-"));
+    const dir = fixtureDir("wisp-notrepo-");
     await expect(createWorktree(dir, "tx", cfg)).rejects.toThrow(/not a git repository/);
   });
 
@@ -148,7 +164,7 @@ describe("worktreeHealth", () => {
   });
 
   test("a missing directory names the path and the way out", async () => {
-    const gone = join(mkdtempSync(join(tmpdir(), "wisp-health-")), "never-existed");
+    const gone = join(fixtureDir("wisp-health-"), "never-existed");
     const health = await worktreeHealth(gone);
     expect(health.ok).toBe(false);
     expect(health.kind).toBe("missing");
@@ -158,7 +174,7 @@ describe("worktreeHealth", () => {
   test("a directory full of files that git no longer tracks says so, and says the files stay", async () => {
     // the reported shape: files remain, with no
     // .git, and no admin entry in the parent repo
-    const orphan = mkdtempSync(join(tmpdir(), "wisp-orphan-wt-"));
+    const orphan = fixtureDir("wisp-orphan-wt-");
     writeFileSync(join(orphan, "work.txt"), "the agent's work is still here\n");
     const health = await worktreeHealth(orphan);
     expect(health.ok).toBe(false);
@@ -170,7 +186,7 @@ describe("worktreeHealth", () => {
   });
 
   test("the reason is ONE sentence, never git's usage text", async () => {
-    const orphan = mkdtempSync(join(tmpdir(), "wisp-orphan-lines-"));
+    const orphan = fixtureDir("wisp-orphan-lines-");
     const reason = (await worktreeHealth(orphan)).reason!;
     expect(reason.split("\n")).toHaveLength(1);
     expect(reason.length).toBeLessThan(300);
@@ -183,7 +199,7 @@ describe("sanitized git errors", () => {
   test("only the first non-empty line of git's stderr reaches the message", async () => {
     // `git diff <base>` outside a repository is the reported case: a warning
     // line, then ~40 lines of `git diff` usage
-    const notARepo = mkdtempSync(join(tmpdir(), "wisp-not-a-repo-"));
+    const notARepo = fixtureDir("wisp-not-a-repo-");
     let message = "";
     try {
       await fullDiff(notARepo, "0000000000000000000000000000000000000000");
@@ -315,7 +331,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
   test("nothing outside the worktree is readable, and the answer never says which reason", async () => {
     const repo = makeRepo();
     const wt = await createWorktree(repo, "tfil03", cfg);
-    const outside = join(mkdtempSync(join(tmpdir(), "wisp-outside-")), "secret.txt");
+    const outside = join(fixtureDir("wisp-outside-"), "secret.txt");
     writeFileSync(outside, "SECRET\n");
 
     for (const path of [
@@ -617,7 +633,7 @@ function makeForkScenario(): { worktree: string; baseCommit: string; forkPoint: 
     return Bun.spawnSync({ cmd: ["git", "rev-parse", "HEAD"], cwd: repo, stdout: "pipe" }).stdout.toString().trim();
   };
 
-  const origin = mkdtempSync(join(tmpdir(), "wisp-origin-"));
+  const origin = fixtureDir("wisp-origin-");
   sh(["git", "init", "-q", "-b", "main"], origin);
   writeFileSync(join(origin, "README.md"), "hi\n");
   const baseCommit = commit(origin, "init");
@@ -641,20 +657,34 @@ function makeForkScenario(): { worktree: string; baseCommit: string; forkPoint: 
   const mainTip = commit(origin, "main after fork");
 
   // the task's worktree: cloned at the OLD base, then the PR branch checked out
-  const worktree = mkdtempSync(join(tmpdir(), "wisp-fork-wt-"));
+  const worktree = fixtureDir("wisp-fork-wt-");
   sh(["git", "clone", "-q", origin, worktree], "/tmp");
   sh(["git", "checkout", "-q", "pr-branch"], worktree);
   return { worktree, baseCommit, forkPoint, mainTip };
 }
 
 describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", () => {
+  // One scenario for the whole block. It costs ~24 git subprocesses including a
+  // clone, and rebuilding it per test made each of these tests pay for setup
+  // four of them only read. Under parallel load that setup is what pushed the
+  // uncommitted-work test past the 5s timeout at 8676ms, from 394ms alone.
+  //
+  // Sharing is safe because the only mutation below is one uncommitted edit to
+  // README.md, which changes no assertion here: a merge base, an `ahead` count,
+  // and "which files does the branch's diff contain" are all unaffected by an
+  // unstaged edit, so these tests do not depend on running in any order.
+  let scenario: ReturnType<typeof makeForkScenario>;
+  beforeAll(() => {
+    scenario = makeForkScenario();
+  });
+
   test("a branch checked out into the worktree diffs from its fork point, not the old base", async () => {
-    const { worktree, baseCommit, forkPoint } = makeForkScenario();
+    const { worktree, baseCommit, forkPoint } = scenario;
     expect(await resolveDiffBase(worktree, baseCommit)).toBe(forkPoint);
   });
 
   test("the diff pane then shows only what the branch did", async () => {
-    const { worktree, baseCommit } = makeForkScenario();
+    const { worktree, baseCommit } = scenario;
     const r = await fullDiff(worktree, baseCommit);
     // the PR's file, and NONE of the commits that landed on main in between
     expect(r.diff).toContain("pr-change.txt");
@@ -664,18 +694,18 @@ describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", 
   });
 
   test("the reported base is the one actually diffed from", async () => {
-    const { worktree, baseCommit, forkPoint } = makeForkScenario();
+    const { worktree, baseCommit, forkPoint } = scenario;
     expect((await fullDiff(worktree, baseCommit)).base).toBe(forkPoint);
   });
 
   test("`ahead` counts from the same base the diff uses", async () => {
-    const { worktree, baseCommit } = makeForkScenario();
+    const { worktree, baseCommit } = scenario;
     // one commit on the PR branch — not the four that separate it from baseCommit
     expect((await statusSummary(worktree, "pr-branch", baseCommit)).ahead).toBe(1);
   });
 
   test("uncommitted work still shows, on top of the branch's own changes", async () => {
-    const { worktree, baseCommit } = makeForkScenario();
+    const { worktree, baseCommit } = scenario;
     appendFileSync(join(worktree, "README.md"), "edited by the agent\n");
     const r = await fullDiff(worktree, baseCommit);
     expect(r.diff).toContain("edited by the agent");
