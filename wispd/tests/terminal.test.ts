@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
@@ -10,8 +10,8 @@ import {
   killAll,
   killForTask,
   openSession,
-  loginShell,
   loginShellArgv,
+  resolveLoginShell,
   sessionKey,
   WEB_TERMINAL_TERM,
   webTerminalEnv,
@@ -62,7 +62,7 @@ afterEach(async () => {
  * suite mostly setup — the interesting part of each test is what it does to
  * the shell afterwards.
  */
-function terminalFixture(label: string): { task: ReturnType<typeof createTask>; worktree: string } {
+function terminalFixture(label: string, terminalShell?: string): { task: ReturnType<typeof createTask>; worktree: string } {
   writeFileSync(
     CONFIG_PATH,
     JSON.stringify({
@@ -71,6 +71,7 @@ function terminalFixture(label: string): { task: ReturnType<typeof createTask>; 
       token,
       webhooks: [],
       stuckMinutes: 10,
+      ...(terminalShell ? { terminalShell } : {}),
       logMaxBytes: 5_000_000,
       setupTimeoutMinutes: 10,
       envAllowlist: {},
@@ -342,6 +343,32 @@ describe("embedded web terminal", () => {
     },
   );
 
+  test("the daemon launches the configured terminal shell", async () => {
+    const shellRoot = mkdtempSync(join(tmpdir(), "wisp-terminal-configured-shell-test-"));
+    const shell = join(shellRoot, "test-shell");
+    writeFileSync(shell, '#!/bin/sh\nprintf "configured-shell-started\\n"\nexec /bin/sh "$@"\n');
+    chmodSync(shell, 0o755);
+    const { task } = terminalFixture("configured-shell", shell);
+
+    server = await serve({ port: 0 });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    let seen = "";
+    const started = new Promise<void>((resolve, reject) => {
+      ws.onerror = () => reject(new Error("configured terminal websocket error"));
+      ws.onmessage = (event) => {
+        const message = JSON.parse(String(event.data)) as Record<string, unknown>;
+        if (message.type === "hello") seen += String(message.replay ?? "");
+        if (message.type === "out") seen += String(message.data ?? "");
+        if (seen.includes("configured-shell-started")) resolve();
+      };
+    });
+
+    await waitFor(started, 10_000);
+    ws.close();
+  });
+
   test(
     "killing a shell does not wait out the SIGKILL grace period",
     { timeout: 20_000 },
@@ -428,29 +455,25 @@ describe("loginShell + shell argv", () => {
     expect(env.LINES).toBeUndefined();
   });
 
-  test("prefers $SHELL when it points at an existing binary", () => {
-    const orig = process.env.SHELL;
-    const shell = Bun.which("sh");
-    if (!shell) throw new Error("test requires sh on PATH");
-    process.env.SHELL = shell;
-    try {
-      expect(loginShell()).toBe(shell);
-      expect(loginShellArgv()).toEqual([shell, "-l"]);
-    } finally {
-      if (orig === undefined) delete process.env.SHELL;
-      else process.env.SHELL = orig;
-    }
+  test("an explicit terminalShell wins over account and inherited values", () => {
+    expect(resolveLoginShell("/configured/zsh", "/account/bash", "/inherited/fish", "linux", () => true)).toBe(
+      "/configured/zsh",
+    );
+    expect(loginShellArgv("/configured/zsh")).toEqual(["/configured/zsh", "-l"]);
   });
 
-  test("a $SHELL that does not exist falls back to the platform default", () => {
-    const orig = process.env.SHELL;
-    process.env.SHELL = "/nonexistent/noshell";
-    try {
-      expect(loginShell()).toBe(process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
-    } finally {
-      if (orig === undefined) delete process.env.SHELL;
-      else process.env.SHELL = orig;
-    }
+  test("the account shell wins over inherited service state", () => {
+    expect(resolveLoginShell(undefined, "/account/zsh", "/inherited/bash", "linux", () => true)).toBe(
+      "/account/zsh",
+    );
+  });
+
+  test("falls back through $SHELL to the platform default", () => {
+    expect(resolveLoginShell(undefined, null, "/inherited/fish", "linux", () => true)).toBe("/inherited/fish");
+    expect(resolveLoginShell(undefined, "/missing/account", "/missing/env", "darwin", () => false)).toBe(
+      "/bin/zsh",
+    );
+    expect(resolveLoginShell(undefined, undefined, undefined, "linux", () => false)).toBe("/bin/bash");
   });
 });
 

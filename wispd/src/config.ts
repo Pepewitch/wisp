@@ -1,6 +1,17 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
@@ -73,6 +84,8 @@ export interface WispConfig {
   /** repos offered in the web UI's new-task form (merged with the repo_paths of existing tasks by GET /api/repos) */
   repos: (string | RepoConfig)[];
   stuckMinutes: number;
+  /** Absolute login-shell executable for embedded terminals; unset follows the OS account. */
+  terminalShell?: string;
   /** Simultaneously running tasks, including setup; never a conversation-turn budget. */
   maxConcurrentTasks?: number;
   /**
@@ -202,6 +215,7 @@ const CONFIG_KEYS = [
   "webhooks",
   "repos",
   "stuckMinutes",
+  "terminalShell",
   "maxConcurrentTasks",
   "turnTranscriptBytes",
   "logMaxBytes",
@@ -228,6 +242,19 @@ function assertPort(port: number, label = "config.json: port"): void {
     throw new Error(
       `${label} must be an integer from ${MIN_CONFIGURED_PORT} to ${MAX_CONFIGURED_PORT}, got ${JSON.stringify(port)}`,
     );
+  }
+}
+
+/** Fail at config load, rather than waiting for the first terminal to open. */
+function assertTerminalShell(path: string): void {
+  if (!isAbsolute(path)) {
+    throw new Error("config.json: terminalShell must be an absolute path");
+  }
+  try {
+    if (!statSync(path).isFile()) throw new Error("not a file");
+    accessSync(path, constants.X_OK);
+  } catch {
+    throw new Error(`config.json: terminalShell is not an executable file: ${JSON.stringify(path)}`);
   }
 }
 
@@ -302,7 +329,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     if (key === "port") assertPort(v);
     out[key] = v;
   };
-  const str = (key: "instanceId" | "host" | "token"): void => {
+  const str = (key: "instanceId" | "host" | "token" | "terminalShell"): void => {
     const v = raw[key];
     if (v === undefined) return;
     if (typeof v !== "string") throw new Error(`config.json: ${key} must be a string, got ${typeName(v)}`);
@@ -318,6 +345,8 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   if (raw.webhooks !== undefined) out.webhooks = stringArray(raw.webhooks, "config.json: webhooks");
   if (raw.repos !== undefined) out.repos = validateRepos(raw.repos);
   num("stuckMinutes");
+  str("terminalShell");
+  if (out.terminalShell !== undefined) assertTerminalShell(out.terminalShell);
   if (raw.maxConcurrentTasks !== undefined) {
     if (!Number.isSafeInteger(raw.maxConcurrentTasks) || (raw.maxConcurrentTasks as number) < 1) {
       throw new Error("config.json: maxConcurrentTasks must be a positive integer");

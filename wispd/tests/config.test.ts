@@ -56,6 +56,7 @@ describe("validateConfig (a prior audit)", () => {
       webhooks: ["https://example.test/hook"],
       repos: ["/repo/a", "/repo/b"],
       stuckMinutes: 5,
+      terminalShell: Bun.which("sh") ?? "/bin/sh",
       turnTranscriptBytes: 123,
       logMaxBytes: 123,
       diagnosticEnabled: true,
@@ -125,6 +126,9 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ stuckMinutes: "10" }))).toBe(
       "config.json: stuckMinutes must be a number, got string",
     );
+    expect(thrownMessage(() => validateConfig({ terminalShell: 42 }))).toBe(
+      "config.json: terminalShell must be a string, got number",
+    );
     expect(thrownMessage(() => validateConfig({ logMaxBytes: null }))).toBe(
       "config.json: logMaxBytes must be a number, got null",
     );
@@ -145,6 +149,23 @@ describe("validateConfig (a prior audit)", () => {
     );
   });
 
+  test("terminalShell must be an absolute executable file", () => {
+    const root = mkdtempSync(join(tmpdir(), "wisp-terminal-shell-config-"));
+    const nonExecutable = join(root, "shell");
+    writeFileSync(nonExecutable, "#!/bin/sh\n");
+    expect(thrownMessage(() => validateConfig({ terminalShell: "zsh" }))).toBe(
+      "config.json: terminalShell must be an absolute path",
+    );
+    expect(thrownMessage(() => validateConfig({ terminalShell: "/nonexistent/wisp-shell" }))).toBe(
+      'config.json: terminalShell is not an executable file: "/nonexistent/wisp-shell"',
+    );
+    expect(thrownMessage(() => validateConfig({ terminalShell: nonExecutable }))).toBe(
+      `config.json: terminalShell is not an executable file: ${JSON.stringify(nonExecutable)}`,
+    );
+    expect(validateConfig({ terminalShell: process.execPath })).toEqual({ terminalShell: process.execPath });
+    rmSync(root, { recursive: true, force: true });
+  });
+
   test("configured ports are bounded integers", () => {
     expect(thrownMessage(() => validateConfig({ port: 0 }))).toBe(
       `config.json: port must be an integer from ${MIN_CONFIGURED_PORT} to ${MAX_CONFIGURED_PORT}, got 0`,
@@ -163,7 +184,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });

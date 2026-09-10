@@ -128,7 +128,8 @@ harmless preferences.
   `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
   at-least-once, dedup on task_id+seq), `repos`, `stuckMinutes` (10),
   `turnTranscriptBytes` (5 MB; `logMaxBytes` is its legacy alias),
-  `setupTimeoutMinutes` (10), `envAllowlist`,
+  `setupTimeoutMinutes` (10), `terminalShell` (an optional absolute executable
+  path for embedded login terminals), `envAllowlist`,
   `harnessDefaults`.
 - `instance-id` — the create-exclusive authority mirrored by
   `config.json.instanceId`; it prevents simultaneous legacy migrations from
