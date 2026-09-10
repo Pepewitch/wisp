@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   LINUX_TARGET,
+  MINIMUM_GLIBC,
   releaseLinux,
   sha256File,
   SUPPORTED_BASELINE,
@@ -15,6 +16,17 @@ describe("Linux release metadata", () => {
   test("uses one stable, explicit supported target", () => {
     expect(LINUX_TARGET).toBe("linux-x86_64");
     expect(SUPPORTED_BASELINE).toBe("Ubuntu 24.04 LTS (x86_64)");
+  });
+
+  // The floor separates "qualified on Ubuntu 24.04" from "runs at all", so a
+  // doc that states a different number is a support promise nothing enforces.
+  test("states the derived glibc floor identically wherever a doc promises one", () => {
+    const root = resolve(import.meta.dir, "../..");
+    for (const file of ["README.md", "docs/INSTALL.md"]) {
+      const stated = [...readFileSync(join(root, file), "utf8").matchAll(/glibc (\d+\.\d+(?:\.\d+)?)/g)];
+      expect(stated.length).toBeGreaterThan(0);
+      expect([...new Set(stated.map((match) => match[1]))]).toEqual([MINIMUM_GLIBC]);
+    }
   });
 
   test("hashes artifact bytes with SHA-256", () => {
