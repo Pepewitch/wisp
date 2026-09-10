@@ -284,9 +284,11 @@ The centre column is ONE conversation — prompt, the tool calls it made, then t
 result — not a raw stream pane stacked on a chat pane. Five rules:
 
 1. **One scroller owns the whole task.** No per-turn clamp, no nested
-   `overflow`, no separate stream pane. `GET /api/tasks/:id` already returns
-   every turn, so scrolling from turn 7 back to turn 1 costs nothing. Do not
-   paginate turns.
+   `overflow`, no separate stream pane.
+   `GET /api/tasks/:id/conversation` returns every turn without Git work, so
+   scrolling from turn 7 back to turn 1 costs nothing. The UI falls back to
+   legacy `GET /api/tasks/:id` for older protocol-1 daemons. Do not paginate
+   turns.
 2. **Activity rows render as summary lines only.** The live stream retains
    only its current turn. A settled turn's structured activity is fetched when
    someone chooses **Show activity**, its SSE closes at `turn-end`, and the

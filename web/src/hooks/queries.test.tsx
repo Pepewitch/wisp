@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { createConnectionQueryKeys } from "@/lib/query"
-import type { DaemonTransport } from "@/lib/transport"
+import { ApiError, type DaemonTransport } from "@/lib/transport"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
@@ -79,6 +79,31 @@ describe("useTaskDetail", () => {
     const { wrapper } = harness()
     renderHook(() => useTaskDetail(null), { wrapper })
     expect(mocks.request).not.toHaveBeenCalled()
+  })
+
+  it("falls back to legacy detail when a protocol-1 daemon lacks the route", async () => {
+    mocks.request.mockReset()
+    mocks.request
+      .mockRejectedValueOnce(new ApiError("not found", 404))
+      .mockResolvedValueOnce({ id: "tlegacy" })
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tlegacy"), { wrapper })
+
+    await waitFor(() => expect(result.result.current.data).toEqual({ id: "tlegacy" }))
+    expect(mocks.request.mock.calls.map(([path]) => path)).toEqual([
+      "/api/tasks/tlegacy/conversation",
+      "/api/tasks/tlegacy",
+    ])
+  })
+
+  it("does not hide a conversation endpoint failure behind legacy Git work", async () => {
+    mocks.request.mockReset()
+    mocks.request.mockRejectedValue(new ApiError("broken", 500))
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tbroken"), { wrapper })
+
+    await waitFor(() => expect(result.result.current.error).toMatchObject({ status: 500 }))
+    expect(mocks.request).toHaveBeenCalledTimes(1)
   })
 })
 

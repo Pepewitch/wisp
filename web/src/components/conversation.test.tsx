@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { utcIso } from "@/lib/time"
-import type { ActivityEvent, TaskDetail, TaskMessage } from "@/lib/types"
+import type { ActivityEvent, ConversationDetail, TaskMessage } from "@/lib/types"
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -31,8 +31,6 @@ describe("Conversation top fade", () => {
       mode: "worktree",
       created_at: "2026-09-03T00:00:00Z",
       updated_at: "2026-09-03T00:00:01Z",
-      diffstat: null,
-      worktreeReason: null,
       turns: [
         {
           id: 1,
@@ -62,7 +60,7 @@ describe("Conversation top fade", () => {
           ended_at: "2026-09-03T00:00:01Z",
         },
       ],
-    } as TaskDetail
+    } as ConversationDetail
 
     render(<Conversation task={task} stream={initialStreamState} />, {
       wrapper: runtimeWrapper(fakeDaemonTransport()),
@@ -97,8 +95,6 @@ describe("Conversation top fade", () => {
       mode: "worktree",
       created_at: "2026-09-03T00:00:00Z",
       updated_at: "2026-09-03T00:00:01Z",
-      diffstat: null,
-      worktreeReason: null,
       turns: [
         {
           id: 1,
@@ -165,7 +161,7 @@ describe("Conversation top fade", () => {
           updated_at: "2026-09-03T00:00:03Z",
         },
       ],
-    } as TaskDetail
+    } as ConversationDetail
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
 
     const view = render(<Conversation task={task} stream={initialStreamState} />, {
@@ -229,14 +225,12 @@ describe("Conversation context boundaries", () => {
       mode: "worktree",
       created_at: "2026-09-09T00:00:00Z",
       updated_at: "2026-09-09T00:00:20Z",
-      diffstat: null,
-      worktreeReason: null,
       messages: [],
       turns: [
         turn(1, 1, "codex", "gpt-5"),
         turn(2, 2, "claude", "claude-opus"),
       ],
-    } as TaskDetail
+    } as ConversationDetail
 
     const { container } = render(
       <Conversation task={task} stream={initialStreamState} />,
@@ -294,7 +288,7 @@ describe("the reading column's axis", () => {
         ended_at: "2026-09-03T00:00:01Z",
       },
     ],
-  } as unknown as TaskDetail
+  } as unknown as ConversationDetail
 
   it("scrolls one way only, and breaks what cannot fit instead", () => {
     render(<Conversation task={task} stream={initialStreamState} />, {
@@ -346,8 +340,6 @@ describe("a steer that lands inside a running turn", () => {
     mode: "worktree",
     created_at: "2026-09-03T00:00:00Z",
     updated_at: "2026-09-03T00:00:02Z",
-    diffstat: null,
-    worktreeReason: null,
     turns: [
       {
         id: 1,
@@ -365,7 +357,7 @@ describe("a steer that lands inside a running turn", () => {
       },
     ],
     messages: [message],
-  } as TaskDetail
+  } as ConversationDetail
 
   const streamOf = (activity: ActivityEvent[]): StreamState =>
     streamReducer(initialStreamState, { type: "backlog", turn: 1, prompt: "Original request", activity })
@@ -376,7 +368,7 @@ describe("a steer that lands inside a running turn", () => {
     { kind: "text", id: "t2", parentId: null, text: "Switching approach" },
   ])
 
-  const render1 = (stream: StreamState, detail: TaskDetail = task) => {
+  const render1 = (stream: StreamState, detail: ConversationDetail = task) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     return render(<Conversation task={detail} stream={stream} />, {
       wrapper: runtimeWrapper(fakeDaemonTransport(), client),
@@ -494,11 +486,9 @@ describe("when a user bubble was sent", () => {
     mode: "worktree",
     created_at: first,
     updated_at: second,
-    diffstat: null,
-    worktreeReason: null,
     turns: [turn(1, first), turn(2, second)],
     messages: [message],
-  } as unknown as TaskDetail
+  } as unknown as ConversationDetail
 
   const render1 = () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -574,8 +564,6 @@ describe("copying user messages", () => {
       mode: "worktree",
       created_at: "2026-09-03T00:00:00Z",
       updated_at: "2026-09-03T00:00:02Z",
-      diffstat: null,
-      worktreeReason: null,
       turns: [
         {
           id: 1,
@@ -618,7 +606,7 @@ describe("copying user messages", () => {
           updated_at: "2026-09-03T00:00:02Z",
         },
       ],
-    } as TaskDetail
+    } as ConversationDetail
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
 
     render(<Conversation task={task} stream={initialStreamState} />, {
@@ -661,8 +649,6 @@ describe("the bubble's caption", () => {
     mode: "worktree",
     created_at: "2026-09-03T00:00:00Z",
     updated_at: "2026-09-03T00:00:02Z",
-    diffstat: null,
-    worktreeReason: null,
     turns: [
       {
         id: 1,
@@ -693,7 +679,7 @@ describe("the bubble's caption", () => {
         updated_at: "2026-09-03T00:00:02Z",
       },
     ],
-  } as unknown as TaskDetail
+  } as unknown as ConversationDetail
 
   const mount = () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -755,7 +741,7 @@ describe("the bubble's caption", () => {
           updated_at: "2026-09-03T00:00:01Z",
         },
       ],
-    } as unknown as TaskDetail
+    } as unknown as ConversationDetail
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
     render(<Conversation task={steered} stream={initialStreamState} />, {
       wrapper: runtimeWrapper(fakeDaemonTransport(), client),

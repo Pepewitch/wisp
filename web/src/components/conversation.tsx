@@ -46,8 +46,9 @@ import type { StreamState } from "@/stream/reducer"
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
 
-   1. ONE scroller owns the whole task. Every turn from GET /api/tasks/:id
-      renders eagerly — no clamp, no nested overflow, no pagination.
+   1. ONE scroller owns the whole task. Every turn from
+      GET /api/tasks/:id/conversation renders eagerly — no clamp, no nested
+      overflow, no pagination.
    2. Activity rows are SUMMARY LINES, in the order the harness emitted them:
       a tool call, the prose that explains the next one, the next call. A live
       turn's timeline comes from the log stream; a settled turn's is fetched on

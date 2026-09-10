@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import {
-  markConversationDetailLoaded,
-  markTaskSelected,
-  scheduleConversationPaint,
-} from "./task-switch-performance"
+type Timings = typeof import("./task-switch-performance")
+
+let timings: Timings
 
 describe("task-switch performance marks", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules()
+    timings = await import("./task-switch-performance")
     performance.clearMarks()
     performance.clearMeasures()
   })
@@ -20,9 +20,9 @@ describe("task-switch performance marks", () => {
         return 1
       })
     try {
-      markTaskSelected()
-      markConversationDetailLoaded()
-      scheduleConversationPaint()
+      timings.markTaskSelected()
+      timings.markConversationDetailLoaded()
+      timings.scheduleConversationPaint()
 
       expect(
         performance.getEntriesByName(
@@ -54,9 +54,9 @@ describe("task-switch performance marks", () => {
         return 1
       })
     try {
-      markTaskSelected()
-      scheduleConversationPaint()
-      markTaskSelected()
+      timings.markTaskSelected()
+      timings.scheduleConversationPaint()
+      timings.markTaskSelected()
       callbacks[0]?.(performance.now())
 
       expect(

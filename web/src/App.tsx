@@ -326,6 +326,8 @@ function MainView({
   // the detail row wins once loaded — it carries the turns
   const header = detailQuery.data ?? task
   const archived = task?.archived ?? false
+  // Status owns Git health for both sidebar and header. It may arrive after
+  // conversation paint, but a slow or failed Git sweep never blocks Chat.
   const status = task ? statusQuery.data?.[task.id] : undefined
   const stream = useLogStream(selectedId, "activity", logGeneration)
   // the harness's own skill registry for Tier 3 (A4) — absent while the

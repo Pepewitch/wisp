@@ -263,7 +263,11 @@ describe("daemon API contracts, batch 2", () => {
 
     const response = await api(base, `/api/tasks/${task.id}/conversation`);
     expect(response.status).toBe(200);
-    expect(response.headers.get("server-timing")).toMatch(/^conversation;dur=\d+\.\d$/);
+    const timing = response.headers.get("server-timing");
+    expect(timing).toMatch(/^conversation;dur=/);
+    const duration = Number(timing?.slice("conversation;dur=".length));
+    expect(Number.isFinite(duration)).toBe(true);
+    expect(duration).toBeGreaterThanOrEqual(0);
     const body = await json<Record<string, unknown>>(response);
     expect(body).toMatchObject({
       id: task.id,

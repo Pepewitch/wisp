@@ -58,6 +58,12 @@ The UI reads or mutates these route families:
   forward verbatim — the search term is percent-encoded user text, not a path;
 - task content: diffs, skills, probes, queued messages, and attachment bytes.
 
+Selected history prefers the SQLite-only
+`GET /api/tasks/:id/conversation`. Because it is an additive protocol-1 route,
+the shared UI retries `GET /api/tasks/:id` only after a 404, preserving saved
+Desktop remotes that run an older protocol-1 daemon. The fallback includes Git
+detail and can therefore be slower, but it must remain routable by the proxy.
+
 JSON errors are part of the user-facing contract. A transport must preserve the
 upstream status, response body, and relevant content headers. It must not turn a
 daemon refusal into a generic proxy failure.

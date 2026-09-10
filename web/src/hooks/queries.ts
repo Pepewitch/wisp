@@ -76,12 +76,23 @@ export function useUpdateStatus(
   })
 }
 
-/** GET /api/tasks/:id/conversation — selected history without filesystem or Git work. */
+/**
+ * Prefer SQLite-only history, but retain protocol-1 compatibility. Older
+ * daemons do not advertise the additive route, so only its 404 falls back to
+ * the legacy Git-aware detail endpoint.
+ */
 export function useTaskDetail(id: string | null) {
   const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.task(id ?? ""),
-    queryFn: () => transport.request<ConversationDetail>(`/api/tasks/${id}/conversation`),
+    queryFn: async () => {
+      try {
+        return await transport.request<ConversationDetail>(`/api/tasks/${id}/conversation`)
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) throw error
+        return transport.request<ConversationDetail>(`/api/tasks/${id}`)
+      }
+    },
     enabled: id !== null,
   });
 }
