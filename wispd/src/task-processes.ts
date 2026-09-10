@@ -32,6 +32,8 @@ const stops = new Map<string, Promise<void>>();
 const liveNames = new Map<number, string[]>();
 /** turn ids already reported as settled background work, so the badge is announced once. */
 const announced = new Set<number>();
+/** turn id → the pid set already named, so an unchanged group is never re-named. */
+const namedPids = new Map<number, string>();
 let refreshing: Promise<void> = Promise.resolve();
 const TURN_LAUNCH_CLOCK_SLOP_MS = 10_000;
 
@@ -154,18 +156,24 @@ export function processStop(taskId: string): Promise<void> | undefined { return 
 /**
  * Name what survived, after the inventory has already decided ownership.
  *
- * One extra `ps` per poll, and only while a task actually has a surviving
- * group — the refresh returns early otherwise. Names live in memory because
- * they are a description, not an identity: persisting them would put a string
- * `ps` happened to report next to the pid/start-time pair that authorizes a
- * signal.
+ * Memoized on the group's exact pid set, which is what keeps this affordable:
+ * `stopRecordedGroups` drains by calling the refresh every 50ms, and naming
+ * the same unchanged pids on every pass would double this daemon's subprocess
+ * rate for the length of a Stop. The suite's known timeout flakes come from
+ * process-creation contention, so a description must not buy itself one.
+ *
+ * Names live in memory because they are a description, not an identity:
+ * persisting them would put a string `ps` happened to report next to the
+ * pid/start-time pair that authorizes a signal.
  */
 async function nameGroups(groups: { turnId: number; pids: number[] }[]): Promise<void> {
-  if (!groups.length) return;
-  const named = await processNames(groups.flatMap(group => group.pids));
+  const fresh = groups.filter(group => namedPids.get(group.turnId) !== group.pids.join(","));
+  if (!fresh.length) return;
+  const named = await processNames(fresh.flatMap(group => group.pids));
   if (!named.size) return;
-  for (const group of groups) {
+  for (const group of fresh) {
     const names = [...new Set(group.pids.map(pid => named.get(pid)).filter((name): name is string => Boolean(name)))];
+    namedPids.set(group.turnId, group.pids.join(","));
     if (names.length) liveNames.set(group.turnId, names);
     else liveNames.delete(group.turnId);
   }
@@ -219,12 +227,13 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
         db.query("UPDATE turn_process_groups SET state = ?, members_json = ?, stop_requested = CASE WHEN ? = 'none' THEN 0 ELSE stop_requested END WHERE turn_id = ?")
           .run(state, identities, state, row.turn_id);
       }
-      if (state === "none") { liveNames.delete(row.turn_id); announced.delete(row.turn_id); }
-      else living.push({ turnId: row.turn_id, pids: members.map(member => member.pid) });
       // A group that merely OUTLIVES its settle window changes no column, so
       // the state comparison below would never announce it. Emit once when it
       // crosses, or the badge it earned would wait for an unrelated event.
       const reportable = state !== "none" && original?.status !== "running" && !settling(original, BACKGROUND_SETTLE_MS);
+      if (state === "none") { liveNames.delete(row.turn_id); namedPids.delete(row.turn_id); announced.delete(row.turn_id); }
+      // Only groups the report will actually show are worth a naming call.
+      else if (reportable) living.push({ turnId: row.turn_id, pids: members.map(member => member.pid) });
       const crossed = reportable && !announced.has(row.turn_id);
       if (crossed) announced.add(row.turn_id);
       if (state !== row.state || state === "none" || crossed) notify(row.task_id);

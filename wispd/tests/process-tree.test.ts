@@ -30,6 +30,7 @@ import { STOPPING } from "../src/interrupt-state";
 import { assertTaskNotStopping } from "../src/turn-interrupt";
 import { archiveTaskRows } from "../src/routes/archive";
 import { route } from "../src/routes";
+import * as processSnapshot from "../src/process-snapshot";
 import { BACKGROUND_SETTLE_MS, backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
 
 const cfg: WispConfig = {
@@ -554,6 +555,37 @@ describe("reporting background work", () => {
     db.query("UPDATE turns SET ended_at = ? WHERE task_id = ?").run(ended, taskId);
   }
 
+  /**
+   * `stopRecordedGroups` drains by refreshing every 50ms. Naming an unchanged
+   * group on each pass would double the daemon's subprocess rate for the whole
+   * of a Stop, and process-creation contention is what makes this suite's
+   * timeout flakes flake. The description must not buy one.
+   */
+  test("an unchanged group is named once, however often the inventory runs", async () => {
+    const task = makeTask("name-once");
+    const def = bashAdapter('sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid; exit 0');
+    startTurn(task, "leave a child", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    await until(() => hasRunningTurn(task.id) === null);
+    backdateTurnEnd(task.id);
+
+    const naming = spyOn(processSnapshot, "processNames");
+    try {
+      await refreshProcessGroups(task.id);
+      expect(naming).toHaveBeenCalledTimes(1);
+      expect(backgroundWork(task.id, BACKGROUND_SETTLE_MS).details[0]!.names).toContain("sleep");
+      for (let pass = 0; pass < 4; pass++) await refreshProcessGroups(task.id);
+      expect(naming).toHaveBeenCalledTimes(1);
+      // …and the names survive those passes rather than being dropped.
+      expect(backgroundWork(task.id, BACKGROUND_SETTLE_MS).details[0]!.names).toContain("sleep");
+    } finally { naming.mockRestore(); }
+
+    signalProcessGroup(turn.pid!, "SIGKILL");
+    await until(() => !alive(descendant));
+  }, 15_000);
+
   test("a straggler that outlives its turn by a moment never reaches the badge", async () => {
     const task = makeTask("settle");
     const def = bashAdapter('sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid; exit 0');
@@ -586,8 +618,10 @@ describe("reporting background work", () => {
     fixtureGroups.push(turn.pid!);
     const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
     await until(() => hasRunningTurn(task.id) === null);
-    await refreshProcessGroups(task.id);
+    // Past the settle window BEFORE the inventory: naming is only paid for a
+    // group the report will actually show.
     backdateTurnEnd(task.id);
+    await refreshProcessGroups(task.id);
 
     const group = backgroundWork(task.id, BACKGROUND_SETTLE_MS).details[0]!;
     expect(group.turn).toBe(1);
