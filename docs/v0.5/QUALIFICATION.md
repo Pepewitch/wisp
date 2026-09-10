@@ -2,12 +2,40 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.1 is the current release; 0.5.0's record is retained below.
+coverage. 0.5.2 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.2 publication
+
+**Published and promoted on 2026-09-10.**
+[Wisp 0.5.2](https://github.com/Pepewitch/wisp/releases/tag/v0.5.2) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+03:57:43 UTC with ten assets. The annotated tag resolves to clean main commit
+[`4d54ae762714e28216f6996484e2413951b597bf`](https://github.com/Pepewitch/wisp/commit/4d54ae762714e28216f6996484e2413951b597bf),
+landed through [PR #121](https://github.com/Pepewitch/wisp/pull/121).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34433983057)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | 58 root, 1,112 daemon, 655 UI tests; lint/types, docs, workflow pins, browser and supply-chain checks, and the native core gate passed on the release commit |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and the clean tagged source |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, fixed-URL convergence for both channels, and post-promotion livecheck passed |
+
+The promotion receipt records completion at **04:03:53 UTC**, with Homebrew tap
+commit [`5015d2e85d34f9fafc7192d37ce6596ce7495cd9`](https://github.com/Pepewitch/homebrew-tap/commit/5015d2e85d34f9fafc7192d37ce6596ce7495cd9).
+
+No installed daemon service or production Desktop profile was upgraded for
+these checks. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## 0.5.1 publication
 
 **Published and promoted on 2026-09-09.**
-[Wisp 0.5.1](https://github.com/Pepewitch/wisp/releases/tag/v0.5.1) is the latest
+[Wisp 0.5.1](https://github.com/Pepewitch/wisp/releases/tag/v0.5.1) was published as a
 regular GitHub release (`draft: false`, `prerelease: false`), published at
 17:26:39 UTC with ten assets. The annotated tag resolves to clean main commit
 [`c81c04e9a92bb2a88c2a941ce5756a64c476c1b1`](https://github.com/Pepewitch/wisp/commit/c81c04e9a92bb2a88c2a941ce5756a64c476c1b1),
@@ -93,12 +121,12 @@ ledger records the completed outcome separately.
 ## Still unqualified or outside scope
 
 - Human-observed in-app installation, relaunch, state preservation, and
-  Homebrew receipt reconciliation for 0.4-to-0.5 and for 0.5.0-to-0.5.1. The
-  historical alpha.12-to-alpha.13 journey passed on one Mac; it does not
-  qualify either 0.5 release automatically.
+  Homebrew receipt reconciliation for 0.4-to-0.5, for 0.5.0-to-0.5.1, and for
+  0.5.1-to-0.5.2. The historical alpha.12-to-alpha.13 journey passed on one
+  Mac; it does not qualify any 0.5 release automatically.
 - A human-observed cross-harness switch on every supported harness, and the
-  0.5.1 database migration 6 upgrade against a large production profile.
-  Migration 6 is covered by automated tests only.
+  0.5.1 database migration 6 and 0.5.2 migration 7 upgrades against a large
+  production profile. Both migrations are covered by automated tests only.
 - Complete fresh-machine real-provider activation, Linux upgrade/rollback,
   every macOS version above the configured minimum, and cross-machine restore.
 - Multi-user authorization, agent sandboxing, forensic data deletion, and an
