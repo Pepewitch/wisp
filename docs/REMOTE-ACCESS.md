@@ -22,13 +22,35 @@ credential in practice.
 
 Install Tailscale on the Wisp host and phone, put both in the same tailnet, and
 confirm the daemon is healthy locally. Run `wisp token` and note the port in
-its URL. Then proxy that loopback service to an HTTPS tailnet URL. For example,
-if Wisp printed `http://127.0.0.1:8710`:
+its URL. Then look at what this node already serves. A bare `tailscale serve`
+takes the base path `/` of the node's HTTPS endpoint, so on a host that already
+publishes something there — a dev server, a dashboard, another tool's UI — the
+documented command below targets the handler that service occupies:
+
+```sh
+tailscale serve status
+```
+
+With `/` free, proxy the loopback service onto it. For example, if Wisp printed
+`http://127.0.0.1:8710`:
 
 ```sh
 tailscale serve --bg http://127.0.0.1:8710
 tailscale serve status
 ```
+
+With `/` already taken, give Wisp its own HTTPS port instead of replacing that
+mapping:
+
+```sh
+tailscale serve --bg --https 8443 http://127.0.0.1:8710
+```
+
+Do not mount Wisp under a subpath (`tailscale serve --set-path /wisp`). Built
+asset URLs are relative, but everything else about the app is rooted: the
+browser runtime requests `/api/...`, the service worker registers at `/sw.js`
+with scope `/`, and the web manifest declares `start_url` and `scope` of `/`.
+Under a subpath those requests leave the mount and reach whatever owns `/`.
 
 Open the HTTPS URL printed by `tailscale serve status` on the phone. On the
 host, run:
@@ -43,10 +65,13 @@ stream, terminal socket, and image; nothing is authenticated by a cookie. Test
 a harmless follow-up on a disposable task before relying on the connection.
 
 If the proxy rewrites `Host`, the daemon cannot derive the browser's own origin
-and will refuse terminal upgrades from it. Name the public origin explicitly:
+and will refuse terminal upgrades from it. Name the origin the browser actually
+shows, which includes a non-default port:
 
 ```sh
 WISP_ALLOWED_ORIGINS=https://wisp.your-tailnet.ts.net wisp serve
+# the `--https 8443` mapping above is a different origin:
+WISP_ALLOWED_ORIGINS=https://wisp.your-tailnet.ts.net:8443 wisp serve
 ```
 
 Wisp Desktop can use the same private HTTPS address. Click `+`, enter the Serve
@@ -63,10 +88,10 @@ before applying this to a shared tailnet.
 
 ## Install Wisp on your phone
 
-Use the **HTTPS URL** printed by Tailscale Serve, at the root of the host.
-A plain HTTP tailnet IP can open the UI, but browsers require a secure origin
-for full PWA installation and offline recovery. Wisp does not require a
-public URL or an app-store download.
+Use the **HTTPS URL** printed by Tailscale Serve, at the root of the endpoint
+you mapped Wisp onto. A plain HTTP tailnet IP can open the UI, but browsers
+require a secure origin for full PWA installation and offline recovery. Wisp
+does not require a public URL or an app-store download.
 
 1. Connect the phone's Tailscale app and open the Wisp HTTPS URL.
 2. On **iPhone or iPad**, open it in Safari, tap **Share → Add to Home Screen →
