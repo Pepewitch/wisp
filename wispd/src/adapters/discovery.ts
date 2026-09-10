@@ -32,6 +32,82 @@ function parseAvailableModelBlocks(text: string): string[] {
   return out;
 }
 
+/** One model record from `opencode models --verbose`. */
+export interface OpencodeCatalogEntry {
+  providerID: string;
+  id: string;
+  capabilities?: Record<string, unknown>;
+  variants?: Record<string, unknown>;
+}
+
+/**
+ * Walk the model records out of `opencode models --verbose`, whose output is
+ * an `id line` + pretty-printed JSON object per model. A brace-depth scan that
+ * skips string contents, rather than a line split: the records span many lines
+ * and the id lines sit between them.
+ */
+export function opencodeCatalog(text: string): OpencodeCatalogEntry[] {
+  const out: OpencodeCatalogEntry[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j]!;
+      if (escaped) {
+        escaped = false;
+      } else if (inString) {
+        if (ch === "\\") escaped = true;
+        else if (ch === '"') inString = false;
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth++;
+      } else if (ch === "}" && --depth === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (end < 0) break; // truncated output: stop rather than rescan the tail
+    try {
+      const parsed: unknown = JSON.parse(text.slice(i, end + 1));
+      if (isRecord(parsed) && typeof parsed.providerID === "string" && typeof parsed.id === "string") {
+        out.push(parsed as unknown as OpencodeCatalogEntry);
+      }
+    } catch {
+      // not a model record; the scan continues past it
+    }
+    i = end;
+  }
+  return out;
+}
+
+/**
+ * Can this catalog entry NOT run a coding turn? An agent turn needs to call
+ * tools and answer in text, and opencode's catalog states both per model.
+ *
+ * FAIL-OPEN, deliberately: only an explicit `false` rejects. Absent or
+ * unrecognised metadata keeps the model, because the one thing worse than a
+ * noisy picker is a picker that silently hides the model someone configured.
+ * That matters most for CUSTOM providers — a hand-written `provider` block in
+ * opencode.json may describe a model sparsely, and it must still be offered.
+ *
+ * What this removes on a real install (opencode 1.18.29): embedding models,
+ * image and video generation, TTS and live-translate variants — 17 of 53
+ * entries, every one of them `toolcall: false`, none of them merely missing
+ * the field. It never removes a model for being unreachable: a local server
+ * that is switched off right now is still a configured model, and hiding it
+ * would break the ordinary "pick the model, then start the server" flow.
+ */
+export function positivelyNotAgentCapable(model: OpencodeCatalogEntry): boolean {
+  const caps = model.capabilities;
+  if (!isRecord(caps)) return false;
+  const output = isRecord(caps.output) ? caps.output : {};
+  return caps.toolcall === false || output.text === false;
+}
+
 export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   /**
    * droid (reverified against 0.213.0): the default model is named on the
@@ -149,7 +225,9 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
    * lets the user's `harnessDefaults` decide, which is the correct precedence.
    */
   "opencode-models": async (def, spawn, signal) => {
-    const res = await spawn([def.bin, "models"], signal);
+    // --verbose prints the SAME `provider/model` id lines plus one JSON record
+    // per model, so one spawn answers both halves and they cannot disagree.
+    const res = await spawn([def.bin, "models", "--verbose"], signal);
     const ids = res.stdout
       .split("\n")
       .map((line) => line.trim())
@@ -161,17 +239,38 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
         defaultModel: null,
         models: null,
         notes: [
-          `'${def.bin} models' printed no provider/model ids (exit ${res.exitCode}) — the CLI may be unauthenticated, or its output shape may have changed`,
+          `'${def.bin} models --verbose' printed no provider/model ids (exit ${res.exitCode}) — the CLI may be unauthenticated, or its output shape may have changed`,
         ],
       };
     }
-    return {
-      defaultModel: null,
-      models: [...new Set(ids)],
-      notes: [
-        `list from '${def.bin} models' (the configured providers' catalog); opencode names no default model on any CLI surface`,
-      ],
-    };
+    const rejected = new Set(
+      opencodeCatalog(res.stdout)
+        .filter(positivelyNotAgentCapable)
+        .map((model) => `${model.providerID}/${model.id}`),
+    );
+    const models = [...new Set(ids)].filter((id) => !rejected.has(id));
+    const notes = [
+      `list from '${def.bin} models --verbose' (the configured providers' catalog); opencode names no default model on any CLI surface`,
+    ];
+    if (rejected.size > 0) {
+      notes.push(
+        `${rejected.size} model(s) hidden: the catalog marks them as not tool-calling or not text-producing (embeddings, image/video/audio generation, TTS) — they cannot run a coding turn`,
+      );
+    }
+    // Every id was rejected: that is far likelier to be a changed capability
+    // shape than a catalog with no usable model in it, so serve the unfiltered
+    // list rather than an empty picker.
+    if (models.length === 0) {
+      return {
+        defaultModel: null,
+        models: [...new Set(ids)],
+        notes: [
+          notes[0]!,
+          `every model was marked not agent-capable — the capability shape has probably changed, so nothing was hidden`,
+        ],
+      };
+    }
+    return { defaultModel: null, models, notes };
   },
 };
 

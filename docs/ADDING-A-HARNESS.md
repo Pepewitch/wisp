@@ -144,6 +144,15 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    verbatim. That was *proven* live; until then the field was simply absent.
 5. **`modelDiscovery`** vs **`staticModels` + `defaultModel`** — prefer a
    probe of the installed CLI (`wisp models` is honest when there is none).
+   A probed list may be *narrowed*, but only by a fact the CLI itself states
+   about the model, and only fail-open: opencode's catalog marks each model's
+   `toolcall` / `output.text`, so the strategy hides the embedding, image,
+   video and TTS entries that cannot run a coding turn (17 of 53 on a real
+   install) — dropping ONLY on an explicit `false`, because a custom provider
+   in the user's own config may describe its model with no capability
+   metadata and must still be offered. Never narrow by reachability: a local
+   server that is switched off right now is still a configured model, and the
+   picker would flicker with the network.
    `staticModels` is the documented exception for CLIs that enumerate none;
    `defaultModel` must be *in* the static list (validate enforces it) and
    loses to both a probed default and the user's `harnessDefaults` config.
