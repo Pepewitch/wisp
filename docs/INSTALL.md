@@ -9,11 +9,19 @@ Automated install and activation gates cover this target. Full clean-machine
 and upgrade/rollback qualification remains incomplete; see the
 [0.5 qualification ledger](v0.5/QUALIFICATION.md).
 
+Ubuntu 24.04 LTS is what those gates and that ledger cover, not a hard
+requirement. The release artifact is a self-contained x86_64 executable that
+needs glibc 2.17 or newer, and the installer checks only that the host is
+Linux on x86_64. Another glibc distribution above that floor is untested
+rather than blocked: the steps below should work, and nothing in this guide is
+qualified against it. There is no musl artifact.
+
 ## Before you start
 
 You need:
 
-- an x86_64 Ubuntu 24.04 host;
+- an x86_64 Linux host with glibc 2.17 or newer; Ubuntu 24.04 LTS is the
+  qualified target;
 - `curl`, `git`, `sha256sum`, and the standard `install` utility;
 - a Git repository with a configured `user.name` and `user.email`;
 - at least one installed and authenticated harness: `droid`, `claude`,
@@ -75,7 +83,7 @@ address:
 wisp init
 ```
 
-On a normal Ubuntu user session, the installer enables and starts
+On a normal systemd user session, the installer enables and starts
 `wisp.service`. Otherwise, keep `wisp serve` in a foreground terminal or use a
 restart-capable supervisor — see [Run without systemd](#run-without-systemd).
 

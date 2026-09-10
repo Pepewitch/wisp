@@ -67,6 +67,15 @@ only here” does not enforce anything.
 | Apple Silicon arm64, macOS 12.3+ configured minimum | CLI/daemon and Desktop; Desktop publication requires Developer ID signing and notarization |
 | Intel macOS | Unsupported; no release artifact |
 
+“Supported” in that table means gated and qualified — what the automated
+install and activation gates cover and what the qualification ledger records.
+It is not a claim about where the binary runs at all. The Linux artifact is a
+self-contained x86_64 executable that needs glibc 2.17 or newer, a floor
+derived from the release toolchain and re-checked by the release build, and
+both the installer and `wisp doctor` gate on Linux x86_64 alone. Another glibc
+distribution above that floor is untested rather than blocked; problems there
+are outside the gates and the ledger. There is no musl artifact.
+
 Built-in harnesses are Droid, Claude Code, Codex, Cursor, and OpenCode. Wisp runs as your
 OS user, without a multi-user authorization boundary or an agent sandbox.
 The macOS deployment minimum is not a claim that every supported OS version
