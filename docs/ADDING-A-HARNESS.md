@@ -1,14 +1,14 @@
 # Adding a harness
 
-Wisp drives four coding-agent CLIs — droid, claude, codex, cursor — through
-one seam: the adapter. An adapter is **declarative config plus small named
+Wisp drives five coding-agent CLIs — droid, claude, codex, cursor, opencode
+— through one seam: the adapter. An adapter is **declarative config plus small named
 strategies** (D7): how to run one headless turn, how to resume the session,
 and how to read the machine output. No harness knowledge lives outside
 `wispd/src/adapters/` — the daemon, routes, CLI, and shared browser/desktop UI all
 render *through* the adapter, so a new harness is one entry in
 `wispd/src/adapters/builtins.ts` plus, at most, a few new named strategies.
 
-This doc is the distilled experience of adding all four. Follow the order —
+This doc is the distilled experience of adding all five. Follow the order —
 it is the order that keeps you from pinning a guess.
 
 ## 0. The one rule: probe before you pin
@@ -93,12 +93,12 @@ field holds a *key* into one. The existing inventory:
 
 | Registry (file) | Adapter field | Existing keys |
 | --- | --- | --- |
-| `PARSE_STRATEGIES` (parse.ts) | `parse.strategy` | `codex-jsonl`, `cursor-stream-json` |
-| `EVENT_FORMATTERS` (format.ts) | `events` | `claude-stream-json`, `droid-stream-json`, `cursor-stream-json`, `codex-jsonl` |
-| `ACTIVITY_NORMALIZERS` (activity.ts) | `activity` | `claude-stream-json`, `droid-stream-json`, `cursor-stream-json`, `codex-jsonl` |
-| `ERROR_STRATEGIES` (errors.ts) | `errors` | `claude-stream-json`, `codex-jsonl`, `droid-stream-json` |
-| `USAGE_FORMATTERS` (usage.ts) | `usageFormat` | `snake-tokens`, `codex-usage` |
-| `MODEL_DISCOVERY` (discovery.ts) | `modelDiscovery` | `droid-models`, `codex-models` |
+| `PARSE_STRATEGIES` (parse.ts) | `parse.strategy` | `codex-jsonl`, `cursor-stream-json`, `opencode-json` |
+| `EVENT_FORMATTERS` (format.ts) | `events` | `claude-stream-json`, `droid-stream-json`, `cursor-stream-json`, `codex-jsonl`, `opencode-json` |
+| `ACTIVITY_NORMALIZERS` (activity.ts) | `activity` | `claude-stream-json`, `droid-stream-json`, `cursor-stream-json`, `codex-jsonl`, `opencode-json` |
+| `ERROR_STRATEGIES` (errors.ts) | `errors` | `claude-stream-json`, `codex-jsonl`, `droid-stream-json`, `opencode-json` |
+| `USAGE_FORMATTERS` (usage.ts) | `usageFormat` | `snake-tokens`, `codex-usage`, `opencode-tokens` |
+| `MODEL_DISCOVERY` (discovery.ts) | `modelDiscovery` | `droid-models`, `codex-models`, `opencode-models` |
 | `PROBE_STRATEGIES` (probe.ts) | `probe` | `print-slash`, `factory-jsonrpc`, `codex-app-server` |
 | `SKILL_STRATEGIES` (skills.ts) | `skillDiscovery` | `claude-init`, `factory-jsonrpc`, `codex-app-server` |
 | `COMPACT_STRATEGIES` (compact.ts) | `compact` | `factory-jsonrpc`, `codex-app-server` |
@@ -108,7 +108,11 @@ field holds a *key* into one. The existing inventory:
 **A new strategy is justified when the harness's wire is genuinely new** —
 cursor's tool activity arrives as top-level `tool_call` events keyed by
 variant (`shellToolCall`, `readToolCall`, …), so `cursor-stream-json` derives
-the tool name from the key instead of hardcoding a list that would rot. A
+the tool name from the key instead of hardcoding a list that would rot.
+opencode needed a full set for a blunter reason: its conclusion and its
+settlement signal are *different events*, every payload is nested under
+`part`, and it reports usage once per STEP rather than once per turn — so
+neither the flat mapping nor any existing key could express it. A
 harness whose stream is claude's shape just sets both `events` and `activity`
 to `"claude-stream-json"` — reusing by name is what
 `~/.wisp/adapters.json` overrides do, and it needs no code at all. Set

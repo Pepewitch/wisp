@@ -102,7 +102,8 @@ its effects and `--log`, then use `--confirm-complete` to skip that script or
 scripts and their children stopped and add `--verified-stopped`. See
 [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md). Archiving a `--local` task is bookkeeping only —
 nothing is removed. `attach` opens the harness's own interactive UI on the
-task's session (claude/codex/cursor; droid declares no attach command).
+task's session (claude/codex/cursor/opencode; droid declares no attach
+command).
 
 The web header observes pull requests separately from pushing. `/push` remains
 available in its slash palette. For a worktree task, Wisp can link a

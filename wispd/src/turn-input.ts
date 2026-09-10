@@ -16,6 +16,27 @@ export function taskEnv(task: Task): Record<string, string> {
   }
 }
 
+/**
+ * The environment for a child spawned into `cwd`, with PWD made to agree.
+ *
+ * The daemon inherits a PWD from whatever directory it was started in, and
+ * `{...process.env}` would hand that stale value to every child — naming a
+ * directory outside the task's worktree entirely.
+ *
+ * That is not a cosmetic disagreement. Caught live on 2026-09-10 during the
+ * opencode bring-up: opencode resolves its project root as
+ * `process.env.PWD ?? process.cwd()` — PWD FIRST — so a turn spawned with
+ * cwd=<worktree> globbed and read the daemon's launch directory instead, and
+ * the worktree isolation Wisp's whole model rests on was silently not in
+ * effect. PWD is a shell convention that is supposed to track cwd, so it is
+ * corrected for every harness here rather than worked around in one adapter's
+ * argv, and it is derived from the SAME `cwd` value passed to the spawn so the
+ * two cannot drift apart.
+ */
+export function envForCwd<T extends Record<string, string | undefined>>(env: T, cwd: string): T & { PWD: string } {
+  return { ...env, PWD: cwd }
+}
+
 export function taskPreamble(task: Task): string {
   return [
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,

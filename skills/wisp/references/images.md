@@ -25,6 +25,7 @@ wisp send tq2szu "the fix should match this mock" --image ./mock.png
 | codex | native: `-i <path>… --` on the argv | png, jpeg, gif, webp |
 | droid | path in the prompt: the harness's file-reading tool decodes the file | png, jpeg only |
 | cursor | same path-in-the-prompt strategy as droid | png, jpeg only |
+| opencode | native: `-f <path>… --` on the argv | png, jpeg, gif, webp |
 
 For droid/cursor, wisp prepends a preamble naming the absolute path(s) and
 asking the model to say plainly if it cannot see the image — whether a model

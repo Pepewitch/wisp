@@ -90,12 +90,18 @@ describe("buildArgv", () => {
     expect(argv.join(" ")).not.toContain("high");
   });
 
+
   // The picker offers these instead of asking for a guess. Each list was read
   // off the CLI itself (see AdapterDef.effortLevels) and they genuinely
   // differ — droid alone has dynamic/off, claude alone lacks none/minimal.
   test("each adapter declares the effort levels its CLI actually accepts", () => {
     expect(droid.effortLevels).toEqual(["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
     expect(claude.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // opencode's ladder is the union of the `variants` keys across its own
+    // catalog, and it alone has no `none` level.
+    expect(BUILTIN_ADAPTERS.opencode!.effortLevels).toEqual([
+      "minimal", "low", "medium", "high", "xhigh", "max",
+    ]);
     // `ultra` came from codex's own catalog: gpt-6-astra lists it in
     // supported_reasoning_levels (found by `bun run harness:snapshot`)
     expect(codex.effortLevels).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -600,7 +606,7 @@ describe("USAGE_FORMATTERS (Theme B)", () => {
     expect(formatUsage(noFormat, { input_tokens: 1 })).toBeNull();
     const bad: AdapterDef = { ...noFormat, usageFormat: "nope" };
     expect(thrownMessage(() => formatUsage(bad, { input_tokens: 1 }))).toBe(
-      "adapter usageFormat 'nope' is not a known formatter (known: snake-tokens, codex-usage)",
+      "adapter usageFormat 'nope' is not a known formatter (known: snake-tokens, codex-usage, opencode-tokens)",
     );
   });
 });
@@ -708,7 +714,7 @@ describe("errorDetail (captured fixtures)", () => {
   test("an unknown strategy on a hand-built def throws instead of silently saying nothing", () => {
     const def: AdapterDef = { bin: "x", exec: [], parse: { format: "json" }, errors: "nope" };
     expect(thrownMessage(() => errorDetail(def, "", ""))).toBe(
-      "adapter errors strategy 'nope' is not a known strategy (known: claude-stream-json, codex-jsonl, droid-stream-json)",
+      "adapter errors strategy 'nope' is not a known strategy (known: claude-stream-json, codex-jsonl, droid-stream-json, opencode-json)",
     );
   });
 });
@@ -931,10 +937,10 @@ describe("validateAdapters (a prior audit)", () => {
   test("events must name a builtin formatter", () => {
     const base = { bin: "x", exec: [], parse: { format: "json" } };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, events: "nope" } }))).toBe(
-      'adapters.json: adapter \'foo\'.events must name a builtin event formatter (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl), got "nope"',
+      'adapters.json: adapter \'foo\'.events must name a builtin event formatter (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl, opencode-json), got "nope"',
     );
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, events: 7 } }))).toBe(
-      "adapters.json: adapter 'foo'.events must name a builtin event formatter (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl), got number",
+      "adapters.json: adapter 'foo'.events must name a builtin event formatter (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl, opencode-json), got number",
     );
     // a new harness can reuse an existing wire format by name — adapters.json only
     expect(validateAdapters({ foo: { ...base, events: "claude-stream-json" } }).foo!.events).toBe(
@@ -945,10 +951,10 @@ describe("validateAdapters (a prior audit)", () => {
   test("activity must name a builtin structured normalizer", () => {
     const base = { bin: "x", exec: [], parse: { format: "json" } };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, activity: "nope" } }))).toBe(
-      'adapters.json: adapter \'foo\'.activity must name a builtin activity normalizer (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl) or null, got "nope"',
+      'adapters.json: adapter \'foo\'.activity must name a builtin activity normalizer (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl, opencode-json) or null, got "nope"',
     );
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, activity: 7 } }))).toBe(
-      "adapters.json: adapter 'foo'.activity must name a builtin activity normalizer (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl) or null, got number",
+      "adapters.json: adapter 'foo'.activity must name a builtin activity normalizer (known: claude-stream-json, droid-stream-json, cursor-stream-json, codex-jsonl, opencode-json) or null, got number",
     );
     expect(validateAdapters({ foo: { ...base, activity: "claude-stream-json" } }).foo!.activity).toBe(
       "claude-stream-json",
@@ -1006,10 +1012,10 @@ describe("validateAdapters (a prior audit)", () => {
   test("usageFormat must name a builtin usage format (Theme B)", () => {
     const base = { bin: "x", exec: [], parse: { format: "text" } };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, usageFormat: "nope" } }))).toBe(
-      'adapters.json: adapter \'foo\'.usageFormat must name a builtin usage formatter (known: snake-tokens, codex-usage), got "nope"',
+      'adapters.json: adapter \'foo\'.usageFormat must name a builtin usage formatter (known: snake-tokens, codex-usage, opencode-tokens), got "nope"',
     );
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, usageFormat: 7 } }))).toBe(
-      "adapters.json: adapter 'foo'.usageFormat must name a builtin usage formatter (known: snake-tokens, codex-usage), got number",
+      "adapters.json: adapter 'foo'.usageFormat must name a builtin usage formatter (known: snake-tokens, codex-usage, opencode-tokens), got number",
     );
     expect(validateAdapters({ foo: { ...base, usageFormat: "snake-tokens" } }).foo!.usageFormat).toBe("snake-tokens");
   });
@@ -1196,10 +1202,10 @@ describe("validateAdapters (a prior audit)", () => {
   test("errors must name a builtin error strategy", () => {
     const base = { bin: "x", exec: [], parse: { format: "json" } };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, errors: "nope" } }))).toBe(
-      'adapters.json: adapter \'foo\'.errors must name a builtin error strategy (known: claude-stream-json, codex-jsonl, droid-stream-json), got "nope"',
+      'adapters.json: adapter \'foo\'.errors must name a builtin error strategy (known: claude-stream-json, codex-jsonl, droid-stream-json, opencode-json), got "nope"',
     );
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, errors: 7 } }))).toBe(
-      "adapters.json: adapter 'foo'.errors must name a builtin error strategy (known: claude-stream-json, codex-jsonl, droid-stream-json), got number",
+      "adapters.json: adapter 'foo'.errors must name a builtin error strategy (known: claude-stream-json, codex-jsonl, droid-stream-json, opencode-json), got number",
     );
     // a new harness with a known wire shape can reuse an error strategy by name
     expect(validateAdapters({ foo: { ...base, errors: "codex-jsonl" } }).foo!.errors).toBe("codex-jsonl");
@@ -1299,7 +1305,7 @@ describe("validateAdapters (a prior audit)", () => {
   describe("loadAdapters", () => {
     test("no user file → builtins only", () => {
       // ADAPTERS_PATH does not exist in the isolated test home
-      expect(Object.keys(loadAdapters()).sort()).toEqual(["claude", "codex", "cursor", "droid"]);
+      expect(Object.keys(loadAdapters()).sort()).toEqual(["claude", "codex", "cursor", "droid", "opencode"]);
     });
 
     test("reads, validates, and merges ~/.wisp/adapters.json", () => {

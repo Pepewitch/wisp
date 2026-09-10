@@ -306,4 +306,117 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // verified on cursor. The palette's tiers are honestly absent, and the
     // routes answer their named refusals (that honesty IS the contract).
   },
+  // Owner request ("i want to support opencode cli"), 2026-09-10. Probed
+  // against opencode 1.18.29 on macOS: every field below was read off the
+  // installed CLI, and the surfaces that could not be read off it are absent
+  // rather than guessed (§4 of docs/ADDING-A-HARNESS.md).
+  //
+  // The whole `--format json` event vocabulary is binary-verified, not
+  // inferred from what one turn happened to emit: the run command's JSON
+  // writer is a single helper — `{type, timestamp, sessionID, ...payload}` —
+  // called from exactly six places, for `step_start`, `step_finish`, `text`,
+  // `tool_use`, `reasoning` and `error`. That same reading is what settles
+  // several absences below, so it is worth re-doing (not re-guessing) on an
+  // upgrade.
+  opencode: {
+    bin: "opencode",
+    // No auth check: `opencode auth list` exits 0 with ZERO credentials
+    // (verified by pointing XDG_DATA_HOME at an empty dir), so wiring it to
+    // doctor would report healthy auth for an unauthenticated host — worse
+    // than no check. There is no `status`/`whoami` equivalent.
+    auth: null,
+    // `--auto` is opencode's bypass, for claude/codex's reason: an isolated
+    // worktree and no human at the keyboard mid-turn. Verified in the bundle
+    // as the ONLY branch that answers a permission ask (`permission.reply`
+    // with "once"); without it every ask is auto-REJECTED, which would fail
+    // turns rather than hang them. The hidden `--yolo` and
+    // `--dangerously-skip-permissions` aliases set the same flag; `--auto` is
+    // the documented spelling. Override in adapters.json to tighten.
+    //
+    // `--thinking` is required for reasoning to reach the stream at all: the
+    // JSON writer's `reasoning` branch is gated on it (default false). Same
+    // role as claude's `--verbose` — without it the activity feed silently
+    // loses a whole event class. Live-verified: it yields real thought text,
+    // not just a heartbeat.
+    //
+    // run mode also hard-denies the `question` permission, so an opencode
+    // turn cannot stop to ask — which is why parse reports needsInput false.
+    exec: ["run", "--format", "json", "--thinking", "--auto"],
+    resume: ["-s", "{session}"],
+    // ids are `provider/model` (e.g. google/gemini-3.6-flash), not bare names
+    model: ["-m", "{model}"],
+    // opencode calls reasoning effort a model VARIANT. Live-verified: a turn
+    // with `--variant high` ran and reported reasoning tokens.
+    effort: ["--variant", "{effort}"],
+    // Read off the catalog, never copied from another harness's ladder: the
+    // union of the `variants` keys across all 53 entries of
+    // `opencode models --verbose` on 1.18.29. Note there is NO `none` here
+    // (droid and codex both have one) — variants are per-model, so this is a
+    // cross-model union like droid's and the menu offers, it does not force.
+    effortLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
+    // Native image input, argv form. The trailing "--" is MANDATORY for
+    // codex's exact reason and this was proven without spending a turn:
+    // `--file` is variadic AND validated for existence before the message
+    // check, so `-f img.png "Name the colors"` fails with
+    // `File not found: Name the colors` — the prompt had been swallowed.
+    // Live-verified as a REAL vision channel (not a path the model shells out
+    // to read): handed a seeded 4x3 color grid PNG and told not to use any
+    // tool, gemini-3.6-flash recited all twelve colors correctly with zero
+    // tool calls.
+    image: ["-f", "{path}", "--"],
+    // A strategy, not a field mapping, for three reasons the flat mapping
+    // cannot express: the result text is on a DIFFERENT event (`text`) from
+    // the settlement signal (`step_finish`), every payload is nested one
+    // level under `part`, and usage is reported PER STEP rather than once per
+    // turn. See the `opencode-json` reducer in outcome.ts.
+    parse: { format: "json", strategy: "opencode-json" },
+    usageFormat: "opencode-tokens",
+    events: "opencode-json",
+    activity: "opencode-json",
+    errors: "opencode-json",
+    // No parse.model, and this is a verified absence rather than an omission:
+    // the run command DOES know the resolved model id, but the line that
+    // prints it (`> <agent> · <modelID>`) is explicitly gated on
+    // `format !== "json"`. So under --format json opencode never reports it,
+    // and surfaces show the requested model marked "(requested)".
+    //
+    // Limit wording, from opencode 1.18.29's own strings (the droid/claude/
+    // codex precedent). Unusually, one of these is ALSO confirmed by a real
+    // captured failure: the free-tier quota ran out during the live bring-up
+    // on 2026-09-10 and "quota exceeded" matched, so the turn was classified
+    // `limit:` rather than as a generic failure
+    // (tests/fixtures/opencode-quota-exhausted.jsonl). The rest stay
+    // bundle-derived until a capture proves them too:
+    //  - "usage limit"  — opencode's own message "Usage limit reached. It
+    //    will reset in …" and its usageExceeded.accountRateLimit dialog.
+    //  - "rate limit" / "rate_limit" / "ratelimit" — the Vercel AI Gateway
+    //    error class opencode ships, which words the SAME failure three ways
+    //    depending on which field survives: message "Rate limit exceeded",
+    //    type "rate_limit_exceeded", name "GatewayRateLimitError". The error
+    //    strategy falls back from message to name, so all three can reach the
+    //    matcher and all three are listed.
+    //  - "quota exceeded" / "insufficient_quota" — its 429 provider mapper.
+    limitMarkers: ["usage limit", "rate limit", "rate_limit", "ratelimit", "quota exceeded", "insufficient_quota"],
+    // Transient wording from the same build: opencode's own error renderer
+    // special-cases an "Overloaded" message ("Provider is overloaded"), and
+    // its retry classifier treats overloaded/service-unavailable as
+    // retryable. Bundle-derived, NOT capture-derived — the distinction
+    // matters if one of these ever misfires.
+    transientMarkers: ["overloaded", "service unavailable", "service_unavailable"],
+    // Interactive attach on the stored session. `--session` is a TOP-LEVEL
+    // option (the default TUI command), not a `run` one; verified routed by
+    // `opencode --session <bogus>` answering "Session not found: <bogus>".
+    attach: ["--session", "{session}"],
+    modelDiscovery: "opencode-models",
+    // No probe: `opencode stats` is the only usage read and it is LIFETIME,
+    // account-wide, box-drawing text — not this session's context or usage,
+    // so answering /context or /usage with it would be a wrong answer rather
+    // than a missing one. No skillDiscovery: opencode has skills internally
+    // (and a .opencode/skills convention) but exposes NO list surface on the
+    // CLI — no subcommand, and the palette's own registry is server-side.
+    // No compact/compactPrompt: opencode's compact is a TUI palette entry
+    // wired to an SDK call, and both `run --command compact` and
+    // `--command summarize` fail with a server error, so it has no headless
+    // surface to prefill. Each absence answers a named refusal instead.
+  },
 };

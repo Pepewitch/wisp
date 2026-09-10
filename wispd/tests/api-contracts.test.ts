@@ -624,7 +624,7 @@ describe("daemon API contracts", () => {
         modelsError?: string;
       }>;
     }>(response);
-    expect(body.harnesses.map((harness) => harness.name)).toEqual(["droid", "claude", "codex", "cursor"]);
+    expect(body.harnesses.map((harness) => harness.name)).toEqual(["droid", "claude", "codex", "cursor", "opencode"]);
     expect(body.harnesses.find((harness) => harness.name === "droid")).toMatchObject({
       hasModel: true,
       hasEffort: true,
@@ -682,6 +682,27 @@ describe("daemon API contracts", () => {
       probeCommands: [],
       compact: null,
     });
+    // opencode (2026-09-10): a PROBED model list (so nothing is served from a
+    // cold cache here), effort as `--variant`, and a native argv image flag —
+    // hence no imageNote, unlike droid/cursor's path delivery. Its probe,
+    // skills and compact surfaces are all honestly absent.
+    expect(body.harnesses.find((harness) => harness.name === "opencode")).toMatchObject({
+      hasModel: true,
+      hasEffort: true,
+      hasImage: true,
+      defaults: {},
+      probeCommands: [],
+      compact: null,
+    });
+    expect(body.harnesses.find((harness) => harness.name === "opencode")?.imageNote).toBeUndefined();
+    expect(body.harnesses.find((harness) => harness.name === "opencode")?.effortLevels).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
 
     const cache = new ModelProbeCache(BUILTIN_ADAPTERS, {
       spawn: () => {
@@ -781,7 +802,7 @@ describe("daemon API contracts", () => {
       base,
       "/api/tasks",
       400,
-      "unknown harness 'bogus' (known: droid, claude, codex, cursor)",
+      "unknown harness 'bogus' (known: droid, claude, codex, cursor, opencode)",
       "POST",
       { repoPath: repo, prompt: "make a task", harness: "bogus" },
     );

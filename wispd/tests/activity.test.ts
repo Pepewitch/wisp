@@ -589,4 +589,62 @@ describe("Codex app-server subagent dialect", () => {
     expect(events[1]).toMatchObject({ kind: "subagent", id: "spawn-1", agentId: "thread-1", phase: "updated", status: "running" });
     expect(events[2]).toMatchObject({ kind: "subagent", id: "thread-1", phase: "completed", status: "stopped" });
   });
+  // opencode 1.18.29, from real captured turns. Its structured projection is
+  // deliberately narrower than the others': tools are only ever reported
+  // COMPLETED (the CLI emits no started event), and the delegating `task` tool
+  // renders as a plain tool row until a real `task` transcript is captured.
+  describe("opencode", () => {
+    const opencode = BUILTIN_ADAPTERS.opencode!;
+
+    test("a captured tool turn yields completed tool rows keyed by the harness's call ids", () => {
+      const events = renderFixture(opencode, "opencode-tool-turn.jsonl");
+      expect(events.map((e) => e.kind)).toEqual(["tool", "tool", "text"]);
+      expect(events[0]).toMatchObject({
+        kind: "tool",
+        id: "call_fixture0001",
+        parentId: null,
+        phase: "completed",
+        name: "read",
+        input: { filePath: "/work/repo/a.txt" },
+        error: null,
+      });
+      expect(events[1]).toMatchObject({ kind: "tool", id: "call_fixture0002", name: "write", phase: "completed" });
+      expect(events[2]).toMatchObject({ kind: "text", id: "prt_fixture0008", text: "`a.txt` said: `hello`" });
+    });
+
+    test("reasoning becomes a thinking row, and step events contribute nothing", () => {
+      const events = renderFixture(opencode, "opencode-thinking-turn.jsonl");
+      expect(events.map((e) => e.kind)).toEqual(["thinking", "text"]);
+      expect(events[0]).toMatchObject({
+        kind: "thinking",
+        id: "prt_fixture0002",
+        text: "**Calculating the Answer**\n\nI broke 17 * 23 into 17 * 20 and 17 * 3, then summed.",
+      });
+    });
+
+    test("a failed tool reports the error and withholds the output", () => {
+      const events = render(opencode, [
+        {
+          type: "tool_use",
+          sessionID: "ses_1",
+          part: {
+            type: "tool",
+            tool: "bash",
+            callID: "c1",
+            state: { status: "error", input: { command: "false" }, error: "exit status 1" },
+          },
+        },
+      ]);
+      expect(events[0]).toMatchObject({ kind: "tool", name: "bash", phase: "completed", output: null, error: "exit status 1" });
+    });
+
+    test("a stream error surfaces as text rather than vanishing from the conversation", () => {
+      const events = renderFixture(opencode, "opencode-unknown-model.jsonl");
+      expect(events).toHaveLength(1);
+      expect(events[0]!.kind).toBe("text");
+      expect((events[0] as { text: string }).text).toStartWith(
+        "Error: This model models/gemini-2.5-flash is no longer available",
+      );
+    });
+  });
 });

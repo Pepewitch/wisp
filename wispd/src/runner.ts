@@ -60,7 +60,7 @@ import {
 import { TurnRecorder } from "./recording/turn-recorder";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
-import { deliveredMessage, inputStrategyFor, taskEnv, taskPreamble } from "./turn-input";
+import { deliveredMessage, envForCwd, inputStrategyFor, taskEnv, taskPreamble } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
 export { startStuckLoop, stuckTick } from "./stuck";
@@ -196,7 +196,7 @@ export function startTurn(
       stdout: isLive ? "pipe" : outFd,
       stderr: recorderEligible ? "pipe" : errFd,
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
-      env: { ...process.env, ...taskEnv(task) },
+      env: envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
       // Its own process GROUP, so a stop reaches the builds, servers, and
       // sub-agents the harness starts — not just the harness (ENG-03). The
       // pid is unchanged, so `exited`, the persisted pid, and the identity

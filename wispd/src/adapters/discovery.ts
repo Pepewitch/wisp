@@ -133,6 +133,46 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
       ],
     };
   },
+
+  /**
+   * opencode (verified against 1.18.29): `opencode models` prints one
+   * `provider/model` id per line and nothing else — no header, no ANSI, no
+   * decoration (all 53 lines matched on the probed install). The catalog is
+   * the CONFIGURED providers' models, so it grows and shrinks with the user's
+   * credentials rather than being a fixed product list; that is the honest
+   * answer for "what can this install run" and the reason there is no
+   * staticModels here.
+   *
+   * NO default is reported, and that is a real absence rather than a gap in
+   * this parse: opencode names no default on any CLI surface (it resolves one
+   * from config and the authenticated providers at run time). Returning null
+   * lets the user's `harnessDefaults` decide, which is the correct precedence.
+   */
+  "opencode-models": async (def, spawn, signal) => {
+    const res = await spawn([def.bin, "models"], signal);
+    const ids = res.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      // the shape guard IS the allowlist: only provider/model ids survive, so
+      // a future banner or warning line cannot become a model the picker offers
+      .filter((line) => /^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+$/.test(line));
+    if (ids.length === 0) {
+      return {
+        defaultModel: null,
+        models: null,
+        notes: [
+          `'${def.bin} models' printed no provider/model ids (exit ${res.exitCode}) — the CLI may be unauthenticated, or its output shape may have changed`,
+        ],
+      };
+    }
+    return {
+      defaultModel: null,
+      models: [...new Set(ids)],
+      notes: [
+        `list from '${def.bin} models' (the configured providers' catalog); opencode names no default model on any CLI surface`,
+      ],
+    };
+  },
 };
 
 /**

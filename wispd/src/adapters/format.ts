@@ -172,6 +172,42 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
         return null; // turn.started, item.updated, …
     }
   },
+  /**
+   * opencode 1.18.29 `run --format json`. Every event is
+   * `{type, timestamp, sessionID, part|error}` with the payload nested under
+   * `part` — the six types below are the COMPLETE vocabulary (the run
+   * command's JSON writer is called from exactly six places in the shipped
+   * bundle), so the default arm is unreachable today and exists for a future
+   * opencode that adds a seventh.
+   */
+  "opencode-json": (e) => {
+    const part = (e.part ?? {}) as Record<string, any>;
+    switch (e.type) {
+      case "text":
+        return part.text?.trim() ? trunc(part.text.trim(), 300) : null;
+      case "reasoning":
+        return thinkingLines(part.text, "", false);
+      case "tool_use": {
+        // opencode emits ONE event per tool call, already terminal (its
+        // writer fires only for state.status completed|error), so the call
+        // and its result are rendered together rather than as a → … ← pair.
+        const name = String(part.tool ?? "tool");
+        const state = (part.state ?? {}) as Record<string, any>;
+        const args = trunc(JSON.stringify(state.input ?? {}), 120);
+        if (state.status === "error") {
+          return `→ ${name}(${args})\n✗ ${trunc(String(state.error ?? "tool failed").replaceAll("\n", " "), 120)}`;
+        }
+        return `→ ${name}(${args})\n← ${trunc(String(state.output ?? "").replaceAll("\n", " "), 120)}`;
+      }
+      case "step_finish":
+        // "tool-calls" means another step follows; anything else ends the turn
+        return part.reason === "tool-calls" ? null : "✓ turn complete";
+      case "error":
+        return `✗ ${trunc(String(e.error?.data?.message ?? e.error?.name ?? "unknown error"), 300)}`;
+      default:
+        return null; // step_start
+    }
+  },
 };
 
 /**

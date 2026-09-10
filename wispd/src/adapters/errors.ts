@@ -20,6 +20,12 @@ const ERROR_DEFS: Record<string, AdapterDef> = {
     parse: { format: "json", resultType: "completion", result: "finalText" },
     errors: "droid-stream-json",
   },
+  "opencode-json": {
+    bin: "opencode",
+    exec: [],
+    parse: { format: "json", strategy: "opencode-json" },
+    errors: "opencode-json",
+  },
 };
 
 /** Named error strategies, implemented as folds over the outcome reducers. */

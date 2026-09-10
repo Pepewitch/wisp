@@ -35,7 +35,7 @@ You need:
 - Homebrew;
 - Git and a repository with `user.name` and `user.email`;
 - at least one installed and authenticated harness: `droid`, `claude`,
-  `codex`, or `cursor-agent`; and
+  `codex`, `cursor-agent`, or `opencode`; and
 - permission to install applications and manage your user service.
 
 Wisp runs as your user so it can access your repositories and harness

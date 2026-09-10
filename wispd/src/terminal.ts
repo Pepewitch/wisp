@@ -13,6 +13,7 @@ import {
   type PtySize,
 } from "./pty";
 import { taskEnv } from "./runner";
+import { envForCwd } from "./turn-input";
 import { getTask } from "./store";
 import { TerminalScreen } from "./terminal-screen";
 
@@ -545,7 +546,7 @@ export function openSession(
     key,
     taskId,
     worktreePath,
-    webTerminalEnv(process.env, taskEnv(task)) as Record<string, string>,
+    envForCwd(webTerminalEnv(process.env, taskEnv(task)), worktreePath) as Record<string, string>,
     size,
   );
   sessions.set(key, session);

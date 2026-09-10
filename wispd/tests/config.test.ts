@@ -431,7 +431,7 @@ describe("checkHarnessDefaults (P5b: the adapter-name check only the merged adap
       (m) => warnings.push(m),
     );
     expect(warnings).toEqual([
-      "config.json: harnessDefaults['nosuch'] names an adapter Wisp doesn't know (loaded: droid, claude, codex, cursor) — ignoring it",
+      "config.json: harnessDefaults['nosuch'] names an adapter Wisp doesn't know (loaded: droid, claude, codex, cursor, opencode) — ignoring it",
     ]);
   });
 

@@ -1,6 +1,6 @@
 ---
 name: wisp
-description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor) through a Wisp daemon — a separate worktree per task (checkout separation, not a sandbox), honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
+description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor, opencode) through a Wisp daemon — a separate worktree per task (checkout separation, not a sandbox), honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
 ---
 
 # Wisp — driving the task daemon
@@ -51,7 +51,7 @@ evidence and pending human updater journey recorded in
 
 ## 2. Creating tasks
 
-    wisp new <repo> "prompt" --harness <droid|claude|codex|cursor>
+    wisp new <repo> "prompt" --harness <droid|claude|codex|cursor|opencode>
         [--model <m>] [--effort <level>] [--local] [--image <path>]…
 
 - Prompts MUST be self-contained: the task worktree sees only the repo, and no
@@ -109,9 +109,9 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
     wisp send <id> "now compare against this mock" --image ./mock.png
 
 `--image` repeats — up to 10 files per turn, 5 MB each, png/jpeg/gif/webp
-(detected by magic bytes, not the extension). All four builtin harnesses
+(detected by magic bytes, not the extension). All five builtin harnesses
 accept images; droid/cursor receive them as file paths to read (png/jpeg
-only), claude/codex get them natively. Images are stored outside the worktree
+only), claude/codex/opencode get them natively. Images are stored outside the worktree
 and never appear in the task's diff. Delivery, limits, and lifecycle:
 [references/images.md](references/images.md).
 

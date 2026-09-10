@@ -14,8 +14,9 @@ An isolated Git worktree per task, and a state machine that cannot lie about it.
 </div>
 
 Wisp is a harness-independent manager for coding-agent tasks. One daemon
-creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`, or
-`cursor-agent` one turn at a time, records what actually happened, and exposes
+creates a dedicated Git worktree per task, runs `droid`, `claude`, `codex`,
+`cursor-agent`, or `opencode` one turn at a time, records what actually
+happened, and exposes
 the same task through a CLI, API, browser/phone UI, and native desktop app.
 
 **Wisp 0.5.1** adds harness, model, and effort switching on an existing task,
