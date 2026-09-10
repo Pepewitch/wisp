@@ -161,6 +161,26 @@ done
 $WISP show "$IDI" | grep -q "attached:" \
   || fail "the archived turn forgot it ever carried an image"
 
+echo "[4c] --attach end to end: a text file travels by path and serves as text"
+printf 'id,name\n1,ada\n2,grace\n' > "$SMOKE/orders.csv"
+OUTA=$($WISP new "$REPO" "reconcile these rows" --harness fake --attach "$SMOKE/orders.csv")
+IDA=$(echo "$OUTA" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
+wait_state "$IDA" done 30
+$WISP show "$IDA" | grep -q "attached: orders.csv" || fail "wisp show did not list the text attachment"
+# the fake harness reports whether the prompt named the stored path: a csv has
+# no argv flag anywhere, so path delivery is the only way it could have arrived
+$WISP result "$IDA" | grep -q "path-delivered" || fail "the csv path never reached the prompt"
+CSVBYTES="http://127.0.0.1:$PORT/api/tasks/$IDA/attachments/1/orders.csv"
+CT=$(curl -sf -D "$SMOKE/served.headers" -o "$SMOKE/served.csv" -w '%{content_type}' \
+  -H "authorization: Bearer smoketoken" "$CSVBYTES") \
+  || fail "bytes route did not serve the text attachment"
+[[ "$CT" == "text/plain; charset=utf-8" ]] || fail "a text attachment must serve as text (got: $CT)"
+cmp -s "$SMOKE/orders.csv" "$SMOKE/served.csv" || fail "served text differs from the stored file"
+# pasted content must never render on the daemon's own origin (the route is
+# GET-only, so the headers come from the same request that fetched the bytes)
+grep -qi 'content-disposition: attachment' "$SMOKE/served.headers" \
+  || fail "a text attachment must be served as a download, not inline"
+
 echo "[5] archive clean task"
 $WISP archive "$ID" | grep -q archived || fail "archive failed"
 $WISP ls | grep -q "$ID" && fail "archived task still listed"
