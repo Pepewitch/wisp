@@ -17,6 +17,7 @@ export {
   BranchRequestRegular as BranchRequest,
   BotRegular as Bot,
   CheckmarkRegular as Check,
+  ClipboardPasteRegular as ClipboardPaste,
   CloudRegular as Remote,
   CloudOffRegular as Offline,
   CopyRegular as Copy,
@@ -49,5 +50,8 @@ export {
   WeatherSunnyRegular as Sun,
   ZoomInRegular as ZoomIn,
 } from "@fluentui/react-icons"
+
+/** The shape every glyph above has, for components that take one as a prop. */
+export type { FluentIcon } from "@fluentui/react-icons"
 
 export { WispMark } from "./wisp-mark"

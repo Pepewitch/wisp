@@ -509,10 +509,36 @@
   body {
     overscroll-behavior: none;
   }
-  /* xterm builds its own viewport element, so it cannot be given `scroll-slim`
-     in JSX — it gets the same containment here. */
-  .xterm-viewport {
-    overscroll-behavior: contain;
+  /* `.xterm-viewport` used to be a scroll container and used to get
+     `overscroll-behavior: contain` here for the same reason every pane does.
+     It is neither any more: xterm 6 scrolls in JS, nothing inside it overflows,
+     and there was no chained scroll left to contain. What a phone needs
+     instead is the two rules below.
+
+     Own the vertical axis over the rows, and only there. Touch scrolling is
+     the pane's own now (`lib/terminal-touch.ts`), so the browser must not
+     compete for the same drag — but pinch zoom is explicitly left alone,
+     because `useMobileViewport` stands down at `scale !== 1` so a pinched page
+     can pan, and taking that away would trap the terminal at one scale. */
+  @media (pointer: coarse) {
+    .xterm .xterm-screen {
+      touch-action: pan-x pinch-zoom;
+    }
+
+    /* Hand the rows back to the platform so a long press can select them.
+       xterm turns selection off wholesale (`user-select: none` on `.xterm`)
+       because its own selection is driven by `mousedown`/`mousemove` — and a
+       finger produces no `mousemove`, so on touch that leaves no way to select
+       anything at all. iOS and Android already have handles, a magnifier and a
+       Copy item; this is the one line that lets them do the job.
+
+       `!important` is load-bearing, not laziness: `useXtermStyles()` injects
+       xterm's stylesheet into <head> at RUNTIME, i.e. after this file, so an
+       equal-specificity rule loses the tie on source order alone. */
+    .xterm .xterm-rows {
+      user-select: text !important;
+      -webkit-user-select: text !important;
+    }
   }
   /* A placeholder is not content, so it never gets its own scroll axis.
      WebKit lays a textarea's placeholder out in a box of its own and does NOT
