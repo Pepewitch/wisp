@@ -2,21 +2,16 @@ import { retentionRoute } from "./retention";
 import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
-import { homeIsDraining, trackHomeWork } from "../home-lifetime";
+import { trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
 import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
-import {
-  AttachError,
-  decodeAttachments,
-  writeTurnAttachments,
-  type DecodedAttachment,
-} from "../attachments";
+import { AttachError, decodeAttachments, type DecodedAttachment } from "../attachments";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
 import { emit } from "../events";
 import { pathExists, readSlice, readTailOf } from "../fsutil";
 import type { PullRequestCache } from "../pull-requests";
 import { isProjectRemovalInProgress } from "../project-removals";
-import { hasRunningTurn, interruptTurn, startTurn, submitTaskMessage, taskEnv } from "../runner";
+import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
 import { InterruptConflict } from "../turn-interrupt";
 import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
@@ -30,26 +25,16 @@ import {
   messagesFor,
   newTaskId,
   setTaskContextFields,
-  setTaskFields,
   switchTaskAgent,
-  transition,
   turnForTask,
   turnsFor,
 } from "../store";
 import { promptWithSuffix } from "../suffix-prompts";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { typeName } from "../validate";
-import {
-  createWorktree,
-  diffStat,
-  fullDiff,
-  localWorktree,
-  pushBranch,
-  readWorktreeFile,
-  runSetup,
-  worktreeHealth,
-} from "../worktree";
+import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
+import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json, jsonObjectBody } from "./http";
 import { updateTaskAndEmit } from "./task-update";
 
@@ -57,49 +42,6 @@ import { updateTaskAndEmit } from "./task-update";
 const LOG_TAIL_BYTES = 16_384;
 /** Creation already derives at most 80 characters from turn 1; renames keep the same UI-safe ceiling. */
 const TASK_TITLE_MAX = 80;
-
-/**
- * Full task-creation flow, run async after the record is persisted (spawn
- * contract rule 1). Turn-1 attachments ride along in memory (validated at
- * request time) and are written to disk only once creation got as far as
- * spawning the turn — a failed worktree/setup leaves no orphan files.
- */
-async function launchTask(
-  task: Task,
-  prompt: string,
-  def: AdapterDef,
-  adapters: Record<string, AdapterDef>,
-  cfg: WispConfig,
-  attachments: DecodedAttachment[] = [],
-): Promise<void> {
-  try {
-    const mode = taskMode(task);
-    // local: adopt the checkout as-is, creating nothing. worktree: the
-    // original path — a fresh worktree on its own branch.
-    const wt =
-      mode === "local"
-        ? await localWorktree(task.repo_path)
-        : await createWorktree(task.repo_path, task.id, cfg);
-    setTaskFields(task.id, { worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
-    // Still 'creating', but the worktree now EXISTS — re-emit so watchers
-    // refetch and pick up worktree_path. Setup can run for minutes, and until
-    // this fires the web terminal has no directory to open a shell in.
-    transition(task.id, "creating", mode === "worktree" ? "worktree ready, running setup" : "using the checkout");
-    // Setup exists to make a FRESH worktree usable. Running it over the user's
-    // own checkout is destructive (it is where `pnpm install` and friends
-    // live), so a local task never runs it.
-    if (mode === "worktree") await runSetup(task.id, task.repo_path, wt.path, taskEnv(getTask(task.id)!), cfg);
-    // Archive may have completed while setup yielded. Its read-only flip wins;
-    // never start a child in a worktree teardown is already removing.
-    const fresh = getTask(task.id);
-    if (!fresh || fresh.archived || homeIsDraining()) return;
-    const stored = attachments.length > 0 ? writeTurnAttachments(task.id, fresh.turn_count + 1, attachments) : [];
-    startTurn(fresh, prompt, def, cfg, stored, undefined, adapters);
-  } catch (e) {
-    if (getTask(task.id)?.archived) return;
-    transition(task.id, "failed", String(e instanceof Error ? e.message : e).slice(0, 300));
-  }
-}
 
 /** GET /api/tasks */
 export function listTasksRoute(url: URL): Response {
@@ -125,6 +67,7 @@ interface CreateTaskBody {
   model?: unknown;
   effort?: unknown;
   mode?: unknown;
+  base?: unknown;
   suffixPromptId?: unknown;
   attachments?: unknown;
 }
@@ -149,6 +92,10 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
     return err(`effort must be a string, got ${typeName(body.effort)}`, 400);
   }
   if (body.effort === "") return err("effort must not be empty", 400);
+  if (body.base !== undefined && typeof body.base !== "string") {
+    return err(`base must be a string, got ${typeName(body.base)}`, 400);
+  }
+  if (body.base === "") return err("base must not be empty", 400);
   return null;
 }
 
@@ -196,6 +143,13 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     // remove. Refuse by name so the fix is obvious. (Worktree tasks are
     // isolated by construction; the global admission limit still applies.)
     if (mode === "local") {
+      // A local task adopts the branch the checkout is already on; there is
+      // nothing to fork, so a base could only be honoured by moving the
+      // user's own working copy. Refuse the combination instead of ignoring
+      // half of it.
+      if (body.base !== undefined) {
+        return err("base applies to worktree tasks only — a local task runs on the checkout's current branch", 400);
+      }
       // a local: the string checks above narrowed body.repoPath, but not
       // inside this callback — bind it
       const live = listTasks(false).find((t) => taskMode(t) === "local" && resolve(t.repo_path) === resolve(repoPath));
@@ -242,7 +196,9 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     }
     if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
     const release = reserveTaskCapacity(task.id, cfg);
-    void trackHomeWork(launchTask(task, prompt, def, adapters, cfg, attachments).finally(release));
+    void trackHomeWork(
+      launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
+    );
     return json(apiTask(task), 201);
   })();
 }

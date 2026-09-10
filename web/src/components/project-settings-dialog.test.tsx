@@ -21,6 +21,7 @@ const CONFIGURED: RepoInfo = {
   setupScript: "",
   archiveScript: "",
   copyFiles: [],
+  baseBranch: "",
   configured: true,
 }
 
@@ -116,5 +117,46 @@ describe("project settings remove", () => {
       path: "/repo",
       archiveTasks: false,
     })
+  })
+})
+
+/**
+ * The base branch field's whole risk is someone filling in a box that was
+ * correct empty. The placeholder is the first defence and Reset is the
+ * second, so both are worth a test.
+ */
+describe("project settings base branch", () => {
+  it("starts empty, names what empty does, and only offers Reset once set", () => {
+    stubApi()
+    mount(<ProjectSettingsSpecimen project={CONFIGURED} />)
+
+    const field = screen.getByLabelText("Base branch")
+    expect(field).toHaveValue("")
+    expect(field).toHaveAttribute("placeholder", "origin/HEAD — the remote's default branch")
+    // nothing to undo yet, so the control cannot be mistaken for an action
+    expect(screen.getByRole("button", { name: "Reset base branch to the Wisp default" })).toBeDisabled()
+  })
+
+  it("saves a trimmed override, and Reset sends the empty string that clears it", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={{ ...CONFIGURED, baseBranch: "origin/develop" }} />)
+
+    const field = screen.getByLabelText("Base branch")
+    expect(field).toHaveValue("origin/develop")
+
+    fireEvent.change(field, { target: { value: "  origin/release-2.1  " } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true))
+    expect((calls.find((call) => call.method === "POST")?.body as { baseBranch: string }).baseBranch).toBe(
+      "origin/release-2.1",
+    )
+
+    const reset = screen.getByRole("button", { name: "Reset base branch to the Wisp default" })
+    fireEvent.click(reset)
+    expect(screen.getByLabelText("Base branch")).toHaveValue("")
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    // "" is the clear: the daemon drops the key and resolves origin/HEAD again
+    await waitFor(() => expect(calls.filter((call) => call.method === "POST").length).toBe(2))
+    expect((calls.filter((call) => call.method === "POST")[1]?.body as { baseBranch: string }).baseBranch).toBe("")
   })
 })

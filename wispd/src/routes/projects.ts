@@ -133,6 +133,9 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
           setupScript: config?.setupScript ?? "",
           archiveScript: config?.archiveScript ?? "",
           copyFiles: config?.copyFiles ?? [],
+          // "" is the meaningful default, not a missing value: it renders as
+          // the placeholder naming what Wisp resolves on its own.
+          baseBranch: config?.baseBranch ?? "",
           configured: config !== undefined || (entry !== undefined && typeof entry === "string"),
         };
       }),
@@ -147,6 +150,7 @@ interface ProjectUpdateBody {
   setupScript?: unknown;
   archiveScript?: unknown;
   copyFiles?: unknown;
+  baseBranch?: unknown;
 }
 
 function projectUpdateError(body: ProjectUpdateBody): Response | null {
@@ -154,7 +158,7 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
   if (body.name !== undefined && typeof body.name !== "string") {
     return err(`name must be a string, got ${typeName(body.name)}`, 400);
   }
-  for (const key of ["setupScript", "archiveScript"] as const) {
+  for (const key of ["setupScript", "archiveScript", "baseBranch"] as const) {
     if (body[key] !== undefined && typeof body[key] !== "string") {
       return err(`${key} must be a string, got ${typeName(body[key])}`, 400);
     }
@@ -180,6 +184,10 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
   const copy = (body.copyFiles as string[] | undefined) ?? existing?.copyFiles;
   const patterns = copy?.map((value) => value.trim()).filter((value) => value !== "");
   if (patterns && patterns.length > 0) merged.copyFiles = patterns;
+  // Same patch semantics as the rest: "" drops the key, which is exactly what
+  // the settings modal's Reset sends — back to Wisp resolving origin/HEAD.
+  const base = (body.baseBranch as string | undefined) ?? existing?.baseBranch;
+  if (base !== undefined && base.trim() !== "") merged.baseBranch = base.trim();
   return Object.keys(merged).length === 1 ? resolved : merged;
 }
 
@@ -219,6 +227,7 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
         setupScript: saved?.setupScript ?? "",
         archiveScript: saved?.archiveScript ?? "",
         copyFiles: saved?.copyFiles ?? [],
+        baseBranch: saved?.baseBranch ?? "",
       },
       before === undefined ? 201 : 200,
     );

@@ -103,6 +103,7 @@ const TASK_FIELDS = [
   "worktree_path",
   "branch",
   "base_commit",
+  "base_ref",
   "session_id",
   "skills_json",
   "turn_count",

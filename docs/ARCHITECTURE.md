@@ -128,6 +128,36 @@ Local project add can return a native folder-picker path because the picker and
 daemon share a machine. A remote project path must be entered as it exists on
 the remote daemon's machine.
 
+## Where a task's worktree starts
+
+A `worktree` task forks from the project's base branch, not from whatever the
+project directory happens to have checked out. The daemon fetches `origin`
+(best effort — offline or remote-less repos simply skip it) and resolves, in
+order:
+
+1. an explicit per-task base (`wisp new --base <ref>`, or the composer's base
+   picker) — an unresolvable one fails the create rather than substituting a
+   different commit;
+2. the project's configured `baseBranch`, for a repo that integrates on
+   `develop` or a release line;
+3. `origin/HEAD`, then `origin/main` / `origin/master`;
+4. the checkout's `HEAD` — a repo with no remote, and the behaviour of
+   every release up to and including 0.5.2.
+
+Step 2 degrades to step 3 rather than failing, because a branch renamed
+upstream must not make a project unstartable — and it says so in the task's
+state detail, since a silently substituted base is the defect this ordering
+exists to remove. The task records the ref it actually forked from in
+`base_ref`, alongside the `base_commit` it forked at.
+
+The new branch is created with `--no-track`. With a remote-tracking
+start-point git would otherwise set its upstream to `origin/main`, and an
+agent running a bare `git push` under `push.default=upstream` would push the
+task branch's commits directly onto main.
+
+A `local` task has no base: it adopts the branch the checkout is already on,
+which is the point of the mode. Passing a base to one is a 400.
+
 ## Change-impact contract
 
 Treat the browser and desktop shell as two shipped clients of one UI/API

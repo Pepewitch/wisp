@@ -585,6 +585,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === missing)).toEqual({
@@ -594,6 +595,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === repo.path)).toEqual({
@@ -603,6 +605,7 @@ describe("daemon API contracts", () => {
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
+      baseBranch: "",
       configured: false,
     });
   });

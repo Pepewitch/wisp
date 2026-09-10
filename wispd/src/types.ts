@@ -33,6 +33,13 @@ export interface Task {
   worktree_path: string | null;
   branch: string | null;
   base_commit: string | null;
+  /**
+   * The ref the worktree forked from (`origin/main`, a configured
+   * `baseBranch`, an explicit per-task base). NULL for a local task, for a
+   * repo with no remote to name, and for every row written before the
+   * column existed — all three of which forked from the checkout's HEAD.
+   */
+  base_ref?: string | null;
   harness: string;
   model: string | null;
   /** Reasoning effort requested for the task (config harnessDefaults at creation, P5b); NULL = harness default. */

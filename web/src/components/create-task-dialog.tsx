@@ -4,6 +4,7 @@ import { Dialog } from "@base-ui/react/dialog"
 import { Branch, Effort, Enter, Folder, Local, Sparkle, Star, StarFilled } from "@/components/icons"
 import { Menu, MenuAction, MenuGroup, MenuItem, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { MENU_ACTION } from "@/lib/menu-actions"
+import { BasePicker } from "@/components/base-picker"
 import { AttachButton, PendingAttachmentRows } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
@@ -135,6 +136,10 @@ function Form({
     return harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? ""
   })
   const [mode, setMode] = useState<TaskMode>("worktree")
+  // "" means "whatever this project resolves to" — the base picker only ever
+  // holds a deliberate one-off override, never the resolved default, so it
+  // cannot go stale against a project setting changed in another tab.
+  const [base, setBase] = useState("")
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(null)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
 
@@ -186,6 +191,7 @@ function Form({
         harness: choice.harness,
         model: choice.model,
         mode,
+        ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
         ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
         ...(suffixPromptId ? { suffixPromptId } : {}),
         ...(payloads ? { attachments: payloads } : {}),
@@ -308,6 +314,7 @@ function Form({
         effort={effort}
         suffixPromptId={suffixPromptId}
         mode={mode}
+        base={base}
         ready={ready}
         pending={createTask.isPending}
         reprobePending={reprobe.isPending}
@@ -319,6 +326,7 @@ function Form({
         onSuffixPromptChange={setSuffixPromptId}
         onSuffixPromptModalChange={setSuffixPromptModalOpen}
         onModeChange={setMode}
+        onBaseChange={setBase}
       />
     </form>
   )
@@ -333,6 +341,7 @@ function TaskControls({
   effort,
   suffixPromptId,
   mode,
+  base,
   ready,
   pending,
   reprobePending,
@@ -344,6 +353,7 @@ function TaskControls({
   onSuffixPromptChange,
   onSuffixPromptModalChange,
   onModeChange,
+  onBaseChange,
 }: {
   attachments: ReturnType<typeof usePendingAttachments>
   harnesses: HarnessInfo[]
@@ -353,6 +363,7 @@ function TaskControls({
   effort: string
   suffixPromptId: string | null
   mode: TaskMode
+  base: string
   ready: boolean
   pending: boolean
   reprobePending: boolean
@@ -364,6 +375,7 @@ function TaskControls({
   onSuffixPromptChange: (value: string | null) => void
   onSuffixPromptModalChange: (open: boolean) => void
   onModeChange: (mode: TaskMode) => void
+  onBaseChange: (base: string) => void
 }) {
   const [customEffort, setCustomEffort] = useState(false)
   return (
@@ -399,6 +411,9 @@ function TaskControls({
       </div>
       <div className="ml-auto flex flex-col items-end justify-end gap-1.5 @min-[640px]:flex-row @min-[640px]:items-center @min-[640px]:gap-1">
         <ModePicker mode={mode} onChange={onModeChange} />
+        {mode === "worktree" && (
+          <BasePicker base={base} onChange={onBaseChange} onRestoreComposer={onRestoreComposer} />
+        )}
         <CreateButton ready={ready} pending={pending} />
       </div>
     </div>

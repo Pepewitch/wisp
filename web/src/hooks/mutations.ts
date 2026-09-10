@@ -61,6 +61,8 @@ export interface CreateTaskBody {
   harness: string;
   model: string;
   mode: TaskMode;
+  /** one-off override for where the worktree forks from; omitted = the project's base */
+  base?: string;
   effort?: string;
   suffixPromptId?: string;
   attachments?: AttachmentPayload[];
@@ -316,6 +318,7 @@ export interface SaveProjectBody {
   setupScript: string;
   archiveScript: string;
   copyFiles: string[];
+  baseBranch: string;
 }
 
 /**

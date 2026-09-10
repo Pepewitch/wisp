@@ -8,11 +8,11 @@ import type { RepoInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
- * Per-project settings: the two worktree hooks, the file-copy patterns, and
- * unregistering a configured project.
+ * Per-project settings: the two worktree hooks, the file-copy patterns, the
+ * base new worktrees fork from, and unregistering a configured project.
  *
  * Everything here applies to WORKTREE tasks only, and the modal says so once
- * at the top rather than three times. A local task runs in the checkout the
+ * at the top rather than four times. A local task runs in the checkout the
  * user is already working in, so running a setup script over it (where
  * `pnpm install` and `rm -rf node_modules` live) would be destructive.
  *
@@ -115,6 +115,7 @@ function Form({
   const [setupScript, setSetupScript] = useState(project.setupScript)
   const [archiveScript, setArchiveScript] = useState(project.archiveScript)
   const [copyText, setCopyText] = useState(project.copyFiles.join("\n"))
+  const [baseBranch, setBaseBranch] = useState(project.baseBranch)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [archiveTasks, setArchiveTasks] = useState(activeTaskCount > 0)
 
@@ -136,7 +137,7 @@ function Form({
 
   const save = () => {
     saveProject.mutate(
-      { path: project.path, setupScript, archiveScript, copyFiles: patterns },
+      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim() },
       { onSuccess: onClose },
     )
   }
@@ -161,8 +162,8 @@ function Form({
 
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto px-4 py-3.5">
         <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-          These run for <span className="text-foreground">worktree</span> tasks only. A local task works in this
-          directory as it already is, so Wisp neither sets it up nor tears it down.
+          These apply to <span className="text-foreground">worktree</span> tasks only. A local task works in this
+          directory as it already is, so Wisp neither chooses a base for it nor sets it up.
         </p>
 
         <Section
@@ -184,6 +185,13 @@ function Form({
             placeholder={'find . -name node_modules -type d -prune -exec rm -rf {} +'}
             aria-label="Archive script"
           />
+        </Section>
+
+        <Section
+          label="Base branch"
+          hint="Where each new worktree starts. Leave it empty unless this project merges somewhere other than its default branch."
+        >
+          <BaseBranchField value={baseBranch} onChange={setBaseBranch} />
         </Section>
 
         <Section
@@ -292,6 +300,43 @@ function Section({ label, hint, children }: { label: string; hint: string; child
       <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">{hint}</p>
       <div className="mt-2">{children}</div>
     </section>
+  )
+}
+
+/**
+ * The base a new worktree forks from.
+ *
+ * Empty is the RIGHT answer for almost every project — Wisp resolves the
+ * remote's default branch on its own — so the placeholder states what empty
+ * does rather than leaving the field looking unfinished. Someone who fills
+ * this in because a blank box felt like a gap has made their project worse,
+ * and Reset is how they get back without having to know that the mechanism
+ * is `origin/HEAD`.
+ */
+function BaseBranchField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+        placeholder="origin/HEAD — the remote's default branch"
+        aria-label="Base branch"
+        className={cn(
+          "min-w-0 flex-1 rounded-md border border-input bg-surface px-2.5 py-1.5",
+          "font-mono text-[11.5px] leading-[1.6] text-foreground placeholder:text-faint",
+          "focus:border-accent-dim focus:ring-2 focus:ring-ring/15 focus:outline-none",
+        )}
+      />
+      <Button
+        type="button"
+        onClick={() => onChange("")}
+        disabled={value.trim() === ""}
+        aria-label="Reset base branch to the Wisp default"
+      >
+        Reset
+      </Button>
+    </div>
   )
 }
 

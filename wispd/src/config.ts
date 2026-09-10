@@ -30,6 +30,16 @@ export interface RepoConfig {
   /** Shell run in the worktree BEFORE it is removed at archive, after .wisp/cleanup.sh. */
   archiveScript?: string;
   /**
+   * Ref new worktrees fork from, for a project that integrates somewhere
+   * other than the remote default — `origin/develop`, a release line. Unset
+   * (the normal case) resolves `origin/HEAD` and needs no configuration.
+   *
+   * A value that stops resolving — the branch was renamed upstream, or typed
+   * wrong — falls back to the default rather than making every task in the
+   * project unstartable, and says so in the task's state detail.
+   */
+  baseBranch?: string;
+  /**
    * Glob patterns for untracked/ignored files copied from the repo into a new
    * worktree — the .env problem: git does not carry them, so a worktree cannot
    * run without them. A pattern with no "/" matches at ANY depth (".env*" also
@@ -359,7 +369,7 @@ function validateRepos(raw: unknown): (string | RepoConfig)[] {
     if (entry.name !== undefined && typeof entry.name !== "string") {
       throw new Error(`${label}.name must be a string, got ${typeName(entry.name)}`);
     }
-    for (const key of ["setupScript", "archiveScript"] as const) {
+    for (const key of ["setupScript", "archiveScript", "baseBranch"] as const) {
       if (entry[key] !== undefined && typeof entry[key] !== "string") {
         throw new Error(`${label}.${key} must be a string, got ${typeName(entry[key])}`);
       }
@@ -368,6 +378,7 @@ function validateRepos(raw: unknown): (string | RepoConfig)[] {
     if (entry.name !== undefined) out.name = entry.name;
     if (typeof entry.setupScript === "string" && entry.setupScript !== "") out.setupScript = entry.setupScript;
     if (typeof entry.archiveScript === "string" && entry.archiveScript !== "") out.archiveScript = entry.archiveScript;
+    if (typeof entry.baseBranch === "string" && entry.baseBranch.trim() !== "") out.baseBranch = entry.baseBranch.trim();
     if (entry.copyFiles !== undefined) {
       const patterns = stringArray(entry.copyFiles, `${label}.copyFiles`).filter((v) => v.trim() !== "");
       if (patterns.length > 0) out.copyFiles = patterns;
