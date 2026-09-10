@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
-import { Branch, Effort, Enter, Folder, Local, Sparkle, Star, StarFilled } from "@/components/icons"
+import { Effort, Enter, Folder, Local, Sparkle, Star, StarFilled, Worktree } from "@/components/icons"
 import { Menu, MenuAction, MenuGroup, MenuItem, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { MENU_ACTION } from "@/lib/menu-actions"
 import { BasePicker } from "@/components/base-picker"
@@ -152,6 +152,9 @@ function Form({
 
   const box = useRef<HTMLTextAreaElement>(null)
   useEffect(() => box.current?.focus(), [])
+  // One "put the cursor back in the prompt", shared by every inline picker
+  // that closes; the frame defers past base-ui's own focus restore.
+  const restoreComposer = () => requestAnimationFrame(() => box.current?.focus())
 
   // Keep `submit` reachable from the key listener below without re-binding it
   // on every keystroke.
@@ -248,11 +251,25 @@ function Form({
         submit()
       }}
     >
-      {/* project — the one decision that scopes everything below it */}
+      {/*
+        Project on the left, where the task runs on the right: the two
+        decisions that scope everything below them, on the row above the
+        prompt. The path rides inside the project trigger as its parenthetical
+        so it costs no width of its own and truncates before any control does.
+      */}
       <div className="flex h-11 items-center gap-1 border-b border-border px-2.5">
         <Menu
+          className="min-w-0 shrink"
           icon={<Folder />}
-          label={<span className="text-[13px] font-medium text-foreground">{project?.name ?? "Pick a project"}</span>}
+          aria-label="Project"
+          label={
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className="shrink-0 text-[13px] font-medium text-foreground">
+                {project?.name ?? "Pick a project"}
+              </span>
+              {project && <span className="truncate font-mono text-[10.5px] text-faint">({project.path})</span>}
+            </span>
+          }
           disabled={repos.length === 0}
         >
           {repos.length === 0 ? (
@@ -268,7 +285,10 @@ function Form({
           )}
         </Menu>
         <span className="flex-1" />
-        {project && <span className="truncate font-mono text-[10.5px] text-faint">{project.path}</span>}
+        <ModePicker mode={mode} onChange={setMode} />
+        {mode === "worktree" && (
+          <BasePicker base={base} onChange={setBase} onRestoreComposer={restoreComposer} />
+        )}
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}
@@ -313,8 +333,6 @@ function Form({
         preferredChoice={preferredChoice}
         effort={effort}
         suffixPromptId={suffixPromptId}
-        mode={mode}
-        base={base}
         ready={ready}
         pending={createTask.isPending}
         reprobePending={reprobe.isPending}
@@ -322,11 +340,9 @@ function Form({
         onTogglePreferredChoice={togglePreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
-        onRestoreComposer={() => requestAnimationFrame(() => box.current?.focus())}
+        onRestoreComposer={restoreComposer}
         onSuffixPromptChange={setSuffixPromptId}
         onSuffixPromptModalChange={setSuffixPromptModalOpen}
-        onModeChange={setMode}
-        onBaseChange={setBase}
       />
     </form>
   )
@@ -340,8 +356,6 @@ function TaskControls({
   preferredChoice,
   effort,
   suffixPromptId,
-  mode,
-  base,
   ready,
   pending,
   reprobePending,
@@ -352,8 +366,6 @@ function TaskControls({
   onRestoreComposer,
   onSuffixPromptChange,
   onSuffixPromptModalChange,
-  onModeChange,
-  onBaseChange,
 }: {
   attachments: ReturnType<typeof usePendingAttachments>
   harnesses: HarnessInfo[]
@@ -362,8 +374,6 @@ function TaskControls({
   preferredChoice: ModelChoice | null
   effort: string
   suffixPromptId: string | null
-  mode: TaskMode
-  base: string
   ready: boolean
   pending: boolean
   reprobePending: boolean
@@ -374,8 +384,6 @@ function TaskControls({
   onRestoreComposer: () => void
   onSuffixPromptChange: (value: string | null) => void
   onSuffixPromptModalChange: (open: boolean) => void
-  onModeChange: (mode: TaskMode) => void
-  onBaseChange: (base: string) => void
 }) {
   const [customEffort, setCustomEffort] = useState(false)
   return (
@@ -409,11 +417,7 @@ function TaskControls({
           disabled={pending}
         />
       </div>
-      <div className="ml-auto flex flex-col items-end justify-end gap-1.5 @min-[640px]:flex-row @min-[640px]:items-center @min-[640px]:gap-1">
-        <ModePicker mode={mode} onChange={onModeChange} />
-        {mode === "worktree" && (
-          <BasePicker base={base} onChange={onBaseChange} onRestoreComposer={onRestoreComposer} />
-        )}
+      <div className="ml-auto flex items-end justify-end @min-[640px]:items-center">
         <CreateButton ready={ready} pending={pending} />
       </div>
     </div>
@@ -611,7 +615,7 @@ function EffortPicker({
 
 function ModePicker({ mode, onChange }: { mode: TaskMode; onChange: (mode: TaskMode) => void }) {
   return (
-    <Menu icon={mode === "local" ? <Local /> : <Branch />} label={mode === "local" ? "This repo" : "Worktree"}>
+    <Menu icon={mode === "local" ? <Local /> : <Worktree />} label={mode === "local" ? "This repo" : "Worktree"}>
       <MenuRadioGroup value={mode} onValueChange={(value) => onChange(value as TaskMode)}>
         <MenuRadioItem value="worktree" hint="default">
           Worktree

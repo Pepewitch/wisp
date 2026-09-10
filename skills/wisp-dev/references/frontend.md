@@ -520,16 +520,24 @@ prompt naturally. Task titles still come from the user text alone. A refused
 steer keeps both draft and suffix selection; success or a task switch resets
 the suffix to none.
 
-The bar answers the MODAL's own width (`@container`), never the window's. On
-a wide modal it is one line: what the task is on the left (attach,
-harness·model, effort, suffix), where it runs plus **Create** on the right,
-with `flex-wrap` as overflow insurance. On a narrow modal the left cluster
-becomes a COLUMN of those choices — only the model trigger truncates; the
-rest keep their natural width — and the right cluster stacks **Worktree**
-directly above **Create**, pinned to the bottom right by `ml-auto` +
-`justify-end`, so the commit action never scrolls out of reach. Where the
-task runs rides with the commit action because it outranks every other choice
-in the modal:
+The modal has TWO bars, and the split is by what a control scopes. The row
+above the prompt carries the two decisions that scope everything below them:
+the project on the left and where the task runs — **Worktree**/**This repo**
+plus its **Base** — on the right. The project's path is a parenthetical inside
+that trigger, `wisp (/path/to/wisp)`, so it costs no width of its own and is
+the first thing to truncate when the row tightens; every control keeps its
+natural width. The mode and base pickers own no glyph in common: mode pairs a
+layered-copy sheet with This repo's monitor because it answers *where*, while
+base keeps the branch glyph because it answers *which ref*.
+
+The bar UNDER the prompt answers the MODAL's own width (`@container`), never
+the window's. On a wide modal it is one line: what the task is on the left
+(attach, harness·model, effort, suffix) and **Create** on the right, with
+`flex-wrap` as overflow insurance. On a narrow modal the left cluster becomes a
+COLUMN of those choices — only the model trigger truncates; the rest keep their
+natural width — and **Create** stays pinned to the bottom right by `ml-auto` +
+`justify-end`, so the commit action never scrolls out of reach. Where the task
+runs is a scoping decision, not a control-bar one:
 
 - **Worktree** (default) — an isolated checkout on its own `wisp/…` branch,
   created at start and removed at archive. A project runs any number at once.

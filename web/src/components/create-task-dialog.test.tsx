@@ -31,7 +31,7 @@ const harness: HarnessInfo = {
 }
 
 describe("create task dialog layout", () => {
-  it("stacks the bar into columns on a narrow modal and one line on a wide one", async () => {
+  function mountLayout() {
     render(
       <CreateTaskDialog
         open
@@ -44,17 +44,35 @@ describe("create task dialog layout", () => {
       />,
       { wrapper: runtimeWrapper(fakeDaemonTransport()) },
     )
+  }
+
+  it("stacks the bar into columns on a narrow modal and one line on a wide one", async () => {
+    mountLayout()
 
     // The switch keys off the modal's own width (@container). Narrow: the
-    // choices that shape the task stack in a left column; worktree rides
-    // directly above Create in a right column pinned to the bottom right.
-    // Wide: both clusters flatten into a single line.
+    // choices that shape the task stack in a left column, with Create pinned
+    // to the bottom right. Wide: both clusters flatten into a single line.
     const create = await screen.findByRole("button", { name: "Create" })
     const rightCluster = create.parentElement as HTMLElement
-    expect(rightCluster).toHaveClass("ml-auto", "flex-col", "justify-end", "@min-[640px]:flex-row")
+    expect(rightCluster).toHaveClass("ml-auto", "flex", "justify-end")
     const bar = rightCluster.parentElement as HTMLElement
     expect(bar).toHaveClass("flex", "@min-[640px]:flex-wrap")
     expect(bar.firstElementChild).toHaveClass("min-w-0", "grow", "flex-col", "@min-[640px]:flex-row")
+  })
+
+  it("keeps project, where it runs and its base on the scoping row above the prompt", async () => {
+    mountLayout()
+
+    // Project and where the task runs are the two decisions that scope the
+    // prompt, so they share the row above it. The path is the project
+    // trigger's own parenthetical rather than a column of its own, which is
+    // what freed the width for the mode and base pickers.
+    const project = await screen.findByRole("button", { name: "Project" })
+    expect(project).toHaveTextContent("repo")
+    expect(project).toHaveTextContent("(/repo)")
+    const row = project.parentElement as HTMLElement
+    expect(row).toContainElement(screen.getByRole("button", { name: "Worktree" }))
+    expect(row).toContainElement(screen.getByRole("button", { name: /Base/ }))
   })
 })
 
