@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import type { ConnectionQueryKeys } from "./query";
 import type { DaemonEventStream, DaemonTransport } from "./transport";
-import type { ApiTask, TaskDetail, TaskState, WispEvent } from "./types";
+import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types";
 
 /**
  * The EventSource→queryClient bridge (the wisp-dev frontend reference): the app holds exactly
@@ -125,7 +125,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
           task.id === evt.taskId ? { ...task, title: evt.title!, updated_at: evt.updatedAt! } : task,
         ),
       );
-      opts.client.setQueryData<TaskDetail>(qk.task(evt.taskId), (current) =>
+      opts.client.setQueryData<ConversationDetail>(qk.task(evt.taskId), (current) =>
         current ? { ...current, title: evt.title!, updated_at: evt.updatedAt! } : current,
       );
       return;
@@ -144,7 +144,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       if (evt.taskId === opts.getSelectedId()) {
         // instant header echo; the debounced refetch brings the truth (and
         // archive flips, which the event alone can't carry)
-        opts.client.setQueryData<TaskDetail>(qk.task(evt.taskId), (old) =>
+        opts.client.setQueryData<ConversationDetail>(qk.task(evt.taskId), (old) =>
           old ? { ...old, state: evt.state as TaskState, state_detail: evt.stateDetail } : old,
         );
         invalidateSelectedTurn();

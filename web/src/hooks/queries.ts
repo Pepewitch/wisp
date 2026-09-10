@@ -6,6 +6,7 @@ import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
+  ConversationDetail,
   DiffResponse,
   HarnessesResponse,
   PullRequestOverview,
@@ -14,7 +15,6 @@ import type {
   SearchResponse,
   StatusEntry,
   SuffixPrompt,
-  TaskDetail,
   TaskSkills,
   UpdateStatus,
   WorktreeFileResponse,
@@ -76,12 +76,12 @@ export function useUpdateStatus(
   })
 }
 
-/** GET /api/tasks/:id — adds turns and diffstat to the list row. */
+/** GET /api/tasks/:id/conversation — selected history without filesystem or Git work. */
 export function useTaskDetail(id: string | null) {
   const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.task(id ?? ""),
-    queryFn: () => transport.request<TaskDetail>(`/api/tasks/${id}`),
+    queryFn: () => transport.request<ConversationDetail>(`/api/tasks/${id}/conversation`),
     enabled: id !== null,
   });
 }

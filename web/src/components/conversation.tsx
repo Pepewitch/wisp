@@ -37,7 +37,8 @@ import {
 } from "@/lib/activity"
 import { duration } from "@/lib/state"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
-import type { TaskDetail, TaskMessage, Turn } from "@/lib/types"
+import { scheduleConversationPaint } from "@/lib/task-switch-performance"
+import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import type { StreamState } from "@/stream/reducer"
@@ -71,7 +72,7 @@ export function Conversation({
   note,
   touch = false,
 }: {
-  task: TaskDetail | null
+  task: ConversationDetail | null
   /** the live log follow; its blocks belong to the newest turn(s) */
   stream: StreamState
   /** "connecting…" / "select a task" — the stream's own placeholder */
@@ -144,6 +145,11 @@ export function Conversation({
     if (node.getBoundingClientRect().top >= el.getBoundingClientRect().top) return
     el.scrollTop += el.scrollHeight - before
   }, [])
+
+  const taskId = task?.id
+  useEffect(() => (
+    taskId ? scheduleConversationPaint() : undefined
+  ), [taskId])
 
   if (!task) {
     return (

@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../src/daemon";
 import { type WispConfig } from "../src/config";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import * as subprocess from "../src/subprocess";
 import { createWorktree } from "../src/worktree";
 
 /**
@@ -103,6 +104,24 @@ describe("the three read routes on a worktree git has forgotten", () => {
     expect(detail.diffstat).toBeNull();
     expect(detail.worktreeReason).toContain(worktree);
     expect(detail.worktreeReason).toContain("Git no longer tracks this worktree");
+  });
+
+  test("GET /api/tasks/:id/conversation does not inspect the forgotten worktree", async () => {
+    const { id } = await forgottenTask();
+    const run = spyOn(subprocess, "runBounded").mockImplementation(async () => {
+      throw new Error("conversation detail spawned a subprocess");
+    });
+    try {
+      const response = await call(`/api/tasks/${id}/conversation`);
+      expect(response.status).toBe(200);
+      const detail = await body<Record<string, unknown>>(response);
+      expect(detail.id).toBe(id);
+      expect(detail).not.toHaveProperty("diffstat");
+      expect(detail).not.toHaveProperty("worktreeReason");
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      run.mockRestore();
+    }
   });
 
   test("GET /api/tasks/:id/diff is 200 with an empty diff and the reason — a state, not a request failure", async () => {

@@ -228,10 +228,14 @@ export interface UpdateStatus {
   checkedAt: string | null
 }
 
-/** GET /api/tasks/:id — the list row plus turns and a diffstat. */
-export interface TaskDetail extends ApiTask {
+/** GET /api/tasks/:id/conversation — task history with no filesystem or Git work. */
+export interface ConversationDetail extends ApiTask {
   turns: Turn[];
   messages?: TaskMessage[];
+}
+
+/** GET /api/tasks/:id — the legacy Git-aware detail contract retained for clients and CLI. */
+export interface TaskDetail extends ConversationDetail {
   /** null whenever there is nothing to measure, including an unreadable worktree */
   diffstat: string | null;
   worktreeReason: WorktreeReason;

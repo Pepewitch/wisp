@@ -251,6 +251,50 @@ describe("daemon API contracts, batch 2", () => {
     });
   });
 
+  test("conversation detail returns the same history without Git-owned fields", async () => {
+    const base = await startServer();
+    const task = makeTask();
+    const logFile = join(LOG_DIR, `${task.id}-conversation-turn1.out.log`);
+    writeFileSync(logFile, "stdout\n");
+    const turnId = createTurn(task.id, 1, "load conversation", null, logFile);
+    finishTurn(turnId, "done", 0, "conversation loaded");
+    setTaskFields(task.id, { turn_count: 1 });
+    transition(task.id, "done", "conversation loaded");
+
+    const response = await api(base, `/api/tasks/${task.id}/conversation`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("server-timing")).toMatch(/^conversation;dur=\d+\.\d$/);
+    const body = await json<Record<string, unknown>>(response);
+    expect(body).toMatchObject({
+      id: task.id,
+      state: "done",
+      state_detail: "conversation loaded",
+      turn_count: 1,
+      latest_turn_has_result: true,
+    });
+    expect(body).not.toHaveProperty("diffstat");
+    expect(body).not.toHaveProperty("worktreeReason");
+    expect(body.messages).toEqual([]);
+    expect(body.turns).toEqual([
+      expect.objectContaining({
+        task_id: task.id,
+        n: 1,
+        prompt: "load conversation",
+        result: "conversation loaded",
+        status: "done",
+      }),
+    ]);
+
+    // Compatibility: the existing route retains its Git-aware shape.
+    const legacy = await api(base, `/api/tasks/${task.id}`);
+    expect(legacy.status).toBe(200);
+    expect(await json(legacy)).toMatchObject({
+      id: task.id,
+      diffstat: null,
+      worktreeReason: null,
+    });
+  });
+
   test("archived task detail remains readable and marks archived true", async () => {
     const base = await startServer();
     const task = makeTask();

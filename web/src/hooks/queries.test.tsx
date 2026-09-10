@@ -16,6 +16,7 @@ import {
   usePullRequestOverview,
   usePullRequests,
   usePullRequestStatus,
+  useTaskDetail,
   useUpdateStatus,
 } from "./queries"
 
@@ -56,6 +57,27 @@ describe("usePullRequestStatus", () => {
   it("does not read when no task is selected", () => {
     const { wrapper } = harness()
     renderHook(() => usePullRequestStatus(null), { wrapper })
+    expect(mocks.request).not.toHaveBeenCalled()
+  })
+})
+
+describe("useTaskDetail", () => {
+  it("reads the DB-only conversation endpoint for the selected task", async () => {
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({ id: "tdetail" })
+    const { wrapper } = harness()
+    renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith(
+        "/api/tasks/tdetail/conversation"
+      )
+    )
+  })
+
+  it("does not read conversation detail when no task is selected", () => {
+    mocks.request.mockReset()
+    const { wrapper } = harness()
+    renderHook(() => useTaskDetail(null), { wrapper })
     expect(mocks.request).not.toHaveBeenCalled()
   })
 })

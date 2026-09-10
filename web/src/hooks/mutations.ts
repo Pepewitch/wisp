@@ -4,7 +4,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, SendResponse, SuffixPrompt, TaskDetail, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
+import type { ApiTask, ConversationDetail, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -95,7 +95,7 @@ export function useRenameTask() {
           task.id === saved.id ? { ...task, title: saved.title, updated_at: saved.updated_at } : task,
         ),
       );
-      client.setQueryData<TaskDetail>(qk.task(saved.id), (current) =>
+      client.setQueryData<ConversationDetail>(qk.task(saved.id), (current) =>
         current ? { ...current, title: saved.title, updated_at: saved.updated_at } : current,
       );
     },

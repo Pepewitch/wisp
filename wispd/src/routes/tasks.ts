@@ -41,6 +41,28 @@ import { updateTaskAndEmit } from "./task-update";
 /** Creation already derives at most 80 characters from turn 1; renames keep the same UI-safe ceiling. */
 const TASK_TITLE_MAX = 80;
 
+/** The conversation payload is SQLite-only; repository state belongs to Status/Changes. */
+function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): Record<string, unknown> {
+  const turns = turnsFor(task.id);
+  const latest = turns.at(-1);
+  return {
+    ...apiTask(task),
+    latest_turn_model: latest?.model ?? null,
+    latest_turn_exit_code: latest?.exit_code ?? null,
+    latest_turn_has_result: latest ? latest.result !== null : false,
+    turns: turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
+    messages: messagesFor(task.id).map(apiTaskMessage),
+  };
+}
+
+/** GET /api/tasks/:id/conversation — task history without filesystem or Git work. */
+function conversationResponse(task: Task, adapters: Record<string, AdapterDef>): Response {
+  const started = performance.now();
+  const response = json(conversationDetail(task, adapters));
+  response.headers.set("server-timing", `conversation;dur=${(performance.now() - started).toFixed(1)}`);
+  return response;
+}
+
 /** GET /api/tasks */
 export function listTasksRoute(url: URL): Response {
   // each task's LATEST turn, for the list surfaces: the model it actually ran
@@ -351,6 +373,9 @@ function basicTaskAction(
   method: string,
   adapters: Record<string, AdapterDef>,
 ): Response | Promise<Response> | null {
+  if (action === "conversation" && method === "GET") {
+    return conversationResponse(task, adapters);
+  }
   if (action === "interrupt" && method === "POST") {
     return (async () => {
       if (task.archived) return err("task is archived — archived tasks are read-only", 409);
@@ -448,17 +473,8 @@ export function taskRoute(
       // task they archived.
       const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path);
       const stat = health?.ok ? await diffStat(task.worktree_path!) : null;
-      // the same latest-turn facts the list carries, so a client derives the
-      // display word ("exited 1") identically from either route (Theme B)
-      const turns = turnsFor(task.id);
-      const latest = turns.at(-1);
       return json({
-        ...apiTask(task),
-        latest_turn_model: latest?.model ?? null,
-        latest_turn_exit_code: latest?.exit_code ?? null,
-        latest_turn_has_result: latest ? latest.result !== null : false,
-        turns: turns.map((t) => apiTurn(t, adapters[t.harness])),
-        messages: messagesFor(task.id).map(apiTaskMessage),
+        ...conversationDetail(task, adapters),
         diffstat: stat,
         worktreeReason: health?.reason ?? null,
       });

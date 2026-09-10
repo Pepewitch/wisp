@@ -48,6 +48,7 @@ import { useAddProject } from "@/hooks/mutations"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
+import { useTaskSwitchPerformance } from "@/hooks/useTaskSwitchPerformance"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -284,6 +285,7 @@ function MainView({
   const statusQuery = useStatus()
   const reposQuery = useRepos()
   const detailQuery = useTaskDetail(selectedId)
+  useTaskSwitchPerformance(selectedId, detailQuery.data?.id, detailQuery.dataUpdatedAt)
   // one record, two surfaces: the sidebar row and the task header can no
   // longer disagree about what a PR has become (see `usePullRequests`)
   const pullRequests = usePullRequests(selectedId)
@@ -461,7 +463,7 @@ function MainView({
         <TaskHeader
           task={header}
           pullRequest={pullRequests.selected}
-          worktreeReason={detailQuery.data?.worktreeReason ?? null}
+          worktreeReason={status?.worktreeReason ?? null}
         />
       }
       updateControl={updateControls.desktop}
