@@ -10,10 +10,10 @@
  *
  * Three properties make this safe to rely on:
  *
- * - **Derived, never authoritative.** The log stays the record; a row here can
- *   be deleted and rebuilt from it. That is why the migration backfills
- *   nothing: the daemon does it in the background, resumably, after it is
- *   listening (turn-text-backfill.ts).
+ * - **Derived while the log survives.** Archived transcript retention requires
+ *   a complete prose row before eviction. After that, this row is the retained
+ *   prose record: never discard it on the assumption a log can rebuild it.
+ *   Migration backfills nothing; the daemon indexes resumably after listening.
  * - **No new parser.** The lines go through the adapter's own
  *   `createActivityFormatter`, the one place harness wire shapes are allowed,
  *   and only `kind: "text"` events are kept. A harness Wisp cannot structure
@@ -133,6 +133,13 @@ export async function indexTurnProse(input: {
   def: AdapterDef | undefined;
 }): Promise<TurnTextState> {
   const jsonl = await readLog(input.logFile);
+  // A retained prose row becomes the only copy after transcript eviction.
+  // Re-indexing an unavailable file must not overwrite that copy with absence.
+  const capture = db.query("SELECT capture_state FROM turns WHERE id = ?").get(input.turnId) as { capture_state: string | null } | null;
+  if (capture?.capture_state === "evicted") {
+    const retained = getTurnText(input.turnId);
+    if (retained) return retained.state;
+  }
   const extracted: ExtractedTurnText =
     jsonl === null ? { text: "", state: "unavailable" } : extractTurnProse(input.def, jsonl, input.result);
   putTurnText({

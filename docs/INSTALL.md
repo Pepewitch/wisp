@@ -128,6 +128,18 @@ are private to the current user. Export a retained turn as JSONL with
 `wisp log <task> [turn] --diagnostic`; treat that export as potentially
 sensitive because it contains harness output from the turn.
 
+Archived stdout/stderr turn logs have a separate policy:
+`turnLogRetentionEnabled: true`, `turnLogRetentionDays: 90`, and
+`turnLogMaxBytes: 1073741824` (1 GiB). The daemon evicts whole archived turns,
+oldest first, only after agent prose is completely indexed. Live logs are never
+eligible. Set `turnLogRetentionEnabled: false` to stop eviction, or change the
+positive integer age/byte limits, then restart. These settings do not change
+`turnTranscriptBytes`, the per-turn capture budget. Use `wisp doctor --storage`
+to inspect storage without modifying the home; use
+`wisp purge --archived-before 30d` for a non-destructive purge preview.
+See [storage and retention](ARCHIVE-CLEANUP.md#turn-log-retention).
+
+
 If a configured port is occupied, Wisp must fail rather than kill the existing
 listener. Inspect it with:
 

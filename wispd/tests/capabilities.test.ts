@@ -72,6 +72,8 @@ describe("daemon capabilities", () => {
         attachments: true,
         managedUpdates: true,
         archiveCleanup: true,
+        bulkPurge: true,
+        turnLogRetention: true,
       },
     });
 

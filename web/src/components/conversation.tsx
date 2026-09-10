@@ -26,7 +26,7 @@ import { TurnAttachments } from "@/components/turn-attachments"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { useFindInTask } from "@/hooks/useFindInTask"
-import { formatBytes } from "@/lib/attachments"
+import { TurnCaptureNotice } from "@/components/turn-capture-notice"
 import {
   activityByTurn,
   anchoredMessageIds,
@@ -275,26 +275,6 @@ function ContextDivider({ turn }: { turn: Turn }) {
   )
 }
 
-function DiagnosticAvailability({ taskId, turn }: { taskId: string; turn: Turn }) {
-  const command = <code>wisp log {taskId} {turn.n} --diagnostic</code>
-  switch (turn.diagnostic_state) {
-    case "complete":
-      return <> The retained diagnostic history can be exported with {command}.</>
-    case "partial":
-      return (turn.diagnostic_bytes ?? 0) > 0
-        ? <> A partial diagnostic archive can be exported with {command}.</>
-        : <> No diagnostic records were retained.</>
-    case "evicted":
-      return <> The diagnostic archive has been evicted.</>
-    case "disabled":
-      return <> Diagnostic recording was disabled.</>
-    case "unavailable":
-      return <> Diagnostic recording was unavailable.</>
-    default:
-      return null
-  }
-}
-
 /**
  * One turn. No "Turn N" rule — the right-aligned bubble is the boundary and
  * the gap carries the rhythm (30px above a bubble, 16px inside a turn).
@@ -351,7 +331,8 @@ function TurnBlock({
    * IN PLACE now, rather than as a separate recovered block down here.
    */
   const settledWithoutResult = !running && !turn.result
-  const timeline = live ?? expanded
+  const evicted = turn.capture_state === "evicted"
+  const timeline = evicted ? null : live ?? expanded
   // Rule 5: only a timeline that is on screen can place a message. Everything
   // it cannot place still renders, at the head of the turn.
   const timelineItems = timeline?.items
@@ -390,7 +371,7 @@ function TurnBlock({
         <SteeredMessage key={message.id} taskId={taskId} message={message} archived={archived} />
       ))}
 
-      <Activity
+      {!evicted && <Activity
         taskId={taskId}
         turn={turn}
         live={live}
@@ -406,22 +387,9 @@ function TurnBlock({
           // placement and wording rather than borrowing this one.
           return message ? <SteeredMessage taskId={taskId} message={message} archived={archived} /> : null
         }}
-      />
+      />}
 
-      {(turn.capture_state === "degraded" || turn.capture_state === "disabled") && (
-        <div data-capture-state={turn.capture_state} className="mt-3.5 rounded-md border border-border bg-card px-3 py-2">
-          <div className="text-[10.5px] font-semibold tracking-[0.075em] text-fg-secondary uppercase">
-            Activity history incomplete
-          </div>
-          <div className="mt-1 text-[12px] leading-relaxed text-fg-secondary">
-            {turn.capture_state === "degraded"
-              ? `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) were not retained. `
-              : "Transcript storage stopped during this turn. "}
-            The final outcome was recorded independently.
-            <DiagnosticAvailability taskId={taskId} turn={turn} />
-          </div>
-        </div>
-      )}
+      <TurnCaptureNotice taskId={taskId} turn={turn} />
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
 

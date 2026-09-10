@@ -171,6 +171,17 @@ For a database startup error, run `wisp doctor --database` with the same
 A newer schema requires the same or a newer Wisp version. For damaged files,
 preserve a copy before repair or restore; deleting the database discards tasks.
 
+Use `wisp doctor --storage` for a strictly read-only local storage report,
+including largest and orphan worktrees, live/archived log bytes, a rough growth
+rate, and potential reclaim. `--archived-before 30d` (the default) or a UTC
+`YYYY-MM-DD` changes the archive estimate. It scans logical file bytes without
+following symlinks or initializing the home. See [storage and retention](docs/ARCHIVE-CLEANUP.md#storage-report).
+
+`wisp purge --archived-before 30d` previews permanent deletion of archived
+tasks. It deletes nothing unless repeated with `--confirm-count <n>` matching
+the preview. Export anything to keep first. Cleanup and process safety checks
+still apply; failures are named without stopping the remaining deletions.
+
 Then create a task:
 
 ```sh
@@ -327,6 +338,17 @@ identifies a saved child by PID plus process start time, or finalizes a dead
 one from its persisted log. Undelivered messages remain in their per-task FIFO;
 native RPC admissions have bounded acknowledgement waits and never hold turn
 finalization open forever.
+
+Archived turn logs also have retention: by default, 90 days and 1 GiB shared
+across archived turns, evicting whole turns (stdout and stderr) oldest first.
+Live-task logs are never eligible. Retention waits for completed archive cleanup,
+stopped processes and a complete indexed-prose row, and defers active readers or
+exports. Protected logs can keep the archive above its limit. Set
+`turnLogRetentionEnabled`, `turnLogRetentionDays` or `turnLogMaxBytes` in
+`config.json`, then restart. These are separate from the per-turn capture budget
+`turnTranscriptBytes`. Eviction is stated in the conversation and `wisp log`,
+including `--raw`; indexed prose, prompts and final results remain in SQLite.
+See [retention details](docs/ARCHIVE-CLEANUP.md#turn-log-retention).
 
 The shipped daemon is one compiled binary: no Node, no `node_modules`, and no
 sibling asset directory to install. That is what “self-contained” means, and it

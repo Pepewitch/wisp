@@ -98,8 +98,62 @@ requests and late callbacks remain bound to their initiating connection.
 
 ## Retention, export, and permanent deletion
 
-Archive is not deletion: conversations, attachment bytes and retained logs stay
-in Wisp. Older archives whose attachments were already deleted show that loss;
+### Storage report
+
+`wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` inspects the local
+`WISP_HOME` without creating files, changing permissions, or requiring a daemon.
+It reads a database snapshot in memory, including committed WAL pages, and never
+opens the on-disk database with SQLite. It reports logical file bytes, not
+allocated disk blocks; symlinks are not followed. Concurrent filesystem changes
+can make the totals approximate; a busy database snapshot asks you to retry.
+
+Orphan worktrees belong to archived or missing tasks. The report identifies
+them but never removes them. The done-task estimate counts worktrees only, not
+local repositories; actual archive still runs its normal safety checks.
+The purge estimate counts managed task files, logs and diagnostics, not orphan
+worktrees or SQLite space (logical row deletion does not shrink the database).
+The cutoff uses an archive's **last update**, conservatively, because historical
+tasks do not record a separate archive timestamp. Incomplete cleanup may refuse
+purge. Growth is retained log bytes divided by days since the oldest log mtime,
+not a measured write rate, and becomes less representative after deletion.
+
+### Turn-log retention
+
+Archive is not permanent task deletion. Prompts, results, indexed agent prose,
+and attachments stay in Wisp; raw turn transcripts have their own retention.
+Defaults in `config.json` (restart after editing):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `turnLogRetentionEnabled` | `true` | Enable background eviction |
+| `turnLogRetentionDays` | `90` | Age since the newest stdout/stderr mtime in a turn |
+| `turnLogMaxBytes` | `1073741824` (1 GiB) | Total managed archived turn-log bytes |
+
+These generous bounds leave recent, modest archives intact while limiting
+long-term growth. `turnTranscriptBytes` remains the separate **per-turn capture**
+budget; diagnostic retention remains independent (7 days / 512 MiB).
+
+A resumable, single-flight pass starts after the daemon is listening and runs
+each minute, yielding between small batches and checking shutdown. It removes
+whole turns, oldest first, for both expired age and excess total bytes. Only
+archived, settled turns with completed cleanup, stopped tracked processes and a
+**complete** `turn_texts` prose row qualify. Missing, partial and unavailable
+indexes are skipped, as are active readers and exports. Live-task logs are never
+removed at any age or size. The byte bound is best effort when protected logs
+alone exceed it. Unknown names, external log paths and symlinks are not removed.
+
+Before unlinking, the turn is durably marked `capture_state: "evicted"`.
+Interrupted file removal resumes on a later pass; `capture_detail` records the
+pending removal until it completes. The conversation, raw/human log API, SSE
+activity timeline and `wisp log <task> [turn] --raw` explicitly name eviction.
+Indexed prose remains searchable, but reasoning and tool activity cannot be
+reconstructed from the prose index. Preserve transcripts in a private export or
+offline backup before retention if those details matter. Disabling retention
+stops future passes; it does not restore evicted logs.
+
+### Export and permanent deletion
+
+Older archives whose attachments were already deleted show that loss;
 upgrading cannot recreate them. Interrupted legacy archive jobs finish under
 their previous attachment-removal policy.
 
@@ -131,7 +185,28 @@ of SQLite pages, filesystem snapshots or copies outside Wisp.
 umask 077
 wisp export <task> > task-export.json
 wisp purge <task> --confirm <task>
+# Preview every matching archive, including exact task IDs and file bytes.
+wisp purge --archived-before 30d
+# Only after reviewing the preview: n must match its count.
+wisp purge --archived-before 30d --confirm-count <n>
 ```
+
+Bulk purge accepts a positive age (`30d`) or a UTC date (`YYYY-MM-DD`).
+Without confirmation it deletes nothing and exits successfully. Confirmation
+must match the current count; the daemon also checks the preview's selection
+fingerprint and fixed cutoff before deleting. A changed selection refuses.
+Only archived tasks qualify, using their last update (not creation date).
+Each deletion uses the same cleanup, process, export-busy and webhook guards as
+single-task purge. One failure does not stop the rest: the receipt names failed
+IDs and reclaimed file bytes, and the CLI exits nonzero if any failed. Bytes
+exclude SQLite pages and unmeasurable partial failures. A same-count replacement
+between separate CLI invocations cannot be detected by count alone: review the
+list printed on confirmation too.
+
+Authenticated bulk API: `GET /api/purge?archivedBefore=30d` returns `tasks`,
+`bytes`, `cutoff` and `fingerprint`; `DELETE /api/purge` requires that `cutoff`,
+`fingerprint` and `confirmCount`. The response lists `purged`, `failed` and
+`reclaimedBytes`. `GET /api/capabilities` advertises `bulkPurge`.
 
 Authenticated API: `GET /api/tasks/:id/storage`, `GET /api/tasks/:id/export`, and
 `DELETE /api/tasks/:id/purge` with `{"confirmTaskId":"<task>"}`. Export validation

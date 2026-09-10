@@ -6,6 +6,18 @@ HTTP clients of the daemon. Setup and diagnostic commands such as `init`,
 installation. Task ids are short strings like `tq2szu`; `wisp --help` prints
 the same list.
 
+`wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` is strictly
+read-only, works without a daemon, and never initializes the local home.
+It shows storage by directory, largest and orphan worktrees, live/archived log
+bytes, estimated growth, and potential reclaim. Archive age uses last update;
+estimates exclude SQLite overhead and do not bypass cleanup safety checks.
+
+`wisp purge --archived-before <30d|YYYY-MM-DD>` lists archived tasks and bytes
+without deleting anything. Repeat with `--confirm-count <n>` only after reviewing
+the list and exporting what you need. A stale count refuses. Failed deletions
+are named while the rest continue; any failure exits nonzero.
+`wisp purge <task> --confirm <task>` remains the single-task form.
+
 ## Tasks
 
 ```
@@ -50,6 +62,13 @@ per-harness (`--raw` for the retained harness stream, `-f` to follow live).
 Recorder-capable live turns continue beyond the retained transcript budget:
 `-f` still receives their current activity, while a settled log clearly marks
 any history that was not retained.
+
+Archived transcripts expire by default after 90 days or when archived logs
+exceed 1 GiB, oldest whole turns first. Only completely indexed prose permits
+eviction; live logs never qualify. `log`, including `--raw`, explicitly says
+when a transcript was evicted. Prompt, result and indexed prose remain.
+Configure `turnLogRetentionEnabled`, `turnLogRetentionDays`, and
+`turnLogMaxBytes` separately from `turnTranscriptBytes`.
 
 ```
 wisp wait <task> [--timeout <sec>]
@@ -97,8 +116,8 @@ wisp cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopp
 wisp attach <task>
 ```
 
-`push` pushes the task branch to origin. `archive` removes the worktree and
-the task's attachment bytes, always keeping the branch; it refuses (exit
+`push` pushes the task branch to origin. `archive` removes the worktree while
+keeping the branch, conversation and attachment bytes; it refuses (exit
 nonzero, named reason) while a turn is running, the tree is dirty, or the
 branch holds commits nothing else holds — a merged or pushed branch archives
 clean. `-f` overrides: kills the turn, commits leftovers onto the branch as

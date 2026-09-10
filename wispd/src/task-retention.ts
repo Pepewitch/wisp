@@ -12,6 +12,12 @@ import type { Task } from "./types";
 import type { TaskExport } from "../../shared/task-export";
 
 const busy = new Set<string>();
+/** Background retention shares the export/purge exclusion, never races a portable snapshot. */
+export function acquireTaskRetention(id: string): (() => void) | null {
+  if (busy.has(id)) return null;
+  busy.add(id);
+  return () => { busy.delete(id); };
+}
 let exporting = false;
 async function processBarrier(id: string): Promise<void> {
   try { await assertTaskProcessesEnded(id); } catch { throw new RetentionError("Tracked background work is still running or unverified. Inspect the task process group on the daemon host, stop it, then retry."); }

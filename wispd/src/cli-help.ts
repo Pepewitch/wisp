@@ -14,6 +14,7 @@ usage:
   ${COMMAND} show <task>                             task detail: turns, attachments, diffstat
   ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)
   ${COMMAND} log <task> [turn] [-f] [--raw] [--diagnostic]  activity feed; --diagnostic exports retained JSONL
+                                               evicted archived transcripts are explicitly marked
   ${COMMAND} search <text> [-a] [--json]             exact text in titles, prompts, results and queued messages
                                                     (-a includes archived tasks)
   ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);
@@ -27,6 +28,8 @@ usage:
   ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work)
   ${COMMAND} export <task>                           print portable JSON (redirect to a private file)
   ${COMMAND} purge <task> --confirm <task>          permanently delete archived Wisp data; keep Git branches
+  ${COMMAND} purge --archived-before <30d|YYYY-MM-DD> [--confirm-count <n>]
+                                               dry run by default; count must match to delete archives
   ${COMMAND} project add <path> [--name <name>]      register a repo for the web project picker
   ${COMMAND} project rm <path>                       remove a configured project (task history stays)
   ${COMMAND} project ls                              list configured and historical repo paths
@@ -46,4 +49,6 @@ usage:
   ${COMMAND} version [--json] | --version [--json]   print the Wisp version and build commit
   ${COMMAND} doctor [--harness <name>]               activation check; optionally require one harness
   ${COMMAND} doctor --database                       read-only database check; no harness probes
+  ${COMMAND} doctor --storage [--archived-before <30d|YYYY-MM-DD>]
+                                               read-only local storage and potential reclaim; no daemon needed
 `;

@@ -53,14 +53,16 @@ export async function exportDiagnosticLog(taskId: string | undefined, turnQuery:
 export async function followHumanLog(taskId: string | undefined, turnQuery: string): Promise<void> {
   const res = await apiStream(`/api/tasks/${taskId}/log/stream?${turnQuery}format=human`);
   if (!res.body) throw new Error("log stream returned no body");
-  for await (const frame of readSseFrames(res.body)) {
-    if (frame.event === "backlog" || frame.event === "append") {
-      const data = JSON.parse(frame.data) as { text?: string };
-      if (data.text) console.log(data.text);
-    } else if (frame.event === "turn-end") {
-      const data = JSON.parse(frame.data) as { turn: number; status: string };
-      console.log(`— turn ${data.turn} ${data.status} —`);
-      return;
+  try {
+    for await (const frame of readSseFrames(res.body)) {
+      if (frame.event === "backlog" || frame.event === "append") {
+        const data = JSON.parse(frame.data) as { text?: string };
+        if (data.text) console.log(data.text);
+      } else if (frame.event === "turn-end") {
+        const data = JSON.parse(frame.data) as { turn: number; status: string };
+        console.log(`— turn ${data.turn} ${data.status} —`);
+        return;
+      }
     }
-  }
+  } finally { await res.body.cancel(); }
 }

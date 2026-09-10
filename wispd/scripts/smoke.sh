@@ -165,6 +165,20 @@ echo "[5] archive clean task"
 $WISP archive "$ID" | grep -q archived || fail "archive failed"
 $WISP ls | grep -q "$ID" && fail "archived task still listed"
 
+echo "[5a] read-only storage report sees the running daemon's ledger"
+STORAGE=$($WISP doctor --storage)
+grep -q "Wisp storage:.*read-only" <<< "$STORAGE" || fail "storage report missing"
+grep -q "archived tasks" <<< "$STORAGE" || fail "storage report omitted archived logs"
+$WISP show "$ID" > /dev/null || fail "storage report changed archived task"
+
+echo "[5b] bulk purge defaults to a non-destructive preview"
+LOG_BEFORE=$($WISP log "$ID" 1 --raw)
+PREVIEW=$($WISP purge --archived-before 9999-12-31)
+grep -q "Dry run: nothing deleted" <<< "$PREVIEW" || fail "bulk purge was not a dry run"
+grep -q "$ID" <<< "$PREVIEW" || fail "bulk preview omitted archive"
+[[ "$($WISP log "$ID" 1 --raw)" == "$LOG_BEFORE" ]] || fail "dry-run purge changed transcript"
+$WISP show "$ID" > /dev/null || fail "dry-run purge deleted archive"
+
 echo "[6] archive refuses on dirty worktree, force commits the work onto the branch"
 OUT4=$($WISP new "$REPO" "dirty task" --harness fake)
 ID4=$(echo "$OUT4" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')

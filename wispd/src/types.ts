@@ -90,7 +90,7 @@ export type TurnStatus = "running" | "done" | "failed" | "interrupted";
 
 /** Durable selection of the turn-capture semantics used when a process starts. */
 export type TurnCaptureMode = "recorder-v1";
-export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy";
+export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
 export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
 
 /**
@@ -276,6 +276,7 @@ export interface Turn {
 
 /** Read old and new turn rows without reinterpreting their capture semantics. */
 export function turnCaptureState(turn: Pick<Turn, "capture_mode" | "capture_state">): TurnCaptureState {
+  if (turn.capture_state === "evicted") return "evicted";
   if (turn.capture_mode === null) return "legacy";
   return turn.capture_state ?? "complete";
 }

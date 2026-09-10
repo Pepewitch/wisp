@@ -76,7 +76,7 @@ export interface WispConfig {
   /** Simultaneously running tasks, including setup; never a conversation-turn budget. */
   maxConcurrentTasks?: number;
   /**
-   * Permanent primary-transcript budget for one turn. Reaching this budget is
+   * Primary-transcript capture budget for one turn. Reaching this budget is
    * non-fatal for recorder-owned turns; legacy turns retain their old cap
    * behavior until the recorder rollout is complete.
    */
@@ -89,6 +89,12 @@ export interface WispConfig {
   diagnosticMaxBytes?: number;
   /** Age ceiling for settled diagnostic turn archives. Defaults to 7 days. */
   diagnosticRetentionDays?: number;
+  /** Evict indexed, archived turn logs only. Defaults to true. */
+  turnLogRetentionEnabled?: boolean;
+  /** Archived turn-log byte ceiling, not the per-turn capture budget. Default 1 GiB. */
+  turnLogMaxBytes?: number;
+  /** Archived turn logs expire after 90 days by default. Live logs are never eligible. */
+  turnLogRetentionDays?: number;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
   /** repo path or repo basename -> untracked files to copy into new worktrees (e.g. [".env"]) */
@@ -180,6 +186,9 @@ const DEFAULTS: WispConfig = {
   diagnosticEnabled: true,
   diagnosticMaxBytes: 512 * 1024 * 1024,
   diagnosticRetentionDays: 7,
+  turnLogRetentionEnabled: true,
+  turnLogMaxBytes: 1024 * 1024 * 1024,
+  turnLogRetentionDays: 90,
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
@@ -199,6 +208,9 @@ const CONFIG_KEYS = [
   "diagnosticEnabled",
   "diagnosticMaxBytes",
   "diagnosticRetentionDays",
+  "turnLogRetentionEnabled",
+  "turnLogMaxBytes",
+  "turnLogRetentionDays",
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
@@ -280,6 +292,8 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
       | "logMaxBytes"
       | "diagnosticMaxBytes"
       | "diagnosticRetentionDays"
+      | "turnLogMaxBytes"
+      | "turnLogRetentionDays"
       | "setupTimeoutMinutes",
   ): void => {
     const v = raw[key];
@@ -329,7 +343,13 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   }
   num("diagnosticMaxBytes");
   num("diagnosticRetentionDays");
-  for (const key of ["diagnosticMaxBytes", "diagnosticRetentionDays"] as const) {
+  if (raw.turnLogRetentionEnabled !== undefined) {
+    if (typeof raw.turnLogRetentionEnabled !== "boolean") throw new Error("config.json: turnLogRetentionEnabled must be a boolean");
+    out.turnLogRetentionEnabled = raw.turnLogRetentionEnabled;
+  }
+  num("turnLogMaxBytes");
+  num("turnLogRetentionDays");
+  for (const key of ["diagnosticMaxBytes", "diagnosticRetentionDays", "turnLogMaxBytes", "turnLogRetentionDays"] as const) {
     const value = out[key];
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
       throw new Error(`config.json: ${key} must be a positive integer, got ${JSON.stringify(value)}`);
@@ -590,5 +610,15 @@ export function diagnosticSettings(
     enabled: cfg.diagnosticEnabled ?? true,
     maxBytes: cfg.diagnosticMaxBytes ?? DEFAULT_DIAGNOSTIC_MAX_BYTES,
     retentionMs: (cfg.diagnosticRetentionDays ?? DEFAULT_DIAGNOSTIC_RETENTION_DAYS) * 24 * 60 * 60 * 1_000,
+  };
+}
+
+export function turnLogSettings(
+  cfg: Pick<WispConfig, "turnLogRetentionEnabled" | "turnLogMaxBytes" | "turnLogRetentionDays">,
+): { enabled: boolean; maxBytes: number; retentionMs: number } {
+  return {
+    enabled: cfg.turnLogRetentionEnabled ?? true,
+    maxBytes: cfg.turnLogMaxBytes ?? 1024 * 1024 * 1024,
+    retentionMs: (cfg.turnLogRetentionDays ?? 90) * 86_400_000,
   };
 }

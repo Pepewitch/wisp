@@ -3,6 +3,7 @@ import { subscribe } from "../events";
 import { readSlice } from "../fsutil";
 import { subscribeTurnBroker, type BrokerGap, type TurnBrokerSubscription } from "../recording/broker";
 import { latestTurnForTask, turnForTask } from "../store";
+import { acquireTranscriptRead, TRANSCRIPT_EVICTED_NOTICE } from "../transcript-access";
 import type { Task, Turn } from "../types";
 import { err, integerQueryParam } from "./http";
 
@@ -87,6 +88,30 @@ type LogFormat = "activity" | "human" | "raw";
 type RenderedChunk =
   | { kind: "text"; text: string }
   | { kind: "activity"; activity: ActivityEvent[] };
+
+function evictedTranscript(format: LogFormat, turnId: number): RenderedChunk {
+  return format === "activity"
+    ? { kind: "activity", activity: [{ kind: "text", id: `transcript-evicted-${turnId}`, parentId: null, text: TRANSCRIPT_EVICTED_NOTICE }] }
+    : { kind: "text", text: TRANSCRIPT_EVICTED_NOTICE };
+}
+
+/** Snapshot the primary prefix once; the broker owns any records after its offset. */
+function turnBacklog(turn: Turn, snapshotEnd: number | undefined): Promise<{ text: string; size: number }> {
+  const firstReadBytes = snapshotEnd === undefined
+    ? LOG_BACKLOG_BYTES
+    : Math.min(LOG_BACKLOG_BYTES, snapshotEnd);
+  return readSlice(turn.log_file, 0, firstReadBytes);
+}
+
+function subscribeLogEvents(taskId: string, send: (event: string, data: unknown) => void, tick: () => Promise<void>): () => void {
+  return subscribe(evt => {
+    if (evt.type === "task" && evt.taskId === taskId) {
+      send("state", { state: evt.state, state_detail: evt.stateDetail });
+    } else if ((evt.type === "turn" || evt.type === "message") && evt.taskId === taskId) {
+      void tick();
+    }
+  });
+}
 
 class TurnStreamRenderer {
   private leftover = "";
@@ -211,6 +236,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   let brokerSubscription: TurnBrokerSubscription | null = null;
   let brokerPump: Promise<void> | null = null;
   let renderer = new TurnStreamRenderer(format, adapters[task.harness]);
+  let releaseTranscript: (() => void) | null = null;
+  let evicted = false;
 
   const cleanup = (): void => {
     if (closed) return;
@@ -223,6 +250,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     resumeDrain?.();
     resumeDrain = null;
     activeLogStreams--;
+    releaseTranscript?.();
+    releaseTranscript = null;
   };
 
   const waitForCapacity = async (): Promise<void> => {
@@ -256,6 +285,9 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   };
 
   const openTurn = async (turn: Turn): Promise<void> => {
+    releaseTranscript?.();
+    releaseTranscript = acquireTranscriptRead(turn.id);
+    evicted = turn.capture_state === "evicted";
     currentN = turn.n;
     lastOpened = turn.n;
     logFile = turn.log_file;
@@ -265,14 +297,16 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     // Formatter state, lifecycle correlation, and adapter semantics belong to
     // exactly one turn. A task may cross a harness boundary between turns.
     renderer = new TurnStreamRenderer(format, adapters[turn.harness]);
+    if (evicted) {
+      offset = 0;
+      sendRendered("backlog", turn.n, evictedTranscript(format, turn.id), turn.prompt);
+      return;
+    }
     // From the START of the turn, offset-tracked so the append stream continues
     // exactly where the backlog stopped (no gap, no overlap). Anything past the
     // first-read budget is picked up by the ordinary append loop.
     const snapshotEnd = brokerSubscription?.primaryOffset;
-    const firstReadBytes = snapshotEnd === undefined
-      ? LOG_BACKLOG_BYTES
-      : Math.min(LOG_BACKLOG_BYTES, snapshotEnd);
-    const backlog = await readSlice(turn.log_file, 0, firstReadBytes);
+    const backlog = await turnBacklog(turn, snapshotEnd);
     offset = backlog.size;
     // the turn row stores the user's actual message (the wisp preamble lives
     // only in the spawned argv), so the stream pane can show each turn's prompt
@@ -302,7 +336,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
       brokerPump = null;
       brokerSubscription?.close();
       brokerSubscription = null;
-    } else {
+    } else if (!evicted) {
       for (;;) {
         const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
         if (slice.size === offset) break; // no new bytes
@@ -322,6 +356,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     if (closed) return;
     send("turn-end", { turn: n, status });
     currentN = null;
+    releaseTranscript?.();
+    releaseTranscript = null;
   };
 
   const tick = async (): Promise<void> => {
@@ -342,7 +378,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
           }
           return;
         }
-        if (!brokerPump) {
+        if (!brokerPump && !evicted) {
           const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
           if (slice.size !== offset) {
             offset = slice.size;
@@ -366,13 +402,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
       controller = c;
-      unsubscribe = subscribe((evt) => {
-        if (evt.type === "task" && evt.taskId === task.id) {
-          send("state", { state: evt.state, state_detail: evt.stateDetail });
-        } else if ((evt.type === "turn" || evt.type === "message") && evt.taskId === task.id) {
-          void tick(); // turn boundary: fast-path the poll instead of waiting out the interval
-        }
-      });
+      unsubscribe = subscribeLogEvents(task.id, send, tick);
       poll = setInterval(() => void tick(), LOG_STREAM_POLL_MS);
       hb = setInterval(() => {
         if (closed) return;
