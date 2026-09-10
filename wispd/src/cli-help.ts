@@ -32,7 +32,7 @@ usage:
                                                dry run by default; count must match to delete archives
   ${COMMAND} project add <path> [--name <name>]      register a repo for the web project picker
   ${COMMAND} project rm <path>                       remove a configured project (task history stays)
-  ${COMMAND} project ls                              list configured and historical repo paths
+  ${COMMAND} project ls                              list configured and historical repo paths (alias: list)
   ${COMMAND} project show <path>                     print a project's settings (setup/archive scripts, copy globs)
   ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]…
                                                [--clear-setup] [--clear-archive] [--clear-copy]

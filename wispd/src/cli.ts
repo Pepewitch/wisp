@@ -357,10 +357,10 @@ async function projectCommand(positional: string[], flags: Flags): Promise<void>
   const [action, path] = positional;
   if (action === "add") return addProject(path, flags);
   if (action === "rm") return removeProject(path);
-  if (action === "ls") return listProjects();
+  if (action === "ls" || action === "list") return listProjects();
   if (action === "show") return showProject(path);
   if (action === "set") return setProject(path, flags);
-  console.error(`usage: ${COMMAND} project add <path> [--name <name>] | rm <path> | ls | show <path> | set <path> [flags]`);
+  console.error(`usage: ${COMMAND} project add <path> [--name <name>] | rm <path> | ls|list | show <path> | set <path> [flags]`);
   process.exit(1);
 }
 
