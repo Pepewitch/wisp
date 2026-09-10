@@ -282,6 +282,7 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
   const adapters = flags.raw ? null : loadAdapters();
   if (!flags.follow && !flags.f) {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}`);
+    if (data.capture_state === "evicted") { console.log(data.notice); return; }
     const def = adapters?.[data.harness as string];
     const formatLine = flags.raw ? null : createEventFormatter(def);
     const pretty = formatLine
@@ -303,6 +304,7 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
   let formatLine: ReturnType<typeof createEventFormatter> | null = null;
   for (;;) {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}offset=${offset}`);
+    if (data.capture_state === "evicted") { console.log(data.notice); return; }
     const def = adapters?.[data.harness as string];
     if (!flags.raw) formatLine ??= createEventFormatter(def);
     offset = data.size;

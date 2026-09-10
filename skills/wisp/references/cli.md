@@ -63,6 +63,13 @@ Recorder-capable live turns continue beyond the retained transcript budget:
 `-f` still receives their current activity, while a settled log clearly marks
 any history that was not retained.
 
+Archived transcripts expire by default after 90 days or when archived logs
+exceed 1 GiB, oldest whole turns first. Only completely indexed prose permits
+eviction; live logs never qualify. `log`, including `--raw`, explicitly says
+when a transcript was evicted. Prompt, result and indexed prose remain.
+Configure `turnLogRetentionEnabled`, `turnLogRetentionDays`, and
+`turnLogMaxBytes` separately from `turnTranscriptBytes`.
+
 ```
 wisp wait <task> [--timeout <sec>]
 ```
@@ -109,8 +116,8 @@ wisp cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopp
 wisp attach <task>
 ```
 
-`push` pushes the task branch to origin. `archive` removes the worktree and
-the task's attachment bytes, always keeping the branch; it refuses (exit
+`push` pushes the task branch to origin. `archive` removes the worktree while
+keeping the branch, conversation and attachment bytes; it refuses (exit
 nonzero, named reason) while a turn is running, the tree is dirty, or the
 branch holds commits nothing else holds — a merged or pushed branch archives
 clean. `-f` overrides: kills the turn, commits leftovers onto the branch as

@@ -117,8 +117,43 @@ tasks do not record a separate archive timestamp. Incomplete cleanup may refuse
 purge. Growth is retained log bytes divided by days since the oldest log mtime,
 not a measured write rate, and becomes less representative after deletion.
 
-Archive is not deletion: conversations, attachment bytes and retained logs stay
-in Wisp. Older archives whose attachments were already deleted show that loss;
+### Turn-log retention
+
+Archive is not permanent task deletion. Prompts, results, indexed agent prose,
+and attachments stay in Wisp; raw turn transcripts have their own retention.
+Defaults in `config.json` (restart after editing):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `turnLogRetentionEnabled` | `true` | Enable background eviction |
+| `turnLogRetentionDays` | `90` | Age since the newest stdout/stderr mtime in a turn |
+| `turnLogMaxBytes` | `1073741824` (1 GiB) | Total managed archived turn-log bytes |
+
+These generous bounds leave recent, modest archives intact while limiting
+long-term growth. `turnTranscriptBytes` remains the separate **per-turn capture**
+budget; diagnostic retention remains independent (7 days / 512 MiB).
+
+A resumable, single-flight pass starts after the daemon is listening and runs
+each minute, yielding between small batches and checking shutdown. It removes
+whole turns, oldest first, for both expired age and excess total bytes. Only
+archived, settled turns with completed cleanup, stopped tracked processes and a
+**complete** `turn_texts` prose row qualify. Missing, partial and unavailable
+indexes are skipped, as are active readers and exports. Live-task logs are never
+removed at any age or size. The byte bound is best effort when protected logs
+alone exceed it. Unknown names, external log paths and symlinks are not removed.
+
+Before unlinking, the turn is durably marked `capture_state: "evicted"`.
+Interrupted file removal resumes on a later pass; `capture_detail` records the
+pending removal until it completes. The conversation, raw/human log API, SSE
+activity timeline and `wisp log <task> [turn] --raw` explicitly name eviction.
+Indexed prose remains searchable, but reasoning and tool activity cannot be
+reconstructed from the prose index. Preserve transcripts in a private export or
+offline backup before retention if those details matter. Disabling retention
+stops future passes; it does not restore evicted logs.
+
+### Export and permanent deletion
+
+Older archives whose attachments were already deleted show that loss;
 upgrading cannot recreate them. Interrupted legacy archive jobs finish under
 their previous attachment-removal policy.
 

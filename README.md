@@ -339,6 +339,17 @@ one from its persisted log. Undelivered messages remain in their per-task FIFO;
 native RPC admissions have bounded acknowledgement waits and never hold turn
 finalization open forever.
 
+Archived turn logs also have retention: by default, 90 days and 1 GiB shared
+across archived turns, evicting whole turns (stdout and stderr) oldest first.
+Live-task logs are never eligible. Retention waits for completed archive cleanup,
+stopped processes and a complete indexed-prose row, and defers active readers or
+exports. Protected logs can keep the archive above its limit. Set
+`turnLogRetentionEnabled`, `turnLogRetentionDays` or `turnLogMaxBytes` in
+`config.json`, then restart. These are separate from the per-turn capture budget
+`turnTranscriptBytes`. Eviction is stated in the conversation and `wisp log`,
+including `--raw`; indexed prose, prompts and final results remain in SQLite.
+See [retention details](docs/ARCHIVE-CLEANUP.md#turn-log-retention).
+
 The shipped daemon is one compiled binary: no Node, no `node_modules`, and no
 sibling asset directory to install. That is what “self-contained” means, and it
 is not the same as dependency-free. The binary embeds the generated single-file

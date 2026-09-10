@@ -1,4 +1,5 @@
 import { retentionRoute } from "./retention";
+import { taskLogResponse } from "./task-log";
 import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
@@ -8,7 +9,7 @@ import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../
 import { AttachError, decodeAttachments, type DecodedAttachment } from "../attachments";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
 import { emit } from "../events";
-import { pathExists, readSlice, readTailOf } from "../fsutil";
+import { pathExists } from "../fsutil";
 import type { PullRequestCache } from "../pull-requests";
 import { isProjectRemovalInProgress } from "../project-removals";
 import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
@@ -26,7 +27,6 @@ import {
   newTaskId,
   setTaskContextFields,
   switchTaskAgent,
-  turnForTask,
   turnsFor,
 } from "../store";
 import { promptWithSuffix } from "../suffix-prompts";
@@ -35,11 +35,9 @@ import { typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
-import { apiTask, apiTaskMessage, apiTurn, err, integerQueryParam, json, jsonObjectBody } from "./http";
+import { apiTask, apiTaskMessage, apiTurn, err, json, jsonObjectBody } from "./http";
 import { updateTaskAndEmit } from "./task-update";
 
-/** Bytes served per log tail — positioned reads only, never whole files (a prior audit). */
-const LOG_TAIL_BYTES = 16_384;
 /** Creation already derives at most 80 characters from turn 1; renames keep the same UI-safe ceiling. */
 const TASK_TITLE_MAX = 80;
 
@@ -204,32 +202,6 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     );
     return json(apiTask(task), 201);
   })();
-}
-
-async function taskLogResponse(
-  task: Task,
-  url: URL,
-): Promise<Response> {
-  const turnNumber = integerQueryParam(url, "turn", 1);
-  if (turnNumber instanceof Response) return turnNumber;
-  const n = turnNumber ?? task.turn_count;
-  const parsedOffset = integerQueryParam(url, "offset", 0);
-  if (parsedOffset instanceof Response) return parsedOffset;
-  const offset = parsedOffset ?? -1;
-  const turn = turnForTask(task.id, n);
-  if (!turn) return err(`no turn ${n}`, 404);
-  const slice =
-    offset >= 0
-      ? await readSlice(turn.log_file, offset, 262_144)
-      : { text: await readTailOf(turn.log_file, LOG_TAIL_BYTES), size: 0 };
-  return json({
-    turn: n,
-    status: turn.status,
-    harness: turn.harness,
-    size: slice.size,
-    out: slice.text,
-    err: await readTailOf(turn.log_file.replace(/\.out\.log$/, ".err.log"), LOG_TAIL_BYTES),
-  });
 }
 
 function idleTaskError(task: Task, runningSuffix = ""): Response | null {

@@ -12,6 +12,7 @@ import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { startArchiveCleanupLoop } from "./routes/archive";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
+import { startTurnLogRetentionLoop } from "./turn-log-retention";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { HomeLifetime } from "./home-lifetime";
@@ -518,6 +519,7 @@ async function serveOwned(
   // Catch-up work for turns that ended before the prose index existed. After
   // Bun.serve on purpose: listening never waits on a disk sweep.
   const proseTimer = options.proseBackfill === false ? null : startTurnTextBackfillLoop(adapters);
+  const turnLogTimer = startTurnLogRetentionLoop(cfg);
   const processLoop = startProcessGroupLoop();
   const stopServer = server.stop.bind(server);
   let stopPromise: Promise<void> | undefined;
@@ -529,6 +531,7 @@ async function serveOwned(
       clearInterval(stuckTimer);
       clearInterval(cleanupTimer);
       if (proseTimer !== null) clearInterval(proseTimer);
+      clearInterval(turnLogTimer);
       // Stop admitting requests first, but keep ownership through handlers and
       // detached work. Closing a socket does not cancel its task launch/hook.
       const stopped = stopServer(closeActiveConnections);

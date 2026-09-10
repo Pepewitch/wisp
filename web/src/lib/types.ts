@@ -7,7 +7,7 @@ export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck
 export type TaskState = (typeof TASK_STATES)[number];
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
-export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy";
+export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
 export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
 
 export type ActivityStatus = "running" | "completed" | "failed" | "stopped" | "unknown"

@@ -14,6 +14,7 @@ usage:
   ${COMMAND} show <task>                             task detail: turns, attachments, diffstat
   ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)
   ${COMMAND} log <task> [turn] [-f] [--raw] [--diagnostic]  activity feed; --diagnostic exports retained JSONL
+                                               evicted archived transcripts are explicitly marked
   ${COMMAND} search <text> [-a] [--json]             exact text in titles, prompts, results and queued messages
                                                     (-a includes archived tasks)
   ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);

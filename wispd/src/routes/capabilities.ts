@@ -12,6 +12,7 @@ export const DAEMON_CAPABILITIES = Object.freeze({
   managedUpdates: true,
   archiveCleanup: true,
   bulkPurge: true,
+  turnLogRetention: true,
 } as const);
 
 export interface DaemonCapabilities {
