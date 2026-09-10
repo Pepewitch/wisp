@@ -140,7 +140,7 @@ wisp init
 
 # The daemon must be reachable before project commands. On Linux:
 systemctl --user status wisp.service
-# Or, when systemd user services are unavailable:
+# Or, when systemd user services are unavailable — docs/INSTALL.md#run-without-systemd:
 wisp serve
 
 # On macOS after the Homebrew install:
