@@ -749,6 +749,14 @@ describe("resolveDiffBase (GitHub's base, not the worktree's creation commit)", 
  */
 describe("worktree base", () => {
   /**
+   * Built per test, unlike the shared `beforeAll` scenario in the
+   * resolveDiffBase block above: almost every test here MUTATES the repo —
+   * new branches, new commits, a rewritten remote URL, a different project
+   * config — so sharing one would couple them through execution order. The
+   * directories are tracked, which is the part that has to stay.
+   */
+
+  /**
    * A repo with an `origin` whose main has moved ahead of the local clone.
    *
    * Every branch name is forced rather than inherited: `init.defaultBranch`
@@ -757,7 +765,7 @@ describe("worktree base", () => {
    * pass locally and fail on CI with "src refspec main does not match any".
    */
   function makeRepoWithRemote(): { repo: string; origin: string } {
-    const root = mkdtempSync(join(tmpdir(), "wisp-base-"));
+    const root = fixtureDir("wisp-base-");
     const origin = join(root, "origin.git");
     sh(["git", "init", "-q", "--bare", origin], root);
     // the bare repo's HEAD decides what a fresh clone checks out
@@ -776,7 +784,7 @@ describe("worktree base", () => {
 
   /** Push a commit to origin/main from a throwaway clone — the teammate. */
   function pushToOrigin(origin: string, file: string): string {
-    const root = mkdtempSync(join(tmpdir(), "wisp-other-"));
+    const root = fixtureDir("wisp-other-");
     const work = join(root, "clone");
     sh(["git", "clone", "-q", origin, work], root);
     writeFileSync(join(work, file), "from origin\n");
