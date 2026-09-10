@@ -201,15 +201,19 @@ const EXPECTED_STAPLED_APP_MEMBERS = [
   "Contents/_CodeSignature/CodeResources",
 ] as const;
 
+/** Which members a bundle may contain, with and without Apple's stapled ticket. */
 export function verifyDesktopInventory(app: string, signed: boolean): void {
   const prefix = `${basename(app)}/`;
-  const entries = appEntries(app);
-  const members = entries.map((entry) => entry.name.slice(prefix.length));
+  const members = appEntries(app).map((entry) => entry.name.slice(prefix.length));
   const expected = signed ? EXPECTED_STAPLED_APP_MEMBERS : EXPECTED_UNSIGNED_APP_MEMBERS;
   if (JSON.stringify(members) !== JSON.stringify(expected)) {
     throw new Error(`desktop application member inventory mismatch: ${JSON.stringify(members)}`);
   }
-  for (const entry of entries) {
+}
+
+/** No shipped member may leak a build host path. Spawns one `strings` per file member. */
+export function verifyNoBuilderPaths(app: string): void {
+  for (const entry of appEntries(app)) {
     if (entry.directory) continue;
     const strings = run(["/usr/bin/strings", entry.path]);
     if (/\/Users\/|\.cargo\/registry|\.rustup\/toolchains/.test(strings)) {
@@ -244,6 +248,7 @@ function signatureField(output: string, name: string): string | null {
 
 function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
   verifyDesktopInventory(app, signed);
+  verifyNoBuilderPaths(app);
   const binary = join(app, "Contents/MacOS/wisp-desktop");
   const fileType = run(["/usr/bin/file", "-b", binary]);
   if (!/Mach-O 64-bit executable arm64/.test(fileType)) throw new Error(`desktop binary is not arm64: ${fileType}`);

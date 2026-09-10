@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -15,11 +15,24 @@ import {
   machOHasUuid,
   releaseCertificateSource,
   verifyDesktopInventory,
+  verifyNoBuilderPaths,
 } from "../scripts/release-desktop";
 import { VERSION } from "../wispd/src/version";
 
+const tempRoots: string[] = [];
+
+function tempRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
+afterAll(() => {
+  for (const root of tempRoots) rmSync(root, { recursive: true, force: true });
+});
+
 function syntheticApp(order: "forward" | "reverse"): string {
-  const root = mkdtempSync(join(tmpdir(), "wisp-desktop-archive-"));
+  const root = tempRoot("wisp-desktop-archive-");
   const app = join(root, "Wisp.app");
   const files = [
     ["Contents/MacOS/wisp-desktop", "synthetic executable"],
@@ -136,7 +149,7 @@ describe("Wisp Desktop release metadata", () => {
     expect(first.equals(second)).toBe(true);
     expect([...first.subarray(4, 8)]).toEqual([0, 0, 0, 0]);
 
-    const root = mkdtempSync(join(tmpdir(), "wisp-desktop-extract-"));
+    const root = tempRoot("wisp-desktop-extract-");
     const archive = join(root, "desktop.tar.gz");
     writeFileSync(archive, first);
     const result = Bun.spawnSync({ cmd: ["/usr/bin/tar", "-xzf", archive, "-C", root] });
@@ -154,6 +167,13 @@ describe("Wisp Desktop release metadata", () => {
     writeFileSync(join(app, "Contents/CodeResources"), "synthetic notarization ticket");
     expect(() => verifyDesktopInventory(app, true)).not.toThrow();
     expect(() => verifyDesktopInventory(app, false)).toThrow("member inventory mismatch");
+  });
+
+  test("refuses a member that leaks a build host path", () => {
+    expect(() => verifyNoBuilderPaths(syntheticApp("forward"))).not.toThrow();
+    const leaking = syntheticApp("forward");
+    writeFileSync(join(leaking, "Contents/Info.plist"), "built from /Users/builder/wisp");
+    expect(() => verifyNoBuilderPaths(leaking)).toThrow("builder path");
   });
 
   test("refuses links instead of creating an ambiguous application archive", () => {
