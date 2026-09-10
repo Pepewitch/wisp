@@ -407,6 +407,13 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // option (the default TUI command), not a `run` one; verified routed by
     // `opencode --session <bogus>` answering "Session not found: <bogus>".
     attach: ["--session", "{session}"],
+    // The catalog is whatever the user's own providers expose — their API
+    // keys, opencode's zero-credential Zen gateway, and any custom `provider`
+    // block in opencode.json — so there is no staticModels to pin. The
+    // strategy hides only models the catalog says cannot call tools or emit
+    // text (embeddings, image/video/TTS: 17 of 53 on the probed install), and
+    // never hides one for being unreachable — a local server that is off
+    // right now is still a configured model.
     modelDiscovery: "opencode-models",
     // No probe: `opencode stats` is the only usage read and it is LIFETIME,
     // account-wide, box-drawing text — not this session's context or usage,

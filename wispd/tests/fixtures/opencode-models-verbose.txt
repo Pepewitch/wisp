@@ -1,0 +1,159 @@
+google/gemini-3.6-flash
+{
+  "id": "gemini-3.6-flash",
+  "providerID": "google",
+  "name": "gemini-3.6-flash",
+  "api": {
+    "id": "gemini-3.6-flash",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "attachment": true,
+    "toolcall": true,
+    "input": {
+      "text": true,
+      "image": true
+    },
+    "output": {
+      "text": true,
+      "image": false,
+      "audio": false
+    }
+  },
+  "variants": {
+    "minimal": {},
+    "low": {},
+    "medium": {},
+    "high": {}
+  }
+}
+opencode/nemotron-3.5-lightning-free
+{
+  "id": "nemotron-3.5-lightning-free",
+  "providerID": "opencode",
+  "name": "nemotron-3.5-lightning-free",
+  "api": {
+    "id": "nemotron-3.5-lightning-free",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "attachment": true,
+    "toolcall": true,
+    "input": {
+      "text": true,
+      "image": true
+    },
+    "output": {
+      "text": true,
+      "image": false,
+      "audio": false
+    }
+  }
+}
+google/gemini-embedding-2
+{
+  "id": "gemini-embedding-2",
+  "providerID": "google",
+  "name": "gemini-embedding-2",
+  "api": {
+    "id": "gemini-embedding-2",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "attachment": true,
+    "toolcall": false,
+    "input": {
+      "text": true,
+      "image": true
+    },
+    "output": {
+      "text": true,
+      "image": false,
+      "audio": false
+    }
+  }
+}
+google/veo-3.1-generate-preview
+{
+  "id": "veo-3.1-generate-preview",
+  "providerID": "google",
+  "name": "veo-3.1-generate-preview",
+  "api": {
+    "id": "veo-3.1-generate-preview",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "attachment": true,
+    "toolcall": false,
+    "input": {
+      "text": true,
+      "image": true
+    },
+    "output": {
+      "text": false,
+      "video": true
+    }
+  }
+}
+google/gemini-3.1-flash-tts-preview
+{
+  "id": "gemini-3.1-flash-tts-preview",
+  "providerID": "google",
+  "name": "gemini-3.1-flash-tts-preview",
+  "api": {
+    "id": "gemini-3.1-flash-tts-preview",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "temperature": true,
+    "reasoning": true,
+    "attachment": true,
+    "toolcall": false,
+    "input": {
+      "text": true,
+      "image": true
+    },
+    "output": {
+      "text": false,
+      "audio": true
+    }
+  }
+}
+llamacpp/qwen38
+{
+  "id": "qwen38",
+  "providerID": "llamacpp",
+  "name": "qwen38",
+  "api": {
+    "id": "qwen38",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active"
+}
+mylocal/some-model
+{
+  "id": "some-model",
+  "providerID": "mylocal",
+  "name": "some-model",
+  "api": {
+    "id": "some-model",
+    "url": "https://example.invalid/v1"
+  },
+  "status": "active",
+  "capabilities": {
+    "toolcall": true
+  }
+}

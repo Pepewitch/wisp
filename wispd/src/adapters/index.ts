@@ -52,7 +52,14 @@ export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
 export { ERROR_STRATEGIES, errorDetail, isLimitError, isTransientError } from "./errors";
 export { buildArgv, buildAttachArgv } from "./argv";
 export { loadAdapters, validateAdapters } from "./validate";
-export { discoverModels, DROID_MODEL_PROBE_SENTINEL, MODEL_DISCOVERY } from "./discovery";
+export {
+  discoverModels,
+  DROID_MODEL_PROBE_SENTINEL,
+  MODEL_DISCOVERY,
+  opencodeCatalog,
+  positivelyNotAgentCapable,
+  type OpencodeCatalogEntry,
+} from "./discovery";
 export { PROBE_STRATEGIES, ProbeError, probeCommands, runProbe } from "./probe";
 export { discoverSkills, scanSkillDirs, SKILL_STRATEGIES } from "./skills";
 export { COMPACT_STRATEGIES, runCompact } from "./compact";

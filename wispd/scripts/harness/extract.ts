@@ -14,7 +14,7 @@
  * one. An allowlist cannot leak what it never reads.
  */
 import type { AdapterDef, ModelProbeSpawnFn } from "../../src/adapters";
-import { buildArgv, discoverModels, DROID_MODEL_PROBE_SENTINEL } from "../../src/adapters";
+import { buildArgv, discoverModels, DROID_MODEL_PROBE_SENTINEL, opencodeCatalog } from "../../src/adapters";
 import type { Surface } from "./facts";
 
 /** Deliberately not a real effort level; every harness rejects it pre-flight. */
@@ -230,50 +230,6 @@ async function cursorModels(ctx: ExtractCtx): Promise<Record<string, Surface>> {
       scalars: { default: null },
     },
   };
-}
-
-/**
- * Walk `provider/model\n{…json…}` pairs out of `opencode models --verbose`,
- * yielding each model record. A brace-depth scan rather than a line split: the
- * records are pretty-printed across many lines, and depth-tracking is what
- * makes the walk immune to the id lines between them.
- */
-function opencodeCatalog(text: string): Record<string, any>[] {
-  const out: Record<string, any>[] = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== "{") continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    let end = -1;
-    for (let j = i; j < text.length; j++) {
-      const ch = text[j]!;
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (inString) {
-        if (ch === "\\") escaped = true;
-        else if (ch === '"') inString = false;
-        continue;
-      }
-      if (ch === '"') inString = true;
-      else if (ch === "{") depth++;
-      else if (ch === "}" && --depth === 0) {
-        end = j;
-        break;
-      }
-    }
-    if (end < 0) break;
-    try {
-      const parsed: unknown = JSON.parse(text.slice(i, end + 1));
-      if (parsed && typeof parsed === "object") out.push(parsed as Record<string, any>);
-    } catch {
-      // not a model record; the scan continues past it
-    }
-    i = end;
-  }
-  return out;
 }
 
 /**

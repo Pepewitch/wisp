@@ -159,6 +159,18 @@ model. Levels per harness:
   model *variants*, and which ones exist depends on the model; ids are
   `provider/model` (e.g. `google/gemini-3.6-flash`)
 
+opencode's model list is whatever YOUR opencode exposes: the providers you
+have credentials for, opencode's own Zen gateway (whose free models need no
+credential), and any custom `provider` block in `opencode.json` — a local
+llama.cpp or Ollama server shows up on its own, no Wisp configuration needed.
+Models the catalog marks as unable to call tools or emit text (embeddings,
+image/video generation, TTS) are hidden, because they cannot run a coding
+turn. Nothing is hidden for being unreachable: a local model whose server is
+switched off still appears, so you can pick it and then start the server.
+Note that a custom provider id which collides with a known provider (naming
+yours `llama`, say) inherits that provider's catalog models too — give it a
+unique id if you only want the models you declared.
+
 ## The HTTP API (for scripts; the CLI covers normal use)
 
 `wisp token` prints the base URL and bearer token. `GET /api/health` is

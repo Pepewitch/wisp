@@ -196,6 +196,17 @@ The complete `--format json` event vocabulary is `step_start`, `step_finish`,
 one helper, called from exactly six places in the shipped 1.18.29 bundle.
 `reasoning` requires `--thinking`, which is why the adapter's exec passes it.
 
+One file in this set is **not** a capture, and is labelled here so nobody
+mistakes it for one: `opencode-models-verbose.txt` is a hand-built
+`opencode models --verbose` catalog. It is shape-preserving — id line followed
+by the model's JSON record, exactly as the CLI prints it — but its entries are
+chosen to exercise the capability filter's branches, including two a real
+capture could not supply: a custom provider whose model has **no**
+`capabilities` block at all, and one with only a partial block. Those are the
+cases the filter must not hide, and the installed CLI has no such model to
+capture. The real catalog's shape is pinned separately by the `models` surface
+in `harness-facts/opencode.json`, which IS read from the CLI.
+
 `opencode-quota-exhausted.jsonl` deserves its own note: it is a genuine
 quota-exhaustion capture, not the usual cheap stand-in. The provider's free
 tier ran out partway through the live verification, so Wisp's limit

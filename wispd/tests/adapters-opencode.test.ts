@@ -10,14 +10,24 @@ import {
   BUILTIN_ADAPTERS,
   buildArgv,
   buildAttachArgv,
+  discoverModels,
   errorDetail,
   foldIncrementalOutcome,
   formatUsage,
   isLimitError,
   isTransientError,
   parseOutput,
+  type ModelProbeSpawnFn,
 } from "../src/adapters";
 import { fixture } from "./fixtures";
+
+/** Serves the captured `opencode models --verbose` catalog to the strategy. */
+function catalogSpawn(stdout: string, seen?: string[][]): ModelProbeSpawnFn {
+  return (cmd) => {
+    seen?.push(cmd);
+    return { exitCode: 0, stdout, stderr: "" };
+  };
+}
 
 const opencode = BUILTIN_ADAPTERS.opencode!;
 
@@ -205,5 +215,80 @@ describe("errorDetail (opencode, captured fixtures)", () => {
     // and an ordinary failure is neither — the prefixes must stay meaningful
     expect(isLimitError(opencode, "This model is no longer available to new users.")).toBe(false);
     expect(isTransientError(opencode, "This model is no longer available to new users.")).toBe(false);
+  });
+});
+
+/**
+ * What the picker offers. The rule: hide a model for what it IS (a permanent
+ * fact the catalog states), never for whether it happens to answer right now
+ * (a fact that changes minute to minute, and would hide the local model
+ * someone is about to start a server for).
+ */
+describe("opencode model discovery (fail-open capability filter)", () => {
+  const CATALOG = fixture("opencode-models-verbose.txt");
+
+  test("one --verbose spawn answers both the id list and the capabilities", async () => {
+    const seen: string[][] = [];
+    await discoverModels(opencode, catalogSpawn(CATALOG, seen));
+    expect(seen).toEqual([["opencode", "models", "--verbose"]]);
+  });
+
+  test("models that cannot run a coding turn are hidden", async () => {
+    const { models } = await discoverModels(opencode, catalogSpawn(CATALOG));
+    // every one of these is explicitly toolcall:false in the catalog
+    expect(models).not.toContain("google/gemini-embedding-2");
+    expect(models).not.toContain("google/veo-3.1-generate-preview");
+    expect(models).not.toContain("google/gemini-3.1-flash-tts-preview");
+  });
+
+  test("ordinary chat models and the zero-credential Zen models stay", async () => {
+    const { models } = await discoverModels(opencode, catalogSpawn(CATALOG));
+    expect(models).toContain("google/gemini-3.6-flash");
+    expect(models).toContain("opencode/nemotron-3.5-lightning-free");
+  });
+
+  // The filter's whole risk is hiding somebody's own provider, so this is the
+  // case that matters most: a hand-written provider block in opencode.json can
+  // describe its model with no capability metadata at all.
+  test("a CUSTOM provider's model survives with no capability metadata", async () => {
+    const { models } = await discoverModels(opencode, catalogSpawn(CATALOG));
+    expect(models).toContain("llamacpp/qwen38"); // no `capabilities` key at all
+    expect(models).toContain("mylocal/some-model"); // partial metadata
+  });
+
+  test("the note says how many were hidden, so a short list is never a mystery", async () => {
+    const { models, notes } = await discoverModels(opencode, catalogSpawn(CATALOG));
+    expect(models).toHaveLength(4);
+    expect(notes.join(" ")).toContain("3 model(s) hidden");
+  });
+
+  // An empty picker is never the right answer to "the shape changed".
+  test("if EVERY model looks unusable, nothing is hidden", async () => {
+    const allRejected = [
+      "a/one",
+      JSON.stringify({ id: "one", providerID: "a", capabilities: { toolcall: false } }),
+      "a/two",
+      JSON.stringify({ id: "two", providerID: "a", capabilities: { toolcall: false } }),
+    ].join("\n");
+    const { models, notes } = await discoverModels(opencode, catalogSpawn(allRejected));
+    expect(models).toEqual(["a/one", "a/two"]);
+    expect(notes.join(" ")).toContain("capability shape has probably changed");
+  });
+
+  test("an unparseable catalog keeps every id rather than emptying the picker", async () => {
+    // ids still line-parse; the JSON records do not
+    const { models, notes } = await discoverModels(opencode, catalogSpawn("a/one\na/two\n<not json>\n"));
+    expect(models).toEqual(["a/one", "a/two"]);
+    expect(notes.join(" ")).not.toContain("hidden");
+  });
+
+  test("no output at all is reported honestly, not as an empty catalog", async () => {
+    const { models, notes } = await discoverModels(opencode, catalogSpawn(""));
+    expect(models).toBeNull();
+    expect(notes.join(" ")).toContain("may be unauthenticated");
+  });
+
+  test("opencode still names no default model", async () => {
+    expect((await discoverModels(opencode, catalogSpawn(CATALOG))).defaultModel).toBeNull();
   });
 });
