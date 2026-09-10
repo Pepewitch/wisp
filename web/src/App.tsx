@@ -65,6 +65,7 @@ import { connectEventsBridge } from "@/lib/sse"
 import {
   clearSelectedTask,
   readSelectedTask,
+  reconcileSelectedTaskId,
   writeSelectedTask,
 } from "@/lib/task-selection"
 import type {
@@ -309,15 +310,8 @@ function MainView({
   }>({ data: undefined, id: null })
   if (seen.data !== tasksQuery.data || seen.id !== selectedId) {
     setSeen({ data: tasksQuery.data, id: selectedId })
-    if (tasksQuery.data) {
-      if (selectedId && !tasksQuery.data.some((t) => t.id === selectedId))
-        selectTask(null)
-      else if (!selectedId) {
-        const first =
-          tasksQuery.data.find((t) => !t.archived) ?? tasksQuery.data[0]
-        if (first) selectTask(first.id)
-      }
-    }
+    const next = reconcileSelectedTaskId(selectedId, tasksQuery.data, seen.data)
+    if (next !== selectedId) selectTask(next)
   }
 
   const task = tasks.find((t) => t.id === selectedId) ?? null

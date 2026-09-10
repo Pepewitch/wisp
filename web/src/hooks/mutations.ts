@@ -74,7 +74,13 @@ export function useCreateTask() {
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: (body: CreateTaskBody) => transport.request<ApiTask>("/api/tasks", { method: "POST", body }),
-    onSuccess: () => {
+    onSuccess: (task) => {
+      // Insert before the refetch so the view that focuses this id does not
+      // treat it as a vanished row and snap back to the previous task.
+      client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) => {
+        if (!current || current.some((row) => row.id === task.id)) return current;
+        return [task, ...current];
+      });
       void client.invalidateQueries({ queryKey: qk.tasks });
     },
   });

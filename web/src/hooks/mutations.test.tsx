@@ -123,14 +123,17 @@ describe("task writes", () => {
     expect(client.getQueryData(localTarget.qk.update)).toEqual(status)
   })
 
-  it("creating a task posts the composer's body and stales the task list", async () => {
-    mocks.request.mockResolvedValue({ id: "t5qmha" })
-    const { spy, wrapper } = harness()
+  it("creating a task posts the composer's body, inserts the row, and stales the list", async () => {
+    const created = { id: "t5qmha", title: "fix it", archived: false }
+    const existing = { id: "old", title: "earlier", archived: false }
+    mocks.request.mockResolvedValue(created)
+    const { client, spy, wrapper } = harness()
+    client.setQueryData(qk.tasksList(false), [existing])
     const { result } = renderHook(() => useCreateTask(), { wrapper })
 
-    let created: { id: string } | undefined
+    let saved: { id: string } | undefined
     await act(async () => {
-      created = await result.current.mutateAsync({
+      saved = await result.current.mutateAsync({
         repoPath: "/repo",
         prompt: "fix it",
         harness: "droid",
@@ -143,7 +146,8 @@ describe("task writes", () => {
       method: "POST",
       body: { repoPath: "/repo", prompt: "fix it", harness: "droid", model: "kimi-k3", mode: "worktree" },
     })
-    expect(created).toEqual({ id: "t5qmha" })
+    expect(saved).toEqual(created)
+    expect(client.getQueryData(qk.tasksList(false))).toEqual([created, existing])
     expect(invalidated(spy)).toEqual([qk.tasks])
   })
 
