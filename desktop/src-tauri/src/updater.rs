@@ -388,7 +388,11 @@ impl DesktopUpdater {
         if self.status().phase != DesktopUpdatePhase::ReadyToRelaunch {
             return Err(DesktopUpdateError::NotReadyToRelaunch);
         }
-        app.restart()
+        // Let Tauri's run loop perform the restart after this IPC command
+        // unwinds. An immediate restart can terminate the updated app before
+        // macOS launches its replacement.
+        app.request_restart();
+        Ok(())
     }
 
     fn fail(&self, app: &AppHandle<Wry>, error: &DesktopUpdateError) {
