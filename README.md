@@ -294,6 +294,9 @@ hand the daemon's token to any other local service. The app provides:
 - linked GitHub pull-request lifecycle, CI, review, and policy-aware merge
   readiness for the original task branch, including glanceable sidebar status,
   when the daemon's `gh` can read it;
+- attachments on any message — images, pdf, text files of any extension, and
+  short video — pasted or picked, with a long paste turning into a text file
+  the agent reads with its own tools;
 - a Git diff pane and worktree terminal;
 - search in two scopes: `⌘F` finds exact text in the task you are reading, and
   `⌘⇧F` searches every task from the projects sidebar — titles, prompts,
