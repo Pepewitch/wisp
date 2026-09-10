@@ -17,6 +17,7 @@ export type {
   ImageInputStrategy,
   ModelDiscovery,
   ModelDiscoveryFn,
+  OfferedModels,
   ModelProbeSpawnFn,
   ParsedTurn,
   ParseStrategy,
@@ -54,6 +55,7 @@ export { buildArgv, buildAttachArgv } from "./argv";
 export { loadAdapters, validateAdapters } from "./validate";
 export {
   discoverModels,
+  offeredModels,
   DROID_MODEL_PROBE_SENTINEL,
   MODEL_DISCOVERY,
   opencodeCatalog,

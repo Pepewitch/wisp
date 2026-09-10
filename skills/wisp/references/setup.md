@@ -143,9 +143,16 @@ harmless preferences.
 ## Models and effort
 
 `wisp models` prints, per harness, the effective model for new tasks
-(`--model` > `harnessDefaults` > harness default) and the model list the
-installed CLI exposes. Builtin harnesses: `droid`, `claude`, `codex`,
-`cursor`, `opencode`.
+(`--model` > `harnessDefaults` > harness default) and the models on offer.
+That list is the installed CLI's own enumeration where it has one, and the
+adapter's pinned selection where it does not — the latter is labelled
+`pinned by the adapter`, because it is a subset and other ids the CLI accepts
+still work. Builtin harnesses: `droid`, `claude`, `codex`, `cursor`,
+`opencode`.
+
+Pass the id `wisp models` prints, not a shortened form of it. A harness CLI
+may accept an unknown `--model` and silently run something else: cursor's
+Grok 4.6 is `cursor-grok-4.6-high`, and a bare `grok-4.6` is not an id.
 
 `--effort <level>` sets reasoning effort; unset means the harness picks per
 model. Levels per harness:

@@ -10,7 +10,7 @@
  * Where a harness exposes nothing (or can't be probed), the report says so
  * out loud; nothing here invents or hardcodes a model id.
  */
-import { discoverModels, type AdapterDef, type ModelDiscovery } from "./adapters";
+import { discoverModels, offeredModels, type AdapterDef, type ModelDiscovery } from "./adapters";
 import type { HarnessDefaults } from "./config";
 import type { SpawnFn } from "./doctor";
 
@@ -58,7 +58,11 @@ export async function probeModels(
  */
 function effectiveLine(info: HarnessModelInfo): string {
   const { name, def, configModel, discovery, probeError } = info;
-  const harnessDefault = discovery?.defaultModel ?? null;
+  // The adapter's pinned default counts as the harness default when the CLI
+  // exposes none: it is what a new task actually gets, so the report must not
+  // call it "<harness default>" and send the reader to config.json.
+  const harnessDefault =
+    offeredModels(def, discovery?.models ?? null, discovery?.defaultModel ?? null)?.defaultModel ?? null;
   // detailLines prints the full probe error; the verdict line stays terse
   const whyNoDefault = probeError ? "unknown (probe failed)" : `not exposed by ${def.bin}`;
   if (configModel && harnessDefault && configModel !== harnessDefault) {
@@ -79,8 +83,15 @@ function effectiveLine(info: HarnessModelInfo): string {
 
 function detailLines(info: HarnessModelInfo): string[] {
   const { name, def, configModel, discovery, probeError } = info;
+  const offered = offeredModels(def, discovery?.models ?? null, discovery?.defaultModel ?? null);
   const out: string[] = [];
-  if (discovery?.defaultModel) out.push(`  harness default: ${discovery.defaultModel}`);
+  if (offered?.defaultModel) {
+    out.push(
+      offered.curated
+        ? `  harness default: ${offered.defaultModel} (pinned by the adapter; ${def.bin} names none)`
+        : `  harness default: ${offered.defaultModel}`,
+    );
+  }
   if (configModel) {
     let line = `  config default: ${configModel} — new tasks get this unless --model is passed (config.json harnessDefaults)`;
     // the P5b boot warning, surfaced where a user goes to understand model
@@ -92,8 +103,16 @@ function detailLines(info: HarnessModelInfo): string[] {
   }
   if (probeError) {
     out.push(`  probe failed: ${probeError}`);
-  } else if (discovery?.models?.length) {
-    out.push(`  models (${discovery.models.length}): ${discovery.models.join(", ")}`);
+  } else if (offered && !offered.curated) {
+    out.push(`  models (${offered.list.length}): ${offered.list.join(", ")}`);
+  } else if (offered) {
+    // A curated list is a SUBSET, so say both halves: these are the offered
+    // ids, and another id the CLI accepts is still valid. Reporting only
+    // "not exposed" is what let a task be created on a model nobody chose.
+    out.push(
+      `  models (${offered.list.length}, pinned by the adapter): ${offered.list.join(", ")}` +
+        ` — ${def.bin} enumerates none, so other ids it accepts also work`,
+    );
   } else {
     out.push(`  model list not exposed by ${def.bin} — any id the CLI accepts works`);
   }

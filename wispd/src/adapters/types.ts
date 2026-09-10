@@ -567,6 +567,28 @@ export type ErrorStrategy = (out: string, err: string) => string | null;
  * model id appears anywhere in wisp source: every id printed comes from the
  * live CLI or the user's own config.
  */
+/**
+ * The models a harness offers, and where that list came from.
+ *
+ * One rule, two consumers: the new-task picker (GET /api/harnesses) and
+ * `wisp models`. They disagreed before — the route merged an adapter's
+ * curated `staticModels` while the CLI reported "model list not exposed",
+ * so `wisp models` told an operator "any id the CLI accepts works" for a
+ * harness that had a pinned list and a pinned default. That is how a task
+ * gets created on a model nobody chose.
+ */
+export interface OfferedModels {
+  list: string[];
+  defaultModel: string | null;
+  /**
+   * true when the list is the adapter's curated selection rather than the
+   * installed CLI's own enumeration. A curated list is a SUBSET: cursor pins
+   * two ids out of roughly forty real ones, so other ids the CLI accepts are
+   * still valid and must not be refused.
+   */
+  curated: boolean;
+}
+
 export interface ModelDiscovery {
   /** the harness's own default model id; null when the CLI doesn't reveal one */
   defaultModel: string | null;
