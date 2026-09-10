@@ -240,3 +240,20 @@ describe("wisp project rm", () => {
     expect(again.stderr).toContain(`project not found in config repos: ${path}`);
   });
 });
+
+describe("wisp project list", () => {
+  // the top-level command took both spellings from the start, so `project
+  // list` reading as an unknown action was pure surprise (#136)
+  test("is an alias for ls, printing the same listing", async () => {
+    await startDaemon();
+    const path = makeProject();
+    expect((await run(["project", "add", path, "--name", "Aliased"])).exitCode).toBe(0);
+
+    const ls = await run(["project", "ls"]);
+    const list = await run(["project", "list"]);
+    expect(list.exitCode).toBe(0);
+    expect(list.stderr).toBe("");
+    expect(list.stdout).toContain(path);
+    expect(list.stdout).toBe(ls.stdout);
+  });
+});
