@@ -10,11 +10,12 @@ import { ownsHome } from "../src/home-lock";
  * request at a time, no browser required, because what is under test is what
  * the SERVER enforces.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ALLOWED_ORIGINS_ENV } from "../src/routes/auth";
 import { CONFIG_PATH } from "../src/config";
 import { serve } from "../src/daemon";
 import { killAll } from "../src/terminal";
@@ -273,4 +274,141 @@ describe("SEC-02 — terminal WebSocket upgrades", () => {
     });
     expect(bearer.status).toBe(404);
   }, 20_000);
+});
+
+/**
+ * #139: the refusal was correct and undiagnosable. The sentence the daemon
+ * composes lived only in the response body of a failed WebSocket upgrade,
+ * which a browser never hands to page JavaScript, and nothing logged it — so
+ * the operator's whole evidence was "the terminal does not open" while the
+ * rest of the UI, which authenticates by bearer token and ignores `Origin`,
+ * kept working.
+ */
+describe("a refused terminal origin explains itself somewhere readable", () => {
+  const withAllowed = async <T>(value: string | undefined, body: () => Promise<T>): Promise<T> => {
+    const previous = process.env[ALLOWED_ORIGINS_ENV];
+    if (value === undefined) delete process.env[ALLOWED_ORIGINS_ENV];
+    else process.env[ALLOWED_ORIGINS_ENV] = value;
+    try {
+      return await body();
+    } finally {
+      if (previous === undefined) delete process.env[ALLOWED_ORIGINS_ENV];
+      else process.env[ALLOWED_ORIGINS_ENV] = previous;
+    }
+  };
+
+  test("the daemon logs every refusal, naming the origin and the set it would accept", async () => {
+    writeConfig();
+    const taskId = taskWithWorktree("logged");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await withAllowed("https://wisp.example.ts.net", async () => {
+        server = await serve({ port: 0 });
+        const response = await fetch(`http://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`, {
+          headers: { origin: OTHER_LOCAL_PORT, upgrade: "websocket", connection: "upgrade" },
+        });
+        expect(response.status).toBe(403);
+
+        const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(logged).toContain("refused terminal upgrade");
+        expect(logged).toContain(OTHER_LOCAL_PORT);
+        // the configured set, which is the answer an operator is missing
+        expect(logged).toContain("https://wisp.example.ts.net");
+        expect(logged).toContain(ALLOWED_ORIGINS_ENV);
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("the 403 names the rejected and expected origin but never the configured set", async () => {
+    writeConfig();
+    const taskId = taskWithWorktree("body");
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await withAllowed("https://proxy.internal.example", async () => {
+        server = await serve({ port: 0 });
+        const base = `http://127.0.0.1:${server.port}`;
+        const response = await fetch(`${base}/api/tasks/${taskId}/terminal`, {
+          headers: { origin: OTHER_LOCAL_PORT, upgrade: "websocket", connection: "upgrade" },
+        });
+        expect(response.status).toBe(403);
+        const { error } = (await response.json()) as { error: string };
+        expect(error).toContain(OTHER_LOCAL_PORT);
+        expect(error).toContain(base);
+        expect(error).toContain(ALLOWED_ORIGINS_ENV);
+        // Answered before any credential is checked, so an unauthenticated
+        // caller on this host must not learn the operator's proxy hostnames.
+        expect(error).not.toContain("proxy.internal.example");
+      });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("POST /api/terminal-origin answers the question the page cannot read", async () => {
+    writeConfig();
+    await withAllowed("https://wisp.example.ts.net", async () => {
+      server = await serve({ port: 0 });
+      const base = `http://127.0.0.1:${server.port}`;
+      const url = `${base}/api/terminal-origin`;
+
+      // Authenticated like every other /api route.
+      expect((await fetch(url, { method: "POST", headers: { origin: OTHER_LOCAL_PORT } })).status).toBe(401);
+      // and GET is not it: a browser omits Origin on a same-origin GET
+      expect((await fetch(url, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
+
+      const auth = { authorization: `Bearer ${TOKEN}` };
+      const refused = await fetch(url, { method: "POST", headers: { ...auth, origin: OTHER_LOCAL_PORT } });
+      expect(refused.status).toBe(200);
+      const report = (await refused.json()) as {
+        verdict: string;
+        origin: string;
+        expected: string;
+        allowed: string[];
+        reason: string;
+      };
+      expect(report.verdict).toBe("foreign");
+      expect(report.origin).toBe(OTHER_LOCAL_PORT);
+      expect(report.expected).toBe(base);
+      expect(report.allowed).toEqual(["https://wisp.example.ts.net"]);
+      // The reader is authenticated here, so the set it is missing is named.
+      expect(report.reason).toContain("https://wisp.example.ts.net");
+      expect(report.reason).toContain(OTHER_LOCAL_PORT);
+
+      const own = await fetch(url, { method: "POST", headers: { ...auth, origin: base } });
+      expect(await own.json()).toMatchObject({ verdict: "allowed", reason: null });
+
+      const allowed = await fetch(url, {
+        method: "POST",
+        headers: { ...auth, origin: "https://wisp.example.ts.net" },
+      });
+      expect(await allowed.json()).toMatchObject({ verdict: "allowed", reason: null });
+
+      // No Origin at all is the CLI or the desktop proxy, not a refusal —
+      // and this is the shape `wisp doctor` reads the configuration from.
+      const cli = await fetch(url, { method: "POST", headers: auth });
+      expect(await cli.json()).toMatchObject({
+        verdict: "absent",
+        reason: null,
+        expected: base,
+        allowed: ["https://wisp.example.ts.net"],
+      });
+    });
+  }, 20_000);
+
+  test("with nothing configured, the report says so rather than staying silent", async () => {
+    writeConfig();
+    await withAllowed(undefined, async () => {
+      server = await serve({ port: 0 });
+      const base = `http://127.0.0.1:${server.port}`;
+      const response = await fetch(`${base}/api/terminal-origin`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, origin: OTHER_LOCAL_PORT },
+      });
+      const report = (await response.json()) as { allowed: string[]; reason: string };
+      expect(report.allowed).toEqual([]);
+      expect(report.reason).toContain(`${ALLOWED_ORIGINS_ENV} is unset`);
+    });
+  });
 });

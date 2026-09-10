@@ -15,6 +15,7 @@ import {
   checkPlatform,
   checkProject,
   checkSupervisor,
+  checkTerminalOrigins,
   parseVersion,
   runDoctor,
   type SpawnFn,
@@ -43,10 +44,18 @@ const CLAUDE: AdapterDef = {
   parse: { format: "json" },
 };
 
-const healthyFetch = (async () => ({
+/**
+ * One stub for both daemon probes, answering per route, because `runDoctor`
+ * now asks the daemon two questions: who it is, and which browser origins it
+ * accepts a terminal socket from.
+ */
+const healthyFetch = (async (input: string) => ({
   ok: true,
   status: 200,
-  json: async () => ({ ok: true, version: VERSION, commit: BUILD_COMMIT, dirty: true }),
+  json: async () =>
+    String(input).endsWith("/api/terminal-origin")
+      ? { verdict: "absent", origin: null, expected: "http://127.0.0.1:8710", allowed: [], reason: null }
+      : { ok: true, version: VERSION, commit: BUILD_COMMIT, dirty: true },
 })) as unknown as typeof fetch;
 
 function tempFile(name: string, contents: string): string {
@@ -287,6 +296,86 @@ describe("supervision and daemon", () => {
     expect((await checkDaemon({ host: "127.0.0.1", port: 8710 }, down)).status).toBe("fail");
     const foreign = (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
     expect((await checkDaemon({ host: "127.0.0.1", port: 8710 }, foreign)).status).toBe("fail");
+  });
+});
+
+describe("terminal origins (#139)", () => {
+  const cfg = { host: "127.0.0.1", port: 8710, token: "doctor-token" };
+  const answering = (status: number, body: unknown) =>
+    (async (_input: string, init?: RequestInit) => {
+      // The report is a POST on purpose: a browser omits Origin on a
+      // same-origin GET, so only a POST sees the header a handshake sent.
+      expect(init?.method).toBe("POST");
+      expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${cfg.token}`);
+      return { ok: status < 400, status, json: async () => body };
+    }) as unknown as typeof fetch;
+
+  test("reports the origins the RUNNING daemon accepts, not this shell's environment", async () => {
+    const unset = await checkTerminalOrigins(
+      cfg,
+      answering(200, { verdict: "absent", expected: "http://127.0.0.1:8710", allowed: [] }),
+    );
+    expect(unset.status).toBe("ok");
+    expect(unset.message).toContain("http://127.0.0.1:8710");
+    expect(unset.message).toContain("WISP_ALLOWED_ORIGINS unset in the daemon's environment");
+
+    const configured = await checkTerminalOrigins(
+      cfg,
+      answering(200, {
+        verdict: "absent",
+        expected: "http://127.0.0.1:8710",
+        allowed: ["https://wisp.example.ts.net"],
+      }),
+    );
+    expect(configured.status).toBe("ok");
+    expect(configured.message).toContain("https://wisp.example.ts.net");
+  });
+
+  test("an older daemon, an error, and an unreachable port all warn rather than guess", async () => {
+    expect((await checkTerminalOrigins(cfg, answering(404, {}))).status).toBe("warn");
+    expect((await checkTerminalOrigins(cfg, answering(500, {}))).status).toBe("warn");
+    expect((await checkTerminalOrigins(cfg, answering(200, { allowed: [] }))).status).toBe("warn");
+    const down = (async () => {
+      throw new Error("fetch failed");
+    }) as unknown as typeof fetch;
+    expect((await checkTerminalOrigins(cfg, down)).status).toBe("warn");
+  });
+
+  test("runDoctor skips the report when the daemon itself is not answering", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-project-"));
+    const down = (async () => {
+      throw new Error("fetch failed");
+    }) as unknown as typeof fetch;
+    const checks = await runDoctor({
+      spawn: goodSpawn,
+      fetchFn: down,
+      configPath: tempFile("config.json", JSON.stringify(config(repo))),
+      adaptersPath: missingFile("adapters.json"),
+      config: config(repo),
+      adapters: { droid: DROID },
+      selectedHarness: "droid",
+      currentPlatform: "linux",
+      currentArch: "x64",
+    });
+    expect(checks.find((check) => check.name === "daemon")?.status).toBe("fail");
+    expect(checks.some((check) => check.name === "terminal origins")).toBe(false);
+  });
+
+  test("a healthy daemon reports its origins in the activation output", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-project-"));
+    const checks = await runDoctor({
+      spawn: goodSpawn,
+      fetchFn: healthyFetch,
+      configPath: tempFile("config.json", JSON.stringify(config(repo))),
+      adaptersPath: missingFile("adapters.json"),
+      config: config(repo),
+      adapters: { droid: DROID },
+      selectedHarness: "droid",
+      currentPlatform: "linux",
+      currentArch: "x64",
+    });
+    expect(checks.find((check) => check.name === "terminal origins")?.status).toBe("ok");
+    expect(checks.filter((check) => check.status === "fail")).toEqual([]);
   });
 });
 

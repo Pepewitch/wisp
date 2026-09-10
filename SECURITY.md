@@ -100,7 +100,12 @@ the daemon).
 A terminal upgrade is command execution, so it is also origin-checked: the
 daemon refuses a handshake whose `Origin` is not its own, another port on the
 same host included. Set `WISP_ALLOWED_ORIGINS` when a reverse proxy rewrites
-`Host` and the daemon therefore cannot derive the browser's origin itself.
+`Host` and the daemon therefore cannot derive the browser's origin itself. Each
+refusal is logged with the rejected origin and the configured set, and
+`POST /api/terminal-origin` reports the same verdict to an authenticated
+caller, because a browser cannot read a failed upgrade's response body. The
+`403` itself names only the rejected and the expected origin: it is answered
+before any credential is checked, so it never echoes the configured set.
 
 Tokens in URL query parameters are not accepted. Treat any script running in
 the Wisp origin as able to read the bearer token; the self-contained bundle and

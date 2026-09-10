@@ -49,6 +49,18 @@ and will refuse terminal upgrades from it. Name the public origin explicitly:
 WISP_ALLOWED_ORIGINS=https://wisp.your-tailnet.ts.net wisp serve
 ```
 
+The variable must be in the environment of the process that serves Wisp, so a
+daemon started by a user service or a container supervisor needs it there and
+not in your shell. `wisp doctor` reports what the running daemon actually
+accepts, under `terminal origins`, and the daemon prints the same line at
+startup.
+
+The symptom of getting this wrong is narrow: the whole UI works, because every
+other request authenticates by bearer token and ignores `Origin`, and only the
+terminal pane fails to open. It now says why — the pane asks the daemon for the
+reason after a refused handshake — and the daemon logs each refusal with the
+rejected origin and the set it would have accepted.
+
 Wisp Desktop can use the same private HTTPS address. Click `+`, enter the Serve
 URL and the token printed on the daemon host, confirm the authenticated daemon
 identity, then enter remote project paths as they exist on that host. Saving a

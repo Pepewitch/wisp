@@ -17,7 +17,15 @@ import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { HomeLifetime } from "./home-lifetime";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
-import { authorized, originVerdict, postSession, tokenAuthorizes } from "./routes/auth";
+import {
+  ALLOWED_ORIGINS_ENV,
+  allowedOrigins,
+  authorized,
+  foreignOriginMessage,
+  originVerdict,
+  postSession,
+  tokenAuthorizes,
+} from "./routes/auth";
 import { err, json } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
@@ -481,7 +489,15 @@ async function serveOwned(
           const credentialed = authorized(req, cfg);
           const origin = originVerdict(req, url);
           if (origin === "foreign") {
-            return err(`terminal upgrades must come from this daemon's own origin, not ${JSON.stringify(req.headers.get("origin"))}`, 403);
+            // Logged as well as answered. The 403 body is the only artifact
+            // that explains this refusal, and a browser never shows a failed
+            // upgrade's body to the page, so without this line the operator's
+            // whole evidence is "the terminal does not open" (#139). The log
+            // is a trusted reader, so it gets the configured set too; the 403
+            // does not, being answered before any credential.
+            const sent = req.headers.get("origin");
+            console.warn(`[wisp] refused terminal upgrade: ${foreignOriginMessage(sent, url.origin, allowedOrigins())}`);
+            return err(foreignOriginMessage(sent, url.origin), 403);
           }
           if (!credentialed && origin === "absent") return err("unauthorized", 401);
           // Whether a task exists is only answered to a caller that already
@@ -559,6 +575,16 @@ async function serveOwned(
   void modelCache.refresh();
   console.log(
     `wispd listening on http://${hostname}:${server.port} (token in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json)`,
+  );
+  // Printed next to the address because the two are read together: a terminal
+  // upgrade is accepted from the origin the browser connected to, and this is
+  // the only other one. Saying "unset" is the point — that is the state an
+  // operator behind a Host-rewriting proxy needs to notice.
+  const extraOrigins = allowedOrigins();
+  console.log(
+    extraOrigins.length > 0
+      ? `wispd terminal origins: also accepting ${extraOrigins.join(", ")} (${ALLOWED_ORIGINS_ENV})`
+      : `wispd terminal origins: its own origin only (${ALLOWED_ORIGINS_ENV} unset)`,
   );
   return server;
 }

@@ -6,6 +6,7 @@ import { wispCommand, type WispCommand } from "./command";
 import { ADAPTERS_PATH, CONFIG_PATH, DB_PATH, loadConfig, validateConfig, type WispConfig } from "./config";
 import { assertExecutableAllowed } from "./launch-policy";
 import { integrityProblems, SCHEMA_VERSION } from "./migrations";
+import { ALLOWED_ORIGINS_ENV } from "./routes/auth";
 import { trunc } from "./text";
 import { readUserJson } from "./validate";
 import { BUILD_COMMIT, BUILD_DIRTY, VERSION } from "./version";
@@ -366,6 +367,48 @@ export async function checkDaemon(
   return ok("daemon", `${cfg.host}:${cfg.port} (${data.version}@${data.commit ?? "unknown"})`);
 }
 
+/**
+ * Which browser origins the RUNNING daemon accepts a terminal socket from.
+ *
+ * Asked of the daemon rather than read from this shell, and that distinction
+ * is the whole value of the check: `WISP_ALLOWED_ORIGINS` has to be in the
+ * daemon's environment, and a daemon started by a user service or a container
+ * supervisor does not share this terminal's. Reading it here would confidently
+ * report "unset" for a daemon that has it set, and the reverse — a second
+ * false diagnosis on top of the one this check exists to prevent (#139).
+ */
+export async function checkTerminalOrigins(
+  cfg: { host: string; port: number; token: string },
+  fetchFn: typeof fetch = fetch,
+): Promise<DoctorCheck> {
+  const check = "terminal origins";
+  const url = `http://${cfg.host}:${cfg.port}/api/terminal-origin`;
+  let response: Response;
+  try {
+    response = await fetchFn(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${cfg.token}` },
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch {
+    return warn(check, `could not ask the daemon which origins it accepts (POST ${url})`);
+  }
+  if (response.status === 404) {
+    return warn(check, `the running daemon does not report its origins yet — restart it to pick up this build`);
+  }
+  if (!response.ok) return warn(check, `POST ${url} returned ${response.status}`);
+  const report = (await response.json().catch(() => null)) as { expected?: unknown; allowed?: unknown } | null;
+  const expected = typeof report?.expected === "string" ? report.expected : null;
+  if (!expected) return warn(check, `POST ${url} did not report an origin`);
+  const allowed = Array.isArray(report?.allowed) ? report.allowed.filter((o): o is string => typeof o === "string") : [];
+  return ok(
+    check,
+    allowed.length > 0
+      ? `${expected}, plus ${ALLOWED_ORIGINS_ENV}: ${allowed.join(", ")}`
+      : `${expected} only (${ALLOWED_ORIGINS_ENV} unset in the daemon's environment)`,
+  );
+}
+
 export interface DoctorDeps {
   spawn?: SpawnFn;
   fetchFn?: typeof fetch;
@@ -482,8 +525,13 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
   const ready = appendHarnessChecks(checks, loadDoctorAdapters(deps, checks), selected, spawn);
 
   checks.push(checkSupervisor(spawn, deps.currentPlatform ?? platform()));
-  if (cfg) checks.push(await checkDaemon(cfg, fetchFn));
-  else checks.push(fail("daemon", "skipped — config.json is invalid (see above)"));
+  if (cfg) {
+    const daemon = await checkDaemon(cfg, fetchFn);
+    checks.push(daemon);
+    // Only worth asking a daemon that answered. An unreachable one already
+    // has its own FAIL above, and a second line saying so explains nothing.
+    if (daemon.status !== "fail") checks.push(await checkTerminalOrigins(cfg, fetchFn));
+  } else checks.push(fail("daemon", "skipped — config.json is invalid (see above)"));
 
   checks.push(activationReceipt(checks, ready, selected, project));
   return checks;
