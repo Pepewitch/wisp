@@ -98,6 +98,25 @@ requests and late callbacks remain bound to their initiating connection.
 
 ## Retention, export, and permanent deletion
 
+### Storage report
+
+`wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` inspects the local
+`WISP_HOME` without creating files, changing permissions, or requiring a daemon.
+It reads a database snapshot in memory, including committed WAL pages, and never
+opens the on-disk database with SQLite. It reports logical file bytes, not
+allocated disk blocks; symlinks are not followed. Concurrent filesystem changes
+can make the totals approximate; a busy database snapshot asks you to retry.
+
+Orphan worktrees belong to archived or missing tasks. The report identifies
+them but never removes them. The done-task estimate counts worktrees only, not
+local repositories; actual archive still runs its normal safety checks.
+The purge estimate counts managed task files, logs and diagnostics, not orphan
+worktrees or SQLite space (logical row deletion does not shrink the database).
+The cutoff uses an archive's **last update**, conservatively, because historical
+tasks do not record a separate archive timestamp. Incomplete cleanup may refuse
+purge. Growth is retained log bytes divided by days since the oldest log mtime,
+not a measured write rate, and becomes less representative after deletion.
+
 Archive is not deletion: conversations, attachment bytes and retained logs stay
 in Wisp. Older archives whose attachments were already deleted show that loss;
 upgrading cannot recreate them. Interrupted legacy archive jobs finish under

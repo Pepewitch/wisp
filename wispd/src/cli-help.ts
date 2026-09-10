@@ -46,4 +46,6 @@ usage:
   ${COMMAND} version [--json] | --version [--json]   print the Wisp version and build commit
   ${COMMAND} doctor [--harness <name>]               activation check; optionally require one harness
   ${COMMAND} doctor --database                       read-only database check; no harness probes
+  ${COMMAND} doctor --storage [--archived-before <30d|YYYY-MM-DD>]
+                                               read-only local storage and potential reclaim; no daemon needed
 `;

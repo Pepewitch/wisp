@@ -6,6 +6,12 @@ HTTP clients of the daemon. Setup and diagnostic commands such as `init`,
 installation. Task ids are short strings like `tq2szu`; `wisp --help` prints
 the same list.
 
+`wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` is strictly
+read-only, works without a daemon, and never initializes the local home.
+It shows storage by directory, largest and orphan worktrees, live/archived log
+bytes, estimated growth, and potential reclaim. Archive age uses last update;
+estimates exclude SQLite overhead and do not bypass cleanup safety checks.
+
 ## Tasks
 
 ```

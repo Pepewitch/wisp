@@ -171,6 +171,12 @@ For a database startup error, run `wisp doctor --database` with the same
 A newer schema requires the same or a newer Wisp version. For damaged files,
 preserve a copy before repair or restore; deleting the database discards tasks.
 
+Use `wisp doctor --storage` for a strictly read-only local storage report,
+including largest and orphan worktrees, live/archived log bytes, a rough growth
+rate, and potential reclaim. `--archived-before 30d` (the default) or a UTC
+`YYYY-MM-DD` changes the archive estimate. It scans logical file bytes without
+following symlinks or initializing the home. See [storage and retention](docs/ARCHIVE-CLEANUP.md#storage-report).
+
 Then create a task:
 
 ```sh

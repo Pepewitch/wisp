@@ -1,4 +1,6 @@
 import { HELP } from "./cli-help";
+import { parseArgs, type Flags } from "./cli-args";
+export { parseArgs } from "./cli-args";
 import { retentionCommand } from "./cli-retention";
 import { cleanupCommand } from "./cli-cleanup";
 import { doctorCommand } from "./cli-doctor";
@@ -18,48 +20,6 @@ import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
 
-
-interface Parsed {
-  positional: string[];
-  flags: Record<string, string | boolean | string[]>;
-}
-type Flags = Parsed["flags"];
-
-/** Flags that take a value; everything else is boolean (so `-f`/`--force` never eat arguments). */
-const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm"]);
-/**
- * Value flags that ACCUMULATE instead of overwriting (A1b). `--image a.png
- * --image b.png` is two images, not the second one: a turn takes up to ten, and
- * silently keeping the last would drop the user's files without saying so.
- */
-const REPEAT_FLAGS = new Set(["image", "copy"]);
-
-export function parseArgs(args: string[]): Parsed {
-  const positional: string[] = [];
-  const flags: Record<string, string | boolean | string[]> = {};
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (a.startsWith("--")) {
-      const key = a.slice(2);
-      const next = args[i + 1];
-      if (REPEAT_FLAGS.has(key) && next !== undefined) {
-        const prior = flags[key];
-        flags[key] = [...(Array.isArray(prior) ? prior : []), next];
-        i++;
-      } else if (VALUE_FLAGS.has(key) && next !== undefined) {
-        flags[key] = next;
-        i++;
-      } else {
-        flags[key] = true;
-      }
-    } else if (a.startsWith("-") && a.length > 1) {
-      flags[a.slice(1)] = true; // short flags are always boolean: -f, -a, …
-    } else {
-      positional.push(a);
-    }
-  }
-  return { positional, flags };
-}
 
 /**
  * `--image ./shot.png` → the wire payload the create/send routes take (A1b).

@@ -13,6 +13,13 @@ try {
     // would run daemon code inside what is about to become the shell.
     const { runPtyExec } = await import("./pty");
     runPtyExec(args.slice(1));
+  } else if (args[0] === "doctor" && args.includes("--storage")) {
+    // Bypass CLI/config imports: this diagnostic must not initialize a home.
+    const { parseArgs } = await import("./cli-args");
+    const { doctorCommand } = await import("./cli-doctor");
+    const { positional, flags } = parseArgs(args.slice(1));
+    if (positional.length) throw new Error("doctor --storage does not take positional arguments");
+    await doctorCommand(flags);
   } else if (args[0] === "serve") {
     const { serve } = await import("./daemon");
     await serve();
