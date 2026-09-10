@@ -4,12 +4,14 @@ export const HELP = `Wisp — coding-agent task manager
 
 usage:
   ${COMMAND} serve                                   run the daemon
-  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--image <path>]…
+  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--attach <path>]…
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults;
                                                        --local runs in the repo itself instead of a worktree,
                                                        and archiving it never removes anything;
-                                                       --image repeats, up to 10 per turn, 5 MB each)
+                                                       --attach repeats, up to 10 files and 50 MB per turn:
+                                                       images 5 MB, pdf and text 20 MB, video 50 MB
+                                                       (--image is the old name and still works))
   ${COMMAND} ls [-a]                                 list your tasks (alias: list; -a includes archived)
   ${COMMAND} show <task>                             task detail: turns, attachments, diffstat
   ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)
@@ -19,7 +21,7 @@ usage:
                                                     (-a includes archived tasks)
   ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout
-  ${COMMAND} send <task> "message" [--image <path>]…  send safely; active tasks steer or queue without stopping
+  ${COMMAND} send <task> "message" [--attach <path>]… send safely; active tasks steer or queue without stopping
   ${COMMAND} interrupt <task>                        stop the running turn (session survives)
   ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)
   ${COMMAND} push <task>                             push the task branch to origin

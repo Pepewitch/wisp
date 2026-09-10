@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { AttachmentPayload } from "./attachments";
+import type { AttachmentFlags } from "./cli";
 import type { ApiTask, SendResult, TaskMessage } from "./types";
 
 interface SendCommandOptions {
   positional: string[];
-  imageFlag: string | boolean | string[] | undefined;
+  attachmentFlags: AttachmentFlags;
   commandName: string;
-  readImages: (raw: string | boolean | string[] | undefined) => Promise<AttachmentPayload[] | undefined>;
+  readAttachments: (flags: AttachmentFlags) => Promise<AttachmentPayload[] | undefined>;
   request: (path: string, method: string, body: unknown) => Promise<unknown>;
 }
 
@@ -14,13 +15,13 @@ interface SendCommandOptions {
 export async function sendCommand(options: SendCommandOptions): Promise<void> {
   const [id, ...message] = options.positional;
   if (!id || message.length === 0) {
-    console.error(`usage: ${options.commandName} send <task> "message" [--image <path>]…`);
+    console.error(`usage: ${options.commandName} send <task> "message" [--attach <path>]…`);
     process.exit(1);
   }
   const result = (await options.request(`/api/tasks/${id}/send`, "POST", {
     message: message.join(" "),
     clientMessageId: randomUUID(),
-    attachments: await options.readImages(options.imageFlag),
+    attachments: await options.readAttachments(options.attachmentFlags),
   })) as ApiTask & SendResult;
   const uncertain = result.message.delivery_uncertain
     ? " (prior delivery may already have succeeded)"
