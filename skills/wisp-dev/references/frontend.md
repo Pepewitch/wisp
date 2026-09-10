@@ -777,12 +777,57 @@ pixels**, so a media query would never fire for it. `@container`, in two steps:
 | `@lg` 512px | + harness · model · effort, truncating before it wraps |
 | `@2xl` 672px | + the note or the `↵` hint inline; the stacked note goes |
 
+On `touch` the bar is one row of thumb targets instead: the model chip, the
+effort glyph, the paperclip, the suffix glyph and the send.
+
 Both things that yield are things the **task header two rows up still says**,
-so nothing leaves the screen. Do not reach for `touch` here: `touch` sizes
+so nothing leaves the screen. Width is not `touch`'s question: `touch` sizes
 controls for a thumb, it does not know how much room the bar has. A squeezed
 bar announced itself as `xhigh` above `effort` and a four-word note wrapped
 between the suffix picker and the send button; every item in the bar is
 `shrink-0` and unbreakable now, and the layout answers the width instead.
+
+The one exception is the **agent picker**, which is a control and not a
+repetition: a per-turn model switch has no other home, so it renders at every
+width. Two container steps cannot make five spelt-out controls fit 342px of
+phone, and while the picker was `shrink-0` with a spelt-out label they simply
+overlapped — the paperclip sat on top of `Default effort`, which sat on top of
+`Suffix prompt`. So `touch` answers what a *thumb* needs, and the two rules
+compose:
+
+- **An unchosen optional control is its glyph; a chosen one shows its value.**
+  Effort at the harness default and an unselected suffix prompt are the
+  `Prompt` and `Effort` glyphs alone, named by `aria-label`/`title`. Pick
+  either and its value comes back as text, because it changes what a send
+  delivers. The model chip is never a glyph — it always names the model.
+- **One item yields, and it is the model.** The chip drops its sparkle
+  (a mono model name under a chevron is unmistakable), keeps `min-w-0 shrink`
+  and truncates; the header still says harness · model in full. Everything
+  else is `shrink-0` at 44px, so nothing can overlap again.
+
+Three more things touch owns here, none of them a width question:
+
+- **The box grows with the draft** (`useAutosizeTextarea`), from a one-line
+  floor to the `max-h-[40vh]` cap. `rows` alone fixed the height, so a long
+  prompt scrolled three lines at a time while the cap applied to nothing — and
+  on a phone the room the box does not need yet belongs to the transcript,
+  which the keyboard has already taken half of.
+- **Return is a newline under a soft keyboard**, and the 44px button is the
+  send (`⌘/Ctrl+Return` still sends, for a phone with a keyboard). There is no
+  Shift to hold on a soft keyboard, and a stray Return firing a half-written
+  prompt costs a turn. This one asks `hasCoarsePointer()` as well as `touch`,
+  because the mobile shell also covers a 720px **Desktop** window: sizing for
+  a thumb must never take a real keyboard's shortcut away.
+- **No hairline and no `↵` hint.** The separator's job — who answers on one
+  side, what to send on the other — is done by the gap, and a keyboard hint on
+  a device with no keyboard is noise. The hairline now ships WITH the identity
+  it separates, so `@lg`'s absence cannot leave a rule with nothing on either
+  side of it.
+
+`Menu` owns thumb sizing for every dropdown, so no call site rolls its own:
+`touch` makes a trigger 44px (`w-11` when `iconOnly`) and adds `active:`, and
+the `menu-row` class takes a 44px floor under `@media (pointer: coarse)` in
+`index.css`, beside the rule that stops iOS zooming a focused field.
 
 ### 5g. Wisp settings — the gear that is not a project's
 
@@ -1034,6 +1079,8 @@ The rules that differ from desktop, and why:
 - **The composer is hidden on the Terminal tab.** Everywhere else it is
   pinned. On Terminal the shell itself is the input, and two composers fight
   over one keyboard.
+- **The composer is one row of thumb targets**, it grows with the draft, and
+  Return breaks a line rather than sending — §5c-ii, which owns that bar.
 - **Safe areas are honoured** with `env(safe-area-inset-*)`: the header clears
   a notch, the composer and the drawer's footer clear a home bar.
 

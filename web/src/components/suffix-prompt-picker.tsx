@@ -53,11 +53,20 @@ export function SuffixPromptPicker({
     <>
       <Menu
         icon={<Prompt />}
-        label={selected?.name ?? <span className="text-muted-foreground">Suffix prompt</span>}
+        touch={touch}
+        // On touch an unchosen prompt is the glyph alone: the phone-width bar
+        // has room for the paperclip, the agent chips and a 44px send, and
+        // "Suffix prompt" spelt out is what it does NOT have room for. Choosing
+        // one brings the name back, because it changes what a send delivers.
+        iconOnly={touch && !selected}
+        label={
+          selected?.name ??
+          (touch ? "Suffix prompt" : <span className="text-muted-foreground">Suffix prompt</span>)
+        }
         disabled={disabled}
-        // the touch cap was 32 when harness and model shared this bar; they
+        // the pointer cap was 32 when harness and model shared this bar; they
         // moved to the task header, so the label no longer has to truncate
-        className={cn("max-w-40", touch && "h-10 max-w-48")}
+        className={cn("max-w-40", touch && "max-w-28")}
         open={menuOpen}
         onOpenChange={(open) => {
           setMenuOpen(open)

@@ -353,3 +353,108 @@ describe("completed work with a background process", () => {
     expect(screen.getByRole("img")).toHaveClass("border-state-background")
   })
 })
+
+describe("the touch composer", () => {
+  const effortful: HarnessInfo[] = [
+    { ...harness("codex", ["gpt-5", "gpt-6"]), hasEffort: true, effortLevels: ["low", "high"] },
+    harness("claude", ["claude-opus"]),
+  ]
+  const placeholder = "Ask for changes, or / for commands"
+
+  /**
+   * A phone-width bar has room for the model, three glyphs and a 44px send —
+   * and for nothing that the task header one band up already says. Every item
+   * used to be `shrink-0` and spelt out, so the paperclip landed ON TOP of
+   * "Default effort", which landed on top of "Suffix prompt".
+   */
+  it("spends its width on controls rather than on labels the header repeats", () => {
+    mount(
+      <SteerBox task={task("done")} harnesses={effortful} canSwitchAgent touch onSend={() => {}} />,
+    )
+
+    // the model alone, and it is the one item allowed to give up width
+    const agent = screen.getByRole("button", { name: "codex · gpt-5" })
+    expect(agent.className).toContain("shrink")
+    expect(agent).toHaveTextContent("gpt-5")
+    expect(agent).not.toHaveTextContent("codex")
+    // an unchosen optional control is its glyph; choosing one brings its value back
+    expect(screen.getByRole("button", { name: "Reasoning effort" })).toHaveClass("w-11")
+    expect(screen.getByRole("button", { name: "Suffix prompt" })).toHaveClass("w-11")
+    expect(screen.queryByText("Default effort")).toBeNull()
+    // and no keyboard hint on a device with no keyboard to hint at
+    expect(screen.queryByTitle("Enter sends · Shift+Enter for a new line")).toBeNull()
+  })
+
+  it("names the chosen effort on the trigger once it is no longer the default", async () => {
+    mount(
+      <SteerBox task={task("done")} harnesses={effortful} canSwitchAgent touch onSend={() => {}} />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning effort" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "high" }))
+
+    expect(
+      await screen.findByRole("button", { name: "Reasoning effort: high" }),
+    ).toHaveTextContent("high")
+  })
+
+  it("keeps the touch send at the 44px floor", () => {
+    mount(<SteerBox task={task("done")} touch onSend={() => {}} />)
+
+    expect(screen.getByRole("button", { name: "Send" })).toHaveClass("size-11")
+    expect(screen.getByRole("button", { name: "Attach an image" })).toHaveClass("size-11")
+  })
+
+  /** A finger, as the device reports it — not a window that happens to be narrow. */
+  const coarsePointer = (matches: boolean) =>
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: matches && query === "(pointer: coarse)",
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    )
+
+  /**
+   * A soft keyboard has no Shift to hold, and a stray Return firing a
+   * half-written prompt costs a turn. The button sends; Return breaks a line.
+   */
+  it("makes Return a newline and leaves sending to the button", async () => {
+    const onSend = vi.fn()
+    coarsePointer(true)
+    mount(<SteerBox task={task("done")} touch onSend={onSend} />)
+    const box = screen.getByPlaceholderText(placeholder)
+
+    fireEvent.change(box, { target: { value: "first line" } })
+    fireEvent.keyDown(box, { key: "Enter" })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(box).toHaveValue("first line")
+
+    // a phone with a keyboard attached still gets a shortcut
+    fireEvent.keyDown(box, { key: "Enter", metaKey: true })
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("first line", undefined))
+
+    fireEvent.change(box, { target: { value: "second try" } })
+    fireEvent.click(screen.getByRole("button", { name: "Send" }))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("second try", undefined))
+  })
+
+  it.each([
+    ["a pointer pane", false, false],
+    // the mobile shell also covers a 720px Desktop window, which has a real
+    // keyboard: thumb SIZING must not take its Return shortcut away
+    ["a narrow window with a real keyboard", true, false],
+  ])("still sends on Return for %s", async (_case, touch, coarse) => {
+    const onSend = vi.fn()
+    coarsePointer(coarse)
+    mount(<SteerBox task={task("done")} touch={touch} onSend={onSend} />)
+    const box = screen.getByPlaceholderText(placeholder)
+
+    fireEvent.change(box, { target: { value: "keyboard send" } })
+    fireEvent.keyDown(box, { key: "Enter" })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("keyboard send", undefined))
+  })
+})

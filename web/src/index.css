@@ -47,6 +47,9 @@
     font-size: max(16px, 1em);
   }
   .settings-content button { min-height: 44px; }
+  /* Every dropdown row is a thumb target too: 26px is a pointer's row, and a
+     model list is chosen from the composer on a phone. */
+  .menu-row { min-height: 44px; }
 }
 
 /* ────────────────────────────────────────────────────────────────────────
