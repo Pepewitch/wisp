@@ -189,7 +189,7 @@ function Form({
 
         <Section
           label="Base branch"
-          hint="Where each new worktree starts. Leave it empty unless this project merges somewhere other than its default branch."
+          hint="Where each new worktree starts. Leave it empty unless this project merges somewhere other than its default branch — a plain branch name is read as the remote's (origin/develop), so it never forks from a stale local copy."
         >
           <BaseBranchField value={baseBranch} onChange={setBaseBranch} />
         </Section>

@@ -83,8 +83,19 @@ describe("wisp project show / set", () => {
 
     const out = await run(["project", "show", path]);
     expect(out.exitCode).toBe(0);
+    // exact, not toContain: this is the test that catches a field added to
+    // `project set` and never taught to `show`
     expect(out.stdout).toBe(
-      [`name: Demo`, `path: ${path}`, `exists: yes`, `setup: -`, `archive: -`, `copy: -`, ``].join("\n"),
+      [
+        `name: Demo`,
+        `path: ${path}`,
+        `exists: yes`,
+        `setup: -`,
+        `archive: -`,
+        `base: - (origin/HEAD)`,
+        `copy: -`,
+        ``,
+      ].join("\n"),
     );
   });
 
@@ -117,6 +128,45 @@ describe("wisp project show / set", () => {
     expect(out.stdout).toContain("setup: bun install\n");
     expect(out.stdout).toContain("archive: git clean -fdx\n");
     expect(out.stdout).toContain("copy: .env, *.local\n");
+  });
+
+  /**
+   * The whole `--base` CLI surface, end to end. Worth its own test because
+   * the flag first shipped unparsable: the handlers read it as a string
+   * while VALUE_FLAGS still made it a boolean, so `--base <ref>` always
+   * refused itself and no test noticed. `show` has to print it too, or there
+   * is no way to confirm what `set` just wrote.
+   */
+  test("--base round-trips through set and show, and --clear-base restores the default", async () => {
+    await startDaemon();
+    const path = makeProject();
+    expect((await run(["project", "add", path])).exitCode).toBe(0);
+
+    // unset is the normal state, and show says what unset MEANS rather than
+    // rendering it as a blank someone feels obliged to fill in
+    let out = await run(["project", "show", path]);
+    expect(out.stdout).toContain("base: - (origin/HEAD)\n");
+
+    const set = await run(["project", "set", path, "--base", "origin/develop"]);
+    expect(set.exitCode).toBe(0);
+    expect(set.stderr).toBe("");
+    out = await run(["project", "show", path]);
+    expect(out.stdout).toContain("base: origin/develop\n");
+
+    // PATCH, like every other field: setting a script leaves the base alone
+    await run(["project", "set", path, "--setup", "bun install"]);
+    out = await run(["project", "show", path]);
+    expect(out.stdout).toContain("base: origin/develop\n");
+
+    const cleared = await run(["project", "set", path, "--clear-base"]);
+    expect(cleared.exitCode).toBe(0);
+    out = await run(["project", "show", path]);
+    expect(out.stdout).toContain("base: - (origin/HEAD)\n");
+    expect(out.stdout).toContain("setup: bun install\n"); // untouched by the clear
+
+    const both = await run(["project", "set", path, "--base", "x", "--clear-base"]);
+    expect(both.exitCode).toBe(1);
+    expect(both.stderr).toContain("mutually exclusive");
   });
 
   test("set is a PATCH: untouched fields survive, and the clear flags empty theirs", async () => {

@@ -35,12 +35,17 @@ async function git(args: string[], cwd: string, options: GitRunOptions = {}): Pr
   const result = await runBounded({
     cmd: ["git", ...args],
     cwd,
-    // Never prompt. The deadline above already stops a hung credential
-    // prompt, but stopping it costs the full timeout and reports as "git
-    // timed out" rather than the auth failure it is. Task creation fetches
-    // from origin now, so this went from theoretical to the common case for
+    // Never wait on a terminal prompt. The deadline already stops a hung
+    // one, but stopping it costs the full timeout and reports as "git timed
+    // out" rather than the auth failure it is. Task creation fetches from
+    // origin now, so this went from theoretical to the common case for
     // anyone whose remote wants a passphrase.
-    env: { GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: "" },
+    //
+    // GIT_TERMINAL_PROMPT only. Blanking GIT_ASKPASS/SSH_ASKPASS would also
+    // apply to `git push` and the archive commit on this shared helper, and
+    // an empty askpass is a DIFFERENT contract from an unset one — it would
+    // break a user whose push authenticates through an askpass helper.
+    env: { GIT_TERMINAL_PROMPT: "0" },
     maxBytes: options.maxBytes,
     timeoutMs: options.timeoutMs ?? READ_TIMEOUT_MS,
   });
@@ -176,17 +181,35 @@ export interface BaseChoice {
  * on disk, which is still no worse than the old behaviour.
  */
 async function fetchBaseRefs(repo: string): Promise<void> {
-  // `git fetch` against a repo with no origin is a failure with a scary
-  // message and a DNS timeout's worth of latency; ask first, it is one cheap
-  // read. --no-tags because a base is a branch: tags are megabytes of refs
-  // on a big repo and nothing here resolves through them.
-  if ((await git(["remote"], repo)).out.split("\n").every((name) => name.trim() !== "origin")) return;
-  await git(["fetch", "--no-tags", "--quiet", "origin"], repo, { timeoutMs: WRITE_TIMEOUT_MS });
+  try {
+    // `git fetch` against a repo with no origin is a failure with a scary
+    // message and a DNS timeout's worth of latency; ask first, it is one cheap
+    // read. --no-tags because a base is a branch: tags are megabytes of refs
+    // on a big repo and nothing here resolves through them.
+    if ((await git(["remote"], repo)).out.split("\n").every((name) => name.trim() !== "origin")) return;
+    await git(["fetch", "--no-tags", "--quiet", "origin"], repo, { timeoutMs: FETCH_TIMEOUT_MS });
+  } catch {
+    // A non-zero fetch is already a no-op here, but `git()` THROWS on its
+    // deadline — so without this catch a black-holed origin would fail the
+    // create outright after the timeout, which is strictly worse than the
+    // behaviour this change replaced. Swallow it: the refs already on disk
+    // are a worse base than a fresh fetch and a better one than no task.
+  }
 }
+
+/**
+ * Deadline for the create-path fetch. Deliberately far below
+ * WRITE_TIMEOUT_MS: this runs before every worktree task, a slow origin must
+ * not hold creation for two minutes, and the fallback (resolve against the
+ * refs already on disk) is cheap and correct.
+ */
+const FETCH_TIMEOUT_MS = 20_000;
 
 /** Resolve a ref to a commit, or null when this repo cannot name it. */
 async function commitFor(repo: string, ref: string): Promise<string | null> {
-  const r = await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repo);
+  // --end-of-options, not "--": in rev-parse a "--" would make the next
+  // argument a PATH rather than a rev. Guards a ref that starts with "-".
+  const r = await git(["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], repo);
   return r.ok && r.out !== "" ? r.out : null;
 }
 
@@ -232,10 +255,25 @@ export async function resolveBase(
     return { ref: null, commit: head, note };
   };
   if (configured !== undefined && configured.trim() !== "") {
-    const ref = configured.trim();
-    const commit = await commitFor(repo, ref);
-    if (commit !== null) return { ref, commit, note: null };
-    return fallback(`this project's base branch '${ref}' does not resolve — check the project's settings`);
+    const asked = configured.trim();
+    // A BARE branch name in the project setting means the integration branch,
+    // not one checkout's copy of it. Typing "main" into a field whose
+    // placeholder reads `origin/HEAD` is easy, and resolving it literally
+    // would fork from the stale local `main` — reintroducing, through the
+    // settings UI, the exact defect this ordering exists to remove. So a name
+    // with no "/" prefers `origin/<name>` when that remote-tracking ref
+    // exists, and falls back to the local branch when it does not (a branch
+    // that only exists locally is still a legitimate base).
+    //
+    // An explicit per-task base above is deliberately NOT treated this way:
+    // it is typed for one task, and `--base my-experiment` meaning the local
+    // branch is the whole point of stacking work on it.
+    const candidates = asked.includes("/") ? [asked] : [`origin/${asked}`, asked];
+    for (const ref of candidates) {
+      const commit = await commitFor(repo, ref);
+      if (commit !== null) return { ref, commit, note: null };
+    }
+    return fallback(`this project's base branch '${asked}' does not resolve — check the project's settings`);
   }
   return fallback(null);
 }

@@ -9,13 +9,18 @@ the same list.
 ## Tasks
 
 ```
-wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--image <path>]…
+wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local]
+         [--base <ref>] [--image <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.
 `--model`/`--effort` fall back to `harnessDefaults` in `~/.wisp/config.json`,
 then to the harness's own default. `--local` runs in the repo checkout itself
-instead of a worktree. `--image` repeats (see images.md). Prints
+instead of a worktree. `--base` forks this task's worktree from `<ref>`
+instead of the project's base branch — any commit-ish (`origin/release-2.1`,
+a local branch to stack on, a tag, a SHA), taken literally, and the create
+fails if it does not resolve. It is rejected for `--local`, which adopts the
+branch the checkout is already on. `--image` repeats (see images.md). Prints
 `created <id> (<harness>[, <model>][, local]) — <title>`; the model is shown
 when Wisp received an explicit or configured choice, and omitted when the
 harness will choose its own default.
@@ -143,16 +148,23 @@ wisp project add <path> [--name <name>]
 wisp project rm <path>
 wisp project ls
 wisp project show <path>
-wisp project set <path> [--name <n>] [--setup <cmd>] [--archive <cmd>]
-                 [--copy <glob>]… [--clear-setup] [--clear-archive] [--clear-copy]
+wisp project set <path> [--name <n>] [--setup <cmd>] [--archive <cmd>] [--base <ref>]
+                 [--copy <glob>]… [--clear-setup] [--clear-archive] [--clear-base]
+                 [--clear-copy]
 ```
 
 The project registry feeds the web UI's pickers and per-project automation.
 `set` edits the same fields as the web gear dialog: a setup script (runs at
 task creation, after the repo's own `.wisp/setup.sh`), an archive script
-(teardown hook; failure pauses workspace deletion for review), and copy globs (files
-copied from the repo into each new worktree, e.g. `.env`). `--copy` repeats
-and the flags REPLACE the stored list. Task history survives `project rm`. An
+(teardown hook; failure pauses workspace deletion for review), copy globs (files
+copied from the repo into each new worktree, e.g. `.env`), and the base branch
+new worktrees fork from. `--copy` repeats and the flags REPLACE the stored list.
+
+Leave the base unset (`--clear-base`) unless the project integrates somewhere
+other than its default branch: Wisp resolves `origin/HEAD` on its own, having
+fetched first. A bare name is read as the integration branch, so `--base
+develop` prefers `origin/develop` over a local `develop` that may be stale;
+write `refs/heads/develop` to insist on the local one. Task history survives `project rm`. An
 unregistered project remains in the Projects list only while it has active
 tasks; archived history remains under **Show archived**. The gear dialog's
 **Remove from Wisp** can also archive every active task while unregistering.

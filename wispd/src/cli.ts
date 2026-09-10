@@ -26,7 +26,7 @@ interface Parsed {
 type Flags = Parsed["flags"];
 
 /** Flags that take a value; everything else is boolean (so `-f`/`--force` never eat arguments). */
-const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "port", "confirm"]);
+const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm"]);
 /**
  * Value flags that ACCUMULATE instead of overwriting (A1b). `--image a.png
  * --image b.png` is two images, not the second one: a turn takes up to ten, and
@@ -426,6 +426,7 @@ async function showProject(path: string | undefined): Promise<void> {
       setupScript: string;
       archiveScript: string;
       copyFiles: string[];
+      baseBranch: string;
     }[];
   };
   const repo = data.repos.find((candidate) => candidate.path === resolved);
@@ -438,6 +439,9 @@ async function showProject(path: string | undefined): Promise<void> {
   console.log(`exists: ${repo.exists ? "yes" : "no (missing)"}`);
   console.log(`setup: ${repo.setupScript || "-"}`);
   console.log(`archive: ${repo.archiveScript || "-"}`);
+  // "-" here is not "unset and broken": an empty base means Wisp resolves the
+  // remote default itself, which is the right answer for almost every project
+  console.log(`base: ${repo.baseBranch || "- (origin/HEAD)"}`);
   console.log(`copy: ${repo.copyFiles.length > 0 ? repo.copyFiles.join(", ") : "-"}`);
 }
 

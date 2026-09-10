@@ -95,7 +95,10 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   if (body.base !== undefined && typeof body.base !== "string") {
     return err(`base must be a string, got ${typeName(body.base)}`, 400);
   }
-  if (body.base === "") return err("base must not be empty", 400);
+  // .trim(), not `=== ""`: "   " would otherwise pass the boundary and then
+  // be silently discarded as "no override" by resolveBase — a base the user
+  // asked for and did not get, which is the failure mode being removed.
+  if (typeof body.base === "string" && body.base.trim() === "") return err("base must not be empty", 400);
   return null;
 }
 

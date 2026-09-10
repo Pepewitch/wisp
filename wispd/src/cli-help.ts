@@ -4,7 +4,7 @@ export const HELP = `Wisp — coding-agent task manager
 
 usage:
   ${COMMAND} serve                                   run the daemon
-  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--image <path>]…
+  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--image <path>]…
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults;
                                                        --local runs in the repo itself instead of a worktree,
@@ -31,7 +31,7 @@ usage:
   ${COMMAND} project rm <path>                       remove a configured project (task history stays)
   ${COMMAND} project ls                              list configured and historical repo paths
   ${COMMAND} project show <path>                     print a project's settings (setup/archive scripts, copy globs)
-  ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--copy <glob>]…
+  ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]…
                                                [--clear-setup] [--clear-archive] [--clear-copy]
                                                     set or clear the fields the web gear dialog edits;
                                                     --copy repeats and the flags REPLACE the stored

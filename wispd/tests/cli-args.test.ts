@@ -65,4 +65,23 @@ describe("parseArgs", () => {
     expect(p.flags.setup).toBe("bun install");
     expect(p.flags["clear-archive"]).toBe(true);
   });
+
+  /**
+   * `--base` shipped in a review draft reading its ref as a POSITIONAL,
+   * because the handlers were written for a value flag while VALUE_FLAGS was
+   * not updated. Every caller then saw `flags.base === true` and refused with
+   * "--base requires a value" — an advertised flag that could not be used at
+   * all. This is the cheap test that catches the next one.
+   */
+  test("--base is a value flag on both `new` and `project set`, and --clear-base is not", () => {
+    const create = parseArgs(["repo", "do the thing", "--harness", "droid", "--base", "origin/develop"]);
+    expect(create.flags.base).toBe("origin/develop");
+    expect(create.positional).toEqual(["repo", "do the thing"]); // the ref did not leak into arity
+
+    const set = parseArgs(["set", "/repo", "--base", "origin/develop", "--clear-copy"]);
+    expect(set.flags.base).toBe("origin/develop");
+    expect(set.positional).toEqual(["set", "/repo"]);
+
+    expect(parseArgs(["set", "/repo", "--clear-base"]).flags["clear-base"]).toBe(true);
+  });
 });

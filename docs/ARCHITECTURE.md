@@ -132,14 +132,21 @@ the remote daemon's machine.
 
 A `worktree` task forks from the project's base branch, not from whatever the
 project directory happens to have checked out. The daemon fetches `origin`
-(best effort — offline or remote-less repos simply skip it) and resolves, in
-order:
+(best effort: no remote, a non-zero fetch, and a fetch that hits its deadline
+all fall through to the refs already on disk rather than failing the task)
+and resolves, in order:
 
 1. an explicit per-task base (`wisp new --base <ref>`, or the composer's base
    picker) — an unresolvable one fails the create rather than substituting a
    different commit;
 2. the project's configured `baseBranch`, for a repo that integrates on
-   `develop` or a release line;
+   `develop` or a release line. A BARE name is read as the integration
+   branch, so `develop` prefers `origin/develop` over a local `develop` that
+   may be stale — otherwise typing `main` into that field would fork from
+   the stale local `main`, reintroducing this defect through the setting
+   meant to control it. Write `refs/heads/develop` to insist on the local
+   branch. An explicit per-task base is deliberately NOT rewritten this way:
+   `--base my-experiment` meaning the local branch is the point of stacking;
 3. `origin/HEAD`, then `origin/main` / `origin/master`;
 4. the checkout's `HEAD` — a repo with no remote, and the behaviour of
    every release up to and including 0.5.2.
