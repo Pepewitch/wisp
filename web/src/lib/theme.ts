@@ -100,6 +100,8 @@ export function applyTheme(theme: Theme): void {
   root.classList.toggle("light", theme === "light")
   setMeta("color-scheme", theme)
   setMeta("theme-color", CHROME_COLOR[theme])
+  // iOS home-screen windows use this separately from the browser toolbar tint.
+  setMeta("apple-mobile-web-app-status-bar-style", theme === "dark" ? "black-translucent" : "default")
 }
 
 let preference = readThemePreference()
