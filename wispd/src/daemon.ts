@@ -110,9 +110,9 @@ function wsError(ws: TerminalSocket, message: string): void {
  * page that opened it must know the token to get any further, which an
  * attacker's page on another origin does not.
  */
-function openTerminal(ws: TerminalSocket): void {
+function openTerminal(ws: TerminalSocket, cfg: WispConfig): void {
   if (ws.data.authenticated) {
-    void attachTerminal(ws);
+    void attachTerminal(ws, cfg);
     return;
   }
   ws.send(JSON.stringify({ type: "auth_required" }));
@@ -134,13 +134,19 @@ function clearTerminalAuthDeadline(ws: TerminalSocket): void {
   terminalAuthDeadlines.delete(ws);
 }
 
-async function attachTerminal(ws: TerminalSocket): Promise<void> {
+async function attachTerminal(ws: TerminalSocket, cfg: WispConfig): Promise<void> {
   try {
     const task = getTask(ws.data.taskId);
     if (!task) throw new Error(`no such task: ${ws.data.taskId}`);
     if (task.archived) throw new Error(`task ${task.id} is archived — worktree removed`);
     if (!task.worktree_path) throw new Error(`task ${task.id} has no worktree_path`);
-    const session = openSession(task.id, ws.data.shellId, task.worktree_path, ws.data.size ?? DEFAULT_PTY_SIZE);
+    const session = openSession(
+      task.id,
+      ws.data.shellId,
+      task.worktree_path,
+      ws.data.size ?? DEFAULT_PTY_SIZE,
+      cfg.terminalShell,
+    );
     const client: TerminalClient = {
       isOpen: () => ws.readyState === 1,
       sendOutput: (data) => ws.send(JSON.stringify({ type: "out", data })),
@@ -194,7 +200,7 @@ function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffe
     }
     ws.data.authenticated = true;
     clearTerminalAuthDeadline(ws);
-    void attachTerminal(ws);
+    void attachTerminal(ws, cfg);
     return;
   }
   if (value.type === "auth") return; // already authenticated at the upgrade; nothing to prove
@@ -422,7 +428,7 @@ async function serveOwned(
         data: {} as TerminalSocketData,
         open(ws) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
-          openTerminal(ws);
+          openTerminal(ws, cfg);
         },
         message(ws, message) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }

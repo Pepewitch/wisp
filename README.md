@@ -383,6 +383,10 @@ store when a client or realtime connection restarts. See
 [Architecture](docs/ARCHITECTURE.md) for the ownership boundaries and
 shared-client contract.
 
+Embedded terminals use the OS account's login shell by default. Set an
+absolute `terminalShell` path in `config.json` and restart the daemon when a
+browser and Desktop should consistently use another installed shell.
+
 Wisp admits up to 100 simultaneously running tasks by default, including tasks
 preparing a workspace. Set a positive integer `maxConcurrentTasks` in
 `config.json` and restart the daemon to change that ceiling. At capacity, finish

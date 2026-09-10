@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { ReadStream } from "node:fs";
+import { userInfo } from "node:os";
 import {
   clampDimension,
   closePty,
@@ -84,15 +85,35 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * The user's login shell: $SHELL when the daemon's environment sets it and the
- * binary exists, else the platform default (zsh on macOS since Catalina,
- * bash on Linux). The web terminal must feel like the machine's own terminal
- * — a hardcoded bash would ignore the user's shell config entirely.
+ * Resolve the user's login shell without assuming the daemon was launched by
+ * an interactive shell. A configured value is authoritative; otherwise the
+ * account database is more reliable than a service manager's inherited
+ * environment. `$SHELL` remains a compatibility fallback for environments
+ * where account lookup is unavailable.
  */
-export function loginShell(): string {
-  const fromEnv = process.env.SHELL;
-  if (fromEnv && existsSync(fromEnv)) return fromEnv;
-  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash";
+export function resolveLoginShell(
+  configured: string | undefined,
+  account: string | null | undefined,
+  inherited: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+  exists: (path: string) => boolean = existsSync,
+): string {
+  if (configured !== undefined) return configured;
+  if (account && exists(account)) return account;
+  if (inherited && exists(inherited)) return inherited;
+  return platform === "darwin" ? "/bin/zsh" : "/bin/bash";
+}
+
+/** The login shell for a new embedded terminal. */
+export function loginShell(configured?: string): string {
+  let account: string | null = null;
+  try {
+    account = userInfo().shell;
+  } catch {
+    // Some constrained runtimes cannot resolve the current uid. `$SHELL` and
+    // the platform default remain useful, deterministic fallbacks.
+  }
+  return resolveLoginShell(configured, account, process.env.SHELL);
 }
 
 /** The login shell invocation, on the pty and in the piped fallback alike. */
@@ -161,8 +182,9 @@ class TerminalSession {
     cwd: string,
     env: Record<string, string>,
     size: PtySize,
+    configuredShell?: string,
   ): TerminalSession {
-    const shell = loginShell();
+    const shell = loginShell(configuredShell);
     const wanted: PtySize = { cols: clampDimension(size.cols), rows: clampDimension(size.rows) };
     let handle: PtyHandle | null = null;
     try {
@@ -529,6 +551,7 @@ export function openSession(
   shellId: number,
   worktreePath: string,
   size: PtySize = DEFAULT_PTY_SIZE,
+  configuredShell?: string,
 ): TerminalSession {
   const key = sessionKey(taskId, shellId);
   const existing = sessions.get(key);
@@ -548,6 +571,7 @@ export function openSession(
     worktreePath,
     envForCwd(webTerminalEnv(process.env, taskEnv(task)), worktreePath) as Record<string, string>,
     size,
+    configuredShell,
   );
   sessions.set(key, session);
   keepIdleGcAlive();

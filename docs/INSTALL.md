@@ -193,6 +193,28 @@ and ignores a globally exported `WISP_HOME`. Use `wisp-dev token`,
 `wisp-dev doctor`, and the other ordinary subcommands against the development
 daemon while production continues under its installed service.
 
+## Embedded terminal shell
+
+Wisp normally opens the login shell recorded for its OS account. If account
+lookup is unavailable, it uses a valid inherited `SHELL`, then the platform
+default. A service manager's environment is therefore not required to match an
+interactive terminal.
+
+To choose a different shell deterministically, set its absolute path in
+`~/.wisp/config.json` and restart Wisp:
+
+```json
+{
+  "terminalShell": "/bin/zsh"
+}
+```
+
+The path must name an executable file, and the shell must accept `-l` for a
+login session. Wisp does not source an interactive startup file to discover a
+shell preference; after launch, the selected login shell reads its own normal
+startup files. Existing terminal sessions stop on daemon restart and new tabs
+use the configured shell.
+
 ## Harness credentials under a service manager
 
 A supervised daemon does not inherit your interactive shell's environment, and
