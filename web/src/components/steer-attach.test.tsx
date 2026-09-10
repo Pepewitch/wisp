@@ -39,6 +39,8 @@ const task = (over: Partial<ApiTask> = {}): ApiTask =>
   }) as ApiTask
 
 const pngFile = () => new File([PNG], "shot.png", { type: "image/png" })
+const CSV = new TextEncoder().encode("id,name\n1,a\n2,b\n")
+const csvFile = () => new File([CSV], "orders.csv", { type: "text/csv" })
 
 describe("SteerBox agent metadata", () => {
   it("keeps the task's selected effort visible after its model", () => {
@@ -55,7 +57,9 @@ describe("SteerBox attachments", () => {
     render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
 
     const input = screen.getByTestId("attach-input") as HTMLInputElement
-    expect(input.accept).toBe("image/png,image/jpeg,image/gif,image/webp")
+    expect(input.accept).toContain("image/png")
+    expect(input.accept).toContain("application/pdf")
+    expect(input.accept).toContain("video/mp4")
     expect(input.multiple).toBe(true)
 
     fireEvent.change(input, { target: { files: [pngFile()] } })
@@ -76,26 +80,67 @@ describe("SteerBox attachments", () => {
     fireEvent.change(box, { target: { value: "look at this" } })
     fireEvent.click(screen.getByLabelText("Send"))
 
-    expect(onSend).toHaveBeenCalledWith("look at this", [{ name: "shot.png", dataBase64: expect.any(String) }])
+    // the bytes are encoded at submit now (A1d), so the call lands a tick later
+    await waitFor(() =>
+      expect(onSend).toHaveBeenCalledWith("look at this", [{ name: "shot.png", dataBase64: expect.any(String) }]),
+    )
     // the queue clears only once the send has RESOLVED — a refusal keeps it
     await waitFor(() => expect(screen.queryByTestId("pending-attachment")).toBeNull())
   })
 
-  it("a plain message sends no attachments field at all", () => {
+  it("a plain message sends no attachments field at all", async () => {
     const onSend = vi.fn()
     render_(<SteerBox task={task()} hasImage onSend={onSend} />)
     fireEvent.change(screen.getByPlaceholderText("Ask for changes, or / for commands"), {
       target: { value: "just text" },
     })
     fireEvent.click(screen.getByLabelText("Send"))
-    expect(onSend).toHaveBeenCalledWith("just text", undefined)
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("just text", undefined))
   })
 
-  it("a harness without image capability disables the paperclip and says why", () => {
+  /**
+   * A1d: the paperclip is never disabled any more, because pdf, text and video
+   * reach every harness by path. An IMAGE at a harness with no image mechanism
+   * is refused by name — and the rest of the batch still attaches, which the
+   * old whole-composer gate could not do.
+   */
+  it("a harness without image capability refuses the image and keeps the text file", async () => {
     render_(<SteerBox task={task({ harness: "opencode" })} hasImage={false} onSend={() => {}} />)
-    const button = screen.getByLabelText("Attach an image")
-    expect(button).toBeDisabled()
-    expect(button.getAttribute("title")).toBe("harness 'opencode' has no image-attachment capability")
+    const button = screen.getByLabelText("Attach a file")
+    expect(button).not.toBeDisabled()
+
+    fireEvent.change(screen.getByTestId("attach-input"), { target: { files: [pngFile(), csvFile()] } })
+    await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
+    expect(screen.getByTestId("pending-attachments").textContent).toContain("orders.csv")
+    expect(screen.getByTestId("attachment-note").textContent).toBe(
+      "harness 'opencode' has no image-attachment capability",
+    )
+  })
+
+  it("A1d: a non-image row says its kind, since a thumbnail cannot", async () => {
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    fireEvent.change(screen.getByTestId("attach-input"), { target: { files: [csvFile()] } })
+    await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
+    expect(screen.getByTestId("pending-attachment").textContent).toBe("orders.csv·text·16 B")
+  })
+
+  it("A1d: a long paste becomes a file, says so, and can be put back inline", async () => {
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    const box = screen.getByPlaceholderText("Ask for changes, or / for commands") as HTMLTextAreaElement
+    const pasted = "id,name\n" + "1,a\n".repeat(3000)
+    fireEvent.paste(box, {
+      clipboardData: { files: [], getData: (type: string) => (type === "text/plain" ? pasted : "") },
+    })
+
+    await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
+    expect(box.value).toBe("") // the wall of text never lands in the composer
+    expect(screen.getByTestId("pending-attachment").textContent).toContain("pasted-1.csv")
+    expect(screen.getByTestId("pasted-text-note").textContent).toContain("long paste attached as pasted-1.csv")
+
+    fireEvent.click(screen.getByText("insert inline instead"))
+    await waitFor(() => expect(screen.queryByTestId("pending-attachment")).toBeNull())
+    expect(box.value).toBe(pasted)
+    expect(screen.queryByTestId("pasted-text-note")).toBeNull()
   })
 
   it("A1c: the harness's delivery caveat shows only once an image is pending", async () => {

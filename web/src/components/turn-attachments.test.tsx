@@ -9,9 +9,10 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { TurnAttachments } from "./turn-attachments"
 
 /**
- * A1a's read side: a past turn's images come back from the daemon by path, open
- * large on click, and — when the task is archived and the bytes are gone — say
- * so instead of rendering a thumbnail that 410s.
+ * A1a's read side: a past turn's attachments come back from the daemon by path,
+ * open large on click, and — when the task is archived and the bytes are gone —
+ * say so instead of rendering a thumbnail that 410s. A1d added the kinds that
+ * have no thumbnail to draw.
  */
 
 const IMAGES: TurnAttachment[] = [
@@ -24,7 +25,7 @@ function mount(node: ReactNode, transport = fakeDaemonTransport()) {
 }
 
 describe("TurnAttachments", () => {
-  it("renders nothing at all for a turn that carried no images", () => {
+  it("renders nothing at all for a turn that carried no attachments", () => {
     const { container } = mount(<TurnAttachments taskId="tk9zdy" turn={2} attachments={[]} archived={false} />)
     expect(container).toBeEmptyDOMElement()
   })
@@ -61,10 +62,10 @@ describe("TurnAttachments", () => {
 
   it("clicking a thumbnail opens the presentation view on THAT image", () => {
     mount(<TurnAttachments taskId="tk9zdy" turn={2} attachments={IMAGES} archived={false} />)
-    expect(screen.queryByTestId("image-viewer")).toBeNull()
+    expect(screen.queryByTestId("attachment-viewer")).toBeNull()
 
     fireEvent.click(screen.getByLabelText("View spacing shot.png"))
-    const viewer = screen.getByTestId("image-viewer")
+    const viewer = screen.getByTestId("attachment-viewer")
     expect(viewer).toBeTruthy()
     // the caption names the clicked image, not the first one
     expect(viewer.textContent).toContain("spacing shot.png")
@@ -75,20 +76,44 @@ describe("TurnAttachments", () => {
   it("left and right step through the rest of the turn's images, wrapping", () => {
     mount(<TurnAttachments taskId="tk9zdy" turn={2} attachments={IMAGES} archived={false} />)
     fireEvent.click(screen.getByLabelText("View cramped.png"))
-    expect(screen.getByTestId("image-viewer").textContent).toContain("1 of 2")
+    expect(screen.getByTestId("attachment-viewer").textContent).toContain("1 of 2")
 
     fireEvent.keyDown(window, { key: "ArrowRight" })
-    expect(screen.getByTestId("image-viewer").textContent).toContain("2 of 2")
+    expect(screen.getByTestId("attachment-viewer").textContent).toContain("2 of 2")
 
     // wrapping forward returns to the first, so there is no dead end
     fireEvent.keyDown(window, { key: "ArrowRight" })
-    expect(screen.getByTestId("image-viewer").textContent).toContain("1 of 2")
+    expect(screen.getByTestId("attachment-viewer").textContent).toContain("1 of 2")
 
     fireEvent.keyDown(window, { key: "ArrowLeft" })
-    expect(screen.getByTestId("image-viewer").textContent).toContain("2 of 2")
+    expect(screen.getByTestId("attachment-viewer").textContent).toContain("2 of 2")
   })
 
-  it("an archived turn names its images and says they were removed — no thumbnail, not silence", () => {
+  it("A1d: a video opens in the same viewer; a pdf and a text file are downloads", () => {
+    const mixed: TurnAttachment[] = [
+      { name: "clip.mp4", size: 47 * 1024 * 1024, mediaType: "video/mp4" },
+      { name: "spec.pdf", size: 2048, mediaType: "application/pdf" },
+      { name: "orders.csv", size: 4096, mediaType: "text/plain" },
+    ]
+    mount(<TurnAttachments taskId="tk9zdy" turn={3} attachments={mixed} archived={false} />)
+
+    // the two that cannot be shown are links that SAVE — the daemon serves them
+    // as attachments, and the app does not disagree with its own server
+    const pdf = screen.getByTitle("Download spec.pdf")
+    expect(pdf.getAttribute("href")).toBe("/api/tasks/tk9zdy/attachments/3/spec.pdf")
+    expect(pdf.getAttribute("download")).toBe("spec.pdf")
+    expect(pdf.textContent).toBe("spec.pdf · pdf · 2 KB")
+    expect(screen.getByTitle("Download orders.csv").textContent).toBe("orders.csv · text · 4 KB")
+
+    fireEvent.click(screen.getByLabelText("View clip.mp4"))
+    const viewer = screen.getByTestId("attachment-viewer")
+    expect(viewer.textContent).toContain("clip.mp4")
+    expect(screen.getByTestId("attachment-video").getAttribute("src")).toBe(
+      "/api/tasks/tk9zdy/attachments/3/clip.mp4",
+    )
+  })
+
+  it("an archived turn names its attachments and says they were removed — no thumbnail, not silence", () => {
     mount(<TurnAttachments taskId="tk9zdy" turn={2} attachments={IMAGES} archived />)
     expect(screen.queryAllByRole("img")).toHaveLength(0)
     expect(screen.queryAllByRole("button")).toHaveLength(0)

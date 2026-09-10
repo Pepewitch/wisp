@@ -402,8 +402,14 @@ export interface HarnessInfo {
   name: string;
   hasModel: boolean;
   hasEffort: boolean;
-  /** S3: the adapter declares one of the three image mechanisms — without it paste is disabled-with-reason */
+  /** S3: the adapter declares one of the three image mechanisms — without it a pasted IMAGE is refused by name */
   hasImage: boolean;
+  /**
+   * A1d: every kind this harness can be handed. pdf, text and video are on
+   * every harness's list (they travel by path); "image" needs a mechanism.
+   * Absent on a daemon older than A1d — read `hasImage` in that case.
+   */
+  attachmentKinds?: ("image" | "pdf" | "text" | "video")[];
   /** A verified active-turn protocol; other harnesses persist for the next turn. */
   hasLiveSteering?: boolean;
   /**

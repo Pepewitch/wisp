@@ -11,20 +11,48 @@ import type { ClipboardEvent } from "react";
  * Paste-only this slice (drag-drop chrome is NOT scope). Pending rows render
  * as muted text (`name.png · 12 KB · ✕`) — no chip, no badge, no tint
  * (design law); the small thumbnail is content, not status.
+ *
+ * A1d widened this past images: pdf, text and video are attachments too, and a
+ * paste longer than PASTE_TO_FILE_CHARS becomes a text file rather than
+ * composer content.
  */
 
-/** Mirror of src/attachments.ts — the daemon re-validates regardless. */
-export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+/** Mirrors of src/attachments.ts — the daemon re-validates regardless. */
+export const ATTACHMENT_KIND_LIMITS = {
+  image: 5 * 1024 * 1024,
+  pdf: 20 * 1024 * 1024,
+  text: 20 * 1024 * 1024,
+  video: 50 * 1024 * 1024,
+} as const;
+export const MAX_TURN_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 10;
+
+/** What the file input offers the platform. A hint, never a check. */
+export const ATTACHMENT_ACCEPT =
+  "image/png,image/jpeg,image/gif,image/webp,application/pdf,video/mp4,video/quicktime,video/webm,text/*,.csv,.log,.json,.md,.txt,.tsv,.yaml,.yml";
+
+export type AttachmentKind = keyof typeof ATTACHMENT_KIND_LIMITS;
+
+export function attachmentKind(mediaType: string): AttachmentKind {
+  if (mediaType.startsWith("image/")) return "image";
+  if (mediaType.startsWith("video/")) return "video";
+  return mediaType === "application/pdf" ? "pdf" : "text";
+}
 
 export interface PendingAttachment {
   id: string;
   name: string;
   mediaType: string;
-  /** the create/send wire payload's data half */
-  dataBase64: string;
+  kind: AttachmentKind;
+  /**
+   * The picked/pasted file itself, encoded to base64 only when the composer
+   * submits. A 50 MB video encodes to a 67 MB string, and holding that in
+   * composer state from the moment of the paste — for a file the user may
+   * still remove — is the one thing this feature could do to a phone.
+   */
+  file: File;
   bytes: number;
-  /** object URL for the content thumbnail; "" where createObjectURL is absent (jsdom) */
+  /** object URL for the image thumbnail; "" for other kinds and where createObjectURL is absent (jsdom) */
   url: string;
 }
 
@@ -51,15 +79,21 @@ export interface AttachmentPayload {
   dataBase64: string;
 }
 
-export function attachmentPayloads(list: PendingAttachment[]): AttachmentPayload[] {
-  return list.map((a) => ({ name: a.name, dataBase64: a.dataBase64 }));
+export async function attachmentPayloads(list: PendingAttachment[]): Promise<AttachmentPayload[]> {
+  return await Promise.all(
+    list.map(async (a) => ({ name: a.name, dataBase64: base64Encode(new Uint8Array(await a.file.arrayBuffer())) })),
+  );
 }
 
 /**
- * The disabled-with-reason note for a paste against a harness without
- * capability. No harness is named here: all three builtins CAN take an image
- * (A1c gave droid delivery by path), so the only defs left without a mechanism
- * are ones the user wrote, and the honest sentence names theirs.
+ * The disabled-with-reason note for an IMAGE pasted at a harness without
+ * capability. No harness is named here: all five builtins CAN take an image
+ * (A1c gave droid prompt-path delivery), so the only defs left without a
+ * mechanism are ones the user wrote, and the honest sentence names theirs.
+ *
+ * Only images can hit this. pdf, text and video reach every harness by path
+ * (A1d), which is a fact about the prompt rather than a capability a CLI has
+ * to declare.
  */
 export function noImageReason(harness: string): string {
   return `harness '${harness}' has no image-attachment capability`;
@@ -86,6 +120,51 @@ export function sniffImageType(b: Uint8Array): string | null {
   return null;
 }
 
+function ascii(b: Uint8Array, offset: number, length: number): string {
+  let out = "";
+  for (let i = offset; i < offset + length && i < b.length; i++) out += String.fromCharCode(b[i]!);
+  return out;
+}
+
+/** The control bytes real text files carry: tab, newline, form feed, CR, and ESC. */
+const TEXT_CONTROL_BYTES = new Set([0x09, 0x0a, 0x0c, 0x0d, 0x1b]);
+
+/** src/attachments.ts's utf-8 scan, mirrored: no NUL, no stray controls, no malformed sequences. */
+export function looksLikeUtf8Text(b: Uint8Array): boolean {
+  let i = 0;
+  while (i < b.length) {
+    const byte = b[i]!;
+    if (byte < 0x80) {
+      if ((byte < 0x20 && !TEXT_CONTROL_BYTES.has(byte)) || byte === 0x7f) return false;
+      i += 1;
+      continue;
+    }
+    const length = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc2 ? 2 : 0;
+    if (length === 0 || byte > 0xf4 || i + length > b.length) return false;
+    const second = b[i + 1]!;
+    if ((second & 0xc0) !== 0x80) return false;
+    if (byte === 0xe0 && second < 0xa0) return false;
+    if (byte === 0xed && second > 0x9f) return false;
+    if (byte === 0xf0 && second < 0x90) return false;
+    if (byte === 0xf4 && second > 0x8f) return false;
+    for (let k = 2; k < length; k++) if ((b[i + k]! & 0xc0) !== 0x80) return false;
+    i += length;
+  }
+  return true;
+}
+
+/** src/attachments.ts's whole-buffer sniff, mirrored: magic bytes first, utf-8 text last. */
+export function sniffAttachmentType(b: Uint8Array): string | null {
+  const image = sniffImageType(b);
+  if (image) return image;
+  if (b.length >= 5 && ascii(b, 0, 5) === "%PDF-") return "application/pdf";
+  if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
+  if (b.length >= 12 && ascii(b, 4, 4) === "ftyp") {
+    return ascii(b, 8, 4) === "qt  " ? "video/quicktime" : "video/mp4";
+  }
+  return b.length > 0 && looksLikeUtf8Text(b) ? "text/plain" : null;
+}
+
 /** src/attachments.ts's formatBytes, mirrored: "320 B" / "12 KB" / "1.2 MB". */
 export function formatBytes(n: number): string {
   const trimmed = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1));
@@ -95,7 +174,7 @@ export function formatBytes(n: number): string {
   return `${trimmed(kb / 1024)} MB`;
 }
 
-/** base64 without the spread-stack blowup (5MB of bytes never hits one apply). */
+/** base64 without the spread-stack blowup (50MB of bytes never hits one apply). */
 function base64Encode(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -105,33 +184,104 @@ function base64Encode(bytes: Uint8Array): string {
 }
 
 /**
+ * The length past which a pasted wall of text becomes a FILE instead of
+ * composer content (A1d).
+ *
+ * Roughly 2k tokens. Below it, a stack trace or a long prompt belongs in the
+ * message, where the model reads it in one go. Above it — the csv someone
+ * selected out of a spreadsheet — a file is strictly better: the agent greps
+ * and slices it with its own tools instead of paying for the whole thing in
+ * one context window, and the composer stays readable.
+ *
+ * The threshold is never silent: the composer says what it did and offers to
+ * put the text back inline.
+ */
+export const PASTE_TO_FILE_CHARS = 8000;
+
+/** A csv keeps its extension: the agent's next move depends on knowing it is one. */
+function pastedTextExtension(text: string): string {
+  const lines = text.split("\n", 5).filter((line) => line.trim() !== "");
+  if (lines.length < 2) return "txt";
+  for (const delimiter of [",", "\t"]) {
+    const counts = lines.map((line) => line.split(delimiter).length - 1);
+    if (counts[0]! >= 1 && counts.every((n) => n === counts[0])) return delimiter === "," ? "csv" : "tsv";
+  }
+  return "txt";
+}
+
+/** The file a long paste becomes. `n` numbers it within the composer's list. */
+export function pastedTextFile(text: string, n: number): File {
+  return new File([text], `pasted-${n}.${pastedTextExtension(text)}`, { type: "text/plain" });
+}
+
+/**
  * Read one pasted file into a pending attachment, or name the client-side
- * rejection (type / empty / oversize). The count cap lives in the hook —
- * it owns the running list.
+ * rejection (type / empty / oversize). The count and budget caps live in the
+ * hook — it owns the running list.
  */
 export async function readAttachment(
   file: File,
 ): Promise<{ ok: true; attachment: Omit<PendingAttachment, "id" | "url"> } | { ok: false; reason: string }> {
-  const name = file.name || "pasted image";
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (bytes.byteLength === 0) return { ok: false, reason: `${name}: empty file` };
-  const mediaType = sniffImageType(bytes);
-  if (!mediaType) return { ok: false, reason: `${name}: not a png/jpeg/gif/webp image` };
-  if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
-    return { ok: false, reason: `${name}: ${formatBytes(bytes.byteLength)} exceeds the 5 MB per-file limit` };
+  // A clipboard file often arrives nameless (a screenshot), so the fallback is
+  // built from what the bytes turn out to BE rather than assumed to be an image.
+  const unnamed = (kind: string) => `pasted ${kind}`;
+  if (bytes.byteLength === 0) return { ok: false, reason: `${file.name || unnamed("file")}: empty file` };
+  const mediaType = sniffAttachmentType(bytes);
+  if (!mediaType) {
+    return {
+      ok: false,
+      reason: `${file.name || unnamed("file")}: not an image, pdf, text file, or mp4/mov/webm video`,
+    };
   }
-  return { ok: true, attachment: { name, mediaType, dataBase64: base64Encode(bytes), bytes: bytes.byteLength } };
+  const kind = attachmentKind(mediaType);
+  const name = file.name || unnamed(kind);
+  const limit = ATTACHMENT_KIND_LIMITS[kind];
+  if (bytes.byteLength > limit) {
+    return {
+      ok: false,
+      reason: `${name}: ${formatBytes(bytes.byteLength)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
+    };
+  }
+  return { ok: true, attachment: { name, mediaType, kind, file, bytes: bytes.byteLength } };
+}
+
+/**
+ * Put a paste-turned-file back where it was typed. The caret is clamped
+ * because the value has been editable since the paste, and an index past the
+ * end would silently append instead of landing where the user is looking.
+ */
+export function insertPastedText(value: string, pasted: PastedText): string {
+  const at = Math.min(Math.max(pasted.caret, 0), value.length);
+  return value.slice(0, at) + pasted.text + value.slice(at);
+}
+
+/** Drop the row a long paste became, once its text is back in the composer (A1d). */
+export function undoPastedFile(attachments: PendingAttachments, name: string): void {
+  const row = attachments.list.find((a) => a.name === name);
+  if (row) attachments.remove(row.id);
+}
+
+/** A paste the composer turned into a file, and everything undoing it needs. */
+export interface PastedText {
+  name: string;
+  text: string;
+  /** where the caret was when it was pasted, so putting it back lands where it was typed */
+  caret: number;
 }
 
 export interface PendingAttachments {
   list: PendingAttachment[];
   /** the muted client-side note (capability / caps / type) — null when quiet */
   note: string | null;
-  /** wire payloads for the submit body; undefined = omit the field entirely */
-  payloads: () => AttachmentPayload[] | undefined;
   /**
-   * Image-file half of composer paste. Text (including HTML hyperlinks) is
-   * left to handleComposerPaste — this only preventDefaults when there are files.
+   * Wire payloads for the submit body; undefined = omit the field entirely.
+   * Async because the bytes are encoded HERE rather than at paste time (A1d).
+   */
+  payloads: () => Promise<AttachmentPayload[] | undefined>;
+  /**
+   * File half of composer paste. Text is left to handleComposerPaste — this
+   * only preventDefaults when there are files.
    */
   onPaste: (e: ClipboardEvent) => void;
   /**
@@ -140,10 +290,16 @@ export interface PendingAttachments {
    * file must not be able to disagree about what is acceptable.
    */
   addFiles: (files: File[]) => void;
-  /** false when the harness has no image capability: the picker says why instead of opening */
-  enabled: boolean;
-  /** the reason the picker is disabled, or null */
-  disabledReason: string | null;
+  /**
+   * Attach a long paste as a text file (A1d). Separate from addFiles because
+   * a paste that leaves the textarea has to be undoable.
+   */
+  addPastedText: (text: string, caret: number) => void;
+  /**
+   * The most recent paste-turned-file, for the composer's "insert it inline
+   * instead" line. Cleared when that row goes, by either route.
+   */
+  pastedText: PastedText | null;
   /**
    * The harness's delivery caveat, shown while images are pending (A1c). Not a
    * rejection: the attach worked, and this is the part of "worked" the user
@@ -203,10 +359,10 @@ export function clearRememberedAttachments(connectionId: string): void {
 
 /**
  * Pending-attachment state for one composer (create dialog / steer box).
- * `hasImage` is tri-state: true/false = known capability (false pastes get
- * the disabled-with-reason note and attach nothing), undefined = the harness
- * list hasn't landed yet — allow optimistically; the daemon re-validates
- * and its named 400 renders inline.
+ * `hasImage` is tri-state: true/false = known IMAGE capability (a false one
+ * refuses pasted images by name and takes the other kinds anyway),
+ * undefined = the harness list hasn't landed yet — allow optimistically; the
+ * daemon re-validates and its named 400 renders inline.
  */
 export function usePendingAttachments({
   harness,
@@ -229,7 +385,10 @@ export function usePendingAttachments({
   const remembered = rememberKey ? rememberedAttachments.get(rememberKey) : undefined;
   const [list, setList] = useState<PendingAttachment[]>(remembered?.list ?? []);
   const [note, setNote] = useState<string | null>(remembered?.note ?? null);
+  const [pastedText, setPastedText] = useState<PastedText | null>(null);
   const seq = useRef(remembered?.seq ?? 0);
+  /** Numbers `pasted-1.csv`; separate from `seq` so the name is known before the read finishes. */
+  const pasteSeq = useRef(0);
   const noteRef = useRef(note);
   const pendingReads = useRef(new Set<PendingAttachmentRead>());
   // the async paste loop reads the live list through this mirror, so the
@@ -258,6 +417,7 @@ export function usePendingAttachments({
   const remove = (id: string) => {
     const hit = listRef.current.find((a) => a.id === id);
     if (hit?.url) URL.revokeObjectURL(hit.url);
+    setPastedText((current) => (current && hit && current.name === hit.name ? null : current));
     commit(listRef.current.filter((a) => a.id !== id));
   };
 
@@ -270,6 +430,7 @@ export function usePendingAttachments({
   };
 
   const clear = () => {
+    setPastedText(null);
     cancelPendingReads();
     for (const a of listRef.current) if (a.url) URL.revokeObjectURL(a.url);
     commit([]);
@@ -294,10 +455,6 @@ export function usePendingAttachments({
   /** One path for both pasting and picking: the two must never disagree. */
   const addFiles = (files: File[]) => {
     if (files.length === 0) return;
-    if (harness && hasImage === false) {
-      commitNote(noImageReason(harness));
-      return; // disabled-with-reason: nothing attaches
-    }
     const pendingRead: PendingAttachmentRead = { cancelled: false };
     pendingReads.current.add(pendingRead);
     if (rememberKey) {
@@ -320,8 +477,24 @@ export function usePendingAttachments({
             rejection = result.reason;
             continue;
           }
+          // Only IMAGES need a harness mechanism; a pdf, a text file or a video
+          // reaches every harness by path (A1d), so the capability check is
+          // per file rather than a gate on the whole composer.
+          if (result.attachment.kind === "image" && harness && hasImage === false) {
+            rejection = noImageReason(harness);
+            continue;
+          }
+          const total = listRef.current.reduce((n, a) => n + a.bytes, 0) + result.attachment.bytes;
+          if (total > MAX_TURN_ATTACHMENT_BYTES) {
+            rejection = `${result.attachment.name}: over the ${formatBytes(MAX_TURN_ATTACHMENT_BYTES)} limit for one turn`;
+            continue;
+          }
           seq.current += 1;
-          const url = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : "";
+          // the thumbnail is the only reason to hold a blob URL, so only images get one
+          const url =
+            result.attachment.kind === "image" && typeof URL.createObjectURL === "function"
+              ? URL.createObjectURL(file)
+              : "";
           commit([...listRef.current, { id: `att-${seq.current}`, url, ...result.attachment }]);
         }
         // a fully-clean batch clears the previous note; the latest rejection wins otherwise
@@ -336,20 +509,34 @@ export function usePendingAttachments({
   const onPaste = (e: ClipboardEvent) => {
     const files = Array.from(e.clipboardData?.files ?? []);
     if (files.length === 0) return; // a text paste passes through untouched
-    e.preventDefault(); // an image paste never inserts junk text
+    e.preventDefault(); // a file paste never inserts junk text
     addFiles(files);
+  };
+
+  /**
+   * A wall of pasted text, as a file (A1d). The record is what makes the
+   * threshold safe to have: the composer says which file the paste became and
+   * offers to put it back inline. A paste that silently vanished from the
+   * textarea would be the same quiet lie as a dropped image.
+   */
+  const addPastedText = (text: string, caret: number): void => {
+    const file = pastedTextFile(text, pasteSeq.current + 1);
+    pasteSeq.current += 1;
+    setPastedText({ name: file.name, text, caret });
+    addFiles([file]);
   };
 
   return {
     list,
     note,
-    payloads: () => (list.length > 0 ? attachmentPayloads(list) : undefined),
+    payloads: async () => (list.length > 0 ? await attachmentPayloads(list) : undefined),
     onPaste,
     addFiles,
-    enabled: !(harness && hasImage === false),
-    disabledReason: harness && hasImage === false ? noImageReason(harness) : null,
-    // shown only once there is something to caveat
-    deliveryNote: list.length > 0 ? (imageNote ?? null) : null,
+    addPastedText,
+    pastedText,
+    // shown only once there is an image to caveat: the note is about how
+    // IMAGES travel, and a pdf beside it would make it read as a lie
+    deliveryNote: list.some((a) => a.kind === "image") ? (imageNote ?? null) : null,
     remove,
     clear,
   };

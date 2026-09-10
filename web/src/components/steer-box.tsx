@@ -23,6 +23,8 @@ import {
   useRememberedDraft,
 } from "@/hooks/useRememberedDesktopInput"
 import {
+  insertPastedText,
+  undoPastedFile,
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
@@ -470,6 +472,7 @@ function SteerComposer({
         onPaste={(event) =>
           handleComposerPaste(event, {
             onImagePaste: attachments.onPaste,
+            onLongText: attachments.addPastedText,
             value,
             onChange: (next, pos) => {
               caretRef.current = pos
@@ -549,7 +552,15 @@ function SteerComposer({
         onSend={onSend}
         onStop={onStop}
       />
-      <PendingAttachmentRows pending={attachments} touch={touch} />
+      <PendingAttachmentRows
+        pending={attachments}
+        touch={touch}
+        onInsertInline={(pasted) => {
+          caretRef.current = Math.min(pasted.caret, value.length) + pasted.text.length
+          onValueChange(insertPastedText(value, pasted))
+          undoPastedFile(attachments, pasted.name)
+        }}
+      />
     </div>
   )
 }

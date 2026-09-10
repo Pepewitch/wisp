@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
 import { Effort, Enter, Folder, Local, Sparkle, Star, StarFilled, Worktree } from "@/components/icons"
@@ -10,7 +10,12 @@ import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
 import { failureReason } from "@/lib/api"
-import { usePendingAttachments } from "@/lib/attachments"
+import {
+  insertPastedText,
+  undoPastedFile,
+  usePendingAttachments,
+  type PendingAttachments,
+} from "@/lib/attachments"
 import { effortOptions, rememberEffort } from "@/lib/effort"
 import { handleComposerPaste } from "@/lib/paste-links"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -110,6 +115,55 @@ const decode = (v: string): ModelChoice => {
 const sameChoice = (a: ModelChoice | null, b: ModelChoice): boolean =>
   a?.harness === b.harness && a.model === b.model
 
+/**
+ * The prompt textarea and its pending attachments. Its own component because
+ * paste is three behaviours in one handler now (files, a long paste that
+ * becomes a file, and Slack-style HTML links), and the dialog around it is
+ * already the longest function in this file.
+ */
+function PromptField({
+  box,
+  prompt,
+  setPrompt,
+  attachments,
+}: {
+  box: RefObject<HTMLTextAreaElement | null>
+  prompt: string
+  setPrompt: Dispatch<SetStateAction<string>>
+  attachments: PendingAttachments
+}) {
+  return (
+    <div className="px-4 pt-3.5">
+      <textarea
+        ref={box}
+        rows={6}
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        onPaste={(e) =>
+          handleComposerPaste(e, {
+            onImagePaste: attachments.onPaste,
+            onLongText: attachments.addPastedText,
+            value: prompt,
+            onChange: (next) => setPrompt(next),
+          })
+        }
+        placeholder="What do you want to work on?"
+        className={cn(
+          "scroll-slim min-h-[132px] w-full resize-none bg-transparent",
+          "text-[13.5px] leading-[1.6] text-foreground placeholder:text-faint focus:outline-none",
+        )}
+      />
+      <PendingAttachmentRows
+        pending={attachments}
+        onInsertInline={(pasted) => {
+          setPrompt((current) => insertPastedText(current, pasted))
+          undoPastedFile(attachments, pasted.name)
+        }}
+      />
+    </div>
+  )
+}
+
 function Form({
   initialRepoPath,
   repos,
@@ -186,30 +240,36 @@ function Form({
     if (!repoPath) return setValidationError("Pick a project")
     if (!prompt.trim()) return setValidationError("A prompt is required")
     setValidationError(null)
-    const payloads = attachments.payloads()
-    createTask.mutate(
-      {
-        repoPath,
-        prompt: prompt.trim(),
-        harness: choice.harness,
-        model: choice.model,
-        mode,
-        ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
-        ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
-        ...(suffixPromptId ? { suffixPromptId } : {}),
-        ...(payloads ? { attachments: payloads } : {}),
-      },
-      {
-        onSuccess: (task) => {
-          // a level that actually ran is a level worth offering next time
-          if (harness?.hasEffort && effort.trim()) {
-            rememberEffort(connectionId, choice.harness, effort.trim())
-          }
-          attachments.clear()
-          onCreated(task.id)
-          onClose()
-        },
-      },
+    const chosen = choice
+    // encoded at submit rather than at paste (A1d): the dialog can hold a
+    // 50 MB video without holding its base64 too
+    void attachments.payloads().then(
+      (payloads) =>
+        createTask.mutate(
+          {
+            repoPath,
+            prompt: prompt.trim(),
+            harness: chosen.harness,
+            model: chosen.model,
+            mode,
+            ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
+            ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
+            ...(suffixPromptId ? { suffixPromptId } : {}),
+            ...(payloads ? { attachments: payloads } : {}),
+          },
+          {
+            onSuccess: (task) => {
+              // a level that actually ran is a level worth offering next time
+              if (harness?.hasEffort && effort.trim()) {
+                rememberEffort(connectionId, chosen.harness, effort.trim())
+              }
+              attachments.clear()
+              onCreated(task.id)
+              onClose()
+            },
+          },
+        ),
+      (error) => setValidationError(error instanceof Error ? error.message : String(error)),
     )
   }
 
@@ -292,27 +352,7 @@ function Form({
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}
-      <div className="px-4 pt-3.5">
-        <textarea
-          ref={box}
-          rows={6}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onPaste={(e) =>
-            handleComposerPaste(e, {
-              onImagePaste: attachments.onPaste,
-              value: prompt,
-              onChange: (next) => setPrompt(next),
-            })
-          }
-          placeholder="What do you want to work on?"
-          className={cn(
-            "scroll-slim min-h-[132px] w-full resize-none bg-transparent",
-            "text-[13.5px] leading-[1.6] text-foreground placeholder:text-faint focus:outline-none",
-          )}
-        />
-        <PendingAttachmentRows pending={attachments} />
-      </div>
+      <PromptField box={box} prompt={prompt} setPrompt={setPrompt} attachments={attachments} />
 
       {error && <div className="px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
       {harnessesError && !error && (

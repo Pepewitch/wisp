@@ -1,5 +1,7 @@
 import type { ClipboardEvent } from "react";
 
+import { PASTE_TO_FILE_CHARS } from "./attachments";
+
 /**
  * Composer paste: images still win (the attachment hook preventDefaults those).
  * A text paste with HTML hyperlinks is rewritten to markdown `[label](url)` so
@@ -117,23 +119,36 @@ export function markdownFromHtmlLinks(html: string): string | null {
 }
 
 /**
- * Image files still go to `onImagePaste`. HTML with http(s) links is inserted
- * as markdown at the caret. Anything else falls through to the textarea default.
+ * Files still go to `onFilePaste`. A plain-text paste past
+ * PASTE_TO_FILE_CHARS becomes a text attachment instead of composer content
+ * (A1d) — the composer says so and offers to put it back. HTML with http(s)
+ * links is inserted as markdown at the caret. Anything else falls through to
+ * the textarea default.
  */
 export function handleComposerPaste(
   e: ClipboardEvent<HTMLTextAreaElement>,
   {
     onImagePaste,
+    onLongText,
     value,
     onChange,
   }: {
     onImagePaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
+    /** Absent = this composer keeps long pastes inline (the daemon has no say here). */
+    onLongText?: (text: string, caret: number) => void;
     value: string;
     onChange: (next: string, caret: number) => void;
   },
 ): void {
   onImagePaste(e);
   if (e.defaultPrevented) return;
+  const plain = e.clipboardData?.getData?.("text/plain") ?? "";
+  if (onLongText && plain.length > PASTE_TO_FILE_CHARS) {
+    e.preventDefault();
+    const el = e.currentTarget;
+    onLongText(plain, el.selectionStart ?? value.length);
+    return;
+  }
   const html = e.clipboardData?.getData?.("text/html") ?? "";
   const rewritten = markdownFromHtmlLinks(html);
   if (rewritten == null) return;
