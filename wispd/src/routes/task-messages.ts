@@ -1,8 +1,10 @@
 import {
+  attachmentKind,
   messageAttachmentPath,
   parseAttachmentManifest,
   removeMessageAttachments,
-  sniffImageType,
+  sniffAttachmentHeader,
+  SNIFF_WINDOW_BYTES,
   turnAttachmentPath,
 } from "../attachments";
 import {
@@ -15,7 +17,7 @@ import {
 import { apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
- * Serve turn or message image bytes. The requested name is first matched
+ * Serve turn or message attachment bytes. The requested name is first matched
  * against a persisted, daemon-sanitized manifest; request characters never
  * become a filesystem path. Content type is sniffed from the bytes.
  */
@@ -88,19 +90,35 @@ function decodedName(raw: string): string | Response {
  */
 export const ATTACHMENT_CACHE_CONTROL = "private, no-store";
 
+/**
+ * Serve one stored attachment's bytes.
+ *
+ * The type comes from the BYTES, never the name or the manifest — a `.png`
+ * holding jpeg serves image/jpeg — and the sniff reads a leading window rather
+ * than the whole file, so a 50 MB video is not copied into the daemon's heap to
+ * decide what it is. The body is streamed from the file for the same reason.
+ *
+ * Only images are served `inline`. Everything else gets an `attachment`
+ * disposition: a text attachment is arbitrary content a person pasted, and
+ * rendering it on the daemon's own origin is the one way these bytes could
+ * become a script rather than a file. The web app never navigates to these
+ * URLs anyway — it fetches them with its bearer credential and renders a blob.
+ */
 async function serveAttachment(filePath: string, name: string, missingMessage: string): Promise<Response> {
   const file = Bun.file(filePath);
   if (!(await file.exists())) return err(missingMessage, 410);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const sniffed = sniffImageType(bytes);
-  if (!sniffed) return err(`${name} is no longer a recognizable image on disk`, 415);
-  return new Response(bytes, {
+  const head = new Uint8Array(await file.slice(0, SNIFF_WINDOW_BYTES).arrayBuffer());
+  const sniffed = sniffAttachmentHeader(head);
+  if (!sniffed) return err(`${name} is no longer a recognizable file on disk`, 415);
+  const kind = attachmentKind(sniffed);
+  return new Response(file.stream(), {
     headers: {
-      "content-type": sniffed,
-      "content-length": String(bytes.byteLength),
+      "content-type": kind === "text" ? "text/plain; charset=utf-8" : sniffed,
+      "content-length": String(file.size),
       "cache-control": ATTACHMENT_CACHE_CONTROL,
       "x-content-type-options": "nosniff",
-      "content-disposition": "inline",
+      "content-disposition":
+        kind === "image" ? "inline" : `attachment; filename="${name.replace(/["\\]/g, "_")}"`,
     },
   });
 }

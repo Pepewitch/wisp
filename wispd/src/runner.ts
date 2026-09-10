@@ -60,7 +60,14 @@ import {
 import { TurnRecorder } from "./recording/turn-recorder";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
-import { deliveredMessage, envForCwd, inputStrategyFor, taskEnv, taskPreamble } from "./turn-input";
+import {
+  deliveredMessage,
+  envForCwd,
+  inputStrategyFor,
+  nativeImageAttachments,
+  taskEnv,
+  taskPreamble,
+} from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
 export { startStuckLoop, stuckTick } from "./stuck";
@@ -129,7 +136,7 @@ function startCapture(
  * the event loop, or two racing `send` requests could both pass
  * hasRunningTurn and spawn two harnesses for the same turn number.
  *
- * `attachments` are this turn's stored image files (S3): they belong to
+ * `attachments` are this turn's stored files (S3/A1d): they belong to
  * exactly this turn, and one honest `· attached: …` line lands in the log
  * BEFORE any harness output (a plain-text line every adapter's parse skips
  * and the human stream renders). The argv/stdin mechanics of getting them to
@@ -148,14 +155,18 @@ export function startTurn(
   assertTaskNotStopping(task.id);
   assertTaskCapacity(cfg, task.id);
   const n = task.turn_count + 1;
-  // A1c: a delivery adapter gets its images by having their paths named in the
-  // prompt, so the strategy's sentence goes immediately before the user's
-  // message — inside the first turn's task preamble, not in front of it.
+  // A1c/A1d: everything wisp cannot hand over through a native channel is
+  // delivered by having its path named in the prompt, so the preamble goes
+  // immediately before the user's message — inside the first turn's task
+  // preamble, not in front of it.
   const body = deliveredMessage(def, attachments, message);
   const prompt = n === 1 ? `${taskPreamble(task)}\n${body}` : body;
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
-  const images = attachments.map((a) => a.path);
+  // Only IMAGES have an argv/stdin channel; pdf, text and video reached the
+  // harness through the path preamble `deliveredMessage` just built, and would
+  // fail inside the harness if they went into codex's `-i` (A1d).
+  const images = nativeImageAttachments(def, attachments).map((a) => a.path);
   // buildArgv owns the argv side of an image turn (template expansion, or the
   // strategy's extra argv + omitted prompt positional for stdin-envelope turns)
   const argv =
@@ -285,7 +296,7 @@ export function startTurn(
     }
     void outputPump.catch((error) => failLiveTurn(child, turnId, sink, error));
   }
-  if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, prompt, attachments);
+  if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, def, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   void trackHomeWork(watchTurn(

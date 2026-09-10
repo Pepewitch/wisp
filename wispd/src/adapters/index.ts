@@ -50,6 +50,7 @@ export {
 } from "./outcome";
 export { USAGE_FORMATTERS, formatUsage } from "./usage";
 export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
+export { attachmentPreamble, type DeliveredFile } from "./delivery";
 export { ERROR_STRATEGIES, errorDetail, isLimitError, isTransientError } from "./errors";
 export { buildArgv, buildAttachArgv } from "./argv";
 export { loadAdapters, validateAdapters } from "./validate";

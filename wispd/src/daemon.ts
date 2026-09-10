@@ -1,6 +1,6 @@
 import { recoverCleanupProgress } from "./archive-progress";
 import { loadAdapters } from "./adapters";
-import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "./attachments";
+import { MAX_TURN_BASE64_CHARS } from "./attachments";
 import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
@@ -78,21 +78,26 @@ export function parseTerminalSize(params: URLSearchParams): PtySize | null | str
  * The largest body the daemon will read, DERIVED from what the attachment
  * validator accepts rather than guessed.
  *
- * A create or send request carries its images as base64 inside the JSON, so a
- * full turn is `MAX_ATTACHMENTS_PER_TURN` files at `MAX_BASE64_CHARS` each —
- * about 67 MiB. A flat 32 MiB (the first version of this) was BELOW that: Bun
- * would answer 413 to a payload `decodeAttachments` still calls valid, and the
- * refusal would land before any validator could name a reason (a review caught
- * it). The headroom covers the JSON envelope: keys, file names, the message
- * text, the suffix prompt id.
+ * A create or send request carries its attachments as base64 inside the JSON,
+ * so the biggest valid one is the turn's whole byte budget encoded —
+ * `MAX_TURN_BASE64_CHARS`, about 67 MiB. A flat 32 MiB (the first version of
+ * this) was BELOW that: Bun would answer 413 to a payload `decodeAttachments`
+ * still calls valid, and the refusal would land before any validator could name
+ * a reason (a review caught it). The headroom covers the JSON envelope: keys,
+ * file names, the message text, the suffix prompt id.
+ *
+ * A1d added 50 MB video without moving this number, because the budget it is
+ * derived from is a TOTAL rather than a per-file cap: ten 5 MB images and one
+ * 50 MB video are the same 50 MB of bytes. That also keeps the ceiling under
+ * the desktop proxy's 80 MB replayable-body limit, which is the real wall for
+ * a request sent through Desktop.
  *
  * The point of the ceiling is unchanged — far below Bun's 128 MB default, and
  * the only thing between "a request arrived" and "the daemon allocated
  * whatever it claimed to be" (ENG-09).
  */
 const JSON_ENVELOPE_HEADROOM_BYTES = 2 * 1024 * 1024;
-export const MAX_REQUEST_BODY_BYTES =
-  MAX_ATTACHMENTS_PER_TURN * MAX_BASE64_CHARS + JSON_ENVELOPE_HEADROOM_BYTES;
+export const MAX_REQUEST_BODY_BYTES = MAX_TURN_BASE64_CHARS + JSON_ENVELOPE_HEADROOM_BYTES;
 
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
 /** Deadline timers for sockets still waiting to authenticate, so an unauthenticated one cannot linger. */

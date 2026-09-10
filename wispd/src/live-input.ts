@@ -10,6 +10,7 @@ import {
   readMessageAttachments,
   type StoredAttachment,
 } from "./attachments";
+import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage } from "./types";
 
@@ -110,14 +111,12 @@ export function configureLiveTurn(options: ConfigureLiveTurnOptions): Promise<vo
 export function writeImageEnvelope(
   child: ReturnType<typeof Bun.spawn>,
   strategy: ImageInputStrategy,
+  def: AdapterDef,
   prompt: string,
   attachments: StoredAttachment[],
 ): void {
   try {
-    const files = attachments.map((attachment) => ({
-      mediaType: attachment.mediaType as string,
-      dataBase64: readFileSync(attachment.path).toString("base64"),
-    }));
+    const files = envelopeFiles(def, attachments);
     const sink = child.stdin;
     if (!sink || typeof sink === "number") return;
     void Promise.resolve(sink.write(`${strategy.envelope(prompt, files)}\n`)).catch(() => {});
@@ -127,12 +126,27 @@ export function writeImageEnvelope(
   }
 }
 
-function envelopeFor(strategy: ImageInputStrategy, prompt: string, attachments: StoredAttachment[]): string {
-  const files = attachments.map((attachment) => ({
+/**
+ * The base64 blocks an image envelope carries. Images only: a pdf or a video
+ * has no block type here, and its path is already named in the prompt (A1d).
+ */
+function envelopeFiles(
+  def: AdapterDef,
+  attachments: StoredAttachment[],
+): { mediaType: string; dataBase64: string }[] {
+  return nativeImageAttachments(def, attachments).map((attachment) => ({
     mediaType: attachment.mediaType as string,
     dataBase64: readFileSync(attachment.path).toString("base64"),
   }));
-  return strategy.envelope(prompt, files);
+}
+
+function envelopeFor(
+  strategy: ImageInputStrategy,
+  def: AdapterDef,
+  prompt: string,
+  attachments: StoredAttachment[],
+): string {
+  return strategy.envelope(prompt, envelopeFiles(def, attachments));
 }
 
 function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInputStrategy): Promise<void> {
@@ -161,12 +175,12 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
     turn: options.turn,
     async send(message) {
       const files = messageAttachments(options.task.id, message);
-      await write(envelopeFor(strategy, message.text, files));
+      await write(envelopeFor(strategy, options.def, steerText(options.def, message, files), files));
       noteDelivery(options.recorder, message, files);
     },
     close,
   });
-  return write(envelopeFor(strategy, options.prompt, options.attachments));
+  return write(envelopeFor(strategy, options.def, options.prompt, options.attachments));
 }
 
 async function pumpClaude(
@@ -210,6 +224,16 @@ function frameDropNote(recorder: LiveOutputSink): (chars: number) => void {
   return (chars) => recorder.recordFrameDrop("stdout", chars);
 }
 
+/**
+ * A steer's text as the harness receives it. A queued message's attachments get
+ * the same treatment a turn's prompt does: images that have a native channel
+ * ride it, and everything delivered by path is named in the text — otherwise a
+ * csv attached mid-turn would reach a live harness as bytes nobody mentioned.
+ */
+function steerText(def: AdapterDef, message: TaskMessage, files: StoredAttachment[]): string {
+  return deliveredMessage(def, files, message.text);
+}
+
 function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
   return readMessageAttachments(taskId, message.id, parseAttachmentManifest(message.attachments_json));
 }
@@ -225,8 +249,8 @@ function noteDelivery(recorder: LiveOutputSink, message: TaskMessage, files: Sto
   if (files.length > 0) recorder.recordNote(formatAttachNote(files));
 }
 
-function droidImages(attachments: StoredAttachment[]): DroidLiveImage[] {
-  return attachments.map((attachment) => ({
+function droidImages(def: AdapterDef, attachments: StoredAttachment[]): DroidLiveImage[] {
+  return nativeImageAttachments(def, attachments).map((attachment) => ({
     type: "base64",
     data: readFileSync(attachment.path).toString("base64"),
     mediaType: attachment.mediaType,
@@ -248,7 +272,7 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     effort: options.task.effort,
     initialMessageId: options.initialMessageId,
     initialText: options.prompt,
-    initialImages: droidImages(options.attachments),
+    initialImages: droidImages(options.def, options.attachments),
     emit,
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
   });
@@ -257,7 +281,7 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     turn: options.turn,
     async send(message) {
       const files = messageAttachments(options.task.id, message);
-      await driver.send(message.id, message.text, droidImages(files));
+      await driver.send(message.id, steerText(options.def, message, files), droidImages(options.def, files));
       noteDelivery(options.recorder, message, files);
     },
     close: () => driver.close(),
@@ -268,9 +292,12 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
   ]).then(() => {});
 }
 
-function codexInput(text: string, attachments: StoredAttachment[]): CodexLiveInput[] {
+function codexInput(def: AdapterDef, text: string, attachments: StoredAttachment[]): CodexLiveInput[] {
   return [
-    ...attachments.map((attachment) => ({ type: "localImage" as const, path: attachment.path })),
+    ...nativeImageAttachments(def, attachments).map((attachment) => ({
+      type: "localImage" as const,
+      path: attachment.path,
+    })),
     { type: "text", text, text_elements: [] },
   ];
 }
@@ -289,7 +316,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     model: options.task.model,
     effort: options.task.effort,
     initialMessageId: options.initialMessageId,
-    initialInput: codexInput(options.prompt, options.attachments),
+    initialInput: codexInput(options.def, options.prompt, options.attachments),
     emit,
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
   });
@@ -298,7 +325,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     turn: options.turn,
     async send(message) {
       const files = messageAttachments(options.task.id, message);
-      await driver.send(message.id, codexInput(message.text, files));
+      await driver.send(message.id, codexInput(options.def, steerText(options.def, message, files), files));
       noteDelivery(options.recorder, message, files);
     },
     close: () => driver.close(),

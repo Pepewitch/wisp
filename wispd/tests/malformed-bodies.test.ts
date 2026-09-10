@@ -16,7 +16,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { BUILTIN_ADAPTERS } from "../src/adapters";
-import { MAX_ATTACHMENTS_PER_TURN, MAX_BASE64_CHARS } from "../src/attachments";
+import { MAX_BASE64_CHARS, MAX_TURN_BASE64_CHARS } from "../src/attachments";
 import { MAX_REQUEST_BODY_BYTES } from "../src/daemon";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
@@ -112,10 +112,22 @@ function readyTask(): string {
  */
 describe("the request-body ceiling", () => {
   test("admits a full turn of maximum-size attachments", () => {
-    const fullTurnOfImages = MAX_ATTACHMENTS_PER_TURN * MAX_BASE64_CHARS;
-    expect(MAX_REQUEST_BODY_BYTES).toBeGreaterThanOrEqual(fullTurnOfImages);
+    // A1d made the budget a TOTAL, so the biggest valid body is one turn's
+    // worth of bytes encoded — whether that is ten images or one video.
+    expect(MAX_REQUEST_BODY_BYTES).toBeGreaterThanOrEqual(MAX_TURN_BASE64_CHARS);
     // …with room for the JSON around them: keys, file names, the message.
-    expect(MAX_REQUEST_BODY_BYTES - fullTurnOfImages).toBeGreaterThanOrEqual(1024 * 1024);
+    expect(MAX_REQUEST_BODY_BYTES - MAX_TURN_BASE64_CHARS).toBeGreaterThanOrEqual(1024 * 1024);
+    // a single file can never exceed the turn it rides in
+    expect(MAX_BASE64_CHARS).toBeLessThanOrEqual(MAX_TURN_BASE64_CHARS);
+  });
+
+  /**
+   * The ceiling also has to fit through the desktop proxy, which buffers a
+   * request body for replay up to 80 MB. A daemon that accepted more would
+   * answer named 400s to browser uploads and an opaque proxy error to Desktop.
+   */
+  test("stays under the desktop proxy's replayable-body limit", () => {
+    expect(MAX_REQUEST_BODY_BYTES).toBeLessThan(80 * 1024 * 1024);
   });
 
   test("stays far below Bun's default, which is the point of having one", () => {

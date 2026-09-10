@@ -118,8 +118,11 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// the response/socket: once headers arrive, response bodies and WebSocket
 /// frames may stream for as long as their callers keep them open.
 const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// Ten 5 MiB attachments expand under base64 plus JSON framing. Keeping one
-/// bounded copy makes a Local request safely replayable after token rotation.
+/// One turn's 50 MiB attachment budget expands under base64 plus JSON framing —
+/// ten 5 MiB images or a single 50 MiB video are the same bytes on the wire.
+/// Keeping one bounded copy makes a Local request safely replayable after token
+/// rotation, and this ceiling stays above the daemon's own body limit, which is
+/// derived from that same budget.
 const MAX_REPLAYABLE_REQUEST_BODY: usize = 80 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]

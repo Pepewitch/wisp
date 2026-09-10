@@ -12,12 +12,18 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import {
+  ATTACHMENT_KIND_LIMITS,
+  attachmentKind,
   decodeAttachments,
   formatAttachNote,
   formatBytes,
+  looksLikeUtf8Text,
   MAX_ATTACHMENTS_PER_TURN,
+  MAX_BASE64_CHARS,
+  MAX_TURN_ATTACHMENT_BYTES,
   promoteMessageAttachments,
   restoreMessageAttachments,
+  sniffAttachmentType,
   sniffImageType,
   writeMessageAttachments,
   writeTurnAttachments,
@@ -33,6 +39,14 @@ const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(
 const GIF = Buffer.concat([Buffer.from("GIF89a", "ascii"), Buffer.alloc(26, 3)]);
 const WEBP = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4, 0), Buffer.from("WEBP"), Buffer.alloc(20, 4)]);
 const TEXT = Buffer.from("hello, not an image");
+/** A1d fixtures: one head per non-image kind wisp stores, filler for the tails. */
+const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n", "ascii"), Buffer.alloc(64, 0x20)]);
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom", "ascii"), Buffer.alloc(32, 5)]);
+const MOV = Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from("ftypqt  ", "ascii"), Buffer.alloc(32, 6)]);
+const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(48, 7)]);
+const CSV = Buffer.from("id,name\n1,café\n2,ok\n", "utf8");
+/** Bytes no signature claims and the text scan refuses: the unsupported case. */
+const BINARY = Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe]);
 
 const b64 = (data: Buffer): string => data.toString("base64");
 const item = (name: string, data: Buffer): { name: string; dataBase64: string } => ({ name, dataBase64: b64(data) });
@@ -85,6 +99,38 @@ describe("sniffImageType", () => {
     expect(sniffImageType(Buffer.from("GIF79a"))).toBeNull(); // near-miss
     expect(sniffImageType(Buffer.from("RIFF....AVI "))).toBeNull(); // RIFF but not WEBP
     expect(sniffImageType(Buffer.alloc(0))).toBeNull();
+  });
+});
+
+describe("sniffAttachmentType (A1d)", () => {
+  test("each kind is recognized by its own evidence, images first", () => {
+    expect(sniffAttachmentType(PNG)).toBe("image/png");
+    expect(sniffAttachmentType(PDF)).toBe("application/pdf");
+    expect(sniffAttachmentType(MP4)).toBe("video/mp4");
+    expect(sniffAttachmentType(MOV)).toBe("video/quicktime"); // the brand, not the box
+    expect(sniffAttachmentType(WEBM)).toBe("video/webm");
+    expect(sniffAttachmentType(CSV)).toBe("text/plain");
+  });
+
+  test("text is the LAST rule, and it is a scan rather than a prefix test", () => {
+    expect(sniffAttachmentType(BINARY)).toBeNull(); // a NUL is not text
+    expect(sniffAttachmentType(Buffer.alloc(0))).toBeNull();
+    // a truncated multi-byte character fails on a whole file and passes on a
+    // window: that ordering is what lets promotion re-sniff 4 KiB of a 50 MB file
+    const splitChar = Buffer.from("café", "utf8").subarray(0, 4);
+    expect(looksLikeUtf8Text(splitChar)).toBe(false);
+    expect(looksLikeUtf8Text(splitChar, true)).toBe(true);
+    expect(looksLikeUtf8Text(Buffer.from([0xed, 0xa0, 0x80]))).toBe(false); // surrogate half
+    expect(looksLikeUtf8Text(Buffer.from([0xc0, 0x80]))).toBe(false); // overlong NUL
+    expect(looksLikeUtf8Text(Buffer.from("log\u001b[31mred\u001b[0m\n"))).toBe(true); // ANSI logs are text
+  });
+
+  test("kinds carry the caps, and the turn budget is the old worst case", () => {
+    expect(attachmentKind("image/png")).toBe("image");
+    expect(attachmentKind("application/pdf")).toBe("pdf");
+    expect(attachmentKind("text/plain")).toBe("text");
+    expect(attachmentKind("video/quicktime")).toBe("video");
+    expect(MAX_TURN_ATTACHMENT_BYTES).toBe(MAX_ATTACHMENTS_PER_TURN * ATTACHMENT_KIND_LIMITS.image);
   });
 });
 
@@ -165,26 +211,62 @@ describe("decodeAttachments", () => {
     );
   });
 
-  test("an over-5MB file is rejected by decoded size, named with its formatted size", () => {
-    // 5MB+1 byte: small enough that the base64-length guard passes, over the decoded cap
+  test("the cap that applies is the KIND's, named with the formatted size", () => {
+    // 5MB+1 byte of png: small enough that the base64-length guard passes
     const big = Buffer.concat([PNG, Buffer.alloc(5 * 1024 * 1024 + 1 - PNG.length, 7)]);
     expect(() => decodeAttachments("codex", codex, [item("big.png", big)])).toThrow(
-      "attachments[0] (big.png): 5.0 MB exceeds the 5 MB per-file limit",
+      "attachments[0] (big.png): 5.0 MB exceeds the 5 MB limit for image attachments",
+    );
+    // …and the same bytes as text would be fine: 20 MB is the text cap
+    const bigText = Buffer.alloc(5 * 1024 * 1024 + 1, 0x61);
+    expect(decodeAttachments("codex", codex, [item("big.csv", bigText)])).toHaveLength(1);
+    const hugeText = Buffer.alloc(ATTACHMENT_KIND_LIMITS.text + 1, 0x61);
+    expect(() => decodeAttachments("codex", codex, [item("huge.csv", hugeText)])).toThrow(
+      "attachments[0] (huge.csv): 20.0 MB exceeds the 20 MB limit for text attachments",
     );
   });
 
   test("an oversize base64 string is rejected before decoding", () => {
-    // the decode cap is ceil(5MB*4/3)+8 = 6990515 chars; 6990516 is the next multiple of 4 past it
-    const hugeB64 = "A".repeat(6_990_516);
-    expect(() => decodeAttachments("codex", codex, [{ name: "huge.png", dataBase64: hugeB64 }])).toThrow(
-      "attachments[0] (huge.png): over the 5 MB per-file limit",
+    const hugeB64 = "A".repeat(MAX_BASE64_CHARS + (4 - (MAX_BASE64_CHARS % 4)));
+    expect(() => decodeAttachments("codex", codex, [{ name: "huge.mp4", dataBase64: hugeB64 }])).toThrow(
+      "attachments[0] (huge.mp4): over the 50 MB per-file limit",
     );
   });
 
-  test("bytes that don't sniff as an image are rejected even with a .png name", () => {
-    expect(() => decodeAttachments("codex", codex, [item("fake.png", TEXT)])).toThrow(
-      "attachments[0] (fake.png): not a png/jpeg/gif/webp image (magic-byte sniff)",
+  test("the turn's TOTAL budget is what bounds a request, not the per-file cap", () => {
+    // four 15 MB texts: each one is legal, together they are over the 50 MB turn
+    const chunk = Buffer.alloc(15 * 1024 * 1024, 0x61);
+    const four = Array.from({ length: 4 }, (_, i) => item(`part${i}.csv`, chunk));
+    expect(() => decodeAttachments("codex", codex, four)).toThrow(
+      "attachments total 60 MB, over the 50 MB limit for one turn",
     );
+    expect(decodeAttachments("codex", codex, four.slice(0, 3))).toHaveLength(3);
+  });
+
+  test("bytes that sniff as nothing wisp stores are rejected even with a .png name", () => {
+    expect(() => decodeAttachments("codex", codex, [item("fake.png", BINARY)])).toThrow(
+      "attachments[0] (fake.png): not a supported attachment (magic-byte sniff) — wisp takes png/jpeg/gif/webp images, pdf, utf-8 text, and mp4/mov/webm video",
+    );
+  });
+
+  test("A1d: pdf, text and video need NO adapter capability — they travel by path", () => {
+    const out = decodeAttachments("blind", blindBash, [
+      item("spec.pdf", PDF),
+      item("orders.csv", CSV),
+      item("clip.mp4", MP4),
+    ]);
+    expect(out.map((a) => a.mediaType)).toEqual(["application/pdf", "text/plain", "video/mp4"]);
+    // the image half of the same harness is still refused, by the same rule as before
+    expect(() => decodeAttachments("blind", blindBash, [item("red.png", PNG)])).toThrow(
+      "harness 'blind' has no image-attachment capability",
+    );
+  });
+
+  test("a delivery harness's narrow image reader does not narrow its other kinds", () => {
+    const droid = BUILTIN_ADAPTERS.droid!;
+    // gif is refused (its Read tool throws on one) — a webm is not an image at all
+    expect(() => decodeAttachments("droid", droid, [item("anim.gif", GIF)])).toThrow("accepts only png and jpeg");
+    expect(decodeAttachments("droid", droid, [item("clip.webm", WEBM)])).toHaveLength(1);
   });
 
   test("happy path: decoded bytes, sniffed mediaType, original name", () => {
@@ -267,6 +349,16 @@ describe("message attachment promotion", () => {
     expect(existsSync(stored[0]!.path)).toBe(true);
   });
 
+  test("A1d: a promoted text file revalidates from its leading window", () => {
+    const taskId = `ttext${Date.now()}`;
+    const stored = writeMessageAttachments(taskId, "message-4", [
+      { name: "orders.csv", mediaType: "text/plain", data: CSV },
+    ]);
+    const records = stored.map(({ name, size, mediaType }) => ({ name, size, mediaType }));
+    const promoted = promoteMessageAttachments(taskId, "message-4", 4, records);
+    expect(readFileSync(promoted[0]!.path)).toEqual(CSV);
+  });
+
   test("recovery rejects a symlink even when its target bytes match the manifest", () => {
     const taskId = `tsymlink${Date.now()}`;
     const stored = writeMessageAttachments(taskId, "message-3", [decoded()]);
@@ -345,12 +437,12 @@ describe("POST /api/tasks attachments (S3)", () => {
 
     const typeRes = await call(cfg, { imgbash: imgBash }, "/api/tasks", {
       repoPath: repo,
-      prompt: "not an image",
+      prompt: "not a file wisp stores",
       harness: "imgbash",
-      attachments: [item("notes.txt", TEXT)],
+      attachments: [item("notes.bin", BINARY)],
     });
     expect(typeRes.status).toBe(400);
-    expect(await errorOf(typeRes)).toContain("not a png/jpeg/gif/webp image");
+    expect(await errorOf(typeRes)).toContain("not a supported attachment (magic-byte sniff)");
 
     expect(listTasks(true).length).toBe(before); // validation runs before createTask
   });
@@ -456,10 +548,84 @@ describe("POST /api/tasks/:id/send attachments (S3)", () => {
     expect(log).not.toContain("-i ");
   });
 
+  test("A1d: a non-image rides the prompt while the image rides argv", async () => {
+    // this harness dumps every argv element, so the log shows BOTH channels
+    const mixedBash: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", 'printf "%s\\n" "$0" "$@"'],
+      image: ["-i", "{path}", "--"],
+      parse: { format: "text" },
+      attach: null,
+    };
+    const task = createTask({
+      id: newTaskId(),
+      title: "mixed delivery",
+      repo_path: "/tmp/repo",
+      harness: "mixedbash",
+      model: null,
+      slot: freeSlot(),
+    });
+    setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-att-wt-")) });
+    transition(task.id, "done", "setup done");
+    const res = await call(cfg, { mixedbash: mixedBash }, `/api/tasks/${task.id}/send`, {
+      message: "reconcile these",
+      attachments: [item("red.png", PNG), item("orders.csv", CSV)],
+    });
+    expect(res.status).toBe(200);
+    await untilSettled(task.id);
+
+    const dir = join(TASKS_DIR, task.id, "attachments", "turn-1");
+    const log = readFileSync(turnsFor(task.id)[0]!.log_file, "utf8");
+    // the csv is named in the prompt, with the type and size the harness needs
+    // to pick a tool, and the png is NOT — it went to the model through -i
+    expect(log).toContain("A file is attached to this message on disk.");
+    expect(log).toContain(`${join(dir, "orders.csv")} (text/plain,`);
+    expect(log).not.toContain("(image/png,");
+    // …and argv carried the image, exactly where the template puts it
+    expect(log).toContain("-i\n");
+    expect(log).toContain(join(dir, "red.png"));
+  });
+
+  test("A1d: an attached video says plainly that nobody can watch it", async () => {
+    const pathBash: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", 'printf "%s" "$0"'],
+      parse: { format: "text" },
+      attach: null,
+    };
+    const task = createTask({
+      id: newTaskId(),
+      title: "video delivery",
+      repo_path: "/tmp/repo",
+      harness: "videobash",
+      model: null,
+      slot: freeSlot(),
+    });
+    setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-att-wt-")) });
+    transition(task.id, "done", "setup done");
+    // no image capability at all, and a video still gets through: path delivery
+    // is a fact about the prompt rather than a channel the CLI has to declare
+    const res = await call(cfg, { videobash: pathBash }, `/api/tasks/${task.id}/send`, {
+      message: "what happens at the end?",
+      attachments: [item("clip.mp4", MP4)],
+    });
+    expect(res.status).toBe(200);
+    await untilSettled(task.id);
+
+    const log = readFileSync(turnsFor(task.id)[0]!.log_file, "utf8");
+    expect(log).toContain(join(TASKS_DIR, task.id, "attachments", "turn-1", "clip.mp4"));
+    expect(log).toContain("You cannot watch a video directly");
+    expect(log).toContain("ffmpeg/ffprobe");
+    expect(log.trimEnd().endsWith("what happens at the end?")).toBe(true);
+  });
+
   test("validation failures are named 400s and spawn no turn", async () => {
     const id = readyTask();
     const cases: [unknown, string][] = [
-      [[item("red.png", PNG), item("red.png", TEXT)], "attachments[1] (red.png): not a png/jpeg/gif/webp image (magic-byte sniff)"],
+      [
+        [item("red.png", PNG), item("red.png", BINARY)],
+        "attachments[1] (red.png): not a supported attachment (magic-byte sniff) — wisp takes png/jpeg/gif/webp images, pdf, utf-8 text, and mp4/mov/webm video",
+      ],
       ["oops", "attachments must be an array of {name, dataBase64}, got string"],
     ];
     for (const [attachments, want] of cases) {
@@ -591,6 +757,40 @@ describe("GET /api/tasks/:id/attachments/:turn/:name (A1a)", () => {
     const id = await taskWithImages();
     expect((await get(cfg, adapters, `/api/tasks/${id}/attachments/9/red.png`)).status).toBe(404);
     expect((await get(cfg, adapters, `/api/tasks/tnope9/attachments/1/red.png`)).status).toBe(404);
+  });
+
+  test("A1d: a text attachment serves as text, and never inline", async () => {
+    const task = createTask({
+      id: newTaskId(),
+      title: "text bytes",
+      repo_path: "/tmp/repo",
+      harness: "imgbash",
+      model: null,
+      slot: freeSlot(),
+    });
+    setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-att-wt-")) });
+    transition(task.id, "done", "setup done");
+    await call(cfg, adapters, `/api/tasks/${task.id}/send`, {
+      message: "read this",
+      attachments: [item("orders.csv", CSV), item("clip.mp4", MP4)],
+    });
+    for (const deadline = Date.now() + 8000; ; ) {
+      const t = turnsFor(task.id).at(-1);
+      if (t && t.status !== "running") break;
+      if (Date.now() > deadline) throw new Error("turn never settled");
+      await Bun.sleep(50);
+    }
+
+    const csv = await get(cfg, adapters, `/api/tasks/${task.id}/attachments/1/orders.csv`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    // pasted content must never render on the daemon's own origin
+    expect(csv.headers.get("content-disposition")).toBe('attachment; filename="orders.csv"');
+    expect(await csv.text()).toBe(CSV.toString("utf8"));
+
+    const video = await get(cfg, adapters, `/api/tasks/${task.id}/attachments/1/clip.mp4`);
+    expect(video.headers.get("content-type")).toBe("video/mp4");
+    expect(new Uint8Array(await video.arrayBuffer())).toEqual(new Uint8Array(MP4));
   });
 
   test("archiving keeps image bytes and manifests available", async () => {

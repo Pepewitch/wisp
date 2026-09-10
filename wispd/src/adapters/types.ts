@@ -528,9 +528,10 @@ export interface ImageInputStrategy {
  * nothing goes on stdin; the turn's stored paths are NAMED IN THE PROMPT and
  * the harness's own tool opens them.
  *
- * That makes the preamble load-bearing rather than cosmetic: an unread file is
- * a turn that succeeds with a wrong answer, so the sentence lives here, in the
- * adapter, and never depends on the user thinking to type it.
+ * The sentences that do the naming live in adapters/delivery.ts, shared with
+ * the pdf/text/video attachments that reach EVERY harness this way (A1d). What
+ * stays here is what is specific to one harness's image reader: what it
+ * accepts, and the caveat the composer shows.
  */
 export interface ImageDeliveryStrategy {
   /**
@@ -540,8 +541,6 @@ export interface ImageDeliveryStrategy {
    * reason, not handed over to fail inside the turn.
    */
   accepts: readonly string[];
-  /** The sentence prepended to the turn's message, naming the absolute paths. */
-  preamble: (paths: string[]) => string;
   /**
    * One sentence for the composer, shown while an image is pending: delivery
    * by path has a caveat argv delivery does not, and the copy belongs with the

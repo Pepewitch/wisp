@@ -1,10 +1,5 @@
-import {
-  IMAGE_DELIVERY_STRATEGIES,
-  IMAGE_INPUT_STRATEGIES,
-  type AdapterDef,
-  type ImageInputStrategy,
-} from "./adapters"
-import type { StoredAttachment } from "./attachments"
+import { attachmentPreamble, IMAGE_INPUT_STRATEGIES, type AdapterDef, type ImageInputStrategy } from "./adapters"
+import { attachmentKind, type StoredAttachment } from "./attachments"
 import type { Task } from "./types"
 
 export function taskEnv(task: Task): Record<string, string> {
@@ -47,23 +42,56 @@ export function taskPreamble(task: Task): string {
   ].join("\n")
 }
 
+/**
+ * Whether this harness's IMAGES travel by path on this turn. Images have
+ * native channels almost everywhere (argv, stdin envelope, a live protocol's
+ * own image blocks), and a path preamble beside a natively delivered image
+ * would just be noise. Everything that is not an image always travels by path.
+ */
+function imageTravelsByPath(def: AdapterDef): boolean {
+  return (
+    Boolean(def.imageDelivery) &&
+    def.liveInput !== "droid-jsonrpc" &&
+    def.liveInput !== "codex-app-server"
+  )
+}
+
+function isImage(attachment: StoredAttachment): boolean {
+  return attachmentKind(attachment.mediaType) === "image"
+}
+
+/**
+ * The attachments this turn hands over by naming their absolute paths: pdf,
+ * text and video always (A1d — no harness CLI has a flag for those, but every
+ * harness has file tools), plus images on a delivery harness.
+ */
+export function pathDeliveredAttachments(
+  def: AdapterDef,
+  attachments: StoredAttachment[],
+): StoredAttachment[] {
+  return attachments.filter((attachment) => !isImage(attachment) || imageTravelsByPath(def))
+}
+
+/**
+ * The images this turn hands over through the harness's own image channel —
+ * the only attachments that belong on argv or in a stdin envelope. A pdf in
+ * codex's `-i` would be a turn that fails inside the harness.
+ */
+export function nativeImageAttachments(
+  def: AdapterDef,
+  attachments: StoredAttachment[],
+): StoredAttachment[] {
+  return attachments.filter((attachment) => isImage(attachment) && !imageTravelsByPath(def))
+}
+
 export function deliveredMessage(
   def: AdapterDef,
   attachments: StoredAttachment[],
   message: string,
 ): string {
-  if (
-    attachments.length === 0 ||
-    !def.imageDelivery ||
-    def.liveInput === "droid-jsonrpc" ||
-    def.liveInput === "codex-app-server"
-  ) {
-    return message
-  }
-  const delivery = IMAGE_DELIVERY_STRATEGIES[def.imageDelivery]
-  return delivery
-    ? `${delivery.preamble(attachments.map((attachment) => attachment.path))}\n\n${message}`
-    : message
+  const byPath = pathDeliveredAttachments(def, attachments)
+  if (byPath.length === 0) return message
+  return `${attachmentPreamble(byPath)}\n\n${message}`
 }
 
 export function inputStrategyFor(

@@ -48,6 +48,17 @@ export function harnessesRoute(
       // S3: paste is disabled-with-reason without one of the three mechanisms
       // (truthiness, not !== undefined: adapters.json null CLEARS a builtin's)
       hasImage: Boolean(def.image ?? def.imageInput ?? def.imageDelivery),
+      // A1d: what this harness can be handed at all. pdf/text/video are on the
+      // list for every harness because they travel by PATH — that is a fact
+      // about the prompt, not a channel a CLI has to declare — while images
+      // still need one of the three image mechanisms. A client older than this
+      // field reads it as absent and falls back to hasImage.
+      attachmentKinds: [
+        ...(def.image ?? def.imageInput ?? def.imageDelivery ? (["image"] as const) : []),
+        "pdf",
+        "text",
+        "video",
+      ],
       hasLiveSteering: Boolean(def.liveInput),
       // A1c: delivery-by-path has a caveat argv delivery does not, and the
       // strategy owns that sentence — the composer only renders it
