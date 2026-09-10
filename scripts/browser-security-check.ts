@@ -515,6 +515,7 @@ async function main(): Promise<void> {
 
     await checkTerminalHandshake(page, started.origin, home);
     await checkImageConsent(page, started.origin);
+    await checkPwa(page, started.origin);
     // Reset this fixture's selection before the clean-app navigation below.
     await page.evaluate(`Object.keys(localStorage).filter(key => key !== 'wisp_token').forEach(key => localStorage.removeItem(key))`);
     await page.client.send("Page.navigate", { url: "about:blank" }, page.session);
@@ -556,3 +557,85 @@ async function main(): Promise<void> {
 }
 
 await main();
+
+/** Installation and offline navigation must work under the actual response CSP. */
+async function checkPwa(page: Page, origin: string): Promise<void> {
+  const send = (method: string, params: Record<string, unknown> = {}) => page.client.send(method, params, page.session);
+  await send("Page.navigate", { url: origin });
+  await waitInPage(page, "!!navigator.serviceWorker.controller", "PWA worker activation");
+  const manifest = await send("Page.getAppManifest");
+  check("the browser discovers a valid Wisp manifest", typeof manifest.data === "string" && JSON.parse(manifest.data).display === "standalone" && (manifest.errors as unknown[]).length === 0, JSON.stringify(manifest.errors));
+  const installability = await send("Page.getInstallabilityErrors");
+  check("the browser accepts PWA installation", (installability.installabilityErrors as unknown[]).length === 0, JSON.stringify(installability.installabilityErrors));
+  check("the browser has a home-screen icon", await page.evaluate("!!document.querySelector('link[rel=apple-touch-icon]')") === true, "missing touch icon");
+
+  await send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await waitInPage(page, "!!document.querySelector('.mobile-browser-shell')", "phone layout");
+  await screenshot(page, "pwa-phone");
+  check("phone layout stays inside its viewport", await page.evaluate("document.documentElement.scrollWidth <= innerWidth") === true, "horizontal overflow");
+  check("phone text inputs avoid focus zoom", await page.evaluate("Array.from(document.querySelectorAll('textarea')).every(input => parseFloat(getComputedStyle(input).fontSize) >= 16)") === true, "a composer input is smaller than 16px");
+  await send("Emulation.setDeviceMetricsOverride", { width: 320, height: 568, deviceScaleFactor: 1, mobile: true });
+  check("small phones have no horizontal overflow", await page.evaluate("document.documentElement.scrollWidth <= innerWidth") === true, "320px overflow");
+  await screenshot(page, "pwa-small-phone");
+  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await page.evaluate("document.querySelector('button[aria-label=\"Open tasks\"]').click()");
+  await waitInPage(page, "!!document.querySelector('button[aria-label=Settings]')", "phone settings trigger");
+  await page.evaluate("document.querySelector('button[aria-label=Settings]').click()");
+  await waitInPage(page, "document.body.innerText.toLowerCase().includes('home screen')", "PWA installation section");
+  await screenshot(page, "pwa-settings");
+  await page.evaluate("Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Done').click()");
+  await send("Emulation.setDeviceMetricsOverride", { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+  await waitInPage(page, "!!document.querySelector('.mobile-browser-shell')", "landscape touch layout");
+  check("landscape phones retain the touch layout", await page.evaluate("document.documentElement.scrollWidth <= innerWidth") === true, "landscape overflow");
+  await screenshot(page, "pwa-landscape");
+
+  // A page's CDP network emulation does not cover its service worker's fetches.
+  // Apply it to both targets so the navigation tests an actually unreachable host.
+  const targets = await page.client.send("Target.getTargets", {});
+  const target = (targets.targetInfos as { type: string; url: string; targetId: string }[]).find(target => target.type === "service_worker" && target.url === `${origin}/sw.js`);
+  if (!target) throw new Error("no active PWA service worker target");
+  const attached = await page.client.send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
+  const workerSession = attached.sessionId as string;
+  await page.client.send("Network.enable", {}, workerSession);
+  const network = { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 };
+  await page.client.send("Network.emulateNetworkConditions", network, workerSession);
+  await send("Network.emulateNetworkConditions", network);
+  await send("Page.navigate", { url: origin });
+  await waitInPage(page, "document.body.innerText.includes('Let’s get you reconnected')", "offline recovery screen").catch(async (error) => {
+    await screenshot(page, "pwa-offline-failure");
+    throw new Error(`${error.message}: ${String(await page.evaluate("document.body.innerText")).slice(0, 300)}`);
+  });
+  await screenshot(page, "pwa-offline");
+  check("offline recovery scripts satisfy CSP", await page.evaluate("window.__cspViolations.length === 0") === true, String(await page.evaluate("window.__cspViolations")));
+  await page.evaluate("document.querySelector('#retry').click()");
+  await waitInPage(page, "document.querySelector('#status').textContent.includes('Still unreachable')", "offline retry feedback");
+  check("PWA stores no application or credential cache", await page.evaluate("caches.keys().then(keys => keys.length === 0)") === true, "unexpected Cache Storage entries");
+  await page.client.send("Network.emulateNetworkConditions", { ...network, offline: false }, workerSession);
+  await send("Network.emulateNetworkConditions", { ...network, offline: false });
+  await waitInPage(page, "!!document.querySelector('#root') && !!document.querySelector('.mobile-browser-shell')", "automatic online recovery");
+  check("PWA returns to the live app after reconnect", true, "");
+  await page.client.send("Target.detachFromTarget", { sessionId: workerSession });
+
+  // A fresh home-screen store may need authentication even after Safari's tab
+  // was signed in. Exercise that entry point without changing the fixture token.
+  const anonymous = await send("Page.addScriptToEvaluateOnNewDocument", { source: "localStorage.removeItem('wisp_token'); localStorage.setItem('wisp_theme', 'light')" });
+  await send("Page.navigate", { url: origin });
+  await waitInPage(page, "!!document.querySelector('[aria-label=\"Daemon token\"]')", "home-screen authentication");
+  await screenshot(page, "pwa-auth-light");
+  check("installation remains available before authentication", await page.evaluate("!!document.querySelector('link[rel=manifest]') && document.documentElement.classList.contains('light')") === true, "missing preauth PWA metadata or light theme");
+  await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: anonymous.identifier });
+  await send("Page.navigate", { url: origin });
+  await waitInPage(page, "!!document.querySelector('.mobile-browser-shell') && !document.querySelector('[aria-label=\"Daemon token\"]')", "authenticated light phone layout");
+  await screenshot(page, "pwa-phone-light");
+  await send("Emulation.setTouchEmulationEnabled", { enabled: false });
+  await send("Emulation.setDeviceMetricsOverride", { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+async function screenshot(page: Page, name: string): Promise<void> {
+  const directory = process.env.WISP_BROWSER_SCREENSHOTS;
+  if (!directory) return;
+  await mkdir(directory, { recursive: true });
+  const result = await page.client.send("Page.captureScreenshot", { format: "png" }, page.session);
+  await writeFile(join(directory, `${name}.png`), Buffer.from(result.data as string, "base64"));
+}

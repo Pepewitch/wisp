@@ -61,6 +61,43 @@ See the current
 [Tailscale Serve documentation](https://tailscale.com/docs/reference/tailscale-cli/serve)
 before applying this to a shared tailnet.
 
+## Install Wisp on your phone
+
+Use the **HTTPS URL** printed by Tailscale Serve, at the root of the host.
+A plain HTTP tailnet IP can open the UI, but browsers require a secure origin
+for full PWA installation and offline recovery. Wisp does not require a
+public URL or an app-store download.
+
+1. Connect the phone's Tailscale app and open the Wisp HTTPS URL.
+2. On **iPhone or iPad**, open it in Safari, tap **Share → Add to Home Screen →
+   Add**. If Safari offers **Open as Web App**, keep it enabled.
+3. On **Android**, use **Settings → Install Wisp** when available, or Chrome's
+   **Install app / Add to Home Screen** menu item.
+4. Open the new Wisp icon. If the installed app asks for your token again,
+   paste the output of `wisp token`; browsers may keep home-screen storage
+   separate from the browser tab.
+
+The app opens in its own window with the Wisp icon, follows your chosen Wisp
+theme, and leaves room for the notch, home indicator, and keyboard. Settings
+also includes installation instructions for the current browser. Keep
+Tailscale connected while working; home-screen installation does not run the
+VPN or start the remote daemon.
+
+When you return to Wisp, browser event streams reconnect and refresh daemon
+state. If the server cannot be reached when launching, an installed service
+worker shows a recovery screen with **Try again**, retries on return/network
+recovery and periodically while visible. The first visit still needs a working
+connection to install that worker. Remote work continues while your phone is
+disconnected, provided the server and daemon are running.
+
+The PWA does not save task responses, logs, images, credentials, or the app
+bundle in Cache Storage, and does not queue commands offline. Existing
+origin-scoped token and draft storage works as before. New launches fetch the
+current UI from the daemon; worker updates do not reload an open conversation.
+
+See [browser installation support](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/Guides/Making_PWAs_installable)
+for platform requirements.
+
 ## SSH local forwarding
 
 From the client machine:

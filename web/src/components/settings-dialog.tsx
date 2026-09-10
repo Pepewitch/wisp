@@ -6,6 +6,7 @@ import { Button, Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
 import { THEME_PREFERENCES, themeStore, useTheme, useThemePreference } from "@/lib/theme"
 import type { ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { PwaInstall, PwaInstallSection } from "./pwa-install"
 
 const THEME_LABEL: Record<ThemePreference, string> = {
   system: "System",
@@ -46,7 +47,7 @@ export function SettingsDialog({
             "overflow-hidden rounded-xl shadow-modal outline-none",
           )}
         >
-          <div className="flex max-h-[80vh] flex-col">
+          <div className="settings-content flex max-h-[80dvh] flex-col">
             <div className="flex shrink-0 items-baseline gap-2.5 border-b border-border px-4 py-3">
               <Dialog.Title className="text-[14.5px] font-semibold tracking-[-0.01em]">Settings</Dialog.Title>
               <span className="min-w-0 flex-1 truncate text-[10.5px] text-faint">This app, on this device</span>
@@ -77,20 +78,24 @@ export function SettingsSpecimen() {
         <span className="min-w-0 flex-1 truncate text-[10.5px] text-faint">This app, on this device</span>
       </div>
       <div className="px-4 py-3.5">
-        <SettingsSections />
+        <SettingsSections specimen />
+        <PwaInstallSection state="ios" />
       </div>
     </div>
   )
 }
 
-function SettingsSections() {
+function SettingsSections({ specimen = false }: { specimen?: boolean }) {
   return (
-    <Section
-      label="Appearance"
-      hint="Dark is Wisp's own. System follows this device's appearance, and the platform's own scrollbars, caret and controls follow whichever theme is on screen."
-    >
-      <ThemeField />
-    </Section>
+    <>
+      <Section
+        label="Appearance"
+        hint="Dark is Wisp's own. System follows this device's appearance, and the platform's own scrollbars, caret and controls follow whichever theme is on screen."
+      >
+        <ThemeField />
+      </Section>
+      {!specimen && <PwaInstall />}
+    </>
   )
 }
 

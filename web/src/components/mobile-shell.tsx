@@ -9,6 +9,7 @@ import { Meta, StateDot, Tab } from "@/components/primitives"
 import { stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 
 type MobileTab = "chat" | "changes" | "terminal"
 
@@ -60,6 +61,7 @@ export function MobileShell({
   desktop = false,
   connectionSwitcher,
   zoomControl,
+  connectionStatus,
 }: {
   task: ApiTask | null
   pullRequest?: PullRequestStatus
@@ -74,9 +76,11 @@ export function MobileShell({
   connectionSwitcher?: ReactNode
   /** Desktop-only application zoom surface. */
   zoomControl?: ReactNode
+  connectionStatus?: ReactNode
 }) {
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
+  const viewportRef = useMobileViewport(!desktop)
 
   // a task switch is always about reading the conversation next
   const [seenTask, setSeenTask] = useState(task?.id)
@@ -86,7 +90,7 @@ export function MobileShell({
   }
 
   return (
-    <div className="flex h-dvh flex-col bg-background text-foreground">
+    <div ref={viewportRef} className={cn("mobile-shell flex h-dvh flex-col bg-background text-foreground", !desktop && "mobile-browser-shell")}>
       <header className="shrink-0 border-b border-border bg-surface" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         {/* The app band is Wisp Desktop's alone, and it is not decoration: that
             window is `titleBarStyle: Overlay`, so the traffic lights float over
@@ -181,6 +185,7 @@ export function MobileShell({
           </div>
         )}
       </header>
+      {connectionStatus}
       {task?.cleanup && <div className="scroll-slim max-h-[40dvh] shrink-0 overflow-y-auto border-b border-border px-3 pb-3 [&_button]:min-h-11"><CleanupPanel task={task} /></div>}
 
       <div
@@ -200,11 +205,11 @@ export function MobileShell({
             conversation's scroll position or tear down a live shell */}
         <Pane show={tab === "chat"}>{conversation}</Pane>
         <Pane show={tab === "changes"}>{changes}</Pane>
-        <Pane show={tab === "terminal"}>{terminal}</Pane>
+        <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
       </main>
 
       {tab !== "terminal" && (
-        <div className="shrink-0" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="shrink-0" style={{ paddingBottom: "var(--mobile-bottom, env(safe-area-inset-bottom))" }}>
           {composer}
         </div>
       )}
@@ -214,7 +219,7 @@ export function MobileShell({
           <Drawer.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
           <Drawer.Popup
             className={cn(
-              "fixed inset-y-0 left-0 z-(--z-modal) flex w-[86vw] max-w-[340px] flex-col",
+              "mobile-task-drawer fixed inset-y-0 left-0 z-(--z-modal) flex w-[86vw] max-w-[340px] flex-col",
               "border-r border-border-strong bg-sidebar outline-none",
             )}
           >

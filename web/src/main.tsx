@@ -13,6 +13,7 @@ import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
 import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { initTheme } from "@/lib/theme"
+import { initPwa } from "@/lib/pwa"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 
 // before the first render, so a light preference does not arrive mid-paint
@@ -20,6 +21,7 @@ initTheme()
 
 const reloadWebApp = () => window.location.reload()
 const desktopBootstrap = isTauri() ? desktopBridge.bootstrap() : null
+if (!desktopBootstrap) initPwa()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
