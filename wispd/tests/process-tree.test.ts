@@ -30,7 +30,7 @@ import { STOPPING } from "../src/interrupt-state";
 import { assertTaskNotStopping } from "../src/turn-interrupt";
 import { archiveTaskRows } from "../src/routes/archive";
 import { route } from "../src/routes";
-import { backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
+import { BACKGROUND_SETTLE_MS, backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -452,7 +452,7 @@ describe("interrupting a turn stops its descendants", () => {
 
     expect(db.query("SELECT state, stop_requested FROM turn_process_groups WHERE turn_id = ?").get(turnId))
       .toEqual({ state: "none", stop_requested: 0 });
-    expect(backgroundWork(task.id)).toEqual({ state: "none", groups: 0 });
+    expect(backgroundWork(task.id)).toEqual({ state: "none", groups: 0, details: [] });
     expect(() => assertTaskNotStopping(task.id)).not.toThrow();
     await expect(assertTaskProcessesEnded(task.id)).resolves.toBeUndefined();
     expect(alive(unrelated.pid)).toBe(true);
@@ -540,4 +540,66 @@ describe("interrupting a turn stops its descendants", () => {
     await until(() => !alive(holder), 5_000);
     expect(hasRunningTurn(task.id)).toBeNull();
   }, 30_000);
+});
+
+/**
+ * Reporting background work is a separate question from owning it. These
+ * cases pin the report: it must not cry wolf over a straggler that dies with
+ * its turn, and when it does speak it must say enough to decide on Stop.
+ */
+describe("reporting background work", () => {
+  /** Pretend the turn finished long enough ago to be past the settle window. */
+  function backdateTurnEnd(taskId: string): void {
+    const ended = new Date(Date.now() - BACKGROUND_SETTLE_MS - 1_000).toISOString();
+    db.query("UPDATE turns SET ended_at = ? WHERE task_id = ?").run(ended, taskId);
+  }
+
+  test("a straggler that outlives its turn by a moment never reaches the badge", async () => {
+    const task = makeTask("settle");
+    const def = bashAdapter('sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid; exit 0');
+    startTurn(task, "leave a child", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    await until(() => hasRunningTurn(task.id) === null);
+
+    // Ownership is unchanged: every caller that deletes, archives or signals
+    // still sees the group the instant the turn ends.
+    expect(backgroundWork(task.id).state).toBe("running");
+    await expect(assertTaskProcessesEnded(task.id)).rejects.toThrow("still running or unverified");
+    // The badge waits, so a child that dies with its turn never flashes.
+    expect(backgroundWork(task.id, BACKGROUND_SETTLE_MS).state).toBe("none");
+
+    backdateTurnEnd(task.id);
+    const settled = backgroundWork(task.id, BACKGROUND_SETTLE_MS);
+    expect(settled.state).toBe("running");
+    expect(settled.details).toHaveLength(1);
+    signalProcessGroup(turn.pid!, "SIGKILL");
+    await until(() => !alive(descendant));
+  }, 15_000);
+
+  test("the report says which turn, how many processes, and what they are", async () => {
+    const task = makeTask("detail");
+    const def = bashAdapter('sleep 30 </dev/null >/dev/null 2>&1 & echo $! > child.pid; exit 0');
+    startTurn(task, "leave a child", def, cfg);
+    const turn = hasRunningTurn(task.id)!;
+    fixtureGroups.push(turn.pid!);
+    const descendant = await recordedPid(join(task.worktree_path!, "child.pid"));
+    await until(() => hasRunningTurn(task.id) === null);
+    await refreshProcessGroups(task.id);
+    backdateTurnEnd(task.id);
+
+    const group = backgroundWork(task.id, BACKGROUND_SETTLE_MS).details[0]!;
+    expect(group.turn).toBe(1);
+    expect(group.pgid).toBe(turn.pid);
+    expect(group.processes).toBeGreaterThan(0);
+    expect(group.state).toBe("running");
+    expect(group.stopRequested).toBe(false);
+    expect(group.since).not.toBeNull();
+    // The whole point of the change: the operator can see WHAT is running.
+    expect(group.names).toContain("sleep");
+
+    signalProcessGroup(turn.pid!, "SIGKILL");
+    await until(() => !alive(descendant));
+  }, 15_000);
 });

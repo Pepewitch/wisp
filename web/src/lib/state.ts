@@ -72,6 +72,45 @@ export function backgroundLabel(background: ApiTask["background"]): string | nul
 }
 
 /**
+ * The programs still running, deduped across groups — the short form, for
+ * places that already have a sentence and only need the nouns.
+ */
+export function backgroundNames(background: ApiTask["background"], limit = 3): string | null {
+  const names = [...new Set((background?.details ?? []).flatMap(group => group.names))]
+  if (!names.length) return null
+  return names.length > limit ? `${names.slice(0, limit).join(", ")}, +${names.length - limit}` : names.join(", ")
+}
+
+/**
+ * What is actually still running, for the state dot's tooltip.
+ *
+ * The word alone ("Background work running") states a fact the reader can act
+ * on in exactly one way — Stop — while withholding everything needed to decide
+ * whether Stop is safe. One line per group: which turn started it, what the
+ * programs are, and how far past the turn they have run.
+ *
+ * Empty when the daemon is older than background detail, so the caller falls
+ * back to the word rather than rendering a confident blank.
+ *
+ * `now` is passed in rather than read here: this is a tooltip, so it is
+ * correct as of its render, and a leaf dot in every sidebar row must not open
+ * a clock subscription to say how old something is.
+ */
+export function backgroundDetail(background: ApiTask["background"], now: number): string | null {
+  const details = background?.details
+  if (!details?.length) return null
+  return details
+    .map(group => {
+      const what = group.names.length ? group.names.join(", ") : `${group.processes} process${group.processes === 1 ? "" : "es"}`
+      const age = group.since ? elapsed(group.since, now) : null
+      return [`turn ${group.turn}: ${what}`, age && `${age} past the turn`, group.state === "unknown" && "ownership unverified"]
+        .filter(Boolean)
+        .join(" · ")
+    })
+    .join("\n")
+}
+
+/**
  * "41s" / "2m 41s" / "1h 02m" — the one shape every duration in the app takes.
  * Read at a glance, never to the millisecond, and never past two units: an
  * agent turn that has run for an hour does not need its seconds.

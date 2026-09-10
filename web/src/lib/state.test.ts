@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
-import { duration, elapsed, stateWord } from "./state"
-import type { ApiTask } from "./types"
+import { backgroundDetail, backgroundNames, duration, elapsed, stateWord } from "./state"
+import type { ApiTask, BackgroundGroup } from "./types"
 
 const START = "2026-08-27T12:00:00.000Z"
 const after = (seconds: number): number => new Date(START).getTime() + seconds * 1000
@@ -75,5 +75,49 @@ describe("stateWord (the honest failure word, Theme B)", () => {
     expect(stateWord(task({ state: "done", latest_turn_has_result: true, latest_turn_exit_code: 0 }))).toBe("Done")
     expect(stateWord(task({ state: "running" }))).toBe("Running")
     expect(stateWord(task({ state: "needs-input" }))).toBe("Needs input")
+  })
+})
+
+describe("background detail (what is still running)", () => {
+  const at = (seconds: number) => new Date(new Date(START).getTime() + seconds * 1000).toISOString()
+  const group = (over: Partial<BackgroundGroup> = {}): BackgroundGroup => ({
+    turn: 6, pgid: 46550, processes: 1, since: START, state: "running" as const,
+    stopRequested: false, names: ["node"], ...over,
+  })
+
+  it("names which turn started it, what it is, and how far past the turn it has run", () => {
+    expect(backgroundDetail({ state: "running", groups: 1, details: [group()] }, after(240)))
+      .toBe("turn 6: node · 4m 00s past the turn")
+  })
+
+  it("falls back to a process count when ps could not name anything", () => {
+    expect(backgroundDetail({ state: "running", groups: 1, details: [group({ names: [], processes: 3 })] }, after(0)))
+      .toBe("turn 6: 3 processes · 0s past the turn")
+  })
+
+  it("says so when ownership is unverified, because Stop will refuse", () => {
+    expect(backgroundDetail({ state: "unknown", groups: 1, details: [group({ state: "unknown" })] }, after(0)))
+      .toContain("ownership unverified")
+  })
+
+  it("gives one line per group", () => {
+    const detail = backgroundDetail({
+      state: "running", groups: 2,
+      details: [group(), group({ turn: 7, pgid: 9, names: ["vite"], since: at(60) })],
+    }, after(120))
+    expect(detail).toBe("turn 6: node · 2m 00s past the turn\nturn 7: vite · 1m 00s past the turn")
+  })
+
+  /** An older daemon sends state without detail; the word must still stand alone. */
+  it("returns null rather than a confident blank when the daemon sent no detail", () => {
+    expect(backgroundDetail({ state: "running", groups: 1 }, after(0))).toBeNull()
+    expect(backgroundDetail(undefined, after(0))).toBeNull()
+  })
+
+  it("dedupes names across groups and caps the list", () => {
+    const many = ["node", "gh", "git", "vite"].map((name, i) => group({ turn: i, names: [name] }))
+    expect(backgroundNames({ state: "running", groups: 2, details: [group(), group({ turn: 7 })] })).toBe("node")
+    expect(backgroundNames({ state: "running", groups: 4, details: many })).toBe("node, gh, git, +1")
+    expect(backgroundNames({ state: "running", groups: 1, details: [group({ names: [] })] })).toBeNull()
   })
 })

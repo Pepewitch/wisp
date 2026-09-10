@@ -166,13 +166,46 @@ export function displayStateWord(
   return state;
 }
 
+/**
+ * One tracked process group that outlived its turn.
+ *
+ * Everything here is already in `turn_process_groups` or the turn it belongs
+ * to; the badge simply never showed it, which left "Background work running"
+ * as a fact the operator could neither act on nor dismiss. Deciding whether to
+ * Stop needs WHICH turn started it, HOW MANY processes are left, HOW LONG they
+ * have outlived the turn, and — the part that actually answers the question —
+ * WHAT they are.
+ */
+export interface BackgroundGroup {
+  /** The turn number the operator sees in `show`/the UI, not the row id. */
+  turn: number;
+  pgid: number;
+  /** Live members at the last inventory, not a historical high-water mark. */
+  processes: number;
+  /** When the owning turn ended, so the UI can age it. Null while unfinished. */
+  since: string | null;
+  state: "running" | "unknown";
+  stopRequested: boolean;
+  /**
+   * Deduped executable names, best effort — empty when the naming call failed
+   * or the group settled between the inventory and now. Never arguments.
+   */
+  names: string[];
+}
+
+export interface BackgroundWork {
+  state: "none" | "running" | "unknown" | "stopping";
+  groups: number;
+  details: BackgroundGroup[];
+}
+
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
 export type ApiTask = Omit<Task, "archived"> & {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
-  background?: { state: "none" | "running" | "unknown" | "stopping"; groups: number };
+  background?: BackgroundWork;
 };
 
 export interface Turn {
@@ -294,6 +327,11 @@ export interface OutboxRow {
   created_at: string;
 }
 
+/**
+ * The status word's suffix, deliberately without the program names: this
+ * shares a padded column with every other task in `ls`, and `show` prints a
+ * `background:` block right below that names them properly.
+ */
 export function backgroundSummary(task: ApiTask): string {
   switch (task.background?.state) {
     case "running": return " · background work running";

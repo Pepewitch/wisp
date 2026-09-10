@@ -39,6 +39,14 @@ remaining platform gaps, and native dependency advisory scope.
   ticks cannot be reused across reboots. A matching living member is required to recover
   ownership; uncertain ownership blocks signalling and workspace deletion.
   The indicator describes tracked groups, not every process on the machine.
+- The background indicator also reports each tracked group's executable
+  NAMES, so an operator can tell a leftover dev server from a stray `git`
+  before deciding to Stop. Names only: Wisp never reads a process's arguments
+  or environment, because argv routinely carries tokens. They come from a
+  second, best-effort `ps` that cannot fail the inventory above — a naming
+  failure yields no name and changes no ownership decision — and they are held
+  in memory, never persisted, so a name can never be mistaken for the
+  PID/start-time identity that authorizes a signal.
 - The worktree file viewer (`GET /api/tasks/:id/file`) checks the requested
   path against the worktree and then FOLLOWS symlinks, so a symlink inside a
   worktree can display a file outside it. Under the trust model above — a

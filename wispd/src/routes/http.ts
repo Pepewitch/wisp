@@ -3,11 +3,17 @@ import { formatUsage, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
 import { typeName } from "../validate";
-import { backgroundWork } from "../task-processes";
+import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
 
-/** SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit). */
+/**
+ * SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit).
+ *
+ * This is the one caller that passes a settle window: the badge is the only
+ * consumer a straggler misleads. Everything that deletes, archives or signals
+ * calls `backgroundWork` bare and still sees every row.
+ */
 export function apiTask(t: Task): ApiTask {
-  return { ...t, archived: t.archived !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...t, archived: t.archived !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export type ApiTaskMessage = Omit<

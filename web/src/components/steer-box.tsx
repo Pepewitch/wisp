@@ -31,6 +31,7 @@ import {
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
+import { backgroundNames } from "@/lib/state"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   compactEntry,
@@ -543,6 +544,13 @@ function SteerComposer({
   )
 }
 
+/** The one line under the composer: what a send will and will not do here. */
+function composerNote(blocked: boolean, backgroundOnly: boolean, running: string | null): string | null {
+  if (blocked) return "running · send won't interrupt"
+  if (!backgroundOnly) return null
+  return `background work${running ? ` (${running})` : ""} · send won't stop it`
+}
+
 function ComposerControls({
   task,
   taskId,
@@ -594,7 +602,10 @@ function ComposerControls({
   // between the suffix picker and the send button, which is what a bar with no
   // opinion about its width did.
   const backgroundOnly = !blocked && task?.background && task.background.state !== "none"
-  const note = blocked ? "running · send won't interrupt" : backgroundOnly ? "background work · send won't stop it" : null
+  // Name the programs here too: this note sits beside the Stop button, which
+  // is the moment the reader has to decide whether stopping is safe.
+  const running = backgroundNames(task?.background)
+  const note = composerNote(blocked, Boolean(backgroundOnly), running)
   return (
     <div className="mt-2 flex flex-col gap-1">
       {note && <span className="px-0.5 text-[11px] text-faint @2xl:hidden">{note}</span>}
@@ -640,7 +651,7 @@ function ComposerControls({
           aria-label={canStop ? backgroundOnly ? "Stop background work" : "Stop turn" : blocked ? "Send safely" : "Send"}
           title={
             canStop
-              ? backgroundOnly ? "Stop this task's background work; keep the completed result" : "Stop the running turn and background work; the session is kept"
+              ? backgroundOnly ? `Stop this task's background work${running ? ` (${running})` : ""}; keep the completed result` : "Stop the running turn and background work; the session is kept"
               : blocked
                 ? "Send at a safe boundary, or queue for the next turn"
                 : "Send"

@@ -1,18 +1,37 @@
 import { PROCESS_BOOT_ID } from "./process-boot";
 import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
-import { processSnapshot, sameProcess, type GroupMember, type ProcessMember } from "./process-snapshot";
+import { processNames, processSnapshot, sameProcess, type GroupMember, type ProcessMember } from "./process-snapshot";
+import type { BackgroundGroup, BackgroundWork } from "./types";
 
-export interface BackgroundWork {
-  state: "none" | "running" | "unknown" | "stopping";
-  groups: number;
-}
 interface GroupRow {
   turn_id: number; task_id: string; pgid: number; boot_id: string | null; members_json: string;
   state: "none" | "running" | "unknown"; stop_requested: number;
 }
+
+/**
+ * How long a just-finished turn's group may take to disperse before the badge
+ * calls it background work.
+ *
+ * A harness can leave a shell, `git` or `gh` child in the turn's group for a
+ * second or two after the turn is marked done — codex did it on 5 of 6 turns
+ * in the report that prompted this. The 2s inventory catches the straggler and
+ * the task flashes "Background work running" for one poll, which teaches the
+ * operator that the badge means nothing. A badge that cries wolf is worse than
+ * no badge, so the REPORTED state waits one beat.
+ *
+ * Only the report waits. `assertTaskProcessesEnded`, archive admission and
+ * Stop all read the raw rows, so no file is deleted and no process is signalled
+ * on the strength of this delay.
+ */
+export const BACKGROUND_SETTLE_MS = 5_000;
+
 const localGroups = new Set<number>();
 const stops = new Map<string, Promise<void>>();
+/** turn id → program names at the last inventory. Memory only: a name is never an identity. */
+const liveNames = new Map<number, string[]>();
+/** turn ids already reported as settled background work, so the badge is announced once. */
+const announced = new Set<number>();
 let refreshing: Promise<void> = Promise.resolve();
 const TURN_LAUNCH_CLOCK_SLOP_MS = 10_000;
 
@@ -66,13 +85,56 @@ export function recordProcessGroup(turnId: number): void {
   localGroups.add(turnId);
 }
 
-/** Agent outcome stays on the task; background work is a separate resource fact. */
-export function backgroundWork(taskId: string): BackgroundWork {
+/** Identities as they were persisted, ignoring anything that is not one. */
+function knownMembers(membersJson: string): ProcessMember[] {
+  try {
+    const parsed: unknown = JSON.parse(membersJson);
+    return Array.isArray(parsed) ? parsed.filter((value): value is ProcessMember =>
+      value !== null && typeof value === "object" && Number.isInteger(value.pid) &&
+      (typeof value.started === "string" || value.started === null)) : [];
+  } catch { return []; }
+}
+
+/** True while a finished turn's group is still inside its settle window. */
+function settling(turn: ReturnType<typeof getTurn>, settleMs: number): boolean {
+  if (settleMs <= 0 || !turn?.ended_at) return false;
+  const ended = Date.parse(turn.ended_at);
+  return Number.isFinite(ended) && Date.now() - ended < settleMs;
+}
+
+/** Reported when a group is background work: what it is, not just that it is. */
+function describe(group: GroupRow[]): BackgroundGroup[] {
+  return group.map(row => {
+    const turn = getTurn(row.turn_id);
+    return {
+      turn: turn?.n ?? row.turn_id,
+      pgid: row.pgid,
+      processes: knownMembers(row.members_json).length,
+      since: turn?.ended_at ?? null,
+      state: row.state === "running" ? "running" as const : "unknown" as const,
+      stopRequested: row.stop_requested !== 0,
+      names: liveNames.get(row.turn_id) ?? [],
+    };
+  });
+}
+
+/**
+ * Agent outcome stays on the task; background work is a separate resource fact.
+ *
+ * `settleMs` is for the report only — the API passes `BACKGROUND_SETTLE_MS` so
+ * a straggler that dies with its turn never reaches the badge. Every caller
+ * that deletes, archives or signals passes nothing and sees every row.
+ */
+export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
   const all = rows(taskId);
-  const background = all.filter(row => getTurn(row.turn_id)?.status !== "running");
-  if (stops.has(taskId)) return { state: "stopping", groups: all.length };
-  if (background.some(row => row.state === "unknown" || row.stop_requested)) return { state: "unknown", groups: background.length };
-  return { state: background.length ? "running" : "none", groups: background.length };
+  const background = all.filter(row => {
+    const turn = getTurn(row.turn_id);
+    return turn?.status !== "running" && !settling(turn, settleMs);
+  });
+  if (stops.has(taskId)) return { state: "stopping", groups: all.length, details: describe(all) };
+  const details = describe(background);
+  if (background.some(row => row.state === "unknown" || row.stop_requested)) return { state: "unknown", groups: background.length, details };
+  return { state: background.length ? "running" : "none", groups: background.length, details };
 }
 
 export function hasRecordedGroup(turnId: number): boolean {
@@ -88,6 +150,46 @@ export function processStopPending(taskId: string): boolean {
   return stops.has(taskId) || rows(taskId).some(row => row.stop_requested !== 0);
 }
 export function processStop(taskId: string): Promise<void> | undefined { return stops.get(taskId); }
+
+/**
+ * Name what survived, after the inventory has already decided ownership.
+ *
+ * One extra `ps` per poll, and only while a task actually has a surviving
+ * group — the refresh returns early otherwise. Names live in memory because
+ * they are a description, not an identity: persisting them would put a string
+ * `ps` happened to report next to the pid/start-time pair that authorizes a
+ * signal.
+ */
+async function nameGroups(groups: { turnId: number; pids: number[] }[]): Promise<void> {
+  if (!groups.length) return;
+  const named = await processNames(groups.flatMap(group => group.pids));
+  if (!named.size) return;
+  for (const group of groups) {
+    const names = [...new Set(group.pids.map(pid => named.get(pid)).filter((name): name is string => Boolean(name)))];
+    if (names.length) liveNames.set(group.turnId, names);
+    else liveNames.delete(group.turnId);
+  }
+}
+
+/** What one inventory says about one recorded group. Ownership lives here alone. */
+function groupState(
+  row: GroupRow,
+  members: GroupMember[],
+  turn: ReturnType<typeof getTurn>,
+  exitedTurnId?: number,
+): GroupRow["state"] {
+  const leader = members.find(member => member.pid === row.pgid);
+  // Never adopt a group whose leader has a different identity. Even an
+  // apparent start-time mismatch can be a locale/timezone change in old ps
+  // timestamps, so preserve files instead of assuming the old work ended.
+  const identity = historicalGroupIdentity(row, leader, turn);
+  const sameBoot = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id === PROCESS_BOOT_ID;
+  const rebooted = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id !== PROCESS_BOOT_ID;
+  if (!members.length || rebooted || identity.ended) return "none";
+  if (identity.reused || !sameBoot) return "unknown";
+  const recognized = knownMembers(row.members_json).some(old => members.some(member => sameProcess(old, member)));
+  return recognized || (row.turn_id === exitedTurnId && localGroups.has(row.turn_id)) ? "running" : "unknown";
+}
 
 /** Serialize inventories so a slow poll cannot overwrite a newer Stop result. */
 export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Promise<void> {
@@ -106,37 +208,28 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
       for (const changedTask of changedTasks) notify(changedTask);
       return;
     }
+    const living: { turnId: number; pids: number[] }[] = [];
     for (const row of pending) {
       const members = inventory.filter(member => member.pgid === row.pgid);
-      let known: ProcessMember[];
-      try {
-        const parsed: unknown = JSON.parse(row.members_json);
-        known = Array.isArray(parsed) ? parsed.filter((value): value is ProcessMember =>
-          value !== null && typeof value === "object" && Number.isInteger(value.pid) &&
-          (typeof value.started === "string" || value.started === null)) : [];
-      } catch { known = []; }
       const original = getTurn(row.turn_id);
-      const leader = members.find(member => member.pid === row.pgid);
-      // Never adopt a group whose leader has a different identity. Even an
-      // apparent start-time mismatch can be a locale/timezone change in old ps
-      // timestamps, so preserve files instead of assuming the old work ended.
-      const identity = historicalGroupIdentity(row, leader, original);
-      let state: GroupRow["state"];
-      const sameBoot = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id === PROCESS_BOOT_ID;
-      const rebooted = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id !== PROCESS_BOOT_ID;
-      if (!members.length || rebooted || identity.ended) { state = "none"; localGroups.delete(row.turn_id); }
-      else if (identity.reused || !sameBoot) state = "unknown";
-      else if (known.some(old => members.some(member => sameProcess(old, member))) ||
-        (row.turn_id === exitedTurnId && localGroups.has(row.turn_id))) state = "running";
-      else state = "unknown";
-      if (row.turn_id === exitedTurnId) localGroups.delete(row.turn_id);
+      const state = groupState(row, members, original, exitedTurnId);
+      if (state === "none" || row.turn_id === exitedTurnId) localGroups.delete(row.turn_id);
       const identities = state === "running" ? JSON.stringify(members.map(({ pid, started }) => ({ pid, started }))) : row.members_json;
       if (state !== row.state || identities !== row.members_json) {
         db.query("UPDATE turn_process_groups SET state = ?, members_json = ?, stop_requested = CASE WHEN ? = 'none' THEN 0 ELSE stop_requested END WHERE turn_id = ?")
           .run(state, identities, state, row.turn_id);
       }
-      if (state !== row.state || state === "none") notify(row.task_id);
+      if (state === "none") { liveNames.delete(row.turn_id); announced.delete(row.turn_id); }
+      else living.push({ turnId: row.turn_id, pids: members.map(member => member.pid) });
+      // A group that merely OUTLIVES its settle window changes no column, so
+      // the state comparison below would never announce it. Emit once when it
+      // crosses, or the badge it earned would wait for an unrelated event.
+      const reportable = state !== "none" && original?.status !== "running" && !settling(original, BACKGROUND_SETTLE_MS);
+      const crossed = reportable && !announced.has(row.turn_id);
+      if (crossed) announced.add(row.turn_id);
+      if (state !== row.state || state === "none" || crossed) notify(row.task_id);
     }
+    await nameGroups(living);
   });
   refreshing = run.catch(() => {});
   return run;
@@ -156,7 +249,7 @@ async function signalGroups(taskId: string, signal: "SIGTERM" | "SIGKILL"): Prom
   await refreshProcessGroups(taskId);
   const pending = rows(taskId);
   if (pending.some(row => row.state !== "running" || !Number.isInteger(row.pgid) || row.pgid <= 1)) {
-    throw new Error("Background process ownership is uncertain; files are preserved. Inspect the task's background work before retrying Stop.");
+    throw new Error("Background process ownership is uncertain; files are preserved. The task's background detail lists the tracked groups and what they are running; check them before retrying Stop.");
   }
   // The immediately preceding inventory validated a living member identity in
   // each group. No await between validation and signalling these owned groups.

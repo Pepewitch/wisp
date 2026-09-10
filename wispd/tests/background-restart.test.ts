@@ -49,7 +49,15 @@ test("a finished turn's watcher survives steering and daemon restart, then Stop 
     daemon!.kill("SIGKILL");
     await daemon!.exited;
     await launch("resume");
-    expect((await task()).background).toEqual({ state: "running", groups: 1 });
+    // Restart keeps the group AND its description: the operator who comes back
+    // to a Done task must still be able to see what it left running.
+    const adopted = (await task()).background!;
+    expect(adopted.state).toBe("running");
+    expect(adopted.groups).toBe(1);
+    expect(adopted.details).toHaveLength(1);
+    expect(adopted.details[0]).toMatchObject({ turn: 1, pgid: group, state: "running", stopRequested: false });
+    expect(adopted.details[0]!.processes).toBeGreaterThan(0);
+    expect(adopted.details[0]!.names).toContain("sleep");
     const refusal = await request("/archive", {});
     expect(refusal.status).toBe(409);
     expect((await task()).archived).toBe(false);
@@ -59,7 +67,7 @@ test("a finished turn's watcher survives steering and daemon restart, then Stop 
     await until(() => !alive(descendant!));
     const stopped = await task();
     expect(stopped.state).toBe("done");
-    expect(stopped.background).toEqual({ state: "none", groups: 0 });
+    expect(stopped.background).toEqual({ state: "none", groups: 0, details: [] });
     expect(stopped.turns.map(turn => turn.result)).toEqual(results);
   } finally {
     if (daemon?.exitCode === null) { daemon.kill("SIGKILL"); await daemon.exited; }

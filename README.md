@@ -226,7 +226,14 @@ A completed agent result stays Done when a watcher or server remains: the sideba
 shows a blue ring and “Background work running”; green means no tracked work
 remains. Stop stays available with an empty composer and preserves that result.
 Amber indicates stopping or unverified background work. Tracking covers older
-turns and daemon restarts. Plain archive refuses surviving background work;
+turns and daemon restarts. The indicator also says WHAT is running, because
+"something is running" is not enough to decide whether stopping is safe: hover
+the dot, or run `wisp show <task>`, for the turn that started each group, how
+many processes are left, how long they have outlived that turn, and the
+programs' names (names only — never their arguments). A group is only reported
+once it has outlived its turn by a few seconds, so a shell or `git` child that
+exits with the turn never flashes the badge; every safety check still sees it
+immediately. Plain archive refuses surviving background work;
 force-archive stops verified groups before deleting files. While stopping, new sends
 and archive requests are refused. An incomplete stop keeps those operations
 blocked until Stop can confirm completion; the conversation session is kept.
