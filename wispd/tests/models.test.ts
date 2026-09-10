@@ -243,6 +243,30 @@ describe("formatModelsReport — the effective-choice line", () => {
     expect(lines).toContain(
       "claude: effective <harness default> — claude exposes no default; no config override (pin one via config.json harnessDefaults or pass --model)",
     );
+    // claude pins a curated list but no default, so the list shows and the
+    // default is still honestly absent.
+    expect(lines.join("\n")).toContain("models (4, pinned by the adapter): claude-fable-5-1");
+  });
+
+  test("a curated list is reported as offered AND as a subset, not as 'not exposed'", async () => {
+    const lines = await render({ cursor: BUILTIN_ADAPTERS.cursor }, {}, failIfSpawned);
+    // Before this, `wisp models` said cursor "exposes no default" and "any id
+    // the CLI accepts works" while the adapter pinned both — which is how a
+    // task gets created on a model nobody chose (a bare `grok-4.6` that
+    // cursor-agent silently substitutes).
+    expect(lines).toContain("cursor: effective cursor-grok-4.6-high (harness default; no config override)");
+    expect(lines).toContain("  harness default: cursor-grok-4.6-high (pinned by the adapter; cursor-agent names none)");
+    const detail = lines.find((line) => line.includes("models (2, pinned by the adapter)"));
+    expect(detail).toContain("cursor-grok-4.6-high, composer-2.5");
+    // The subset half matters: cursor accepts ~40 real ids, so refusing
+    // anything outside the pinned two would be wrong.
+    expect(detail).toContain("other ids it accepts also work");
+    expect(lines.join("\n")).not.toContain("model list not exposed");
+  });
+
+  test("a harness with neither a probe nor a curated list still says 'not exposed'", async () => {
+    const bare = { ...BUILTIN_ADAPTERS.claude!, staticModels: undefined, defaultModel: undefined };
+    const lines = await render({ bare }, {}, failIfSpawned);
     expect(lines).toContain("  model list not exposed by claude — any id the CLI accepts works");
   });
 

@@ -1,26 +1,26 @@
-import { COMPACT_STRATEGIES, IMAGE_DELIVERY_STRATEGIES, probeCommands, type AdapterDef } from "../adapters";
+import { COMPACT_STRATEGIES, IMAGE_DELIVERY_STRATEGIES, offeredModels, probeCommands, type AdapterDef } from "../adapters";
 import type { WispConfig } from "../config";
 import type { CachedModels, ModelCacheEntry, ModelProbeCache } from "../model-probes";
 import { undeliveredOutbox } from "../store";
 import { json } from "./http";
 
 /**
- * The model list the new-task picker is offered.
+ * The model list the new-task picker is offered, in the cache's shape.
  *
- * A real probe ALWAYS wins. An adapter's curated `staticModels` fills in only
- * for a harness whose CLI enumerates none (claude — see AdapterDef.staticModels),
- * and is returned under the same shape as a probe so the UI keeps its "a model
- * is always PICKED, never typed" contract instead of dropping to free text.
+ * The precedence itself lives in adapters/discovery.ts so `wisp models` uses
+ * the same rule; this only carries `probedAt`, which the picker needs and the
+ * CLI does not. Returning a curated list under the probe's shape keeps the
+ * UI's "a model is always PICKED, never typed" contract instead of dropping to
+ * free text.
  */
-export function offeredModels(def: AdapterDef, cached: ModelCacheEntry): CachedModels | null {
+export function offeredCachedModels(def: AdapterDef, cached: ModelCacheEntry): CachedModels | null {
   const probed = cached.models;
-  if (probed && probed.list.length > 0) return probed;
-  if (!def.staticModels || def.staticModels.length === 0) return probed;
+  const offered = offeredModels(def, probed?.list ?? null, probed?.defaultModel ?? null);
+  if (!offered) return probed;
+  if (!offered.curated) return probed;
   return {
-    list: def.staticModels,
-    // a real probe's default always wins; the adapter's declared default is
-    // the static list's own (cursor: Grok 4.6 — owner-pinned, slice 9)
-    defaultModel: probed?.defaultModel ?? def.defaultModel ?? null,
+    list: offered.list,
+    defaultModel: offered.defaultModel,
     probedAt: probed?.probedAt ?? new Date().toISOString(),
   };
 }
@@ -71,7 +71,7 @@ export function harnessesRoute(
           ? { kind: "prompt" as const, prompt: def.compactPrompt }
           : null,
       defaults: cfg.harnessDefaults[name] ?? {},
-      models: offeredModels(def, models.snapshot(name)),
+      models: offeredCachedModels(def, models.snapshot(name)),
       ...(models.snapshot(name).modelsError ? { modelsError: models.snapshot(name).modelsError } : {}),
     })),
   });

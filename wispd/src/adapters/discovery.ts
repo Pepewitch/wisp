@@ -1,6 +1,6 @@
 import { isRecord } from "../validate";
 import { buildArgv } from "./argv";
-import type { AdapterDef, ModelDiscovery, ModelDiscoveryFn, ModelProbeSpawnFn } from "./types";
+import type { AdapterDef, ModelDiscovery, ModelDiscoveryFn, ModelProbeSpawnFn, OfferedModels } from "./types";
 
 /**
  * Sentinel for droid's invalid-model probe. It is deliberately NOT a real
@@ -298,4 +298,31 @@ export async function discoverModels(
     throw new Error(`adapter modelDiscovery '${def.modelDiscovery}' is not a known strategy (known: ${known})`);
   }
   return strategy(def, spawn, signal);
+}
+
+/**
+ * Which models a harness offers, from one rule both the picker and
+ * `wisp models` use.
+ *
+ * A real enumeration from the installed CLI always wins: it is what this
+ * install can actually run. An adapter's curated `staticModels` fills in only
+ * for a CLI that enumerates none (claude, cursor), and is marked `curated` so
+ * a caller can say so out loud rather than presenting a pinned subset as the
+ * whole truth.
+ */
+export function offeredModels(
+  def: Pick<AdapterDef, "staticModels" | "defaultModel">,
+  probedList: string[] | null,
+  probedDefault: string | null,
+): OfferedModels | null {
+  if (probedList && probedList.length > 0) {
+    return { list: probedList, defaultModel: probedDefault, curated: false };
+  }
+  if (!def.staticModels || def.staticModels.length === 0) return null;
+  return {
+    // a real probe's default still wins when the probe named one
+    list: def.staticModels,
+    defaultModel: probedDefault ?? def.defaultModel ?? null,
+    curated: true,
+  };
 }
