@@ -41,6 +41,7 @@ export {
   SearchRegular as Search,
   SettingsRegular as Gear,
   DesktopRegular as Local,
+  LayerDiagonalRegular as Worktree,
   MoreHorizontalRegular as More,
   SubtractRegular as Minus,
   StopRegular as Stop,
