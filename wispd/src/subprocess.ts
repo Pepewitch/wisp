@@ -46,6 +46,8 @@ export interface RunOptions {
   timeoutMs?: number;
   /** Caller-owned cancellation, on top of the deadline. */
   signal?: AbortSignal;
+  /** Bounded caller-owned stdin, used by the workflow executable protocol. */
+  input?: string;
   /** Persist ownership before the command may execute; the gate exits on parent EOF. */
   beforeStart?: (pid: number) => void;
 }
@@ -68,6 +70,7 @@ export interface RunResult {
  * Ordinary completion still drains both streams and preserves the exit code.
  */
 export async function runBounded(options: RunOptions): Promise<RunResult> {
+  if (options.beforeStart && options.input !== undefined) throw new Error("A gated command cannot also supply protocol stdin");
   if (options.signal?.aborted) {
     return { exitCode: null, out: "", err: "", truncated: false, timedOut: false, cancelled: true };
   }
@@ -78,17 +81,18 @@ export async function runBounded(options: RunOptions): Promise<RunResult> {
     cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",
-    stdin: options.beforeStart ? "pipe" : "ignore",
+    stdin: options.beforeStart ? "pipe" : options.input === undefined ? "ignore" : new TextEncoder().encode(options.input),
     ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
     detached: true,
   });
   if (options.beforeStart) {
+    const gate = child.stdin as Bun.FileSink;
     try {
       options.beforeStart(child.pid);
-      child.stdin!.write("start\n");
-      child.stdin!.end();
+      gate.write("start\n");
+      gate.end();
     } catch (error) {
-      child.stdin!.end();
+      gate.end();
       child.kill("SIGKILL");
       await child.exited;
       await Promise.all([child.stdout.cancel(), child.stderr.cancel()]);

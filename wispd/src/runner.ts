@@ -1,4 +1,5 @@
 import { assertTaskCapacity } from "./task-admission";
+import { pauseTaskWorkflows } from "./workflows/store";
 import { homeIsDraining, trackHomeWork } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -374,6 +375,7 @@ export function startNextQueuedMessage(
   taskId: string,
   adapters: Readonly<Record<string, AdapterDef>>,
   cfg: WispConfig,
+  workflowMessageId = "",
 ): TaskMessage | null {
   if (homeIsDraining()) return null;
   if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
@@ -381,7 +383,7 @@ export function startNextQueuedMessage(
   if (!task || task.archived || !task.worktree_path || hasRunningTurn(taskId)) {
     return null;
   }
-  const message = nextQueuedMessage(taskId);
+  const message = nextQueuedMessage(taskId, workflowMessageId);
   if (!message) return null;
   const def = adapters[message.harness];
   if (!def) {
@@ -636,6 +638,7 @@ function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SI
 
 /** Explicit interruption; normal message delivery never calls this operation. */
 export function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
+  pauseTaskWorkflows(taskId);
   const hadBackground = backgroundWork(taskId).groups > 0;
   return withProcessStop(taskId, async () => {
     await refreshProcessGroups(taskId);

@@ -35,6 +35,7 @@ import { terminalOriginRoute } from "./auth";
 import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
+import { workflowRoute } from "./workflows";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -165,6 +166,7 @@ export function route(
   updateManager?: UpdateManager,
 ): Response | Promise<Response> {
   const m = req.method;
+  if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
   const models = modelCache ?? modelCacheFor(adapters);
   const probes = probeCache ?? probeCacheFor(adapters);
   const skills = skillCache ?? skillCacheFor(adapters);

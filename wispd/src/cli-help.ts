@@ -23,6 +23,7 @@ usage:
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout
   ${COMMAND} send <task> "message" [--attach <path>]… send safely; active tasks steer or queue without stopping
   ${COMMAND} interrupt <task>                        stop the running turn (session survives)
+  ${COMMAND} workflow <command>                      task automations: types, add, list, show, set, pause, resume, complete
   ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)
   ${COMMAND} push <task>                             push the task branch to origin
   ${COMMAND} update                                  check for and install the latest Wisp daemon

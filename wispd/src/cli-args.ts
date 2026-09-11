@@ -7,6 +7,7 @@ export type Flags = Parsed["flags"];
 /** Everything else is boolean, so --force never eats a positional argument. */
 const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm", "archived-before", "confirm-count"]);
 const REPEAT_FLAGS = new Set(["attach", "image", "copy"]);
+for (const flag of ["every", "pr", "prompt", "on-red", "on-green", "quiet-for", "lifetime", "max-wakeups", "reviewers", "exclude-authors", "params", "file"]) VALUE_FLAGS.add(flag);
 
 export function parseArgs(args: string[]): Parsed {
   const positional: string[] = [];

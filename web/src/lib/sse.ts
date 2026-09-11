@@ -117,6 +117,10 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (!("taskId" in evt) || !evt.taskId) return;
+    if (evt.type === "workflow") {
+      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
+      return;
+    }
     // A rename carries the complete metadata delta. Patching it directly keeps
     // status, skills, diff, and the task list off the network.
     if (evt.type === "task" && evt.title !== undefined && evt.updatedAt !== undefined) {

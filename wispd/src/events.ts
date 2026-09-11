@@ -21,6 +21,7 @@ export type WispEvent =
     }
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
+  | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string };
 
 export type WispEventListener = (evt: WispEvent) => void;

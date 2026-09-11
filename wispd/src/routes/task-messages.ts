@@ -14,6 +14,7 @@ import {
   turnForTask,
   updateQueuedTaskMessage,
 } from "../store";
+import { changeWorkflowState } from "../workflows/store";
 import { apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
@@ -136,6 +137,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
     return err("task is archived — archived tasks are read-only", 409);
   }
   if (method === "PATCH") {
+    if (message.workflow_id) return err("Configure the workflow instead of editing its generated instruction", 409);
     return (async () => {
       const parsed = await jsonObjectBody(req);
       if (parsed instanceof Response) return parsed;
@@ -153,6 +155,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
   if (method === "DELETE") {
     const cancelled = cancelQueuedTaskMessage(message.id, task.id);
     if (!cancelled) return err("only queued messages can be cancelled", 409);
+    if (message.workflow_id) changeWorkflowState(message.workflow_id, "paused", "Generated instruction cancelled by user");
     removeMessageAttachments(task.id, message.id);
     return json(apiTaskMessage(cancelled));
   }

@@ -103,6 +103,18 @@ function seed(client: QueryClient): void {
   client.setQueryData(qk.diff("t1"), { kind: "ok", diff: "", truncated: false, untracked: [] });
 }
 
+it("workflow events invalidate only the originating connection's workflow state", () => {
+  const h = bridge("t1", "remote-a");
+  const a = [...h.qk.task("t1"), "workflows"];
+  const b = [...createConnectionQueryKeys("remote-b").task("t1"), "workflows"];
+  h.client.setQueryData(a, []);
+  h.client.setQueryData(b, []);
+  h.sources[0]!.emit({ type: "workflow", taskId: "t1" });
+  expect(h.client.getQueryState(a)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(b)?.isInvalidated).toBe(false);
+  h.close();
+});
+
 const invalidated = (client: QueryClient, key: QueryKey): boolean => client.getQueryState(key)?.isInvalidated === true;
 
 describe("the /api/events → queryClient bridge", () => {

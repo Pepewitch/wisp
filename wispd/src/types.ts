@@ -295,6 +295,8 @@ export type TaskMessageDelivery = "started" | "steered" | null;
 export interface TaskMessage {
   id: string;
   task_id: string;
+  /** Non-null for daemon-originated workflow instructions. */
+  workflow_id?: string | null;
   /** Target configuration captured when the message was submitted. */
   context_n: number;
   harness: string;

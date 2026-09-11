@@ -87,6 +87,7 @@ notarized; the macOS CLI is currently ad-hoc signed.
 ## Go further
 
 - [CLI reference](skills/wisp/references/cli.md)
+- [Task workflows: heartbeat, CI, and review automation](docs/WORKFLOWS.md)
 - [Remote and phone access](docs/REMOTE-ACCESS.md)
 - [Storage, archive, and cleanup](docs/ARCHIVE-CLEANUP.md)
 - [Security and vulnerability reporting](SECURITY.md)
