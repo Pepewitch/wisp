@@ -1,5 +1,5 @@
 /**
- * Which branches a task made, and which of their answers is the one to show.
+ * Which branches are associated with a task, and which answer to show.
  *
  * Split out of `pull-requests.ts` because it is the part with no cache, no
  * backoff and no provider in it: two pure-ish functions the daemon and its
@@ -17,7 +17,33 @@ import type { Task } from "./types";
 export const PULL_REQUEST_TASK_BRANCH_LIMIT = 8;
 
 /**
- * Every branch this task made, newest name last, its branch of record first.
+ * The named branch checked out in the task's worktree, or null for detached
+ * HEAD and unreadable worktrees. This is deliberately read from worktree_path,
+ * not repo_path: the repository's main checkout belongs to the user and can be
+ * on an entirely different branch.
+ */
+async function currentTaskBranch(
+  task: Task,
+  run: ProbeSpawnFn,
+  signal: AbortSignal,
+): Promise<string | null> {
+  const cwd = task.worktree_path;
+  if (!cwd) return null;
+  const result = await Promise.resolve()
+    .then(() =>
+      run(
+        ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
+        { cwd, signal },
+      ),
+    )
+    .catch(() => null);
+  const branch = result?.exitCode === 0 ? result.stdout.trim() : "";
+  return branch !== "" && !branch.includes("\n") ? branch : null;
+}
+
+/**
+ * Every branch this task made, its branch of record first and current checkout
+ * second, followed by its other task-named branches in recency order.
  *
  * `wisp/<id>-…` is the convention every worktree branch is created under, so
  * the id in the name is the whole index — nothing to record at push time,
@@ -29,6 +55,11 @@ export const PULL_REQUEST_TASK_BRANCH_LIMIT = 8;
  * The stored branch always leads. It is the task's branch of record — the one
  * archive tears down and `/push` pushes — and it is included even when git
  * cannot be read at all, so this can only ever widen the old answer.
+ *
+ * The current checkout is next even when it has an arbitrary name. Commands
+ * such as `gh pr checkout` move the worktree onto a provider-owned branch name
+ * that cannot carry Wisp's task prefix; omitting HEAD there makes a real pull
+ * request look absent while the Changes pane is already showing that branch.
  */
 export async function taskBranches(
   task: Task,
@@ -37,32 +68,41 @@ export async function taskBranches(
 ): Promise<string[]> {
   const stored = task.branch;
   if (!stored) return [];
-  const found = await Promise.resolve()
-    .then(() =>
-      run(
-        [
-          "git",
-          "for-each-ref",
-          // recency, not name: the cap truncates, and a name sort could drop
-          // the branch holding the newest pull request
-          "--sort=-committerdate",
-          "--format=%(refname:short)",
-          `refs/heads/wisp/${task.id}-*`,
-        ],
-        { cwd: task.repo_path, signal },
-      ),
-    )
-    .catch(() => null);
-  if (!found || found.exitCode !== 0) return [stored];
+  const [found, checkedOut] = await Promise.all([
+    Promise.resolve()
+      .then(() =>
+        run(
+          [
+            "git",
+            "for-each-ref",
+            // recency, not name: the cap truncates, and a name sort could drop
+            // the branch holding the newest pull request
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            `refs/heads/wisp/${task.id}-*`,
+          ],
+          { cwd: task.repo_path, signal },
+        ),
+      )
+      .catch(() => null),
+    currentTaskBranch(task, run, signal),
+  ]);
+  if (!found || found.exitCode !== 0) {
+    return checkedOut && checkedOut !== stored ? [stored, checkedOut] : [stored];
+  }
   // Only names git could have matched: the prefix is re-checked here so a
   // surprising stdout can never become a head in a provider query.
   const prefix = `wisp/${task.id}-`;
   const names = found.stdout
     .split("\n")
     .map((line) => line.trim())
-    // git's order is kept: it is the recency the cap is about to spend
-    .filter((line) => line.startsWith(prefix) && line !== stored);
-  return [stored, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
+    // git's order is kept, not re-sorted: it is the recency the cap spends
+    .filter((line) => line.startsWith(prefix) && line !== stored && line !== checkedOut);
+  return [
+    stored,
+    ...(checkedOut && checkedOut !== stored ? [checkedOut] : []),
+    ...names,
+  ].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
 }
 
 /**

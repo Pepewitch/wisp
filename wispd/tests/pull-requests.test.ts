@@ -39,6 +39,7 @@ function task(overrides: Partial<Task> = {}): Task {
 }
 
 const ok = (stdout: string): SpawnResult => ({ exitCode: 0, stdout, stderr: "" });
+const noCurrentBranch: SpawnResult = { exitCode: 1, stdout: "", stderr: "" };
 
 /**
  * The daemon asks git two things before it asks the provider anything: which
@@ -50,6 +51,7 @@ function githubRun(
   rows: unknown[],
   origin = "git@github.com:acme/widgets.git",
   branches: string[] = [],
+  currentBranch: string | null = null,
 ): { run: ProbeSpawnFn; calls: string[][] } {
   const calls: string[][] = [];
   return {
@@ -57,6 +59,9 @@ function githubRun(
     run: (cmd) => {
       calls.push(cmd);
       if (cmd[1] === "for-each-ref") return Promise.resolve(ok(branches.join("\n")));
+      if (cmd[1] === "symbolic-ref") {
+        return Promise.resolve(currentBranch === null ? noCurrentBranch : ok(currentBranch));
+      }
       return Promise.resolve(
         cmd[0] === "git"
           ? ok(origin)
@@ -133,7 +138,7 @@ describe("PullRequestCache", () => {
     );
     const result = await new PullRequestCache({ run }).status(task());
 
-    // which repository, then which branches this task made, then the provider
+    // which repository, then task-named branches and current HEAD, then the provider
     expect(calls[0]).toEqual(["git", "remote", "get-url", "origin"]);
     expect(calls[1]).toEqual([
       "git",
@@ -142,10 +147,11 @@ describe("PullRequestCache", () => {
       "--format=%(refname:short)",
       "refs/heads/wisp/tpr01-*",
     ]);
-    expect(calls[2]).toContain("name=widgets");
-    expect(calls[2]!.join(" ")).not.toContain("credential");
-    expect(calls[2]!.join(" ")).toContain("mergeStateStatus");
-    expect(calls[2]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
+    expect(calls[2]).toEqual(["git", "symbolic-ref", "--quiet", "--short", "HEAD"]);
+    expect(calls[3]).toContain("name=widgets");
+    expect(calls[3]!.join(" ")).not.toContain("credential");
+    expect(calls[3]!.join(" ")).toContain("mergeStateStatus");
+    expect(calls[3]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
     expect(result).toEqual({
       kind: "found",
       provider: "github",
@@ -329,6 +335,7 @@ describe("PullRequestCache", () => {
     let now = 1_000;
     let ghCalls = 0;
     const run: ProbeSpawnFn = async (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets");
       ghCalls += 1;
       await Bun.sleep(20);
@@ -355,6 +362,7 @@ describe("PullRequestCache", () => {
     let now = 1_000;
     let ghCalls = 0;
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets");
       ghCalls += 1;
       return ghCalls === 1
@@ -411,10 +419,11 @@ describe("PullRequestCache", () => {
     const callsBeforeHits = calls.length;
     await cache.status(task({ id: "keep" }));
     await cache.status(task({ id: "touch" }));
-    // The evicted task repeats its branch enumeration and its provider lookup:
+    // The evicted task repeats its branch enumeration, current-branch read,
+    // and provider lookup:
     // repository discovery is cached once per repo path for both selected-task
-    // and overview reads, and the branch read is local and cheap.
-    expect(calls.length - callsBeforeHits).toBe(2);
+    // and overview reads, and both branch reads are local and cheap.
+    expect(calls.length - callsBeforeHits).toBe(3);
   });
 });
 
@@ -431,6 +440,7 @@ describe("every branch a task made", () => {
   function multiBranchRun(
     perBranch: Record<string, unknown[]>,
     branches: string[],
+    currentBranch: string | null = null,
   ): { run: ProbeSpawnFn; calls: string[][] } {
     const calls: string[][] = [];
     return {
@@ -438,6 +448,9 @@ describe("every branch a task made", () => {
       run: (cmd) => {
         calls.push(cmd);
         if (cmd[1] === "for-each-ref") return Promise.resolve(ok(branches.join("\n")));
+        if (cmd[1] === "symbolic-ref") {
+          return Promise.resolve(currentBranch === null ? noCurrentBranch : ok(currentBranch));
+        }
         if (cmd[0] === "git") return Promise.resolve(ok("git@github.com:acme/widgets.git"));
         const query = cmd.join("\n");
         // answer each aliased selection with the rows for its head ref
@@ -478,6 +491,29 @@ describe("every branch a task made", () => {
     // the NEWEST pull request, and an honest count of what it is newest of
     expect(result).toMatchObject({ kind: "found", others: 1 });
     expect((result as { pullRequest: { number: number } }).pullRequest.number).toBe(53);
+  });
+
+  test("asks about an arbitrary branch currently checked out in the task worktree", async () => {
+    const { run, calls } = multiBranchRun(
+      {
+        "wisp/tpr01-show-pr-status": [],
+        "fix/provider-owned-name": [pr(54, { state: "OPEN" })],
+      },
+      [],
+      "fix/provider-owned-name",
+    );
+
+    const result = await new PullRequestCache({ run }).status(task());
+
+    const current = calls.find((cmd) => cmd[1] === "symbolic-ref");
+    expect(current).toEqual(["git", "symbolic-ref", "--quiet", "--short", "HEAD"]);
+    const query = calls.find((cmd) => cmd[0] === "gh")!.join("\n");
+    expect(query).toContain('headRefName: "wisp/tpr01-show-pr-status"');
+    expect(query).toContain('headRefName: "fix/provider-owned-name"');
+    expect(result).toMatchObject({
+      kind: "found",
+      pullRequest: { number: 54 },
+    });
   });
 
   test("counts nothing when the task made exactly one pull request", async () => {
@@ -536,7 +572,7 @@ describe("every branch a task made", () => {
 
   test("the branch of record leads, and survives git being unreadable", async () => {
     const failing: ProbeSpawnFn = (cmd) =>
-      cmd[1] === "for-each-ref"
+      cmd[1] === "for-each-ref" || cmd[1] === "symbolic-ref"
         ? Promise.reject(new Error("not a git repository"))
         : Promise.resolve(ok("git@github.com:acme/widgets.git"));
 
@@ -546,16 +582,38 @@ describe("every branch a task made", () => {
 
     const listed: ProbeSpawnFn = (cmd) =>
       Promise.resolve(
-        ok(
-          cmd[1] === "for-each-ref"
-            ? ["wisp/tpr01-zzz", "wisp/tpr01-show-pr-status", "wisp/tpr01-aaa"].join("\n")
-            : "git@github.com:acme/widgets.git",
-        ),
+        cmd[1] === "symbolic-ref"
+          ? noCurrentBranch
+          : ok(
+              cmd[1] === "for-each-ref"
+                ? ["wisp/tpr01-zzz", "wisp/tpr01-show-pr-status", "wisp/tpr01-aaa"].join("\n")
+                : "git@github.com:acme/widgets.git",
+            ),
       );
     // git's order is kept, not re-sorted by name: it is the recency the cap spends
     await expect(
       taskBranches(task(), listed, new AbortController().signal),
     ).resolves.toEqual(["wisp/tpr01-show-pr-status", "wisp/tpr01-zzz", "wisp/tpr01-aaa"]);
+  });
+
+  test("keeps the current checkout when task-named branch enumeration fails", async () => {
+    let currentBranchCwd: string | undefined;
+    const run: ProbeSpawnFn = (cmd, opts) => {
+      if (cmd[1] === "for-each-ref") throw new Error("cannot enumerate refs");
+      if (cmd[1] === "symbolic-ref") {
+        currentBranchCwd = opts.cwd;
+        return Promise.resolve(ok("fix/provider-owned-name"));
+      }
+      return Promise.resolve(ok(""));
+    };
+
+    await expect(
+      taskBranches(task(), run, new AbortController().signal),
+    ).resolves.toEqual([
+      "wisp/tpr01-show-pr-status",
+      "fix/provider-owned-name",
+    ]);
+    expect(currentBranchCwd).toBe("/tmp/worktree");
   });
 
   test("asks git for the freshest branches, and spends the cap on those", async () => {
@@ -566,7 +624,11 @@ describe("every branch a task made", () => {
     const calls: string[][] = [];
     const listed: ProbeSpawnFn = (cmd) => {
       calls.push(cmd);
-      return Promise.resolve(ok(cmd[1] === "for-each-ref" ? many.join("\n") : "git@github.com:acme/widgets.git"));
+      return Promise.resolve(
+        cmd[1] === "symbolic-ref"
+          ? noCurrentBranch
+          : ok(cmd[1] === "for-each-ref" ? many.join("\n") : "git@github.com:acme/widgets.git"),
+      );
     };
 
     const branches = await taskBranches(task(), listed, new AbortController().signal);
@@ -591,6 +653,9 @@ describe("every branch a task made", () => {
           ? new Promise<SpawnResult>(() => {})
           : Promise.resolve(ok(""));
       }
+      if (cmd[1] === "symbolic-ref") {
+        return Promise.resolve(noCurrentBranch);
+      }
       if (cmd[0] === "git") return Promise.resolve(ok("git@github.com:acme/widgets.git"));
       return Promise.resolve(graphQlResponse([[], []], [[], []]));
     };
@@ -611,7 +676,9 @@ describe("every branch a task made", () => {
     // a stdout that is not a branch list must never become a head in a query
     const surprising: ProbeSpawnFn = (cmd) =>
       Promise.resolve(
-        ok(cmd[1] === "for-each-ref" ? "git@github.com:acme/widgets.git\nmain" : "git@github.com:acme/widgets.git"),
+        cmd[1] === "symbolic-ref"
+          ? noCurrentBranch
+          : ok(cmd[1] === "for-each-ref" ? "git@github.com:acme/widgets.git\nmain" : "git@github.com:acme/widgets.git"),
       );
 
     await expect(
@@ -625,6 +692,7 @@ describe("PullRequestCache overview", () => {
     const calls: string[][] = [];
     const run: ProbeSpawnFn = (cmd) => {
       calls.push(cmd);
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("git@github.com:acme/widgets.git");
       return graphQlResponse([[row()], []]);
     };
@@ -680,6 +748,7 @@ describe("PullRequestCache overview", () => {
   test("chunks large repository overviews instead of spawning once per task", async () => {
     let providerCalls = 0;
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       providerCalls += 1;
       const query = cmd.find((part) => part.startsWith("query=")) ?? "";
@@ -703,6 +772,7 @@ describe("PullRequestCache overview", () => {
       finish = resolve;
     });
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       providerCalls += 1;
       return provider;
@@ -727,6 +797,7 @@ describe("PullRequestCache overview", () => {
     let providerCalls = 0;
     let finish: ((result: SpawnResult) => void) | undefined;
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       providerCalls += 1;
       if (providerCalls === 1) return graphQlResponse([[row()]]);
@@ -766,6 +837,7 @@ describe("PullRequestCache overview", () => {
     let now = Date.parse("2026-09-05T08:00:00Z");
     let fail = false;
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       if (fail) return { exitCode: 1, stdout: "", stderr: "provider unavailable" };
       return graphQlResponse([[row()]]);
@@ -816,6 +888,7 @@ describe("PullRequestCache overview", () => {
     let failingCalls = 0;
     let healthyCalls = 0;
     const run: ProbeSpawnFn = (cmd, opts) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") {
         return ok(
           opts.cwd === "/tmp/failing"
@@ -864,6 +937,7 @@ describe("PullRequestCache overview", () => {
   test("times out one repository without discarding healthy repository answers", async () => {
     let slowAborted = false;
     const run: ProbeSpawnFn = (cmd, opts) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") {
         return ok(
           opts.cwd === "/tmp/slow"
@@ -910,6 +984,7 @@ describe("PullRequestCache overview", () => {
     let now = Date.parse("2026-09-05T08:00:00Z");
     let fail = false;
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       return fail
         ? { exitCode: 1, stdout: "", stderr: "provider unavailable" }
@@ -945,6 +1020,7 @@ describe("PullRequestCache overview", () => {
     let fail = false;
     let providerState: "open" | "merged" | "new-open" = "open";
     const run: ProbeSpawnFn = (cmd) => {
+      if (cmd[1] === "symbolic-ref") return noCurrentBranch;
       if (cmd[0] === "git") return ok("https://github.com/acme/widgets.git");
       providerCalls += 1;
       if (fail) return { exitCode: 1, stdout: "", stderr: "provider unavailable" };
@@ -1091,6 +1167,7 @@ test("GET /api/pull-requests serves the batched live-task overview", async () =>
   });
   setTaskFields(stored.id, { branch: "wisp/toverview-pr-status" });
   const run: ProbeSpawnFn = (cmd) => {
+    if (cmd[1] === "symbolic-ref") return noCurrentBranch;
     if (cmd[0] === "git") return ok("https://github.com/acme/widgets");
     const query = cmd.find((part) => part.startsWith("query=")) ?? "";
     const aliases = [...query.matchAll(/\bb\d+: pullRequests/g)];
