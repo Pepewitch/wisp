@@ -31,6 +31,7 @@ import { attachmentRoute, taskMessageRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
+import { terminalOriginRoute } from "./auth";
 import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
@@ -172,6 +173,9 @@ export function route(
   const updates = updateManager ?? updateManagerFor(cfg);
 
   if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
+  // The terminal socket's own gate, asked as a plain request: a page whose
+  // upgrade died cannot read the 403 that explained it, so it asks here.
+  if (path === "/api/terminal-origin" && m === "POST") return terminalOriginRoute(req, url);
   if (path === "/api/purge") return bulkPurgeRoute(req, url);
 
   const updateResponse = updateRoute(req, path, m, updates);

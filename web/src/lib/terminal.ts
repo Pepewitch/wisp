@@ -38,7 +38,7 @@
  */
 
 import { readConnectionStorage, writeConnectionStorage } from "./connection-storage";
-import type { DaemonTransport } from "./transport";
+import type { DaemonRequestOptions, DaemonTransport } from "./transport";
 
 export interface TerminalHello {
   pty: boolean;
@@ -108,6 +108,58 @@ export function terminalSocketPath(taskId: string, shellId: number, size?: Termi
 export interface TerminalSize {
   cols: number;
   rows: number;
+}
+
+/** The daemon's origin report — see wispd/src/routes/auth.ts. */
+export interface TerminalOriginReport {
+  verdict: "absent" | "allowed" | "foreign";
+  origin: string | null;
+  expected: string;
+  allowed: string[];
+  reason: string | null;
+}
+
+/**
+ * Ask the daemon whether it is refusing THIS page's origin, and return the
+ * sentence it answers with.
+ *
+ * A terminal upgrade the daemon refuses at the HTTP layer never becomes a
+ * frame: the 403 explains itself in a response body that a browser does not
+ * expose to page JavaScript, so the pane sees only a socket that did not open.
+ * That is the failure operators land in after putting Wisp behind a proxy
+ * that rewrites Host, and the whole rest of the UI keeps working, because
+ * everything else authenticates by bearer token and never looks at `Origin`.
+ *
+ * The probe is a POST for one specific reason: a browser omits `Origin` on a
+ * same-origin GET but always sends it on a POST, so the daemon evaluates the
+ * exact header the handshake carried. Returns null for anything that is not a
+ * clear origin refusal — an unreachable daemon, an older one without the
+ * route, or a page whose origin is fine — so the caller keeps its own
+ * explanation for those.
+ *
+ * Only asked of a transport that authenticates the socket IN BAND, which is
+ * the one whose handshake a browser sends `Origin` on. The desktop proxy
+ * strips it and carries its own credential, so its terminal sockets are never
+ * origin-refused and the question has no answer there.
+ */
+export async function terminalOriginRefusal(transport: {
+  /**
+   * `DaemonTransport["request"]`, but not generic — the answer is validated
+   * here rather than asserted, so a caller (and a test) needs nothing more
+   * than something that returns the daemon's JSON.
+   */
+  request(path: string, options?: DaemonRequestOptions): Promise<unknown>;
+  socketToken?(): string | null;
+}): Promise<string | null> {
+  if (!transport.socketToken) return null;
+  let body: unknown;
+  try {
+    body = await transport.request("/api/terminal-origin", { method: "POST" });
+  } catch {
+    return null;
+  }
+  const report = body as Partial<TerminalOriginReport> | null;
+  return report?.verdict === "foreign" && typeof report.reason === "string" ? report.reason : null;
 }
 
 // WebSocket readyState constants, mirrored so tests need no DOM constants.

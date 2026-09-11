@@ -8,6 +8,7 @@ import {
   SHELL_TABS_KEY,
   SHELL_TABS_MAX_TASKS,
   TerminalConnection,
+  terminalOriginRefusal,
   terminalSocketPath,
   type TerminalClientHandlers,
   type TerminalSocketLike,
@@ -387,5 +388,54 @@ describe("TerminalConnection dispose", () => {
     expect(socket().closed).toBe(true);
     expect(socket().onmessage).toBeNull();
     expect(socket().onclose).toBeNull();
+  });
+});
+
+/**
+ * #139: the daemon's origin refusal lived only in a failed WebSocket
+ * upgrade's response body, which a browser does not expose to the page. The
+ * pane asks for it over a route it CAN read instead.
+ */
+describe("terminalOriginRefusal", () => {
+  /** The browser transport: it proves the socket in band, so its handshake carries Origin. */
+  const report = (body: unknown) => ({
+    request: vi.fn(async () => body),
+    socketToken: () => "token",
+  });
+
+  it("asks with a POST, because a same-origin GET carries no Origin header", async () => {
+    const transport = report({ verdict: "allowed", reason: null });
+    await terminalOriginRefusal(transport);
+    expect(transport.request).toHaveBeenCalledWith("/api/terminal-origin", {
+      method: "POST",
+    });
+  });
+
+  it("returns the daemon's sentence when this page's origin is the problem", async () => {
+    const reason = 'terminal upgrades must come from this daemon\'s own origin, not "https://wisp.example"';
+    expect(await terminalOriginRefusal(report({ verdict: "foreign", reason }))).toBe(reason);
+  });
+
+  it("keeps quiet about anything that is not an origin refusal", async () => {
+    expect(await terminalOriginRefusal(report({ verdict: "allowed", reason: null }))).toBeNull();
+    expect(await terminalOriginRefusal(report({ verdict: "absent", reason: null }))).toBeNull();
+    // a foreign verdict with no sentence is not a sentence
+    expect(await terminalOriginRefusal(report({ verdict: "foreign", reason: null }))).toBeNull();
+    expect(await terminalOriginRefusal(report(null))).toBeNull();
+    // an unreachable daemon, or one too old to know the route
+    expect(
+      await terminalOriginRefusal({
+        request: vi.fn(async () => {
+          throw new Error("not found");
+        }),
+        socketToken: () => "token",
+      }),
+    ).toBeNull();
+  });
+
+  it("never asks a transport whose proxy strips Origin and authenticates upstream", async () => {
+    const desktop = { request: vi.fn(async () => ({ verdict: "foreign", reason: "would be refused" })) };
+    expect(await terminalOriginRefusal(desktop)).toBeNull();
+    expect(desktop.request).not.toHaveBeenCalled();
   });
 });

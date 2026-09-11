@@ -5,7 +5,13 @@ import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
 import { Dismiss, Plus } from "@/components/icons"
 import { useDaemonRuntime } from "@/lib/runtime"
-import { loadShellTabs, saveShellTabs, TerminalConnection, type ShellTabs } from "@/lib/terminal"
+import {
+  loadShellTabs,
+  saveShellTabs,
+  terminalOriginRefusal,
+  TerminalConnection,
+  type ShellTabs,
+} from "@/lib/terminal"
 import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
 import { cn } from "@/lib/utils"
@@ -431,6 +437,21 @@ function ShellView({
             setDetail(refusal)
             return
           }
+          // A close with no frame behind it may still have a reason: the
+          // daemon can refuse the upgrade at the HTTP layer, and a browser
+          // never shows the page a failed handshake's response body. Ask for
+          // that reason alongside the retry rather than before it, so a
+          // daemon that is merely still starting up loses nothing — and when
+          // an answer does come back, it replaces the retry with the sentence.
+          void terminalOriginRefusal(transport).then((reason) => {
+            if (!live || reason === null) return
+            if (retryTimer !== null) {
+              clearTimeout(retryTimer)
+              retryTimer = null
+            }
+            setPhase("error")
+            setDetail(reason)
+          })
           if (retries.current >= RETRY_LIMIT) {
             setPhase("error")
             setDetail(`could not open a shell (${code}) — ${RETRY_LIMIT} attempts`)
@@ -484,8 +505,17 @@ function ShellView({
     <div className={cn("absolute inset-0 flex flex-col", !active && "pointer-events-none invisible")}>
       <div ref={host} className="min-h-0 flex-1 px-2.5 pb-1" />
       {(phase !== "live" || noPty) && (
-        <div className="flex shrink-0 items-center gap-2.5 px-3.5 pb-1.5 font-mono text-[10.5px] text-faint">
-          <span className="min-w-0 truncate">
+        <div className="flex shrink-0 items-start gap-2.5 px-3.5 pb-1.5 font-mono text-[10.5px] text-faint">
+          {/*
+            A refusal can be a whole sentence — the daemon's origin
+            explanation is the long one — and a single truncated line would
+            hide the half that says what to change. Errors wrap instead, with
+            the full text on the title for anything past three lines.
+          */}
+          <span
+            className={cn("min-w-0", phase === "error" ? "line-clamp-3 break-words" : "truncate")}
+            title={phase === "error" && detail ? detail : undefined}
+          >
             {phase === "connecting"
               ? "connecting…"
               : phase === "live"

@@ -48,7 +48,8 @@ handshake and must run before a remote connection is saved.
 The UI reads or mutates these route families:
 
 - daemon identity and lifecycle: `/api/health`, `/api/capabilities`,
-  `/api/update`;
+  `/api/update`, and `POST /api/terminal-origin`, which reports whether the
+  daemon would accept a terminal socket from the caller's `Origin`;
 - tasks and actions: `/api/tasks`, `/api/tasks/:id`, task action subroutes,
   `/api/status`, `/api/pull-requests`, and `/api/outbox` (the current
   same-origin session probe);

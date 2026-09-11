@@ -79,11 +79,90 @@ export function originVerdict(req: Request, url: URL): OriginVerdict {
   const origin = req.headers.get("origin");
   if (origin === null) return "absent";
   if (origin === url.origin) return "allowed";
-  const allowed = (process.env[ALLOWED_ORIGINS_ENV] ?? "")
+  return allowedOrigins().includes(origin) ? "allowed" : "foreign";
+}
+
+/**
+ * The extra origins as configured, parsed. Its own function because three
+ * things need the same list now: the verdict, the log line that explains a
+ * refusal, and the diagnostics that report the configuration.
+ */
+export function allowedOrigins(): string[] {
+  return (process.env[ALLOWED_ORIGINS_ENV] ?? "")
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry !== "");
-  return allowed.includes(origin) ? "allowed" : "foreign";
+}
+
+/**
+ * Why a terminal upgrade was refused, in one sentence.
+ *
+ * Composed once and read in three places, because a browser cannot read a
+ * failed WebSocket upgrade's response body: the page saw only a socket that
+ * did not open, so the 403 explained itself where nothing could reach it. The
+ * same sentence therefore also goes to the daemon log and to the authenticated
+ * origin report the page asks for after a handshake dies.
+ *
+ * `configured` is the allowed set, and is passed ONLY where the reader is
+ * trusted. The 403 body is answered before any credential is checked, so it
+ * names the rejected and the expected origin — both of which the caller
+ * already supplied — and never the operator's proxy hostnames.
+ */
+export function foreignOriginMessage(origin: string | null, expected: string, configured?: string[]): string {
+  const extra =
+    configured === undefined
+      ? ""
+      : configured.length > 0
+        ? ` ${ALLOWED_ORIGINS_ENV} also allows ${configured.map((entry) => JSON.stringify(entry)).join(", ")}.`
+        : ` ${ALLOWED_ORIGINS_ENV} is unset.`;
+  return (
+    `terminal upgrades must come from this daemon's own origin, not ${JSON.stringify(origin)}` +
+    ` — it answers as ${JSON.stringify(expected)}.${extra}` +
+    ` If a reverse proxy rewrites Host, name the browser's origin in ${ALLOWED_ORIGINS_ENV}` +
+    ` and restart the daemon (docs/REMOTE-ACCESS.md).`
+  );
+}
+
+/** What the daemon reports about the origin a request actually carried. */
+export interface OriginReport {
+  verdict: OriginVerdict;
+  /** The Origin header as received, or null for a non-browser caller. */
+  origin: string | null;
+  /** The origin this daemon derives from Host, which a same-origin page matches. */
+  expected: string;
+  /** The parsed `WISP_ALLOWED_ORIGINS`, in the daemon's own environment. */
+  allowed: string[];
+  env: typeof ALLOWED_ORIGINS_ENV;
+  /** The refusal sentence, present only when this caller would be refused. */
+  reason: string | null;
+}
+
+/**
+ * POST /api/terminal-origin: "would you accept a terminal socket from me?"
+ *
+ * POST, not GET, and that is the whole trick. A browser omits `Origin` on a
+ * same-origin GET but always sends it on a POST, so this sees the same header
+ * the WebSocket handshake sent and can answer about the real refusal rather
+ * than a hypothetical one. The page cannot read a failed upgrade's body, but it
+ * can read this.
+ *
+ * Authenticated like every other /api route, so unlike the 403 it may name the
+ * configured set — that is the answer an operator is actually missing, and the
+ * daemon's own environment is the only place it is true.
+ */
+export function terminalOriginRoute(req: Request, url: URL): Response {
+  const origin = req.headers.get("origin");
+  const verdict = originVerdict(req, url);
+  const allowed = allowedOrigins();
+  const report: OriginReport = {
+    verdict,
+    origin,
+    expected: url.origin,
+    allowed,
+    env: ALLOWED_ORIGINS_ENV,
+    reason: verdict === "foreign" ? foreignOriginMessage(origin, url.origin, allowed) : null,
+  };
+  return json(report, 200, { "cache-control": "private, no-store" });
 }
 
 /**
