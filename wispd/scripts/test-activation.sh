@@ -17,7 +17,7 @@ printf '{"auths":{}}\n' > "$CFG/config.json"
 
 docker --config "$CFG" run --rm --platform linux/amd64 \
   --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-  --pids-limit=256 --memory=768m --cpus=1 \
+  --pids-limit=256 --memory=1536m --cpus=1 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev \
   --tmpfs /run:rw,noexec,nosuid,nodev \
   --tmpfs /home/evaluator:rw,exec,nosuid,nodev,mode=0700,uid=1000,gid=1000 \
@@ -77,7 +77,22 @@ EOF
         break
       fi
       kill -0 "$DAEMON_PID" || {
+        # Report why the daemon died before the readiness wait gave up: the
+        # wait status distinguishes a clean exit, a signal kill (137 = the
+        # cgroup OOM killer), and a crash, and the cgroup counters record
+        # OOM kills and pid exhaustion the daemon log cannot show.
+        sleep 1
+        daemon_status=unknown
+        wait "$DAEMON_PID" 2>/dev/null || daemon_status=$?
+        echo "activation daemon exited; wait status: $daemon_status (attempt $ATTEMPT)" >&2
         cat "$HOME/daemon.log" >&2
+        cat "$HOME/project.log" >&2
+        for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.events; do
+          if test -r "$f"; then
+            echo "$f:" >&2
+            cat "$f" >&2
+          fi
+        done
         echo "activation daemon exited before it became ready" >&2
         exit 1
       }
