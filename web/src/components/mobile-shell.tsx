@@ -58,6 +58,7 @@ export function MobileShell({
   changes,
   terminal,
   composer,
+  firstRun,
   desktop = false,
   connectionSwitcher,
   zoomControl,
@@ -70,6 +71,13 @@ export function MobileShell({
   changes: ReactNode
   terminal: ReactNode
   composer: ReactNode
+  /**
+   * The first-run panel. When set it owns everything below the app band: there
+   * is no task, so the surface tabs have nothing to switch between and the
+   * composer has nothing to steer. The drawer stays reachable — the hamburger
+   * is the one control that still means something.
+   */
+  firstRun?: ReactNode
   /** Wisp Desktop, whose packaged window hides its title bar — see the app band. */
   desktop?: boolean
   /** Desktop mode uses one compact menu here; browser mode leaves it absent. */
@@ -161,6 +169,8 @@ export function MobileShell({
                   ]}
                 />
               </>
+            ) : firstRun ? (
+              <div className="text-[14.5px] font-semibold tracking-[-0.01em]">Wisp</div>
             ) : (
               <div className="text-[14.5px] text-muted-foreground">No task selected</div>
             )}
@@ -188,6 +198,7 @@ export function MobileShell({
       {connectionStatus}
       {task?.cleanup && <div className="scroll-slim max-h-[40dvh] shrink-0 overflow-y-auto border-b border-border px-3 pb-3 [&_button]:min-h-11"><CleanupPanel task={task} /></div>}
 
+      {!firstRun && (
       <div
         role="tablist"
         aria-label="Task surface"
@@ -199,16 +210,20 @@ export function MobileShell({
           </Tab>
         ))}
       </div>
+      )}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {/* every pane stays mounted: switching tabs must not drop the
             conversation's scroll position or tear down a live shell */}
-        <Pane show={tab === "chat"}>{conversation}</Pane>
-        <Pane show={tab === "changes"}>{changes}</Pane>
-        <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
+        {firstRun}
+        {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
+        {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
+        {!firstRun && (
+          <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
+        )}
       </main>
 
-      {tab !== "terminal" && (
+      {!firstRun && tab !== "terminal" && (
         <div className="shrink-0" style={{ paddingBottom: "var(--mobile-bottom, env(safe-area-inset-bottom))" }}>
           {composer}
         </div>

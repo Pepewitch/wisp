@@ -21,12 +21,9 @@ import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
-import {
-  AddProjectDialog,
-  ProjectPickerErrorDialog,
-} from "@/components/project-add-dialogs"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
+import { StartHere } from "@/components/start-here"
 import { Gear, WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
 import { Button } from "@/components/primitives"
@@ -44,7 +41,8 @@ import {
   useTaskSkills,
   useTasks,
 } from "@/hooks/queries"
-import { useAddProject } from "@/hooks/mutations"
+import { useFirstRunPanel } from "@/hooks/useFirstRunPanel"
+import { useProjectAddFlow } from "@/hooks/useProjectAddFlow"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
@@ -59,7 +57,7 @@ import {
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { addPickedLocalProject, groupTasksByProject } from "@/lib/projects"
+import { groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { connectEventsBridge } from "@/lib/sse"
@@ -127,56 +125,6 @@ function useConnectionTaskSelection(connectionId: string) {
     selectTask(focusRequest.taskId)
   }, [focusRequest, selectTask])
   return [selectedId, selectTask] as const
-}
-
-function useProjectAddFlow() {
-  const desktop = useDesktopConnections()
-  const addProject = useAddProject()
-  const [remoteOpen, setRemoteOpen] = useState(false)
-  const [pickerError, setPickerError] = useState<string | null>(null)
-  const onAddProject = desktop
-    ? () => {
-        addProject.reset()
-        setPickerError(null)
-        // The mutation belongs to the initiating provider. A tab switch can
-        // unmount it, but cannot retarget a picker completion to a remote.
-        if (desktop.active.metadata.kind === "local") {
-          void addPickedLocalProject(
-            desktop.pickLocalProject,
-            addProject.mutateAsync
-          ).catch((error: unknown) =>
-            setPickerError(
-              error instanceof Error ? error.message : String(error)
-            )
-          )
-          return
-        }
-        setRemoteOpen(true)
-      }
-    : undefined
-  const dialogs = (
-    <>
-      <AddProjectDialog
-        open={remoteOpen}
-        connectionName={desktop?.active.metadata.name ?? ""}
-        pending={addProject.isPending}
-        error={addProject.error}
-        onClose={() => {
-          setRemoteOpen(false)
-          addProject.reset()
-        }}
-        onSubmit={async (path) => {
-          await addProject.mutateAsync(path)
-          setRemoteOpen(false)
-        }}
-      />
-      <ProjectPickerErrorDialog
-        error={pickerError}
-        onClose={() => setPickerError(null)}
-      />
-    </>
-  )
-  return { desktop, onAddProject, pending: addProject.isPending, dialogs }
 }
 
 function useDesktopConnectionHealth(
@@ -278,8 +226,8 @@ function MainView({
   // held as a PATH, not a row: the repos query refetches after a save, and a
   // captured row would leave the modal showing what was just replaced
   const [configuringPath, setConfiguringPath] = useState<string | null>(null)
-  // Wisp's own preferences: client-local and global, so this belongs to the
-  // shell rather than to the selected connection.
+  // Wisp's own preferences are client-local and global (§5g), so they belong
+  // to the shell rather than to the selected connection.
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const tasksQuery = useTasks(showArchived)
@@ -340,7 +288,19 @@ function MainView({
 
   const sideError = queryError(tasksQuery.error, statusQuery.error)
 
+  const firstRun = useFirstRunPanel({
+    onAddProject: projectAdd.onAddProject,
+    pending: projectAdd.pending,
+    taskCount: tasksQuery.data?.length,
+  })
+
   const isMobile = useIsMobile()
+  // the base is NOT passed to the diff: only the daemon knows which commit it
+  // actually diffed from (it resolves GitHub's base), and a local task diffs
+  // against the working tree with no base at all
+  const refreshDiff = () =>
+    selectedId &&
+    void queryClient.invalidateQueries({ queryKey: runtime.qk.diff(selectedId) })
 
   // composed once; only one shell mounts, so nothing double-renders
   const sidebarNode = (opts?: {
@@ -379,6 +339,7 @@ function MainView({
       onAddProject={projectAdd.onAddProject}
       addProjectPending={projectAdd.pending}
       error={sideError}
+      errorAction={firstRun.errorAction(sideError)}
       loading={tasksQuery.isPending}
       touch={opts?.touch}
     />
@@ -403,19 +364,7 @@ function MainView({
     />
   )
   const changesNode = (
-    <ChangesPane
-      taskId={selectedId}
-      archived={archived}
-      // the base is NOT passed in: only the daemon knows which commit it
-      // actually diffed from (it resolves GitHub's base), and a local task
-      // diffs against the working tree with no base at all
-      onRefresh={() =>
-        selectedId &&
-        void queryClient.invalidateQueries({
-          queryKey: runtime.qk.diff(selectedId),
-        })
-      }
-    />
+    <ChangesPane taskId={selectedId} archived={archived} onRefresh={refreshDiff} />
   )
   const terminalNode = (
     <TerminalSection
@@ -427,13 +376,23 @@ function MainView({
       touch={isMobile}
     />
   )
+  // Replaces the whole centre column — including the "Select a task" band,
+  // which had nothing to select and said so over a panel already saying it.
+  const firstRunNode = firstRun.show && selectedId === null ? (
+    <StartHere
+      steps={firstRun.steps}
+      baseLabel={firstRun.baseLabel}
+      onNewTask={firstRun.canCreateTask ? () => setCreateFor({ repoPath: null }) : undefined}
+      touch={isMobile}
+    />
+  ) : null
   const dialogs = (
     <>
       <AppDialogs
         createFor={createFor}
         configuringPath={configuringPath}
         repos={reposQuery.data}
-        activeTaskCount={groups.find((group) => group.path === configuringPath)?.tasks.length ?? 0}
+        activeTaskCount={groups.find((g) => g.path === configuringPath)?.tasks.length ?? 0}
         harnesses={harnessesQuery.data}
         harnessesError={harnessesQuery.error}
         onCloseCreate={() => setCreateFor(null)}
@@ -455,6 +414,7 @@ function MainView({
       changes={changesNode}
       terminal={terminalNode}
       composer={composerNode}
+      firstRun={firstRunNode}
       taskHeader={
         <TaskHeader
           task={header}
@@ -483,6 +443,7 @@ function AppShell({
   updateControl,
   onOpenSettings,
   dialogs,
+  firstRun,
 }: {
   mobile: boolean
   desktop: boolean
@@ -501,6 +462,8 @@ function AppShell({
   /** The pointer shell's gear. Touch reaches the same modal from the drawer. */
   onOpenSettings: () => void
   dialogs: ReactNode
+  /** When set, it OWNS the centre column — header, transcript and composer. */
+  firstRun: ReactNode
 }) {
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
   // resizable group applies phone dimensions to desktop geometry.
@@ -510,6 +473,7 @@ function AppShell({
         <MobileShell
           task={task}
           pullRequest={pullRequest}
+          firstRun={firstRun}
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
           changes={changes}
@@ -561,9 +525,13 @@ function AppShell({
         sidebar={sidebar()}
         centre={
           <main className="flex h-full min-w-0 flex-col bg-background">
-            {taskHeader}
-            {conversation}
-            {composer}
+            {firstRun ?? (
+              <>
+                {taskHeader}
+                {conversation}
+                {composer}
+              </>
+            )}
           </main>
         }
         right={<RightColumn changes={changes} terminal={terminal} />}

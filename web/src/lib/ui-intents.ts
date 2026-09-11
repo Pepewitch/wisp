@@ -4,14 +4,17 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * THREE intents. `/log` is the palette's one command that needs another
+ * FOUR intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
  * already mounted, and that view is the only thing that can select it. A find
  * request is ⌘F, the task overflow menu, and a picked cross-project result:
  * three places that all mean "open the transcript's find bar", none of which
- * owns the scroller that has to answer.
+ * owns the scroller that has to answer. A local-setup request is the same
+ * shape again: the first-run panel and the sidebar's error row both mean "open
+ * the Local Wisp dialog", and neither owns it — the desktop connection chrome
+ * does, and it is mounted in two different shells.
  */
 import { LOCAL_CONNECTION_ID } from "./transport";
 
@@ -41,6 +44,8 @@ export interface UiIntents {
   focusTask(taskId: string): void;
   findRequest(): FindRequest | null;
   openFind(query?: string | null, turn?: number | null): void;
+  localSetupRequests(): number;
+  openLocalSetup(): void;
 }
 
 function createUiIntents(): UiIntents {
@@ -48,6 +53,7 @@ function createUiIntents(): UiIntents {
   let streamFocusRequests = 0;
   let taskFocusRequest: TaskFocusRequest | null = null;
   let findRequest: FindRequest | null = null;
+  let localSetupRequests = 0;
   const notify = () => {
     for (const fn of listeners) fn();
   };
@@ -80,6 +86,14 @@ function createUiIntents(): UiIntents {
     },
     openFind(query: string | null = null, turn: number | null = null): void {
       findRequest = { query, turn, seq: (findRequest?.seq ?? 0) + 1 };
+      notify();
+    },
+    /** the latest "open the Local Wisp setup dialog" request */
+    localSetupRequests(): number {
+      return localSetupRequests;
+    },
+    openLocalSetup(): void {
+      localSetupRequests += 1;
       notify();
     },
   };

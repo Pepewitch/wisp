@@ -20,8 +20,11 @@ import { cn } from "@/lib/utils"
  * Registering a project needs an ABSOLUTE path on the daemon host, and a
  * browser cannot produce one: showDirectoryPicker() hands back a folder NAME
  * with no parent, and webkitdirectory yields paths relative to the chosen
- * root. Rather than ship a text field dressed up as a picker, the web app
- * defers to `wisp project add`, which already exists and takes a real path.
+ * root. So the browser does not ship a picker — it ships the daemon-side path
+ * field a remote desktop tab already used (`AddProjectDialog`), because the
+ * alternative was a disabled button and a sentence sending someone to a
+ * terminal, which made this pane a dead end from zero. A caller with no add
+ * mechanism at all still gets the honest CLI sentence.
  */
 const ADD_PROJECT_HINT = "Add a project from the CLI: wisp project add <path>"
 
@@ -61,6 +64,12 @@ interface SidebarProps {
   addProjectPending?: boolean
   /** a tasks/status fetch failure, shown inline */
   error: string | null
+  /**
+   * The repair for that failure, chosen by the caller because only it knows
+   * which one applies — a stopped local daemon needs setup, anything else
+   * needs another try. A red string with no door was the whole bug.
+   */
+  errorAction?: { label: string; onClick: () => void }
   loading: boolean
   /** touch mode: two-line rows, no hover cards, thumb-sized controls */
   touch?: boolean
@@ -87,6 +96,7 @@ export function Sidebar({
   onAddProject,
   addProjectPending = false,
   error,
+  errorAction,
   loading,
   touch = false,
 }: SidebarProps) {
@@ -115,8 +125,21 @@ export function Sidebar({
       )}
 
       {error && (
-        <div className="px-3.5 pb-1.5 text-[11.5px] text-destructive">
-          {error}
+        <div className="flex items-start gap-2 px-3.5 pb-1.5 text-[11.5px] text-destructive">
+          <span className="min-w-0 flex-1">{error}</span>
+          {errorAction && (
+            <button
+              type="button"
+              onClick={errorAction.onClick}
+              className={cn(
+                "shrink-0 underline underline-offset-2",
+                "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                touch && "min-h-11"
+              )}
+            >
+              {errorAction.label}
+            </button>
+          )}
         </div>
       )}
 
@@ -134,7 +157,11 @@ export function Sidebar({
         ) : loading && groups.length === 0 ? (
           <div className="px-2.5 py-1 text-[11.5px] text-faint">Loading…</div>
         ) : groups.length === 0 && archivedTasks.length === 0 ? (
-          <NoProjects canAdd={onAddProject !== undefined} />
+          <NoProjects
+            onAddProject={onAddProject}
+            pending={addProjectPending}
+            touch={touch}
+          />
         ) : (
           <div className="flex flex-col">
             {groups.map((group) => (
@@ -277,25 +304,44 @@ function SidebarHeader({
   )
 }
 
-/** The one placeholder a pane with no projects at all can honestly show. */
-function NoProjects({ canAdd }: { canAdd: boolean }) {
+/**
+ * The one placeholder a pane with no projects at all can honestly show — and
+ * it ENDS IN THE CONTROL rather than pointing at one. It used to end in a
+ * noun, telling you to use an unlabelled folder icon in the pane header; on a
+ * fresh install that was the pane's only instruction and its only dead end.
+ */
+function NoProjects({
+  onAddProject,
+  pending,
+  touch,
+}: {
+  onAddProject?: () => void
+  pending: boolean
+  touch: boolean
+}) {
   return (
     <div className="px-2.5 py-2 text-[11.5px] leading-relaxed text-faint">
-      {canAdd ? (
-        <>
-          No projects yet. Add a project, then its{" "}
-          <span className="text-muted-foreground">+</span> creates the first
-          task.
-        </>
+      No projects yet.
+      {onAddProject ? (
+        <div className="mt-2">
+          <Button
+            size={touch ? "touch" : "md"}
+            tone="outline"
+            disabled={pending}
+            onClick={onAddProject}
+          >
+            <FolderAdd />
+            {pending ? "Adding…" : "Add project…"}
+          </Button>
+        </div>
       ) : (
         <>
-          No projects yet. Run{" "}
+          {" "}
+          Run{" "}
           <code className="text-muted-foreground">
             wisp project add &lt;path&gt;
           </code>{" "}
-          to register one, then its{" "}
-          <span className="text-muted-foreground">+</span> creates the first
-          task.
+          on the daemon host to register one.
         </>
       )}
     </div>
@@ -469,9 +515,25 @@ function ProjectSection({
               )
             )
           ) : (
-            <div className="px-2.5 py-1 text-[11.5px] text-faint">
-              No tasks yet
-            </div>
+            /**
+             * Hover-reveal is right for a dense list and wrong when the row's
+             * only content is an empty state: a fresh install has exactly one
+             * project, no tasks, and — until this — no visible way to make
+             * one. The line stops being dead text and becomes the control.
+             */
+            <button
+              type="button"
+              onClick={() => onNewTask(group.path)}
+              className={cn(
+                "flex w-full items-center gap-1.5 rounded-md px-2.5 text-left text-[11.5px]",
+                "text-faint hover:bg-hover hover:text-muted-foreground",
+                "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+                touch ? "h-11" : "h-[26px]"
+              )}
+            >
+              <Plus aria-hidden className="size-3 shrink-0" />
+              No tasks yet — create one
+            </button>
           )}
         </div>
       )}

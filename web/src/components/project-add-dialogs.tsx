@@ -4,16 +4,29 @@ import { Dialog } from "@base-ui/react/dialog"
 import { Button } from "@/components/primitives"
 import { cn } from "@/lib/utils"
 
+/**
+ * Register a project by typing the path the DAEMON will resolve.
+ *
+ * Two callers, one dialog. A remote desktop tab has always used it; the
+ * browser now does too, because a browser cannot produce an absolute path
+ * (showDirectoryPicker() hands back a folder NAME with no parent) and the
+ * alternative was a disabled button that sent someone to a terminal — on a
+ * phone, the surface where a terminal costs the most. `hint` carries the one
+ * sentence that differs: whose filesystem this path is on.
+ */
 export function AddProjectDialog({
   open,
   connectionName,
+  hint = "This path is resolved by the remote daemon, not on this computer.",
   pending,
   error,
   onClose,
   onSubmit,
 }: {
   open: boolean
+  /** named in the field's label, so it is also the accessible name */
   connectionName: string
+  hint?: string
   pending: boolean
   error: unknown
   onClose: () => void
@@ -66,8 +79,7 @@ export function AddProjectDialog({
                   )}
                 />
                 <span className="leading-relaxed font-normal text-faint">
-                  This path is resolved by the remote daemon, not on this
-                  computer.
+                  {hint}
                 </span>
               </label>
             </div>

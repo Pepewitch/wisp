@@ -997,6 +997,87 @@ the composer is a BARE key, because the textarea forwards ↑/↓/Home/End/↵ t
 cmdk and owns the rest of what it is typing. A ⌘ chord is never in that set,
 which is how `lib/desktop-zoom.tsx` already claims ⌘+/−/0.
 
+## 5j. First run — the empty state IS the onboarding
+
+`components/start-here.tsx` replaces the centre column when a connection has
+no tasks. It is not a tour, a carousel, a coach mark or a route, and adding one
+later is a regression, not a feature. Three reasons, all of them specific to
+this app:
+
+- A tour teaches the happy path to someone whose daemon is not running. It
+  cannot know which wall this person is behind.
+- It goes stale the moment the shell moves, and nothing fails when it starts
+  lying — it is invisible to every gate.
+- "Has this person been onboarded" is not one bit here. It is one bit **per
+  daemon**, and Desktop has up to five.
+
+So the panel is DERIVED and owns no state. `lib/first-run.ts` builds its rows
+from `LocalSetupReport`, `GET /api/harnesses` and `GET /api/projects`;
+`hooks/useFirstRunPanel.ts` binds them to the active connection. There is no
+`hasOnboarded` flag, nothing per-connection to keep straight, and nothing in
+Settings to restart it (§5g). It shows because `tasks.length === 0`, and it
+stops for the same reason — archive every task and it comes back, correctly,
+which is the behaviour a veteran wants from an empty workspace anyway.
+
+The rules it exists to keep:
+
+- **Exactly one primary action** (§1), and it is the first outstanding step
+  that can be acted on **from inside the app**. `primaryStepKey` decides;
+  a component never picks a second. Installing a harness happens in a
+  terminal, so that row's button is `outline` and a quiet line says so.
+- **The row COUNT is derived too.** The browser owns one daemon and that
+  daemon served the page, so it has no "Wisp is running" row at all and the
+  heading counts down to "Two things". A step that can only be green teaches
+  nothing.
+- **A step that cannot be evaluated says so.** When Local is not running, the
+  harness and project rows read *"Checked once Wisp is running."* with no
+  action — never faked green, never hidden, and never answered from a cache
+  the current daemon never filled.
+- **Hue on the 6px marker and nowhere else.** Filled `state-done`, a neutral
+  `state-creating` ring, `state-failed` for blocked. No badges, no chips, no
+  progress bar, no step numbers: it is a status list you keep, not a sequence
+  you finish.
+- **It replaces the whole centre column, including the task header.** That
+  band said *"Select a task"* over a panel already explaining there were none.
+  The right column keeps its panes — they show the workspace you are about to
+  get, which is worth seeing, and they no longer repeat the centre.
+- **The heading is a 14.5px title, not a second eyebrow.** The centre pane has
+  none.
+
+When every row passes it collapses to one **New task** button and two
+sentences — the branch-and-worktree contract, delivered at the one moment it
+becomes true rather than in a slide nobody read. The base is named only when a
+project actually configured one: `""` means "let Wisp resolve the remote
+default", which is not a branch name, so the sentence omits it rather than
+inventing `main`.
+
+### An empty state ends in the control, not in a noun
+
+The panel is the centre column's share of this; the sidebar owes the same debt
+and it is the same bug three times over. A placeholder that names an
+affordance instead of being one is unfinished:
+
+- **No projects** ends in an `Add project…` button, not in a sentence pointing
+  at an unlabelled folder icon in the pane header.
+- **A project with zero tasks** turns its *"No tasks yet"* line INTO the
+  create control. Hover-reveal is right for a dense populated list and wrong
+  when the row's only content is an empty state — a fresh install has exactly
+  one project, no tasks, and otherwise no visible way to make one.
+- **The error row carries its own repair.** A tasks/status failure takes an
+  `errorAction` from the caller, because only the caller knows which repair
+  applies: a stopped local daemon needs setting up, anything else needs
+  another try. An indicator that is not also the door to its fix is half a
+  feature — which is exactly what the `Local` tab's red glyph still is, and
+  why the panel and this row are the two doors to `LocalSetupDialog` rather
+  than a third one in the header (§5g: two gears for one room).
+
+**The browser registers projects too.** A browser cannot produce an absolute
+path, so it does not ship a picker — it ships the daemon-side path field a
+remote Desktop tab already used (`AddProjectDialog`, with its own `hint`
+naming whose filesystem the path is on). The disabled button it replaced meant
+the web UI could not be taken from zero to one project without a terminal, on
+the one surface — a phone — where that costs the most.
+
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its
