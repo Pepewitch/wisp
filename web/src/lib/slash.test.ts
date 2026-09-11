@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  commandEntries,
   compactEntry,
   slashName,
   slashScore,
@@ -75,6 +76,43 @@ describe("tier3Entries (A4)", () => {
   it("no registry, no entries", () => {
     expect(tier3Entries(undefined, undefined)).toEqual([])
     expect(tier3Entries([], "slash")).toEqual([])
+  })
+})
+
+describe("commandEntries", () => {
+  it("prefills the harness command and its argument hint without executing it", () => {
+    expect(
+      commandEntries([
+        {
+          name: "release",
+          description: "Prepare a release",
+          argumentHint: "[version]",
+          executable: false,
+        },
+      ]),
+    ).toEqual([
+      {
+        name: "release",
+        hint: "Prepare a release · [version]",
+        keywords: ["command", "custom"],
+        prefill: "/release ",
+        command: true,
+        costLabel: "runs a turn",
+      },
+    ])
+  })
+
+  it("warns when sending the command may execute a script", () => {
+    expect(
+      commandEntries([
+        {
+          name: "verify",
+          description: null,
+          argumentHint: null,
+          executable: true,
+        },
+      ])[0]!.costLabel,
+    ).toBe("may run a script")
   })
 })
 
@@ -167,6 +205,7 @@ describe("slashScore (what the row under the cursor answers to)", () => {
 
   it("reads the command name out of a probe row's disambiguating value", () => {
     expect(slashName("probe:context")).toBe("context")
+    expect(slashName("command:release")).toBe("release")
     expect(slashName("fresh")).toBe("fresh")
   })
 })

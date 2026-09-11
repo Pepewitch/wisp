@@ -145,10 +145,10 @@ describe("buildArgv", () => {
     expect(argv[argv.length - 1]).toBe("go");
   });
 
-  test("attach argv substitutes session; droid has none yet", () => {
+  test("attach argv substitutes the stored session for each interactive harness", () => {
     expect(buildAttachArgv(claude, "xyz")).toEqual(["claude", "--resume", "xyz"]);
     expect(buildAttachArgv(codex, "xyz")).toEqual(["codex", "resume", "xyz"]);
-    expect(buildAttachArgv(droid, "xyz")).toBeNull();
+    expect(buildAttachArgv(droid, "xyz")).toEqual(["droid", "resume", "xyz"]);
   });
 
   // S3 (spike ts7efd): the image slot sits immediately before the prompt

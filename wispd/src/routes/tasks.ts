@@ -544,6 +544,8 @@ export function taskRoute(
       if (!def.skillDiscovery) {
         return json({
           skills: [],
+          commands: [],
+          commandError: null,
           errors: [],
           partialNote: `harness '${task.harness}' declares no skill discovery`,
           invoke: null,

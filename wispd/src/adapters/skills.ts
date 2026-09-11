@@ -20,6 +20,11 @@ import type {
  * harness uses its native surface, with the frontmatter scan as the honest
  * PARTIAL fallback — and a partial list always says it is partial.
  *
+ * Droid command discovery shares this read because `droid.list_commands`
+ * requires the same loaded session as `droid.list_skills`. The registries
+ * stay separate in the result and UI: commands can take arguments or execute
+ * scripts, while skills are model workflows.
+ *
  * The named failure modes are SP2's and the strategies honor them verbatim:
  * a missing root is zero skills, never an error; a directory without a
  * SKILL.md is not a skill; malformed frontmatter is skipped; a name-only
@@ -99,6 +104,10 @@ function desc(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error && error.message.trim() ? error.message.trim() : String(error);
+}
+
 export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
   /**
    * claude (SP2): names for free from the session's init event (Wisp already
@@ -117,6 +126,8 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
       }
       return Promise.resolve({
         skills: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
+        commands: [],
+        commandError: null,
         errors: [],
         partialNote:
           ctx.initSkills === null
@@ -134,7 +145,9 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
    * and never stored. `userInvocable` is the harness's own palette filter —
    * the five false ones are exactly the skills that must not appear as
    * `/name` — and `enabled`/`disabledBy` are honored rather than offering a
-   * skill that will refuse.
+   * skill that will refuse. `droid.list_commands` is the matching native
+   * registry for custom slash commands; unlike the TUI's built-in command
+   * table, it is scoped to commands the user or project actually installed.
    */
   "factory-jsonrpc": {
     invoke: "slash", // SP1: a slash prompt naming a skill routes to the Skill tool (verified with /review)
@@ -147,10 +160,15 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
       });
       try {
         await rpc.call("droid.load_session", { sessionId: ctx.sessionId });
-        const raw = await rpc.call("droid.list_skills", {});
+        const [skillsAnswer, commandsAnswer] = await Promise.allSettled([
+          rpc.call("droid.list_skills", {}),
+          rpc.call("droid.list_commands", {}),
+        ]);
+        if (skillsAnswer.status === "rejected") throw skillsAnswer.reason;
+        const skillsRaw = skillsAnswer.value;
         const r =
-          typeof raw === "object" && raw !== null && Array.isArray((raw as Record<string, unknown>).skills)
-            ? (raw as { skills: unknown[] })
+          typeof skillsRaw === "object" && skillsRaw !== null && Array.isArray((skillsRaw as Record<string, unknown>).skills)
+            ? (skillsRaw as { skills: unknown[] })
             : (() => {
                 throw new ProbeError("the harness's skill list is not a JSON object — the protocol shape may have changed");
               })();
@@ -160,7 +178,31 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
           .filter((s) => s.userInvocable === true && s.enabled !== false && !s.disabledBy)
           .map((s) => ({ name: s.name as string, description: desc(s.description) }))
           .sort((a, b) => a.name.localeCompare(b.name));
-        return { skills, errors: [], partialNote: null };
+        let commands: SkillDiscoveryResult["commands"] = [];
+        let commandError: string | null = null;
+        if (commandsAnswer.status === "rejected") {
+          commandError = `custom commands unavailable: ${errorText(commandsAnswer.reason)}`;
+        } else if (
+          typeof commandsAnswer.value !== "object" ||
+          commandsAnswer.value === null ||
+          !Array.isArray((commandsAnswer.value as Record<string, unknown>).commands)
+        ) {
+          commandError = "custom commands unavailable: the harness's command-list protocol may have changed";
+        } else {
+          commands = (commandsAnswer.value as { commands: unknown[] }).commands
+            .map(skillRow)
+            .filter((command): command is Record<string, unknown> => command !== null)
+            .map((command) => ({
+              name: command.name as string,
+              description: desc(command.description),
+              argumentHint: desc(command.argumentHint),
+              // Optional in Droid's schema: absence means a Markdown command,
+              // while true is the only value that denotes an executable.
+              executable: command.isExecutable === true,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        }
+        return { skills, commands, commandError, errors: [], partialNote: null };
       } finally {
         rpc.close(); // a read never leaves the harness session running
       }
@@ -208,7 +250,7 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
           }
         }
         skills.sort((a, b) => a.name.localeCompare(b.name));
-        return { skills, errors, partialNote: null };
+        return { skills, commands: [], commandError: null, errors, partialNote: null };
       } finally {
         rpc.close();
       }

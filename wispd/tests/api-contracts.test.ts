@@ -462,9 +462,9 @@ describe("daemon API contracts", () => {
     const droid = makeTask({ harness: "droid" });
     setTaskFields(droid.id, { session_id: "droid-session" });
     expect(await json(await api(base, `/api/tasks/${droid.id}/attach`))).toEqual({
-      argv: null,
+      argv: ["droid", "resume", "droid-session"],
       cwd: null,
-      message: "harness 'droid' has no known interactive attach command yet",
+      message: null,
     });
 
     await expectError(base, "/api/tasks/tnope9/diff", 404, "no such task: tnope9");

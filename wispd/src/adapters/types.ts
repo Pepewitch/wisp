@@ -636,6 +636,19 @@ export interface SkillEntry {
 }
 
 /**
+ * One custom slash command exposed by the harness's own registry. Commands
+ * stay separate from skills because they can carry an argument hint and can
+ * be executable scripts; the palette still only prefills them, so selecting
+ * one never runs code or spends a turn without a second explicit send.
+ */
+export interface SlashCommandEntry {
+  name: string;
+  description: string | null;
+  argumentHint: string | null;
+  executable: boolean;
+}
+
+/**
  * What discovery found (A4, SP2). `errors` are the malformed-skill reports a
  * harness handed back (codex's skills/list `errors[]`) — surfaced verbatim,
  * never swallowed, because a silently-skipped skill is the absence this
@@ -646,6 +659,10 @@ export interface SkillEntry {
  */
 export interface SkillDiscoveryResult {
   skills: SkillEntry[];
+  /** Custom slash commands discovered alongside the skill registry, when exposed. */
+  commands: SlashCommandEntry[];
+  /** Command-registry failure that must not erase an otherwise valid skill list. */
+  commandError: string | null;
   errors: string[];
   partialNote: string | null;
   /**

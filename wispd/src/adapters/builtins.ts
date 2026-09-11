@@ -68,11 +68,16 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // tests/fixtures/droid-transient-provider-error.jsonl. More markers are
     // added only from real captures, never invented shapes.
     transientMarkers: ["floating point nan", "not-a-number"],
-    attach: null,
+    // `droid resume <id>` is the interactive form of the same stored session
+    // (verified against droid 0.217.0's top-level help).
+    attach: ["resume", "{session}"],
     modelDiscovery: "droid-models",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
-    // context out of band. droid has NO usage read — the palette's Tier 2
-    // for a droid task is /context alone, and Wisp's own numbers fill the gap.
+    // context out of band. Droid still has NO usage/limits RPC in 0.217.0.
+    // Sending `/limits` through exec is not a local command: it runs a model
+    // turn, spends tokens, and the model reports that account limits are not
+    // available there. The interactive command is a TUI pane, so Tier 2 stays
+    // /context alone rather than advertising a false account read.
     probe: "factory-jsonrpc",
     // A4 (SP2, live-verified 0.205.0): `droid.list_skills` is the ONLY
     // complete surface (20 of 21 skills are builtin:<name>, invisible to any
@@ -303,8 +308,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // invented shapes.
     attach: ["--resume", "{session}"], // interactive resume, same session
     // No probe/skillDiscovery/compact strategy: none of those surfaces is
-    // verified on cursor. The palette's tiers are honestly absent, and the
-    // routes answer their named refusals (that honesty IS the contract).
+    // verified on cursor. Cursor documents interactive `/usage`, but
+    // cursor-agent 2026.09.10 did not settle it in print mode, so it remains
+    // TUI-only here. The palette's tiers are honestly absent, and the routes
+    // answer their named refusals (that honesty IS the contract).
   },
   // Owner request ("i want to support opencode cli"), 2026-09-10. Probed
   // against opencode 1.18.29 on macOS: every field below was read off the

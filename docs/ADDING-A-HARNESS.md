@@ -164,7 +164,11 @@ one; each has a named refusal when absent, so the UI degrades honestly.
 7. **`skillDiscovery`** — how the palette's Tier 3 lists the harness's own
    skills, plus `invoke: "slash" | "prompt"` — how a pick becomes prompt
    text. A harness with no headless slash surface is `"prompt"`, and the
-   palette says the pick costs a turn.
+   palette says the pick costs a turn. A strategy may also return the
+   harness's custom slash-command registry when the same native channel
+   exposes it. Keep commands separate from skills: commands can carry argument
+   hints or execute scripts, and the palette must label those facts while
+   prefilling rather than immediately running them.
 8. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
    both together). A strategy when the harness has an RPC for it; the prompt
    when its `/compact` runs headless as an ordinary turn. Set the strategy's

@@ -4,6 +4,7 @@ import type {
   ApiTask,
   HarnessCompact,
   ProbeCommandName,
+  SlashCommandEntry,
   SkillEntry,
   StatusEntry,
 } from "@/lib/types";
@@ -84,6 +85,8 @@ export interface SlashEntry {
    * honestly reported (removedCount, a replaced session, codex's turn).
    */
   compact?: boolean;
+  /** A custom harness command, namespaced so it cannot collide with a skill. */
+  command?: boolean;
   /**
    * A5/Q6: the cost marker, overriding the group's `costsTurn` marker. The
    * harness group is free reads EXCEPT compact, so the one costing entry
@@ -97,9 +100,12 @@ export interface SlashEntry {
  * preserving the harness's own command name in the row.
  */
 const PROBE_VALUE_PREFIX = "probe:";
+const COMMAND_VALUE_PREFIX = "command:";
 
 export function slashValue(entry: SlashEntry): string {
-  return entry.probe ? `${PROBE_VALUE_PREFIX}${entry.probe}` : entry.name;
+  if (entry.probe) return `${PROBE_VALUE_PREFIX}${entry.probe}`;
+  if (entry.command) return `${COMMAND_VALUE_PREFIX}${entry.name}`;
+  return entry.name;
 }
 
 /**
@@ -107,9 +113,9 @@ export function slashValue(entry: SlashEntry): string {
  * typing. `probe:context` is bookkeeping; `context` is the command.
  */
 export function slashName(value: string): string {
-  return value.startsWith(PROBE_VALUE_PREFIX)
-    ? value.slice(PROBE_VALUE_PREFIX.length)
-    : value;
+  if (value.startsWith(PROBE_VALUE_PREFIX)) return value.slice(PROBE_VALUE_PREFIX.length);
+  if (value.startsWith(COMMAND_VALUE_PREFIX)) return value.slice(COMMAND_VALUE_PREFIX.length);
+  return value;
 }
 
 /**
@@ -293,6 +299,25 @@ export function tier3Entries(
     keywords: ["skill"],
     prefill: invoke === "prompt" ? `use the ${s.name} skill: ` : `/${s.name}`,
   }));
+}
+
+/**
+ * Harness custom commands are reviewable prompt text, never immediate
+ * actions. Executable commands are labeled because sending one may run a
+ * local script rather than a model-authored workflow.
+ */
+export function commandEntries(commands: SlashCommandEntry[] | undefined): SlashEntry[] {
+  return (commands ?? []).map((command) => {
+    const hint = [command.description, command.argumentHint].filter(Boolean).join(" · ");
+    return {
+      name: command.name,
+      hint,
+      keywords: ["command", "custom"],
+      prefill: `/${command.name}${command.argumentHint ? " " : ""}`,
+      command: true,
+      costLabel: command.executable ? "may run a script" : "runs a turn",
+    };
+  });
 }
 
 /**
