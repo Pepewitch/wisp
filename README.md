@@ -49,7 +49,7 @@ troubleshooting, see the [macOS guide](docs/INSTALL-MACOS.md).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.5/scripts/install.sh | sh
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.6/scripts/install.sh | sh
 ```
 
 The installer verifies the download, installs under your home directory, and
