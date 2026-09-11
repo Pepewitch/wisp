@@ -310,3 +310,8 @@ brew uninstall wisp
 Homebrew removes its managed binary and service definition. It does not remove
 `~/.wisp`; inspect that directory and all referenced worktrees before deleting
 anything manually.
+
+Upgrading and removing Wisp leaves its entries in **System Settings ▸ Privacy &
+Security ▸ App Management** behind. See
+[the `wisp` rows in macOS App Management](MACOS-APP-MANAGEMENT.md) for why they
+accumulate, which ones are dead, and how to clear them.
