@@ -10,11 +10,11 @@ import { cn } from "@/lib/utils"
  * to choose — the textarea below stays the input the whole time.
  *
  * Grouped by tier, and ONLY the tier that costs a model turn says so (Q6, and
- * §5c's "only what is news is marked"). A tier with no entries renders no
- * group at all: a task whose skills haven't loaded (or whose daemon refused
- * while a turn runs) has no Skills heading, and a harness whose adapter
- * declares no out-of-turn reads is absent Tier 2 the same way rather than as
- * an empty promise.
+ * §5c's "only what is news is marked"). A tier with neither entries nor an
+ * explanatory footer renders no group at all: a task whose skills haven't
+ * loaded (or whose daemon refused while a turn runs) has no Skills heading,
+ * and a harness whose adapter declares no out-of-turn reads is absent Tier 2
+ * the same way rather than as an empty promise.
  */
 export function SlashPaletteList({
   groups,
@@ -38,7 +38,7 @@ export function SlashPaletteList({
   // Order is the answer here: cmdk selects the first row, and Enter runs what
   // is selected. See `rankSlashGroups`.
   const ranked = useMemo(() => rankSlashGroups(groups, query), [groups, query])
-  const shown = ranked.filter((group) => group.entries.length > 0)
+  const shown = ranked.filter((group) => group.entries.length > 0 || Boolean(group.footer))
   return (
     <Command
       ref={commandRef}

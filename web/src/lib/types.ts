@@ -529,9 +529,18 @@ export interface SkillEntry {
   description: string | null;
 }
 
+/** A custom slash command discovered from the harness's own registry. */
+export interface SlashCommandEntry {
+  name: string;
+  description: string | null;
+  argumentHint: string | null;
+  executable: boolean;
+}
+
 /**
- * GET /api/tasks/:id/skills — the harness's OWN registry for Tier 3, never a
- * hardcoded list. `errors` are malformed-skill reports the harness handed
+ * GET /api/tasks/:id/skills — the harness's OWN registries for Tier 3, never
+ * hardcoded lists. `commands` stays separate because a custom command can be
+ * executable or take arguments. `errors` are malformed-skill reports the harness handed
  * back (codex); `partialNote` marks a knowingly-incomplete list (claude
  * before its first turn: user/project skills only); `invoke` says how a pick
  * becomes prompt text — "/name" (slash) or a plain-text ask (prompt), because
@@ -539,6 +548,10 @@ export interface SkillEntry {
  */
 export interface TaskSkills {
   skills: SkillEntry[];
+  /** Optional for compatibility with daemons predating command discovery. */
+  commands?: SlashCommandEntry[];
+  /** Optional for compatibility; command failure does not erase valid skills. */
+  commandError?: string | null;
   errors: string[];
   partialNote: string | null;
   invoke: "slash" | "prompt" | null;

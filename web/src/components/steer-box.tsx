@@ -30,6 +30,7 @@ import {
 } from "@/lib/attachments"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
+  commandEntries,
   compactEntry,
   isTier1Command,
   slashTokenAt,
@@ -378,6 +379,12 @@ function slashGroups(
     skillGroup.footer = skills.partialNote
   }
   groups.push(skillGroup)
+  const commandGroup: SlashGroup = {
+    label: "Commands",
+    entries: commandEntries(skills?.commands),
+  }
+  if (skills?.commandError) commandGroup.footer = skills.commandError
+  groups.push(commandGroup)
   return groups
 }
 

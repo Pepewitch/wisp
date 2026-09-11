@@ -88,6 +88,8 @@ describe("GET /api/tasks/:id/skills (A4)", () => {
       { name: "code-review", description: null },
       { name: "simplify", description: null },
     ]);
+    expect(body.commands).toEqual([]);
+    expect(body.commandError).toBeNull();
     expect(body.invoke).toBe("slash");
     expect(body.partialNote).toBeNull();
     expect(body.cached).toBe(false);
@@ -144,6 +146,8 @@ describe("GET /api/tasks/:id/skills (A4)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.skills).toEqual([]);
+    expect(body.commands).toEqual([]);
+    expect(body.commandError).toBeNull();
     expect(body.partialNote).toBe("harness 'bare' declares no skill discovery");
   });
 
@@ -160,6 +164,18 @@ describe("GET /api/tasks/:id/skills (A4)", () => {
               ],
             });
           }
+          if (method === "droid.list_commands") {
+            return Promise.resolve({
+              commands: [
+                {
+                  name: "release",
+                  description: "Prepare a release",
+                  argumentHint: "[version]",
+                  isExecutable: false,
+                },
+              ],
+            });
+          }
           return Promise.reject(new Error(`unexpected ${method}`));
         },
         close: () => {},
@@ -171,6 +187,15 @@ describe("GET /api/tasks/:id/skills (A4)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.skills).toEqual([{ name: "review", description: "Review code changes" }]);
+    expect(body.commands).toEqual([
+      {
+        name: "release",
+        description: "Prepare a release",
+        argumentHint: "[version]",
+        executable: false,
+      },
+    ]);
+    expect(body.commandError).toBeNull();
     expect(body.invoke).toBe("slash");
   });
 

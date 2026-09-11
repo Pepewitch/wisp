@@ -134,6 +134,8 @@ describe("claude-init (A4)", () => {
     const result = await discoverSkills(claude, ctx({ initSkills: null }), NO_IO);
     expect(result.partialNote).toBe("user and project skills only — no session has reported its builtins yet");
     expect(result.invoke).toBe("slash");
+    expect(result.commands).toEqual([]);
+    expect(result.commandError).toBeNull();
     expect(result.errors).toEqual([]);
   });
 
@@ -144,6 +146,8 @@ describe("claude-init (A4)", () => {
       { name: "code-review", description: null },
       { name: "simplify", description: null },
     ]);
+    expect(result.commands).toEqual([]);
+    expect(result.commandError).toBeNull();
   });
 
   test("the parse captures the init event's list — names, straight off the captured fixture", () => {
@@ -171,9 +175,18 @@ describe("factory-jsonrpc skill discovery (droid)", () => {
   };
 
   test("the harness's own filter is honored: userInvocable and enabled, content projected away", async () => {
-    const { io, calls, state } = scriptedRpc({ "droid.load_session": { sessionId: "s-1" }, "droid.list_skills": LIST });
+    const { io, calls, state } = scriptedRpc({
+      "droid.load_session": { sessionId: "s-1" },
+      "droid.list_skills": LIST,
+      "droid.list_commands": {
+        commands: [
+          { name: "release", description: "Prepare a release", argumentHint: "[version]", isExecutable: false },
+          { name: "verify", description: "Run project checks", isExecutable: true },
+        ],
+      },
+    });
     const result = await discoverSkills(droid, ctx(), io);
-    expect(calls).toEqual(["droid.load_session", "droid.list_skills"]);
+    expect(calls).toEqual(["droid.load_session", "droid.list_skills", "droid.list_commands"]);
     expect(state.closed).toBe(true);
     expect(result.invoke).toBe("slash");
     expect(result.skills).toEqual([
@@ -181,6 +194,21 @@ describe("factory-jsonrpc skill discovery (droid)", () => {
       { name: "nameless-ok", description: null }, // name-only renders name-only — dropped would be the lie
       { name: "review", description: "Review code changes" },
     ]);
+    expect(result.commands).toEqual([
+      {
+        name: "release",
+        description: "Prepare a release",
+        argumentHint: "[version]",
+        executable: false,
+      },
+      {
+        name: "verify",
+        description: "Run project checks",
+        argumentHint: null,
+        executable: true,
+      },
+    ]);
+    expect(result.commandError).toBeNull();
     // the ~500 KB of skill bodies never crosses the boundary
     expect(JSON.stringify(result)).not.toContain("skill body");
   });
@@ -190,6 +218,18 @@ describe("factory-jsonrpc skill discovery (droid)", () => {
     const err = await discoverSkills(droid, ctx({ sessionId: null }), io).catch((e) => e);
     expect((err as ProbeError).status).toBe(409);
     expect(calls).toHaveLength(0);
+  });
+
+  test("a rejected command registry preserves skills and names the partial result", async () => {
+    const { io, state } = scriptedRpc({
+      "droid.load_session": { sessionId: "s-1" },
+      "droid.list_skills": LIST,
+    });
+    const result = await discoverSkills(droid, ctx(), io);
+    expect(result.skills.map((skill) => skill.name)).toContain("review");
+    expect(result.commands).toEqual([]);
+    expect(result.commandError).toContain("droid.list_commands");
+    expect(state.closed).toBe(true);
   });
 });
 
@@ -217,6 +257,8 @@ describe("codex-app-server skill discovery (codex)", () => {
       { name: "browser:control", description: "Browser" },
       { name: "openai-docs", description: "Codex docs" },
     ]);
+    expect(result.commands).toEqual([]);
+    expect(result.commandError).toBeNull();
     expect(result.errors).toEqual(["/bad/SKILL.md: Missing 'description' in frontmatter"]);
   });
 
@@ -269,7 +311,11 @@ describe("TaskSkillCache", () => {
   }
 
   test("a second ask inside the TTL is served cached and discovers nothing new", async () => {
-    const { io, calls } = scriptedRpc({ "droid.load_session": {}, "droid.list_skills": { skills: [] } });
+    const { io, calls } = scriptedRpc({
+      "droid.load_session": {},
+      "droid.list_skills": { skills: [] },
+      "droid.list_commands": { commands: [] },
+    });
     const cache = new TaskSkillCache({ openRpc: io.openRpc, ttlMs: 60_000 });
     const task = skillTask("droid");
     const first = await cache.skills(task, droid);

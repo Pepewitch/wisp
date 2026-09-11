@@ -29,6 +29,7 @@ export type {
   ProbeStrategy,
   RpcFactory,
   RpcSession,
+  SlashCommandEntry,
   SkillCtx,
   SkillDiscoveryResult,
   SkillEntry,

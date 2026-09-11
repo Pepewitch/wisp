@@ -270,6 +270,52 @@ describe("keyboard and picking", () => {
     expect(calls).toHaveLength(0)
   })
 
+  it("a custom command is separate from skills and only prefills its reviewed form", async () => {
+    const onSend = vi.fn(async () => {})
+    mount(
+      <SteerBox
+        task={task({ harness: "droid" })}
+        skills={{
+          ...SKILLS,
+          commands: [
+            {
+              name: "release",
+              description: "Prepare a release",
+              argumentHint: "[version]",
+              executable: false,
+            },
+          ],
+        }}
+        onSend={onSend}
+      />,
+    )
+    type("/release")
+    await screen.findByTestId("slash-palette")
+    expect(screen.getByText("Commands")).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId("slash-command:release"))
+
+    expect(box().value).toBe("/release ")
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it("a command-registry failure leaves skills visible and says what is missing", async () => {
+    mount(
+      <SteerBox
+        task={task({ harness: "droid" })}
+        skills={{
+          ...SKILLS,
+          commands: [],
+          commandError: "custom commands unavailable: unsupported method",
+        }}
+        onSend={async () => {}}
+      />,
+    )
+    type("/")
+    await screen.findByTestId("slash-palette")
+    expect(screen.getByTestId("slash-code-review")).toBeInTheDocument()
+    expect(screen.getByText("custom commands unavailable: unsupported method")).toBeInTheDocument()
+  })
+
   it("a codex skill pick prefills a plain-text ask — no fake slash (SP2: codex has no headless /name)", async () => {
     const onSend = vi.fn(async () => {})
     const codexSkills: TaskSkills = {
