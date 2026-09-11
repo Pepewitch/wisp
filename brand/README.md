@@ -14,6 +14,7 @@ The generator lives in [`scripts/brand/`](../scripts/brand/):
 |---|---|
 | `geometry.ts` | the icosahedron, its edges, and the projection — derived, not typed |
 | `mark.ts` | the lantern, its flat reduction, the favicon, and the lockup |
+| `cli-icon.ts` | the Finder icon for a `wisp` binary, emitted as PDF without a rasteriser |
 | `wordmark-data.ts` | "Wisp" in Geist 600, converted to outlines once |
 | `build.ts` | writes this directory; rasterises the two PNGs with Chrome |
 
@@ -122,6 +123,8 @@ for one value that suits both.
 | `pwa-icon-192.png` | 192×192 | web app installation, opaque plate |
 | `pwa-icon-512.png` | 512×512 | web app installation and Android maskable icon |
 | `og.png` | 2560×1280 | GitHub social preview (rendered at 1280×640, shipped 2×) |
+| `cli-icon.pdf` | 512pt | Finder icon for an installed `wisp` binary |
+| `cli-icon-dev.pdf` | 512pt | the same, inverted onto light violet, for a local build |
 
 The two lockups use **distinct gradient id prefixes** (`ld`, `ll`). As separate
 files on GitHub they could safely share ids, but anyone inlining both into one
@@ -139,6 +142,16 @@ them both:
 The app draws the mark at 17–24px, which is reduction territory. Emitting that
 component from the generator rather than hand-copying its paths is what keeps the
 app's mark and `brand/` from drifting apart.
+
+The two CLI icons are the only vector-but-not-SVG assets here, and the only
+ones that never touch Chrome. macOS lists an unbundled executable in Privacy &
+Security ▸ App Management by its file icon, and a bare Mach-O has none, so
+every Wisp release and every local build shows up there as an identical
+unlabelled row. `scripts/macos/stamp-icon.sh` attaches one of these to a binary
+to break the tie; [`docs/MACOS-APP-MANAGEMENT.md`](../docs/MACOS-APP-MANAGEMENT.md)
+covers the rest. PDF because the slot that decides whether it worked is a ~16px
+Settings row, where a resampled raster is mush — the same 16px argument the
+reduction's tone mapping is built on, one step further.
 
 `og.png` is **not** served by the daemon and is not referenced by the app. It has
 to be uploaded by hand, once, at

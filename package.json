@@ -60,6 +60,7 @@
     "desktop:check": "bash scripts/desktop/check.sh",
     "desktop:build": "bash scripts/desktop/build-macos.sh",
     "tauri": "tauri",
+    "macos:stamp-icon": "bash scripts/macos/stamp-icon.sh",
     "brand": "bun run scripts/brand/build.ts",
     "brand:check": "bun run scripts/brand/build.ts --check"
   },
