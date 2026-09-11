@@ -2,7 +2,51 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.5 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.6 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.6 publication
+
+**Published and promoted on 2026-09-11.**
+[Wisp 0.5.6](https://github.com/Pepewitch/wisp/releases/tag/v0.5.6) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+20:09:47 UTC with ten release assets. The annotated tag resolves to clean main
+commit
+[`20c76c9d493c590d01607b9ae07cc1cf907f4542`](https://github.com/Pepewitch/wisp/commit/20c76c9d493c590d01607b9ae07cc1cf907f4542),
+landed through [PR #173](https://github.com/Pepewitch/wisp/pull/173) (release
+preparation), [PR #174](https://github.com/Pepewitch/wisp/pull/174), and
+[PR #175](https://github.com/Pepewitch/wisp/pull/175) (release-contract fixes).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34641113702)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, native-core, npm, Rust, supply-chain, and public-promotion dry-run checks passed |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `20c76c9`; the downloaded Linux binary reported 0.5.6 at that commit |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+Promotion completed with Homebrew tap commit
+[`9c166fccb1115f51e88cafbde1254815cfbfdfcb`](https://github.com/Pepewitch/homebrew-tap/commit/9c166fccb1115f51e88cafbde1254815cfbfdfcb)
+pushed at 20:17:06 UTC. Both update channels serve 0.5.6.
+
+Two earlier runs of the same tag failed before any asset was public and were
+diagnosed as release-contract sizing, not product regressions: the installer
+test's occupied-port readiness budget (20 attempts) predated the daemon's
+embedded UI bundle growing from 2.1 MB to 5.6 MB (#174), and the activation
+container's 768 MB cap was sized to the smaller bundle (#175, which also adds
+daemon-exit and cgroup reporting to that failure path). Both unpublished tags
+were deleted and re-cut per the recovery rule; no public bytes changed.
+
+0.5.6 adds database migration 9 (task workflows), so a 0.5.5 daemon cannot
+reopen a profile that 0.5.6 has opened. The run provenance here is the
+automated release workflow: no maintainer qualification — fresh-install or
+upgrade receipts, an updater journey across this version, or the paid
+evaluator panel — was performed for this publication, and this record does not
+claim them. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## 0.5.5 publication
 
