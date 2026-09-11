@@ -95,6 +95,46 @@ describe("create task dialog submission", () => {
     fireEvent.click(create)
     await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
   })
+
+  /**
+   * A drop is the third way a file arrives, and it must not be a side door
+   * around the attachment contract: the create carries it the same way a
+   * pasted or picked file would.
+   */
+  it("a dropped file becomes a pending row and rides with the create", async () => {
+    const request = vi.fn().mockResolvedValue({ id: "tk9zdy" })
+    const create = await mountWithRequest(request)
+    // the fixture harness has no image capability, so the drop is a text file:
+    // pdf, text and video reach every harness by path (A1d)
+    const CSV = new TextEncoder().encode("id,name\n1,a\n2,b\n")
+    const csvFile = new File([CSV], "orders.csv", { type: "text/csv" })
+
+    fireEvent.drop(screen.getByTestId("create-prompt-field"), {
+      dataTransfer: { types: ["Files"], files: [csvFile] },
+    })
+    await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
+    expect(screen.getByTestId("pending-attachments").textContent).toContain("orders.csv")
+
+    fireEvent.click(create)
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(request).toHaveBeenCalledWith(
+      "/api/tasks",
+      expect.objectContaining({
+        body: expect.objectContaining({
+          attachments: [{ name: "orders.csv", dataBase64: expect.any(String) }],
+        }),
+      }),
+    )
+  })
+
+  it("a non-file drag is not answered", async () => {
+    await mountWithRequest(vi.fn())
+    const field = screen.getByTestId("create-prompt-field")
+    fireEvent.dragEnter(field, { dataTransfer: { types: ["text/plain"] } })
+    expect(field.className).not.toContain("ring-2")
+    fireEvent.drop(field, { dataTransfer: { types: ["text/plain"], files: [] } })
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+  })
 })
 
 describe("create task dialog layout", () => {

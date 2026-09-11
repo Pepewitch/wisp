@@ -4,6 +4,7 @@ import { PendingAttachmentRows } from "@/components/pending-attachments"
 import {
   insertPastedText,
   undoPastedFile,
+  useComposerDrop,
   type PendingAttachments,
 } from "@/lib/attachments"
 import { handleComposerPaste } from "@/lib/paste-links"
@@ -27,8 +28,25 @@ export function PromptField({
   setPrompt: Dispatch<SetStateAction<string>>
   attachments: PendingAttachments
 }) {
+  // The prompt field is the drop zone: it fills the modal, so the whole
+  // "drop the file on the dialog" gesture lands here, in the same addFiles
+  // path a paste and a pick use.
+  const { dragging, dropHandlers } = useComposerDrop({
+    onFiles: (files) => attachments.addFiles(files),
+  })
   return (
-    <div className="px-4 pt-3.5">
+    <div
+      data-testid="create-prompt-field"
+      onDragEnter={dropHandlers.onDragEnter}
+      onDragOver={dropHandlers.onDragOver}
+      onDragLeave={dropHandlers.onDragLeave}
+      onDrop={dropHandlers.onDrop}
+      className={cn(
+        "px-4 pt-3.5",
+        // the focus treatment, answering the drag instead of the caret
+        dragging && "ring-2 ring-ring/15",
+      )}
+    >
       <textarea
         ref={box}
         rows={6}

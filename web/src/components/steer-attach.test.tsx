@@ -178,3 +178,51 @@ describe("SteerBox attachments", () => {
     expect(box.value).toBe("1. [APP-101: improve retry handling](https://example.com/issues/APP-101)")
   })
 })
+
+describe("SteerBox drag-drop", () => {
+  it("a dropped file lands in the same pending path as a paste, and the highlight comes down with the drop", async () => {
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    const composer = screen.getByTestId("steer-composer")
+
+    // only a FILE drag answers: enter and over raise the ring, a text drag does not
+    expect(composer.className).not.toContain("ring-2")
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["text/plain"] } })
+    expect(composer.className).not.toContain("ring-2")
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["Files"] } })
+    expect(composer.className).toContain("ring-2")
+
+    fireEvent.drop(composer, { dataTransfer: { types: ["Files"], files: [pngFile()] } })
+    await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
+    expect(screen.getByTestId("pending-attachments").textContent).toContain("shot.png")
+    expect(composer.className).not.toContain("ring-2")
+  })
+
+  it("crossing a child while dragging does not flash the highlight", () => {
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    const composer = screen.getByTestId("steer-composer")
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["Files"] } })
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["Files"] } })
+    fireEvent.dragLeave(composer, { dataTransfer: { types: ["Files"] } })
+    // one leave was the child; the drag is still over the surface
+    expect(composer.className).toContain("ring-2")
+    fireEvent.dragLeave(composer, { dataTransfer: { types: ["Files"] } })
+    expect(composer.className).not.toContain("ring-2")
+  })
+
+  it("a non-file drag passes through untouched and a drop without files attaches nothing", () => {
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    const composer = screen.getByTestId("steer-composer")
+    fireEvent.drop(composer, { dataTransfer: { types: ["text/plain"], files: [] } })
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+    expect(composer.className).not.toContain("ring-2")
+  })
+
+  it("a read-only task refuses the drop", () => {
+    render_(<SteerBox task={task({ archived: true })} hasImage onSend={() => {}} />)
+    const composer = screen.getByTestId("steer-composer")
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["Files"] } })
+    expect(composer.className).not.toContain("ring-2")
+    fireEvent.drop(composer, { dataTransfer: { types: ["Files"], files: [pngFile()] } })
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+  })
+})

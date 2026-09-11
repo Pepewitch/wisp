@@ -25,6 +25,7 @@ import {
 import {
   insertPastedText,
   undoPastedFile,
+  useComposerDrop,
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
@@ -450,13 +451,25 @@ function SteerComposer({
   // for a thumb" and "is the Return key a soft one" are two questions.
   const softKeyboard = touch && hasCoarsePointer()
   useAutosizeTextarea(boxRef, value)
+  // A dropped file lands in the same addFiles path a paste and a pick use. A
+  // read-only task refuses drops the way it refuses the textarea: a file that
+  // could never be sent must not look attachable.
+  const { dragging, dropHandlers } = useComposerDrop({
+    onFiles: (files) => attachments.addFiles(files),
+    disabled,
+  })
   return (
     <div
+      data-testid="steer-composer"
+      onDragEnter={dropHandlers.onDragEnter}
+      onDragOver={dropHandlers.onDragOver}
+      onDragLeave={dropHandlers.onDragLeave}
+      onDrop={dropHandlers.onDrop}
       className={cn(
         "border bg-surface transition-colors",
         // a softer, roomier sheet under a thumb; the pointer box is unchanged
         touch ? "rounded-2xl px-2.5 pt-2 pb-1.5" : "rounded-xl px-3 pt-2.5 pb-2",
-        focused
+        focused || dragging
           ? "border-accent-dim ring-2 ring-ring/15"
           : "border-border-strong"
       )}

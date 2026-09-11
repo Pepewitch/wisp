@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { ClipboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ClipboardEvent, DragEvent } from "react";
 
 /**
  * The client half of S3 attachments. The daemon's src/attachments.ts is the
@@ -8,7 +8,9 @@ import type { ClipboardEvent } from "react";
  * round-tripping. The two files share caps and wording by hand (the classic
  * UI's key-sharing contract, one level up).
  *
- * Paste-only this slice (drag-drop chrome is NOT scope). Pending rows render
+ * Paste- and drop-fed this slice: a picked, pasted or DROPPED file all land in
+ * the same `addFiles` read/validate path (the drop chrome itself is
+ * `useComposerDrop`, below). Pending rows render
  * as muted text (`name.png · 12 KB · ✕`) — no chip, no badge, no tint
  * (design law); the small thumbnail is content, not status.
  *
@@ -568,4 +570,90 @@ export function usePendingAttachments({
     remove,
     clear,
   };
+}
+
+export interface ComposerDropHandlers {
+  onDragEnter: (e: DragEvent) => void;
+  onDragOver: (e: DragEvent) => void;
+  onDragLeave: (e: DragEvent) => void;
+  onDrop: (e: DragEvent) => void;
+}
+
+/**
+ * Drop chrome for a composer surface — the third way a file arrives, beside
+ * the paperclip (A1a) and the paste. It hands dropped files to `onFiles`
+ * (always `addFiles`), so a drop cannot disagree with a pick or a paste about
+ * what is acceptable; the daemon re-sniffs regardless.
+ *
+ * `dragging` is the surface's cue to answer the drop — the same treatment as
+ * its focus ring, so the composer visibly opens for the file instead of
+ * swallowing it silently. Only a FILE drag answers: a dragged link or a text
+ * selection passes through untouched, because preventDefault is what takes a
+ * drag away from the browser's own handling.
+ *
+ * enter/leave are COUNTED because they fire on every child the drag crosses;
+ * a raw leave/enter pair would flash the highlight off and on across the gap.
+ * A drag that ends outside the surface — dropped on the page, or cancelled —
+ * never sends it a dragleave, so the reset also listens at the window while
+ * the highlight is up.
+ */
+export function useComposerDrop({
+  onFiles,
+  disabled = false,
+}: {
+  onFiles: (files: File[]) => void;
+  disabled?: boolean;
+}): { dragging: boolean; dropHandlers: ComposerDropHandlers } {
+  const [dragging, setDragging] = useState(false);
+  const depth = useRef(0);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const reset = () => {
+      depth.current = 0;
+      setDragging(false);
+    };
+    window.addEventListener("dragend", reset);
+    window.addEventListener("drop", reset);
+    return () => {
+      window.removeEventListener("dragend", reset);
+      window.removeEventListener("drop", reset);
+    };
+  }, [dragging]);
+
+  const dropHandlers = useMemo<ComposerDropHandlers>(() => {
+    // dataTransfer.types is live in the real API but plain in jsdom; the copy
+    // answers "is anything file-shaped being carried" for both.
+    const hasFiles = (e: DragEvent): boolean =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    return {
+      onDragEnter: (e) => {
+        if (disabled || !hasFiles(e)) return;
+        e.preventDefault();
+        depth.current += 1;
+        setDragging(true);
+      },
+      onDragOver: (e) => {
+        if (disabled || !hasFiles(e)) return;
+        // dragover must be prevented or the browser never fires drop
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      },
+      onDragLeave: (e) => {
+        if (disabled || !hasFiles(e)) return;
+        depth.current = Math.max(0, depth.current - 1);
+        if (depth.current === 0) setDragging(false);
+      },
+      onDrop: (e) => {
+        if (disabled || !hasFiles(e)) return;
+        e.preventDefault();
+        depth.current = 0;
+        setDragging(false);
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length > 0) onFiles(files);
+      },
+    };
+  }, [disabled, onFiles]);
+
+  return { dragging, dropHandlers };
 }
