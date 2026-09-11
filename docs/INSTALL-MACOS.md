@@ -1,9 +1,9 @@
 # Install Wisp Desktop and the daemon on Apple Silicon
 
-This guide covers Wisp **0.5.4**, the current daemon and Desktop release of the
+This guide covers Wisp **0.5.5**, the current daemon and Desktop release of the
 0.5 series. Public Desktop artifacts require Developer ID signing,
 Apple notarization, stapling, and signed in-app updates. See the
-[release notes](v0.5/RELEASE-NOTES-0.5.4.md) and
+[release notes](v0.5/RELEASE-NOTES-0.5.5.md) and
 [qualification ledger](v0.5/QUALIFICATION.md) for the current evidence.
 
 ## Scope and security notice
@@ -217,7 +217,7 @@ If the desktop Cask is not installed yet, replace its upgrade command with
 `brew install --cask Pepewitch/tap/wisp-desktop`.
 
 After alpha.12 is installed, later signed Desktop upgrades, including
-0.5.4, use the Tauri updater. Homebrew remains the recovery path:
+0.5.5, use the Tauri updater. Homebrew remains the recovery path:
 
 ```sh
 brew update
