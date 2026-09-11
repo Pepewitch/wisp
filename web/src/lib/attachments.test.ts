@@ -240,10 +240,17 @@ describe("per-file capability and the turn budget", () => {
     const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
     const chunk = new Uint8Array(18 * 1024 * 1024).fill(0x61);
     act(() => hook.result.current.addFiles([file(chunk, "one.csv"), file(chunk, "two.csv"), file(chunk, "three.csv")]));
-    await waitFor(() => expect(hook.result.current.list).toHaveLength(2));
+    await waitFor(() =>
+      expect(hook.result.current.note).toBe("three.csv: over the 50 MB limit for one turn"),
+    );
 
-    act(() => hook.result.current.addPastedText("id,name\n" + "1,a\n".repeat(PASTE_TO_FILE_CHARS), 0));
-    await waitFor(() => expect(hook.result.current.note).toContain("limit for one turn"));
+    // 36 MB is already attached. This paste is below the 20 MB text-file cap,
+    // but genuinely crosses the 50 MB turn cap.
+    const pasted = "a".repeat(15 * 1024 * 1024);
+    act(() => hook.result.current.addPastedText(pasted, 0));
+    await waitFor(() =>
+      expect(hook.result.current.note).toBe("pasted-1.txt: over the 50 MB limit for one turn"),
+    );
     // no row landed, so there is nothing to insert back — an offer that does
     // nothing when taken is worse than no offer
     expect(hook.result.current.pastedText).toBeNull();
