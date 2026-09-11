@@ -2,7 +2,37 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.4 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.5 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.5 publication
+
+**Published and promoted on 2026-09-11.**
+[Wisp 0.5.5](https://github.com/Pepewitch/wisp/releases/tag/v0.5.5) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+05:03:54 UTC with ten release assets. The annotated tag resolves to clean main
+commit
+[`5f4fd1731a5dc7adf728742a4de491c6f68b85a1`](https://github.com/Pepewitch/wisp/commit/5f4fd1731a5dc7adf728742a4de491c6f68b85a1),
+landed through [PR #159](https://github.com/Pepewitch/wisp/pull/159).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34563565288)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, native-core, npm, Rust, supply-chain, and public-promotion dry-run checks passed |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `5f4fd173`; the downloaded Linux binary reported 0.5.5 at that commit |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+Promotion completed at **05:11:34 UTC**, with Homebrew tap commit
+[`179ab6477a73dfe0d0179f9555da89a40f551ada`](https://github.com/Pepewitch/homebrew-tap/commit/179ab6477a73dfe0d0179f9555da89a40f551ada).
+Both update channels serve 0.5.5, verified anonymously after promotion.
+
+0.5.5 adds no database migration. No installed daemon service or production
+Desktop profile was upgraded for these checks. The published assets and release
+body remain immutable; this ledger records the completed outcome separately.
 
 ## 0.5.4 publication
 
