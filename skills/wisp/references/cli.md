@@ -50,7 +50,7 @@ the harness never reported one), turn count, age, title, and `state_detail`.
 ```
 wisp show <task>
 wisp result <task> [turn]
-wisp log <task> [turn] [-f|--follow] [--raw]
+wisp log <task> [turn] [-f|--follow] [--raw|--diagnostic]
 ```
 
 `show`: state + state_detail, harness/model/effort, session id, worktree,
@@ -69,6 +69,15 @@ eviction; live logs never qualify. `log`, including `--raw`, explicitly says
 when a transcript was evicted. Prompt, result and indexed prose remain.
 Configure `turnLogRetentionEnabled`, `turnLogRetentionDays`, and
 `turnLogMaxBytes` separately from `turnTranscriptBytes`.
+
+```
+wisp search <text> [-a] [--json]
+```
+
+Search exact text across task titles, turn prompts/results, queued messages,
+and indexed agent prose. Results name the matched field and include a snippet.
+`-a` includes archived tasks; `--json` returns the daemon's response for scripts.
+In the UI, `⌘F` searches the current task and `⌘⇧F` searches across tasks.
 
 ```
 wisp wait <task> [--timeout <sec>]
@@ -98,6 +107,11 @@ Stop is pending or incomplete; retry Stop after resolving the reported failure.
 The session survives, so a later `send` can continue the conversation.
 `fresh` clears the stored session id so the NEXT turn
 starts cold (the web palette's `/fresh`).
+
+Messages are persisted before delivery. If native admission cannot be
+confirmed durably, Wisp leaves the message queued and reports uncertain
+delivery rather than risking loss. Recovery can replay that stable-ID
+message at least once.
 
 There is no CLI verb for changing an existing task's harness, model, or
 effort. That is a composer control in the browser and Desktop app, and a
@@ -209,6 +223,25 @@ wisp version        print the Wisp version
 
 `init` creates or validates private state and selects a first loopback port.
 It does not start the daemon. A persisted port never changes silently.
+
+`wisp log <task> [turn] --diagnostic` exports a retained JSONL diagnostic
+snapshot, not a live stream. Records are bounded, and oversized protocol
+records carry omission markers; this is not a byte-for-byte pipe dump.
+Exports can contain sensitive harness output.
+
+Diagnostic archives are private and enabled by default. Settled archives
+expire after 7 days and share a 512 MiB quota, evicting oldest whole turns
+first. Configure `diagnosticEnabled`, `diagnosticRetentionDays`, and
+`diagnosticMaxBytes` in `config.json`, then restart. A turn reports whether
+its archive is complete, partial, evicted, disabled, or unavailable.
+Diagnostic loss never stops the harness. These settings are separate from
+transcript capture and archived turn-log retention.
+
+`maxConcurrentTasks` defaults to 100, including tasks preparing a workspace.
+At capacity, finish or stop another task and retry; new tasks are not silently
+queued. Set a positive integer in `config.json` and restart to change the
+limit. Steering a running task keeps its slot, and the limit does not cap the
+number of turns in a task.
 
 ## Conventions that apply everywhere
 

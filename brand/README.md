@@ -143,15 +143,9 @@ The app draws the mark at 17–24px, which is reduction territory. Emitting that
 component from the generator rather than hand-copying its paths is what keeps the
 app's mark and `brand/` from drifting apart.
 
-The two CLI icons are the only vector-but-not-SVG assets here, and the only
-ones that never touch Chrome. macOS lists an unbundled executable in Privacy &
-Security ▸ App Management by its file icon, and a bare Mach-O has none, so
-every Wisp release and every local build shows up there as an identical
-unlabelled row. `scripts/macos/stamp-icon.sh` attaches one of these to a binary
-to break the tie; [`docs/MACOS-APP-MANAGEMENT.md`](../docs/MACOS-APP-MANAGEMENT.md)
-covers the rest. PDF because the slot that decides whether it worked is a ~16px
-Settings row, where a resampled raster is mush — the same 16px argument the
-reduction's tone mapping is built on, one step further.
+The two CLI icons are vector PDFs for small Finder and System Settings rows.
+See [CLI file icons](#cli-file-icons) below and
+[macOS permissions](../docs/INSTALL-MACOS.md#macos-permissions).
 
 `og.png` is **not** served by the daemon and is not referenced by the app. It has
 to be uploaded by hand, once, at
@@ -178,6 +172,28 @@ the launcher supply its own corner shape. To regenerate just these PNGs using
 a particular Chrome/Chromium binary, set `CHROME_PATH` and run
 `bun run scripts/brand/build.ts --pwa-only`. Add `--check` to verify them without
 rewriting. This also checks the shared generated SVGs and favicon.
+
+## CLI file icons
+
+Generate the icons, then stamp an installed binary or a local development
+build on macOS:
+
+```sh
+bun run brand
+bash scripts/macos/stamp-icon.sh
+bash scripts/macos/stamp-icon.sh --dev dist/wisp
+```
+
+The production icon uses a dark background; the development icon uses light
+violet. Reopen System Settings to refresh the display. An upgrade replaces the
+file and its icon, so stamp again if wanted. To remove an icon, use
+`bash scripts/macos/stamp-icon.sh --clear /path/to/wisp`.
+
+Stamping writes a resource fork, not the Mach-O code directory. Ordinary
+`codesign --verify` still passes, but `codesign --verify --strict` rejects the
+resource fork as detritus. The script therefore refuses `dist/release/`.
+Never stamp artifacts for publication. An icon does not change the binary's
+code-signing identity or permissions.
 
 ## Typeface
 

@@ -1,317 +1,165 @@
-# Install Wisp Desktop and the daemon on Apple Silicon
+# Install Wisp on macOS
 
-This guide covers Wisp **0.5.5**, the current daemon and Desktop release of the
-0.5 series. Public Desktop artifacts require Developer ID signing,
-Apple notarization, stapling, and signed in-app updates. See the
-[release notes](v0.5/RELEASE-NOTES-0.5.5.md) and
-[qualification ledger](v0.5/QUALIFICATION.md) for the current evidence.
+Wisp Desktop supports **Apple Silicon**, with a configured minimum of
+macOS 12.3. Intel Macs are unsupported. OS coverage is limited; see the
+[qualification ledger](v0.5/QUALIFICATION.md) for tested journeys and gaps.
 
-## Scope and security notice
-
-The 0.5 release target is:
-
-- Apple Silicon arm64 only, with a configured macOS 12.3 minimum;
-- qualified on a limited Apple Silicon test environment;
-- installed from the fully qualified custom Homebrew tap; and
-- for every current release, blocked from immutable asset publication unless
-  Developer ID signing, notarization, and stapling all succeed, then blocked
-  from channel promotion unless the public bytes and Homebrew recipes pass.
-
-Intel Macs are unsupported. The configured 12.3 deployment target is enforced
-by the app metadata and Mach-O loader command, but it is not evidence that
-12.3 or every later macOS version has been qualified. Alpha.8 was ad-hoc signed
-and may have required a per-app Gatekeeper exception. Current releases open
-normally only after their release workflow proves Developer ID signing,
-notarization, and stapling. Do not disable or bypass Gatekeeper for an artifact
-that fails those checks. Verify the download URL is under
-`github.com/Pepewitch/wisp`, that Homebrew accepts the recipe checksum, and that
-`wisp version --json` reports the release version and commit.
-
-## Before you start
-
-You need:
-
-- an Apple Silicon Mac (`uname -m` prints `arm64`);
-- Homebrew;
-- Git and a repository with `user.name` and `user.email`;
-- at least one installed and authenticated harness: `droid`, `claude`,
-  `codex`, `cursor-agent`, or `opencode`; and
-- permission to install applications and manage your user service.
-
-Wisp runs as your user so it can access your repositories and harness
-credentials. Its state stays in `~/.wisp`, outside Homebrew's versioned prefix.
-launchd does not source interactive shell startup files; the Formula must give
-the service a path to Git and documented harness locations. Prefer each
-harness's secure per-user login or keychain. Never put an API key in the
-Formula or launchd plist.
+You need Homebrew, Git, a repository with a configured Git identity, and an
+installed and authenticated harness: Droid, Claude Code, Codex, Cursor, or
+OpenCode. Wisp runs as your user, not in a sandbox.
 
 ## Install the desktop app and daemon
 
-Install the desktop app from the public tap:
-
 ```sh
 brew install --cask Pepewitch/tap/wisp-desktop
-```
-
-The Cask declares `Pepewitch/tap/wisp` as a required Formula dependency.
-Homebrew therefore installs the CLI/daemon as part of this command when Wisp
-is absent. Both recipes download immutable arm64 release assets and verify
-their SHA-256 checksums. Neither requires Bun.
-
-To install only the daemon, CLI, and browser UI, use:
-
-```sh
-brew install Pepewitch/tap/wisp
-```
-
-Launch the desktop app:
-
-```sh
 open -a Wisp
 ```
 
-The signed and notarized current artifact should not require **Open Anyway**.
-If macOS says it cannot verify it or offers to move it to Trash, stop and
-check the installed version, Cask checksum, signature, and notarization ticket;
-do not remove quarantine attributes or disable Gatekeeper. The per-app Privacy
-& Security exception documented by Apple applies to the older ad-hoc alpha.8,
-not to the expected current release posture. See
-[Open a Mac app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+The Cask includes the CLI/daemon Formula. Neither needs Bun or Node.
+Homebrew checks the release checksums; current Desktop releases are Developer
+ID signed and notarized. If macOS rejects a current app, stop and verify the
+download and signature. Do not disable Gatekeeper or remove quarantine to
+bypass that failure.
 
-On first launch, Local reports whether the standard Wisp profile and service
-are ready. Wisp Desktop asks for confirmation before it initializes the
-profile or starts the Homebrew service. It never starts a second child daemon
-owned by the app.
+In Desktop:
 
-The command-line equivalent initializes production state and starts the
-managed launchd service:
+1. Complete **Local** setup. Wisp asks before initializing `~/.wisp` or
+   starting the Homebrew user service.
+2. Add a repository with the folder picker.
+3. Choose your harness and create a small task.
+
+Desktop connects to the managed daemon; it does not start a second app-owned
+daemon. Closing Desktop leaves the daemon and its tasks running.
+
+### CLI-only installation
 
 ```sh
+brew install Pepewitch/tap/wisp
 wisp init
 brew services start wisp
-wisp token
+wisp project add /path/to/repo
 wisp doctor --harness droid
+wisp new /path/to/repo "Find a small bug, fix it, and run the tests." --harness droid
 ```
 
-`brew services` runs the daemon under launchd, which does not inherit this
-shell's environment. Doctor's `harness` and `harness auth` lines describe the
-shell that ran the command, so a green line does not on its own prove the
-managed daemon can authenticate a harness whose credential you exported
-interactively. The rule and its confirmation step are in
-[Harness credentials under a service manager](INSTALL.md#harness-credentials-under-a-service-manager).
+Use your repository path and harness. `wisp token` prints the URL and private
+token for the browser UI. Use that URL rather than assuming port `8710`.
 
-The desktop Add Project action uses the native folder picker while Local is
-active. You can still open the URL printed by `wisp token` to use the browser
-UI. Do not assume the URL ends in `:8710`; use the persisted URL printed by
-Wisp.
+**Credentials:** launchd does not source your interactive shell configuration.
+Per-user harness login files may be available while shell-exported API keys
+are not. Doctor probes the shell that ran it, so verify authentication with a
+real daemon-launched task. See
+[service credentials](INSTALL.md#harness-credentials-under-a-service-manager)
+if the two disagree.
 
 ## Add a remote daemon
 
-Click `+` in the desktop header and enter a unique tab name, the daemon URL,
-and its access token. Wisp Desktop performs an authenticated capability check
-before saving the connection, pins the daemon identity it reached, and stores
-the token in the macOS Keychain. Tokens never return from native code to the
-webview.
+Click `+` in Desktop and enter a name, URL, and token. The daemon must already
+be reachable through trusted HTTPS or an exact-loopback SSH tunnel. Follow
+[remote access](REMOTE-ACCESS.md); never expose the Wisp port to the internet.
+Enter project paths as they exist on the remote machine, not your Mac.
 
-A URL and token do not create network connectivity. The remote daemon must
-already be reachable through a trusted HTTPS route such as Tailscale Serve, or
-through an exact-loopback user-managed tunnel. Never expose the Wisp port
-directly to the public internet. When adding a project on a remote tab, enter
-the absolute path as it exists on the remote daemon's machine; the local
-folder picker is deliberately unavailable there.
-
-Local and remote tab names are desktop-only labels and can be renamed. Remove
-connection works while the daemon is offline: it immediately revokes the
-desktop route and removes the active metadata, then attempts to delete the
-Keychain credential. If credential cleanup fails, Wisp reports it and retains
-a tombstone so **Reset desktop data** or the next launch can retry. Removal does
-not stop remote agents or delete daemon projects, tasks, worktrees, or history.
-
-Closing Wisp Desktop has the same non-destructive property: every daemon and
-running agent continues independently.
-
-## Port selection and collision behavior
-
-Production state and its selected port live in `~/.wisp/config.json`.
-
-- A new `wisp init` prefers `127.0.0.1:8710`.
-- If that port is already occupied during first initialization, Wisp
-  tries `8711` through `8799`, selects the first available loopback port, and
-  persists it.
-- If that complete range is occupied, initialization stops and asks for an
-  explicit unused port, for example `wisp init --port 8800`.
-- A later daemon restart never silently changes the persisted port.
-- If another process later occupies that port, Wisp exits nonzero and names
-  the address. It does not kill the process or choose another port behind your
-  back.
-
-Inspect the listener before changing anything:
-
-```sh
-port=8710 # replace with the configured port
-lsof -nP -iTCP:"$port" -sTCP:LISTEN
-```
-
-If it is another Wisp instance, stop the instance you do not intend to use. If
-it is another application, either move that application or edit the numeric
-`port` in `~/.wisp/config.json`, then restart Wisp:
-
-```sh
-brew services restart wisp
-wisp token
-wisp doctor
-```
-
-Any Tailscale Serve, SSH tunnel, bookmark, or local integration must be updated
-to the new URL. Keep `host` set to `127.0.0.1`.
+Remote tokens stay in the macOS Keychain, outside the webview. Removing a
+connection revokes its Desktop route and attempts to delete its saved
+credential, without stopping or deleting remote tasks. If credential removal
+fails, retry **Reset desktop data** or relaunch. For the protocol and storage
+details, see [Desktop transport](DESKTOP-TRANSPORT.md).
 
 ## Upgrade
 
-The browser header shows the running daemon version and an explicitly named
-daemon update action when its Homebrew service can update safely. The
-equivalent terminal command is:
+Open **Updates** in Desktop:
+
+- **Wisp Desktop** installs the application update and relaunches it.
+- **Local daemon** updates this Mac's managed daemon, regardless of the
+  selected connection tab.
+
+**Check now** installs nothing. Saved remote daemons must be updated on their
+own host or through their browser UI. The two local update operations cannot
+run together.
+
+For the managed daemon alone:
 
 ```sh
 wisp update
 ```
 
-Both paths refresh Wisp's fixed daemon channel, which is published in the same
-Homebrew tap commit as the matching Formula. The check therefore does not
-depend on whether this Mac has run `brew update`, and it cannot offer a GitHub
-release before Homebrew can install it. After you accept an update, Wisp runs
-the Homebrew refresh and Formula upgrade, verifies the installed binary,
-exits, and lets launchd start the new daemon. The browser reloads only after
-the new daemon answers its health check.
+Updates preserve data and repositories, but restarting the daemon closes
+terminal shells and can interrupt task setup. Running turns are reconciled
+after restart. Take a [backup](INSTALL.md#back-up-and-restore-a-wisp-home)
+first; the full update/rollback matrix is not qualified.
 
-Wisp Desktop has one **Updates** popover with two independent rows:
-
-- **Wisp Desktop** checks and installs the global application version;
-- **Local daemon** checks and updates the daemon on this Mac, regardless of the
-  selected connection tab.
-
-Saved remote daemons are never updated by Wisp Desktop; update them on their
-host or through their own browser UI. **Check now** refreshes both named rows
-but never installs either one. Desktop download and replacement start only
-after **Update Desktop and relaunch** is clicked. The optional launch check is
-Desktop-only and does not poll periodically. A Local daemon update in progress
-temporarily disables Desktop relaunch.
-
-The restart is immediate. Open web terminal shells stop, and an in-progress
-task setup may need to be retried. Running turns retain their durable logs and
-are reconciled by the new daemon.
-
-Alpha.8 predates the Desktop updater. Bootstrap the current release through Homebrew;
-`--greedy` is required because the new Cask declares that the application can
-update itself:
+Homebrew is also the bootstrap and repair path, including for older apps
+without an updater:
 
 ```sh
 brew update
 brew upgrade Pepewitch/tap/wisp
 brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop
 brew services restart wisp
-wisp version
-wisp doctor --harness droid
 ```
 
-If the desktop Cask is not installed yet, replace its upgrade command with
-`brew install --cask Pepewitch/tap/wisp-desktop`.
+An in-app update does not update Homebrew's Cask receipt. The `--greedy`
+command synchronizes it. For a damaged app, quit it and run
+`brew reinstall --cask Pepewitch/tap/wisp-desktop`. See
+[Desktop updates](DESKTOP-UPDATES.md) for signing, recovery, and compatibility.
 
-After alpha.12 is installed, later signed Desktop upgrades, including
-0.5.5, use the Tauri updater. Homebrew remains the recovery path:
+## Troubleshooting
 
-```sh
-brew update
-brew reinstall --cask Pepewitch/tap/wisp-desktop
-```
+| Problem | Next step |
+| --- | --- |
+| Local daemon is unavailable | Run `brew services info wisp`, then `wisp doctor`. Start it with `brew services start wisp` if needed. |
+| A green auth check but a failed task | Check the daemon's credentials, not just your shell's; see [service credentials](INSTALL.md#harness-credentials-under-a-service-manager). |
+| Port is occupied | Inspect it with `lsof -nP -iTCP:8710 -sTCP:LISTEN`, substituting the port in `~/.wisp/config.json`. Stop the unintended listener or change Wisp's port, then restart the service. |
+| Profile is already being served | Use that daemon or stop its supervisor before restarting. Never delete `daemon-owner.lock.db`. |
+| Browser or tunnel cannot reconnect after a port change | Run `wisp token` and update bookmarks, tunnels, and proxy mappings to the persisted address. |
 
-An in-app replacement does not rewrite Homebrew's Caskroom receipt. Immediately
-after self-update, `Wisp.app` can correctly report the newer version while
-`brew info --cask wisp-desktop` still lists the bootstrap version as installed.
-This is bookkeeping, not an app downgrade. Run `brew update` followed by
-`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` to synchronize the
-receipt; Homebrew installs the same immutable archive and must not replace a
-newer app with an older one.
+Initialization prefers port `8710`, trying `8711`–`8799` if needed. An existing
+profile never silently changes ports. Separate daemons need separate
+`WISP_HOME` directories and ports. For source development, use the isolated
+workflow in [Contributing](../CONTRIBUTING.md).
 
-The updater and Cask install the same Developer ID signed, notarized archive.
-The update channel, version, URL, release notes, size, and Minisign signature
-are release-generated and native-controlled; the webview cannot choose them.
-See [Desktop updates](DESKTOP-UPDATES.md) for the trust and qualification
-contract.
+## macOS permissions
 
-Wisp Desktop never overwrites the Homebrew-managed daemon binary. An upgrade
-changes the managed executable and preserves `~/.wisp`, repositories, task
-history, branches, worktrees, user changes, Desktop metadata, and remote
-Keychain credentials.
+Desktop, the CLI/daemon, and agent tools are separate executables. A macOS
+permission prompt is not the same as a harness's tool-approval prompt.
+Wisp's built-in harnesses run with approval bypass enabled; see the
+[trust model](../SECURITY.md#trust-model).
 
-The button stays informational for a Homebrew binary started manually rather
-than through `brew services`; Wisp cannot promise that such a process will
-restart. Start the managed service before using automatic updates:
+The released CLI is currently **ad-hoc signed**, unlike Desktop. A different
+CLI build can have a different identity to macOS and leave another `wisp`
+entry in **Privacy & Security → App Management**. Changing its icon does not
+stabilize that identity or reduce its access.
 
-```sh
-brew services restart wisp
-```
+Do not infer from an entry alone that an operation was safe, that permission
+is required, or which child tool triggered it. If a prompt is unexpected, deny
+it and record the action and named requester. Check whether the task accesses
+a protected folder or modifies an application. Do not grant Full Disk Access
+or Accessibility as a blanket troubleshooting step.
 
-The public alpha.12-to-alpha.13 in-app update, subsequent Cask receipt sync,
-and daemon Formula restart preserved config, history, branches, worktrees, and
-repository work in one test environment. That historical result does not
-qualify the 0.4-to-0.5 update automatically. See the
-[0.5 qualification ledger](v0.5/QUALIFICATION.md) for publication results and
-the pending human updater receipt. OS coverage remains limited.
-
-## Develop beside the installed service
-
-Never point development at production `~/.wisp`. The repository's development
-command defaults to separate state and port `18710`. Install its dedicated
-source launcher once:
-
-```sh
-bun run dev:install-cli
-bun run dev
-```
-
-The installed daemon then owns `~/.wisp` and its selected port. The development
-daemon and Vite share `~/.wisp-dev` and port `18710`. If `18710` is occupied,
-choose another unused development port before the first run:
-
-```sh
-wisp-dev init --port 18711
-bun run dev
-```
-
-Open the development URL Vite prints, normally <http://localhost:5173>.
-
-Use bare `wisp` for production and `wisp-dev` for development. The latter
-ignores a globally exported `WISP_HOME` and always selects `~/.wisp-dev`
-unless `WISP_DEV_HOME` explicitly chooses another non-production directory.
-Do not copy the production token or database into the development home.
+For old App Management entries, first identify the installed executable with
+`command -v wisp` and `ls -l "$(brew --prefix wisp)/bin/wisp"`. Remove only
+entries you have identified in System Settings; revoking one may cause a
+future access request. Avoid resetting all applications' permissions.
+Optional [CLI icon stamping](../brand/README.md#cli-file-icons) helps label
+installed binaries, but is not a security fix.
 
 ## Remove
 
-If you want saved remote credentials deleted, remove each remote connection or
-use **Reset desktop data** before uninstalling. Cask uninstall quits and
-removes the application but intentionally has no destructive `zap`; desktop
-metadata and remote Keychain entries otherwise remain available for a later
-reinstall.
-
-Remove only the desktop app:
+To delete saved remote credentials, remove connections or use **Reset desktop
+data** before uninstalling. Otherwise, Desktop metadata and Keychain entries
+remain for a later reinstall.
 
 ```sh
 brew uninstall --cask wisp-desktop
 ```
 
-The daemon is a separate Formula and remains installed. Remove it only when it
-is no longer needed:
+The daemon is separate. Remove it only when no longer needed:
 
 ```sh
 brew services stop wisp
 brew uninstall wisp
 ```
 
-Homebrew removes its managed binary and service definition. It does not remove
-`~/.wisp`; inspect that directory and all referenced worktrees before deleting
-anything manually.
-
-Upgrading and removing Wisp leaves its entries in **System Settings ▸ Privacy &
-Security ▸ App Management** behind. See
-[the `wisp` rows in macOS App Management](MACOS-APP-MANAGEMENT.md) for why they
-accumulate, which ones are dead, and how to clear them.
+Homebrew preserves `~/.wisp`, repositories, branches, and worktrees.
+Inspect retained data before deleting it; uninstalling does not clear macOS
+privacy decisions.
