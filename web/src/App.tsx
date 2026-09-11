@@ -18,6 +18,7 @@ import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
+import { FileViewerProvider } from "@/components/file-viewer"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
@@ -57,6 +58,7 @@ import {
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
+import { revealFileHandler } from "@/lib/external-links"
 import { groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -364,7 +366,15 @@ function MainView({
     />
   )
   const changesNode = (
-    <ChangesPane taskId={selectedId} archived={archived} onRefresh={refreshDiff} />
+    // The pane's double-click opens a file the way a path in prose does, so it
+    // gets the same provider. An archived task's worktree is gone — no opener,
+    // which is exactly what the pane's own "unavailable" note already says.
+    <FileViewerProvider
+      taskId={archived ? null : selectedId}
+      onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
+    >
+      <ChangesPane taskId={selectedId} archived={archived} onRefresh={refreshDiff} />
+    </FileViewerProvider>
   )
   const terminalNode = (
     <TerminalSection

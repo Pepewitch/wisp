@@ -12,6 +12,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }))
 
 import { ChangesPane } from "./changes-pane"
+import { FileViewerProvider } from "./file-viewer"
 
 const TRACKED = `diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -110,5 +111,63 @@ index 0000000..e69de29
     await waitFor(() => expect(screen.getByText("empty.txt")).toBeInTheDocument())
     fireEvent.click(screen.getByText("empty.txt"))
     expect(screen.getByText("Empty file — nothing to show")).toBeInTheDocument()
+  })
+})
+
+describe("opening a file from the Changes pane", () => {
+  /** Diff and file requests both land on the one mocked transport. */
+  function okDiffAndFile() {
+    mocks.api.mockImplementation((path: string) =>
+      path.includes("/file")
+        ? Promise.resolve({
+            kind: "text",
+            path: "src/a.ts",
+            text: "const a = 1\n",
+            bytes: 12,
+            truncated: false,
+          })
+        : Promise.resolve({
+            diff: TRACKED,
+            truncated: false,
+            untracked: [],
+            base: "8f2a1c9",
+            worktreeReason: null,
+          }),
+    )
+  }
+
+  it("double-clicking a row opens the whole file in the viewer", async () => {
+    okDiffAndFile()
+    withClient(
+      <FileViewerProvider taskId="tk9zdy">
+        <ChangesPane taskId="tk9zdy" archived={false} />
+      </FileViewerProvider>,
+    )
+    await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
+    fireEvent.doubleClick(screen.getByText("a.ts"))
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer).toHaveTextContent("const a = 1"))
+    expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("src/a.ts")
+  })
+
+  it("a single click still selects the diff, and only the diff", async () => {
+    okDiffAndFile()
+    withClient(
+      <FileViewerProvider taskId="tk9zdy">
+        <ChangesPane taskId="tk9zdy" archived={false} />
+      </FileViewerProvider>,
+    )
+    await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("a.ts"))
+    expect(screen.getByText(/TRACKED_ADD/)).toBeInTheDocument()
+    expect(screen.queryByTestId("file-viewer")).toBeNull()
+  })
+
+  it("double-click is a no-op with no viewer behind the pane", async () => {
+    okDiff()
+    withClient(<ChangesPane taskId="tk9zdy" archived={false} />)
+    await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
+    fireEvent.doubleClick(screen.getByText("a.ts"))
+    expect(screen.queryByTestId("file-viewer")).toBeNull()
   })
 })

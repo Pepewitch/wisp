@@ -45,11 +45,43 @@ describe("the worktree file viewer", () => {
   it("reads anything else as its own bytes rather than as a document", async () => {
     const request = vi
       .fn()
+      .mockResolvedValue({ ...PLAN, path: "notes.txt", text: "# just words\n" })
+    withTransport(<FileViewer taskId="tk9zdy" path="notes.txt" onClose={() => {}} />, request)
+    // the source as written, in a pre — not markdown-processed
+    const pre = await waitFor(() => screen.getByText(/just words/))
+    expect(pre.tagName).toBe("PRE")
+    // the dialog's own title is an h2; a "# line" read as markdown would be an h1
+    expect(screen.getByTestId("file-viewer").querySelector("h1")).toBeNull()
+  })
+
+  /** Source with a known extension keeps its bytes AND gets prose's colours. */
+  it("highlights a code file with the same palette a transcript fence wears", async () => {
+    const request = vi
+      .fn()
       .mockResolvedValue({ ...PLAN, path: "src/a.ts", text: "export const a = 1\n" })
     withTransport(<FileViewer taskId="tk9zdy" path="src/a.ts" onClose={() => {}} />, request)
-    // the source as written, in a pre — not markdown-processed
-    const pre = await waitFor(() => screen.getByText(/export const a = 1/))
-    expect(pre.tagName).toBe("PRE")
+    // the viewer is a portal, so queries scope to it, not to render's container
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer.querySelector(".hljs-keyword")).not.toBeNull())
+    expect(viewer.querySelector(".hljs-keyword")?.textContent).toBe("export")
+    expect(viewer).toHaveTextContent("export const a = 1")
+    // read as source: nothing in it was interpreted as markdown
+    expect(viewer.querySelector("pre")).not.toBeNull()
+    expect(viewer.querySelector("h1")).toBeNull()
+  })
+
+  /** A fence IN the file is text, not the end of the block it is shown in. */
+  it("shows a file's own fences as content, never as structure", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/b.md.ts",
+      text: "const doc = `# not a heading\n```\n`\n",
+    })
+    withTransport(<FileViewer taskId="tk9zdy" path="src/b.md.ts" onClose={() => {}} />, request)
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer.querySelector(".hljs-keyword")).not.toBeNull())
+    expect(viewer).toHaveTextContent("# not a heading")
+    expect(viewer.querySelector("h1")).toBeNull()
   })
 
   /** Binary is a state the viewer can talk about, which is why it is not an error. */
