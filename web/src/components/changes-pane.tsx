@@ -5,6 +5,7 @@ import { Button, DiffStat, PaneHeader } from "@/components/primitives"
 import { useDiff, type DiffData } from "@/hooks/queries"
 import { hunkGaps, hunkSection, parseDiff, type DiffFile, type DiffLine } from "@/lib/diff"
 import { cn, oneLine } from "@/lib/utils"
+import { useWorktreeFileOpener } from "@/lib/worktree-files"
 
 /**
  * File list first (skills/wisp-dev/references/frontend.md §7): one row per changed file, directory
@@ -112,6 +113,9 @@ function Body({
   selected: string | null
   onSelect: (path: string | null) => void
 }) {
+  // a hook, so it sits above the early returns; null without a provider, and
+  // the early-return states render no rows that could ask for it anyway
+  const openFile = useWorktreeFileOpener()
   if (taskId === null) return <Note>No task selected</Note>
   if (archived) return <Note>Diff viewing is unavailable for archived tasks.</Note>
   // oneLine() on both: the daemon already sanitizes git's stderr, and the pane
@@ -132,11 +136,20 @@ function Body({
   const file = parsed.files.find((f) => f.path === selected) ?? null
   const selectedUntracked = selected !== null && untrackedNames.has(selected)
 
+  // A click reads the diff; a double-click reads the file itself, in the same
+  // viewer a path in prose opens. Absent without a provider (the gallery, an
+  // archived task) the gesture is simply not there.
   return (
     <>
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
         {tracked.map((f) => (
-          <FileRow key={f.path} file={f} selected={f.path === selected} onSelect={() => onSelect(f.path)} />
+          <FileRow
+            key={f.path}
+            file={f}
+            selected={f.path === selected}
+            onSelect={() => onSelect(f.path)}
+            onOpen={openFile ? () => openFile(f.path) : undefined}
+          />
         ))}
         {data.untracked.map((path) => (
           <UntrackedRow
@@ -144,6 +157,7 @@ function Body({
             path={path}
             selected={path === selected}
             onSelect={() => onSelect(path)}
+            onOpen={openFile ? () => openFile(path) : undefined}
           />
         ))}
         {file && <FileDiff file={file} />}
@@ -170,12 +184,15 @@ function Body({
 
 function Row({
   onSelect,
+  onOpen,
   selected,
   dir,
   base,
   children,
 }: {
   onSelect?: () => void
+  /** Double-click: the whole file in the viewer, not just its diff. */
+  onOpen?: () => void
   selected?: boolean
   dir: string | null
   base: string
@@ -186,6 +203,7 @@ function Row({
       type="button"
       data-diff-file={`${dir ?? ""}${base}`}
       onClick={onSelect}
+      onDoubleClick={onOpen}
       className={cn(
         "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left transition-colors",
         selected ? "bg-accent" : "hover:bg-hover",
@@ -205,11 +223,21 @@ function split(path: string): { dir: string | null; base: string } {
   return i === -1 ? { dir: null, base: path } : { dir: path.slice(0, i + 1), base: path.slice(i + 1) }
 }
 
-function FileRow({ file, selected, onSelect }: { file: DiffFile; selected: boolean; onSelect: () => void }) {
+function FileRow({
+  file,
+  selected,
+  onSelect,
+  onOpen,
+}: {
+  file: DiffFile
+  selected: boolean
+  onSelect: () => void
+  onOpen?: () => void
+}) {
   const { dir, base } = split(file.path)
   const note = file.isBinary ? "binary" : file.isNew ? "new" : file.isDeleted ? "deleted" : undefined
   return (
-    <Row dir={dir} base={base} selected={selected} onSelect={onSelect}>
+    <Row dir={dir} base={base} selected={selected} onSelect={onSelect} onOpen={onOpen}>
       <DiffStat adds={file.adds} dels={file.dels} note={note} />
     </Row>
   )
@@ -219,14 +247,16 @@ function UntrackedRow({
   path,
   selected,
   onSelect,
+  onOpen,
 }: {
   path: string
   selected: boolean
   onSelect: () => void
+  onOpen?: () => void
 }) {
   const { dir, base } = split(path)
   return (
-    <Row dir={dir} base={base} selected={selected} onSelect={onSelect}>
+    <Row dir={dir} base={base} selected={selected} onSelect={onSelect} onOpen={onOpen}>
       <span className="shrink-0 font-mono text-[10.5px] text-faint">untracked</span>
     </Row>
   )

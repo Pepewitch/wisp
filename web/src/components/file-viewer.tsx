@@ -20,7 +20,10 @@ import { resolveAgainst, WorktreeFileContext } from "@/lib/worktree-files"
  *
  * Markdown is rendered, because a plan is a document and reading it as source
  * defeats the point. Everything else is the file's own bytes in mono on the
- * code surface — a `.ts` is meant to be read as what it is.
+ * code surface — a `.ts` is meant to be read as what it is. An extension that
+ * names a language prose can highlight reads as source WITH colour: the bytes
+ * are the same bytes, just wearing the `--syntax-*` palette a code fence in a
+ * transcript already wears.
  *
  * Fully controlled, like the image viewer: `path` lives with whoever opened it.
  */
@@ -79,9 +82,7 @@ export function FileViewer({
                   <Prose text={file.text} />
                 </WorktreeFileContext.Provider>
               ) : (
-                <pre className="font-mono text-[11.5px] leading-[1.75] whitespace-pre-wrap text-foreground/85">
-                  {file.text}
-                </pre>
+                <SourceFile path={file.path} text={file.text} />
               )
             ) : null}
           </div>
@@ -120,6 +121,93 @@ export function FileViewer({
 /** Rendered as a document, not as source. Extensions only — this is presentation. */
 function isMarkdown(path: string): boolean {
   return /\.(?:md|markdown|mdx)$/i.test(path)
+}
+
+/**
+ * A source file: the bytes verbatim, highlighted when the extension names a
+ * language the prose highlighter knows.
+ *
+ * The highlighting IS prose's: the file goes through `Prose` as one fenced
+ * block, so `rehype-highlight` colours it with the same `--syntax-*` tokens a
+ * fence in a transcript gets, and the same 20 KB ceiling (prose-highlight.ts)
+ * drops a huge file back to plain mono instead of stalling the popup. The
+ * fence is one backtick longer than the file's own longest run, so nothing in
+ * the file can close it early and leak out as markdown.
+ *
+ * The fence's own card comes off (`[&_pre]` overrides): this surface is the
+ * viewer's, and a card inside it would read as a document, which a source
+ * file is not. What survives is exactly the colour.
+ *
+ * An extension the map does not know — `.txt`, `.log`, `.env` — keeps the
+ * plain pre it always had: guessing at a language is the thing
+ * `detect: false` exists to refuse.
+ */
+function SourceFile({ path, text }: { path: string; text: string }) {
+  const language = sourceLanguage(path)
+  if (language === null) {
+    return (
+      <pre className="font-mono text-[11.5px] leading-[1.75] whitespace-pre-wrap text-foreground/85">
+        {text}
+      </pre>
+    )
+  }
+  let longest = 0
+  for (const run of text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length)
+  const fence = "`".repeat(Math.max(3, longest + 1))
+  return (
+    <Prose
+      text={`${fence}${language}\n${text}\n${fence}`}
+      className="[&_pre]:mt-0 [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
+    />
+  )
+}
+
+/**
+ * Extension → a language lowlight's `common` set registers. An entry is a
+ * promise the colour will come out; an extension NOT here renders plain,
+ * never guessed (the same rule an unlabelled fence already lives by).
+ */
+const SOURCE_LANGUAGES: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  json: "json",
+  css: "css",
+  html: "xml",
+  xml: "xml",
+  svg: "xml",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  go: "go",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  hpp: "cpp",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  yaml: "yaml",
+  toml: "ini",
+  ini: "ini",
+  sql: "sql",
+  diff: "diff",
+}
+
+function sourceLanguage(path: string): string | null {
+  const name = path.slice(path.lastIndexOf("/") + 1)
+  const dot = name.lastIndexOf(".")
+  if (dot <= 0) return null // extensionless, or a dotfile like `.env`
+  return SOURCE_LANGUAGES[name.slice(dot + 1).toLowerCase()] ?? null
 }
 
 /**
