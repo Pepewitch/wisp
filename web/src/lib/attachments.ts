@@ -153,6 +153,16 @@ export function looksLikeUtf8Text(b: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * src/attachments.ts's ISO-BMFF brand allowlist, mirrored. The container is not
+ * the format: HEIC and AVIF photos and M4A audio are ISO-BMFF too, so only
+ * these brands are video.
+ */
+const MP4_BRANDS = new Set([
+  "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "mp71", "mmp4",
+  "avc1", "dash", "M4V", "M4VH", "M4VP", "3gp4", "3gp5", "3g2a",
+]);
+
 /** src/attachments.ts's whole-buffer sniff, mirrored: magic bytes first, utf-8 text last. */
 export function sniffAttachmentType(b: Uint8Array): string | null {
   const image = sniffImageType(b);
@@ -160,7 +170,9 @@ export function sniffAttachmentType(b: Uint8Array): string | null {
   if (b.length >= 5 && ascii(b, 0, 5) === "%PDF-") return "application/pdf";
   if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
   if (b.length >= 12 && ascii(b, 4, 4) === "ftyp") {
-    return ascii(b, 8, 4) === "qt  " ? "video/quicktime" : "video/mp4";
+    const brand = ascii(b, 8, 4).replace(/ +$/, "");
+    if (brand === "qt") return "video/quicktime";
+    return MP4_BRANDS.has(brand) ? "video/mp4" : null;
   }
   return b.length > 0 && looksLikeUtf8Text(b) ? "text/plain" : null;
 }
@@ -452,8 +464,14 @@ export function usePendingAttachments({
     };
   }, [rememberKey]);
 
-  /** One path for both pasting and picking: the two must never disagree. */
-  const addFiles = (files: File[]) => {
+  /**
+   * One path for both pasting and picking: the two must never disagree.
+   *
+   * `onSettled` reports the names that actually landed — the paste-to-file
+   * path needs it, because whether a row exists decides whether there is
+   * anything to undo.
+   */
+  const addFiles = (files: File[], onSettled?: (added: string[]) => void) => {
     if (files.length === 0) return;
     const pendingRead: PendingAttachmentRead = { cancelled: false };
     pendingReads.current.add(pendingRead);
@@ -465,6 +483,7 @@ export function usePendingAttachments({
     void (async () => {
       try {
         let rejection: string | null = null;
+        const added: string[] = [];
         for (const file of files) {
           if (pendingRead.cancelled) return;
           if (listRef.current.length >= MAX_ATTACHMENTS) {
@@ -496,9 +515,13 @@ export function usePendingAttachments({
               ? URL.createObjectURL(file)
               : "";
           commit([...listRef.current, { id: `att-${seq.current}`, url, ...result.attachment }]);
+          added.push(result.attachment.name);
         }
         // a fully-clean batch clears the previous note; the latest rejection wins otherwise
-        if (!pendingRead.cancelled) commitNote(rejection);
+        if (!pendingRead.cancelled) {
+          commitNote(rejection);
+          onSettled?.(added);
+        }
       } finally {
         pendingReads.current.delete(pendingRead);
         if (rememberKey) unregisterRememberedRead(rememberKey, pendingRead);
@@ -522,8 +545,13 @@ export function usePendingAttachments({
   const addPastedText = (text: string, caret: number): void => {
     const file = pastedTextFile(text, pasteSeq.current + 1);
     pasteSeq.current += 1;
-    setPastedText({ name: file.name, text, caret });
-    addFiles([file]);
+    // The offer to put the text back is made only once the row EXISTS. A full
+    // composer (ten files, or the turn's byte budget) rejects this file like
+    // any other, and "attached as pasted-3.csv · insert inline instead" beside
+    // no such row is an offer that does nothing when taken.
+    addFiles([file], (added) => {
+      setPastedText(added.includes(file.name) ? { name: file.name, text, caret } : null);
+    });
   };
 
   return {

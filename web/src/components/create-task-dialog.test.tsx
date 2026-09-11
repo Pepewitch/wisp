@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { describe, expect, it, vi } from "vitest"
 
+import type { DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -29,6 +30,72 @@ const harness: HarnessInfo = {
     probedAt: "2026-09-01T00:00:00.000Z",
   },
 }
+
+/**
+ * A1d moved base64 encoding from paste to submit, which opened a window the
+ * dialog did not close: `createTask.isPending` only goes true once the encode
+ * finishes, so during a 50 MB video's encode the Create button stayed live and
+ * ⌘↵ still fired. Two clicks meant two tasks.
+ */
+describe("create task dialog submission", () => {
+  async function mountWithRequest(request: ReturnType<typeof vi.fn>) {
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={[harness]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      {
+        wrapper: runtimeWrapper(
+          fakeDaemonTransport("test-connection", { request: request as unknown as DaemonTransport["request"] }),
+        ),
+      },
+    )
+    fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), {
+      target: { value: "reconcile the rows" },
+    })
+    return await screen.findByRole("button", { name: "Create" })
+  }
+
+  it("a second click or ⌘↵ while one create is in flight cannot make a second task", async () => {
+    // a create that never settles: the whole window under test is the one
+    // between the first click and the daemon answering
+    let finish!: (task: { id: string }) => void
+    const request = vi.fn(() => new Promise((resolve) => { finish = resolve }))
+    const create = await mountWithRequest(request)
+
+    fireEvent.click(create)
+    // the second click lands in the same tick, while the encode is still a
+    // pending microtask and nothing has reached the daemon yet
+    fireEvent.click(create)
+    // …and the keyboard path bypasses the button's disabled state entirely
+    fireEvent.keyDown(document, { key: "Enter", metaKey: true })
+
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1))
+    expect(create).toBeDisabled()
+
+    // the create is still in flight, so neither route may start another
+    fireEvent.click(create)
+    fireEvent.keyDown(document, { key: "Enter", metaKey: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(request).toHaveBeenCalledTimes(1)
+    finish({ id: "tk9zdy" })
+  })
+
+  it("a refused create is retryable: the guard releases on failure too", async () => {
+    const request = vi.fn().mockRejectedValueOnce(new Error("no such project")).mockResolvedValue({ id: "tk9zdy" })
+    const create = await mountWithRequest(request)
+
+    fireEvent.click(create)
+    await waitFor(() => expect(create).not.toBeDisabled())
+    fireEvent.click(create)
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+  })
+})
 
 describe("create task dialog layout", () => {
   function mountLayout() {

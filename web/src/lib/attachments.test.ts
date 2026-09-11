@@ -37,6 +37,7 @@ const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x4
 const PDF = new TextEncoder().encode("%PDF-1.7\n%âãÏÓ\n");
 const MP4 = new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode("ftypisom"), 1, 2, 3, 4]);
 const CSV = new TextEncoder().encode("id,name\n1,café\n2,ok\n");
+const HEIC = new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode("ftypheic"), 1, 2, 3, 4]);
 const BINARY = new Uint8Array([0x00, 0x01, 0x02, 0xff]);
 
 function file(bytes: Uint8Array<ArrayBuffer>, name = "shot.png"): File {
@@ -93,6 +94,8 @@ describe("sniffAttachmentType (mirrors src/attachments.ts)", () => {
     expect(sniffAttachmentType(CSV)).toBe("text/plain");
     expect(sniffAttachmentType(BINARY)).toBeNull();
     expect(sniffAttachmentType(new Uint8Array([]))).toBeNull();
+    // the ftyp box is shared with HEIC/AVIF photos and M4A audio: brand decides
+    expect(sniffAttachmentType(HEIC)).toBeNull();
   });
 });
 
@@ -230,6 +233,20 @@ describe("per-file capability and the turn budget", () => {
     await waitFor(() => expect(hook.result.current.list).toHaveLength(2));
     act(() => hook.result.current.addFiles([file(chunk, "three.csv")]));
     await waitFor(() => expect(hook.result.current.note).toBe("three.csv: over the 50 MB limit for one turn"));
+    expect(hook.result.current.list).toHaveLength(2);
+  });
+
+  it("a long paste that cannot attach makes no offer to undo", async () => {
+    const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
+    const chunk = new Uint8Array(18 * 1024 * 1024).fill(0x61);
+    act(() => hook.result.current.addFiles([file(chunk, "one.csv"), file(chunk, "two.csv"), file(chunk, "three.csv")]));
+    await waitFor(() => expect(hook.result.current.list).toHaveLength(2));
+
+    act(() => hook.result.current.addPastedText("id,name\n" + "1,a\n".repeat(PASTE_TO_FILE_CHARS), 0));
+    await waitFor(() => expect(hook.result.current.note).toContain("limit for one turn"));
+    // no row landed, so there is nothing to insert back — an offer that does
+    // nothing when taken is worse than no offer
+    expect(hook.result.current.pastedText).toBeNull();
     expect(hook.result.current.list).toHaveLength(2);
   });
 

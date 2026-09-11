@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AttachmentPayload } from "./attachments";
-import type { AttachmentFlags } from "./cli";
+import type { AttachmentFlags } from "./cli-attach";
 import type { ApiTask, SendResult, TaskMessage } from "./types";
 
 interface SendCommandOptions {

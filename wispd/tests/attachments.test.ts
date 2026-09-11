@@ -44,6 +44,9 @@ const PDF = Buffer.concat([Buffer.from("%PDF-1.7\n", "ascii"), Buffer.alloc(64, 
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom", "ascii"), Buffer.alloc(32, 5)]);
 const MOV = Buffer.concat([Buffer.from([0, 0, 0, 0x14]), Buffer.from("ftypqt  ", "ascii"), Buffer.alloc(32, 6)]);
 const WEBM = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(48, 7)]);
+/** Same ISO-BMFF box, a brand that is NOT video: an iPhone photo and an m4a. */
+const HEIC = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic", "ascii"), Buffer.alloc(32, 8)]);
+const M4A = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypM4A ", "ascii"), Buffer.alloc(32, 9)]);
 const CSV = Buffer.from("id,name\n1,café\n2,ok\n", "utf8");
 /** Bytes no signature claims and the text scan refuses: the unsupported case. */
 const BINARY = Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe]);
@@ -110,6 +113,17 @@ describe("sniffAttachmentType (A1d)", () => {
     expect(sniffAttachmentType(MOV)).toBe("video/quicktime"); // the brand, not the box
     expect(sniffAttachmentType(WEBM)).toBe("video/webm");
     expect(sniffAttachmentType(CSV)).toBe("text/plain");
+  });
+
+  test("the ftyp box is not enough: only known video BRANDS are video", () => {
+    // HEIC/AVIF photos and M4A audio share mp4's container. Storing one as a
+    // video would show it as `video` and tell the model to run ffmpeg on it.
+    expect(sniffAttachmentType(HEIC)).toBeNull();
+    expect(sniffAttachmentType(M4A)).toBeNull();
+    expect(sniffAttachmentType(MOV)).toBe("video/quicktime"); // "qt  ", trailing spaces and all
+    expect(() => decodeAttachments("codex", imgBash, [item("IMG_1234.HEIC", HEIC)])).toThrow(
+      "attachments[0] (IMG_1234.HEIC): not a supported attachment (magic-byte sniff)",
+    );
   });
 
   test("text is the LAST rule, and it is a scan rather than a prefix test", () => {

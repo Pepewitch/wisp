@@ -192,16 +192,32 @@ function sniffPdf(data: Uint8Array): DocumentMediaType | null {
 }
 
 /**
- * ISO-BMFF (`….ftyp<brand>`) and Matroska/WebM (EBML magic). The brand is what
- * separates a QuickTime `.mov` from an mp4 — both are the same box structure,
- * and a `<video>` element wants to be told which it got.
+ * The ISO-BMFF brands that actually mean VIDEO.
+ *
+ * An allowlist rather than "anything with an ftyp box", because the container
+ * is not the format: HEIC and AVIF photos, and M4A audio, are ISO-BMFF too. A
+ * `qt  ` brand is QuickTime; the rest are the mp4 family, and a `<video>`
+ * element wants to be told which it got. Trailing spaces are trimmed first —
+ * the brand field is four bytes, so `M4V ` is how "M4V" is spelled.
+ *
+ * A video whose brand is not here is refused by name (it falls through to the
+ * text scan and fails), which is the safe direction: storing a photo as a
+ * video would tell the model to run ffmpeg on a still.
  */
+const MP4_BRANDS = new Set([
+  "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "mp71", "mmp4",
+  "avc1", "dash", "M4V", "M4VH", "M4VP", "3gp4", "3gp5", "3g2a",
+]);
+
+/** ISO-BMFF (`….ftyp<brand>`) and Matroska/WebM (EBML magic). */
 function sniffVideo(data: Uint8Array): VideoMediaType | null {
   if (data.length >= 4 && data[0] === 0x1a && data[1] === 0x45 && data[2] === 0xdf && data[3] === 0xa3) {
     return "video/webm"; // EBML — matroska or webm; the browser reads both as webm
   }
   if (data.length >= 12 && ascii(data, 4, 4) === "ftyp") {
-    return ascii(data, 8, 4) === "qt  " ? "video/quicktime" : "video/mp4";
+    const brand = ascii(data, 8, 4).replace(/ +$/, "");
+    if (brand === "qt") return "video/quicktime";
+    return MP4_BRANDS.has(brand) ? "video/mp4" : null;
   }
   return null;
 }
