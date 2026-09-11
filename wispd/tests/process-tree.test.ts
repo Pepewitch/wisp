@@ -242,7 +242,7 @@ describe("interrupting a turn stops its descendants", () => {
     await interruptTurn(task.id, 200);
     expect(alive(descendant)).toBe(false);
     expect(hasRunningTurn(task.id)).toBeNull();
-    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a correction");
+    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a message to continue");
   }, 10_000);
 
   test("recovery retains an unresolved Stop until retry confirms completion", async () => {

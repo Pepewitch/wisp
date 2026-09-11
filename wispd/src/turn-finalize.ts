@@ -119,6 +119,43 @@ async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
   transition(facts.taskId, "failed", `${limitPrefix || transientPrefix}${why}`);
 }
 
+interface InterruptedTurnFacts {
+  recorderMode: boolean;
+  recorderErrorDetail: string | null;
+  parsed: ParsedTurn;
+  def: AdapterDef;
+  rawOut: string;
+  errPath: string;
+}
+
+/**
+ * Settle an interrupted turn: the stop's own detail, plus the harness's last
+ * words when it reported an error of its own (a startup failure, say). Such a
+ * turn must not read as "the stop lost work": the user steering a
+ * dead-on-arrival turn otherwise waits on a session that can never answer.
+ * The harness's words belong here, never Wisp's checkpoint bookkeeping.
+ */
+async function finalizeInterruptedTurn(
+  taskId: string,
+  turnId: number,
+  exitCode: number | null,
+  interruptDetail: string,
+  facts: InterruptedTurnFacts,
+): Promise<void> {
+  finishTurn(turnId, "interrupted", exitCode, facts.parsed.result);
+  const harnessError = !facts.parsed.isError
+    ? null
+    : facts.recorderMode
+      ? facts.recorderErrorDetail
+      : errorDetail(facts.def, facts.rawOut, await safeRead(facts.errPath));
+  const settled = harnessError
+    ? `${interruptDetail}. The harness last reported: ${harnessError.slice(0, 250)}`
+    : interruptDetail;
+  // Leader finalization must not turn an incomplete Stop into permission to
+  // resume. Keep the retry control visible, including after restart.
+  transition(taskId, isUnresolvedInterrupt(interruptDetail) ? "stuck" : "needs-input", settled);
+}
+
 /** Finalize from a recorder checkpoint, or from whole files for a durable legacy turn. */
 export async function finalizeTurn(
   taskId: string,
@@ -133,10 +170,13 @@ export async function finalizeTurn(
   const recorderMode = turn?.capture_mode === "recorder-v1";
   let rawOut = "";
   let recorderDetail: string | null = null;
+  /** The harness's own error words from the checkpoint, if it reported any. */
+  let recorderErrorDetail: string | null = null;
   let parsed: ParsedTurn;
   if (recorderMode) {
     const restored = liveRecorderOutcome ?? restoreRecorderOutcome(def, turn?.outcome_json ?? null);
     parsed = restored?.parsed ?? emptyFailedOutcome();
+    recorderErrorDetail = restored?.errorDetail ?? null;
     recorderDetail =
       restored?.errorDetail ??
       (turn?.outcome_json ? "outcome checkpoint is unreadable" : "outcome checkpoint is unavailable");
@@ -156,10 +196,14 @@ export async function finalizeTurn(
   const interruptDetail = currentTurn?.interrupt_detail ?? null;
   const killReason = currentTurn?.kill_detail ?? undefined;
   if (interruptDetail !== null) {
-    finishTurn(turnId, "interrupted", exitCode, parsed.result);
-    // Leader finalization must not turn an incomplete Stop into permission to
-    // resume. Keep the retry control visible, including after restart.
-    transition(taskId, isUnresolvedInterrupt(interruptDetail) ? "stuck" : "needs-input", interruptDetail);
+    await finalizeInterruptedTurn(taskId, turnId, exitCode, interruptDetail, {
+      recorderMode,
+      recorderErrorDetail,
+      parsed,
+      def,
+      rawOut,
+      errPath,
+    });
     return;
   }
 

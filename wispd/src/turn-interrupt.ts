@@ -143,7 +143,8 @@ async function stopTurnProcesses(
     let detail = INTERRUPTED;
     if (!(await ended(graceMs))) {
       await signal("SIGKILL");
-      detail = "turn interrupted (escalated to SIGKILL after SIGTERM was trapped) — session kept, send a correction";
+      detail =
+        "turn interrupted — the harness ignored the stop signal, so its processes were force-killed (escalated to SIGKILL); session kept, send a message to continue";
       if (!(await ended(Math.max(graceMs, 1000)))) {
         throw new Error(`processes in turn ${turn.n} (pid ${pid}) survived SIGKILL`);
       }

@@ -377,12 +377,12 @@ describe("finalizeTurn matrix (a prior audit + test gap #1)", () => {
       out: `${RESULT_LINE}\n`,
       pre: (turnId) => {
         recordKillReason(turnId, "log cap exceeded (test)");
-        markInterrupted(turnId, "turn interrupted — session kept, send a correction");
+        markInterrupted(turnId, "turn interrupted — session kept, send a message to continue");
       },
     });
     expect(turn.status).toBe("interrupted");
     expect(task.state).toBe("needs-input");
-    expect(task.state_detail).toBe("turn interrupted — session kept, send a correction");
+    expect(task.state_detail).toBe("turn interrupted — session kept, send a message to continue");
   });
 
   test("kill reason wins over a clean exit with a result", async () => {
@@ -1071,7 +1071,7 @@ describe("persisted interrupt intent (a prior audit)", () => {
     const child = Bun.spawn({ cmd: ["sleep", "0"] });
     const turnId = createTurn(task.id, 1, "prompt", child.pid, outPath, processStartTime(child.pid));
     // the old daemon killed the child and persisted the intent…
-    markInterrupted(turnId, "turn interrupted — session kept, send a correction");
+    markInterrupted(turnId, "turn interrupted — session kept, send a message to continue");
     await child.exited;
     // …then crashed before finalize. The restarted daemon has no in-memory state,
     // so this only passes if finalize reads the intent from the turn row.
@@ -1079,7 +1079,7 @@ describe("persisted interrupt intent (a prior audit)", () => {
     expect(turnsFor(task.id)[0]!.status).toBe("interrupted");
     const after = getTask(task.id)!;
     expect(after.state).toBe("needs-input");
-    expect(after.state_detail).toBe("turn interrupted — session kept, send a correction");
+    expect(after.state_detail).toBe("turn interrupted — session kept, send a message to continue");
     // the user hears "needs-input", never the spurious "failed" webhook M2 complained about
     const rows = undeliveredOutbox().filter((r) => r.task_id === task.id);
     expect(rows.map((r) => r.event)).toEqual(["needs-input"]);
@@ -1237,7 +1237,7 @@ appendFileSync(mark, "stdin\\n");
 
     expect(hasRunningTurn(task.id)).toBeNull();
     expect(turnsFor(task.id)[0]!.status).toBe("interrupted");
-    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a correction");
+    expect(getTask(task.id)?.state_detail).toBe("turn interrupted — session kept, send a message to continue");
     expect(readFileSync(markPath, "utf8")).toContain("stdin");
   });
 });
@@ -1257,7 +1257,7 @@ describe("interruptTurn", () => {
       expect(turnsFor(task.id)[0]!.status).toBe("interrupted");
       const after = getTask(task.id)!;
       expect(after.state).toBe("needs-input");
-      expect(after.state_detail).toBe("turn interrupted — session kept, send a correction");
+      expect(after.state_detail).toBe("turn interrupted — session kept, send a message to continue");
     },
     15_000,
   );
@@ -1278,7 +1278,7 @@ describe("interruptTurn", () => {
       const after = getTask(task.id)!;
       expect(after.state).toBe("needs-input");
       expect(after.state_detail).toContain("escalated to SIGKILL");
-      expect(after.state_detail).toContain("send a correction");
+      expect(after.state_detail).toContain("send a message to continue");
     },
     15_000,
   );
