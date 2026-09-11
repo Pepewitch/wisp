@@ -45,6 +45,21 @@ daemon's turn record, the event stream is only a realtime invalidation signal,
 and the webhook outbox is durable notification delivery. A client must refetch
 its connection's baseline after an event-stream reconnect.
 
+## Harness execution
+
+Each turn uses a headless harness process and its native session contract,
+not TUI scraping or synthesized keystrokes. Claude stream-json, Droid
+JSON-RPC, and Codex app-server drivers stay duplex during a turn for native
+steering; other adapters queue follow-ups for the next turn.
+
+Turn transcripts are size-capped. Recorder-capable drivers keep draining
+activity and checkpoint the result independently of retained history.
+On restart, the daemon checks saved process identity using PID and start time,
+or finalizes a dead turn from its persisted record. Pending messages remain
+in a per-task FIFO; uncertain native delivery can be replayed at least once.
+See the [CLI reference](../skills/wisp/references/cli.md) for the user-facing
+states, diagnostics, and stop behavior.
+
 ## The shared client contract
 
 `web/src/lib/transport.ts` defines `DaemonTransport`. UI code receives a
@@ -202,8 +217,10 @@ sampling frames with ffmpeg is the honest option and saying "I cannot" is
 better than guessing.
 
 Each turn and queued message keeps a small manifest (name, size, media type)
-on its row. Archive deletes the bytes; the manifest stays, so the conversation
-can still say a file was attached and that it was removed.
+on its row. New archives retain attachment bytes with the conversation.
+Older archives may already have removed them; their manifests let the UI
+explain that absence. See [retention and permanent deletion](ARCHIVE-CLEANUP.md#retention-export-and-permanent-deletion)
+for export and purge behavior.
 
 ## Change-impact contract
 
@@ -238,6 +255,12 @@ the daemon binary embeds it and the desktop build packages the same output.
 Pull-request CI generates and exercises this artifact but never compares it to
 Git. Tag CI reproduces it once, transfers it by checksum between runners, and
 uses those exact bytes for every release artifact.
+
+The compiled daemon needs no Node runtime or sibling asset directory, but it
+is not dependency-free. It embeds the UI and the `@xterm/headless` and
+`@xterm/addon-serialize` terminal packages. `bun.lock` and
+`desktop/src-tauri/Cargo.lock` inventory the JavaScript and native dependency
+trees; CI audits both.
 
 The public macOS distribution keeps the service and interface composable:
 
