@@ -1,4 +1,5 @@
 import { CleanupPanel } from "./cleanup-panel"
+import { WorkflowControl } from "./workflow-control"
 import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
@@ -92,6 +93,7 @@ export function TaskHeader({
       />
 
       {task.cleanup && <CleanupPanel task={task} />}
+      <div className="mt-1"><WorkflowControl task={task} prUrl={pullRequest?.kind === "found" ? pullRequest.pullRequest.url : undefined} /></div>
 
       {/* ONE muted line, the same register the archived-task placeholders use.
           Capped here as well as at the daemon: nothing about a git failure gets

@@ -1,4 +1,5 @@
 import { HELP } from "./cli-help";
+import { workflowCommand } from "./cli-workflow";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
 import { retentionCommand } from "./cli-retention";
@@ -447,6 +448,9 @@ export async function cli(args: string[]): Promise<void> {
   const { positional, flags } = parseArgs(rest);
 
   switch (cmd) {
+    case "workflow":
+      await workflowCommand(positional, flags, api);
+      break;
     case "version":
     case "--version":
       console.log(flags.json ? JSON.stringify(BUILD_INFO) : versionLine());

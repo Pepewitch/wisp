@@ -18,6 +18,27 @@ the list and exporting what you need. A stale count refuses. Failed deletions
 are named while the rest continue; any failure exits nonzero.
 `wisp purge <task> --confirm <task>` remains the single-task form.
 
+## Workflows
+
+```sh
+wisp workflow types [--json]
+wisp workflow add <task> heartbeat --every 5m --prompt "Objective and stop condition"
+wisp workflow add <task> pr-ci --pr <url> --every 5m
+wisp workflow add <task> pr-review --pr <url> --quiet-for 30m
+wisp workflow list <task> [--json]
+wisp workflow show <workflow-id> [--json]
+wisp workflow set <workflow-id> --every 10m
+wisp workflow pause <workflow-id>
+wisp workflow resume <workflow-id>
+wisp workflow complete <workflow-id>
+```
+
+Workflows persist in the daemon and wake settled tasks between turns. Stop
+pauses them; archive completes them. Configure prompts, timers, limits, and
+explicit push/merge permissions through flags or `--params` JSON. See
+[Task workflows](../../../docs/WORKFLOWS.md) for defaults, review quiet-window
+semantics, recovery limits, and the trusted executable plugin contract.
+
 ## Tasks
 
 ```

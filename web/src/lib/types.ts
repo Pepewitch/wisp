@@ -182,6 +182,7 @@ export interface Turn {
 export interface TaskMessage {
   id: string
   task_id: string
+  workflow_id?: string | null
   context_n?: number
   harness?: string
   model?: string | null
@@ -352,6 +353,7 @@ export type WispEvent =
     }
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
+  | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string };
 
 /**
@@ -462,6 +464,7 @@ export interface HarnessesResponse {
     taskAgentSwitching?: boolean;
     /** GET /api/search answers cross-task text search (the sidebar's ⌘⇧F). */
     taskSearch?: boolean;
+    taskWorkflows?: boolean;
   };
 }
 

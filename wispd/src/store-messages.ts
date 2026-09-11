@@ -112,11 +112,11 @@ export function createTaskMessageWithAgent(
  * callers (fixtures, tests) use this; user submissions go through
  * createTaskMessageWithAgent so the guard and the switch commit together.
  */
-export function createTaskMessage(input: CreateTaskMessageInput): TaskMessage {
+export function createTaskMessage(input: CreateTaskMessageInput, notify = true): TaskMessage {
   const task = getTask(input.taskId);
   if (!task) throw new Error(`no such task: ${input.taskId}`);
   const message = insertTaskMessage(input, task);
-  emit({ type: "message", taskId: input.taskId, messageId: input.id });
+  if (notify) emit({ type: "message", taskId: input.taskId, messageId: input.id });
   return message;
 }
 
@@ -130,15 +130,15 @@ export function messagesFor(taskId: string): TaskMessage[] {
     .all(taskId) as TaskMessage[];
 }
 
-export function nextQueuedMessage(taskId: string): TaskMessage | null {
+export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskMessage | null {
   return (
     (db
       .query(
         `SELECT * FROM task_messages
-         WHERE task_id = ? AND status = 'queued' AND claim IS NULL
+         WHERE task_id = ? AND status = 'queued' AND claim IS NULL AND (workflow_id IS NULL OR id = ?)
          ORDER BY created_at ASC, rowid ASC LIMIT 1`,
       )
-      .get(taskId) as TaskMessage | null) ?? null
+      .get(taskId, workflowMessageId) as TaskMessage | null) ?? null
   );
 }
 
@@ -186,10 +186,10 @@ function claimTaskMessage(
      WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL
        AND id = (
          SELECT queued.id FROM task_messages AS queued
-         WHERE queued.task_id = ? AND queued.status = 'queued'
+         WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
          ORDER BY queued.created_at ASC, queued.rowid ASC LIMIT 1
        )`,
-    [delivery, turnN, now(), id, taskId, taskId],
+    [delivery, turnN, now(), id, taskId, taskId, id],
   );
   return result.changes > 0 ? getTaskMessage(id) : null;
 }
