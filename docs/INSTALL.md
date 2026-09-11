@@ -1,7 +1,7 @@
 # Install Wisp on Linux
 
-Release gates cover **Ubuntu 24.04 LTS, x86_64**. The binary requires glibc
-2.17 or newer; other glibc distributions are untested, not blocked. There is
+Release gates cover **Ubuntu 24.04 LTS, x86_64**. The binary requires
+glibc 2.17 or newer; other glibc distributions are untested, not blocked. There is
 no musl or ARM Linux artifact. Full clean-machine and rollback qualification
 still has gaps; see the [qualification ledger](v0.5/QUALIFICATION.md).
 
