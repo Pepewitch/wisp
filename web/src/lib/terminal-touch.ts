@@ -30,8 +30,14 @@
  * How far a finger travels before the gesture becomes a scroll rather than a
  * tap. Below this the touch is left entirely alone, so the browser still
  * synthesizes the mouse events xterm focuses on.
+ *
+ * Set at the platform's own press slop rather than lower. A long press is how
+ * a finger selects text here (see lib/terminal-clipboard.ts), and iOS gives a
+ * press about ten pixels of wobble before it gives up and calls the gesture a
+ * pan. Claiming at eight would take the touch away inside that window and
+ * cancel presses the platform was still willing to honour.
  */
-export const TOUCH_SCROLL_THRESHOLD_PX = 8
+export const TOUCH_SCROLL_THRESHOLD_PX = 10
 
 /** What one touchmove should do. */
 export interface TouchScrollStep {
@@ -66,6 +72,16 @@ export class TouchScrollGesture {
   /** Sub-row pixels not yet spent on a whole row. */
   private banked = 0
   private claimedGesture = false
+  /**
+   * Which finger this gesture is following, or null between gestures.
+   *
+   * Load-bearing, not bookkeeping. A pinch is two fingers and only one of them
+   * is ever tracked; when the OTHER one lifts, the survivor's next move would
+   * otherwise be diffed against a position the tracked finger held before the
+   * pinch began, and the whole pinch's travel would cash out as one enormous
+   * scroll in a single frame.
+   */
+  private pointer: number | null = null
   private readonly threshold: number
 
   constructor(threshold: number = TOUCH_SCROLL_THRESHOLD_PX) {
@@ -73,10 +89,20 @@ export class TouchScrollGesture {
   }
 
   /** A finger went down. Any previous gesture is abandoned, banked pixels and all. */
-  start(y: number): void {
+  start(y: number, pointer: number): void {
     this.origin = y
     this.previous = y
     this.banked = 0
+    this.claimedGesture = false
+    this.pointer = pointer
+  }
+
+  /**
+   * Stop following whatever finger this was. Every move is ignored until the
+   * next `start`, so a gesture can never be resumed with stale coordinates.
+   */
+  end(): void {
+    this.pointer = null
     this.claimedGesture = false
   }
 
@@ -93,7 +119,10 @@ export class TouchScrollGesture {
    * spanning that should use the geometry in front of the user, not the one it
    * started at.
    */
-  move(y: number, cellHeight: number): TouchScrollStep {
+  move(y: number, cellHeight: number, pointer: number): TouchScrollStep {
+    // Not the finger this gesture is following — or no gesture at all. Read
+    // nothing from it, least of all a position to diff against later.
+    if (this.pointer === null || pointer !== this.pointer) return { lines: 0, claimed: false }
     const travelled = this.previous - y
     this.previous = y
     // An unmeasured terminal (an inactive tab, a pane mid-mount) has no rows to

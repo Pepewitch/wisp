@@ -5,12 +5,15 @@ import { cellHeightOf, TouchScrollGesture, TOUCH_SCROLL_THRESHOLD_PX } from "./t
 /** One row, in the pane's real neighbourhood: 11.5px at 1.45 line height. */
 const CELL = 17
 
+/** The finger these helpers use; identity only matters in the pinch tests. */
+const FINGER = 1
+
 /** Drag a finger from `from` to `to` in `steps`, collecting what each move asks for. */
 function swipe(gesture: TouchScrollGesture, from: number, to: number, steps: number) {
-  gesture.start(from)
+  gesture.start(from, FINGER)
   const moves = []
   for (let i = 1; i <= steps; i++) {
-    moves.push(gesture.move(from + ((to - from) * i) / steps, CELL))
+    moves.push(gesture.move(from + ((to - from) * i) / steps, CELL, FINGER))
   }
   return {
     lines: moves.reduce((total, move) => total + move.lines, 0),
@@ -55,8 +58,8 @@ describe("TouchScrollGesture", () => {
     // A flick is one or two moves, and the first of them is what qualified the
     // gesture. Discarding that distance would drop most of a fast swipe.
     const gesture = new TouchScrollGesture()
-    gesture.start(400)
-    const step = gesture.move(400 - CELL * 5, CELL)
+    gesture.start(400, FINGER)
+    const step = gesture.move(400 - CELL * 5, CELL, FINGER)
 
     expect(step.claimed).toBe(true)
     expect(step.lines).toBe(5)
@@ -67,12 +70,12 @@ describe("TouchScrollGesture", () => {
     // independently would round every one of them to zero and the terminal
     // would sit still under a finger that is plainly moving.
     const gesture = new TouchScrollGesture(0)
-    gesture.start(500)
+    gesture.start(500, FINGER)
     let position = 500
     let total = 0
     for (let i = 0; i < CELL; i++) {
       position -= 1
-      total += gesture.move(position, CELL).lines
+      total += gesture.move(position, CELL, FINGER).lines
     }
 
     expect(total).toBe(1)
@@ -82,22 +85,58 @@ describe("TouchScrollGesture", () => {
     // An inactive tab is hidden, so its rows have no height. Banking pixels
     // against a cell height of 0 would spend them at the wrong scale later.
     const gesture = new TouchScrollGesture()
-    gesture.start(200)
+    gesture.start(200, FINGER)
 
-    expect(gesture.move(100, 0)).toEqual({ lines: 0, claimed: false })
+    expect(gesture.move(100, 0, FINGER)).toEqual({ lines: 0, claimed: false })
     // Those 100 unmeasurable pixels are gone rather than banked, so the first
     // measured move spends only its own 50.
-    expect(gesture.move(50, CELL).lines).toBe(Math.trunc(50 / CELL))
+    expect(gesture.move(50, CELL, FINGER).lines).toBe(Math.trunc(50 / CELL))
   })
 
   it("abandons a previous gesture's progress on the next touch", () => {
     const gesture = new TouchScrollGesture()
     swipe(gesture, 300, 300 - CELL * 3 - 5, 3)
-    gesture.start(300)
+    gesture.start(300, FINGER)
 
     expect(gesture.claimed).toBe(false)
-    // The 5 banked pixels from the last swipe must not tip this one early.
-    expect(gesture.move(300 - (TOUCH_SCROLL_THRESHOLD_PX - 1), CELL).lines).toBe(0)
+    // The banked pixels from the last swipe must not tip this one early.
+    expect(gesture.move(300 - (TOUCH_SCROLL_THRESHOLD_PX - 1), CELL, FINGER).lines).toBe(0)
+  })
+
+  it("ignores a finger it is not following", () => {
+    const gesture = new TouchScrollGesture()
+    gesture.start(300, FINGER)
+
+    expect(gesture.move(100, CELL, FINGER + 1)).toEqual({ lines: 0, claimed: false })
+  })
+
+  it("does not cash a pinch out as one scroll when a finger lifts", () => {
+    // The sequence that used to jump the buffer: one finger starts, a second
+    // joins, the pinch drags the tracked finger a long way, then the OTHER one
+    // lifts. Without ending the gesture the survivor's next move is diffed
+    // against where it sat before the pinch, and the whole travel scrolls at
+    // once — hundreds of pixels in a single frame.
+    const gesture = new TouchScrollGesture()
+    gesture.start(500, FINGER)
+    gesture.end() // the second finger arriving
+
+    // The pinch moves the tracked finger far, unseen.
+    expect(gesture.move(100, CELL, FINGER)).toEqual({ lines: 0, claimed: false })
+    // The other finger lifts and this one keeps going: nothing until it is
+    // started again, and then only its own travel.
+    expect(gesture.move(95, CELL, FINGER)).toEqual({ lines: 0, claimed: false })
+
+    gesture.start(95, FINGER)
+    expect(gesture.move(95 - CELL * 2, CELL, FINGER).lines).toBe(2)
+  })
+
+  it("stops following a finger once it lifts", () => {
+    const gesture = new TouchScrollGesture()
+    swipe(gesture, 300, 200, 4)
+    gesture.end()
+
+    expect(gesture.claimed).toBe(false)
+    expect(gesture.move(100, CELL, FINGER)).toEqual({ lines: 0, claimed: false })
   })
 })
 

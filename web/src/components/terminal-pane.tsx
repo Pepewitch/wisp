@@ -12,6 +12,7 @@ import {
   TerminalConnection,
   type ShellTabs,
 } from "@/lib/terminal"
+import { bufferText, selectionWithin } from "@/lib/terminal-clipboard"
 import { cellHeightOf, TouchScrollGesture } from "@/lib/terminal-touch"
 import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
@@ -157,33 +158,36 @@ export function TerminalSection({
   }, [])
   const [copied, setCopied] = useState(false)
   const copiedReset = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => void (copiedReset.current && clearTimeout(copiedReset.current)), [])
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (copiedReset.current) clearTimeout(copiedReset.current)
+    }
+  }, [])
 
   /**
-   * Copy the selection, or the whole buffer when there is none.
+   * Copy whichever selection exists, or the whole buffer when none does.
    *
-   * The fallback is the point. A pointer can drag a selection out and this
-   * respects it, but a finger cannot make one at all — xterm's selection is
-   * driven by `mousemove`, which a touch drag never produces — so on a phone
-   * "copy" can only reasonably mean "all of it". Blunt beats retyping, and it
-   * is also the pane's first copy affordance on ANY pointer.
+   * The ORDER is the substance here, and `lib/terminal-clipboard.ts` explains
+   * why: a phone's only selection is the platform's, made by long press and
+   * held in the DOM where xterm cannot see it, so asking xterm first would
+   * ignore the one selection a finger can actually make and copy the entire
+   * buffer over the top of it.
    */
   const copy = async () => {
     const terminal = terminals.current.get(activeId)
     if (!terminal) return
-    const everything = () => {
-      terminal.selectAll()
-      // selectAll reaches the blank rows below the prompt too, and those are
-      // not output.
-      const all = terminal.getSelection().replace(/\s+$/, "")
-      terminal.clearSelection()
-      return all
-    }
-    // A selection someone DREW is copied exactly as drawn.
-    const text = terminal.hasSelection() ? terminal.getSelection() : everything()
+    const root = terminal.element ?? null
+    const text =
+      selectionWithin(root, root?.ownerDocument.getSelection() ?? null) ||
+      (terminal.hasSelection() ? terminal.getSelection() : "") ||
+      bufferText(terminal.buffer.active)
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
+      if (!mounted.current) return
       setCopied(true)
       if (copiedReset.current) clearTimeout(copiedReset.current)
       copiedReset.current = setTimeout(() => setCopied(false), 1_200)
@@ -243,31 +247,37 @@ export function TerminalSection({
     // opens one row tall
     <div className="flex h-full min-h-0 flex-1 flex-col bg-background">
       <div className={cn("flex shrink-0 items-center gap-1 pr-2.5 pl-2", touch ? "h-12" : "h-8")}>
-        {shells.map((id) => (
-          <ShellTab
-            key={id}
-            label={labelFor(id)}
-            active={id === activeId}
-            closeable={shells.length > 1}
-            onActivate={() => setTabs({ ids: shells, active: id })}
-            onClose={() => close(id)}
+        {/* The tab list SCROLLS and the clipboard controls do not.
+            Everything here is `shrink-0`, and the pane allows eight shells, so
+            on a phone a second tab was already enough to push what follows it
+            off the right edge — with no way to reach it, because the mobile
+            shell refuses overscroll. Giving the tabs their own scroller is
+            what keeps the controls on screen at any shell count. */}
+        <div className="scroll-slim flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {shells.map((id) => (
+            <ShellTab
+              key={id}
+              label={labelFor(id)}
+              active={id === activeId}
+              closeable={shells.length > 1}
+              onActivate={() => setTabs({ ids: shells, active: id })}
+              onClose={() => close(id)}
+              touch={touch}
+            />
+          ))}
+          <ShellControl
+            icon={Plus}
+            label="New shell"
+            title="New shell in this worktree"
+            onAct={open}
+            disabled={unavailable !== null || shells.length >= MAX_SHELLS_PER_TASK}
             touch={touch}
           />
-        ))}
-        <ShellControl
-          icon={Plus}
-          label="New shell"
-          title="New shell in this worktree"
-          onAct={open}
-          disabled={unavailable !== null || shells.length >= MAX_SHELLS_PER_TASK}
-          touch={touch}
-        />
+        </div>
 
-        {/* Copy and paste sit at the FAR end, away from the tabs and the `+`:
-            they act on the shell rather than on the tab list, and a control
-            that empties the clipboard into a live shell should not share an
-            edge with the one that closes a tab. */}
-        <span className="flex-1" />
+        {/* Outside that scroller, and in this order: a control that empties the
+            clipboard into a live shell does not share an edge with the one
+            that closes a tab. */}
         <ShellControl
           icon={copied ? Check : Copy}
           label={copied ? "Copied" : "Copy"}
@@ -361,8 +371,17 @@ function ShellTab({
   onClose: () => void
   touch?: boolean
 }) {
+  const self = useRef<HTMLSpanElement>(null)
+  // The strip scrolls now, so the tab you just opened or switched to can be
+  // sitting off its edge. `nearest` on both axes so a tab already in view is
+  // left exactly where it is.
+  useEffect(() => {
+    if (active) self.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }, [active])
+
   return (
     <span
+      ref={self}
       className={cn(
         "group/tab flex shrink-0 items-center gap-1.5 rounded-md pr-1.5 pl-2.5 transition-colors",
         touch ? "h-11 gap-2 pr-2 pl-3.5" : "h-[22px]",
@@ -737,11 +756,16 @@ function useTouchScroll(
     const single = (event: TouchEvent) => event.touches.length === 1 && !reporting()
 
     const onStart = (event: TouchEvent) => {
-      if (single(event)) gesture.start(event.touches[0]!.clientY)
+      // A finger JOINING mid-gesture ends it rather than being ignored: the
+      // gesture must not still be following a finger through a pinch and then
+      // cash the whole pinch out as one scroll when the other one lifts.
+      if (!single(event)) gesture.end()
+      else gesture.start(event.touches[0]!.clientY, event.touches[0]!.identifier)
     }
     const onMove = (event: TouchEvent) => {
       if (!single(event) || selecting()) return
-      const step = gesture.move(event.touches[0]!.clientY, cellHeightOf(screen(), t.rows))
+      const touch = event.touches[0]!
+      const step = gesture.move(touch.clientY, cellHeightOf(screen(), t.rows), touch.identifier)
       if (!step.claimed) return
       // Only once the gesture IS a scroll. Defaulting the touch any earlier
       // stops the browser synthesizing the mouse events that focus the
@@ -749,12 +773,17 @@ function useTouchScroll(
       event.preventDefault()
       if (step.lines !== 0) t.scrollLines(step.lines)
     }
+    const onEnd = () => gesture.end()
 
     element.addEventListener("touchstart", onStart, { passive: true })
     element.addEventListener("touchmove", onMove, { passive: false })
+    element.addEventListener("touchend", onEnd, { passive: true })
+    element.addEventListener("touchcancel", onEnd, { passive: true })
     return () => {
       element.removeEventListener("touchstart", onStart)
       element.removeEventListener("touchmove", onMove)
+      element.removeEventListener("touchend", onEnd)
+      element.removeEventListener("touchcancel", onEnd)
     }
     // host and term are refs; they are here only to satisfy the lint rule,
     // which cannot see that a ref passed as a parameter is stable.
