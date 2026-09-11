@@ -17,6 +17,7 @@ import { Prose } from "@/components/prose"
 import { ProseCodeSpecimen } from "@/components/prose-code-specimen"
 import { ProbePanel } from "@/components/probe-panel"
 import { SearchSpecimens } from "@/components/search-gallery-specimen"
+import { StartHereSpecimen } from "@/components/start-here"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
@@ -514,6 +515,10 @@ function WorkflowSpecimens() {
               </div>
             </div>
           </div>
+      </Section>
+
+      <Section title="First run — the empty state IS the onboarding">
+        <StartHereSpecimen />
       </Section>
 
       <Section title="Project settings — the worktree contract, one modal">

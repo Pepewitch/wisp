@@ -56,3 +56,74 @@ describe("the sidebar footer", () => {
     expect(screen.queryByText("Update daemon 0.4.1")).toBeNull()
   })
 })
+
+/** A project group with the shape `groupTasksByProject` produces. */
+function group(tasks: never[] = []) {
+  return { path: "/src/wisp", name: "wisp", exists: true, unlisted: false, tasks }
+}
+
+function mountPane(props: Partial<Parameters<typeof Sidebar>[0]>) {
+  return render(
+    <Sidebar
+      groups={[]}
+      archivedTasks={[]}
+      status={{}}
+      pullRequests={{}}
+      selectedId={null}
+      onSelect={() => {}}
+      showArchived={false}
+      onShowArchivedChange={() => {}}
+      onNewTask={() => {}}
+      onConfigureProject={() => {}}
+      search={inertProjectSearch()}
+      error={null}
+      loading={false}
+      {...props}
+    />,
+  )
+}
+
+describe("an empty pane ends in the control, not in a noun", () => {
+  it("offers Add project to a client that can register one", () => {
+    const onAddProject = vi.fn()
+    mountPane({ onAddProject })
+
+    // the pane header's icon button carries the same verb; this is the one in
+    // the placeholder, which is the only one a first-time reader will see
+    fireEvent.click(screen.getByRole("button", { name: "Add project…" }))
+    expect(onAddProject).toHaveBeenCalledOnce()
+  })
+
+  it("keeps the CLI sentence — and no dead button — when it cannot", () => {
+    mountPane({ onAddProject: undefined })
+
+    expect(screen.getByText(/wisp project add/)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Add project…" })).toBeNull()
+  })
+
+  it("turns a project's empty task list into the way to fill it", () => {
+    const onNewTask = vi.fn()
+    mountPane({ groups: [group()], onNewTask })
+
+    fireEvent.click(screen.getByRole("button", { name: /No tasks yet/ }))
+    expect(onNewTask).toHaveBeenCalledWith("/src/wisp")
+  })
+})
+
+describe("the error row carries its own repair", () => {
+  it("runs the action the caller chose for this failure", () => {
+    const onClick = vi.fn()
+    mountPane({ error: "tasks: fetch failed", errorAction: { label: "Set up", onClick } })
+
+    expect(screen.getByText("tasks: fetch failed")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }))
+    expect(onClick).toHaveBeenCalledOnce()
+  })
+
+  it("stays a plain line when there is nothing to offer", () => {
+    mountPane({ error: "tasks: fetch failed" })
+
+    expect(screen.getByText("tasks: fetch failed")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull()
+  })
+})

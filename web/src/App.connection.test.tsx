@@ -172,7 +172,14 @@ vi.mock("@/hooks/mutations", () => ({
     mutateAsync: mocks.refresh,
     isPending: false,
   }),
-  useAddProject: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useAddProject: () => ({
+    mutateAsync: vi.fn(),
+    reset: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
+  // the first-run panel's "Check again"
+  useReprobeHarnesses: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/hooks/useLogStream", () => ({

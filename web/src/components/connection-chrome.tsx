@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 
 import {
   ConnectionDialogs,
@@ -33,6 +33,7 @@ import {
 } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
 import { STATE_LABEL } from "@/lib/state"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import type { TaskState } from "@/lib/types"
 
 const DIRECT_CONNECTION_LIMIT = 4
@@ -198,10 +199,39 @@ export function DesktopConnectionChrome({
   return mobile ? <MobileConnections /> : <DesktopConnections />
 }
 
+/**
+ * The Local Wisp dialog has THREE callers and owns none of them: this menu,
+ * the first-run panel's blocked step, and the sidebar's error row. The two
+ * outside callers issue an intent rather than reaching for this component's
+ * state — it is mounted once per shell and there are two shells.
+ *
+ * Requests older than the mount are history, so the seed captures the current
+ * count. A request that arrives while a REMOTE tab is active is dropped: this
+ * dialog diagnoses the local profile and has nothing to say about a remote.
+ */
+function useLocalSetupIntent(
+  onDialog: (mode: ConnectionDialogMode) => void
+): void {
+  const desktop = useDesktopConnections()!
+  const active = desktop.active.metadata
+  const intents = uiIntentsFor(active.id)
+  const requests = useSyncExternalStore(
+    intents.subscribe,
+    intents.localSetupRequests
+  )
+  const answered = useRef(requests)
+  useEffect(() => {
+    if (requests === answered.current) return
+    answered.current = requests
+    if (active.kind === "local") onDialog("local-setup")
+  }, [active.kind, onDialog, requests])
+}
+
 function DesktopConnections() {
   const desktop = useDesktopConnections()!
   const [dialog, setDialog] = useState<ConnectionDialogMode>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  useLocalSetupIntent(setDialog)
   const split = useMemo(
     () => splitConnections(desktop.connections, desktop.active.metadata.id),
     [desktop.connections, desktop.active.metadata.id]
@@ -335,6 +365,7 @@ function MobileConnections() {
   const desktop = useDesktopConnections()!
   const [dialog, setDialog] = useState<ConnectionDialogMode>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  useLocalSetupIntent(setDialog)
   const canAdd = desktop.connections.length < MAX_DESKTOP_CONNECTIONS
   return (
     <>
