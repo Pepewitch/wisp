@@ -620,6 +620,7 @@ describe("daemon API contracts", () => {
         hasModel: boolean;
         hasEffort: boolean;
         hasImage: boolean;
+        attachmentKinds: string[];
         imageNote?: string;
         effortLevels: string[];
         defaults: Record<string, string>;
@@ -643,6 +644,11 @@ describe("daemon API contracts", () => {
       const entry = body.harnesses.find((harness) => harness.name === name)!;
       expect(entry.hasImage).toBe(true);
       expect(entry.imageNote).toBeUndefined();
+    }
+    // A1d: every harness takes pdf, text and video — those travel by path, which
+    // is a fact about the prompt rather than a channel the CLI has to declare
+    for (const harness of body.harnesses) {
+      expect(harness.attachmentKinds).toEqual(["image", "pdf", "text", "video"]);
     }
     // claude-code 2.1.246 gained --effort, so the adapter forwards it now
     expect(body.harnesses.find((harness) => harness.name === "claude")).toMatchObject({

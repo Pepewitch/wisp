@@ -108,6 +108,11 @@ export function contentSecurityPolicy(policy: PageSecurityPolicy, origin: string
     // http(s) images load only after explicit per-URL consent in agent prose.
     // Static CSP allows that chosen request; the renderer owns the consent gate.
     "img-src 'self' data: blob: https: http:",
+    // A1d: an attached video plays from the same kind of blob: URL its
+    // thumbnail-less siblings download from — the bytes were fetched with the
+    // bearer token, never loaded by the element itself. Without this directive
+    // default-src 'none' would silently refuse to play it.
+    "media-src 'self' blob:",
     `connect-src 'self' blob: ${socketOrigins.join(" ")}`.trim(),
     // The app never frames anything and must never BE framed: a framed Wisp is
     // a clickjacking surface for consequential buttons (archive, force-stop).

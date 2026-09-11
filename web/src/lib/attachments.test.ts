@@ -2,13 +2,18 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ATTACHMENT_KIND_LIMITS,
   attachmentPayloads,
   clearRememberedAttachments,
   formatBytes,
-  MAX_ATTACHMENT_BYTES,
+  insertPastedText,
   MAX_ATTACHMENTS,
+  MAX_TURN_ATTACHMENT_BYTES,
   noImageReason,
+  PASTE_TO_FILE_CHARS,
+  pastedTextFile,
   readAttachment,
+  sniffAttachmentType,
   sniffImageType,
   usePendingAttachments,
   type PendingAttachment,
@@ -29,6 +34,11 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 4, 5]);
 const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
 const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+const PDF = new TextEncoder().encode("%PDF-1.7\n%âãÏÓ\n");
+const MP4 = new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode("ftypisom"), 1, 2, 3, 4]);
+const CSV = new TextEncoder().encode("id,name\n1,café\n2,ok\n");
+const HEIC = new Uint8Array([0, 0, 0, 0x18, ...new TextEncoder().encode("ftypheic"), 1, 2, 3, 4]);
+const BINARY = new Uint8Array([0x00, 0x01, 0x02, 0xff]);
 
 function file(bytes: Uint8Array<ArrayBuffer>, name = "shot.png"): File {
   return new File([bytes], name);
@@ -76,6 +86,19 @@ describe("sniffImageType (mirrors src/attachments.ts)", () => {
   });
 });
 
+describe("sniffAttachmentType (mirrors src/attachments.ts)", () => {
+  it("recognizes every kind the daemon stores, text last", () => {
+    expect(sniffAttachmentType(PNG)).toBe("image/png");
+    expect(sniffAttachmentType(PDF)).toBe("application/pdf");
+    expect(sniffAttachmentType(MP4)).toBe("video/mp4");
+    expect(sniffAttachmentType(CSV)).toBe("text/plain");
+    expect(sniffAttachmentType(BINARY)).toBeNull();
+    expect(sniffAttachmentType(new Uint8Array([]))).toBeNull();
+    // the ftyp box is shared with HEIC/AVIF photos and M4A audio: brand decides
+    expect(sniffAttachmentType(HEIC)).toBeNull();
+  });
+});
+
 describe("formatBytes (mirrors src/attachments.ts)", () => {
   it("formats like the daemon: 320 B / 12 KB / 1.2 MB", () => {
     expect(formatBytes(320)).toBe("320 B");
@@ -87,14 +110,29 @@ describe("formatBytes (mirrors src/attachments.ts)", () => {
 });
 
 describe("readAttachment", () => {
-  it("reads a png into a base64 payload with its sniffed media type", async () => {
+  it("reads a png into a pending row with its sniffed media type and kind", async () => {
     const r = await readAttachment(file(PNG));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.attachment.name).toBe("shot.png");
     expect(r.attachment.mediaType).toBe("image/png");
+    expect(r.attachment.kind).toBe("image");
     expect(r.attachment.bytes).toBe(PNG.byteLength);
-    expect(new Uint8Array(atob(r.attachment.dataBase64).split("").map((c) => c.charCodeAt(0)))).toEqual(PNG);
+    // the FILE is kept, not its base64: encoding waits for the submit (A1d)
+    expect(r.attachment.file.name).toBe("shot.png");
+  });
+
+  it("takes pdf, text and video too, each with its own kind", async () => {
+    const kinds = await Promise.all([
+      readAttachment(file(PDF, "spec.pdf")),
+      readAttachment(file(CSV, "orders.csv")),
+      readAttachment(file(MP4, "clip.mp4")),
+    ]);
+    expect(kinds.map((r) => (r.ok ? [r.attachment.kind, r.attachment.mediaType] : r.reason))).toEqual([
+      ["pdf", "application/pdf"],
+      ["text", "text/plain"],
+      ["video", "video/mp4"],
+    ]);
   });
 
   it("names a nameless clipboard file 'pasted image'", async () => {
@@ -102,18 +140,40 @@ describe("readAttachment", () => {
     expect(r.ok && r.attachment.name === "pasted image").toBe(true);
   });
 
-  it("rejects non-images, empty files, and oversize with named reasons", async () => {
-    const notImage = await readAttachment(file(new TextEncoder().encode("plain text")));
-    expect(notImage).toEqual({ ok: false, reason: "shot.png: not a png/jpeg/gif/webp image" });
+  it("rejects unstorable bytes, empty files, and oversize with named reasons", async () => {
+    const unsupported = await readAttachment(file(BINARY));
+    expect(unsupported).toEqual({
+      ok: false,
+      reason: "shot.png: not an image, pdf, text file, or mp4/mov/webm video",
+    });
 
     const empty = await readAttachment(file(new Uint8Array([])));
     expect(empty).toEqual({ ok: false, reason: "shot.png: empty file" });
 
-    const big = new Uint8Array(MAX_ATTACHMENT_BYTES + 1);
+    // the cap that applies is the KIND's: 5 MB of png is over, 5 MB of csv is not
+    const big = new Uint8Array(ATTACHMENT_KIND_LIMITS.image + 1);
     big.set(PNG); // it must SNIFF as png to reach the size branch
     const oversize = await readAttachment(file(big));
     expect(oversize.ok).toBe(false);
-    if (!oversize.ok) expect(oversize.reason).toContain("exceeds the 5 MB per-file limit");
+    if (!oversize.ok) expect(oversize.reason).toContain("exceeds the 5 MB limit for image attachments");
+
+    const text = new Uint8Array(ATTACHMENT_KIND_LIMITS.image + 1).fill(0x61);
+    expect((await readAttachment(file(text, "big.csv"))).ok).toBe(true);
+  });
+});
+
+describe("pastedTextFile (A1d)", () => {
+  it("keeps a delimited paste's extension, so the agent knows what it has", () => {
+    expect(pastedTextFile("a,b\n1,2\n3,4\n", 1).name).toBe("pasted-1.csv");
+    expect(pastedTextFile("a\tb\n1\t2\n", 2).name).toBe("pasted-2.tsv");
+    expect(pastedTextFile("just a long note\nwith prose\n", 3).name).toBe("pasted-3.txt");
+  });
+
+  it("the cutoff is a real threshold, and insertion puts the text back where it was", () => {
+    expect(PASTE_TO_FILE_CHARS).toBe(8000);
+    expect(insertPastedText("start end", { name: "pasted-1.txt", text: "MID", caret: 5 })).toBe("startMID end");
+    // the value has been editable since the paste, so a stale caret is clamped
+    expect(insertPastedText("ab", { name: "pasted-1.txt", text: "X", caret: 99 })).toBe("abX");
   });
 });
 
@@ -127,16 +187,79 @@ describe("noImageReason", () => {
 });
 
 describe("attachmentPayloads", () => {
-  it("strips rows down to the wire shape { name, dataBase64 }", () => {
+  it("encodes each row's file into the wire shape { name, dataBase64 }", async () => {
     const list: PendingAttachment[] = [
-      { id: "a1", name: "a.png", mediaType: "image/png", dataBase64: "QUJD", bytes: 3, url: "blob:x" },
+      {
+        id: "a1",
+        name: "a.txt",
+        mediaType: "text/plain",
+        kind: "text",
+        file: new File(["ABC"], "a.txt"),
+        bytes: 3,
+        url: "",
+      },
     ];
-    expect(attachmentPayloads(list)).toEqual([{ name: "a.png", dataBase64: "QUJD" }]);
+    expect(await attachmentPayloads(list)).toEqual([{ name: "a.txt", dataBase64: "QUJD" }]);
   });
 
   it("the caps constants mirror the daemon's", () => {
-    expect(MAX_ATTACHMENT_BYTES).toBe(5 * 1024 * 1024);
+    expect(ATTACHMENT_KIND_LIMITS).toEqual({
+      image: 5 * 1024 * 1024,
+      pdf: 20 * 1024 * 1024,
+      text: 20 * 1024 * 1024,
+      video: 50 * 1024 * 1024,
+    });
+    expect(MAX_TURN_ATTACHMENT_BYTES).toBe(50 * 1024 * 1024);
     expect(MAX_ATTACHMENTS).toBe(10);
+  });
+});
+
+describe("per-file capability and the turn budget", () => {
+  it("refuses an IMAGE by name on a harness without one, and takes the rest of the batch", async () => {
+    const hook = renderHook(() =>
+      usePendingAttachments({ harness: "opencode", hasImage: false }),
+    );
+    act(() => hook.result.current.addFiles([file(PNG, "shot.png"), file(CSV, "orders.csv")]));
+    await waitFor(() => expect(hook.result.current.list).toHaveLength(1));
+    expect(hook.result.current.list[0]!.name).toBe("orders.csv");
+    expect(hook.result.current.note).toBe(noImageReason("opencode"));
+  });
+
+  it("a paste that would blow the turn's byte budget is refused by name", async () => {
+    const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
+    // each file is under the 20 MB text cap; the third one is over the TURN
+    const chunk = new Uint8Array(18 * 1024 * 1024).fill(0x61);
+    act(() => hook.result.current.addFiles([file(chunk, "one.csv"), file(chunk, "two.csv")]));
+    await waitFor(() => expect(hook.result.current.list).toHaveLength(2));
+    act(() => hook.result.current.addFiles([file(chunk, "three.csv")]));
+    await waitFor(() => expect(hook.result.current.note).toBe("three.csv: over the 50 MB limit for one turn"));
+    expect(hook.result.current.list).toHaveLength(2);
+  });
+
+  it("a long paste that cannot attach makes no offer to undo", async () => {
+    const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
+    const chunk = new Uint8Array(18 * 1024 * 1024).fill(0x61);
+    act(() => hook.result.current.addFiles([file(chunk, "one.csv"), file(chunk, "two.csv"), file(chunk, "three.csv")]));
+    await waitFor(() => expect(hook.result.current.list).toHaveLength(2));
+
+    act(() => hook.result.current.addPastedText("id,name\n" + "1,a\n".repeat(PASTE_TO_FILE_CHARS), 0));
+    await waitFor(() => expect(hook.result.current.note).toContain("limit for one turn"));
+    // no row landed, so there is nothing to insert back — an offer that does
+    // nothing when taken is worse than no offer
+    expect(hook.result.current.pastedText).toBeNull();
+    expect(hook.result.current.list).toHaveLength(2);
+  });
+
+  it("a long paste becomes a file the composer can put back inline", async () => {
+    const hook = renderHook(() => usePendingAttachments({ harness: "codex", hasImage: true }));
+    const pasted = "id,name\n" + "1,a\n".repeat(PASTE_TO_FILE_CHARS);
+    act(() => hook.result.current.addPastedText(pasted, 4));
+    await waitFor(() => expect(hook.result.current.list).toHaveLength(1));
+    expect(hook.result.current.list[0]!.name).toBe("pasted-1.csv");
+    expect(hook.result.current.pastedText).toEqual({ name: "pasted-1.csv", text: pasted, caret: 4 });
+    // removing the row is the other half of the undo: the offer goes with it
+    act(() => hook.result.current.remove(hook.result.current.list[0]!.id));
+    expect(hook.result.current.pastedText).toBeNull();
   });
 });
 
@@ -159,7 +282,7 @@ describe("remembered desktop attachments", () => {
 
     const second = renderHook(() => usePendingAttachments(options));
     expect(second.result.current.list).toHaveLength(1);
-    expect(second.result.current.payloads()).toEqual([
+    expect(await second.result.current.payloads()).toEqual([
       expect.objectContaining({ name: "shot.png" }),
     ]);
     act(() => second.result.current.clear());
@@ -200,7 +323,7 @@ describe("remembered desktop attachments", () => {
 
     const reopened = renderHook(() => usePendingAttachments(options));
     expect(reopened.result.current.list).toEqual([]);
-    expect(reopened.result.current.payloads()).toBeUndefined();
+    expect(await reopened.result.current.payloads()).toBeUndefined();
     expect(urls.createObjectURL).not.toHaveBeenCalled();
   });
 

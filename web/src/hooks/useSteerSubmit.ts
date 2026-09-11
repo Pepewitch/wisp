@@ -76,7 +76,26 @@ export function useSteerSubmit({
     if (!canSend || !task) return
     const id = task.id
     const message = value
-    const payloads = attachments.payloads()
+    setPalette(null)
+    setNote(null)
+    setSending(true)
+    // The bytes are encoded HERE rather than at paste time (A1d), so a 50 MB
+    // video costs its base64 once, at the moment the user asked for work.
+    void attachments.payloads().then(
+      (payloads) => post(id, message, payloads, agent),
+      (error) => {
+        setSending(false)
+        setNote(failureNote(id, error))
+      },
+    )
+  }
+
+  const post = (
+    id: string,
+    message: string,
+    payloads: AttachmentPayload[] | undefined,
+    agent: AgentSubmission | null,
+  ) => {
     const previous = pendingSend.current
     const clientMessageId =
       previous?.taskId === id &&
@@ -87,9 +106,6 @@ export function useSteerSubmit({
         ? previous.clientMessageId
         : crypto.randomUUID()
     pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent }
-    setPalette(null)
-    setNote(null)
-    setSending(true)
     const done = (result: SendResponse | void) => {
       pendingSend.current = null
       setSending(false)

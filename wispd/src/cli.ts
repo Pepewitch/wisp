@@ -5,9 +5,10 @@ import { retentionCommand } from "./cli-retention";
 import { cleanupCommand } from "./cli-cleanup";
 import { doctorCommand } from "./cli-doctor";
 import { updateCommand } from "./cli-update";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
-import { formatBytes, sniffImageType, type AttachmentPayload } from "./attachments";
+import { formatBytes } from "./attachments";
+import { readAttachmentFlags } from "./cli-attach";
 import { searchCommand } from "./cli-search";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
@@ -20,42 +21,6 @@ import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
 
-
-/**
- * `--image ./shot.png` → the wire payload the create/send routes take (A1b).
- *
- * The daemon is still the authority: it re-sniffs the magic bytes and re-checks
- * every cap on the request. What this does is fail EARLY and locally on the two
- * things only the CLI can see — a path that does not exist, and a file that is
- * not an image — because the alternative is base64-ing 5 MB of someone's PDF up
- * a socket to be told the same thing.
- *
- * Exits rather than throwing: a bad `--image` is a usage error, and the caller
- * has not sent anything yet.
- */
-async function readImageFlags(raw: string | boolean | string[] | undefined): Promise<AttachmentPayload[] | undefined> {
-  if (raw === undefined) return undefined;
-  if (raw === true) {
-    console.error("--image requires a path (e.g. --image ./shot.png)");
-    process.exit(1);
-  }
-  const paths = Array.isArray(raw) ? raw : [String(raw)];
-  const out: AttachmentPayload[] = [];
-  for (const p of paths) {
-    const file = Bun.file(resolve(p));
-    if (!(await file.exists())) {
-      console.error(`--image ${p}: no such file`);
-      process.exit(1);
-    }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (!sniffImageType(bytes)) {
-      console.error(`--image ${p}: not a png/jpeg/gif/webp image (magic-byte sniff)`);
-      process.exit(1);
-    }
-    out.push({ name: basename(p), dataBase64: Buffer.from(bytes).toString("base64") });
-  }
-  return out;
-}
 
 async function api(path: string, method = "GET", body?: unknown): Promise<any> {
   const cfg = loadConfig();
@@ -159,7 +124,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--image <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -184,7 +149,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     effort: typeof flags.effort === "string" ? flags.effort : undefined,
     mode: flags.local ? "local" : undefined,
     base: typeof flags.base === "string" ? flags.base : undefined,
-    attachments: await readImageFlags(flags.image),
+    attachments: await readAttachmentFlags(flags),
   })) as ApiTask;
   const where = task.mode === "local" ? ", local" : "";
   console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}) — ${task.title}`);
@@ -518,9 +483,9 @@ export async function cli(args: string[]): Promise<void> {
     case "send": {
       await sendCommand({
         positional,
-        imageFlag: flags.image,
+        attachmentFlags: flags,
         commandName: COMMAND,
-        readImages: readImageFlags,
+        readAttachments: readAttachmentFlags,
         request: api,
       });
       break;

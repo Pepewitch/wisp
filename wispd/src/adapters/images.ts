@@ -48,6 +48,10 @@ export const IMAGE_DELIVERY_STRATEGIES: Record<string, ImageDeliveryStrategy> = 
    * refused at the boundary with a named reason instead of being handed over
    * to break mid-turn.
    *
+   * The sentences themselves moved to adapters/delivery.ts when pdf, text and
+   * video joined images on this mechanism (A1d): one preamble per turn, listing
+   * everything that travels by path, beats one block per strategy.
+   *
    * What wisp cannot know: whether the selected model has vision. droid's
    * catalog carries the flag internally (`noImageSupport` in its bundle) but
    * exposes it on NO CLI surface — the only model list droid prints is a flat
@@ -66,15 +70,6 @@ export const IMAGE_DELIVERY_STRATEGIES: Record<string, ImageDeliveryStrategy> = 
    */
   "read-tool-path": {
     accepts: ["image/png", "image/jpeg"],
-    preamble: (paths) => {
-      const one = paths.length === 1;
-      return [
-        `${one ? "An image is" : `${paths.length} images are`} attached to this message as ${one ? "a file" : "files"} on disk.`,
-        `Read ${one ? "it" : "them"} with your file-reading tool before answering:`,
-        ...paths.map((p) => `  ${p}`),
-        `If you cannot see ${one ? "the image" : "these images"}, say so plainly instead of guessing what ${one ? "it shows" : "they show"}.`,
-      ].join("\n");
-    },
     note: "this harness has no image flag: wisp names the file's path in the prompt and the harness reads it. png and jpeg only, and the prompt asks the model to say so if it cannot see the file.",
   },
 };

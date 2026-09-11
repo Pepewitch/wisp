@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
-import { parseAttachmentManifest, turnAttachmentPath, messageAttachmentPath } from "./attachments";
+import { formatBytes, parseAttachmentManifest, turnAttachmentPath, messageAttachmentPath } from "./attachments";
 import { readdir, lstat, rm, open } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { DIAGNOSTIC_DIR, LOG_DIR, TASKS_DIR } from "./config";
 import { db, getTask, messagesFor, setTaskFields, turnsFor } from "./store";
 import { archiveCleanup } from "./archive-jobs";
@@ -88,7 +88,10 @@ export async function exportTask(task: Task): Promise<TaskExport> {
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
         const size = (await file.stat()).size;
-        if (total + size > MAX_EXPORT_BYTES) throw new RetentionError("Task files exceed the 32 MiB portable-export limit. Use the offline backup procedure to preserve the full task.", 413);
+        // Naming the file that crossed the line matters more since A1d: a task
+        // with one 50 MB video can never export, and "task files exceed the
+        // limit" alone leaves the owner guessing which file to move aside.
+        if (total + size > MAX_EXPORT_BYTES) throw new RetentionError(`Task files exceed the 32 MiB portable-export limit (${basename(path)} is ${formatBytes(size)}). Use the offline backup procedure to preserve the full task.`, 413);
         total += size;
         // Bounded reads even if an external writer grows a file after the size check.
         const bytes = Buffer.alloc(size);

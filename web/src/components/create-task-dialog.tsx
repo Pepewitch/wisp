@@ -5,14 +5,14 @@ import { Effort, Enter, Folder, Local, Sparkle, Star, StarFilled, Worktree } fro
 import { Menu, MenuAction, MenuGroup, MenuItem, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { MENU_ACTION } from "@/lib/menu-actions"
 import { BasePicker } from "@/components/base-picker"
-import { AttachButton, PendingAttachmentRows } from "@/components/pending-attachments"
+import { PromptField } from "@/components/create-prompt-field"
+import { AttachButton } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
 import { failureReason } from "@/lib/api"
 import { usePendingAttachments } from "@/lib/attachments"
 import { effortOptions, rememberEffort } from "@/lib/effort"
-import { handleComposerPaste } from "@/lib/paste-links"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
   defaultModelFor,
@@ -49,8 +49,9 @@ import { cn } from "@/lib/utils"
  *    the configured default plus anything used before (lib/effort.ts). No
  *    hardcoded ladder — the daemon's own tests assert codex taking `xhigh`, so
  *    a low/medium/high menu would hide the level the owner actually uses.
- *  - Attachments ride inline in the create body. A harness with no headless
- *    image path (droid) pastes disabled with its named reason.
+ *  - Attachments ride inline in the create body, encoded when the dialog
+ *    submits. A harness with no image mechanism refuses a pasted IMAGE with
+ *    its named reason and takes every other kind (A1d).
  *  - Creation errors carry named reasons from the daemon and stay inline here.
  */
 export function CreateTaskDialog({
@@ -159,6 +160,17 @@ function Form({
   // Keep `submit` reachable from the key listener below without re-binding it
   // on every keystroke.
   const submitRef = useRef<() => void>(() => {})
+  /**
+   * A create is in flight, from the FIRST click rather than from the mutation.
+   *
+   * Encoding moved to submit (A1d), and a 50 MB video's base64 takes seconds
+   * on the main thread — `createTask.isPending` does not go true until that
+   * finishes, so between the click and the mutation the button was live and a
+   * second ⌘↵ made a second task. The ref is what actually closes the window:
+   * state updates are batched, and two clicks can land inside one batch.
+   */
+  const submitting = useRef(false)
+  const [encoding, setEncoding] = useState(false)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
   const anyUsable = harnesses.some(isUsable)
@@ -166,7 +178,8 @@ function Form({
 
   const project = repos.find((r) => r.path === repoPath)
   const model = choice?.model ?? ""
-  const ready = repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending
+  const ready =
+    repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending && !encoding
 
   const pickChoice = (value: string) => {
     const next = decode(value)
@@ -182,33 +195,52 @@ function Form({
   }
 
   const submit = () => {
+    if (submitting.current) return
     if (!choice) return setValidationError("No harness on this machine can run a task")
     if (!repoPath) return setValidationError("Pick a project")
     if (!prompt.trim()) return setValidationError("A prompt is required")
     setValidationError(null)
-    const payloads = attachments.payloads()
-    createTask.mutate(
-      {
-        repoPath,
-        prompt: prompt.trim(),
-        harness: choice.harness,
-        model: choice.model,
-        mode,
-        ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
-        ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
-        ...(suffixPromptId ? { suffixPromptId } : {}),
-        ...(payloads ? { attachments: payloads } : {}),
-      },
-      {
-        onSuccess: (task) => {
-          // a level that actually ran is a level worth offering next time
-          if (harness?.hasEffort && effort.trim()) {
-            rememberEffort(connectionId, choice.harness, effort.trim())
-          }
-          attachments.clear()
-          onCreated(task.id)
-          onClose()
-        },
+    const chosen = choice
+    submitting.current = true
+    setEncoding(true)
+    // encoded at submit rather than at paste (A1d): the dialog can hold a
+    // 50 MB video without holding its base64 too
+    void attachments.payloads().then(
+      (payloads) =>
+        createTask.mutate(
+          {
+            repoPath,
+            prompt: prompt.trim(),
+            harness: chosen.harness,
+            model: chosen.model,
+            mode,
+            ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
+            ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
+            ...(suffixPromptId ? { suffixPromptId } : {}),
+            ...(payloads ? { attachments: payloads } : {}),
+          },
+          {
+            onSuccess: (task) => {
+              // a level that actually ran is a level worth offering next time
+              if (harness?.hasEffort && effort.trim()) {
+                rememberEffort(connectionId, chosen.harness, effort.trim())
+              }
+              attachments.clear()
+              onCreated(task.id)
+              onClose()
+            },
+            // a refused create must be retryable, so the guard is released on
+            // both outcomes rather than only on the happy one
+            onSettled: () => {
+              submitting.current = false
+              setEncoding(false)
+            },
+          },
+        ),
+      (error) => {
+        submitting.current = false
+        setEncoding(false)
+        setValidationError(error instanceof Error ? error.message : String(error))
       },
     )
   }
@@ -292,27 +324,7 @@ function Form({
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}
-      <div className="px-4 pt-3.5">
-        <textarea
-          ref={box}
-          rows={6}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onPaste={(e) =>
-            handleComposerPaste(e, {
-              onImagePaste: attachments.onPaste,
-              value: prompt,
-              onChange: (next) => setPrompt(next),
-            })
-          }
-          placeholder="What do you want to work on?"
-          className={cn(
-            "scroll-slim min-h-[132px] w-full resize-none bg-transparent",
-            "text-[13.5px] leading-[1.6] text-foreground placeholder:text-faint focus:outline-none",
-          )}
-        />
-        <PendingAttachmentRows pending={attachments} />
-      </div>
+      <PromptField box={box} prompt={prompt} setPrompt={setPrompt} attachments={attachments} />
 
       {error && <div className="px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
       {harnessesError && !error && (
@@ -334,7 +346,7 @@ function Form({
         effort={effort}
         suffixPromptId={suffixPromptId}
         ready={ready}
-        pending={createTask.isPending}
+        pending={createTask.isPending || encoding}
         reprobePending={reprobe.isPending}
         onPickChoice={pickChoice}
         onTogglePreferredChoice={togglePreferredChoice}

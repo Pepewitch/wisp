@@ -172,6 +172,39 @@ task branch's commits directly onto main.
 A `local` task has no base: it adopts the branch the checkout is already on,
 which is the point of the mode. Passing a base to one is a 400.
 
+## Attachments
+
+A message can carry files: images, pdf, text of any extension, and short video.
+They arrive base64-encoded inside the create/send JSON, are validated by
+MAGIC BYTES rather than by the pasted name or mime, and are written under
+`~/.wisp/tasks/<id>/attachments/` — never into the worktree, where they would
+show up in the task's own diff and in the dirty check archive refuses on.
+
+The caps are per kind (5 MB image, 20 MB pdf, 20 MB text, 50 MB video) under
+one 50 MB budget for the whole turn, and the daemon's request-body ceiling is
+DERIVED from that budget rather than guessed. Holding the total where the
+old ten-images worst case already was keeps the ceiling under the desktop
+proxy's 80 MB replayable-body limit; the visible consequence is that a 50 MB
+video is the whole turn's budget.
+
+How a file reaches the harness depends only on whether it is an image:
+
+| Kind | Delivery |
+| --- | --- |
+| image | the adapter's own channel — argv (`-i <path>`), a stdin envelope of base64 blocks, or a live protocol's image blocks; by path where the adapter declares `imageDelivery` |
+| pdf, text, video | by PATH, on every harness: the absolute paths are named in the prompt and the harness opens them with its own file tools |
+
+Path delivery needs nothing from a CLI, so a harness with no image mechanism
+still takes the other kinds. The preamble that names the paths lives in
+`wispd/src/adapters/delivery.ts` and says what it has to: the type and size of
+each file, and — for video, which nothing in this stack can watch — that
+sampling frames with ffmpeg is the honest option and saying "I cannot" is
+better than guessing.
+
+Each turn and queued message keeps a small manifest (name, size, media type)
+on its row. Archive deletes the bytes; the manifest stays, so the conversation
+can still say a file was attached and that it was removed.
+
 ## Change-impact contract
 
 Treat the browser and desktop shell as two shipped clients of one UI/API

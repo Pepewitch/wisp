@@ -147,6 +147,10 @@ describe("the assembled policy", () => {
     expect(directive(csp, "img-src")).toContain("blob:");
     expect(directive(csp, "img-src")).toContain("data:");
     expect(directive(csp, "font-src")).toContain("data:");
+    // A1d: an attached video plays from a blob: URL the app fetched with its
+    // bearer token. Without this directive default-src 'none' refuses it, and
+    // nothing else in this file would notice a later edit dropping it.
+    expect(directive(csp, "media-src")).toContain("blob:");
   });
 
   test("the legacy framing header and a no-referrer policy ride along", () => {

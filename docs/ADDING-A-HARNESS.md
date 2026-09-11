@@ -171,8 +171,13 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    `recordsTurn` truthfully — the palette tells the user what a compact
    costs.
 9. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
-   (argv template, stdin envelope, prompt-path preamble), mutually exclusive.
-   The trailing `--` in an argv template is mandatory.
+   for IMAGES (argv template, stdin envelope, prompt-path preamble), mutually
+   exclusive. The trailing `--` in an argv template is mandatory. A harness
+   that declares none refuses images by name; it still takes every other
+   attachment kind, because pdf, text and video are delivered by naming their
+   absolute paths in the prompt (`adapters/delivery.ts`) and every harness has
+   file tools. Nothing is copied into the worktree — an attachment must never
+   show up in the task's own diff.
 10. **`liveInput`** — only for a protocol verified to admit a message without
    terminating the active turn. Admission must have a native acknowledgement,
    stable client message id, and a terminal event. No field means Wisp

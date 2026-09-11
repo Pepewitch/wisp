@@ -402,7 +402,7 @@ describe("the touch composer", () => {
     mount(<SteerBox task={task("done")} touch onSend={() => {}} />)
 
     expect(screen.getByRole("button", { name: "Send" })).toHaveClass("size-11")
-    expect(screen.getByRole("button", { name: "Attach an image" })).toHaveClass("size-11")
+    expect(screen.getByRole("button", { name: "Attach a file" })).toHaveClass("size-11")
   })
 
   /** A finger, as the device reports it — not a window that happens to be narrow. */

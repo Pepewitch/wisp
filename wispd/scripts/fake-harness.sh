@@ -53,4 +53,12 @@ init_model=""
 [[ -n "$model" ]] && init_model=',"model":"'"$model"'"'
 printf '{"type":"system","subtype":"init","session_id":"%s"%s}\n' "$session" "$init_model"
 short=$(printf '%s' "$prompt" | tail -c 80 | tr '\n' ' ' | tr -d '"\\')
-printf '{"result":"echo(turn on %s): %s","session_id":"%s"}\n' "$session" "$short" "$session"
+# A non-image attachment is delivered by having its PATH named in the prompt,
+# and the tail above cannot show it (the user's own message ends the prompt).
+# Reporting it here is what lets the smoke prove delivery rather than storage.
+# an `if`, not `cmd && assign`: under `set -e` a false compound ends the script
+delivery=""
+if grep -q 'attached to this message on disk' <<< "$prompt"; then
+  delivery=" [path-delivered]"
+fi
+printf '{"result":"echo(turn on %s): %s%s","session_id":"%s"}\n' "$session" "$short" "$delivery" "$session"
