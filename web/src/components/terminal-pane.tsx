@@ -1,9 +1,9 @@
-import { useEffect, useId, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react"
 import { FitAddon } from "@xterm/addon-fit"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
-import { Dismiss, Plus } from "@/components/icons"
+import { Check, ClipboardPaste, Copy, Dismiss, Plus, type FluentIcon } from "@/components/icons"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
   loadShellTabs,
@@ -12,6 +12,8 @@ import {
   TerminalConnection,
   type ShellTabs,
 } from "@/lib/terminal"
+import { bufferText, selectionWithin } from "@/lib/terminal-clipboard"
+import { cellHeightOf, TouchScrollGesture } from "@/lib/terminal-touch"
 import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
 import { cn } from "@/lib/utils"
@@ -84,6 +86,19 @@ function labelFor(id: number): string {
   return `Shell ${id + 1}`
 }
 
+/**
+ * Whether this browser will hand the app the clipboard at all.
+ *
+ * Read per capability rather than once for "clipboard": Safari and Chrome give
+ * both halves, Firefox gives only `writeText`, and a page served over plain
+ * http — a LAN address rather than the documented HTTPS one — is not a secure
+ * context and gets neither. Asking separately is what lets the two controls
+ * disable themselves honestly instead of failing silently on the tap.
+ */
+function clipboardCan(verb: "readText" | "writeText"): boolean {
+  return typeof navigator !== "undefined" && typeof navigator.clipboard?.[verb] === "function"
+}
+
 
 export function TerminalSection({
   taskId,
@@ -125,6 +140,82 @@ export function TerminalSection({
   const shells = tabs.ids
   const activeId = tabs.active
 
+  /**
+   * The live xterm behind each tab, so the strip's controls can act on the one
+   * in front of the user.
+   *
+   * A ref rather than state: a terminal arriving or leaving changes nothing
+   * about what is painted, and putting it in state would re-render the pane —
+   * and therefore every mounted shell — on mount and unmount.
+   */
+  const terminals = useRef(new Map<number, Terminal>())
+  // Must stay referentially stable: a tab's terminal is created and disposed by
+  // an effect that depends on this, so a `register` that changed identity would
+  // tear down live shells — scrollback, socket and all — to rebuild them.
+  const register = useCallback((id: number, terminal: Terminal | null) => {
+    if (terminal) terminals.current.set(id, terminal)
+    else terminals.current.delete(id)
+  }, [])
+  const [copied, setCopied] = useState(false)
+  const copiedReset = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (copiedReset.current) clearTimeout(copiedReset.current)
+    }
+  }, [])
+
+  /**
+   * Copy whichever selection exists, or the whole buffer when none does.
+   *
+   * The ORDER is the substance here, and `lib/terminal-clipboard.ts` explains
+   * why: a phone's only selection is the platform's, made by long press and
+   * held in the DOM where xterm cannot see it, so asking xterm first would
+   * ignore the one selection a finger can actually make and copy the entire
+   * buffer over the top of it.
+   */
+  const copy = async () => {
+    const terminal = terminals.current.get(activeId)
+    if (!terminal) return
+    const root = terminal.element ?? null
+    const text =
+      selectionWithin(root, root?.ownerDocument.getSelection() ?? null) ||
+      (terminal.hasSelection() ? terminal.getSelection() : "") ||
+      bufferText(terminal.buffer.active)
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      if (!mounted.current) return
+      setCopied(true)
+      if (copiedReset.current) clearTimeout(copiedReset.current)
+      copiedReset.current = setTimeout(() => setCopied(false), 1_200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  /**
+   * Paste into the active shell.
+   *
+   * `Terminal.paste` rather than an input frame of our own: it normalizes line
+   * endings and applies bracketed-paste mode, so a shell that asked to be told
+   * a paste is a paste still gets told.
+   */
+  const paste = async () => {
+    const terminal = terminals.current.get(activeId)
+    if (!terminal) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) terminal.paste(text)
+      terminal.focus()
+    } catch {
+      // A refused permission or an empty clipboard is not an error worth a
+      // surface; the control stays where it is and the shell is untouched.
+    }
+  }
+
   // The next id is the smallest FREE one, not max+1: ids address daemon-side
   // shells, and reusing a closed tab's id reattaches to the shell still
   // running under it — which is the behaviour you want after a stray close.
@@ -156,31 +247,53 @@ export function TerminalSection({
     // opens one row tall
     <div className="flex h-full min-h-0 flex-1 flex-col bg-background">
       <div className={cn("flex shrink-0 items-center gap-1 pr-2.5 pl-2", touch ? "h-12" : "h-8")}>
-        {shells.map((id) => (
-          <ShellTab
-            key={id}
-            label={labelFor(id)}
-            active={id === activeId}
-            closeable={shells.length > 1}
-            onActivate={() => setTabs({ ids: shells, active: id })}
-            onClose={() => close(id)}
+        {/* The tab list SCROLLS and the clipboard controls do not.
+            Everything here is `shrink-0`, and the pane allows eight shells, so
+            on a phone a second tab was already enough to push what follows it
+            off the right edge — with no way to reach it, because the mobile
+            shell refuses overscroll. Giving the tabs their own scroller is
+            what keeps the controls on screen at any shell count. */}
+        <div className="scroll-slim flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {shells.map((id) => (
+            <ShellTab
+              key={id}
+              label={labelFor(id)}
+              active={id === activeId}
+              closeable={shells.length > 1}
+              onActivate={() => setTabs({ ids: shells, active: id })}
+              onClose={() => close(id)}
+              touch={touch}
+            />
+          ))}
+          <ShellControl
+            icon={Plus}
+            label="New shell"
+            title="New shell in this worktree"
+            onAct={open}
+            disabled={unavailable !== null || shells.length >= MAX_SHELLS_PER_TASK}
             touch={touch}
           />
-        ))}
-        <button
-          type="button"
-          onClick={open}
-          disabled={unavailable !== null || shells.length >= MAX_SHELLS_PER_TASK}
-          aria-label="New shell"
-          title="New shell in this worktree"
-          className={cn(
-            "flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
-            "hover:bg-hover hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent",
-            touch ? "size-11" : "size-[22px]",
-          )}
-        >
-          <Plus className={touch ? "size-4" : "size-3"} />
-        </button>
+        </div>
+
+        {/* Outside that scroller, and in this order: a control that empties the
+            clipboard into a live shell does not share an edge with the one
+            that closes a tab. */}
+        <ShellControl
+          icon={copied ? Check : Copy}
+          label={copied ? "Copied" : "Copy"}
+          title="Copy the selection, or everything this shell has printed"
+          onAct={() => void copy()}
+          disabled={unavailable !== null || !clipboardCan("writeText")}
+          touch={touch}
+        />
+        <ShellControl
+          icon={ClipboardPaste}
+          label="Paste"
+          title="Paste the clipboard into this shell"
+          onAct={() => void paste()}
+          disabled={unavailable !== null || !clipboardCan("readText")}
+          touch={touch}
+        />
       </div>
 
       <div className="relative min-h-0 flex-1">
@@ -194,11 +307,52 @@ export function TerminalSection({
               taskId={taskId!}
               shellId={id}
               active={id === activeId}
+              register={register}
             />
           ))
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * One icon control in the tab strip — `+`, copy, paste.
+ *
+ * Extracted the moment there were three of them: the strip's controls are one
+ * shape at two sizes, and §6b's 44px floor is about the hit box, so `touch`
+ * grows the BOX rather than the glyph.
+ */
+function ShellControl({
+  icon: Icon,
+  label,
+  title,
+  onAct,
+  disabled,
+  touch = false,
+}: {
+  icon: FluentIcon
+  label: string
+  title: string
+  onAct: () => void
+  disabled: boolean
+  touch?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onAct}
+      disabled={disabled}
+      aria-label={label}
+      title={title}
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
+        "hover:bg-hover hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent",
+        touch ? "size-11" : "size-[22px]",
+      )}
+    >
+      <Icon className={touch ? "size-4" : "size-3"} />
+    </button>
   )
 }
 
@@ -217,8 +371,17 @@ function ShellTab({
   onClose: () => void
   touch?: boolean
 }) {
+  const self = useRef<HTMLSpanElement>(null)
+  // The strip scrolls now, so the tab you just opened or switched to can be
+  // sitting off its edge. `nearest` on both axes so a tab already in view is
+  // left exactly where it is.
+  useEffect(() => {
+    if (active) self.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }, [active])
+
   return (
     <span
+      ref={self}
       className={cn(
         "group/tab flex shrink-0 items-center gap-1.5 rounded-md pr-1.5 pl-2.5 transition-colors",
         touch ? "h-11 gap-2 pr-2 pl-3.5" : "h-[22px]",
@@ -277,11 +440,14 @@ function ShellView({
   taskId,
   shellId,
   active,
+  register,
 }: {
   transport: DaemonTransport
   taskId: string
   shellId: number
   active: boolean
+  /** Publish this tab's terminal to the strip's controls; null on teardown. */
+  register: (id: number, terminal: Terminal | null) => void
 }) {
   const host = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
@@ -332,12 +498,14 @@ function ShellView({
     t.open(host.current)
     term.current = t
     fit.current = f
+    register(shellId, t)
     return () => {
+      register(shellId, null)
       t.dispose()
       term.current = null
       fit.current = null
     }
-  }, [])
+  }, [register, shellId])
 
   // A theme switch repaints the live terminal in place — scrollback, the
   // socket and the running process are all untouched.
@@ -501,6 +669,8 @@ function ShellView({
     }
   }, [active])
 
+  useTouchScroll(host, term, active)
+
   return (
     <div className={cn("absolute inset-0 flex flex-col", !active && "pointer-events-none invisible")}>
       <div ref={host} className="min-h-0 flex-1 px-2.5 pb-1" />
@@ -538,6 +708,86 @@ function ShellView({
       )}
     </div>
   )
+}
+
+/**
+ * Swipe to scroll — the gesture xterm 6 dropped.
+ *
+ * `lib/terminal-touch.ts` has the why and the arithmetic; this is the wiring,
+ * and it deliberately mirrors the shape of the listeners the 5.x line carried
+ * on its terminal element.
+ */
+function useTouchScroll(
+  host: RefObject<HTMLDivElement | null>,
+  term: RefObject<Terminal | null>,
+  active: boolean,
+) {
+  useEffect(() => {
+    const element = host.current
+    const t = term.current
+    if (!active || !element || !t) return
+    const gesture = new TouchScrollGesture()
+    // xterm keeps cell metrics for its renderers alone, so the rows are
+    // measured off the element the DOM renderer sizes to exactly `rows` of
+    // them — the same DOM this app already addresses in index.css.
+    const screen = () => element.querySelector(".xterm-screen")
+
+    /**
+     * Stand down for a program that turned mouse reporting on. xterm marks its
+     * root and forwards the wheel to the program instead of scrolling its own
+     * buffer; 5.x's touch handlers carried the same guard, and scrolling a
+     * buffer that a full-screen app is redrawing is worse than not scrolling.
+     */
+    const reporting = () => t.element?.classList.contains("enable-mouse-events") === true
+
+    /**
+     * A selection in progress owns the finger. On touch the rows are handed
+     * back to the platform (see index.css) so a long press can select and copy
+     * — and dragging one of those handles also fires touchmove, so scrolling
+     * underneath would fight the very gesture that was enabled.
+     */
+    const selecting = () => {
+      const selection = element.ownerDocument.getSelection()
+      const anchor = selection?.anchorNode ?? null
+      return !!selection && !selection.isCollapsed && anchor !== null && element.contains(anchor)
+    }
+
+    // A second finger is a pinch, and pinch-zoom belongs to the browser.
+    const single = (event: TouchEvent) => event.touches.length === 1 && !reporting()
+
+    const onStart = (event: TouchEvent) => {
+      // A finger JOINING mid-gesture ends it rather than being ignored: the
+      // gesture must not still be following a finger through a pinch and then
+      // cash the whole pinch out as one scroll when the other one lifts.
+      if (!single(event)) gesture.end()
+      else gesture.start(event.touches[0]!.clientY, event.touches[0]!.identifier)
+    }
+    const onMove = (event: TouchEvent) => {
+      if (!single(event) || selecting()) return
+      const touch = event.touches[0]!
+      const step = gesture.move(touch.clientY, cellHeightOf(screen(), t.rows), touch.identifier)
+      if (!step.claimed) return
+      // Only once the gesture IS a scroll. Defaulting the touch any earlier
+      // stops the browser synthesizing the mouse events that focus the
+      // terminal, and tap-to-type is the one thing that already worked here.
+      event.preventDefault()
+      if (step.lines !== 0) t.scrollLines(step.lines)
+    }
+    const onEnd = () => gesture.end()
+
+    element.addEventListener("touchstart", onStart, { passive: true })
+    element.addEventListener("touchmove", onMove, { passive: false })
+    element.addEventListener("touchend", onEnd, { passive: true })
+    element.addEventListener("touchcancel", onEnd, { passive: true })
+    return () => {
+      element.removeEventListener("touchstart", onStart)
+      element.removeEventListener("touchmove", onMove)
+      element.removeEventListener("touchend", onEnd)
+      element.removeEventListener("touchcancel", onEnd)
+    }
+    // host and term are refs; they are here only to satisfy the lint rule,
+    // which cannot see that a ref passed as a parameter is stable.
+  }, [active, host, term])
 }
 
 /**
