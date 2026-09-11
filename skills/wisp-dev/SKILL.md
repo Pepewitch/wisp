@@ -45,7 +45,7 @@ Wisp has one authoritative daemon and several clients:
 | Change the desktop shell's native core, proxy, connections, credentials, or updater | [Desktop transport contract](../../docs/DESKTOP-TRANSPORT.md), [Desktop updates](../../docs/DESKTOP-UPDATES.md), then `desktop/README.md` | TypeScript bridge/runtime plus `desktop/src-tauri/`; gate with `bun run check` and `bun run desktop:check` |
 | Prepare, publish, recover, or promote a versioned release or Homebrew update | [Releasing and publishing Wisp](references/releasing.md) — start at its **short path** section; read further only for the reasoning or a manual fallback | Release scripts, promotion receipt, release notes, evaluator guide, and both repository diffs |
 | Change a user-visible command or contract | Server reference plus the source | `README.md` and `skills/wisp/references/` so operational guidance stays true |
-| Change product direction or revisit an invariant | Open a focused proposal | Keep unpublished planning outside the public repository |
+| Change product direction or revisit an invariant | Draft a focused proposal in `.context/` | Discuss it with the maintainer; never commit the proposal |
 | Change the mark or generated brand assets | `brand/README.md` | `scripts/brand/`; never hand-edit generated assets |
 
 Source and tests are authoritative for architecture, fields, payloads, and
@@ -107,9 +107,12 @@ publication surfaces.
 8. Keep this entry point thin. Put durable workflow or rationale in the
    selective references; leave volatile field lists and exact payload shapes
    in code and tests.
-9. Keep investigation notes and implementation plans in `.context/` by
-   default. Commit one only when it serves a durable repository-level purpose,
-   and sanitize it to the standard required for any public artifact.
+9. Store all plans, proposals, and investigation notes in Git-ignored
+   `.context/`. Never stage, commit, or force-add them, or copy them into
+   tracked documentation or PR descriptions. Before committing or opening a
+   PR, check the staged diff and branch history for planning artifacts.
+   PRs should contain the implementation and necessary documentation;
+   their descriptions should summarize changes and validation, not the plan.
 10. Treat immutable GitHub release publication and mutable Homebrew/update-channel
    promotion as separate states. Recover a valid published release through the
    idempotent promotion path; never rebuild, replace assets, or create a new
