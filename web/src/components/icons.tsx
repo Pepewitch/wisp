@@ -35,6 +35,8 @@ export {
   ChevronDownRegular as ChevronDown,
   ChevronRightRegular as ChevronRight,
   ChevronUpRegular as ChevronUp,
+  CodeRegular as Code,
+  FlowchartRegular as Flowchart,
   DismissRegular as Dismiss,
   EditRegular as Pencil,
   FolderAddRegular as FolderAdd,
@@ -49,6 +51,7 @@ export {
   WeatherMoonRegular as Moon,
   WeatherSunnyRegular as Sun,
   ZoomInRegular as ZoomIn,
+  ZoomOutRegular as ZoomOut,
 } from "@fluentui/react-icons"
 
 /** The shape every glyph above has, for components that take one as a prop. */

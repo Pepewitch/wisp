@@ -562,7 +562,11 @@ await main();
 async function checkPwa(page: Page, origin: string): Promise<void> {
   const send = (method: string, params: Record<string, unknown> = {}) => page.client.send(method, params, page.session);
   await send("Page.navigate", { url: origin });
-  await waitInPage(page, "!!navigator.serviceWorker.controller", "PWA worker activation");
+  // The worker alone cannot mean "booted": once the SW controls this origin,
+  // every later navigation starts controlled before any app JS runs, and the
+  // manifest link (injected at boot) has not arrived yet. The link IS the
+  // boot marker, and the manifest check below reads it.
+  await waitInPage(page, "!!navigator.serviceWorker.controller && !!document.querySelector('link[rel=manifest]')", "PWA worker activation");
   const manifest = await send("Page.getAppManifest");
   check("the browser discovers a valid Wisp manifest", typeof manifest.data === "string" && JSON.parse(manifest.data).display === "standalone" && (manifest.errors as unknown[]).length === 0, JSON.stringify(manifest.errors));
   const installability = await send("Page.getInstallabilityErrors");
