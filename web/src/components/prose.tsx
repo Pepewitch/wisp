@@ -4,7 +4,9 @@ import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdo
 
 import { externalLinkProps } from "@/lib/external-links"
 import { PROSE_HIGHLIGHT_PLUGINS } from "@/lib/prose-highlight"
+import { mermaidFenceCode } from "@/lib/mermaid-fence-code"
 import { RemoteImage } from "./remote-image"
+import { MermaidFence } from "./mermaid-fence"
 import { cn } from "@/lib/utils"
 import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
 
@@ -92,28 +94,37 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   // block wearing the same fill made the two indistinguishable when scanning
   // a transcript for "where did I say something". This one recedes toward the
   // reading column so the bubble stays the brightest thing in the stream.
-  pre: ({ children }) => (
-    <pre
-      className={cn(
-        "scroll-slim mt-2.5 overflow-x-auto rounded-md border border-border bg-code px-3 py-2",
-        "font-mono text-[11.5px] leading-[1.75]",
-        // A fence's contents arrive as a `code` element and so does inline
-        // code; the ONLY thing that tells them apart is the `language-*` class
-        // markdown adds when — and only when — the fence names a language. A
-        // bare ``` has none, so it took the inline branch above and wore the
-        // violet chip: pill fill, side padding and accent text, wrapped round
-        // a whole block, on top of this surface. Two code styles at once, and
-        // a block-sized wash of the one hue §1 spends on inline code.
-        //
-        // The block is the parent, so the block decides. A fence is plain
-        // mono on `--code` whether or not it named a language; naming one adds
-        // colour INSIDE the text, and nothing else.
-        "[&>code]:bg-transparent [&>code]:p-0 [&>code]:text-[11.5px] [&>code]:text-inherit"
-      )}
-    >
-      {children}
-    </pre>
-  ),
+  pre: ({ children }) => <ProsePre>{children}</ProsePre>,
+}
+
+const PROSE_PRE_CLASS = cn(
+  "scroll-slim overflow-x-auto rounded-md border border-border bg-code px-3 py-2",
+  "font-mono text-[11.5px] leading-[1.75]",
+  // A fence's contents arrive as a `code` element and so does inline
+  // code; the ONLY thing that tells them apart is the `language-*` class
+  // markdown adds when — and only when — the fence names a language. A
+  // bare ``` has none, so it took the inline branch above and wore the
+  // violet chip: pill fill, side padding and accent text, wrapped round
+  // a whole block, on top of this surface. Two code styles at once, and
+  // a block-sized wash of the one hue §1 spends on inline code.
+  //
+  // The block is the parent, so the block decides. A fence is plain
+  // mono on `--code` whether or not it named a language; naming one adds
+  // colour INSIDE the text, and nothing else.
+  "[&>code]:bg-transparent [&>code]:p-0 [&>code]:text-[11.5px] [&>code]:text-inherit"
+)
+
+/** Prose's `pre`: a plain fence, or a mermaid one wearing its corner switch. */
+function ProsePre({ children }: { children?: React.ReactNode }) {
+  const code = mermaidFenceCode(children)
+  if (code === null) {
+    return <pre className={cn("mt-2.5", PROSE_PRE_CLASS)}>{children}</pre>
+  }
+  return (
+    <MermaidFence code={code}>
+      <pre className={PROSE_PRE_CLASS}>{children}</pre>
+    </MermaidFence>
+  )
 }
 
 /** Prose's `a`, which resolves to one of the three things an href can be. */

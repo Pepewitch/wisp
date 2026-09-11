@@ -1,11 +1,22 @@
 import { fireEvent, render, screen } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
 import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
 
 import { Prose } from "./prose"
+
+const renderDiagram = vi.hoisted(() => vi.fn())
+vi.mock("@streamdown/mermaid", () => ({
+  // the shape MermaidFence reaches through its dynamic import
+  mermaid: {
+    name: "mermaid",
+    type: "diagram",
+    language: "mermaid",
+    getMermaid: () => ({ initialize: vi.fn(), render: renderDiagram }),
+  },
+}))
 
 /**
  * The three things agents emit that a hand-rolled inline parser could not do:
@@ -86,7 +97,7 @@ describe("Prose", () => {
   })
 
   it("renders a language it does not know as plain text instead of throwing", () => {
-    const { container } = render(<Prose text={"```mermaid\ngraph TD; a-->b\n```"} />)
+    const { container } = render(<Prose text={"```wisp-lang\ngraph TD; a-->b\n```"} />)
 
     // an agent's prose is not a build input; an unknown fence must not be able
     // to take a turn down with it (`ignoreMissing`)
@@ -213,6 +224,51 @@ describe("Prose", () => {
     const { container } = render(<Prose text="SOLANA_RENT_SHORTFALL and account_index" />)
     expect(container.querySelector("em")).toBeNull()
     expect(container.textContent).toContain("SOLANA_RENT_SHORTFALL")
+  })
+
+  /**
+   * A mermaid fence is source first: the switch renders the diagram only when
+   * asked, and the source is one click away again. The renderer behind the
+   * dynamic import is mocked here — its zoom/pan surface is the thing under
+   * test, not mermaid's parser.
+   */
+  describe("mermaid fences", () => {
+    const FENCE = "```mermaid\ngraph TD\n    a --> b\n```"
+
+    beforeEach(() => renderDiagram.mockReset())
+
+    it("keeps the source as the default and offers the diagram on hover", () => {
+      const { container } = render(<Prose text={FENCE} />)
+      expect(container.querySelector("pre")?.textContent).toContain("a --> b")
+      expect(screen.getByRole("button", { name: "Render diagram" })).toBeInTheDocument()
+      // and a fence that is not mermaid gets no switch
+      const plain = render(<Prose text={"```ts\nconst x = 1\n```"} />)
+      expect(plain.container.querySelector("[aria-label='Render diagram']")).toBeNull()
+    })
+
+    it("renders the diagram on the switch, and returns to the source on it again", async () => {
+      renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
+      const { container } = render(<Prose text={FENCE} />)
+
+      fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
+      expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
+      expect(container.querySelector("[data-test='dag']")).not.toBeNull()
+      expect(renderDiagram).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^wisp-mermaid-/), expect.stringContaining("a --> b"))
+
+      fireEvent.click(screen.getByRole("button", { name: "Show source" }))
+      expect(container.querySelector("pre")?.textContent).toContain("a --> b")
+    })
+
+    it("offers a retry when the diagram cannot be parsed", async () => {
+      renderDiagram.mockRejectedValueOnce(new Error("Parse error on line 2"))
+      renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
+      render(<Prose text={FENCE} />)
+
+      fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
+      expect(await screen.findByText("Parse error on line 2")).toBeInTheDocument()
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+      expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
+    })
   })
 
   /**
