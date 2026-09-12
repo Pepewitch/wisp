@@ -1,20 +1,23 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
 import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
 
 import { Prose } from "./prose"
 
 const renderDiagram = vi.hoisted(() => vi.fn())
+// `getMermaid` carries the theme, so it is a spy of its own
+const getMermaid = vi.hoisted(() => vi.fn())
 vi.mock("@streamdown/mermaid", () => ({
   // the shape MermaidFence reaches through its dynamic import
   mermaid: {
     name: "mermaid",
     type: "diagram",
     language: "mermaid",
-    getMermaid: () => ({ initialize: vi.fn(), render: renderDiagram }),
+    getMermaid,
   },
 }))
 
@@ -237,38 +240,60 @@ describe("Prose", () => {
 
     beforeEach(() => {
       renderDiagram.mockReset()
+      getMermaid.mockReset()
+      getMermaid.mockImplementation(() => ({ initialize: vi.fn(), render: renderDiagram }))
       localStorage.clear()
+      // the theme store is module-global; no fence may leave it moved
+      themeStore.set(DEFAULT_THEME_PREFERENCE)
     })
 
     /** The diagram on screen, plus the node its transform is written to. */
     async function openDiagram() {
       renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
       const view = render(<Prose text={FENCE} />)
-      fireEvent.click(screen.getAllByRole("button", { name: "Render diagram" })[0])
       const surface = await screen.findByRole("application", { name: "Mermaid diagram" })
       return { view, surface, content: surface.firstElementChild as HTMLElement }
     }
 
-    it("keeps the source as the default and offers the diagram on hover", () => {
-      const { container } = render(<Prose text={FENCE} />)
-      expect(container.querySelector("pre")?.textContent).toContain("a --> b")
-      expect(screen.getByRole("button", { name: "Render diagram" })).toBeInTheDocument()
-      // and a fence that is not mermaid gets no switch
-      const plain = render(<Prose text={"```ts\nconst x = 1\n```"} />)
-      expect(plain.container.querySelector("[aria-label='Render diagram']")).toBeNull()
-    })
-
-    it("renders the diagram on the switch, and returns to the source on it again", async () => {
+    it("shows the diagram as soon as the fence renders as one", async () => {
       renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
       const { container } = render(<Prose text={FENCE} />)
 
-      fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
+      // nobody clicked anything: a fence that means a diagram shows a diagram
       expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
       expect(container.querySelector("[data-test='dag']")).not.toBeNull()
-      expect(renderDiagram).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^wisp-mermaid-/), expect.stringContaining("a --> b"))
+      expect(renderDiagram).toHaveBeenCalledExactlyOnceWith(
+        expect.stringMatching(/^wisp-mermaid-/),
+        expect.stringContaining("a --> b"),
+      )
 
+      // and the switch is still how you get back to the text that made it
       fireEvent.click(screen.getByRole("button", { name: "Show source" }))
       expect(container.querySelector("pre")?.textContent).toContain("a --> b")
+      fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
+      expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
+    })
+
+    it("gives a fence that is not mermaid no switch at all", () => {
+      const plain = render(<Prose text={"```ts\nconst x = 1\n```"} />)
+      expect(plain.container.querySelector("[aria-label='Render diagram']")).toBeNull()
+      expect(renderDiagram).not.toHaveBeenCalled()
+    })
+
+    /**
+     * An agent writes a diagram a character at a time. Until the whole thing
+     * parses there is nothing to show, and a parse error mid-turn announces
+     * only that the second half has not arrived — so the source stands.
+     */
+    it("leaves a fence that does not parse as its source, not as an error", async () => {
+      renderDiagram.mockRejectedValue(new Error("Parse error on line 2"))
+      const { container } = render(<Prose text={FENCE} />)
+
+      await waitFor(() => expect(renderDiagram).toHaveBeenCalled())
+      expect(screen.queryByRole("application", { name: "Mermaid diagram" })).toBeNull()
+      expect(container.querySelector("pre")?.textContent).toContain("a --> b")
+      // the error is still reachable — it is why the diagram is not there
+      expect(screen.getByRole("button", { name: "Render diagram" })).toBeInTheDocument()
     })
 
     it("offers a retry when the diagram cannot be parsed", async () => {
@@ -276,10 +301,49 @@ describe("Prose", () => {
       renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
       render(<Prose text={FENCE} />)
 
-      fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
+      fireEvent.click(await screen.findByRole("button", { name: "Render diagram" }))
       expect(await screen.findByText("Parse error on line 2")).toBeInTheDocument()
       fireEvent.click(screen.getByRole("button", { name: "Retry" }))
       expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
+    })
+
+    /**
+     * Mermaid bakes the palette into the SVG, so a theme change is a re-render
+     * or it is nothing. The picture has to survive the swap: unmounting the
+     * viewer would throw away a pan and zoom someone just set up.
+     */
+    it("re-renders in the new theme without dropping the view", async () => {
+      renderDiagram.mockResolvedValue({ svg: '<svg data-test="dark" />' })
+      const { container } = render(<Prose text={FENCE} />)
+      const surface = await screen.findByRole("application", { name: "Mermaid diagram" })
+
+      // pan somewhere, so losing the viewer would be visible
+      fireEvent.pointerDown(surface, { button: 0, pointerId: 9, clientX: 0, clientY: 0 })
+      fireEvent.pointerMove(surface, { pointerId: 9, clientX: 40, clientY: 0 })
+      fireEvent.pointerUp(surface, { pointerId: 9, clientX: 40, clientY: 0 })
+      const content = surface.firstElementChild as HTMLElement
+      await waitFor(() => expect(content.style.transform).toBe("translate3d(40px, 0px, 0) scale(1)"))
+
+      expect(renderDiagram).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything())
+      renderDiagram.mockResolvedValue({ svg: '<svg data-test="light" />' })
+      act(() => themeStore.set("light"))
+
+      await waitFor(() => expect(container.querySelector("[data-test='light']")).not.toBeNull())
+      expect(renderDiagram).toHaveBeenCalledTimes(2)
+      // the same viewer, still where it was panned to
+      expect(screen.getByRole("application", { name: "Mermaid diagram" })).toBe(surface)
+      expect(content.style.transform).toBe("translate3d(40px, 0px, 0) scale(1)")
+    })
+
+    it("asks mermaid for the theme that is actually on screen", async () => {
+      renderDiagram.mockResolvedValue({ svg: "<svg />" })
+      act(() => themeStore.set("light"))
+      render(<Prose text={FENCE} />)
+      await waitFor(() => expect(renderDiagram).toHaveBeenCalled())
+      expect(getMermaid).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "default" }))
+
+      act(() => themeStore.set("dark"))
+      await waitFor(() => expect(getMermaid).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark" })))
     })
 
     /**

@@ -9,6 +9,7 @@ import {
 } from "react"
 
 import { Code, Flowchart, Refresh, ZoomIn, ZoomOut } from "@/components/icons"
+import { useDebouncedValue } from "@/hooks/useDebouncedValue"
 import {
   clampDiagramHeight,
   MAX_DIAGRAM_HEIGHT,
@@ -16,27 +17,31 @@ import {
   readDiagramHeight,
   writeDiagramHeight,
 } from "@/lib/diagram-height"
+import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
 /**
  * A ```mermaid fence.
  *
- * Renders as code — Wisp's plain mono surface, deliberately untouched — until
- * the toggle in the corner asks for the diagram. The switch exists because a
- * diagram replaces the text that produced it, and an agent's output is read
- * far more often than it is visualised: the source must be the default, not
- * the casualty.
+ * A diagram is what the fence MEANT, so a diagram is what it shows — but only
+ * once there is one. A fence still arriving, or one mermaid cannot parse, is
+ * left as the source it already is: an agent writes a diagram a character at
+ * a time, and flashing a parse error at someone mid-turn to announce that the
+ * second half has not arrived yet is worse than showing them the text. The
+ * corner switch pins either view once a person picks one.
  *
  * `mermaid` itself is behind a dynamic import (the plugin statically pulls the
- * real package), so its cost is paid on first toggle and never for a
- * transcript that has no diagrams. Zoom, pan and height are ours: wheel to
- * zoom, drag to move, drag the bottom edge for room — no editor, just a
- * viewer.
+ * real package), so its cost is paid by the first fence that appears and never
+ * by a transcript that has none. Zoom, pan and height are ours: wheel to zoom,
+ * drag to move, drag the bottom edge for room — no editor, just a viewer.
  */
 
 const ZOOM_STEP = 0.15
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
+
+/** How long a fence has to stop changing before it is worth parsing. */
+const SETTLE_MS = 200
 
 /** Mermaid requires a fresh id per render; collisions leak stale SVGs. */
 let MERMAID_SEQ = 0
@@ -44,14 +49,19 @@ const nextMermaidId = () => `wisp-mermaid-${(MERMAID_SEQ += 1)}`
 
 /** The fence, with its corner switch. `children` is the code surface. */
 export function MermaidFence({ code, children }: { code: string; children: ReactNode }) {
-  const [showDiagram, setShowDiagram] = useState(false)
+  const [choice, setChoice] = useState<"source" | "diagram" | null>(null)
+  const [render, retry] = useMermaidRender(code)
+
+  // Nobody has chosen yet: follow the fence. It becomes a diagram the moment
+  // one exists, and stays source until then.
+  const showDiagram = choice === null ? render.status === "ready" : choice === "diagram"
 
   return (
     <div className="group relative mt-2.5">
-      {showDiagram ? <MermaidDiagram code={code} /> : children}
+      {showDiagram ? <MermaidDiagram render={render} onRetry={retry} /> : children}
       <button
         type="button"
-        onClick={() => setShowDiagram((view) => !view)}
+        onClick={() => setChoice(showDiagram ? "source" : "diagram")}
         aria-pressed={showDiagram}
         aria-label={showDiagram ? "Show source" : "Render diagram"}
         title={showDiagram ? "Show source" : "Render diagram"}
@@ -68,21 +78,45 @@ export function MermaidFence({ code, children }: { code: string; children: React
   )
 }
 
+type MermaidRender =
+  | { status: "loading" }
+  | { status: "ready"; svg: string }
+  | { status: "error"; message: string }
+
 /**
- * The rendered diagram: loading, error with retry, or the pan/zoom surface —
- * all three inside one frame, so the height a person chose survives a retry
- * and the box never jumps as the states swap.
+ * The SVG for a fence, re-rendered whenever its source, the app's theme, or a
+ * retry moves.
+ *
+ * Mermaid bakes the palette INTO the SVG it returns — there is no token a
+ * stylesheet can move afterwards — so the theme is a render input like the
+ * source is, and a diagram left over from the other end of the scale is a
+ * diagram in the wrong colours. That is the whole reason this reads
+ * `useTheme()` rather than the `dark` class it used to sample once, inside an
+ * effect that never ran again.
+ *
+ * Two rules about what the caller sees while an attempt is in flight:
+ *
+ * - A newer FENCE shows nothing. The previous SVG is a picture of text that
+ *   is no longer on screen, so it would be a lie for as long as it hung around.
+ * - A newer THEME keeps the picture. It is the same diagram either way, and
+ *   holding the old colours for a frame beats blanking a diagram someone has
+ *   panned and zoomed — which is what unmounting the viewer would cost them.
+ *
+ * `code` is debounced because a fence arrives a chunk at a time and
+ * `mermaid.render` is not cheap: without it every chunk parses a broken
+ * diagram on the way to the whole one.
  */
-function MermaidDiagram({ code }: { code: string }) {
+function useMermaidRender(code: string): [MermaidRender, () => void] {
+  const theme = useTheme()
   const [attempt, setAttempt] = useState(0)
-  // The render that produced this state is carried alongside it: while a
-  // newer `code` or retry has not landed yet, the old SVG would flash — so
-  // it shows the loading surface instead, and no effect ever writes state
-  // synchronously to "clear" it.
-  const [render, setRender] = useState<
-    { code: string; attempt: number; svg: string } | { code: string; attempt: number; error: string } | null
+  const settled = useDebouncedValue(code, SETTLE_MS)
+  const key = `${theme}\u0000${attempt}\u0000${settled}`
+
+  // The inputs that produced a result are carried with it, so no effect ever
+  // has to write state synchronously to clear a stale one.
+  const [done, setDone] = useState<
+    { key: string; code: string; svg: string } | { key: string; code: string; message: string } | null
   >(null)
-  const current = render !== null && render.code === code && render.attempt === attempt ? render : null
 
   useEffect(() => {
     let cancelled = false
@@ -92,36 +126,52 @@ function MermaidDiagram({ code }: { code: string }) {
         // mermaid package eagerly, so a static import here would evaluate the
         // whole library on every app start.
         const { mermaid: plugin } = await import("@streamdown/mermaid")
-        const dark = document.documentElement.classList.contains("dark")
         const mermaid = plugin.getMermaid({
           startOnLoad: false,
           securityLevel: "strict",
           suppressErrorRendering: true,
-          theme: dark ? "dark" : "default",
+          theme: theme === "dark" ? "dark" : "default",
         })
-        const { svg } = await mermaid.render(nextMermaidId(), code)
-        if (!cancelled) setRender({ code, attempt, svg })
+        const { svg } = await mermaid.render(nextMermaidId(), settled)
+        if (!cancelled) setDone({ key, code: settled, svg })
       } catch (error) {
-        if (!cancelled) setRender({ code, attempt, error: renderError(error) })
+        if (!cancelled) setDone({ key, code: settled, message: renderError(error) })
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [code, attempt])
+  }, [key, settled, theme])
 
+  const current =
+    done === null
+      ? null
+      : done.key === key
+        ? done
+        : // same fence, a newer theme or retry still rendering: hold the picture
+          "svg" in done && done.code === settled
+          ? done
+          : null
+
+  const retry = useCallback(() => setAttempt((value) => value + 1), [])
+  if (current === null) return [{ status: "loading" }, retry]
+  return ["svg" in current ? { status: "ready", svg: current.svg } : { status: "error", message: current.message }, retry]
+}
+
+/** The diagram's three faces, in the frame whose height a person owns. */
+function MermaidDiagram({ render, onRetry }: { render: MermaidRender; onRetry: () => void }) {
   return (
     <DiagramFrame>
-      {current === null ? (
+      {render.status === "loading" ? (
         <div className="flex h-full items-center justify-center rounded-md border border-border bg-code">
           <div className="size-4 animate-spin rounded-full border-2 border-fg-secondary border-t-transparent" />
         </div>
-      ) : "error" in current ? (
+      ) : render.status === "error" ? (
         <div className="flex h-full flex-col items-center justify-center gap-3 rounded-md border border-border bg-code px-4 text-center">
-          <p className="line-clamp-3 font-mono text-[11px] text-fg-secondary">{current.error}</p>
+          <p className="line-clamp-3 font-mono text-[11px] text-fg-secondary">{render.message}</p>
           <button
             type="button"
-            onClick={() => setAttempt((value) => value + 1)}
+            onClick={onRetry}
             className={cn(
               "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
               "hover:text-foreground"
@@ -131,7 +181,7 @@ function MermaidDiagram({ code }: { code: string }) {
           </button>
         </div>
       ) : (
-        <PanZoom svg={current.svg} />
+        <PanZoom svg={render.svg} />
       )}
     </DiagramFrame>
   )
