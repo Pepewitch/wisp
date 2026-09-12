@@ -10,7 +10,7 @@ import {
 } from "../src/pull-request-branches";
 import { PullRequestCache } from "../src/pull-requests";
 import { createTask as createStoredTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
-import { syncTaskTitleWithPullRequest } from "../src/task-update";
+import { syncTaskTitleWithPullRequest, updateTaskAndEmit } from "../src/task-update";
 import type { Task } from "../src/types";
 
 function task(overrides: Partial<Task> = {}): Task {
@@ -595,6 +595,46 @@ describe("every branch a task made", () => {
       onPullRequestFound: sync,
     }).status(selectedTask);
     expect(getTask(stored.id)?.title).toBe("Newest pull request");
+  });
+
+  test("never overrides a title the user chose, however many PRs appear", async () => {
+    const stored = createStoredTask({
+      id: newTaskId(),
+      title: "Original task title",
+      repo_path: "/tmp/repo",
+      harness: "droid",
+      model: null,
+      slot: freeSlot(),
+    });
+    const branch = `wisp/${stored.id}-first`;
+    setTaskFields(stored.id, { branch, worktree_path: "/tmp/worktree" });
+    const cfg = { autoRenameTasksFromPullRequests: true };
+    const sync = (taskWithPullRequest: Task, pullRequest: { title: string }) => {
+      syncTaskTitleWithPullRequest(cfg, taskWithPullRequest.id, pullRequest.title);
+    };
+
+    // the sync owns the title only until the user says otherwise
+    const first = multiBranchRun({ [branch]: [pr(48, { title: "First pull request" })] }, [branch]);
+    await new PullRequestCache({ run: first.run, onPullRequestFound: sync }).status(
+      task({ id: stored.id, title: stored.title, branch }),
+    );
+    expect(getTask(stored.id)?.title).toBe("First pull request");
+
+    // what the PATCH rename route writes: the user's name, plus the lock
+    updateTaskAndEmit(stored.id, { title: "A name of my own", custom_title: 1 }, "title");
+
+    const next = multiBranchRun({ [branch]: [pr(53, { title: "Newest pull request" })] }, [branch]);
+    await new PullRequestCache({ run: next.run, onPullRequestFound: sync }).status(
+      task({ id: stored.id, title: "A name of my own", branch }),
+    );
+    expect(getTask(stored.id)?.title).toBe("A name of my own");
+
+    // the overview path (the sidebar's poll) respects the lock the same way
+    const overview = multiBranchRun({ [branch]: [pr(54, { title: "An even newer pull request" })] }, [branch]);
+    await new PullRequestCache({ run: overview.run, onPullRequestFound: sync }).overview([
+      task({ id: stored.id, title: "A name of my own", branch }),
+    ]);
+    expect(getTask(stored.id)?.title).toBe("A name of my own");
   });
 
   test("keeps answering after the forge deletes a merged head ref", async () => {

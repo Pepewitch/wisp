@@ -26,6 +26,7 @@ import {
   messagesFor,
   newTaskId,
   setTaskContextFields,
+  setTaskFields,
   switchTaskAgent,
   turnsFor,
 } from "../store";
@@ -455,10 +456,18 @@ export function taskRoute(
       if (title.length > TASK_TITLE_MAX) {
         return err(`title must be at most ${TASK_TITLE_MAX} characters`, 400);
       }
-      if (title === task.title) return json(apiTask(task));
+      if (title === task.title) {
+        // Re-submitting the current name is still the user CHOOSING it: lock
+        // the PR-title sync even though nothing visible about the row changes.
+        if (!task.custom_title) {
+          setTaskFields(task.id, { custom_title: 1 });
+          return json(apiTask(getTask(id)!));
+        }
+        return json(apiTask(task));
+      }
       // Renaming is metadata, not a state transition: keep seq/outbox stable,
       // but wake every UI with enough data to patch without broad refetches.
-      const updated = updateTaskAndEmit(task.id, { title }, "title")!;
+      const updated = updateTaskAndEmit(task.id, { title, custom_title: 1 }, "title")!;
       return json(apiTask(updated));
     })();
   }

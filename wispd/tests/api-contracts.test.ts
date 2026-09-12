@@ -233,8 +233,9 @@ describe("daemon API contracts", () => {
     try {
       const renamed = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "  A clearer task name  " });
       expect(renamed.status).toBe(200);
-      const renamedBody = await json<{ title: string; updated_at: string }>(renamed);
-      expect(renamedBody).toMatchObject({ title: "A clearer task name" });
+      const renamedBody = await json<{ title: string; updated_at: string; custom_title: number }>(renamed);
+      // a manual rename locks the title against the pull-request sync
+      expect(renamedBody).toMatchObject({ title: "A clearer task name", custom_title: 1 });
 
       const unchanged = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "A clearer task name" });
       expect(await json<{ updated_at: string }>(unchanged)).toMatchObject({ updated_at: renamedBody.updated_at });
@@ -263,6 +264,16 @@ describe("daemon API contracts", () => {
         "PATCH",
         { title: "x".repeat(81) },
       );
+
+      // re-submitting the current name on a task that was never renamed is
+      // still the user choosing it: the lock lands without a title event
+      const fresh = makeTask({ title: "Untouched title" });
+      const before = await api(base, `/api/tasks/${fresh.id}`);
+      expect(await json<{ custom_title: number }>(before)).toMatchObject({ custom_title: 0 });
+      events.length = 0;
+      const reaffirmed = await api(base, `/api/tasks/${fresh.id}`, "PATCH", { title: "Untouched title" });
+      expect(await json<{ custom_title: number }>(reaffirmed)).toMatchObject({ custom_title: 1 });
+      expect(events).toEqual([]);
     } finally {
       unsubscribe();
     }

@@ -166,7 +166,7 @@ function TaskTitleToggle({
       <span>
         <span className="block text-[12.5px] text-fg-secondary">Use pull request titles</span>
         <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
-          Rename a task to the title of the pull request Wisp shows for it.
+          Rename a task to the title of the pull request Wisp shows for it. A name you type yourself always wins.
         </span>
       </span>
       <SwitchTrack checked={checked} />

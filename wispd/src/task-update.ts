@@ -31,7 +31,8 @@ export function updateTaskAndEmit(
  * Apply provider-owned PR metadata without duplicating pull-request selection
  * rules. The cache calls this only after it has chosen the same PR the UI
  * links to. Re-reading the row makes concurrent manual/automatic updates
- * idempotent, and archived history remains immutable.
+ * idempotent, archived history remains immutable, and a name the user typed
+ * (custom_title) is authority this sync never overrides.
  */
 export function syncTaskTitleWithPullRequest(
   cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests">,
@@ -42,7 +43,8 @@ export function syncTaskTitleWithPullRequest(
   if (
     cfg.autoRenameTasksFromPullRequests === false ||
     !task ||
-    task.archived
+    task.archived ||
+    task.custom_title
   ) {
     return task;
   }
