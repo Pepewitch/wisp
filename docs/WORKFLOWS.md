@@ -7,10 +7,11 @@ asks the agent to reason about your objective and can spend tokens.
 
 **Workflows** is a tab in the right column, beside **Changes**, in the browser
 and in Desktop. It lists what is attached to the selected task: one row each,
-carrying the workflow's state and the reason it is waiting. `+` adds one —
-choose a built-in, edit its parameters, open **Limits and permissions** if you
-need them, and select **Arm workflow**. Opening a row shows its next check,
-wake-up count, the latest 100 history entries, and the controls to **Pause**,
+carrying the workflow's state and the reason it is waiting. The list ends in
+**Add workflow…** — choose a built-in, edit its parameters, open **Limits and
+permissions** if you need them, and select **Arm workflow**. Opening a row
+shows its next check, wake-up count, the latest 100 history entries, and the
+controls to **Pause**,
 **Configure** or **Remove** it. Removing completes the workflow: it stops
 checking and moves under **Finished**, where its history stays readable. Older
 remote daemons without workflow support show no tab at all.
