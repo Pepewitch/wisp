@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
@@ -262,6 +262,66 @@ describe("daemon API contracts", () => {
         "title must be at most 80 characters",
         "PATCH",
         { title: "x".repeat(81) },
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("reads and persists the daemon-wide PR title setting", async () => {
+    const base = await startServer();
+    const events: WispEvent[] = [];
+    const unsubscribe = subscribe((event) => events.push(event));
+
+    try {
+      const initial = await api(base, "/api/settings");
+      expect(await json(initial)).toEqual({
+        autoRenameTasksFromPullRequests: true,
+      });
+
+      const updated = await api(base, "/api/settings", "PATCH", {
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(updated.status).toBe(200);
+      expect(await json(updated)).toEqual({
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
+        autoRenameTasksFromPullRequests: false,
+        token,
+      });
+      expect(await json(await api(base, "/api/settings"))).toEqual({
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(events).toContainEqual({ type: "settings" });
+
+      // a no-op PATCH answers with the current value but rewrites nothing
+      // and broadcasts nothing
+      events.length = 0;
+      const noop = await api(base, "/api/settings", "PATCH", {
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(noop.status).toBe(200);
+      expect(await json(noop)).toEqual({
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(events).toEqual([]);
+
+      await expectError(
+        base,
+        "/api/settings",
+        400,
+        "autoRenameTasksFromPullRequests is required",
+        "PATCH",
+        {},
+      );
+      await expectError(
+        base,
+        "/api/settings",
+        400,
+        "autoRenameTasksFromPullRequests must be a boolean, got string",
+        "PATCH",
+        { autoRenameTasksFromPullRequests: "no" },
       );
     } finally {
       unsubscribe();

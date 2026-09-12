@@ -83,6 +83,32 @@ export function Rule({ className }: { className?: string }) {
   return <span aria-hidden className={cn("h-px flex-1 bg-border", className)} />
 }
 
+/**
+ * The track-and-knob half of a `role="switch"` button (15×26 — a visual,
+ * not a hit target). The button and the label layout around it stay at the
+ * call site: the sidebar's whole row is the touch target, the settings
+ * dialog's label sits left of the control.
+ */
+export function SwitchTrack({ checked, className }: { checked: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "relative h-[15px] w-[26px] shrink-0 rounded-full transition-colors",
+        checked ? "bg-primary" : "bg-border-strong",
+        className,
+      )}
+    >
+      <span
+        className={cn(
+          "absolute top-0.5 size-[11px] rounded-full transition-all",
+          checked ? "left-[13px] bg-primary-foreground" : "left-0.5 bg-muted-foreground",
+        )}
+      />
+    </span>
+  )
+}
+
 type ButtonTone = "quiet" | "outline" | "primary" | "destructive"
 
 const TONE: Record<ButtonTone, string> = {

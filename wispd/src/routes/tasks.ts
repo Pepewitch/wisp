@@ -36,10 +36,7 @@ import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, apiTurn, err, json, jsonObjectBody } from "./http";
-import { updateTaskAndEmit } from "./task-update";
-
-/** Creation already derives at most 80 characters from turn 1; renames keep the same UI-safe ceiling. */
-const TASK_TITLE_MAX = 80;
+import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 
 /** The conversation payload is SQLite-only; repository state belongs to Status/Changes. */
 function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): Record<string, unknown> {

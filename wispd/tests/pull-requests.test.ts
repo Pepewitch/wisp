@@ -9,7 +9,8 @@ import {
   taskBranches,
 } from "../src/pull-request-branches";
 import { PullRequestCache } from "../src/pull-requests";
-import { createTask as createStoredTask, freeSlot, newTaskId, setTaskFields } from "../src/store";
+import { createTask as createStoredTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
+import { syncTaskTitleWithPullRequest } from "../src/task-update";
 import type { Task } from "../src/types";
 
 function task(overrides: Partial<Task> = {}): Task {
@@ -529,6 +530,71 @@ describe("every branch a task made", () => {
 
     expect(result).toMatchObject({ kind: "found" });
     expect(result).not.toHaveProperty("others");
+  });
+
+  test("renames from the selected PR repeatedly and honors the global opt-out", async () => {
+    const stored = createStoredTask({
+      id: newTaskId(),
+      title: "Original task title",
+      repo_path: "/tmp/repo",
+      harness: "droid",
+      model: null,
+      slot: freeSlot(),
+    });
+    const firstBranch = `wisp/${stored.id}-first`;
+    const secondBranch = `wisp/${stored.id}-second`;
+    setTaskFields(stored.id, {
+      branch: firstBranch,
+      worktree_path: "/tmp/worktree",
+    });
+    const selectedTask = task({
+      id: stored.id,
+      title: stored.title,
+      branch: firstBranch,
+    });
+    const cfg = { autoRenameTasksFromPullRequests: true };
+    const sync = (taskWithPullRequest: Task, pullRequest: { title: string }) => {
+      syncTaskTitleWithPullRequest(cfg, taskWithPullRequest.id, pullRequest.title);
+    };
+
+    const first = multiBranchRun(
+      {
+        [firstBranch]: [pr(48, { title: "First pull request" })],
+      },
+      [firstBranch],
+    );
+    await new PullRequestCache({
+      run: first.run,
+      onPullRequestFound: sync,
+    }).status(selectedTask);
+    expect(getTask(stored.id)?.title).toBe("First pull request");
+
+    const next = multiBranchRun(
+      {
+        [firstBranch]: [pr(48, { title: "First pull request" })],
+        [secondBranch]: [pr(53, { title: "Newest pull request" })],
+      },
+      [secondBranch, firstBranch],
+    );
+    await new PullRequestCache({
+      run: next.run,
+      onPullRequestFound: sync,
+    }).overview([selectedTask]);
+    expect(getTask(stored.id)?.title).toBe("Newest pull request");
+
+    cfg.autoRenameTasksFromPullRequests = false;
+    const optedOut = multiBranchRun(
+      {
+        [firstBranch]: [pr(48, { title: "First pull request" })],
+        [secondBranch]: [pr(54, { title: "Ignored pull request" })],
+      },
+      [secondBranch, firstBranch],
+    );
+    await new PullRequestCache({
+      run: optedOut.run,
+      onPullRequestFound: sync,
+    }).status(selectedTask);
+    expect(getTask(stored.id)?.title).toBe("Newest pull request");
   });
 
   test("keeps answering after the forge deletes a merged head ref", async () => {

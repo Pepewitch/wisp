@@ -8,7 +8,7 @@ import { archiveTaskWithCleanup, type ArchiveCleanupJob } from "../archive-jobs"
 import { getTask } from "../store";
 import { taskMode, type Task } from "../types";
 import { archivePreflight, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
-import { updateTaskAndEmit } from "./task-update";
+import { updateTaskAndEmit } from "../task-update";
 
 const PREFLIGHT_CONCURRENCY = 4;
 
