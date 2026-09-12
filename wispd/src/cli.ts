@@ -14,8 +14,9 @@ import { searchCommand } from "./cli-search";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
-import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT } from "./config";
+import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT, rotateToken } from "./config";
 import { bunSpawn } from "./doctor";
+import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { modelsReport } from "./models";
 import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
@@ -549,9 +550,36 @@ export async function cli(args: string[]): Promise<void> {
       break;
     }
     case "token": {
-      const cfg = loadConfig();
+      const rotated = flags.rotate === true;
+      let cfg: ReturnType<typeof loadConfig>;
+      if (rotated) {
+        let ownership;
+        try {
+          ownership = acquireHomeOwnership();
+        } catch (error) {
+          if (error instanceof HomeBusyError) {
+            throw new Error(
+              `cannot rotate the token while the daemon is running; stop it first, rerun '${COMMAND} token --rotate', then start it again`,
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+        try {
+          cfg = rotateToken();
+        } finally {
+          ownership.release();
+        }
+      } else {
+        cfg = loadConfig();
+      }
       console.log(`url:   http://${cfg.host}:${cfg.port}`);
       console.log(`token: ${cfg.token}`);
+      if (rotated) {
+        console.log(`\nToken rotated in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json. Start the Wisp daemon again now.`);
+        console.log("The old token is invalid after startup.");
+        console.log("Update every browser and saved Desktop connection with the new token.");
+      }
       break;
     }
     case "init": {

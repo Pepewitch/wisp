@@ -43,7 +43,8 @@ usage:
                                                     --copy repeats and the flags REPLACE the stored
                                                     glob list (each glob is appended at task setup)
   ${COMMAND} attach <task>                           open the harness interactively on the task's session
-  ${COMMAND} token                                   print API URL + token (for the web page or other API clients)
+  ${COMMAND} token [--rotate]                        print API URL + token; --rotate replaces the token
+                                               (stop the daemon first, then restart it and update every client)
   ${COMMAND} init [--port <port>]                    create or validate ${COMMAND === "wisp-dev" ? "~/.wisp-dev" : "~/.wisp"} without starting the daemon;
                                                --port applies only when creating a new config
   ${COMMAND} models                                  model options per harness: the effective choice for new

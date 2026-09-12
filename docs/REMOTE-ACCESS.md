@@ -18,6 +18,24 @@ credential in practice.
 - Give tailnet access only to devices and people trusted to run code on the
   Wisp host.
 
+## If the token leaks
+
+On the Wisp host, stop the daemon using the service manager or command that
+normally starts it. Then rotate the token:
+
+```sh
+wisp token --rotate
+```
+
+The command securely replaces the token in `~/.wisp/config.json` and prints
+the new value. It refuses to run while the daemon owns the Wisp home, preventing
+token rotation from racing another config update.
+
+Start the daemon again immediately. It loads the new token at startup, and the
+old token no longer works. Every browser session and saved Desktop connection
+must be updated with the new token. This invalidation is expected and is the
+purpose of rotation.
+
 ## Private HTTPS path: Tailscale Serve
 
 Install Tailscale on the Wisp host and phone, put both in the same tailnet, and

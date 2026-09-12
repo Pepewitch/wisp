@@ -235,7 +235,10 @@ wisp init [--port <port>]
 wisp serve          run the daemon (foreground; supervise it — see setup.md)
 wisp doctor --database  read-only database diagnosis; no migrations or harness probes
 wisp doctor         self-check: harness CLIs, git, config files, daemon; exit 1 on failure
-wisp token          print the API URL + bearer token (also what the web page needs)
+wisp token [--rotate]
+                    print the API URL + bearer token (also what the web page needs);
+                    stop the daemon before --rotate replaces it in config.json,
+                    then restart and update every client
 wisp models         per harness: the effective model for new tasks, and the
                     models on offer — the CLI's own list where it has one, else
                     the adapter's pinned subset
