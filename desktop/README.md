@@ -281,9 +281,12 @@ does not cover code embedded in both clients.
 bun run desktop:check # builds the shared UI, then formats, lints, and tests Rust
 ```
 
-Tauri embeds the generated UI during Rust compilation. If you run Cargo
-commands directly from `desktop/src-tauri`, run `bun run build:ui` from the
-repository root first.
+Tauri embeds the generated UI during Rust compilation, and `build.rs` names
+`web/ui-dist` as a build input so that refreshing the bundle rebuilds this
+crate instead of leaving a stale document compiled into it — `tauri_build`
+declares the config, capabilities and resources, but not `frontendDist`. The
+bundle still has to exist: run `bun run build:ui` from the repository root
+before Cargo commands issued directly from `desktop/src-tauri`.
 
 ```sh
 bash scripts/desktop/build-macos.sh             # .app + .dmg

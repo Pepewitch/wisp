@@ -7,16 +7,50 @@
 //! the app serves them with one, and a refused stylesheet renders wrong rather
 //! than failing. `desktop/README.md` states the contract.
 
+use std::path::Path;
+
 use tauri::utils::assets::{AssetKey, CspHash, STYLE_NONCE_TOKEN};
 
 /// The bundle is one self-contained document, and Tauri keys it by this path.
 fn document() -> String {
     let context = wisp_desktop::context();
-    let bytes = context
-        .assets()
-        .get(&AssetKey::from("index.html"))
-        .expect("the packaged bundle has an index.html");
+    let assets = context.assets();
+    let Some(bytes) = assets.get(&AssetKey::from("index.html")) else {
+        panic!("{}", no_index_html(assets))
+    };
     String::from_utf8(bytes.to_vec()).expect("the bundle is UTF-8")
+}
+
+/// Why there is no `index.html`, in the two forms that has taken.
+///
+/// This has failed on CI against a bundle that demonstrably existed on disk
+/// forty seconds earlier, and a bare `expect` sends the next person down the
+/// same road: the message named the expectation and nothing about the world.
+/// Report both sides instead. An empty asset list beside a present file is a
+/// compile-time problem inside Tauri's codegen and worth an upstream issue; an
+/// absent file just means the job never ran `bun run build:ui`.
+fn no_index_html(assets: &dyn tauri::Assets<tauri::Wry>) -> String {
+    let bundle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/ui-dist/index.html");
+    let on_disk = match std::fs::metadata(bundle.as_path()) {
+        Ok(meta) => format!("{} bytes", meta.len()),
+        Err(error) => format!("unreadable: {error}"),
+    };
+    let mut embedded: Vec<String> = assets
+        .iter()
+        .map(|(key, bytes)| format!("{key} ({} bytes)", bytes.len()))
+        .collect();
+    embedded.sort();
+    let embedded = if embedded.is_empty() {
+        "nothing at all".to_string()
+    } else {
+        embedded.join(", ")
+    };
+    format!(
+        "the packaged bundle has no index.html\n  \
+         on disk now: {} is {on_disk}\n  \
+         embedded at compile time: {embedded}",
+        bundle.display()
+    )
 }
 
 /// xterm.js delivers the terminal's font, cell metrics and ANSI colors through
