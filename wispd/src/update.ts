@@ -174,14 +174,21 @@ function managedLinuxInstallation(): Installation | null {
   if (!existsSync(current) || !lstatSync(current).isSymbolicLink()) return null;
   if (realpathSync(current) !== realpathSync(process.execPath)) return null;
   if (!Bun.which("systemctl")) {
-    return { method: "managed-linux", supervised: false, reason: "systemctl is not available", installRoot };
+    return {
+      method: "managed-linux",
+      supervised: false,
+      reason: "automatic updates require systemd, but systemctl is not available",
+      installRoot,
+    };
   }
   const service = runSync(["systemctl", "--user", "show", "wisp.service", "--property=MainPID", "--value"]);
   const supervised = service.exitCode === 0 && Number(service.stdout) === process.pid;
   return {
     method: "managed-linux",
     supervised,
-    reason: supervised ? null : "this managed installation is not running under wisp.service",
+    reason: supervised
+      ? null
+      : "automatic updates require the running daemon to be managed by wisp.service",
     installRoot,
   };
 }
