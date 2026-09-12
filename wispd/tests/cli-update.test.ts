@@ -92,6 +92,36 @@ describe("wisp update", () => {
     ).rejects.toThrow("source and development builds update manually");
   });
 
+  test("explains how to recover when a managed Linux daemon is not supervised", async () => {
+    await expect(
+      updateCommand(
+        [],
+        async () =>
+          status({
+            canAutoUpdate: false,
+            installMethod: "managed-linux",
+            message: "automatic updates require the running daemon to be managed by wisp.service",
+          }),
+        () => {},
+      ),
+    ).rejects.toThrow(
+      [
+        "automatic updates require the running daemon to be managed by wisp.service",
+        "",
+        "To enable automatic updates with systemd (if available):",
+        "1. Open a separate terminal, because stopping Wisp may disconnect this one.",
+        "2. Stop the current daemon using the terminal or supervisor that started it.",
+        "3. Start the systemd service:",
+        "   systemctl --user enable --now wisp.service",
+        "4. Retry:",
+        "   wisp update",
+        "",
+        "If another supervisor intentionally manages Wisp, install the release manually and restart it with that supervisor.",
+        "Guide: https://github.com/Pepewitch/wisp/blob/main/docs/INSTALL.md#upgrade-and-reinstall",
+      ].join("\n"),
+    );
+  });
+
   test("does not start a second update or accept positional arguments", async () => {
     const lines: string[] = [];
     await updateCommand(
