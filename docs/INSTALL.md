@@ -134,6 +134,8 @@ configure a restart-capable supervisor with:
 - restart on daemon exit, including a successful update exit;
 - umask `0077`, your user's `HOME`, and a `PATH` reaching Wisp and the harnesses;
 - stop signals directed to the daemon, **not its whole process group**.
+- `WISP_UPDATE_SUPERVISOR=supervisord` only when the program is named `wisp`
+  and keeps `autorestart=true`; this explicitly enables automatic updates.
 
 For example, under supervisord:
 
@@ -147,31 +149,34 @@ autorestart=true
 startsecs=5
 stopasgroup=false
 killasgroup=false
-environment=HOME="%(ENV_HOME)s",PATH="%(ENV_HOME)s/.local/bin:/usr/local/bin:/usr/bin:/bin"
+environment=HOME="%(ENV_HOME)s",PATH="%(ENV_HOME)s/.local/bin:/usr/local/bin:/usr/bin:/bin",WISP_UPDATE_SUPERVISOR="supervisord"
 ```
 
 Adapt `PATH` for your harness locations. Provide credentials and any
 `WISP_ALLOWED_ORIGINS` in the supervised process environment, not just your
 terminal. Killing the whole group can stop harness children behind Wisp.
 
-Doctor recognizes systemd on Linux, not other supervisors; its supervisor
-warning is expected here. Automatic updates remain informational for a
-foreground or custom-supervised daemon because Wisp cannot guarantee restart.
+Doctor's local supervisor check recognizes systemd on Linux, so its supervisor
+warning is expected here. Before enabling automatic updates, Wisp requires the
+explicit opt-in above, Supervisor's injected process identity, and an exact PID
+match from `supervisorctl pid wisp`. Updates remain informational for foreground
+daemons and other supervisors because Wisp cannot guarantee restart.
 
 For a systemd service that should continue after logout, an administrator can
 deliberately enable user lingering with `loginctl enable-linger <user>`.
 
 ## Upgrade and reinstall
 
-For an installer-managed daemon running under `wisp.service`:
+For an installer-managed daemon running under `wisp.service` or an explicitly
+opted-in Supervisor program:
 
 ```sh
 wisp update
 ```
 
 The command and browser update action use the promoted release channel,
-verify the candidate, activate it atomically, and let systemd restart Wisp.
-Rerunning the installer for the same version is idempotent.
+verify the candidate, activate it atomically, and let the service manager
+restart Wisp. Rerunning the installer for the same version is idempotent.
 
 After an out-of-band installation, restart the service yourself:
 
