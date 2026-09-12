@@ -19,6 +19,7 @@ import rehypeHighlight from "rehype-highlight"
  *    agent's prose is not a build input; it must not be able to break a turn.
  */
 const HIGHLIGHT_LIMIT = 20_000
+const STATIC_HIGHLIGHT_LIMIT = 50_000
 
 /** The minimum of hast this module needs, so it needs no type dependency. */
 interface HastNode {
@@ -53,21 +54,34 @@ function walk(node: HastNode, visit: (node: HastNode) => void): void {
  * a block with no language is exactly what it then renders as: plain mono, the
  * same treatment a bare fence gets. Nothing is hidden and nothing stalls.
  */
-function rehypeSkipHugeCode() {
-  return (tree: HastNode) => {
-    walk(tree, (node) => {
-      if (node.tagName !== "code" || !node.properties) return
-      const classes = classList(node)
-      if (!classes.some((name) => name.startsWith("language-"))) return
-      if (textLength(node) <= HIGHLIGHT_LIMIT) return
-      node.properties.className = classes.filter((name) => !name.startsWith("language-"))
-    })
+function skipCodePast(limit: number) {
+  return function rehypeSkipHugeCode() {
+    return (tree: HastNode) => {
+      walk(tree, (node) => {
+        if (node.tagName !== "code" || !node.properties) return
+        const classes = classList(node)
+        if (!classes.some((name) => name.startsWith("language-"))) return
+        if (textLength(node) <= limit) return
+        node.properties.className = classes.filter((name) => !name.startsWith("language-"))
+      })
+    }
   }
 }
 
-export const PROSE_HIGHLIGHT_PLUGINS = [
-  rehypeSkipHugeCode,
-  [rehypeHighlight, { detect: false, ignoreMissing: true }],
-] as const
+function highlightPlugins(limit: number) {
+  return [
+    skipCodePast(limit),
+    [rehypeHighlight, { detect: false, ignoreMissing: true }],
+  ] as const
+}
+
+export const PROSE_HIGHLIGHT_PLUGINS = highlightPlugins(HIGHLIGHT_LIMIT)
+
+/**
+ * A complete document or source file is coloured once, not again for every
+ * arriving chunk, so it can safely support the ordinary 20–50 KB file range.
+ */
+export const STATIC_PROSE_HIGHLIGHT_PLUGINS = highlightPlugins(STATIC_HIGHLIGHT_LIMIT)
 
 export const PROSE_HIGHLIGHT_LIMIT = HIGHLIGHT_LIMIT
+export const STATIC_PROSE_HIGHLIGHT_LIMIT = STATIC_HIGHLIGHT_LIMIT

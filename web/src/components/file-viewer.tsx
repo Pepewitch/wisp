@@ -13,7 +13,7 @@ import {
   WorktreeFileContext,
   type WorktreeFileOpenOptions,
 } from "@/lib/worktree-files"
-import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import { STATIC_PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
 import type { WorktreeFileResponse } from "@/lib/types"
 
 /** Rich Markdown creates an AST; larger documents stay one bounded text node. */
@@ -157,7 +157,7 @@ function ViewerContent({
    */
   return (
     <WorktreeFileContext.Provider value={(next) => onOpen?.(resolveAgainst(file.path, next))}>
-      <Prose text={file.text} />
+      <Prose text={file.text} mode="static" />
     </WorktreeFileContext.Provider>
   )
 }
@@ -178,7 +178,7 @@ function ViewerFooter({
   const highlightingSkipped = file?.kind === "text"
     && mode === "file"
     && sourceLanguage(file.path) !== null
-    && file.text.length > PROSE_HIGHLIGHT_LIMIT
+    && file.text.length > STATIC_PROSE_HIGHLIGHT_LIMIT
   const documentPreviewSkipped = file?.kind === "text"
     && mode === "file"
     && isMarkdown(file.path)
@@ -298,10 +298,11 @@ function isMarkdown(path: string): boolean {
  *
  * The highlighting IS prose's: the file goes through `Prose` as one fenced
  * block, so `rehype-highlight` colours it with the same `--syntax-*` tokens a
- * fence in a transcript gets, and the same 20 KB ceiling (prose-highlight.ts)
- * drops a huge file back to plain mono instead of stalling the popup. The
- * fence is one backtick longer than the file's own longest run, so nothing in
- * the file can close it early and leak out as markdown.
+ * fence in a transcript gets. A complete preview is coloured once, so it gets
+ * a higher ceiling than a streaming fence that would be recoloured for every
+ * chunk; past that ceiling it still drops back to plain mono. The fence is one
+ * backtick longer than the file's own longest run, so nothing in the file can
+ * close it early and leak out as markdown.
  *
  * The fence's own card comes off (`[&_pre]` overrides): this surface is the
  * viewer's, and a card inside it would read as a document, which a source
@@ -326,6 +327,7 @@ function SourceFile({ path, text }: { path: string; text: string }) {
   return (
     <Prose
       text={`${fence}${language}\n${text}\n${fence}`}
+      mode="static"
       className="[&_pre]:mt-0 [&_pre]:overflow-visible [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
     />
   )
