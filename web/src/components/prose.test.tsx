@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
 import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
 
 import { Prose } from "./prose"
@@ -335,15 +336,28 @@ describe("Prose", () => {
       expect(content.style.transform).toBe("translate3d(40px, 0px, 0) scale(1)")
     })
 
-    it("asks mermaid for the theme that is actually on screen", async () => {
+    /**
+     * Mermaid's stock themes are not ours. `base` plus our variables is how a
+     * diagram ends up in Wisp's palette rather than mermaid's, and the theme
+     * on screen is what picks which end of the scale it gets.
+     */
+    it("hands mermaid Wisp's palette for the theme that is actually on screen", async () => {
       renderDiagram.mockResolvedValue({ svg: "<svg />" })
       act(() => themeStore.set("light"))
       render(<Prose text={FENCE} />)
       await waitFor(() => expect(renderDiagram).toHaveBeenCalled())
-      expect(getMermaid).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "default" }))
+      expect(getMermaid).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: "base", themeVariables: mermaidThemeVariables("light") }),
+      )
 
       act(() => themeStore.set("dark"))
-      await waitFor(() => expect(getMermaid).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark" })))
+      await waitFor(() =>
+        expect(getMermaid).toHaveBeenLastCalledWith(
+          expect.objectContaining({ theme: "base", themeVariables: mermaidThemeVariables("dark") }),
+        ),
+      )
+      // and the two ends really are different palettes, not one set twice
+      expect(mermaidThemeVariables("dark").primaryColor).not.toBe(mermaidThemeVariables("light").primaryColor)
     })
 
     /**

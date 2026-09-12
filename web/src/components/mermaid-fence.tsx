@@ -17,6 +17,7 @@ import {
   readDiagramHeight,
   writeDiagramHeight,
 } from "@/lib/diagram-height"
+import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
@@ -130,7 +131,10 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
           startOnLoad: false,
           securityLevel: "strict",
           suppressErrorRendering: true,
-          theme: theme === "dark" ? "dark" : "default",
+          // `base` is mermaid's "derive it from what I give you"; the stock
+          // themes are palettes to fight rather than extend.
+          theme: "base",
+          themeVariables: mermaidThemeVariables(theme),
         })
         const { svg } = await mermaid.render(nextMermaidId(), settled)
         if (!cancelled) setDone({ key, code: settled, svg })

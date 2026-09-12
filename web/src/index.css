@@ -303,6 +303,22 @@
   --syntax-entity: #7cc1e9;     /* oklch(0.78 0.09 235) — functions and types */
   --syntax-comment: #a09ca8;    /* quiet, readable on the raised code surface */
 
+  /* mermaid diagrams — the fourth hue family, and it lives inside a code
+     block too. Mermaid bakes its palette into the SVG it returns, so these
+     cannot be read as tokens at paint time; `lib/mermaid-theme.ts` mirrors
+     them and `theme-palette.test.ts` holds the two together.
+
+     A node is its BORDER, not its fill — the one idea worth keeping from
+     mermaid's own light theme, and exactly what its dark theme drops. The
+     border is the only part that spends hue 300, at chroma 0.085: below
+     syntax's 0.09, far below the accent's 0.155, so a chart never
+     out-colours the send button. The fill stops below `--card`, because a
+     prompt bubble is the brightest surface a turn may contain and a diagram
+     is inside a turn. Edges and groups stay the app's greys. */
+  --diagram-node: #251d32;         /* oklch(0.25 0.04 300) — tint, not elevation */
+  --diagram-node-border: #7c699f;  /* oklch(0.56 0.085 300) — what draws the node */
+  --diagram-line: #837f8b;         /* oklch(0.604 0.018 300) — edges, neutral */
+
   /* elevation and the modal veil — black, because the page is already near it */
   --elevation-float: 0 8px 24px rgb(0 0 0 / 0.5);
   --elevation-popover: 0 16px 40px rgb(0 0 0 / 0.66);
@@ -358,6 +374,12 @@
   --fg-secondary: #4f4f5a;      /* labels, tab text, tool verbs */
   --muted-foreground: #6c6c78;  /* branches, harness · model, paths, counts */
   --faint: #8a8a96;             /* eyebrows, separators, timings, placeholders */
+
+  /* diagrams, the same structure moved down the lightness axis: a violet
+     outline that can carry a line on paper, over a fill that barely tints */
+  --diagram-node: #f0e9ff;         /* oklch(0.945 0.03 300) */
+  --diagram-node-border: #8766bb;  /* oklch(0.58 0.13 300) */
+  --diagram-line: #827e8b;         /* oklch(0.6 0.02 300) */
 
   --card-foreground: var(--foreground);
   --popover-foreground: var(--foreground);
