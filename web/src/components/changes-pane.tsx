@@ -128,13 +128,15 @@ function Body({
   if (data.kind === "unavailable") return <Note>{oneLine(data.message)}</Note>
 
   const parsed = parseDiff(data.diff)
+  const filesByPath = new Map(parsed.files.map((candidate) => [candidate.path, candidate]))
   const untrackedNames = new Set(data.untracked)
   const tracked = parsed.files.filter((f) => !untrackedNames.has(f.path))
   const total = fileCount(parsed.files, data.untracked)
   if (total === 0) return <Note>No changes in this worktree yet</Note>
 
-  const file = parsed.files.find((f) => f.path === selected) ?? null
+  const file = selected === null ? null : filesByPath.get(selected) ?? null
   const selectedUntracked = selected !== null && untrackedNames.has(selected)
+  const lastFile = parsed.files.at(-1)
 
   // A click reads the diff; a double-click reads the file itself, in the same
   // viewer a path in prose opens. Absent without a provider (the gallery, an
@@ -148,7 +150,9 @@ function Body({
             file={f}
             selected={f.path === selected}
             onSelect={() => onSelect(f.path)}
-            onOpen={openFile ? () => openFile(f.path) : undefined}
+            onOpen={openFile
+              ? () => openFile(f.path, { diff: f, diffTruncated: data.truncated && f === lastFile })
+              : undefined}
           />
         ))}
         {data.untracked.map((path) => (
@@ -157,7 +161,10 @@ function Body({
             path={path}
             selected={path === selected}
             onSelect={() => onSelect(path)}
-            onOpen={openFile ? () => openFile(path) : undefined}
+            onOpen={openFile ? () => {
+              const diff = filesByPath.get(path)
+              openFile(path, { diff, diffTruncated: data.truncated && diff === lastFile })
+            } : undefined}
           />
         ))}
         {file && <FileDiff file={file} />}

@@ -1,12 +1,23 @@
 import { Dialog } from "@base-ui/react/dialog"
-import { useCallback, useState, type ReactNode } from "react"
+import { memo, useCallback, useState, type ReactNode } from "react"
 
 import { Prose } from "@/components/prose"
+import { Tab } from "@/components/primitives"
 import { formatBytes } from "@/lib/attachments"
+import { fullFileDiff, type DiffFile, type FullFileDiffLine } from "@/lib/diff"
 import { failureReason } from "@/lib/web-transport"
 import { useWorktreeFile } from "@/hooks/queries"
 import { cn } from "@/lib/utils"
-import { resolveAgainst, WorktreeFileContext } from "@/lib/worktree-files"
+import {
+  resolveAgainst,
+  WorktreeFileContext,
+  type WorktreeFileOpenOptions,
+} from "@/lib/worktree-files"
+import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import type { WorktreeFileResponse } from "@/lib/types"
+
+/** Rich Markdown creates an AST; larger documents stay one bounded text node. */
+const DOCUMENT_PREVIEW_LIMIT = 100_000
 
 /**
  * Reading one file out of the task's worktree without leaving the task — the
@@ -33,6 +44,8 @@ export function FileViewer({
   onClose,
   onOpen,
   onReveal,
+  diff,
+  diffTruncated = false,
 }: {
   taskId: string | null
   /** worktree-relative or absolute; null = closed */
@@ -46,10 +59,21 @@ export function FileViewer({
    * machine — the button is simply not there rather than failing on click.
    */
   onReveal?: (path: string) => void
+  /** Present when Changes opened the file, enabling the full-file diff view. */
+  diff?: DiffFile
+  diffTruncated?: boolean
 }) {
+  const [mode, setMode] = useState<"file" | "diff">("file")
+  const [seenPath, setSeenPath] = useState(path)
+  if (seenPath !== path) {
+    setSeenPath(path)
+    setMode("file")
+  }
   const open = taskId !== null && path !== null
   const query = useWorktreeFile(open ? taskId : null, open ? path : null)
   const file = query.data
+  const canDiff = diff !== undefined && !diff.isBinary && !diff.isDeleted
+  const effectiveMode = mode === "diff" && canDiff ? "diff" : "file"
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
@@ -60,61 +84,206 @@ export function FileViewer({
           className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
           <Dialog.Title className="sr-only">{file?.path ?? path ?? "File"}</Dialog.Title>
+          {canDiff && (
+            <div role="tablist" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
+              <Tab role="tab" aria-selected={effectiveMode === "file"} active={effectiveMode === "file"} onClick={() => setMode("file")}>
+                File
+              </Tab>
+              <Tab role="tab" aria-selected={effectiveMode === "diff"} active={effectiveMode === "diff"} onClick={() => setMode("diff")}>
+                Diff
+              </Tab>
+            </div>
+          )}
           <div className="scroll-slim min-h-0 flex-1 overflow-auto rounded-md border border-border bg-code px-4 py-3">
-            {query.isPending ? (
-              <p className="font-mono text-[11px] text-faint">reading…</p>
-            ) : query.isError ? (
-              <p className="font-mono text-[11px] text-faint">{failureReason(query.error)}</p>
-            ) : file?.kind === "binary" ? (
-              <p className="font-mono text-[11px] text-faint">
-                {formatBytes(file.bytes)} of binary — nothing to read here.
-              </p>
-            ) : file ? (
-              isMarkdown(file.path) ? (
-                /**
-                 * A document's own relative links mean "next to me", not "at
-                 * the top of the worktree", so nested prose resolves against
-                 * this file's directory and reuses the one open viewer.
-                 */
-                <WorktreeFileContext.Provider
-                  value={(next) => onOpen?.(resolveAgainst(file.path, next))}
-                >
-                  <Prose text={file.text} />
-                </WorktreeFileContext.Provider>
-              ) : (
-                <SourceFile path={file.path} text={file.text} />
-              )
-            ) : null}
+            <ViewerContent
+              pending={query.isPending}
+              error={query.isError ? query.error : null}
+              file={file}
+              mode={effectiveMode}
+              diff={diff}
+              diffTruncated={diffTruncated}
+              onOpen={onOpen}
+            />
           </div>
-          <div className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
-            <span data-testid="file-viewer-path" className="truncate font-mono">
-              {file?.path ?? path}
-            </span>
-            {file && (
-              <>
-                <span className="shrink-0 text-faint">·</span>
-                <span className="shrink-0">{formatBytes(file.bytes)}</span>
-              </>
-            )}
-            {file?.kind === "text" && file.truncated && (
-              <span className="shrink-0 text-faint">· first {formatBytes(file.text.length)} shown</span>
-            )}
-            {onReveal && file && (
-              <button
-                type="button"
-                onClick={() => onReveal(file.path)}
-                className={cn(
-                  "ml-auto shrink-0 transition-colors hover:text-foreground",
-                  "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                )}
-              >
-                Reveal in Finder
-              </button>
-            )}
-          </div>
+          <ViewerFooter
+            path={file?.path ?? path}
+            file={file}
+            mode={effectiveMode}
+            diffTruncated={diffTruncated}
+            onReveal={onReveal}
+          />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function ViewerContent({
+  pending,
+  error,
+  file,
+  mode,
+  diff,
+  diffTruncated,
+  onOpen,
+}: {
+  pending: boolean
+  error: unknown
+  file: WorktreeFileResponse | undefined
+  mode: "file" | "diff"
+  diff?: DiffFile
+  diffTruncated: boolean
+  onOpen?: (path: string) => void
+}) {
+  if (pending) return <p className="font-mono text-[11px] text-faint">reading…</p>
+  if (error) return <p className="font-mono text-[11px] text-faint">{failureReason(error)}</p>
+  if (!file) return null
+  if (file.kind === "binary") {
+    return (
+      <p className="font-mono text-[11px] text-faint">
+        {formatBytes(file.bytes)} of binary — nothing to read here.
+      </p>
+    )
+  }
+  if (mode === "diff" && diff) {
+    return <FullFileDiff file={diff} text={file.text} patchTruncated={diffTruncated} />
+  }
+  if (!isMarkdown(file.path) || file.text.length > DOCUMENT_PREVIEW_LIMIT) {
+    return <SourceFile path={file.path} text={file.text} />
+  }
+  /**
+   * A document's own relative links mean "next to me", not "at the top of the
+   * worktree", so nested prose resolves against this file's directory.
+   */
+  return (
+    <WorktreeFileContext.Provider value={(next) => onOpen?.(resolveAgainst(file.path, next))}>
+      <Prose text={file.text} />
+    </WorktreeFileContext.Provider>
+  )
+}
+
+function ViewerFooter({
+  path,
+  file,
+  mode,
+  diffTruncated,
+  onReveal,
+}: {
+  path: string | null
+  file: WorktreeFileResponse | undefined
+  mode: "file" | "diff"
+  diffTruncated: boolean
+  onReveal?: (path: string) => void
+}) {
+  const highlightingSkipped = file?.kind === "text"
+    && mode === "file"
+    && sourceLanguage(file.path) !== null
+    && file.text.length > PROSE_HIGHLIGHT_LIMIT
+  const documentPreviewSkipped = file?.kind === "text"
+    && mode === "file"
+    && isMarkdown(file.path)
+    && file.text.length > DOCUMENT_PREVIEW_LIMIT
+  return (
+    <div className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+      <span data-testid="file-viewer-path" className="truncate font-mono">{path}</span>
+      {file && (
+        <>
+          <span className="shrink-0 text-faint">·</span>
+          <span className="shrink-0">{formatBytes(file.bytes)}</span>
+        </>
+      )}
+      {file?.kind === "text" && file.truncated && (
+        <span className="shrink-0 text-faint">· preview capped</span>
+      )}
+      {highlightingSkipped && (
+        <span className="shrink-0 text-faint">· highlighting off for performance</span>
+      )}
+      {documentPreviewSkipped && (
+        <span className="shrink-0 text-faint">· preview off for performance</span>
+      )}
+      {mode === "diff" && diffTruncated && (
+        <span className="shrink-0 text-faint">· diff capped; unmarked lines may have changes</span>
+      )}
+      {onReveal && file && (
+        <button
+          type="button"
+          onClick={() => onReveal(file.path)}
+          className={cn(
+            "ml-auto shrink-0 transition-colors hover:text-foreground",
+            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+          )}
+        >
+          Reveal in Finder
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Editor-style inline diff: every current line stays visible; changed rows are inserted in place. */
+const FullFileDiff = memo(function FullFileDiff({
+  file,
+  text,
+  patchTruncated,
+}: {
+  file: DiffFile
+  text: string
+  patchTruncated: boolean
+}) {
+  const result = fullFileDiff(file, text, patchTruncated)
+  if (result.lines.length === 0) {
+    return <p className="font-mono text-[11px] text-faint">Empty file — nothing to show</p>
+  }
+  return (
+    <div className="-mx-4 -my-3 font-mono text-[11.5px] leading-[1.75]">
+      {result.lines.map((line, index) => (
+        <FullFileDiffRow key={`${line.oldNo ?? ""}:${line.newNo ?? ""}:${index}`} line={line} />
+      ))}
+      {result.capped && (
+        <p className="px-4 py-2 text-faint">
+          Diff display stopped at {result.lines.length.toLocaleString()} lines for performance.
+        </p>
+      )}
+    </div>
+  )
+})
+
+function FullFileDiffRow({ line }: { line: FullFileDiffLine }) {
+  return (
+    <div
+      data-diff-line={line.kind}
+      data-diff-known={line.known || undefined}
+      className={cn(
+        "flex min-w-max",
+        line.kind === "add" && "bg-diff-add-bg",
+        line.kind === "del" && "bg-diff-del-bg",
+      )}
+    >
+      <span className="w-[54px] shrink-0 pr-3 text-right text-faint select-none">
+        {line.newNo ?? line.oldNo ?? ""}
+      </span>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "w-5 shrink-0 select-none",
+          line.kind === "add" && "text-diff-add",
+          line.kind === "del" && "text-diff-del",
+          !line.known && "text-faint",
+        )}
+      >
+        {line.kind === "add" ? "+" : line.kind === "del" ? "−" : !line.known ? "?" : " "}
+      </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 pr-4 whitespace-pre",
+          line.kind === "add" && "text-diff-add",
+          line.kind === "del" && "text-diff-del",
+          line.kind === "context" && "text-foreground/85",
+        )}
+      >
+        {line.text || " "}
+      </span>
+    </div>
   )
 }
 
@@ -225,20 +394,24 @@ export function FileViewerProvider({
   onReveal?: (path: string) => void
   children: ReactNode
 }) {
-  const [path, setPath] = useState<string | null>(null)
+  const [opened, setOpened] = useState<{ path: string; options?: WorktreeFileOpenOptions } | null>(null)
   // Identity-stable so a transcript of prose is not re-rendered per keystroke
   // elsewhere; the viewer is keyed by `path`, not by this.
-  const open = useCallback((next: string) => setPath(next), [])
+  const open = useCallback((next: string, options?: WorktreeFileOpenOptions) => {
+    setOpened({ path: next, options })
+  }, [])
 
   return (
     <WorktreeFileContext.Provider value={taskId === null ? null : open}>
       {children}
       <FileViewer
         taskId={taskId}
-        path={path}
-        onClose={() => setPath(null)}
+        path={opened?.path ?? null}
+        onClose={() => setOpened(null)}
         onOpen={open}
         onReveal={onReveal}
+        diff={opened?.options?.diff}
+        diffTruncated={opened?.options?.diffTruncated}
       />
     </WorktreeFileContext.Provider>
   )
