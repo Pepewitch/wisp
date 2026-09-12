@@ -5,11 +5,15 @@ conditions without an agent turn, then wakes the task between turns when there
 is something to do. Heartbeat is the deliberate exception: every eligible tick
 asks the agent to reason about your objective and can spend tokens.
 
-Open **Workflows** beneath the task header in the browser or Desktop. Choose a
-built-in, edit its parameters, review limits and permissions, and select **Arm
-workflow**. The same panel shows state, waiting reason, next check, wake-up
-count, and the latest 100 history entries. Older remote daemons without workflow
-support do not show the control.
+**Workflows** is a tab in the right column, beside **Changes**, in the browser
+and in Desktop. It lists what is attached to the selected task: one row each,
+carrying the workflow's state and the reason it is waiting. `+` adds one —
+choose a built-in, edit its parameters, open **Limits and permissions** if you
+need them, and select **Arm workflow**. Opening a row shows its next check,
+wake-up count, the latest 100 history entries, and the controls to **Pause**,
+**Configure** or **Remove** it. Removing completes the workflow: it stops
+checking and moves under **Finished**, where its history stays readable. Older
+remote daemons without workflow support show no tab at all.
 
 ## Built-ins
 

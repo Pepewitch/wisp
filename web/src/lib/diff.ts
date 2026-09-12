@@ -169,6 +169,16 @@ export function parseDiff(diff: string): ParsedDiff {
 }
 
 /**
+ * How many files a branch actually changed. Untracked paths also appear in the
+ * parsed diff (as new-file patches), so each path is counted once — the pane
+ * and the tab above it have to agree on one number.
+ */
+export function changedFileCount(files: DiffFile[], untracked: string[]): number {
+  const names = new Set(untracked);
+  return files.filter((f) => !names.has(f.path)).length + untracked.length;
+}
+
+/**
  * Unmodified-line counts before each hunk (the collapsed regions in the
  * detail view): the leading region for the first hunk, then the gap between
  * consecutive hunks. The region AFTER the last hunk is unknowable from the

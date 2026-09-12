@@ -1101,13 +1101,46 @@ middle (`web/src/components/panes.tsx`). Panes carry no border toward a
 handle — the handle *is* the divider. Layouts persist through the library's
 own `useDefaultLayout`; never hand-roll layout JSON.
 
-The right column is a vertical split, not tabs: **Changes** over **Terminal**.
-Terminal holds as many shells in the worktree as you want, tabbed, each its own
-websocket, connecting only while active. A shell with something long-running
-keeps its own dot so a finishing test run is visible without switching to it.
+The right column is a vertical split, not tabs: the **task panel** over
+**Terminal**. Terminal holds as many shells in the worktree as you want, tabbed,
+each its own websocket, connecting only while active. A shell with something
+long-running keeps its own dot so a finishing test run is visible without
+switching to it.
 
-`Changes` is a label, not a tab — this pane has one view. It keeps a tab's shape
-so `Checks` can slot in beside it later, but carries no underline and no hue.
+### The task panel: Changes · Workflows
+
+`Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
+slot in beside it later". **Workflows** is the sibling that arrived first
+(`task-panel.tsx`), and the shape was right: two tabs, selection is a background
+pill, no underline and no hue.
+
+Both panes stay **mounted**; the inactive one is `hidden`, so switching tabs
+never closes the diff you had open. The strip is handed to the VISIBLE pane's
+`PaneHeader`, never to both — two tablists in one tree is the bug that trades
+one duplicated label for a broken a11y tree. Each pane keeps its own action at
+the right edge (Changes refreshes, Workflows adds), and each still renders its
+own plain label when it is given no strip — which is exactly what an older
+daemon without `taskWorkflows` sees.
+
+**A workflow is state, so it gets a pane, not a dialog.** The first version of
+this feature hung a button under the task header that opened a 640px modal.
+Three things were wrong with that and none of them were the feature's: a scrim
+sat between you and the task the automation was watching; "pick one" and
+"configure it" stacked into one tall scroll that read as a bureaucratic form;
+and *what is armed here?* — the one question a person actually has — could only
+be answered by opening a door, because a button has room for a count and
+nothing else.
+
+The pane answers it on the row: **two lines, what it is and what it is waiting
+for**, with the numbers, the controls and the history behind the same click a
+file row in Changes takes. Adding is a drill-down in the same pane — picker,
+then form, with a back row where a dialog would have put a close button — so
+nothing about arming a workflow puts an overlay over the app. The form is ONE
+column: a number field beside a prompt textarea is two fields of different
+weight sharing a row, and it is most of why the modal read as paperwork.
+Removing a workflow completes it and files it under a collapsed **Finished**
+group: a task that ran three watches over a week should not open on three
+obituaries.
 
 ## 6b. Mobile — touch is not a small mouse
 
@@ -1147,7 +1180,10 @@ version wrapped onto two lines inside the width the title needed.
    The compact link is a 44px two-line thumb target; splitting the header with
    the title left both unreadable.
 4. **The tab strip is three equal thirds** (`flex-1`), a segmented control
-   rather than left-packed pills with a dead right half.
+   rather than left-packed pills with a dead right half. It stays three: the
+   task panel's own `Changes · Workflows` strip nests inside the Changes tab
+   rather than becoming a fourth thumb target, and its `PaneHeader` takes
+   `touch` so those tabs and the pane's action each reach 44px.
 
 **App-level state lives in the drawer footer on touch**, beside the gear that is
 already there, because below `md` there is no persistent top bar to carry it.

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
+import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
 import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
@@ -293,5 +294,31 @@ export function useWorktreeFile(taskId: string | null, path: string | null) {
       transport.request<WorktreeFileResponse>(
         `/api/tasks/${taskId}/file?path=${encodeURIComponent(path!)}`,
       ),
+  });
+}
+
+/**
+ * GET /api/tasks/:id/workflows — the automations attached to one task.
+ *
+ * Two callers share it: the right column's tab, which puts the live count on
+ * the strip, and the Workflows pane under it. One key, one request — and it is
+ * the key the SSE `workflow` event invalidates (`lib/sse.ts`).
+ */
+export function useTaskWorkflows(taskId: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.task(taskId ?? ""), "workflows"],
+    queryFn: () => transport.request<Workflow[]>(`/api/tasks/${taskId}/workflows`),
+    enabled: enabled && taskId !== null,
+  });
+}
+
+/** GET /api/workflow-types — what this daemon can arm, connection-wide. */
+export function useWorkflowTypes(enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.connection, "workflow-types"],
+    queryFn: () => transport.request<WorkflowDefinition[]>("/api/workflow-types"),
+    enabled,
   });
 }

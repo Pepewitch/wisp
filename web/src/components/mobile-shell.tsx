@@ -5,7 +5,6 @@ import { CleanupPanel } from "./cleanup-panel"
 import { Hamburger, Local } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
-import { WorkflowControl } from "@/components/workflow-control"
 import { Meta, StateDot, Tab } from "@/components/primitives"
 import { stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
@@ -195,7 +194,6 @@ export function MobileShell({
             />
           </div>
         )}
-        {task && <div className="px-3"><WorkflowControl task={task} prUrl={pullRequest?.kind === "found" ? pullRequest.pullRequest.url : undefined} /></div>}
       </header>
       {connectionStatus}
       {task?.cleanup && <div className="scroll-slim max-h-[40dvh] shrink-0 overflow-y-auto border-b border-border px-3 pb-3 [&_button]:min-h-11"><CleanupPanel task={task} /></div>}
