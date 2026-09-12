@@ -75,6 +75,16 @@ describe("release version sites", () => {
       expect(() => checkVersionSites(root)).toThrow("scripts/install.sh");
     }));
 
+  test("refuses a stale pinned install URL in the front-page README", () =>
+    scratch((root) => {
+      // The README and install-guide URLs were a prose step before they were
+      // sites: the one bump a prep PR could forget without any gate noticing.
+      const path = join(root, "README.md");
+      const version = sourceVersion(root);
+      writeFileSync(path, readFileSync(path, "utf8").replace(`/wisp/v${version}/scripts`, "/wisp/v0.0.1/scripts"));
+      expect(() => checkVersionSites(root)).toThrow("README.md");
+    }));
+
   test("fails closed when a site changes shape instead of checking nothing", () =>
     scratch((root) => {
       const path = join(root, "wispd/scripts/evaluator/run.sh");

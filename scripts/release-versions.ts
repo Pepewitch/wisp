@@ -76,10 +76,25 @@ export const VERSION_SITES: readonly VersionSite[] = [
     why: "the release artifact the evaluator harness runs against",
     matchers: [{ pattern: /^VERSION="([^"]+)"$/gm, count: 1 }],
   },
+  {
+    file: "README.md",
+    why: "the pinned installer URL in the front-page Linux install command",
+    matchers: [
+      { pattern: /raw\.githubusercontent\.com\/Pepewitch\/wisp\/v([^/]+)\/scripts\/install\.sh/g, count: 1 },
+    ],
+  },
+  {
+    file: "docs/INSTALL.md",
+    why: "the pinned installer and uninstaller URLs and the named release in the Linux guide",
+    matchers: [
+      { pattern: /raw\.githubusercontent\.com\/Pepewitch\/wisp\/v([^/]+)\/scripts\/(?:un)?install\.sh/g, count: 3 },
+      { pattern: /pins the installer to release `([^`]+)`/g, count: 1 },
+    ],
+  },
 ] as const;
 
 // Pinned so that deleting a site is a failure rather than a smaller check.
-export const EXPECTED_SITE_COUNT = 9;
+export const EXPECTED_SITE_COUNT = 11;
 
 export interface SiteReading {
   file: string;
