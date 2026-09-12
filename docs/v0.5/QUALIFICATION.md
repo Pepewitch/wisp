@@ -2,7 +2,39 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.6 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.7 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.7 publication
+
+**Published and promoted on 2026-09-12.**
+[Wisp 0.5.7](https://github.com/Pepewitch/wisp/releases/tag/v0.5.7) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+11:31:35 UTC with ten release assets. The annotated tag resolves to clean main
+commit
+[`0af1b98b85527f3ad30dca6672aff28d9d6f9d9f`](https://github.com/Pepewitch/wisp/commit/0af1b98b85527f3ad30dca6672aff28d9d6f9d9f),
+landed through [PR #188](https://github.com/Pepewitch/wisp/pull/188).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34690504009)
+completed all three jobs successfully on the first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, native-core, npm, Rust, supply-chain, and public-promotion dry-run checks passed |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `0af1b98`; the downloaded Linux binary reported 0.5.7 at that commit |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+Promotion completed with Homebrew tap commit
+[`7f38831d843e1b8ff4c7eb34190616f3b7137fa6`](https://github.com/Pepewitch/homebrew-tap/commit/7f38831d843e1b8ff4c7eb34190616f3b7137fa6)
+pushed at 11:37:44 UTC. Both update channels serve 0.5.7.
+
+0.5.7 adds no database migration. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, an updater
+journey across this version, or the paid evaluator panel — was performed, and
+this record does not claim them. The published assets and release body remain
+immutable; this ledger records the completed outcome separately.
 
 ## 0.5.6 publication
 
