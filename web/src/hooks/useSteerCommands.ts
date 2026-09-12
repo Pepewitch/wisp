@@ -5,6 +5,7 @@ import { useDaemonRuntime } from "@/lib/runtime"
 import { statusNote, type Tier1CommandName } from "@/lib/slash"
 import type {
   ApiTask,
+  AttachResponse,
   CompactAnswer,
   ProbeAnswer,
   ProbeCommandName,
@@ -132,12 +133,6 @@ export function useSteerCommands({
   }
 
   return { archive, compact, dispatch, probe }
-}
-
-interface AttachResponse {
-  argv: string[] | null
-  cwd: string | null
-  message: string | null
 }
 
 async function attachCommand(

@@ -826,6 +826,20 @@ Three more things touch owns here, none of them a width question:
   it separates, so `@lg`'s absence cannot leave a rule with nothing on either
   side of it.
 
+**The resume hint hangs off the same right edge.** Once a turn has ended,
+`components/resume-hint.tsx` names the command that continues the stored
+session outside Wisp — the daemon's own `GET /attach` answer, built from the
+adapter's `attach` template, never reconstructed client-side from the harness
+name, so a harness that declares none renders nothing rather than a guess. It
+shows only when a session exists AND no turn is running: mid-turn the command
+is not paste-ready, and the running note owns the row. The line is the same
+one `/attach` writes into its note — `cd <worktree> && …` included, because a
+harness resolves its sessions per directory and the bare command fails pasted
+anywhere else. The display truncates from the LEFT (`dir="rtl"` on an all-LTR
+string), so the tail that matters — the command and the session id — survives
+a phone; the copy button (the bubble toolbar's `BUBBLE_ACTION` shape, 32px
+under a coarse pointer) always carries the whole working line.
+
 `Menu` owns thumb sizing for every dropdown, so no call site rolls its own:
 `touch` makes a trigger 44px (`w-11` when `iconOnly`) and adds `active:`, and
 the `menu-row` class takes a 44px floor under `@media (pointer: coarse)` in

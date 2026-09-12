@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { FreshContextDialog } from "@/components/fresh-context-dialog"
 import { PendingAttachmentRows } from "@/components/pending-attachments"
+import { ResumeHint } from "@/components/resume-hint"
 import { SteerOverlays } from "@/components/steer-box-overlays"
 import { ComposerControls } from "@/components/steer-controls"
 import { type TaskAgentChoice } from "@/components/task-agent-picker"
@@ -264,6 +265,10 @@ export function SteerBox({
           runningSince={runningSince}
           note={shown}
         />
+
+        {/* The resume hint hugs the composer's right edge; the overlays'
+            in-flow rows (running note, command notes) sit above it. */}
+        {task && <ResumeHint task={task} />}
 
         <SteerComposer
           task={task}

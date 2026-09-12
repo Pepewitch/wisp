@@ -111,6 +111,8 @@ function stubApi(handler: (path: string, method: string) => { status: number; bo
   )
   return calls
 }
+/** The resume hint's own mount-time GET /attach is not one of the composer's actions. */
+const composerCalls = (calls: Call[]) => calls.filter((c) => !c.path.endsWith("/attach"))
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -267,7 +269,7 @@ describe("keyboard and picking", () => {
     expect(box().value).toBe("/code-review") // no trailing space: a skill takes arguments
     expect(screen.queryByTestId("slash-palette")).toBeNull()
     expect(onSend).not.toHaveBeenCalled()
-    expect(calls).toHaveLength(0)
+    expect(composerCalls(calls)).toHaveLength(0)
   })
 
   it("a custom command is separate from skills and only prefills its reviewed form", async () => {
@@ -473,12 +475,12 @@ describe("Tier-1 dispatch", () => {
     fireEvent.click(screen.getByTestId("slash-archive"))
 
     expect(await screen.findByText("task has unpushed commits — push first, or archive with force")).toBeInTheDocument()
-    expect(calls[0]).toEqual({ path: "/api/tasks/tk9zdy/archive", method: "POST", body: { force: false } })
+    expect(composerCalls(calls)[0]).toEqual({ path: "/api/tasks/tk9zdy/archive", method: "POST", body: { force: false } })
 
     refuse = false
     fireEvent.click(screen.getByRole("button", { name: "Archive anyway" }))
-    await waitFor(() => expect(calls).toHaveLength(2))
-    expect(calls[1]).toEqual({ path: "/api/tasks/tk9zdy/archive", method: "POST", body: { force: true } })
+    await waitFor(() => expect(composerCalls(calls)).toHaveLength(2))
+    expect(composerCalls(calls)[1]).toEqual({ path: "/api/tasks/tk9zdy/archive", method: "POST", body: { force: true } })
   })
 
   it("/fresh fires immediately — there is no second confirm", async () => {
@@ -489,7 +491,7 @@ describe("Tier-1 dispatch", () => {
     fireEvent.click(screen.getByTestId("slash-fresh"))
 
     expect(await screen.findByTestId("steer-note")).toHaveTextContent("session cleared — the next turn starts fresh")
-    expect(calls[0]?.path).toBe("/api/tasks/tk9zdy/fresh-session")
+    expect(composerCalls(calls)[0]?.path).toBe("/api/tasks/tk9zdy/fresh-session")
   })
 
   it("/attach puts the assembled command in the note, with a copy button", async () => {
@@ -582,8 +584,8 @@ describe("a refused send", () => {
     type("do the thing")
     fireEvent.click(screen.getByLabelText("Send"))
 
-    await waitFor(() => expect(calls).toHaveLength(1))
-    expect(calls[0]).toEqual({
+    await waitFor(() => expect(composerCalls(calls)).toHaveLength(1))
+    expect(composerCalls(calls)[0]).toEqual({
       path: "/api/tasks/tk9zdy/send",
       method: "POST",
       body: {
@@ -687,7 +689,7 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
     fireEvent.keyDown(box(), { key: "Enter" })
 
     await waitFor(() =>
-      expect(calls).toEqual([{ path: "/api/tasks/tk9zdy/probe", method: "POST", body: { command: "context" } }]),
+      expect(composerCalls(calls)).toEqual([{ path: "/api/tasks/tk9zdy/probe", method: "POST", body: { command: "context" } }]),
     )
     expect(onSend).not.toHaveBeenCalled()
   })
@@ -735,7 +737,7 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
 
     const panel = await screen.findByTestId("probe-panel")
     await waitFor(() => expect(panel).toHaveTextContent("Current session: 41% used"))
-    expect(calls).toEqual([
+    expect(composerCalls(calls)).toEqual([
       { path: "/api/tasks/tk9zdy/probe", method: "POST", body: { command: "usage" } },
     ])
     expect(screen.queryByTestId("tokens-panel")).toBeNull()
@@ -780,7 +782,7 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
     expect(box().value).toBe("hello ")
     expect(await screen.findByTestId("probe-panel")).toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId("probe-panel")).toHaveTextContent("13.3k / 1m"))
-    expect(calls).toEqual([
+    expect(composerCalls(calls)).toEqual([
       { path: "/api/tasks/tk9zdy/probe", method: "POST", body: { command: "context" } },
     ])
     expect(screen.queryByTestId("steer-note")).toBeNull()
@@ -895,7 +897,7 @@ describe("compact (A5)", () => {
 
     expect(box().value).toBe("/compact")
     expect(onSend).not.toHaveBeenCalled()
-    expect(calls).toHaveLength(0) // nothing dispatched — the user reviews what costs a turn
+    expect(composerCalls(calls)).toHaveLength(0) // nothing dispatched — the user reviews what costs a turn
   })
 
   it("droid's compact dispatches, and the note reports exactly what the harness said", async () => {

@@ -521,6 +521,18 @@ export interface CompactAnswer {
   sessionReplaced: boolean;
   note: string | null;
 }
+/**
+ * GET /api/tasks/:id/attach — the harness's own interactive resume command for
+ * the task's stored session, assembled by the daemon from the adapter's
+ * `attach` template. `argv: null` means there is nothing honest to show (no
+ * session yet, or a harness that declares no attach command); `message` says
+ * which. `cwd` is the directory the command belongs in (the task's worktree).
+ */
+export interface AttachResponse {
+  argv: string[] | null;
+  cwd: string | null;
+  message: string | null;
+}
 
 /**
  * A4: one skill as the palette renders it. description is null on a name-only
