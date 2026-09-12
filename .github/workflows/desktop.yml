@@ -102,6 +102,13 @@ jobs:
       - name: build shared UI bundle
         run: bun run build:ui
         working-directory: .
+      # `tauri::generate_context!()` embeds this file at compile time and
+      # tests/webview.rs asserts against what it embedded, so a bundle that is
+      # missing or empty has to fail HERE, naming itself, rather than a minute
+      # later as a Rust panic about a missing asset key.
+      - name: the bundle the app will embed exists
+        run: test -s web/ui-dist/index.html
+        working-directory: .
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
