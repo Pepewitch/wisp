@@ -68,7 +68,12 @@ describe("the worktree file viewer", () => {
     expect(viewer.querySelector(".hljs-keyword")?.textContent).toBe("export")
     expect(viewer).toHaveTextContent("export const a = 1")
     // read as source: nothing in it was interpreted as markdown
-    expect(viewer.querySelector("pre")).not.toBeNull()
+    const pre = viewer.querySelector("pre")
+    expect(pre).not.toBeNull()
+    // Prose normally gives fences their own horizontal scroller. In the file
+    // viewer that nested scroller traps vertical wheel events because
+    // `scroll-slim` contains overscroll, so the viewer must own both axes.
+    expect(pre?.parentElement?.parentElement).toHaveClass("[&_pre]:overflow-visible")
     expect(viewer.querySelector("h1")).toBeNull()
   })
 
