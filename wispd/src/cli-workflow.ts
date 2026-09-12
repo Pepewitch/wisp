@@ -12,13 +12,13 @@ export function workflowDuration(value: unknown): number {
   return Number(match[1]) * (match[2] === "d" ? 1440 : match[2] === "h" ? 60 : 1);
 }
 export function workflowFlags(flags: Flags): WorkflowParams {
-  const allowed = new Set(["json", "params", "pr", "prompt", "file", "every", "on-red", "on-green", "quiet-for", "lifetime", "max-wakeups", "reviewers", "exclude-authors", "allow-push", "allow-merge", "include-bots"]);
+  const allowed = new Set(["json", "params", "pr", "prompt", "file", "at", "every", "on-red", "on-green", "quiet-for", "lifetime", "max-wakeups", "reviewers", "exclude-authors", "allow-push", "allow-merge", "include-bots"]);
   for (const flag of Object.keys(flags)) if (!allowed.has(flag)) throw new Error(`Unknown workflow flag: --${flag}`);
   if (flags.params !== undefined && typeof flags.params !== "string") throw new Error("--params needs a JSON object");
   const raw: unknown = typeof flags.params === "string" ? JSON.parse(flags.params) : {};
   if (!isRecord(raw)) throw new Error("--params must be a JSON object");
   const params = { ...raw } as WorkflowParams;
-  const strings: Record<string, string> = { pr: "prUrl", prompt: "prompt", "on-red": "onRed", "on-green": "onGreen", reviewers: "reviewers", "exclude-authors": "excludeAuthors" };
+  const strings: Record<string, string> = { pr: "prUrl", prompt: "prompt", at: "scheduledAt", "on-red": "onRed", "on-green": "onGreen", reviewers: "reviewers", "exclude-authors": "excludeAuthors" };
   for (const [flag, key] of Object.entries(strings)) {
     if (flags[flag] !== undefined) {
       if (typeof flags[flag] !== "string") throw new Error(`--${flag} needs a value`);
@@ -48,7 +48,8 @@ function id(value: string | undefined): string {
   return value;
 }
 function printWorkflow(item: Workflow): void {
-  console.log(`${item.id}  ${item.type}  ${item.state}  ${item.wakeCount}/${item.params.maxWakeups} wake-ups  ${item.reason}`);
+  const count = item.type === "schedule-steer" ? "one shot" : `${item.wakeCount}/${item.params.maxWakeups} wake-ups`;
+  console.log(`${item.id}  ${item.type}  ${item.state}  ${count}  ${item.reason}`);
 }
 export async function workflowCommand(args: string[], flags: Flags, api: Api): Promise<void> {
   const [command, target, type] = args;
@@ -86,7 +87,7 @@ export async function workflowCommand(args: string[], flags: Flags, api: Api): P
     result = await api(`/api/workflows/${id(target)}/${command}`, "POST", {});
   } else {
     console.log(`${wispCommand()} workflow types | start <task> <type> | list <task> | show <id> | set <id> | pause <id> | resume <id> | complete <id>
-Parameters: --every 5m --prompt "..." --file instructions.md --pr <url>
+Parameters: --every 5m --prompt "..." --file instructions.md --at <ISO-8601> --pr <url>
             --on-red "..." --on-green "..." --quiet-for 30m --reviewers login,bot
             --lifetime 24h --max-wakeups 20 --allow-push --allow-merge
             --params '{"customParameter":"value"}' --json`);

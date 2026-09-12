@@ -23,6 +23,14 @@ const definition: WorkflowDefinition = {
     { key: "allowPush", label: "Allow pushing changes", type: "boolean", default: false, description: "" },
   ],
 }
+const scheduleDefinition: WorkflowDefinition = {
+  id: "schedule-steer", version: "1", name: "Schedule Steer",
+  description: "Send one steer message at a chosen time, then complete.",
+  parameters: [
+    { key: "prompt", label: "Steer message", type: "string", default: "", required: true, multiline: true, description: "" },
+    { key: "scheduledAt", label: "Scheduled time", type: "string", default: "", required: true, description: "" },
+  ],
+}
 const task = { ...TASKS[0]!, state: "done" as const }
 const item: Workflow = {
   id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])) },
@@ -30,7 +38,10 @@ const item: Workflow = {
   lastCheckedAt: new Date().toISOString(), nextCheckAt: new Date().toISOString(),
   expiresAt: "2026-12-01T00:00:00Z", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 }
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 it.each(["browser", "desktop"] as const)("arms a parameterized review watch through the %s transport", async runtime => {
   const fetcher = vi.fn<typeof fetch>(async (url, init) => {
@@ -175,4 +186,38 @@ it("keeps an edited PR pinned and permits explicit push authorization", () => {
   fireEvent.click(checkbox)
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ allowPush: true }))
+})
+
+it("schedules one steer using an explicit wall time and time zone", () => {
+  const submit = vi.fn()
+  render(<WorkflowForm definition={scheduleDefinition} pending={false} onSubmit={submit} onCancel={() => {}} />)
+
+  fireEvent.change(screen.getByRole("textbox", { name: "Steer message" }), { target: { value: "Use the staged rollout." } })
+  fireEvent.click(screen.getByRole("button", { name: "Date and time" }))
+  fireEvent.change(screen.getByLabelText("Time zone"), { target: { value: "420" } })
+  fireEvent.change(screen.getByLabelText("Date and time", { selector: "input" }), { target: { value: "2099-09-13T14:00" } })
+  expect(screen.getByText(/2099-09-13T07:00:00.000Z/)).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole("button", { name: "Start" }))
+  expect(submit).toHaveBeenCalledWith({
+    prompt: "Use the staged rollout.",
+    scheduledAt: "2099-09-13T07:00:00.000Z",
+  })
+})
+
+it("schedules a steer after a relative number of hours", () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date("2026-09-12T10:00:00.000Z"))
+  const submit = vi.fn()
+  render(<WorkflowForm definition={scheduleDefinition} pending={false} onSubmit={submit} onCancel={() => {}} />)
+
+  fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "hours" } })
+  fireEvent.change(screen.getByLabelText("Delay"), { target: { value: "2" } })
+  fireEvent.change(screen.getByRole("textbox", { name: "Steer message" }), { target: { value: "Recheck the deploy." } })
+  fireEvent.click(screen.getByRole("button", { name: "Start" }))
+
+  expect(submit).toHaveBeenCalledWith({
+    prompt: "Recheck the deploy.",
+    scheduledAt: "2026-09-12T12:00:00.000Z",
+  })
 })

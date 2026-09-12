@@ -15,6 +15,16 @@ import type { DaemonEventStream, DaemonTransport } from "@/lib/transport"
 
 const TYPES: WorkflowDefinition[] = [
   {
+    id: "schedule-steer",
+    version: "1",
+    name: "Schedule Steer",
+    description: "Send one steer message at a chosen time, then complete.",
+    parameters: [
+      { key: "prompt", label: "Steer message", type: "string", default: "", required: true, multiline: true, description: "What should the agent know or do at the scheduled time?" },
+      { key: "scheduledAt", label: "Scheduled time", type: "string", default: "", required: true, description: "An exact time with a UTC offset, stored as an instant." },
+    ],
+  },
+  {
     id: "heartbeat",
     version: "1",
     name: "Heartbeat",

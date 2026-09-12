@@ -19,6 +19,14 @@ const pr = { ...text("prUrl", "Pull request URL", "", "A specific github.com pul
 
 export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   {
+    id: "schedule-steer", version: "1", name: "Schedule Steer",
+    description: "Send one steer message at a chosen time, then complete. If the task cannot accept a live steer, the message waits for its next turn.",
+    parameters: [
+      { ...text("prompt", "Steer message", "", "What should the agent know or do at the scheduled time?", true), required: true },
+      { ...text("scheduledAt", "Scheduled time", "", "An exact time with a UTC offset, stored as an instant."), required: true },
+    ],
+  },
+  {
     id: "heartbeat", version: "1", name: "Heartbeat",
     description: "Revisit an objective on a timer. Each eligible check wakes the agent and can spend tokens.",
     parameters: [
@@ -73,6 +81,12 @@ export function validateWorkflowParams(def: WorkflowDefinition, input: unknown):
     }
     if (typeof value === "string" && (value.length > 16_000 || (p.required && !value.trim()))) throw new Error(`${p.label} is required and must be at most 16000 characters`);
     output[p.key] = value as string | number | boolean;
+  }
+  if (def.id === "schedule-steer") {
+    const value = String(output.scheduledAt);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
+      !Number.isFinite(Date.parse(value))) throw new Error("Scheduled time must include a valid date, time, and UTC offset");
+    output.scheduledAt = new Date(value).toISOString();
   }
   if (def.id === "pr-ci" || def.id === "pr-review") output.prUrl = parsePrUrl(output.prUrl).url;
   return output;

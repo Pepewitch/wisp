@@ -16,11 +16,12 @@ test("local manifests expose parameter schemas, protect built-ins, and pin effec
   const path = join(dir, "workflows.json"), plugin = manifest();
   writeFileSync(path, JSON.stringify([plugin]));
   const types = installedWorkflows(path);
-  expect(types).toHaveLength(4);
-  expect(types[3]?.definition.parameters.some(p => p.key === "maxWakeups")).toBe(true);
-  const version = types[3]!.definition.version;
+  expect(types).toHaveLength(5);
+  const custom = types.find(type => type.definition.id === plugin.id)!;
+  expect(custom.definition.parameters.some(p => p.key === "maxWakeups")).toBe(true);
+  const version = custom.definition.version;
   writeFileSync(path, JSON.stringify([{ ...plugin, description: "Updated" }]));
-  expect(installedWorkflows(path)[3]!.definition.version).not.toBe(version);
+  expect(installedWorkflows(path).find(type => type.definition.id === plugin.id)!.definition.version).not.toBe(version);
   writeFileSync(path, JSON.stringify([{ ...plugin, id: "heartbeat" }]));
   expect(() => installedWorkflows(path)).toThrow();
   writeFileSync(path, JSON.stringify([{ ...plugin, command: ["relative-executable"] }]));
@@ -33,7 +34,7 @@ test("executable protocol reads stdin, validates stdout, and handles failures wi
   const dir = mkdtempSync(join(tmpdir(), "wisp-workflow-protocol-"));
   const path = join(dir, "workflows.json");
   writeFileSync(path, JSON.stringify([manifest()]));
-  const plugin = installedWorkflows(path)[3]!;
+  const plugin = installedWorkflows(path).find(type => type.definition.id === "sample-watch")!;
   expect((await evaluatePlugin(plugin, { protocol: 1, checkpoint: {} }, dir, new AbortController().signal)).action).toBe("wait");
   await expect(evaluatePlugin({ ...plugin, command: ["/bin/sh", "-c", "printf 'not json'"] }, {}, dir, new AbortController().signal)).rejects.toThrow();
   await expect(evaluatePlugin({ ...plugin, command: ["/bin/sh", "-c", "exit 1"] }, {}, dir, new AbortController().signal)).rejects.toThrow("Plugin check failed");

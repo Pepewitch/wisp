@@ -7,15 +7,16 @@ import { wispCommand } from "../command";
 import { homeIsDraining, trackHomeWork } from "../home-lifetime";
 import { isTaskStopping } from "../turn-interrupt";
 import { startNextQueuedMessage } from "../runner";
-import { db, getTask, nextQueuedMessage, runningTurn } from "../store";
+import { db, getTask, getTaskMessage, nextQueuedMessage, runningTurn } from "../store";
 import { assertTaskCapacity } from "../task-admission";
 import { backgroundWork, processStopPending } from "../task-processes";
+import { deliverToRunningTurn } from "../task-submit";
 import type { Task } from "../types";
-import { evaluateCi, evaluateHeartbeat, evaluateReview } from "./evaluate";
+import { evaluateCi, evaluateHeartbeat, evaluateReview, evaluateScheduledSteer } from "./evaluate";
 import { readWorkflowPr, type WorkflowPrSource } from "./github";
 import { evaluatePlugin, validateDecision, workflowById } from "./plugins";
 import {
-  announceWorkflow, cancelWorkflowMessages, changeWorkflowState, dueWorkflows,
+  announceWorkflow, cancelWorkflowMessages, changeWorkflowState, completeWorkflowWake, dueWorkflows,
   getWorkflow, reserveWorkflowWake, saveEvaluation, seenWake, workflow, type WorkflowRow,
 } from "./store";
 
@@ -38,6 +39,7 @@ function uncertainDelivery(id: string): boolean {
   return Boolean(db.query("SELECT 1 FROM task_messages WHERE workflow_id = ? AND delivery_uncertain = 1 LIMIT 1").get(id));
 }
 function workflowPrompt(row: WorkflowRow, result: WorkflowDecision): string {
+  if (row.type === "schedule-steer") return result.message!;
   const item = workflow(row);
   const control = [
     `[Wisp workflow ${row.id}: ${row.type}]`,
@@ -110,7 +112,8 @@ export class WorkflowRuntime {
     const now = this.now(), item = workflow(row), previous = JSON.parse(row.checkpoint_json) as Record<string, unknown>;
     const task = getTask(row.task_id);
     if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return; }
-    if (Date.parse(row.expires_at) <= now.getTime() || row.wake_count >= Number(item.params.maxWakeups)) {
+    if (Date.parse(row.expires_at) <= now.getTime() ||
+      (row.type !== "schedule-steer" && row.wake_count >= Number(item.params.maxWakeups))) {
       changeWorkflowState(row.id, "paused", "Workflow lifetime or wake-up budget reached", now); return;
     }
     if (task.context_n !== row.context_n || uncertainDelivery(row.id)) {
@@ -132,6 +135,8 @@ export class WorkflowRuntime {
       let reviewClosed = false;
       if (plugin.command) {
         result = await evaluatePlugin(plugin, { protocol: 1, workflow: item, task: { id: task.id, state: task.state, idle }, checkpoint: previous, now: now.toISOString() }, task.worktree_path ?? task.repo_path, controller.signal);
+      } else if (row.type === "schedule-steer") {
+        result = evaluateScheduledSteer(item, previous, now);
       } else if (row.type === "heartbeat") {
         result = evaluateHeartbeat(item, previous);
       } else {
@@ -141,7 +146,7 @@ export class WorkflowRuntime {
       }
       result = validateDecision(result);
       if (controller.signal.aborted || this.stopped || homeIsDraining()) return;
-      this.applyResult(row, result, previous, reviewClosed);
+      await this.applyResult(row, result, previous, reviewClosed);
     } catch (error) {
       if (!this.stopped && !homeIsDraining()) saveEvaluation(row, {
         action: "wait", reason: (error instanceof Error ? error.message : "Workflow check failed").slice(0, 1000), checkpoint: previous,
@@ -151,7 +156,7 @@ export class WorkflowRuntime {
       this.controller.signal.removeEventListener("abort", abort);
     }
   }
-  private applyResult(row: WorkflowRow, result: WorkflowDecision, previous: Record<string, unknown>, reviewClosed: boolean): void {
+  private async applyResult(row: WorkflowRow, result: WorkflowDecision, previous: Record<string, unknown>, reviewClosed: boolean): Promise<void> {
     const current = getWorkflow(row.id), task = getTask(row.task_id);
     if (!current || current.state !== "active" || current.revision !== row.revision || !task || task.archived) return;
     if (Date.parse(current.expires_at) <= this.now().getTime()) {
@@ -163,14 +168,18 @@ export class WorkflowRuntime {
     if (result.action === "complete" || result.action === "pause") {
       saveEvaluation(row, result, this.now());
       changeWorkflowState(row.id, result.action === "complete" ? "completed" : "paused", result.reason, this.now());
-    } else if (result.action === "wake") this.wake(row, task, result, previous);
+    } else if (result.action === "wake") await this.wake(row, task, result, previous);
     else saveEvaluation(row, result, this.now());
   }
-  private wake(row: WorkflowRow, task: Task, result: WorkflowDecision, previous: Record<string, unknown>): void {
+  private async wake(row: WorkflowRow, task: Task, result: WorkflowDecision, previous: Record<string, unknown>): Promise<void> {
     if (seenWake(row.id, result.key!)) {
+      if (row.type === "schedule-steer") {
+        completeWorkflowWake(row, "Scheduled steer delivered", this.now());
+        return;
+      }
       saveEvaluation(row, { ...result, action: "wait", reason: "Already delivered this evidence; waiting for a change" }, this.now()); return;
     }
-    if (!canWake(task)) {
+    if (row.type !== "schedule-steer" && !canWake(task)) {
       saveEvaluation(row, { action: "wait", reason: `Waiting for task (${task.state}); no instruction queued`, checkpoint: previous }, this.now()); return;
     }
     assertTaskCapacity(this.cfg, task.id);
@@ -179,6 +188,19 @@ export class WorkflowRuntime {
     if (recent >= 200) { changeWorkflowState(row.id, "paused", "Task reached 200 workflow wake-ups in 24 hours", this.now()); return; }
     const id = reserveWorkflowWake(row, result, workflowPrompt(row, result), this.now());
     if (!id) return;
+    if (row.type === "schedule-steer") {
+      let sent: boolean;
+      if (this.options.dispatch) {
+        sent = this.options.dispatch(task.id, id);
+      } else {
+        const message = getTaskMessage(id)!;
+        const delivery = await deliverToRunningTurn(task, message);
+        sent = delivery.result?.disposition === "steered" ||
+          (!delivery.running && startNextQueuedMessage(task.id, this.adapters, this.cfg, id)?.id === id);
+      }
+      completeWorkflowWake(row, sent ? "Scheduled steer sent" : "Scheduled steer queued for next turn", this.now());
+      return;
+    }
     const started = this.options.dispatch
       ? this.options.dispatch(task.id, id)
       : startNextQueuedMessage(task.id, this.adapters, this.cfg, id)?.id === id;

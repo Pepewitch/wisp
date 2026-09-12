@@ -376,6 +376,9 @@ function Row({
   onAct: (action: "pause" | "resume" | "complete") => void
   onConfigure: () => void
 }) {
+  const reason = item.type === "schedule-steer" && item.state === "active"
+    ? `Sends ${fromNow(String(item.params.scheduledAt))}`
+    : item.reason
   return (
     <div>
       <button
@@ -392,7 +395,7 @@ function Row({
           <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{name}</span>
           <span className="shrink-0 text-[11.5px] text-muted-foreground">{STATE_WORD[item.state]}</span>
         </span>
-        <span className="w-full truncate pl-3.5 text-[11.5px] text-muted-foreground">{item.reason}</span>
+        <span className="w-full truncate pl-3.5 text-[11.5px] text-muted-foreground">{reason}</span>
       </button>
       {open && (
         <Detail item={item} pending={pending} frozen={frozen} onAct={onAct} onConfigure={onConfigure} />
@@ -424,9 +427,11 @@ function Detail({
   return (
     <div className="mb-1 px-2 pt-1.5 pb-1 pl-5.5">
       <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-        {item.lastCheckedAt ? `Checked ${fromNow(item.lastCheckedAt)}` : "Not checked yet"} · {item.wakeCount}/
-        {String(item.params.maxWakeups)} wake-ups
-        {item.state === "active" && ` · next check ${fromNow(item.nextCheckAt)}`}
+        {item.type === "schedule-steer"
+          ? `${item.state === "completed" ? "Scheduled" : "Sends"} ${fromNow(String(item.params.scheduledAt))} · one shot`
+          : <>{item.lastCheckedAt ? `Checked ${fromNow(item.lastCheckedAt)}` : "Not checked yet"} · {item.wakeCount}/
+            {String(item.params.maxWakeups)} wake-ups
+            {item.state === "active" && ` · next check ${fromNow(item.nextCheckAt)}`}</>}
       </p>
       {/* -ml-2.5 cancels the button's own padding, so the labels start on the
           same left edge as the line above them */}
