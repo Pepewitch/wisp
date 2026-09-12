@@ -1127,7 +1127,7 @@ there and it was wrong twice over: a `+` at the end of a tab row is the
 universal *new tab* affordance, and one divider below it the Terminal pane uses
 exactly that glyph, in exactly that corner, to open a new SHELL TAB. Adding
 belongs beside the things it adds to, so the Workflows pane ends its list in a
-`+ Add workflow…` row — a row the height of a file row in Changes, so it reads
+`+ New workflow…` row — a row the height of a file row in Changes, so it reads
 as "one more of these" rather than as pane chrome.
 
 **A workflow is state, so it gets a pane, not a dialog.** The first version of
@@ -1151,9 +1151,13 @@ Pause, Resume and Remove, so Start is the verb that completes the set — and it
 names what pressing it does. `Arm` was precise and borrowed from alarms and
 explosives: the only word on the pane a reader had to already know.
 
-Removing a workflow completes it and files it under a collapsed **Finished**
-group: a task that ran three watches over a week should not open on three
-obituaries. The list therefore reads live rows → add → archive.
+**The UI and the CLI share one vocabulary**, so neither has to be translated
+into the other: `Start` is `wisp workflow start`, `Pause`/`Resume` are
+`pause`/`resume`, and `Complete` is `complete`. Completing files the row under
+a collapsed **Completed** group rather than deleting it — a task that ran three
+watches over a week should not open on three obituaries, and the history that
+explains one has to survive it. The list therefore reads live rows → add →
+archive.
 
 The empty state keeps a bordered `outline` button rather than that quiet row,
 for the reason the sidebar already draws its own two ways: a quiet affordance

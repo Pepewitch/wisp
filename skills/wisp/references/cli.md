@@ -22,9 +22,9 @@ are named while the rest continue; any failure exits nonzero.
 
 ```sh
 wisp workflow types [--json]
-wisp workflow add <task> heartbeat --every 5m --prompt "Objective and stop condition"
-wisp workflow add <task> pr-ci --pr <url> --every 5m
-wisp workflow add <task> pr-review --pr <url> --quiet-for 30m
+wisp workflow start <task> heartbeat --every 5m --prompt "Objective and stop condition"
+wisp workflow start <task> pr-ci --pr <url> --every 5m
+wisp workflow start <task> pr-review --pr <url> --quiet-for 30m
 wisp workflow list <task> [--json]
 wisp workflow show <workflow-id> [--json]
 wisp workflow set <workflow-id> --every 10m

@@ -8,23 +8,25 @@ asks the agent to reason about your objective and can spend tokens.
 **Workflows** is a tab in the right column, beside **Changes**, in the browser
 and in Desktop. It lists what is attached to the selected task: one row each,
 carrying the workflow's state and the reason it is waiting. The list ends in
-**Add workflow…** — choose a built-in, edit its parameters, open **Limits and
+**New workflow…** — choose a built-in, edit its parameters, open **Limits and
 permissions** if you need them, and select **Start**. Opening a row
 shows its next check, wake-up count, the latest 100 history entries, and the
-controls to **Pause**,
-**Configure** or **Remove** it. Removing completes the workflow: it stops
-checking and moves under **Finished**, where its history stays readable. Older
-remote daemons without workflow support show no tab at all.
+controls to **Pause**, **Configure** or **Complete** it. Completing stops the
+checks and moves the row under **Completed**, where its history stays readable.
+Older remote daemons without workflow support show no tab at all.
+
+The UI and the CLI use one vocabulary: **Start** is `wisp workflow start`,
+**Pause**/**Resume** are `pause`/`resume`, and **Complete** is `complete`.
 
 ## Built-ins
 
 ### Heartbeat
 
 ```sh
-wisp workflow add <task> heartbeat --every 5m \
+wisp workflow start <task> heartbeat --every 5m \
   --prompt "Check the deployment. Investigate failures. Finish when it is healthy."
 # Or read instructions from a file:
-wisp workflow add <task> heartbeat --every 5m --file ./instructions.md
+wisp workflow start <task> heartbeat --every 5m --file ./instructions.md
 ```
 
 The daemon saves a `HEARTBEAT.md` snapshot under its task data directory for
@@ -36,7 +38,7 @@ sleep and poll on its own. Snapshots remain with task data until purge.
 ### PR CI watch
 
 ```sh
-wisp workflow add <task> pr-ci \
+wisp workflow start <task> pr-ci \
   --pr https://github.com/example/project/pull/42 --every 5m \
   --on-red "Fix relevant CI failures, test locally, and push the fix." \
   --on-green "Report readiness and remaining merge blockers." --allow-push
@@ -57,7 +59,7 @@ agent to merge only the watched PR through its normal protected path.
 ### PR review watch
 
 ```sh
-wisp workflow add <task> pr-review \
+wisp workflow start <task> pr-review \
   --pr https://github.com/example/project/pull/42 \
   --every 2m --quiet-for 30m --allow-push \
   --prompt "Read new feedback. Fix valid nits, run tests, and push."

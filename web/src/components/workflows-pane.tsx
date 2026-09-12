@@ -195,7 +195,7 @@ function Body({
 }
 
 /**
- * Live workflows read as a list; finished ones collapse into one line. A task
+ * Live workflows read as a list; completed ones collapse into one line. A task
  * that ran three watches over a week should not open on three obituaries.
  */
 function List({
@@ -245,7 +245,7 @@ function List({
       {finished.length > 0 && (
         <details className="mt-1">
           <summary className="cursor-pointer rounded-md px-2 py-1.5 text-[11.5px] text-muted-foreground hover:bg-hover">
-            Finished · {finished.length}
+            Completed · {finished.length}
           </summary>
           {finished.map((item) => row(item, true))}
         </details>
@@ -258,13 +258,21 @@ function List({
   )
 }
 
-const STATE_WORD: Record<WorkflowState, string> = { active: "Active", paused: "Paused", completed: "Finished" }
+// One vocabulary across UI and CLI: the button says Complete because
+// `wisp workflow complete` does, and the row it produces says Completed.
+const STATE_WORD: Record<WorkflowState, string> = { active: "Active", paused: "Paused", completed: "Completed" }
 
 /**
  * The chip ban applies here too: a dot plus muted words, never a pill. A RING
  * rather than a fill, for the same reason `StateDot` rings background work — a
  * workflow is ambient work attached to the task, not the agent's own outcome.
- * Finished is the one filled dot: it IS an outcome, and it is over.
+ * Completed is the one filled dot: it IS an outcome, and it is over.
+ */
+/**
+ * `New`, not `Add`: the app already says New task and New shell, and the CLI
+ * has no `add` verb to match — the four words that DO map to commands are
+ * Start, Pause, Resume and Complete. An entry point is navigation, so it takes
+ * the app's own word for "make one of these" rather than inventing a fifth.
  */
 function AddRow({ onAdd }: { onAdd: () => void }) {
   return (
@@ -274,7 +282,7 @@ function AddRow({ onAdd }: { onAdd: () => void }) {
       className="mt-0.5 flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
     >
       <Plus className="size-3.5 shrink-0" />
-      Add workflow…
+      New workflow…
     </button>
   )
 }
@@ -307,7 +315,7 @@ function Empty({ archived, onAdd }: { archived: boolean; onAdd: () => void }) {
       {!archived && (
         <Button tone="outline" size="md" className="mt-2.5" onClick={onAdd}>
           <Plus />
-          Add workflow…
+          New workflow…
         </Button>
       )}
     </div>
@@ -331,7 +339,7 @@ function Picker({
         <button
           key={def.id}
           type="button"
-          aria-label={`Add ${def.name}`}
+          aria-label={`Choose ${def.name}`}
           onClick={() => onPick(def.id)}
           className="block w-full rounded-md px-2 py-2 text-left transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
@@ -430,11 +438,11 @@ function Detail({
           <Button disabled={pending} onClick={onConfigure}>
             Configure
           </Button>
-          {/* `complete` is the daemon's own verb for "stop watching". The row
-              then moves under Finished, which is what removal looks like
-              without losing the history that explains it. */}
+          {/* `wisp workflow complete <id>` is the same act from a terminal,
+              so the button is the same word. It stops the checks and moves the
+              row under Completed, where the history that explains it stays. */}
           <Button disabled={pending} onClick={() => onAct("complete")}>
-            Remove
+            Complete
           </Button>
         </div>
       )}

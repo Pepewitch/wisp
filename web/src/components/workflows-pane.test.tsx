@@ -43,8 +43,8 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
   vi.stubGlobal("fetch", fetcher)
   const transport = runtime === "browser" ? sameOriginWebTransport : createDesktopTransport("http://127.0.0.1:45678/fixture", "remote-fixture", 1)
   render(<WorkflowsPane task={task} prUrl="https://github.com/example/project/pull/42" />, { wrapper: runtimeWrapper(transport) })
-  fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
-  fireEvent.click(await screen.findByRole("button", { name: "Add PR review watch" }))
+  fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Choose PR review watch" }))
   expect(screen.getByRole("textbox", { name: "Pull request URL" })).toHaveValue("https://github.com/example/project/pull/42")
   expect(screen.getByRole("spinbutton", { name: "Stop after quiet (minutes)" })).toHaveValue(30)
   fireEvent.change(screen.getByRole("textbox", { name: "When new feedback arrives" }), { target: { value: "Fix nits and run tests." } })
@@ -75,17 +75,17 @@ it("opens a row for its numbers and history without treating quiet completion as
   await waitFor(() => expect(request).toHaveBeenCalledWith("/api/workflows/wfixture/pause", { method: "POST", body: {} }))
 })
 
-it("removes a workflow by completing it, and files it under Finished", async () => {
+it("completes a workflow with the CLI's own verb, and files it under Completed", async () => {
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition]
     : path === "/api/workflows/wfixture" ? { workflow: item, history: [] }
     : [{ ...item, state: "completed", reason: "Stopped" }])
   render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })) })
-  // removal is not deletion: the row leaves the live list for a collapsed
+  // completing is not deleting: the row leaves the live list for a collapsed
   // group, so the history that explains it survives
-  expect(await screen.findByText("Finished · 1")).toBeInTheDocument()
+  expect(await screen.findByText("Completed · 1")).toBeInTheDocument()
   fireEvent.click(await screen.findByRole("button", { name: /PR review watch/ }))
-  // and a finished workflow is read-only — nothing acts on it
-  expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument()
+  // and a completed workflow is read-only — nothing acts on it
+  expect(screen.queryByRole("button", { name: "Complete" })).not.toBeInTheDocument()
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument()
 })
 
@@ -97,17 +97,17 @@ it("puts adding in the list rather than in the tab strip", async () => {
   render(<WorkflowsPane task={task} header={<div role="tablist" aria-label="Task panel" />} />, {
     wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })),
   })
-  const add = await screen.findByRole("button", { name: "Add workflow…" })
+  const add = await screen.findByRole("button", { name: "New workflow…" })
   expect(within(screen.getByRole("tablist")).queryByRole("button")).toBeNull()
   fireEvent.click(add)
-  expect(await screen.findByRole("button", { name: "Add PR review watch" })).toBeInTheDocument()
+  expect(await screen.findByRole("button", { name: "Choose PR review watch" })).toBeInTheDocument()
 })
 
 it("ends its empty state in the control, not in a noun", async () => {
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [])
   render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })) })
-  fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
-  expect(await screen.findByRole("button", { name: "Add PR review watch" })).toBeInTheDocument()
+  fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
+  expect(await screen.findByRole("button", { name: "Choose PR review watch" })).toBeInTheDocument()
 })
 
 const EMPTY_DIFF = { diff: "", untracked: [], base: null, worktreeReason: null }
@@ -159,8 +159,8 @@ it("drops a half-filled form when the daemon changes under the same task ID", as
   )
   const rendered = render(view(a))
   fireEvent.click(await screen.findByRole("tab", { name: /Workflows/ }))
-  fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
-  fireEvent.click(await screen.findByRole("button", { name: "Add PR review watch" }))
+  fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Choose PR review watch" }))
   expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument()
   rendered.rerender(view(b))
   await waitFor(() => expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument())

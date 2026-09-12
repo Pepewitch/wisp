@@ -10,7 +10,7 @@ import type { DaemonEventStream, DaemonTransport } from "@/lib/transport"
 /**
  * The Workflows pane, rendered for real rather than mocked up: the same
  * component the right column mounts, fed by a transport that answers from
- * fixtures — armed beside empty, the two states a task is ever in.
+ * fixtures — populated beside empty, the two states a task is ever in.
  */
 
 const TYPES: WorkflowDefinition[] = [
@@ -96,7 +96,7 @@ const HISTORY: WorkflowDetail = {
   history: [
     { id: 3, at: at(4), kind: "checked", detail: "3 of 9 checks still running — no new evidence", messageId: null },
     { id: 2, at: at(64), kind: "woke", detail: "typecheck failed on 4bd1d58; delivered the failure instruction", messageId: "m2" },
-    { id: 1, at: at(240), kind: "armed", detail: "Armed on pull request #179", messageId: null },
+    { id: 1, at: at(240), kind: "started", detail: "Started on pull request #179", messageId: null },
   ],
 }
 
@@ -104,7 +104,7 @@ const client = new QueryClient({ defaultOptions: { queries: { retry: false } } }
 
 // One client, so two panes on this page must not share a connection id — the
 // query keys are connection-scoped and the empty specimen would otherwise read
-// the armed one's cache.
+// the populated one's cache.
 function specimenTransport(connectionId: string, items: Workflow[]): DaemonTransport {
   return {
     connectionId,
@@ -145,18 +145,19 @@ export function WorkflowsPaneSpecimen() {
   return (
     <div className="grid grid-cols-2 gap-8">
       <div>
-        <Framed id="gallery-armed" items={ITEMS} />
+        <Framed id="gallery-running" items={ITEMS} />
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          Two lines a row: what is armed, and what it is waiting for. That second line is the whole reason this left
-          the task header — a button could only count the active ones. Finished work collapses into one line rather
-          than accumulating obituaries, and <span className="font-medium text-foreground">Remove</span> is what sends
-          a row there.
+          Two lines a row: what is running, and what it is waiting for. That second line is the whole reason this
+          left the task header — a button could only count the active ones. Completed work collapses into one line
+          rather than accumulating obituaries, and{" "}
+          <span className="font-medium text-foreground">Complete</span> — the same word{" "}
+          <span className="font-mono">wisp workflow complete</span> uses — is what sends a row there.
         </p>
       </div>
       <div>
         <Framed id="gallery-empty" items={[]} />
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          Empty ends in the control, not in a noun. Adding is a drill-down inside the pane — picker, then form, with a
+          Empty ends in the control, not in a noun. Creating one is a drill-down inside the pane — picker, then form, with a
           back row where a dialog would have put a close button. Nothing about starting a workflow opens an overlay, so
           the diff you were reading is one click away the whole time.
         </p>
