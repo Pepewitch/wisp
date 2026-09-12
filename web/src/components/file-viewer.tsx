@@ -326,7 +326,7 @@ function SourceFile({ path, text }: { path: string; text: string }) {
   return (
     <Prose
       text={`${fence}${language}\n${text}\n${fence}`}
-      className="[&_pre]:mt-0 [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
+      className="[&_pre]:mt-0 [&_pre]:overflow-visible [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
     />
   )
 }
