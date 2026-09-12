@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 
 import { SURFACES } from "@/components/gallery-fixtures"
 
+import { DIAGRAM_TOKENS, diagramColour } from "./mermaid-theme"
 import { applyTheme } from "./theme"
 
 const css = readFileSync(resolve(import.meta.dirname, "../index.css"), "utf8")
@@ -72,5 +73,50 @@ describe("theme palette", () => {
     expect(levels[3]).toBeLessThan(0.9)
     expect(contrast(color(darkCss!, "--faint"), color(darkCss!, "--background")))
       .toBeGreaterThanOrEqual(4.5)
+  })
+
+  /**
+   * Mermaid bakes its palette into the SVG, so a diagram's colours have to
+   * exist as strings in TypeScript as well as tokens in CSS. Two copies is
+   * one more than the app allows anywhere else, and this is what pays for it.
+   */
+  describe("diagrams", () => {
+    const NAMES = { "--diagram-node": "node", "--diagram-node-border": "nodeBorder", "--diagram-line": "line" } as const
+
+    it("mirrors every diagram token, in both themes", () => {
+      for (const [theme, block] of [["dark", darkCss!], ["light", lightCss!]] as const) {
+        for (const token of DIAGRAM_TOKENS) {
+          expect(diagramColour(theme, NAMES[token])).toBe(color(block, token))
+        }
+      }
+    })
+
+    it("reuses the app's own tokens for everything a diagram does not need its own", () => {
+      // a subgraph is `--surface` outlined in `--border-strong`, a note is a
+      // `--card`, labels are the text hierarchy — no private greys
+      for (const [theme, block] of [["dark", darkCss!], ["light", lightCss!]] as const) {
+        expect(diagramColour(theme, "canvas")).toBe(color(block, "--code"))
+        expect(diagramColour(theme, "group")).toBe(color(block, "--surface"))
+        expect(diagramColour(theme, "groupBorder")).toBe(color(block, "--border-strong"))
+        expect(diagramColour(theme, "note")).toBe(color(block, "--card"))
+        expect(diagramColour(theme, "text")).toBe(color(block, "--foreground"))
+        expect(diagramColour(theme, "secondaryText")).toBe(color(block, "--fg-secondary"))
+      }
+    })
+
+    it("draws a node with its border and keeps its fill under the prompt bubble", () => {
+      for (const block of [darkCss!, lightCss!]) {
+        const node = color(block, "--diagram-node")
+        // the border is what you see, so it has to clear the fill it sits on
+        expect(contrast(color(block, "--diagram-node-border"), node)).toBeGreaterThanOrEqual(2.2)
+        // and a label on that fill has to be readable
+        expect(contrast(color(block, "--foreground"), node)).toBeGreaterThanOrEqual(4.5)
+        // an edge has to be traceable across the canvas
+        expect(contrast(color(block, "--diagram-line"), color(block, "--code"))).toBeGreaterThanOrEqual(3)
+      }
+      // §1: nothing inside a turn may meet or pass the prompt bubble's surface
+      expect(luminance(color(darkCss!, "--diagram-node")))
+        .toBeLessThan(luminance(color(darkCss!, "--card")))
+    })
   })
 })
