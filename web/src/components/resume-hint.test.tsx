@@ -11,7 +11,8 @@ import { SteerBox } from "./steer-box"
 
 /**
  * The resume hint: after a turn ends, the right edge above the composer names
- * the command that continues the session outside Wisp. The command is the
+ * the stored session — one short `session: <id>` line — while the copy button
+ * carries the full command that continues it outside Wisp. That command is the
  * daemon's own answer (GET /attach, built from the adapter's attach template),
  * never something the UI reconstructs from the harness name.
  */
@@ -72,22 +73,27 @@ afterEach(() => {
 })
 
 describe("ResumeHint", () => {
-  it("after a turn ends, the right edge above the composer names the resume command", async () => {
+  it("after a turn ends, the right edge above the composer names the session, not the command", async () => {
     stubApi(() => ({ status: 200, body: { argv: ["claude", "--resume", "s-1"], cwd: "/tmp/wt", message: null } }))
     mount(<ResumeHint task={task()} />)
 
     const hint = await screen.findByTestId("resume-hint")
-    expect(hint).toHaveTextContent("cd /tmp/wt && claude --resume s-1")
-    // right-aligned above the input, the command readable to the last char
+    expect(hint).toHaveTextContent("session: s-1")
+    // the full working line lives in the hover title, not the display
+    expect(hint.querySelector("span")).toHaveAttribute("title", "cd /tmp/wt && claude --resume s-1")
+    // a long id truncates from the left, keeping its identifying tail
     expect(hint.querySelector("span")).toHaveAttribute("dir", "rtl")
   })
 
-  it("speaks every harness's own shape, because the daemon assembled it", async () => {
+  it("the copy speaks every harness's own shape, because the daemon assembled it", async () => {
     stubApi(() => ({ status: 200, body: { argv: ["codex", "resume", "s-1"], cwd: null, message: null } }))
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
     mount(<ResumeHint task={task({ harness: "codex" })} />)
 
-    await screen.findByTestId("resume-hint")
-    expect(screen.getByTestId("resume-hint")).toHaveTextContent("codex resume s-1")
+    // the display is harness-independent
+    expect(await screen.findByTestId("resume-hint")).toHaveTextContent("session: s-1")
+    fireEvent.click(screen.getByRole("button", { name: "Copy the resume command" }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("codex resume s-1"))
   })
 
   it("the copy carries the whole working line, not the truncated display", async () => {
@@ -105,7 +111,7 @@ describe("ResumeHint", () => {
     stubApi(() => ({ status: 200, body: { argv: ["claude", "--resume", "s-1"], cwd: null, message: null } }))
     mount(<ResumeHint task={task({ state: "needs-input" })} />)
 
-    expect(await screen.findByTestId("resume-hint")).toHaveTextContent("claude --resume s-1")
+    expect(await screen.findByTestId("resume-hint")).toHaveTextContent("session: s-1")
   })
 
   it("renders nothing before the first turn gives the task a session", () => {
