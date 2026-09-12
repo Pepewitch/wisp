@@ -13,9 +13,17 @@ import {
   isReleaseVersion,
 } from "../../shared/release-version";
 import type { SpawnResult } from "./doctor";
+import {
+  isHomebrewServiceProcess,
+  isSupervisordServiceProcess,
+} from "./update-supervisor";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
 
 export { compareVersions } from "../../shared/release-version";
+export {
+  isHomebrewServiceProcess,
+  isSupervisordServiceProcess,
+} from "./update-supervisor";
 
 const DAEMON_CHANNEL_URL =
   "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
@@ -26,7 +34,6 @@ const RESTART_DELAY_MS = 500;
 const MAX_CHANNEL_BYTES = 16 * 1024;
 const MAX_ARTIFACT_BYTES = 250 * 1024 * 1024;
 const SHA256 = /^[0-9a-f]{64}$/;
-const HOMEBREW_SERVICE_LABELS = ["sh.brew.wisp", "homebrew.mxcl.wisp"] as const;
 
 export type InstallMethod = "homebrew" | "managed-linux" | "unsupported";
 export type UpdateState = "up-to-date" | "available" | "installing" | "restarting" | "failed" | "unavailable";
@@ -132,22 +139,6 @@ function runSync(cmd: string[]): CommandResult {
   };
 }
 
-function pidFromSupervisorOutput(value: string): number | null {
-  const match = value.match(/(?:^|\n)\s*pid\s*=\s*(\d+)\s*(?:\n|$)/);
-  return match ? Number(match[1]) : null;
-}
-
-export function isHomebrewServiceProcess(
-  uid: number,
-  pid: number,
-  run: (cmd: string[]) => CommandResult = runSync,
-): boolean {
-  return HOMEBREW_SERVICE_LABELS.some((label) => {
-    const service = run(["launchctl", "print", `gui/${uid}/${label}`]);
-    return service.exitCode === 0 && pidFromSupervisorOutput(service.stdout) === pid;
-  });
-}
-
 function homebrewInstallation(): Installation | null {
   if (platform() !== "darwin" || !Bun.which("brew") || !Bun.which("launchctl")) return null;
   const prefix = runSync(["brew", "--prefix", "wisp"]);
@@ -173,6 +164,9 @@ function managedLinuxInstallation(): Installation | null {
   if (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== MANAGED_INSTALL_MARKER) return null;
   if (!existsSync(current) || !lstatSync(current).isSymbolicLink()) return null;
   if (realpathSync(current) !== realpathSync(process.execPath)) return null;
+  if (isSupervisordServiceProcess(process.pid)) {
+    return { method: "managed-linux", supervised: true, reason: null, installRoot };
+  }
   if (!Bun.which("systemctl")) {
     return {
       method: "managed-linux",

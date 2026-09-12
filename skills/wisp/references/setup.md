@@ -8,8 +8,10 @@ unsupervised daemon dies with its shell or container. Any of:
 - container entrypoint: `while true; do wisp serve; sleep 1; done`
 - supervisord: reproduce `KillMode=process` (signal only the daemon, not its
   process group), `UMask=0077`, `Restart=always` / `RestartSec=2`, and a
-  user-session `HOME` plus a `PATH` that reaches harness binaries. Worked
-  example: [Run without systemd](../../../docs/INSTALL.md#run-without-systemd)
+  user-session `HOME` plus a `PATH` that reaches harness binaries. To enable
+  automatic updates, name the program `wisp` and explicitly set
+  `WISP_UPDATE_SUPERVISOR=supervisord`. Worked example:
+  [Run without systemd](../../../docs/INSTALL.md#run-without-systemd)
 - systemd: `ExecStart=/usr/local/bin/wisp serve`, `Restart=always`
 - Homebrew on macOS: `brew services start wisp` (launchd)
 

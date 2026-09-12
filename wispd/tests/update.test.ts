@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
 import { serve } from "../src/daemon";
 import type { CommandResult, UpdateStatus } from "../src/update";
-import { compareVersions, isHomebrewServiceProcess, UpdateManager } from "../src/update";
+import {
+  compareVersions,
+  isHomebrewServiceProcess,
+  isSupervisordServiceProcess,
+  UpdateManager,
+} from "../src/update";
 import { updateRoute } from "../src/routes/update";
 import { API_PROTOCOL_VERSION } from "../src/version";
 
@@ -81,6 +86,57 @@ describe("supervisor detection", () => {
     expect(isHomebrewServiceProcess(501, 42, run)).toBe(true);
     expect(labels).toEqual(["gui/501/sh.brew.wisp", "gui/501/homebrew.mxcl.wisp"]);
     expect(isHomebrewServiceProcess(501, 41, run)).toBe(false);
+  });
+
+  test("recognizes an explicitly opted-in Supervisor program by its exact pid", () => {
+    const commands: string[][] = [];
+    const run = (cmd: string[]): CommandResult => {
+      commands.push(cmd);
+      return { exitCode: 0, stdout: "42", stderr: "" };
+    };
+    const env = {
+      WISP_UPDATE_SUPERVISOR: "supervisord",
+      SUPERVISOR_ENABLED: "1",
+      SUPERVISOR_PROCESS_NAME: "wisp",
+      SUPERVISOR_GROUP_NAME: "wisp",
+    };
+
+    expect(isSupervisordServiceProcess(42, env, run)).toBe(true);
+    expect(isSupervisordServiceProcess(41, env, run)).toBe(false);
+    expect(commands).toEqual([
+      ["supervisorctl", "pid", "wisp"],
+      ["supervisorctl", "pid", "wisp"],
+    ]);
+  });
+
+  test("refuses Supervisor without both the opt-in and injected identity", () => {
+    const run = () => {
+      throw new Error("supervisorctl must not run");
+    };
+    expect(isSupervisordServiceProcess(42, {}, run)).toBe(false);
+    expect(isSupervisordServiceProcess(42, {
+      WISP_UPDATE_SUPERVISOR: "supervisord",
+      SUPERVISOR_ENABLED: "1",
+      SUPERVISOR_PROCESS_NAME: "other",
+      SUPERVISOR_GROUP_NAME: "other",
+    }, run)).toBe(false);
+  });
+
+  test("treats a failed Supervisor query as unsupervised", () => {
+    const env = {
+      WISP_UPDATE_SUPERVISOR: "supervisord",
+      SUPERVISOR_ENABLED: "1",
+      SUPERVISOR_PROCESS_NAME: "wisp",
+      SUPERVISOR_GROUP_NAME: "wisp",
+    };
+    expect(isSupervisordServiceProcess(42, env, () => ({
+      exitCode: 3,
+      stdout: "",
+      stderr: "wisp: ERROR (no such process)",
+    }))).toBe(false);
+    expect(isSupervisordServiceProcess(42, env, () => {
+      throw new Error("supervisor socket unavailable");
+    })).toBe(false);
   });
 });
 
