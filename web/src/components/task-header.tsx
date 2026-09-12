@@ -1,5 +1,4 @@
 import { CleanupPanel } from "./cleanup-panel"
-import { WorkflowControl } from "./workflow-control"
 import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
@@ -17,7 +16,10 @@ import { oneLine } from "@/lib/utils"
  * the task branch: lifecycle, CI and review. No PR, unsupported origin, or a
  * provider failure renders nothing. Push remains available through `/push`.
  *
- * Stop/steer lives in the composer. Rename and Archive live behind the overflow.
+ * Stop/steer lives in the composer. Rename and Archive live behind the
+ * overflow. Workflows are NOT here: an armed automation is standing state, so
+ * it belongs in the right column beside Changes (`task-panel.tsx`), not as a
+ * fourth control competing with the title for this band's one line.
  */
 export function TaskHeader({
   task,
@@ -93,7 +95,6 @@ export function TaskHeader({
       />
 
       {task.cleanup && <CleanupPanel task={task} />}
-      <div className="mt-1"><WorkflowControl task={task} prUrl={pullRequest?.kind === "found" ? pullRequest.pullRequest.url : undefined} /></div>
 
       {/* ONE muted line, the same register the archived-task placeholders use.
           Capped here as well as at the daemon: nothing about a git failure gets

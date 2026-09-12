@@ -33,6 +33,7 @@ export {
   ArrowUpRegular as ArrowUp,
   AttachRegular as Attach,
   ChevronDownRegular as ChevronDown,
+  ChevronLeftRegular as ChevronLeft,
   ChevronRightRegular as ChevronRight,
   ChevronUpRegular as ChevronUp,
   CodeRegular as Code,

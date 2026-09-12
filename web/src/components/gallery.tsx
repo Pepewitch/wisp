@@ -25,6 +25,7 @@ import { PullRequestSpecimens } from "@/components/pull-request-specimens"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
+import { WorkflowsPaneSpecimen } from "@/components/workflows-gallery-specimen"
 import {
   HeaderClusterSpecimen,
   UpdateGallerySpecimen,
@@ -509,12 +510,15 @@ function WorkflowSpecimens() {
                   </Button>
                 </PaneHeader>
                 <div className="px-3.5 py-3 text-[11.5px] text-faint">
-                  A label, not a tab — this pane has one view. It keeps a tab&#39;s shape so Checks can slot in
-                  beside it later, but carries no underline and no hue.
+                  The shape a pane header keeps whether it carries a label or the right column&#39;s two tabs.
                 </div>
               </div>
             </div>
           </div>
+      </Section>
+
+      <Section title="Workflows — a pane, because an armed automation is state">
+          <WorkflowsPaneSpecimen />
       </Section>
 
       <Section title="First run — the empty state IS the onboarding">

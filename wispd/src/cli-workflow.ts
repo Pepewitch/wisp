@@ -59,7 +59,9 @@ export async function workflowCommand(args: string[], flags: Flags, api: Api): P
     else for (const def of definitions) console.log(`${def.id}  ${def.name}\n  ${def.description}`);
     return;
   }
-  if (command === "add") {
+  // `start` is the verb the UI's primary button uses; `add` is kept working,
+  // undocumented, so the scripts written against the first release do not break.
+  if (command === "start" || command === "add") {
     if (!type) throw new Error("A workflow type is required; run workflow types");
     result = await api(`/api/tasks/${id(target)}/workflows`, "POST", { type, params: workflowFlags(flags) });
   } else if (command === "list" || command === "ls") {
@@ -83,7 +85,7 @@ export async function workflowCommand(args: string[], flags: Flags, api: Api): P
   } else if (["pause", "resume", "complete"].includes(command ?? "")) {
     result = await api(`/api/workflows/${id(target)}/${command}`, "POST", {});
   } else {
-    console.log(`${wispCommand()} workflow types | add <task> <type> | list <task> | show <id> | set <id> | pause <id> | resume <id> | complete <id>
+    console.log(`${wispCommand()} workflow types | start <task> <type> | list <task> | show <id> | set <id> | pause <id> | resume <id> | complete <id>
 Parameters: --every 5m --prompt "..." --file instructions.md --pr <url>
             --on-red "..." --on-green "..." --quiet-for 30m --reviewers login,bot
             --lifetime 24h --max-wakeups 20 --allow-push --allow-merge

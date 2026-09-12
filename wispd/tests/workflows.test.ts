@@ -253,8 +253,8 @@ test("workflow API creates, edits with revision checks, and completes idempotent
 });
 
 test("CLI flags preserve custom parameters and target the API", async () => {
-  const parsed = parseArgs(["add", "tabcde", "heartbeat", "--every", "5m", "--prompt", "Check", "--max-wakeups", "12"]);
-  expect(parsed.positional).toEqual(["add", "tabcde", "heartbeat"]);
+  const parsed = parseArgs(["start", "tabcde", "heartbeat", "--every", "5m", "--prompt", "Check", "--max-wakeups", "12"]);
+  expect(parsed.positional).toEqual(["start", "tabcde", "heartbeat"]);
   expect(workflowFlags(parsed.flags)).toEqual({ prompt: "Check", everyMinutes: 5, maxWakeups: 12 });
   expect(workflowDuration("2h")).toBe(120);
   expect(() => workflowDuration("zero")).toThrow();
@@ -264,6 +264,11 @@ test("CLI flags preserve custom parameters and target the API", async () => {
   const item = arm();
   await workflowCommand(parsed.positional, { ...parsed.flags, json: true }, async (...args) => { calls.push(args); return item; });
   expect(calls).toEqual([["/api/tasks/tabcde/workflows", "POST", { type: "heartbeat", params: { prompt: "Check", everyMinutes: 5, maxWakeups: 12 } }]]);
+  // `start` renamed `add`; the old verb stays working, undocumented, so scripts
+  // written against the first release do not break
+  const alias: unknown[] = [];
+  await workflowCommand(["add", "tabcde", "heartbeat"], { json: true }, async (...args) => { alias.push(args); return item; });
+  expect(alias).toEqual([["/api/tasks/tabcde/workflows", "POST", { type: "heartbeat", params: {} }]]);
   expect(() => validateDecision({ action: "wake", reason: "Due", checkpoint: {} })).toThrow();
   expect(workflow(getWorkflow(item.id)!).type).toBe("heartbeat");
 });

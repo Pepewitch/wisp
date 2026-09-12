@@ -1,9 +1,9 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 
 import { Refresh } from "@/components/icons"
 import { Button, DiffStat, PaneHeader } from "@/components/primitives"
 import { useDiff, type DiffData } from "@/hooks/queries"
-import { hunkGaps, hunkSection, parseDiff, type DiffFile, type DiffLine } from "@/lib/diff"
+import { changedFileCount, hunkGaps, hunkSection, parseDiff, type DiffFile, type DiffLine } from "@/lib/diff"
 import { cn, oneLine } from "@/lib/utils"
 import { useWorktreeFileOpener } from "@/lib/worktree-files"
 
@@ -12,18 +12,27 @@ import { useWorktreeFileOpener } from "@/lib/worktree-files"
  * muted and basename lit, the +adds/−dels pair the only thing on the right
  * edge. A full-branch wall of diff is never the entry point.
  *
- * "Changes" is a label, not a tab — this pane has one view. It keeps a tab's
- * shape so Checks can slot in beside it later, but carries no underline and no
- * hue.
+ * "Changes" keeps a tab's shape because it now HAS a sibling: the right
+ * column's strip is Changes · Workflows, and `header` is where that strip
+ * arrives. Without one the pane draws its own label, which is what an older
+ * daemon with no workflow support still sees — a label, no underline, no hue.
  */
 export function ChangesPane({
   taskId,
   archived,
   onRefresh,
+  header,
+  hidden = false,
+  touch = false,
 }: {
   taskId: string | null
   archived: boolean
   onRefresh?: () => void
+  /** the right column's tab strip, in place of this pane's own label */
+  header?: ReactNode
+  /** kept mounted while another tab is shown, so the open diff survives */
+  hidden?: boolean
+  touch?: boolean
 }) {
   const query = useDiff(taskId, archived)
   const [selected, setSelected] = useState<string | null>(null)
@@ -42,8 +51,14 @@ export function ChangesPane({
     // height) as well as a flex column (which does not) — CONVENTIONS §6b.
     // With flex-1 alone the panel does not constrain it, so the file list grows
     // to its content and spills past the divider instead of scrolling.
-    <div className="flex h-full min-h-0 flex-1 flex-col">
-      <Header count={counted(query.data)} onRefresh={onRefresh} disabled={taskId === null || archived} />
+    <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
+      <Header
+        count={counted(query.data)}
+        onRefresh={onRefresh}
+        disabled={taskId === null || archived}
+        header={header}
+        touch={touch}
+      />
       <Body
         taskId={taskId}
         archived={archived}
@@ -59,30 +74,32 @@ export function ChangesPane({
 
 function counted(data: DiffData | undefined): number | null {
   if (!data || data.kind !== "ok") return null
-  return fileCount(parseDiff(data.diff).files, data.untracked)
-}
-
-/** Untracked paths also appear in the parsed diff (as new-file patches); count each path once. */
-function fileCount(files: DiffFile[], untracked: string[]): number {
-  const names = new Set(untracked)
-  return files.filter((f) => !names.has(f.path)).length + untracked.length
+  return changedFileCount(parseDiff(data.diff).files, data.untracked)
 }
 
 function Header({
   count,
   onRefresh,
   disabled,
+  header,
+  touch,
 }: {
   count: number | null
   onRefresh?: () => void
   disabled: boolean
+  header?: ReactNode
+  touch?: boolean
 }) {
   return (
-    <PaneHeader>
-      <span className="text-[12.5px] font-medium text-foreground">Changes</span>
-      {count !== null && <span className="font-mono text-[10.5px] text-muted-foreground">{count}</span>}
+    <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
+      {header ?? (
+        <>
+          <span className="text-[12.5px] font-medium text-foreground">Changes</span>
+          {count !== null && <span className="font-mono text-[10.5px] text-muted-foreground">{count}</span>}
+        </>
+      )}
       <span className="flex-1" />
-      <Button size="sm" icon aria-label="Refresh diff" onClick={onRefresh} disabled={disabled}>
+      <Button size={touch ? "touch" : "sm"} icon aria-label="Refresh diff" onClick={onRefresh} disabled={disabled}>
         <Refresh />
       </Button>
     </PaneHeader>
@@ -131,7 +148,7 @@ function Body({
   const filesByPath = new Map(parsed.files.map((candidate) => [candidate.path, candidate]))
   const untrackedNames = new Set(data.untracked)
   const tracked = parsed.files.filter((f) => !untrackedNames.has(f.path))
-  const total = fileCount(parsed.files, data.untracked)
+  const total = changedFileCount(parsed.files, data.untracked)
   if (total === 0) return <Note>No changes in this worktree yet</Note>
 
   const file = selected === null ? null : filesByPath.get(selected) ?? null

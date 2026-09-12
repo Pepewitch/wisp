@@ -12,7 +12,6 @@ import {
 } from "react"
 
 import { AuthDialog } from "@/components/auth-dialog"
-import { ChangesPane } from "@/components/changes-pane"
 import { ConnIndicator } from "@/components/conn-indicator"
 import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
@@ -27,6 +26,7 @@ import { SettingsDialog } from "@/components/settings-dialog"
 import { StartHere } from "@/components/start-here"
 import { Gear, WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
+import { TaskPanel } from "@/components/task-panel"
 import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
@@ -365,15 +365,15 @@ function MainView({
       touch={isMobile}
     />
   )
-  const changesNode = (
-    // The pane's double-click opens a file the way a path in prose does, so it
-    // gets the same provider. An archived task's worktree is gone — no opener,
-    // which is exactly what the pane's own "unavailable" note already says.
+  const panelNode = (
+    // The diff pane's double-click opens a file the way a path in prose does,
+    // so it gets the same provider. An archived task's worktree is gone — no
+    // opener, which is exactly what the pane's own "unavailable" note says.
     <FileViewerProvider
       taskId={archived ? null : selectedId}
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
-      <ChangesPane taskId={selectedId} archived={archived} onRefresh={refreshDiff} />
+      <TaskPanel task={task} taskId={selectedId} archived={archived} prUrl={prUrlOf(pullRequests.selected)} onRefresh={refreshDiff} touch={isMobile} />
     </FileViewerProvider>
   )
   const terminalNode = (
@@ -421,7 +421,7 @@ function MainView({
       pullRequest={pullRequests.selected}
       sidebar={sidebarNode}
       conversation={conversationNode}
-      changes={changesNode}
+      changes={panelNode}
       terminal={terminalNode}
       composer={composerNode}
       firstRun={firstRunNode}
@@ -555,6 +555,11 @@ function AppShell({
       {dialogs}
     </div>
   )
+}
+
+/** The watched PR a workflow form should prefill with, when there is one. */
+function prUrlOf(status: PullRequestStatus | undefined): string | undefined {
+  return status?.kind === "found" ? status.pullRequest.url : undefined
 }
 
 function queryError(tasksError: unknown, statusError: unknown): string | null {

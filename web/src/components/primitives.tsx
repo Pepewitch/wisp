@@ -181,10 +181,27 @@ export function Tab({
 /**
  * A pane's header strip: 36px, one hairline underneath, and a title that is a
  * label rather than a tab when the pane has only one view.
+ *
+ * `touch` is the phone's 48px, so the tabs and the action inside it can each
+ * reach the 44px hit floor (frontend reference §6b) instead of asking a thumb for 22px.
  */
-export function PaneHeader({ children, className }: { children: ReactNode; className?: string }) {
+export function PaneHeader({
+  children,
+  touch = false,
+  className,
+}: {
+  children: ReactNode
+  touch?: boolean
+  className?: string
+}) {
   return (
-    <div className={cn("flex h-9 shrink-0 items-center gap-2 border-b border-border px-2.5 pl-3.5", className)}>
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-2 border-b border-border px-2.5 pl-3.5",
+        touch ? "h-12" : "h-9",
+        className,
+      )}
+    >
       {children}
     </div>
   )
