@@ -77,20 +77,11 @@ export function WorkflowsPane({
   return (
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
       <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
+        {/* No action at this end. A `+` here would sit in a tab strip, one
+            pane above a Terminal whose `+` means "new shell TAB" — same glyph,
+            same corner, different noun. Adding lives in the list instead, next
+            to the things it adds to. */}
         {header ?? <span className="text-[12.5px] font-medium text-foreground">Workflows</span>}
-        <span className="flex-1" />
-        {view.kind === "list" && (
-          <Button
-            size={touch ? "touch" : "sm"}
-            icon
-            aria-label="Add workflow"
-            title="Add a workflow to this task"
-            disabled={taskId === null || task?.archived}
-            onClick={() => setView({ kind: "picker" })}
-          >
-            <Plus />
-          </Button>
-        )}
       </PaneHeader>
 
       {/* the way back out of a drill-down, in the pane rather than in a
@@ -198,6 +189,7 @@ function Body({
         resetMutation()
         setView({ kind: "form", type: item.type, existing: item })
       }}
+      onAdd={() => setView({ kind: "picker" })}
     />
   )
 }
@@ -213,6 +205,7 @@ function List({
   pending,
   onAct,
   onConfigure,
+  onAdd,
 }: {
   items: Workflow[]
   types?: WorkflowDefinition[]
@@ -220,6 +213,7 @@ function List({
   pending: boolean
   onAct: (item: Workflow, action: "pause" | "resume" | "complete") => void
   onConfigure: (item: Workflow) => void
+  onAdd: () => void
 }) {
   const [opened, setOpened] = useState<string | null>(null)
   // a plugin can be uninstalled while its workflow lives on, so the id is the
@@ -243,6 +237,11 @@ function List({
   return (
     <>
       {live.map((item) => row(item, archived))}
+      {/* The list ends in the control, populated or empty — the same debt the
+          empty state pays, paid in the same place. It is a ROW, the height of
+          a file row in Changes, so it reads as "one more of these" rather than
+          as pane chrome. */}
+      {!archived && <AddRow onAdd={onAdd} />}
       {finished.length > 0 && (
         <details className="mt-1">
           <summary className="cursor-pointer rounded-md px-2 py-1.5 text-[11.5px] text-muted-foreground hover:bg-hover">
@@ -267,6 +266,19 @@ const STATE_WORD: Record<WorkflowState, string> = { active: "Active", paused: "P
  * workflow is ambient work attached to the task, not the agent's own outcome.
  * Finished is the one filled dot: it IS an outcome, and it is over.
  */
+function AddRow({ onAdd }: { onAdd: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onAdd}
+      className="mt-0.5 flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[12px] text-muted-foreground transition-colors hover:bg-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      <Plus className="size-3.5 shrink-0" />
+      Add workflow…
+    </button>
+  )
+}
+
 function WorkflowDot({ state }: { state: WorkflowState }) {
   return (
     <span

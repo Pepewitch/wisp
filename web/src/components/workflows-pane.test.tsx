@@ -43,7 +43,7 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
   vi.stubGlobal("fetch", fetcher)
   const transport = runtime === "browser" ? sameOriginWebTransport : createDesktopTransport("http://127.0.0.1:45678/fixture", "remote-fixture", 1)
   render(<WorkflowsPane task={task} prUrl="https://github.com/example/project/pull/42" />, { wrapper: runtimeWrapper(transport) })
-  fireEvent.click(await screen.findByRole("button", { name: "Add workflow" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
   fireEvent.click(await screen.findByRole("button", { name: "Add PR review watch" }))
   expect(screen.getByRole("textbox", { name: "Pull request URL" })).toHaveValue("https://github.com/example/project/pull/42")
   expect(screen.getByRole("spinbutton", { name: "Stop after quiet (minutes)" })).toHaveValue(30)
@@ -87,6 +87,20 @@ it("removes a workflow by completing it, and files it under Finished", async () 
   // and a finished workflow is read-only — nothing acts on it
   expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument()
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument()
+})
+
+it("puts adding in the list rather than in the tab strip", async () => {
+  // A `+` at the right end of a tab row is the universal "new tab" affordance,
+  // and the Terminal pane one divider down uses exactly that for new shells.
+  // The control belongs beside the things it adds to.
+  const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [item])
+  render(<WorkflowsPane task={task} header={<div role="tablist" aria-label="Task panel" />} />, {
+    wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })),
+  })
+  const add = await screen.findByRole("button", { name: "Add workflow…" })
+  expect(within(screen.getByRole("tablist")).queryByRole("button")).toBeNull()
+  fireEvent.click(add)
+  expect(await screen.findByRole("button", { name: "Add PR review watch" })).toBeInTheDocument()
 })
 
 it("ends its empty state in the control, not in a noun", async () => {
@@ -145,7 +159,7 @@ it("drops a half-filled form when the daemon changes under the same task ID", as
   )
   const rendered = render(view(a))
   fireEvent.click(await screen.findByRole("tab", { name: /Workflows/ }))
-  fireEvent.click(await screen.findByRole("button", { name: "Add workflow" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
   fireEvent.click(await screen.findByRole("button", { name: "Add PR review watch" }))
   expect(screen.getByRole("button", { name: "Arm workflow" })).toBeInTheDocument()
   rendered.rerender(view(b))

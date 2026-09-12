@@ -1117,10 +1117,18 @@ pill, no underline and no hue.
 Both panes stay **mounted**; the inactive one is `hidden`, so switching tabs
 never closes the diff you had open. The strip is handed to the VISIBLE pane's
 `PaneHeader`, never to both — two tablists in one tree is the bug that trades
-one duplicated label for a broken a11y tree. Each pane keeps its own action at
-the right edge (Changes refreshes, Workflows adds), and each still renders its
-own plain label when it is given no strip — which is exactly what an older
-daemon without `taskWorkflows` sees.
+one duplicated label for a broken a11y tree. Each pane still renders its own
+plain label when it is given no strip — which is exactly what an older daemon
+without `taskWorkflows` sees.
+
+**Nothing that CREATES may sit at the right end of a tab strip.** Changes keeps
+its Refresh there because refreshing acts on the view. Workflows put a `+`
+there and it was wrong twice over: a `+` at the end of a tab row is the
+universal *new tab* affordance, and one divider below it the Terminal pane uses
+exactly that glyph, in exactly that corner, to open a new SHELL TAB. Adding
+belongs beside the things it adds to, so the Workflows pane ends its list in a
+`+ Add workflow…` row — a row the height of a file row in Changes, so it reads
+as "one more of these" rather than as pane chrome.
 
 **A workflow is state, so it gets a pane, not a dialog.** The first version of
 this feature hung a button under the task header that opened a 640px modal.
@@ -1140,7 +1148,12 @@ column: a number field beside a prompt textarea is two fields of different
 weight sharing a row, and it is most of why the modal read as paperwork.
 Removing a workflow completes it and files it under a collapsed **Finished**
 group: a task that ran three watches over a week should not open on three
-obituaries.
+obituaries. The list therefore reads live rows → add → archive.
+
+The empty state keeps a bordered `outline` button rather than that quiet row,
+for the reason the sidebar already draws its own two ways: a quiet affordance
+is right in a dense populated list and wrong when it is the only thing on the
+screen.
 
 ## 6b. Mobile — touch is not a small mouse
 
