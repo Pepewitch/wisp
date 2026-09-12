@@ -827,17 +827,19 @@ Three more things touch owns here, none of them a width question:
   side of it.
 
 **The resume hint hangs off the same right edge.** Once a turn has ended,
-`components/resume-hint.tsx` names the command that continues the stored
-session outside Wisp — the daemon's own `GET /attach` answer, built from the
+`components/resume-hint.tsx` names the stored session so it can be continued
+outside Wisp — from the daemon's own `GET /attach` answer, built from the
 adapter's `attach` template, never reconstructed client-side from the harness
 name, so a harness that declares none renders nothing rather than a guess. It
 shows only when a session exists AND no turn is running: mid-turn the command
-is not paste-ready, and the running note owns the row. The line is the same
-one `/attach` writes into its note — `cd <worktree> && …` included, because a
+is not paste-ready, and the running note owns the row. The display is one
+short fact — `session: <id>`, mono and muted — because the full working line
+(`cd <worktree> && …`, the same one `/attach` writes into its note, since a
 harness resolves its sessions per directory and the bare command fails pasted
-anywhere else. The display truncates from the LEFT (`dir="rtl"` on an all-LTR
-string), so the tail that matters — the command and the session id — survives
-a phone; the copy button (the bubble toolbar's `BUBBLE_ACTION` shape, 32px
+anywhere else) is what the copy button carries, not what the line spells out;
+hovering the id still names the whole line via `title`. The id truncates from
+the LEFT (`dir="rtl"` on an all-LTR string) so its identifying tail survives
+a phone. The copy button (the bubble toolbar's `BUBBLE_ACTION` shape, 32px
 under a coarse pointer) always carries the whole working line.
 
 `Menu` owns thumb sizing for every dropdown, so no call site rolls its own:

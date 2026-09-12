@@ -6,22 +6,22 @@ import type { ApiTask } from "@/lib/types"
 /**
  * The resume hint, on the right edge directly above the steer composer. Once a
  * turn has ended, the task's stored session can be continued outside Wisp, and
- * this names the exact command — assembled by the daemon from the adapter's
- * own `attach` template (claude `--resume`, codex's `resume` subcommand,
- * droid's, cursor's and opencode's equivalents), never reconstructed
- * client-side, so a custom harness with no attach command renders nothing
- * rather than a guess.
+ * this names it — assembled by the daemon from the adapter's own `attach`
+ * template (claude `--resume`, codex's `resume` subcommand, droid's, cursor's
+ * and opencode's equivalents), never reconstructed client-side, so a custom
+ * harness with no attach command renders nothing rather than a guess.
  *
  * It shows only when a session exists AND no turn is running: mid-turn the
  * command is not what you want to paste yet, and the running note owns the
  * row above the composer.
  *
- * The line is the same one `/attach` puts in its note — `cd <worktree> && …`
- * included, because a harness resolves its sessions per directory and the bare
- * command would fail pasted anywhere else. The display truncates from the LEFT
- * (`dir="rtl"` on an all-LTR string), so the tail that matters — the harness
- * command and the session id — stays readable on a phone while the copy
- * button always carries the whole working line.
+ * The display is one short fact — `session: <id>` — because the full command
+ * (`cd <worktree> && …`, the same one `/attach` puts in its note, since a
+ * harness resolves its sessions per directory) is what the copy button
+ * carries, not what the line spells out. Hovering still names the whole
+ * working line via `title`, and the id truncates from the LEFT (`dir="rtl"`
+ * on an all-LTR string) so a long session id keeps its tail — the part that
+ * identifies it — on a phone.
  */
 export function ResumeHint({ task }: { task: ApiTask }) {
   const session = task.session_id
@@ -39,7 +39,7 @@ export function ResumeHint({ task }: { task: ApiTask }) {
         title={line}
         className="min-w-0 truncate font-mono text-[11.5px] text-muted-foreground"
       >
-        {line}
+        session: {session}
       </span>
       <CopyButton
         text={line}
