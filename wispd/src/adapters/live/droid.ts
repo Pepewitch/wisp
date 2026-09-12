@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { FACTORY_PROTOCOL_VERSION } from "../../probes";
 import type { AdapterDef } from "../types";
 import { boundedOutput } from "./bounded-output";
+import { DroidSubagentStream } from "./droid-subagents";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
 
 export interface DroidLiveImage {
@@ -102,6 +103,7 @@ export class DroidLiveDriver {
   private sessionId: string | null;
   private model: string | null;
   private finalText = "";
+  private subagents: DroidSubagentStream | null = null;
 
   constructor(private readonly options: DroidLiveOptions) {
     this.sessionId = options.sessionId;
@@ -161,6 +163,10 @@ export class DroidLiveDriver {
       session_id: this.sessionId,
       model: this.model,
       reasoning_effort: this.options.effort ?? settings.reasoningEffort ?? null,
+    });
+    this.subagents = new DroidSubagentStream({
+      parentSessionId: this.sessionId,
+      emit: this.options.emit,
     });
     await this.call(
       "droid.add_user_message",
@@ -280,6 +286,9 @@ export class DroidLiveDriver {
           timestamp: message.createdAt,
           session_id: this.sessionId,
         });
+        if (block.name === "Task" && typeof block.id === "string") {
+          this.subagents?.follow(block.id);
+        }
         // Wisp has no reply path for Droid AskUser. End the turn as
         // needs-input so the operator answers with send, rather than waiting
         // forever for a questionnaire nothing can fill in.
@@ -308,6 +317,8 @@ export class DroidLiveDriver {
   }
 
   close(): Promise<void> {
-    return this.peer.close();
+    return this.subagents
+      ? this.subagents.close().then(() => this.peer.close())
+      : this.peer.close();
   }
 }

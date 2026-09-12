@@ -228,6 +228,7 @@ function taskReport(value: string): string | null {
 
 function droidMessage(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const at = timestamp(event);
+  const parentId = string(event.parent_tool_use_id);
   const value = string(event.text);
   if (!value) return [];
   const completion = droidCompletion(value);
@@ -237,7 +238,7 @@ function droidMessage(event: Record<string, any>, context: NormalizeContext): Ac
       kind: "subagent",
       id: completion.taskId,
       agentId: completion.taskId,
-      parentId: null,
+      parentId,
       timestamp: at,
       phase: "completed",
       status: state,
@@ -250,7 +251,7 @@ function droidMessage(event: Record<string, any>, context: NormalizeContext): Ac
     ? [{
         kind: "text",
         id: eventId(event.id ?? event.messageId, context, "text"),
-        parentId: null,
+        parentId,
         timestamp: at,
         text: trunc(value, 4_000),
       }]
@@ -263,7 +264,7 @@ function droidReasoning(event: Record<string, any>, context: NormalizeContext): 
     ? [{
         kind: "thinking",
         id: eventId(event.id, context, "thinking"),
-        parentId: null,
+        parentId: string(event.parent_tool_use_id),
         timestamp: timestamp(event),
         text: trunc(value, 4_000),
       }]
@@ -274,6 +275,7 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
   const id = eventId(event.id ?? event.toolCallId, context, "tool");
   const name = string(event.toolName ?? event.toolId) ?? "tool";
   const input = event.parameters ?? {};
+  const parentId = string(event.parent_tool_use_id);
   if (name === "Task") {
     context.subagents.add(id);
     const background = record(input).await !== true;
@@ -281,7 +283,7 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
     return [{
       kind: "subagent",
       id,
-      parentId: null,
+      parentId,
       timestamp: timestamp(event),
       phase: "started",
       status: "running",
@@ -294,7 +296,7 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
   return [{
     kind: "tool",
     id,
-    parentId: childId,
+    parentId: childId ?? parentId,
     timestamp: timestamp(event),
     phase: "started",
     name,
@@ -306,6 +308,7 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
   const id = eventId(event.id ?? event.toolCallId ?? event.toolId, context, "tool");
   const value = text(event.value ?? event.error);
   const error = event.isError === true ? value ?? "Tool failed" : null;
+  const parentId = string(event.parent_tool_use_id);
   if (context.subagents.has(id)) {
     const background = context.background.get(id) === true;
     const agentId = value ? taskIdFrom(value) ?? sessionIdFrom(value) : null;
@@ -313,7 +316,7 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
       kind: "subagent",
       id,
       agentId,
-      parentId: null,
+      parentId,
       timestamp: timestamp(event),
       phase: background && !error ? "updated" : "completed",
       status: error ? "failed" : background ? "running" : "completed",
@@ -325,7 +328,7 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
   return [{
     kind: "tool",
     id,
-    parentId: context.toolParents.get(id) ?? null,
+    parentId: context.toolParents.get(id) ?? parentId,
     timestamp: timestamp(event),
     phase: "completed",
     name: "tool",
