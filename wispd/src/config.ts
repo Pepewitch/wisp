@@ -572,6 +572,10 @@ function persistConfig(value: Record<string, unknown>): void {
   }
 }
 
+function mintToken(): string {
+  return crypto.randomUUID().replaceAll("-", "");
+}
+
 export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   let stored: Partial<WispConfig> = {};
   let storedRaw: Record<string, unknown> = {};
@@ -604,7 +608,7 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   if (!cfg.token) {
     // First run (no config file, or one written without a token): mint a token
     // and persist the merged defaults so the file documents every knob.
-    cfg.token = crypto.randomUUID().replaceAll("-", "");
+    cfg.token = mintToken();
     mustPersist = true;
   }
   if (mustPersist) {
@@ -620,6 +624,19 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     persistConfig(persisted);
   }
   return cfg;
+}
+
+/**
+ * Replace the persisted bearer credential without changing the rest of the
+ * profile. The caller must hold exclusive ownership of the Wisp home so this
+ * read-modify-write cannot race another config writer.
+ */
+export function rotateToken(): WispConfig {
+  const cfg = loadConfig();
+  const raw = readUserJson(CONFIG_PATH) as Record<string, unknown>;
+  const token = mintToken();
+  persistConfig({ ...raw, token });
+  return { ...cfg, token };
 }
 
 /** Resolve the canonical per-turn transcript budget across the config rename. */
