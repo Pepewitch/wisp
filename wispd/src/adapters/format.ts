@@ -73,21 +73,22 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
     }
   },
   "droid-stream-json": (e) => {
+    const pre = e.parent_tool_use_id ? "  [sub] " : "";
     switch (e.type) {
       case "system":
         return e.subtype === "init" ? `· session ${e.session_id}` : null;
       case "message":
-        return e.role === "assistant" && e.text ? trunc(e.text, 300) : null;
+        return e.role === "assistant" && e.text ? `${pre}${trunc(e.text, 300)}` : null;
       // droid DOES ship its reasoning text (shape captured from real logs:
       // {type:"reasoning", id, text, timestamp, session_id}). Its text often
       // begins with a newline and can contain paragraphs, so every rendered
       // line needs the `~` marker the conversation's grouping contract reads.
       case "reasoning":
-        return thinkingLines(e.text, "", false);
+        return thinkingLines(e.text, pre, false);
       case "tool_call":
-        return `→ ${e.toolName}(${trunc(JSON.stringify(e.parameters ?? {}), 120)})`;
+        return `${pre}→ ${e.toolName}(${trunc(JSON.stringify(e.parameters ?? {}), 120)})`;
       case "tool_result":
-        return `← ${trunc(String(e.value ?? "").replaceAll("\n", " "), 120)}`;
+        return `${pre}← ${trunc(String(e.value ?? "").replaceAll("\n", " "), 120)}`;
       case "completion": // final
         return settlementLine(e, e.finalText);
       default:
