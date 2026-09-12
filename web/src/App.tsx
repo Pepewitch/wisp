@@ -507,9 +507,15 @@ function AppShell({
         data-tauri-drag-region={desktop ? "" : undefined}
         className={`flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface pr-3 ${desktop ? "pl-20" : "pl-3"}`}
       >
-        <span role="img" aria-label="Wisp" className="shrink-0">
-          <WispMark className="size-[17px]" />
-        </span>
+        {/* The mark is the browser's only left-end identity: no window chrome,
+            no tabs, so a bare 36px bar would otherwise be empty. Desktop drops
+            it — the traffic lights own that corner and the connection tabs
+            already say which daemon is on screen (§5h). */}
+        {!desktop && (
+          <span role="img" aria-label="Wisp" className="shrink-0">
+            <WispMark className="size-[17px]" />
+          </span>
+        )}
         {desktop && <DesktopConnectionChrome />}
         <span className="flex-1" />
         <span className="ml-1">
