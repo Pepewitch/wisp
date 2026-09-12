@@ -12,6 +12,7 @@ import {
   useDesktopConnections,
 } from "@/lib/desktop-connections"
 import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
+import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import type { UpdateStatus } from "@/lib/types"
@@ -184,6 +185,12 @@ vi.mock("@/hooks/mutations", () => ({
 
 vi.mock("@/hooks/useLogStream", () => ({
   useLogStream: () => ({ activity: [], note: null }),
+}))
+
+// Desktop's top bar mounts the zoom control, whose provider reaches the
+// native webview; the test only needs the call to land somewhere harmless.
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({ setZoom: async () => undefined }),
 }))
 
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -363,6 +370,29 @@ describe("connection-bound update recovery", () => {
     await waitFor(() =>
       expect(screen.queryByText("Checking Local daemon…")).toBeNull()
     )
+  })
+})
+
+describe("the top bar's left end", () => {
+  it("drops the mark on Desktop, where the traffic lights and connection tabs own the corner", () => {
+    const nativeBridge = desktopBridge()
+    render(
+      <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
+        <DesktopZoomProvider>
+          <DesktopApplicationProvider
+            initial={desktopBootstrap()}
+            bridge={nativeBridge}
+          >
+            <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
+              <App />
+            </DaemonRuntimeProvider>
+          </DesktopApplicationProvider>
+        </DesktopZoomProvider>
+      </DesktopUpdaterProvider>,
+    )
+
+    expect(screen.queryByRole("img", { name: "Wisp" })).toBeNull()
+    expect(screen.getByRole("tab", { name: "Local" })).toBeInTheDocument()
   })
 })
 

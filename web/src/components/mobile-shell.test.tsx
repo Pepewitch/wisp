@@ -47,6 +47,9 @@ describe("the mobile header", () => {
     // the top left and a hidden title bar leaves nothing to drag by
     expect(band).not.toBeNull()
     expect(band!.className).toContain("pl-20")
+    // the mark yields the corner to the lights and the connection menu, the
+    // same bar the pointer shell drops it from
+    expect(screen.queryByRole("img", { name: "Wisp" })).toBeNull()
     expect(screen.getByText("Local")).toBeInTheDocument()
     expect(screen.getByText("Zoom")).toBeInTheDocument()
   })

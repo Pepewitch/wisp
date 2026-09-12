@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react"
 import { Drawer } from "@base-ui/react/drawer"
 import { CleanupPanel } from "./cleanup-panel"
 
-import { Hamburger, Local, WispMark } from "@/components/icons"
+import { Hamburger, Local } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { WorkflowControl } from "@/components/workflow-control"
@@ -113,9 +113,9 @@ export function MobileShell({
             data-tauri-drag-region=""
             className="flex h-11 items-center gap-1 border-b border-border pr-1.5 pl-20"
           >
-            <span role="img" aria-label="Wisp" className="shrink-0">
-              <WispMark className="size-[17px]" />
-            </span>
+            {/* Same bar as the pointer shell's: no mark on Desktop, where the
+                traffic lights own the corner and the connection menu names
+                the daemon. The band itself stays — the drag region does not. */}
             {connectionSwitcher}
             <span className="flex-1" />
             {zoomControl}
