@@ -75,7 +75,7 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   hr: () => <hr className="my-3.5 border-0 border-t border-border" />,
 
   table: ({ children }) => (
-    <div className="scroll-slim mt-2.5 max-w-full overflow-x-auto rounded-md border border-border">
+    <div className="scroll-slim mt-2.5 max-w-full overflow-x-auto overscroll-y-auto rounded-md border border-border">
       <table className="w-full border-collapse text-[12px]">{children}</table>
     </div>
   ),

@@ -41,6 +41,9 @@ describe("Prose", () => {
     expect(container.querySelectorAll("th")).toHaveLength(2)
     expect(container.querySelectorAll("tbody tr")).toHaveLength(2)
     expect(screen.getByText("droid")).toBeInTheDocument()
+    // The horizontal table scroller must let vertical wheel gestures reach
+    // the conversation viewport instead of containing them over the table.
+    expect(container.querySelector("table")?.parentElement).toHaveClass("overscroll-y-auto")
   })
 
   /**
