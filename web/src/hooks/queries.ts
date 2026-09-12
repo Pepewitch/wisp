@@ -6,6 +6,7 @@ import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
   ApiTask,
+  AttachResponse,
   ConversationDetail,
   DiffResponse,
   HarnessesResponse,
@@ -181,6 +182,20 @@ export function useTaskSkills(id: string | null, archived: boolean) {
     queryKey: qk.skills(id ?? ""),
     enabled: id !== null && !archived,
     queryFn: () => transport.request<TaskSkills>(`/api/tasks/${id}/skills`),
+  });
+}
+/**
+ * GET /api/tasks/:id/attach — the harness's own interactive resume command for
+ * the stored session. The session id rides the query key, so a compaction's
+ * replacement refetches. `argv: null` and failures are expected shapes, not
+ * errors to surface: the resume hint renders nothing rather than pretending.
+ */
+export function useAttachCommand(id: string | null, session: string | null) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: qk.attach(id ?? "", session ?? ""),
+    enabled: id !== null && session !== null,
+    queryFn: () => transport.request<AttachResponse>(`/api/tasks/${id}/attach`),
   });
 }
 

@@ -7,11 +7,14 @@ export function CopyButton({
   text,
   label = "Copy",
   copiedLabel = "Copied",
+  title,
   className,
 }: {
   text: string
   label?: string
   copiedLabel?: string
+  /** Hover wording; defaults to the bubble's "Copy message". */
+  title?: string
   className?: string
 }) {
   const [copied, setCopied] = useState(false)
@@ -42,7 +45,7 @@ export function CopyButton({
     <button
       type="button"
       aria-label={copied ? copiedLabel : label}
-      title={copied ? "Copied" : "Copy message"}
+      title={title ?? (copied ? "Copied" : "Copy message")}
       onClick={() => void copy()}
       className={cn(
         // Icons carry no size classes of their own: the container sizes them,

@@ -321,11 +321,14 @@ describe("completed work with a background process", () => {
     fireEvent.change(box, { target: { value: "continue working" } })
     fireEvent.keyDown(box, { key: "Enter" })
     await waitFor(() => expect(send).toHaveBeenCalledWith("continue working", undefined))
-    expect(fetcher).not.toHaveBeenCalled()
+    // the send itself is client-side; the only fetch so far is the resume
+    // hint's own mount-time GET /attach
+    const composerCalls = () => fetcher.mock.calls.filter(([url]) => !String(url).endsWith("/attach"))
+    expect(composerCalls()).toHaveLength(0)
     await waitFor(() => expect(box).toHaveValue(""))
     fireEvent.click(screen.getByRole("button", { name: "Stop background work" }))
-    await waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
-    expect(fetcher.mock.calls[0]?.[0]).toBe(runtime === "browser" ? "/api/tasks/tk9zdy/interrupt"
+    await waitFor(() => expect(composerCalls()).toHaveLength(1))
+    expect(composerCalls()[0]?.[0]).toBe(runtime === "browser" ? "/api/tasks/tk9zdy/interrupt"
       : "http://127.0.0.1:45678/fixture-capability/connections/remote-fixture/1/api/tasks/tk9zdy/interrupt")
     await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent("Stopped"))
     view.rerender(<><StateDot state="done" background={{ state: "none", groups: 0 }} />
