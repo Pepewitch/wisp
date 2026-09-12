@@ -28,3 +28,21 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {}
 }
+
+// jsdom implements none of pointer capture, which every drag surface in the
+// app takes on press — the mermaid viewer's pan and its height handle. Track
+// the ids so `hasPointerCapture` answers honestly rather than always false.
+if (typeof Element !== "undefined" && !Element.prototype.setPointerCapture) {
+  const captured = new WeakMap<Element, Set<number>>()
+  Element.prototype.setPointerCapture = function setPointerCapture(id: number) {
+    const ids = captured.get(this) ?? new Set<number>()
+    ids.add(id)
+    captured.set(this, ids)
+  }
+  Element.prototype.releasePointerCapture = function releasePointerCapture(id: number) {
+    captured.get(this)?.delete(id)
+  }
+  Element.prototype.hasPointerCapture = function hasPointerCapture(id: number) {
+    return captured.get(this)?.has(id) ?? false
+  }
+}

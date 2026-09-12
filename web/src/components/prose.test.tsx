@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { WorktreeFileContext } from "@/lib/worktree-files"
@@ -235,7 +235,19 @@ describe("Prose", () => {
   describe("mermaid fences", () => {
     const FENCE = "```mermaid\ngraph TD\n    a --> b\n```"
 
-    beforeEach(() => renderDiagram.mockReset())
+    beforeEach(() => {
+      renderDiagram.mockReset()
+      localStorage.clear()
+    })
+
+    /** The diagram on screen, plus the node its transform is written to. */
+    async function openDiagram() {
+      renderDiagram.mockResolvedValue({ svg: '<svg data-test="dag" />' })
+      const view = render(<Prose text={FENCE} />)
+      fireEvent.click(screen.getAllByRole("button", { name: "Render diagram" })[0])
+      const surface = await screen.findByRole("application", { name: "Mermaid diagram" })
+      return { view, surface, content: surface.firstElementChild as HTMLElement }
+    }
 
     it("keeps the source as the default and offers the diagram on hover", () => {
       const { container } = render(<Prose text={FENCE} />)
@@ -268,6 +280,77 @@ describe("Prose", () => {
       expect(await screen.findByText("Parse error on line 2")).toBeInTheDocument()
       fireEvent.click(screen.getByRole("button", { name: "Retry" }))
       expect(await screen.findByRole("application", { name: "Mermaid diagram" })).toBeInTheDocument()
+    })
+
+    /**
+     * The reported shake. A drag used to set React state per pointer event
+     * AND re-aim a 150ms eased CSS transition that had not finished the last
+     * one, so the diagram lurched forward and snapped back tens of pixels a
+     * second. Input-driven motion is written to the node with no transition;
+     * only the discrete button nudges ease.
+     */
+    it("pans straight to the pointer, with nothing animating the drag", async () => {
+      const { surface, content } = await openDiagram()
+
+      fireEvent.pointerDown(surface, { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 140, clientY: 130 })
+      await waitFor(() => expect(content.style.transform).toBe("translate3d(40px, 30px, 0) scale(1)"))
+      expect(content.style.transition).toBe("none")
+
+      // and the next move is relative to the last, not to the press
+      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 150, clientY: 130 })
+      await waitFor(() => expect(content.style.transform).toBe("translate3d(50px, 30px, 0) scale(1)"))
+      fireEvent.pointerUp(surface, { pointerId: 1, clientX: 150, clientY: 130 })
+
+      // a released pointer no longer moves the diagram
+      fireEvent.pointerMove(surface, { pointerId: 1, clientX: 400, clientY: 400 })
+      await waitFor(() => expect(content.style.transform).toBe("translate3d(50px, 30px, 0) scale(1)"))
+    })
+
+    it("eases the button nudges, which are steps rather than a held position", async () => {
+      const { content } = await openDiagram()
+
+      fireEvent.click(screen.getByRole("button", { name: "Zoom in" }))
+      await waitFor(() => expect(content.style.transform).toBe("translate3d(0px, 0px, 0) scale(1.15)"))
+      expect(content.style.transition).toBe("transform 150ms ease-out")
+    })
+
+    /**
+     * A chart zoomed out to fit still needs somewhere to fit INTO, so the
+     * bottom edge drags and the height a person picked is what the next
+     * diagram opens at.
+     */
+    it("resizes on the bottom edge and opens the next diagram at that height", async () => {
+      const { view } = await openDiagram()
+      const handle = screen.getByRole("separator", { name: "Resize diagram" })
+      const frame = handle.parentElement as HTMLElement
+      expect(frame.style.height).toBe("288px")
+
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientY: 400 })
+      fireEvent.pointerMove(handle, { pointerId: 2, clientY: 560 })
+      // the frame follows the pointer without a re-render in between
+      expect(frame.style.height).toBe("448px")
+      fireEvent.pointerUp(handle, { pointerId: 2, clientY: 560 })
+      expect(handle).toHaveAttribute("aria-valuenow", "448")
+
+      view.unmount()
+      const next = render(<Prose text={FENCE} />)
+      fireEvent.click(next.getByRole("button", { name: "Render diagram" }))
+      expect(await next.findByRole("separator", { name: "Resize diagram" })).toHaveAttribute("aria-valuenow", "448")
+    })
+
+    it("clamps the drag and takes the arrow keys", async () => {
+      await openDiagram()
+      const handle = screen.getByRole("separator", { name: "Resize diagram" })
+      const frame = handle.parentElement as HTMLElement
+
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 3, clientY: 400 })
+      fireEvent.pointerMove(handle, { pointerId: 3, clientY: -2000 })
+      expect(frame.style.height).toBe("160px")
+      fireEvent.pointerUp(handle, { pointerId: 3, clientY: -2000 })
+
+      fireEvent.keyDown(handle, { key: "ArrowDown" })
+      expect(frame.style.height).toBe("184px")
     })
   })
 

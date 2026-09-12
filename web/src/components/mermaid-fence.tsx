@@ -1,6 +1,21 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react"
 
 import { Code, Flowchart, Refresh, ZoomIn, ZoomOut } from "@/components/icons"
+import {
+  clampDiagramHeight,
+  MAX_DIAGRAM_HEIGHT,
+  MIN_DIAGRAM_HEIGHT,
+  readDiagramHeight,
+  writeDiagramHeight,
+} from "@/lib/diagram-height"
 import { cn } from "@/lib/utils"
 
 /**
@@ -14,8 +29,9 @@ import { cn } from "@/lib/utils"
  *
  * `mermaid` itself is behind a dynamic import (the plugin statically pulls the
  * real package), so its cost is paid on first toggle and never for a
- * transcript that has no diagrams. Zoom and pan are ours: wheel to zoom,
- * drag to move, buttons to nudge — no editor, just a viewer.
+ * transcript that has no diagrams. Zoom, pan and height are ours: wheel to
+ * zoom, drag to move, drag the bottom edge for room — no editor, just a
+ * viewer.
  */
 
 const ZOOM_STEP = 0.15
@@ -52,7 +68,11 @@ export function MermaidFence({ code, children }: { code: string; children: React
   )
 }
 
-/** The rendered diagram: loading, error with retry, or the pan/zoom surface. */
+/**
+ * The rendered diagram: loading, error with retry, or the pan/zoom surface —
+ * all three inside one frame, so the height a person chose survives a retry
+ * and the box never jumps as the states swap.
+ */
 function MermaidDiagram({ code }: { code: string }) {
   const [attempt, setAttempt] = useState(0)
   // The render that produced this state is carried alongside it: while a
@@ -90,33 +110,31 @@ function MermaidDiagram({ code }: { code: string }) {
     }
   }, [code, attempt])
 
-  if (current === null) {
-    return (
-      <div className="flex h-72 items-center justify-center rounded-md border border-border bg-code">
-        <div className="size-4 animate-spin rounded-full border-2 border-fg-secondary border-t-transparent" />
-      </div>
-    )
-  }
-
-  if ("error" in current) {
-    return (
-      <div className="flex h-72 flex-col items-center justify-center gap-3 rounded-md border border-border bg-code px-4 text-center">
-        <p className="line-clamp-3 font-mono text-[11px] text-fg-secondary">{current.error}</p>
-        <button
-          type="button"
-          onClick={() => setAttempt((value) => value + 1)}
-          className={cn(
-            "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
-            "hover:text-foreground"
-          )}
-        >
-          Retry
-        </button>
-      </div>
-    )
-  }
-
-  return <PanZoom svg={current.svg} />
+  return (
+    <DiagramFrame>
+      {current === null ? (
+        <div className="flex h-full items-center justify-center rounded-md border border-border bg-code">
+          <div className="size-4 animate-spin rounded-full border-2 border-fg-secondary border-t-transparent" />
+        </div>
+      ) : "error" in current ? (
+        <div className="flex h-full flex-col items-center justify-center gap-3 rounded-md border border-border bg-code px-4 text-center">
+          <p className="line-clamp-3 font-mono text-[11px] text-fg-secondary">{current.error}</p>
+          <button
+            type="button"
+            onClick={() => setAttempt((value) => value + 1)}
+            className={cn(
+              "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
+              "hover:text-foreground"
+            )}
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <PanZoom svg={current.svg} />
+      )}
+    </DiagramFrame>
+  )
 }
 
 function renderError(error: unknown): string {
@@ -133,15 +151,151 @@ function renderError(error: unknown): string {
   return message.length > 300 ? `${message.slice(0, 300)}…` : message
 }
 
-/** Wheel zooms, drag pans, and the corner buttons nudge — a viewer, not an editor. */
+/**
+ * The box the diagram lives in, as tall as the last one someone chose.
+ *
+ * Its bottom edge drags, like every other divider in the shell — a hairline
+ * grip that appears with the corner switch. A height change is a layout, so
+ * the frame is written directly while the pointer is down and React commits
+ * the result once, on release, rather than re-rendering the diagram sixty
+ * times a second.
+ */
+function DiagramFrame({ children }: { children: ReactNode }) {
+  const [height, setHeight] = useState(readDiagramHeight)
+  const frame = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ pointer: number; from: number; height: number; next: number } | null>(null)
+
+  const show = (next: number) => {
+    const element = frame.current
+    if (element) element.style.height = `${next}px`
+  }
+
+  const commit = (next: number) => {
+    setHeight(next)
+    writeDiagramHeight(next)
+  }
+
+  const end = (event: ReactPointerEvent<HTMLDivElement>, keep: boolean) => {
+    const state = drag.current
+    if (!state || state.pointer !== event.pointerId) return
+    drag.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    if (keep) commit(state.next)
+    else show(height)
+  }
+
+  return (
+    <div ref={frame} className="relative" style={{ height }}>
+      {children}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize diagram"
+        aria-valuenow={height}
+        aria-valuemin={MIN_DIAGRAM_HEIGHT}
+        aria-valuemax={MAX_DIAGRAM_HEIGHT}
+        tabIndex={0}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          event.preventDefault()
+          event.currentTarget.setPointerCapture(event.pointerId)
+          drag.current = { pointer: event.pointerId, from: event.clientY, height, next: height }
+        }}
+        onPointerMove={(event) => {
+          const state = drag.current
+          if (!state || state.pointer !== event.pointerId) return
+          state.next = clampDiagramHeight(state.height + (event.clientY - state.from))
+          show(state.next)
+        }}
+        onPointerUp={(event) => end(event, true)}
+        onPointerCancel={(event) => end(event, false)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") commit(clampDiagramHeight(height + 24))
+          else if (event.key === "ArrowUp") commit(clampDiagramHeight(height - 24))
+          else return
+          event.preventDefault()
+        }}
+        className={cn(
+          "group/grip absolute inset-x-0 bottom-0 z-10 flex h-2 touch-none items-end justify-center",
+          "cursor-ns-resize focus-visible:outline-none"
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "mb-[3px] h-[3px] w-[26px] rounded-sm bg-border-strong transition-[opacity,background-color]",
+            "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+            "group-hover/grip:bg-muted-foreground"
+          )}
+        />
+      </div>
+    </div>
+  )
+}
+
+type View = { zoom: number; x: number; y: number }
+
+const IDENTITY: View = { zoom: 1, x: 0, y: 0 }
+const clampZoom = (zoom: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom))
+
+/**
+ * Wheel zooms, drag pans, and the corner buttons nudge — a viewer, not an
+ * editor.
+ *
+ * The transform is NOT React state, and it carries no CSS transition while a
+ * pointer is driving it. Both used to be true, and together they made a drag
+ * visibly shake: every pointer event re-rendered the subtree and re-aimed a
+ * 150ms eased transition that had not finished the last one, so the diagram
+ * lurched forward and snapped back tens of pixels several times a second.
+ * Input-driven motion is written straight to the node, once per frame; only
+ * the discrete button nudges — a step a person asked for, not a position they
+ * are holding — are allowed to ease.
+ */
 function PanZoom({ svg }: { svg: string }) {
   const surface = useRef<HTMLDivElement>(null)
-  const [zoom, setZoom] = useState(1)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const content = useRef<HTMLDivElement>(null)
+  const view = useRef<View>({ ...IDENTITY })
+  const eased = useRef(false)
+  const frame = useRef<number | null>(null)
+  const drag = useRef<{ pointer: number; x: number; y: number } | null>(null)
   const [dragging, setDragging] = useState(false)
-  const last = useRef({ x: 0, y: 0 })
+  // The only thing React still renders about the view: which buttons are dead.
+  const [limits, setLimits] = useState({ min: false, max: false, moved: false })
 
-  const zoomBy = (delta: number) => setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + delta)))
+  const paint = useCallback(() => {
+    frame.current = null
+    const node = content.current
+    if (!node) return
+    const { zoom, x, y } = view.current
+    node.style.transition = eased.current ? "transform 150ms ease-out" : "none"
+    node.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`
+  }, [])
+
+  const apply = useCallback(
+    (next: View, ease = false) => {
+      view.current = next
+      eased.current = ease
+      if (frame.current === null) frame.current = requestAnimationFrame(paint)
+      setLimits((shown) => {
+        const wanted = {
+          min: next.zoom <= MIN_ZOOM,
+          max: next.zoom >= MAX_ZOOM,
+          moved: next.zoom !== 1 || next.x !== 0 || next.y !== 0,
+        }
+        // same object when nothing changed, so a drag re-renders nothing
+        return shown.min === wanted.min && shown.max === wanted.max && shown.moved === wanted.moved ? shown : wanted
+      })
+    },
+    [paint]
+  )
+
+  useLayoutEffect(() => {
+    paint()
+    return () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current)
+    }
+  }, [paint])
 
   // React registers wheel passively at the root; preventing the browser's
   // scroll-zoom needs our own listener.
@@ -150,11 +304,11 @@ function PanZoom({ svg }: { svg: string }) {
     if (!element) return
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
-      setZoom((current) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current + (event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP))))
+      apply({ ...view.current, zoom: clampZoom(view.current.zoom + (event.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP)) })
     }
     element.addEventListener("wheel", onWheel, { passive: false })
     return () => element.removeEventListener("wheel", onWheel)
-  }, [])
+  }, [apply])
 
   return (
     <div
@@ -164,34 +318,37 @@ function PanZoom({ svg }: { svg: string }) {
       onPointerDown={(event) => {
         if (event.button !== 0) return
         event.currentTarget.setPointerCapture(event.pointerId)
+        // the drag lives in a ref, so the first move after the press is not
+        // dropped waiting for a render to say it started
+        drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY }
         setDragging(true)
-        last.current = { x: event.clientX, y: event.clientY }
       }}
       onPointerMove={(event) => {
-        if (!dragging) return
-        const dx = event.clientX - last.current.x
-        const dy = event.clientY - last.current.y
-        last.current = { x: event.clientX, y: event.clientY }
-        setPan((current) => ({ x: current.x + dx, y: current.y + dy }))
+        const state = drag.current
+        if (!state || state.pointer !== event.pointerId) return
+        const dx = event.clientX - state.x
+        const dy = event.clientY - state.y
+        state.x = event.clientX
+        state.y = event.clientY
+        apply({ ...view.current, x: view.current.x + dx, y: view.current.y + dy })
       }}
       onPointerUp={(event) => {
+        drag.current = null
         setDragging(false)
-        event.currentTarget.releasePointerCapture(event.pointerId)
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+          event.currentTarget.releasePointerCapture(event.pointerId)
       }}
-      onPointerCancel={() => setDragging(false)}
-      style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
-      className={cn("relative h-72 touch-none overflow-hidden rounded-md border border-border bg-code", "select-none")}
+      onPointerCancel={() => {
+        drag.current = null
+        setDragging(false)
+      }}
+      style={{ cursor: dragging ? "grabbing" : "grab" }}
+      className={cn("relative h-full touch-none overflow-hidden rounded-md border border-border bg-code", "select-none")}
     >
       <div
-        className={cn(
-          "flex h-full w-full items-center justify-center [&>svg]:h-auto [&>svg]:max-w-full",
-          "transition-transform duration-150 ease-out"
-        )}
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-          transformOrigin: "center center",
-          willChange: "transform",
-        }}
+        ref={content}
+        className="flex h-full w-full items-center justify-center [&>svg]:h-auto [&>svg]:max-w-full"
+        style={{ transformOrigin: "center center", willChange: "transform" }}
         dangerouslySetInnerHTML={{ __html: svg }}
       />
       <div
@@ -201,16 +358,23 @@ function PanZoom({ svg }: { svg: string }) {
         )}
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <ZoomButton label="Zoom in" icon={ZoomIn} disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(ZOOM_STEP)} />
-        <ZoomButton label="Zoom out" icon={ZoomOut} disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-ZOOM_STEP)} />
+        <ZoomButton
+          label="Zoom in"
+          icon={ZoomIn}
+          disabled={limits.max}
+          onClick={() => apply({ ...view.current, zoom: clampZoom(view.current.zoom + ZOOM_STEP) }, true)}
+        />
+        <ZoomButton
+          label="Zoom out"
+          icon={ZoomOut}
+          disabled={limits.min}
+          onClick={() => apply({ ...view.current, zoom: clampZoom(view.current.zoom - ZOOM_STEP) }, true)}
+        />
         <ZoomButton
           label="Reset zoom and pan"
           icon={Refresh}
-          disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
-          onClick={() => {
-            setZoom(1)
-            setPan({ x: 0, y: 0 })
-          }}
+          disabled={!limits.moved}
+          onClick={() => apply({ ...IDENTITY }, true)}
         />
       </div>
     </div>
