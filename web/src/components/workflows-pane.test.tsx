@@ -48,7 +48,7 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
   expect(screen.getByRole("textbox", { name: "Pull request URL" })).toHaveValue("https://github.com/example/project/pull/42")
   expect(screen.getByRole("spinbutton", { name: "Stop after quiet (minutes)" })).toHaveValue(30)
   fireEvent.change(screen.getByRole("textbox", { name: "When new feedback arrives" }), { target: { value: "Fix nits and run tests." } })
-  fireEvent.click(screen.getByRole("button", { name: "Arm workflow" }))
+  fireEvent.click(screen.getByRole("button", { name: "Start" }))
   await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true))
   const call = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!
   expect(String(call[0])).toBe(runtime === "browser"
@@ -161,9 +161,9 @@ it("drops a half-filled form when the daemon changes under the same task ID", as
   fireEvent.click(await screen.findByRole("tab", { name: /Workflows/ }))
   fireEvent.click(await screen.findByRole("button", { name: "Add workflow…" }))
   fireEvent.click(await screen.findByRole("button", { name: "Add PR review watch" }))
-  expect(screen.getByRole("button", { name: "Arm workflow" })).toBeInTheDocument()
+  expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument()
   rendered.rerender(view(b))
-  await waitFor(() => expect(screen.queryByRole("button", { name: "Arm workflow" })).not.toBeInTheDocument())
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument())
 })
 
 it("keeps an edited PR pinned and permits explicit push authorization", () => {

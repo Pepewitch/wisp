@@ -9,7 +9,7 @@ asks the agent to reason about your objective and can spend tokens.
 and in Desktop. It lists what is attached to the selected task: one row each,
 carrying the workflow's state and the reason it is waiting. The list ends in
 **Add workflow…** — choose a built-in, edit its parameters, open **Limits and
-permissions** if you need them, and select **Arm workflow**. Opening a row
+permissions** if you need them, and select **Start**. Opening a row
 shows its next check, wake-up count, the latest 100 history entries, and the
 controls to **Pause**,
 **Configure** or **Remove** it. Removing completes the workflow: it stops
@@ -80,7 +80,7 @@ New feedback, a changed PR head, and completion of workflow-driven work restart
 the quiet window. Wisp does not complete while the task is running, blocked,
 has queued user input, or has tracked background work. Thirty quiet minutes
 means **no new feedback**, not reviewer approval. Later feedback does not
-reactivate a completed instance; arm another one. Merging or closing the PR
+reactivate a completed instance; start another one. Merging or closing the PR
 completes either PR watcher without an agent turn.
 
 Both PR built-ins currently support explicit `https://github.com/…/pull/…`
@@ -131,7 +131,7 @@ archive the task or stop a turn that already received an instruction.
   teardown. Changing the agent configuration or context pauses them for review.
 - Local observations and message identities are durable. An uncertain process
   delivery pauses automation for inspection rather than promising exactly-once
-  external effects. Arm a new instance after resolving uncertainty.
+  external effects. Start a new instance after resolving uncertainty.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
   custom plugins run as your OS user. Review objectives and only use trusted
   code. PR feedback and logs are untrusted evidence, not authority to grant
@@ -175,7 +175,7 @@ This is an explicit local trust decision. Wisp never scans a repository for
 executable plugins, downloads one automatically, or loads its code into the
 daemon process. Common scheduling/permission parameters are added automatically
 and cannot be overridden by a plugin definition. Changing the registered
-manifest changes its effective version and pauses existing instances; arm new
+manifest changes its effective version and pauses existing instances; start new
 ones after reviewing an upgrade. Executable contents are not sandboxed or
 integrity-verified, so protect installed files and update the declared version
 when replacing them.

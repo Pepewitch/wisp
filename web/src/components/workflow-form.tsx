@@ -129,7 +129,7 @@ export function WorkflowForm({
 
       {definition.custom && (
         <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-          This trusted local plugin runs as your OS user. Only arm plugins whose code you trust.
+          This trusted local plugin runs as your OS user. Only run plugins whose code you trust.
         </p>
       )}
 
@@ -138,7 +138,11 @@ export function WorkflowForm({
           Cancel
         </Button>
         <Button size="md" tone="primary" type="submit" disabled={pending}>
-          {pending ? "Saving…" : existing ? "Save changes" : "Arm workflow"}
+          {/* `Start`, not `Arm`: the row this creates already offers Pause,
+              Resume and Remove, so Start is the one verb that completes the
+              set — and it says what pressing it does, which `Arm` only said if
+              you already knew the word. */}
+          {pending ? "Saving…" : existing ? "Save changes" : "Start"}
         </Button>
       </div>
     </form>

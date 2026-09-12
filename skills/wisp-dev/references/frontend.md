@@ -1143,9 +1143,14 @@ The pane answers it on the row: **two lines, what it is and what it is waiting
 for**, with the numbers, the controls and the history behind the same click a
 file row in Changes takes. Adding is a drill-down in the same pane — picker,
 then form, with a back row where a dialog would have put a close button — so
-nothing about arming a workflow puts an overlay over the app. The form is ONE
+nothing about starting a workflow puts an overlay over the app. The form is ONE
 column: a number field beside a prompt textarea is two fields of different
 weight sharing a row, and it is most of why the modal read as paperwork.
+**The primary says `Start`, not `Arm`.** The row it creates already offers
+Pause, Resume and Remove, so Start is the verb that completes the set — and it
+names what pressing it does. `Arm` was precise and borrowed from alarms and
+explosives: the only word on the pane a reader had to already know.
+
 Removing a workflow completes it and files it under a collapsed **Finished**
 group: a task that ran three watches over a week should not open on three
 obituaries. The list therefore reads live rows → add → archive.

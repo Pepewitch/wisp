@@ -157,7 +157,7 @@ export function WorkflowsPaneSpecimen() {
         <Framed id="gallery-empty" items={[]} />
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
           Empty ends in the control, not in a noun. Adding is a drill-down inside the pane — picker, then form, with a
-          back row where a dialog would have put a close button. Nothing about arming a workflow opens an overlay, so
+          back row where a dialog would have put a close button. Nothing about starting a workflow opens an overlay, so
           the diff you were reading is one click away the whole time.
         </p>
       </div>
