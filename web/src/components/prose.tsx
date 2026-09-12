@@ -3,7 +3,10 @@ import remarkBreaks from "remark-breaks"
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown"
 
 import { externalLinkProps } from "@/lib/external-links"
-import { PROSE_HIGHLIGHT_PLUGINS } from "@/lib/prose-highlight"
+import {
+  PROSE_HIGHLIGHT_PLUGINS,
+  STATIC_PROSE_HIGHLIGHT_PLUGINS,
+} from "@/lib/prose-highlight"
 import { mermaidFenceCode } from "@/lib/mermaid-fence-code"
 import { RemoteImage } from "./remote-image"
 import { MermaidFence } from "./mermaid-fence"
@@ -11,14 +14,23 @@ import { cn } from "@/lib/utils"
 import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
 
 /** Agent prose, rendered safely while markdown is still streaming. */
-export function Prose({ text, className }: { text: string; className?: string }) {
+export function Prose({
+  text,
+  className,
+  mode = "streaming",
+}: {
+  text: string
+  className?: string
+  mode?: "streaming" | "static"
+}) {
   return (
     <div className={cn("text-[13px] leading-[1.7] text-foreground/85", className)}>
       <Streamdown
-        parseIncompleteMarkdown
+        mode={mode}
+        parseIncompleteMarkdown={mode === "streaming"}
         controls={false}
         remarkPlugins={PROSE_REMARK_PLUGINS}
-        rehypePlugins={PROSE_REHYPE_PLUGINS}
+        rehypePlugins={mode === "static" ? STATIC_PROSE_REHYPE_PLUGINS : PROSE_REHYPE_PLUGINS}
         components={PROSE_COMPONENTS}
       >
         {text}
@@ -40,13 +52,20 @@ const PROSE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBrea
  * `javascript:` or `file:` href. `linkSafety` is a different mechanism and
  * blocks none of this; leaving it at its default is deliberate.
  */
+const PROSE_REHYPE_BASE = Object.entries(defaultRehypePlugins)
+  .filter(([name]) => name !== "harden")
+  .map(([, plugin]) => plugin)
+
 const PROSE_REHYPE_PLUGINS = [
-  ...Object.entries(defaultRehypePlugins)
-    .filter(([name]) => name !== "harden")
-    .map(([, plugin]) => plugin),
+  ...PROSE_REHYPE_BASE,
   // LAST, and deliberately after `sanitize`: the `hljs-*` spans are added to a
   // tree that has already been sanitised, so they reach the DOM (§5b).
   ...PROSE_HIGHLIGHT_PLUGINS,
+] as ComponentProps<typeof Streamdown>["rehypePlugins"]
+
+const STATIC_PROSE_REHYPE_PLUGINS = [
+  ...PROSE_REHYPE_BASE,
+  ...STATIC_PROSE_HIGHLIGHT_PLUGINS,
 ] as ComponentProps<typeof Streamdown>["rehypePlugins"]
 
 const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {

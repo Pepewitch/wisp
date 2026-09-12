@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest"
 
 import { ApiError, type DaemonTransport } from "@/lib/transport"
 import { parseDiff } from "@/lib/diff"
-import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import {
+  PROSE_HIGHLIGHT_LIMIT,
+  STATIC_PROSE_HIGHLIGHT_LIMIT,
+} from "@/lib/prose-highlight"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { FileViewer, FileViewerProvider } from "./file-viewer"
@@ -77,6 +80,25 @@ describe("the worktree file viewer", () => {
     expect(viewer.querySelector("h1")).toBeNull()
   })
 
+  it("highlights a complete source file above the streaming prose limit", async () => {
+    const line = "export const value = 1\n"
+    const text = line.repeat(Math.ceil((PROSE_HIGHLIGHT_LIMIT + 4_000) / line.length))
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/prose.test.tsx",
+      text,
+      bytes: text.length,
+    })
+    withTransport(
+      <FileViewer taskId="tk9zdy" path="src/prose.test.tsx" onClose={() => {}} />,
+      request,
+    )
+
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer.querySelector(".hljs-keyword")).not.toBeNull())
+    expect(viewer).not.toHaveTextContent("highlighting off for performance")
+  })
+
   it("shows an editor-style full-file diff without hiding unchanged lines", async () => {
     const request = vi.fn().mockResolvedValue({
       ...PLAN,
@@ -110,7 +132,7 @@ describe("the worktree file viewer", () => {
 
   it("labels both safety caps and skips expensive highlighting", async () => {
     const text = "export const value = 1\n".repeat(
-      Math.ceil((PROSE_HIGHLIGHT_LIMIT + 1) / 23),
+      Math.ceil((STATIC_PROSE_HIGHLIGHT_LIMIT + 1) / 23),
     )
     const request = vi.fn().mockResolvedValue({
       ...PLAN,
