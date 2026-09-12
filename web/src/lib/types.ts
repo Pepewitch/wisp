@@ -354,7 +354,13 @@ export type WispEvent =
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
-  | { type: "project"; action: "add" | "remove"; path: string };
+  | { type: "project"; action: "add" | "remove"; path: string }
+  | { type: "settings" };
+
+/** GET/PATCH /api/settings, the daemon-wide preferences safe to expose. */
+export interface WispSettings {
+  autoRenameTasksFromPullRequests: boolean;
+}
 
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then

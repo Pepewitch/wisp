@@ -34,6 +34,7 @@ import type { PtySize } from "./pty";
 import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
 import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
+import { pullRequestTitleSync } from "./task-update";
 import { pwaResponse } from "./pwa";
 // The generated single-file app is loaded only when the daemon starts. That
 // keeps source-only CLI commands usable before a checkout has built ui-dist;
@@ -416,6 +417,7 @@ async function serveOwned(
     run: options.pullRequestRun,
     timeoutMs: options.pullRequestTimeoutMs,
     ttlMs: options.pullRequestCacheTtlMs,
+    onPullRequestFound: pullRequestTitleSync(cfg),
   });
   const updates = options.updateManager ?? new UpdateManager();
   // P5b loud fallback: only here does the merged adapter set exist to check

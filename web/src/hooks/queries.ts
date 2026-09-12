@@ -19,6 +19,7 @@ import type {
   SuffixPrompt,
   TaskSkills,
   UpdateStatus,
+  WispSettings,
   WorktreeFileResponse,
 } from "@/lib/types";
 
@@ -207,6 +208,15 @@ export function useRepos() {
     queryKey: qk.repos,
     queryFn: () => transport.request<{ repos: RepoInfo[] }>("/api/repos"),
     select: (data) => data.repos,
+  });
+}
+
+/** GET /api/settings — daemon-wide preferences shared by every client. */
+export function useWispSettings() {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: qk.settings,
+    queryFn: () => transport.request<WispSettings>("/api/settings"),
   });
 }
 

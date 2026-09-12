@@ -60,6 +60,7 @@ describe("validateConfig (a prior audit)", () => {
       turnTranscriptBytes: 123,
       logMaxBytes: 123,
       diagnosticEnabled: true,
+      autoRenameTasksFromPullRequests: false,
       diagnosticMaxBytes: 456,
       diagnosticRetentionDays: 3,
       setupTimeoutMinutes: 2,
@@ -95,6 +96,9 @@ describe("validateConfig (a prior audit)", () => {
     );
     expect(thrownMessage(() => validateConfig({ diagnosticEnabled: "yes" }))).toBe(
       "config.json: diagnosticEnabled must be a boolean, got string",
+    );
+    expect(thrownMessage(() => validateConfig({ autoRenameTasksFromPullRequests: "yes" }))).toBe(
+      "config.json: autoRenameTasksFromPullRequests must be a boolean, got string",
     );
     expect(thrownMessage(() => validateConfig({ diagnosticMaxBytes: 0 }))).toBe(
       "config.json: diagnosticMaxBytes must be a positive integer, got 0",
@@ -184,7 +188,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
@@ -326,6 +330,7 @@ describe("loadConfig", () => {
       expect(cfg.diagnosticEnabled).toBe(true);
       expect(cfg.diagnosticMaxBytes).toBe(512 * 1024 * 1024);
       expect(cfg.diagnosticRetentionDays).toBe(7);
+      expect(cfg.autoRenameTasksFromPullRequests).toBe(true);
       expect(cfg.repos).toEqual([]); // default
       expect(cfg.envAllowlist).toEqual({}); // default
       expect(cfg.harnessDefaults).toEqual({}); // default
