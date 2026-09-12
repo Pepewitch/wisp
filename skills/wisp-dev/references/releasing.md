@@ -28,6 +28,19 @@ bun run check                        # includes version:check, docs, pins, lint,
 bun run brand:check && bun run smoke && bun run build && bun run test:evaluator
 ```
 
+`brand:check` rasterizes the PNG assets with headless Chrome. On a host where
+Chrome hangs headless (first-run dialogs, GPU sandboxes), run
+`CHROME_PATH=/nonexistent bun run brand:check`: every tracked SVG, PDF, and
+text asset is still verified, and the PNG steps are skipped with a warning.
+Accept that only when no PNG asset changes in the release and tag CI runs the
+full gate, which it always does.
+
+The installer and activation contracts (`test:install`, `test:activation`)
+need a container runtime. On a host without one, tag CI is the only place they
+run and each diagnosis costs a full workflow round trip — so when a change
+touches the release contract, land the failure-path diagnostics (the daemon's
+wait status and the cgroup memory/pid counters) in the same PR as the change.
+
 `main` does not hold still while the gates run. If something lands, take it
 before opening the PR, so the release describes what it actually ships:
 
@@ -48,8 +61,11 @@ commit is one commit that carries one synchronized version:
 gh pr merge <number> --squash --delete-branch
 ```
 
-Then publish from the merged commit. `main` is normally checked out in the
-primary worktree, so `git switch main` fails here; detach instead:
+Then publish from the merged commit. The release worktree can live anywhere,
+including nested inside another worktree; publishing requires only that the
+tag points at a clean `origin/main` commit, not a particular checkout.
+`main` is normally checked out in the primary worktree, so `git switch main`
+fails there; detach instead:
 
 ```sh
 git fetch origin && git switch --detach origin/main
@@ -75,6 +91,13 @@ git switch -c "release/$version-closeout" origin/main
 # the promotion receipt time and tap commit, and anything the gates do NOT
 # prove. A superseded release keeps its evidence and loses only claims that
 # are now false, such as "latest".
+#
+# When no maintainer qualification ran for the release, record only what the
+# workflow's jobs prove (the same gate table, citing the run), state the
+# promotion commit and time, and name the gates that did not run —
+# fresh-install and upgrade receipts, an updater journey across the version,
+# the paid evaluator panel. Do not copy a prior release's two-version
+# receipt or claim checks nobody performed; the 0.5.6 record is the example.
 gh pr merge <number> --squash --delete-branch
 ```
 
@@ -307,6 +330,9 @@ the notes become an immutable release body.
 
 Finally, update the prose that names the current release: the headline and
 install commands in `README.md`, `docs/INSTALL.md`, and `docs/INSTALL-MACOS.md`.
+The pinned installer URLs in README and the Linux guide are version sites, so
+`version:check` refuses a release that forgets them; any remaining prose that
+names the release is updated by judgment.
 Do not rewrite published release notes or a past release's qualification record
 merely to make an old version look current; a superseded release keeps its
 evidence and loses only claims that are now false, such as "latest".
