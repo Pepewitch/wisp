@@ -1,5 +1,7 @@
 import { createContext, useContext } from "react"
 
+import type { DiffFile } from "./diff"
+
 import { safeHttpUrl } from "./paste-links"
 
 /**
@@ -54,7 +56,14 @@ export function resolveAgainst(from: string, relative: string): string {
  * gallery and the probe panel render prose with no worktree behind it, and a
  * path there is text.
  */
-export type WorktreeFileOpener = (path: string) => void
+export interface WorktreeFileOpenOptions {
+  /** The parsed patch for a row opened from Changes. */
+  diff?: DiffFile
+  /** The diff payload itself hit the daemon's byte cap. */
+  diffTruncated?: boolean
+}
+
+export type WorktreeFileOpener = (path: string, options?: WorktreeFileOpenOptions) => void
 
 export const WorktreeFileContext = createContext<WorktreeFileOpener | null>(null)
 

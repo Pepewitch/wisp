@@ -150,6 +150,21 @@ describe("opening a file from the Changes pane", () => {
     expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("src/a.ts")
   })
 
+  it("hands the selected patch to the viewer's full-file diff toggle", async () => {
+    okDiffAndFile()
+    withClient(
+      <FileViewerProvider taskId="tk9zdy">
+        <ChangesPane taskId="tk9zdy" archived={false} />
+      </FileViewerProvider>,
+    )
+    await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
+    fireEvent.doubleClick(screen.getByText("a.ts"))
+    const diff = await screen.findByRole("tab", { name: "Diff" })
+    fireEvent.click(diff)
+    expect(screen.getByTestId("file-viewer").querySelector('[data-diff-line="add"]'))
+      .toHaveTextContent("TRACKED_ADD")
+  })
+
   it("a single click still selects the diff, and only the diff", async () => {
     okDiffAndFile()
     withClient(

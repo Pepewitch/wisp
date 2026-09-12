@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { hunkGaps, hunkSection, parseDiff } from "./diff";
+import {
+  FULL_FILE_DIFF_LINE_LIMIT,
+  fullFileDiff,
+  hunkGaps,
+  hunkSection,
+  parseDiff,
+} from "./diff";
 
 /** Two files; the first has two hunks with a 26-line unmodified gap between them. */
 const SAMPLE = `diff --git a/src/a.ts b/src/a.ts
@@ -157,5 +163,79 @@ describe("hunkSection", () => {
     const file = parseDiff(SAMPLE).files[0]!;
     expect(hunkSection(file.hunks[0]!)).toBe('import { VERSION } from "./version";');
     expect(hunkSection(file.hunks[1]!)).toBe("tail");
+  });
+});
+
+describe("fullFileDiff", () => {
+  it("keeps every current-file line and inserts changed rows at their new-file coordinates", () => {
+    const file = parseDiff(`diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -2,2 +2,3 @@
+ keep two
+-old three
++new three
++added four
+`).files[0]!;
+    const result = fullFileDiff(file, "keep one\nkeep two\nnew three\nadded four\nkeep five\n");
+    const rows = result.lines;
+
+    expect(result.capped).toBe(false);
+    expect(rows.map((line) => [line.kind, line.text])).toEqual([
+      ["context", "keep one"],
+      ["context", "keep two"],
+      ["del", "old three"],
+      ["add", "new three"],
+      ["add", "added four"],
+      ["context", "keep five"],
+    ]);
+    expect(rows.map((line) => line.newNo)).toEqual([1, 2, null, 3, 4, 5]);
+    expect(rows.every((line) => line.known)).toBe(true);
+  });
+
+  it("marks lines outside a capped patch as unknown rather than confidently unchanged", () => {
+    const file = parseDiff(`diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1,1 +1,1 @@
+-old
++new
+`).files[0]!;
+    const rows = fullFileDiff(file, "new\ntail\n", true).lines;
+    expect(rows.map((line) => [line.text, line.known])).toEqual([
+      ["old", true],
+      ["new", false],
+      ["tail", false],
+    ]);
+  });
+
+  it("uses the complete file line when the bounded patch ends mid-line", () => {
+    const file = parseDiff(`diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1,1 +1,1 @@
+-old
++partial`).files[0]!;
+    const rows = fullFileDiff(file, "complete current line\n", true).lines;
+    expect(rows.map((line) => [line.kind, line.text, line.known])).toEqual([
+      ["del", "old", true],
+      ["context", "complete current line", false],
+    ]);
+  });
+
+  it("stops constructing DOM-bound rows at the client safety ceiling", () => {
+    const file = parseDiff(`diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1,1 +1,1 @@
+-old
++new
+`).files[0]!;
+    const result = fullFileDiff(
+      file,
+      `new\n${"tail\n".repeat(FULL_FILE_DIFF_LINE_LIMIT + 10)}`,
+    );
+    expect(result.lines).toHaveLength(FULL_FILE_DIFF_LINE_LIMIT);
+    expect(result.capped).toBe(true);
   });
 });

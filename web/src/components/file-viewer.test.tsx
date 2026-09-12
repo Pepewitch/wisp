@@ -3,6 +3,8 @@ import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import { ApiError, type DaemonTransport } from "@/lib/transport"
+import { parseDiff } from "@/lib/diff"
+import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { FileViewer, FileViewerProvider } from "./file-viewer"
@@ -68,6 +70,56 @@ describe("the worktree file viewer", () => {
     // read as source: nothing in it was interpreted as markdown
     expect(viewer.querySelector("pre")).not.toBeNull()
     expect(viewer.querySelector("h1")).toBeNull()
+  })
+
+  it("shows an editor-style full-file diff without hiding unchanged lines", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/a.ts",
+      text: "const before = 1\nconst value = 2\nconst after = 3\n",
+    })
+    const diff = parseDiff(`diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -2,1 +2,1 @@
+-const value = 1
++const value = 2
+`).files[0]!
+    withTransport(
+      <FileViewer taskId="tk9zdy" path="src/a.ts" onClose={() => {}} diff={diff} />,
+      request,
+    )
+    const viewer = await screen.findByTestId("file-viewer")
+    fireEvent.click(screen.getByRole("tab", { name: "Diff" }))
+    expect(viewer).toHaveTextContent("const before = 1")
+    expect(viewer).toHaveTextContent("const after = 3")
+    expect(viewer.querySelector('[data-diff-line="del"]')).toHaveTextContent("const value = 1")
+    expect(viewer.querySelector('[data-diff-line="del"]')).toHaveClass("bg-diff-del-bg")
+    expect(viewer.querySelector('[data-diff-line="add"]')).toHaveTextContent("const value = 2")
+    expect(viewer.querySelector('[data-diff-line="add"]')).toHaveClass("bg-diff-add-bg")
+    expect(screen.getByRole("tab", { name: "Diff" })).toHaveAttribute("aria-selected", "true")
+
+    fireEvent.click(screen.getByRole("tab", { name: "File" }))
+    await waitFor(() => expect(viewer.querySelector(".hljs-keyword")).not.toBeNull())
+  })
+
+  it("labels both safety caps and skips expensive highlighting", async () => {
+    const text = "export const value = 1\n".repeat(
+      Math.ceil((PROSE_HIGHLIGHT_LIMIT + 1) / 23),
+    )
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/large.ts",
+      text,
+      bytes: 900_000,
+      truncated: true,
+    })
+    withTransport(<FileViewer taskId="tk9zdy" path="src/large.ts" onClose={() => {}} />, request)
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer).toHaveTextContent("export const value = 1"))
+    expect(viewer.querySelector(".hljs-keyword")).toBeNull()
+    expect(viewer).toHaveTextContent("preview capped")
+    expect(viewer).toHaveTextContent("highlighting off for performance")
   })
 
   /** A fence IN the file is text, not the end of the block it is shown in. */

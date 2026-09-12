@@ -49,6 +49,23 @@ export interface ParsedDiff {
   dels: number;
 }
 
+export interface FullFileDiffLine extends DiffLine {
+  /**
+   * True when the line came from the file response rather than the bounded
+   * patch. A capped patch can end before the file does, so the viewer must not
+   * imply those remaining lines were inspected and unchanged.
+   */
+  known: boolean;
+}
+
+export const FULL_FILE_DIFF_LINE_LIMIT = 10_000;
+
+export interface FullFileDiff {
+  lines: FullFileDiffLine[];
+  /** The DOM row ceiling was reached; remaining rows were never constructed. */
+  capped: boolean;
+}
+
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 /** unquoted form; quoted paths fall back to the ---/+++ lines */
 const GIT_LINE_RE = /^diff --git a\/(.+) b\/(.+)$/;
@@ -171,4 +188,66 @@ export function hunkGaps(file: DiffFile): number[] {
 export function hunkSection(hunk: DiffHunk): string | null {
   const m = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@\s*(.*)$/.exec(hunk.header);
   return m && m[1] !== "" ? m[1]! : null;
+}
+
+/**
+ * Expand a unified patch over the complete post-image text.
+ *
+ * Git hunks already carry new-file coordinates. Lines between them come from
+ * the file response, while deletions are inserted beside the new-file cursor.
+ * This produces the editor-style view people expect: the whole current file,
+ * with changed rows in place instead of collapsed hunk gaps.
+ */
+export function fullFileDiff(file: DiffFile, text: string, patchTruncated = false): FullFileDiff {
+  const source = text.split("\n", FULL_FILE_DIFF_LINE_LIMIT + 1);
+  if (text.endsWith("\n") && source.at(-1) === "") source.pop();
+  if (text === "") source.length = 0;
+  const lines: FullFileDiffLine[] = [];
+  let sourceIndex = 0;
+  let capped = false;
+  const terminalPatchLine = patchTruncated ? file.hunks.at(-1)?.lines.at(-1) : undefined;
+  const push = (line: FullFileDiffLine): boolean => {
+    if (lines.length === FULL_FILE_DIFF_LINE_LIMIT) {
+      capped = true;
+      return false;
+    }
+    lines.push(line);
+    return true;
+  };
+
+  hunks:
+  for (const hunk of file.hunks) {
+    const hunkIndex = Math.max(sourceIndex, hunk.newStart === 0 ? 0 : hunk.newStart - 1);
+    while (sourceIndex < hunkIndex && sourceIndex < source.length) {
+      if (!push({
+        kind: "context",
+        text: source[sourceIndex]!,
+        oldNo: null,
+        newNo: sourceIndex + 1,
+        known: true,
+      })) break hunks;
+      sourceIndex++;
+    }
+
+    for (const line of hunk.lines) {
+      // A bounded patch can stop halfway through its final line. The complete
+      // worktree response is authoritative for the post-image; a partial
+      // deletion cannot be recovered and is omitted rather than invented.
+      if (line === terminalPatchLine) continue;
+      if (!push({ ...line, known: true })) break hunks;
+      if (line.kind !== "del") sourceIndex++;
+    }
+  }
+
+  while (!capped && sourceIndex < source.length) {
+    if (!push({
+      kind: "context",
+      text: source[sourceIndex]!,
+      oldNo: null,
+      newNo: sourceIndex + 1,
+      known: !patchTruncated,
+    })) break;
+    sourceIndex++;
+  }
+  return { lines, capped };
 }
