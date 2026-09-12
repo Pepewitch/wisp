@@ -1,5 +1,6 @@
 import { useState } from "react"
 import type { Workflow, WorkflowDefinition, WorkflowParameter, WorkflowParams } from "../../../shared/workflows"
+import { cn } from "@/lib/utils"
 import { Button } from "./primitives"
 
 /**
@@ -53,7 +54,7 @@ function ParameterField({
       {p.description && <span className="mt-0.5 block text-[11.5px] leading-relaxed text-muted-foreground">{p.description}</span>}
       {p.multiline ? (
         <textarea
-          className={`${FIELD} min-h-16 resize-y leading-relaxed`}
+          className={cn(FIELD, "min-h-16 resize-y leading-relaxed")}
           value={String(value)}
           required={p.required}
           maxLength={16000}
@@ -62,7 +63,9 @@ function ParameterField({
         />
       ) : (
         <input
-          className={p.type === "number" ? `${FIELD} w-24` : FIELD}
+          // cn(), not a template literal: `w-24` and FIELD's `w-full` are the
+          // same utility, and only tailwind-merge reliably drops the loser
+          className={cn(FIELD, p.type === "number" && "w-24")}
           type={p.type === "number" ? "number" : p.key === "prUrl" ? "url" : "text"}
           value={String(value)}
           min={p.min}
