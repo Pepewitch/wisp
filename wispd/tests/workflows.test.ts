@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { loadConfig, TASKS_DIR } from "../src/config";
 import { createTask, createTurn, db, finishTurn, getTask, markTaskMessageDelivered, messagesFor, newTaskId, nextQueuedMessage, setTaskFields, transition } from "../src/store";
 import { BUILTIN_WORKFLOWS, parsePrUrl, validateWorkflowParams } from "../src/workflows/definitions";
-import { evaluateCi, evaluateReview } from "../src/workflows/evaluate";
+import { evaluateCi, evaluateReview, evaluateScheduledSteer } from "../src/workflows/evaluate";
 import type { WorkflowPr } from "../src/workflows/github";
 import { WorkflowRuntime } from "../src/workflows/runtime";
 import { changeWorkflowState, createWorkflow, getWorkflow, listWorkflows, reserveWorkflowWake, updateWorkflow, workflow } from "../src/workflows/store";
@@ -25,7 +25,12 @@ function arm(type = "heartbeat", params: WorkflowParams = {}) {
   setTaskFields(id, { worktree_path: "/fixture" });
   transition(id, "done");
   const def = BUILTIN_WORKFLOWS.find(d => d.id === type)!;
-  return createWorkflow(id, def, validateWorkflowParams(def, type === "heartbeat" ? { prompt: "Check the objective", ...params } : { prUrl: "https://github.com/example/project/pull/42", ...params }), base);
+  const defaults = type === "heartbeat"
+    ? { prompt: "Check the objective" }
+    : type === "schedule-steer"
+      ? { prompt: "Use the staged rollout", scheduledAt: new Date(base.getTime() + 10 * 60_000).toISOString() }
+      : { prUrl: "https://github.com/example/project/pull/42" };
+  return createWorkflow(id, def, validateWorkflowParams(def, { ...defaults, ...params }), base);
 }
 function pr(): WorkflowPr {
   return { url: "https://github.com/example/project/pull/42", head: "a".repeat(40), closed: false, merged: false, viewer: "agent", checks: [], feedback: [] };
@@ -43,7 +48,7 @@ function dispatch(taskId: string, messageId: string): boolean {
 }
 
 test("parameters are typed, bounded, defaulted, and PR identity is pinned", () => {
-  const def = BUILTIN_WORKFLOWS[1]!;
+  const def = BUILTIN_WORKFLOWS.find(item => item.id === "pr-ci")!;
   expect(() => validateWorkflowParams(def, { prUrl: "https://github.com/example/project/pull/42/files" })).toThrow();
   expect(() => validateWorkflowParams(def, { prUrl: "https://github.com/example/project/pull/42", everyMinutes: 0 })).toThrow();
   expect(() => validateWorkflowParams(def, { prUrl: "https://github.com/example/project/pull/42", extra: true })).toThrow();
@@ -54,6 +59,40 @@ test("parameters are typed, bounded, defaulted, and PR identity is pinned", () =
   expect(item.params.everyMinutes).toBe(5);
   expect(item.params.allowMerge).toBe(false);
   expect(() => updateWorkflow(item.id, { ...item.params, prUrl: "https://github.com/example/project/pull/43" }, item.revision)).toThrow("different PR");
+  const schedule = BUILTIN_WORKFLOWS.find(item => item.id === "schedule-steer")!;
+  expect(validateWorkflowParams(schedule, { prompt: "Ship", scheduledAt: "2026-09-13T14:00:00+07:00" }).scheduledAt)
+    .toBe("2026-09-13T07:00:00.000Z");
+  expect(() => validateWorkflowParams(schedule, { prompt: "Ship", scheduledAt: "2026-09-13T14:00:00" })).toThrow("UTC offset");
+  expect(() => arm("schedule-steer", { scheduledAt: base.toISOString() })).toThrow("future");
+});
+
+test("scheduled steer waits for its instant, sends once, and completes", async () => {
+  const item = arm("schedule-steer");
+  expect(item.nextCheckAt).toBe(new Date(base.getTime() + 10 * 60_000).toISOString());
+  expect(item.reason).toContain("Scheduled for");
+  expect(evaluateScheduledSteer(item, {}, new Date(base.getTime() + 9 * 60_000)).action).toBe("wait");
+  const clock = new Date(base.getTime() + 10 * 60_000);
+  const runtime = new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch });
+  await runtime.tick();
+  expect(messagesFor(item.taskId)).toHaveLength(1);
+  expect(messagesFor(item.taskId)[0]?.text).toBe("Use the staged rollout");
+  expect(getWorkflow(item.id)?.state).toBe("completed");
+  expect(getWorkflow(item.id)?.reason).toBe("Scheduled steer sent");
+  await new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch }).tick();
+  expect(messagesFor(item.taskId)).toHaveLength(1);
+});
+
+test("scheduled steer queues behind a non-live running turn and still completes", async () => {
+  const item = arm("schedule-steer");
+  transition(item.taskId, "running");
+  createTurn(item.taskId, 1, "Current work", null, "/fixture/log", null);
+  const clock = new Date(base.getTime() + 10 * 60_000);
+  await new WorkflowRuntime(loadConfig(), {}, { now: () => clock }).tick();
+  const message = messagesFor(item.taskId)[0]!;
+  expect(message).toMatchObject({ status: "queued", workflow_id: null });
+  expect(nextQueuedMessage(item.taskId)?.id).toBe(message.id);
+  expect(getWorkflow(item.id)?.state).toBe("completed");
+  expect(getWorkflow(item.id)?.reason).toBe("Scheduled steer queued for next turn");
 });
 
 test("heartbeat is durable, writes its completion footer outside the worktree, and skips missed ticks", async () => {
@@ -260,6 +299,7 @@ test("CLI flags preserve custom parameters and target the API", async () => {
   expect(() => workflowDuration("zero")).toThrow();
   expect(() => workflowFlags({ "quite-for": "30m" })).toThrow("Unknown workflow flag");
   expect(() => workflowFlags({ params: true })).toThrow("--params needs");
+  expect(workflowFlags({ at: "2026-09-14T16:00:00Z" })).toEqual({ scheduledAt: "2026-09-14T16:00:00Z" });
   const calls: unknown[] = [];
   const item = arm();
   await workflowCommand(parsed.positional, { ...parsed.flags, json: true }, async (...args) => { calls.push(args); return item; });

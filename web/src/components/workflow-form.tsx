@@ -19,6 +19,146 @@ const FIELD =
 
 /** Limits and permissions: real, but not the question you are here to answer. */
 const SAFETY = new Set(["maxWakeups", "lifetimeHours", "allowPush", "allowMerge", "reviewers", "excludeAuthors", "includeBots"])
+const pad = (value: number) => String(value).padStart(2, "0")
+const offsetLabel = (minutes: number) => {
+  const sign = minutes < 0 ? "-" : "+"
+  const absolute = Math.abs(minutes)
+  return `UTC${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+}
+const offsetSuffix = (minutes: number) => `${minutes < 0 ? "-" : "+"}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`
+const localInput = (instant: string, offset: number | "local") => {
+  const date = new Date(instant)
+  const minutes = offset === "local" ? -date.getTimezoneOffset() : offset
+  return new Date(date.getTime() + minutes * 60_000).toISOString().slice(0, 16)
+}
+const instantFromInput = (value: string, offset: number | "local") => {
+  const date = offset === "local" ? new Date(value) : new Date(`${value}:00${offsetSuffix(offset)}`)
+  return Number.isFinite(date.getTime()) ? date.toISOString() : ""
+}
+const initialSchedule = () => new Date(Date.now() + 15 * 60_000).toISOString()
+const scheduleFromNow = (amount: number, unit: "minutes" | "hours") =>
+  new Date(Date.now() + amount * (unit === "hours" ? 3_600_000 : 60_000)).toISOString()
+const FIXED_OFFSETS = Array.from(new Set([
+  ...Array.from({ length: 53 }, (_, index) => -720 + index * 30),
+  345, 525, 765,
+])).sort((a, b) => a - b)
+
+function ScheduleField({
+  value,
+  setValue,
+  disabled,
+  existing,
+}: {
+  value: string
+  setValue: (value: string) => void
+  disabled: boolean
+  existing: boolean
+}) {
+  const [mode, setMode] = useState<"relative" | "absolute">(existing ? "absolute" : "relative")
+  const [amount, setAmount] = useState(15)
+  const [unit, setUnit] = useState<"minutes" | "hours">("minutes")
+  const [zone, setZone] = useState<number | "local">("local")
+  const target = new Date(value)
+  const valid = Number.isFinite(target.getTime())
+  const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const localOffset = -(valid ? target : new Date()).getTimezoneOffset()
+  const updateRelative = (nextAmount: number, nextUnit = unit) => {
+    setAmount(nextAmount)
+    setValue(scheduleFromNow(nextAmount, nextUnit))
+  }
+  const updateZone = (next: number | "local") => {
+    setZone(next)
+    const wall = localInput(value, zone)
+    setValue(instantFromInput(wall, next))
+  }
+  return (
+    <fieldset disabled={disabled}>
+      <legend className="text-[12.5px] font-medium">When</legend>
+      <div className="mt-1 flex rounded-md border border-input bg-surface p-0.5">
+        {(["relative", "absolute"] as const).map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            aria-pressed={mode === choice}
+            onClick={() => {
+              setMode(choice)
+              if (choice === "relative") updateRelative(amount)
+            }}
+            className={cn(
+              "flex-1 rounded-sm px-2 py-1 text-[12px] transition-colors",
+              mode === choice ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {choice === "relative" ? "After a delay" : "Date and time"}
+          </button>
+        ))}
+      </div>
+      {mode === "relative" ? (
+        <div className="mt-2 flex gap-1.5">
+          <label className="min-w-0 flex-1 text-[11.5px] text-muted-foreground">
+            Delay
+            <input
+              className={FIELD}
+              type="number"
+              min={1}
+              max={10080}
+              step={1}
+              value={amount}
+              onChange={(event) => {
+                const next = Number(event.target.value)
+                if (Number.isSafeInteger(next) && next >= 1) updateRelative(next)
+              }}
+            />
+          </label>
+          <label className="min-w-0 flex-1 text-[11.5px] text-muted-foreground">
+            Unit
+            <select
+              className={FIELD}
+              value={unit}
+              onChange={(event) => {
+                const next = event.target.value as "minutes" | "hours"
+                setUnit(next)
+                updateRelative(amount, next)
+              }}
+            >
+              <option value="minutes">minutes</option>
+              <option value="hours">hours</option>
+            </select>
+          </label>
+        </div>
+      ) : (
+        <div className="mt-2 flex flex-col gap-2">
+          <label className="text-[11.5px] text-muted-foreground">
+            Date and time
+            <input
+              className={FIELD}
+              type="datetime-local"
+              value={localInput(value, zone)}
+              onChange={(event) => setValue(instantFromInput(event.target.value, zone))}
+            />
+          </label>
+          <label className="text-[11.5px] text-muted-foreground">
+            Time zone
+            <select
+              className={FIELD}
+              value={zone}
+              onChange={(event) => updateZone(event.target.value === "local" ? "local" : Number(event.target.value))}
+            >
+              <option value="local">Local · {localZone} ({offsetLabel(localOffset)})</option>
+              {FIXED_OFFSETS.map((offset) => <option key={offset} value={offset}>{offset === 0 ? "UTC" : offsetLabel(offset)}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+      {valid && (
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          Sends {new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(target)}
+          {" · "}{target.toISOString()}
+        </p>
+      )}
+    </fieldset>
+  )
+}
 
 function ParameterField({
   parameter: p,
@@ -95,8 +235,12 @@ export function WorkflowForm({
   onSubmit: (params: WorkflowParams) => void
   onCancel: () => void
 }) {
+  const [openedAt] = useState(Date.now)
   const [params, setParams] = useState<WorkflowParams>(() => ({
-    ...Object.fromEntries(definition.parameters.map((p) => [p.key, p.key === "prUrl" && prUrl ? prUrl : p.default])),
+    ...Object.fromEntries(definition.parameters.map((p) => [
+      p.key,
+      p.key === "prUrl" && prUrl ? prUrl : p.key === "scheduledAt" && !existing ? initialSchedule() : p.default,
+    ])),
     ...existing?.params,
   }))
   const field = (p: WorkflowParameter) => (
@@ -108,16 +252,29 @@ export function WorkflowForm({
       setValue={(value) => setParams((previous) => ({ ...previous, [p.key]: value }))}
     />
   )
+  const scheduleError = definition.id === "schedule-steer" &&
+    (!Number.isFinite(Date.parse(String(params.scheduledAt))) || Date.parse(String(params.scheduledAt)) <= openedAt)
   return (
-    <form onSubmit={(e) => { e.preventDefault(); onSubmit(params) }} className="px-1.5 pt-1">
+    <form onSubmit={(e) => { e.preventDefault(); if (!scheduleError) onSubmit(params) }} className="px-1.5 pt-1">
       <h3 className="text-[12.5px] font-medium">
         {existing ? "Configure" : "Add"} {definition.name}
       </h3>
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">{definition.description}</p>
 
-      <div className="mt-3 flex flex-col gap-3">{definition.parameters.filter((p) => !SAFETY.has(p.key)).map(field)}</div>
+      <div className="mt-3 flex flex-col gap-3">
+        {definition.parameters.filter((p) => !SAFETY.has(p.key) && p.key !== "scheduledAt").map(field)}
+        {definition.id === "schedule-steer" && (
+          <ScheduleField
+            value={String(params.scheduledAt)}
+            setValue={(value) => setParams((previous) => ({ ...previous, scheduledAt: value }))}
+            disabled={pending}
+            existing={Boolean(existing)}
+          />
+        )}
+        {scheduleError && <p role="alert" className="text-[11.5px] text-destructive">Choose a time in the future.</p>}
+      </div>
 
-      <details className="mt-3 border-t border-border pt-2">
+      {definition.parameters.some((p) => SAFETY.has(p.key)) && <details className="mt-3 border-t border-border pt-2">
         <summary className="cursor-pointer py-1 text-[12px] text-muted-foreground hover:text-foreground">
           Limits and permissions
         </summary>
@@ -125,7 +282,7 @@ export function WorkflowForm({
           Defaults: 20 wake-ups, 24 hours, no pushing or merging. Instructions guide the agent; they are not a sandbox.
         </p>
         <div className="mt-2.5 flex flex-col gap-3">{definition.parameters.filter((p) => SAFETY.has(p.key)).map(field)}</div>
-      </details>
+      </details>}
 
       {definition.custom && (
         <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
@@ -137,7 +294,7 @@ export function WorkflowForm({
         <Button size="md" disabled={pending} onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="md" tone="primary" type="submit" disabled={pending}>
+        <Button size="md" tone="primary" type="submit" disabled={pending || scheduleError}>
           {/* `Start`, not `Arm`: the row this creates already offers Pause,
               Resume and Remove, so Start is the one verb that completes the
               set — and it says what pressing it does, which `Arm` only said if

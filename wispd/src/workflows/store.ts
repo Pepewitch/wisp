@@ -41,10 +41,20 @@ export function createWorkflow(taskId: string, def: WorkflowDefinition, params: 
     if (!task || task.archived || !task.worktree_path) throw new Error("A workflow needs a live task with a usable checkout");
     if (listWorkflows(taskId).filter(w => w.state !== "completed").length >= 10) throw new Error("A task can have at most 10 unfinished workflows");
     const id = randomId("w", 12), at = now.toISOString();
-    const next = new Date(now.getTime() + (def.id === "heartbeat" ? Number(params.everyMinutes) * 60_000 : 0)).toISOString();
+    const scheduled = def.id === "schedule-steer" ? Date.parse(String(params.scheduledAt)) : null;
+    if (scheduled !== null && scheduled <= now.getTime()) throw new Error("Scheduled time must be in the future");
+    const next = scheduled === null
+      ? new Date(now.getTime() + (def.id === "heartbeat" ? Number(params.everyMinutes) * 60_000 : 0)).toISOString()
+      : new Date(scheduled).toISOString();
+    // A scheduled steer is allowed to arrive late after the host was asleep.
+    // Its chosen instant is the due date, not a narrow delivery window.
+    const expires = scheduled === null
+      ? new Date(now.getTime() + Number(params.lifetimeHours) * 3_600_000).toISOString()
+      : "9999-12-31T23:59:59.999Z";
+    const reason = scheduled === null ? "Waiting for first check" : `Scheduled for ${new Date(scheduled).toISOString()}`;
     db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'active', 'Waiting for first check', ?, ?, ?, ?, ?)`,
-    [id, taskId, def.id, def.version, JSON.stringify(params), task.context_n, next, new Date(now.getTime() + Number(params.lifetimeHours) * 3_600_000).toISOString(), at, at]);
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+    [id, taskId, def.id, def.version, JSON.stringify(params), reason, task.context_n, next, expires, at, at]);
     recordWorkflow(id, "armed", def.name, at);
     return workflow(getWorkflow(id)!);
   })();
@@ -65,12 +75,16 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
       throw new Error("Completed workflows cannot resume; arm a new instance");
     }
     const task = getTask(row.task_id);
+    const item = workflow(row);
     if (state === "active" && (!task || task.archived || Date.parse(row.expires_at) <= now.getTime() ||
-      row.wake_count >= Number(workflow(row).params.maxWakeups))) throw new Error("Cannot resume an archived task or exhausted workflow; update its limits or arm a new instance");
+      (row.type !== "schedule-steer" && row.wake_count >= Number(item.params.maxWakeups)))) throw new Error("Cannot resume an archived task or exhausted workflow; update its limits or arm a new instance");
     const at = now.toISOString();
+    const next = state === "active" && row.type === "schedule-steer"
+      ? new Date(Math.max(now.getTime(), Date.parse(String(item.params.scheduledAt)))).toISOString()
+      : at;
     cancelWorkflowMessages(id);
     db.run("UPDATE workflows SET state = ?, reason = ?, revision = revision + 1, context_n = ?, next_check_at = ?, updated_at = ?, failures = 0 WHERE id = ?",
-      [state, reason, task?.context_n ?? row.context_n, at, at, id]);
+      [state, reason, task?.context_n ?? row.context_n, next, at, id]);
     recordWorkflow(id, state, reason, at);
     return workflow(getWorkflow(id)!);
   })();
@@ -86,9 +100,14 @@ export function updateWorkflow(id: string, params: WorkflowParams, revision: num
     // Retargeting is a new automation, not an edit to already observed evidence.
     if (previous.prUrl !== params.prUrl) throw new Error("Arm a new workflow to watch a different PR");
     cancelWorkflowMessages(id);
-    const expiry = new Date(Date.parse(row.created_at) + Number(params.lifetimeHours) * 3_600_000).toISOString();
+    const scheduled = row.type === "schedule-steer" ? Date.parse(String(params.scheduledAt)) : null;
+    if (scheduled !== null && scheduled <= now.getTime()) throw new Error("Scheduled time must be in the future");
+    const expiry = scheduled === null
+      ? new Date(Date.parse(row.created_at) + Number(params.lifetimeHours) * 3_600_000).toISOString()
+      : "9999-12-31T23:59:59.999Z";
+    const next = scheduled === null ? now.toISOString() : new Date(scheduled).toISOString();
     db.run("UPDATE workflows SET params_json = ?, revision = revision + 1, next_check_at = ?, expires_at = ?, updated_at = ? WHERE id = ?",
-      [JSON.stringify(params), now.toISOString(), expiry, now.toISOString(), id]);
+      [JSON.stringify(params), next, expiry, now.toISOString(), id]);
     recordWorkflow(id, "configured", "Parameters updated; pending instructions cancelled", now.toISOString());
     return workflow(getWorkflow(id)!);
   })();
@@ -104,7 +123,7 @@ export function dueWorkflows(now: Date): WorkflowRow[] {
 export function saveEvaluation(row: WorkflowRow, result: WorkflowDecision, now: Date, failures = 0, notify = true): boolean {
   const current = getWorkflow(row.id);
   if (!current || current.state !== "active" || current.revision !== row.revision) return false;
-  const minutes = Number(workflow(row).params.everyMinutes);
+  const minutes = row.type === "schedule-steer" ? 1 : Number(workflow(row).params.everyMinutes);
   const delay = Math.min(Math.max(minutes * 60_000, failures ? 60_000 * 2 ** Math.min(failures, 8) : 0), 86_400_000);
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1,
     failures = ?, last_checked_at = ?, next_check_at = ?, updated_at = ? WHERE id = ?`,
@@ -112,6 +131,24 @@ export function saveEvaluation(row: WorkflowRow, result: WorkflowDecision, now: 
   if (result.action === "wait" && row.reason !== result.reason) recordWorkflow(row.id, failures ? "error" : "wait", result.reason, now.toISOString());
   if (notify) announceWorkflow(row.task_id);
   return true;
+}
+/** Complete a one-shot wake without cancelling the message it just reserved. */
+export function completeWorkflowWake(row: WorkflowRow, reason: string, now: Date): Workflow | null {
+  const result = db.transaction(() => {
+    const current = getWorkflow(row.id);
+    if (!current || current.state !== "active" || current.revision !== row.revision) return null;
+    const at = now.toISOString();
+    db.run("UPDATE workflows SET state = 'completed', reason = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+      [reason, at, row.id]);
+    // A fired schedule becomes an ordinary durable task message. That lets a
+    // non-live running task consume it on its next turn, and lets the user
+    // edit or cancel it after the one-shot workflow has completed.
+    if (row.type === "schedule-steer") db.run("UPDATE task_messages SET workflow_id = NULL WHERE workflow_id = ?", [row.id]);
+    recordWorkflow(row.id, "completed", reason, at);
+    return workflow(getWorkflow(row.id)!);
+  })();
+  if (result) announceWorkflow(result.taskId);
+  return result;
 }
 export function seenWake(id: string, key: string): boolean {
   const entry = db.query(`SELECT m.status, m.delivery_uncertain FROM workflow_wakes w
