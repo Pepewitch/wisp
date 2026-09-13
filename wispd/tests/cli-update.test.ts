@@ -122,6 +122,36 @@ describe("wisp update", () => {
     );
   });
 
+  test("uses Homebrew recovery instructions for an unsupervised macOS daemon", async () => {
+    await expect(
+      updateCommand(
+        [],
+        async () =>
+          status({
+            canAutoUpdate: false,
+            installMethod: "homebrew",
+            message: "automatic updates require the running daemon to be managed by Homebrew services",
+          }),
+        () => {},
+      ),
+    ).rejects.toThrow(
+      [
+        "automatic updates require the running daemon to be managed by Homebrew services",
+        "",
+        "To enable automatic updates with Homebrew services:",
+        "1. Open a separate terminal, because stopping Wisp may disconnect this one.",
+        "2. Stop the current daemon using the terminal or supervisor that started it.",
+        "3. Start the Homebrew service:",
+        "   brew services start wisp",
+        "4. Retry:",
+        "   wisp update",
+        "",
+        "If another supervisor intentionally manages Wisp, update it manually and restart it with that supervisor.",
+        "Guide: https://github.com/Pepewitch/wisp/blob/main/docs/INSTALL-MACOS.md",
+      ].join("\n"),
+    );
+  });
+
   test("does not start a second update or accept positional arguments", async () => {
     const lines: string[] = [];
     await updateCommand(

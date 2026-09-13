@@ -32,7 +32,7 @@ function blockedUpdateMessage(status: UpdateStatus): string {
     return [
       reason,
       "",
-        "To enable automatic updates with systemd (if available):",
+      "To enable automatic updates with Homebrew services:",
       "1. Open a separate terminal, because stopping Wisp may disconnect this one.",
       "2. Stop the current daemon using the terminal or supervisor that started it.",
       "3. Start the Homebrew service:",

@@ -34,6 +34,11 @@ export const VERSION_SITES: readonly VersionSite[] = [
     matchers: [{ pattern: /"version": "([^"]+)"/g, count: 1 }],
   },
   {
+    file: "bun.lock",
+    why: "the root workspace lock metadata used by frozen Bun installs",
+    matchers: [{ pattern: /"wispd": \{\n {6}"name": "wispd",\n {6}"version": "([^"]+)"/g, count: 1 }],
+  },
+  {
     file: "wispd/src/version.ts",
     why: "the constant compiled into the daemon and reported by `wisp version`",
     matchers: [{ pattern: /export const VERSION = "([^"]+)";/g, count: 1 }],
@@ -91,10 +96,15 @@ export const VERSION_SITES: readonly VersionSite[] = [
       { pattern: /pins the installer to release `([^`]+)`/g, count: 1 },
     ],
   },
+  {
+    file: "SECURITY.md",
+    why: "the current supported release named by the public security policy",
+    matchers: [{ pattern: /\| Current `([^`]+)` \|/g, count: 1 }],
+  },
 ] as const;
 
 // Pinned so that deleting a site is a failure rather than a smaller check.
-export const EXPECTED_SITE_COUNT = 11;
+export const EXPECTED_SITE_COUNT = 13;
 
 export interface SiteReading {
   file: string;

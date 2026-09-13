@@ -16,6 +16,10 @@ Wisp Desktop packages. Build and validation orchestration stays at the
 repository root. The public `scripts/install.sh` and `scripts/uninstall.sh`
 entrypoints also stay at the root so existing release URLs remain stable.
 
+Run `bun run build:ui` from the repository root before directly invoking a
+daemon test that starts `serve`. The root `bun run test` and `bun run check`
+commands already generate this ignored bundle first.
+
 See [Contributing](../CONTRIBUTING.md) for source setup and focused tests.
 
 ## Test a release candidate
