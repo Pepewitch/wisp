@@ -128,13 +128,16 @@ describe("Wisp Desktop release metadata", () => {
     expect(buildScript).toContain("WISP_PREBUILT_UI must be 0 or 1");
   });
 
-  test("generates the ignored UI before native checks compile Tauri", () => {
+  test("generates the ignored UI after cache restore and before native checks compile Tauri", () => {
     const checkScript = readFileSync(new URL("../scripts/desktop/check.sh", import.meta.url), "utf8");
     expect(checkScript.indexOf("bun run build:ui")).toBeGreaterThan(-1);
     expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
 
     const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
     expect(workflow.indexOf("name: build shared UI bundle")).toBeGreaterThan(-1);
+    expect(workflow.indexOf("name: build shared UI bundle")).toBeGreaterThan(
+      workflow.indexOf("uses: Swatinem/rust-cache"),
+    );
     expect(workflow.indexOf("name: build shared UI bundle")).toBeLessThan(workflow.indexOf("name: formatting"));
   });
 
