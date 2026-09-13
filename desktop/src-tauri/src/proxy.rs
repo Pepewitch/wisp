@@ -120,8 +120,7 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// A raw 50 MiB upload may cross a slow tunnel. Keep it bounded without
 /// treating request-body transmission as an ordinary response-header wait.
-const ATTACHMENT_UPLOAD_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(15 * 60);
+const ATTACHMENT_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 /// Ordinary JSON writes remain safely replayable after Local token rotation.
 /// Raw attachment uploads take a separate streaming path below and never enter
 /// this buffer.
