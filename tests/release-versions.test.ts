@@ -85,6 +85,18 @@ describe("release version sites", () => {
       expect(() => checkVersionSites(root)).toThrow("README.md");
     }));
 
+  test("refuses stale workspace lock metadata and security policy text", () =>
+    scratch((root) => {
+      const version = sourceVersion(root);
+      const lock = join(root, "bun.lock");
+      writeFileSync(lock, readFileSync(lock, "utf8").replace(`"version": "${version}"`, '"version": "0.0.1"'));
+      expect(() => checkVersionSites(root)).toThrow("bun.lock");
+
+      const security = join(root, "SECURITY.md");
+      writeFileSync(security, readFileSync(security, "utf8").replace(`| Current \`${version}\` |`, "| Current `0.0.1` |"));
+      expect(() => checkVersionSites(root)).toThrow("SECURITY.md");
+    }));
+
   test("fails closed when a site changes shape instead of checking nothing", () =>
     scratch((root) => {
       const path = join(root, "wispd/scripts/evaluator/run.sh");

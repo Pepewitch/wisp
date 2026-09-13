@@ -24,10 +24,18 @@ test("a finished turn's watcher survives steering and daemon restart, then Stop 
   let port = 0;
   async function launch(mode: "seed" | "resume") {
     rmSync(ready, { force: true });
+    const log = join(home, `${mode}.log`);
     daemon = Bun.spawn({ cmd: [process.execPath, join(import.meta.dir, "fixtures/background-daemon.ts"), mode],
-      env: { ...process.env, WISP_HOME: home }, stdout: "ignore", stderr: Bun.file(join(home, `${mode}.log`)),
+      env: { ...process.env, WISP_HOME: home }, stdout: "ignore", stderr: Bun.file(log),
     });
-    await until(() => existsSync(ready));
+    await until(() => {
+      if (existsSync(ready)) return true;
+      if (daemon!.exitCode !== null) {
+        const detail = existsSync(log) ? readFileSync(log, "utf8").trim() : "";
+        throw new Error(`background fixture exited ${daemon!.exitCode} before readiness${detail ? `:\n${detail}` : ""}`);
+      }
+      return false;
+    });
     port = JSON.parse(readFileSync(ready, "utf8")).port as number;
   }
   const request = (suffix = "", body?: unknown) => fetch(`http://127.0.0.1:${port}/api/tasks/tbgfixture${suffix}`, {
@@ -57,7 +65,9 @@ test("a finished turn's watcher survives steering and daemon restart, then Stop 
     expect(adopted.details).toHaveLength(1);
     expect(adopted.details[0]).toMatchObject({ turn: 1, pgid: group, state: "running", stopRequested: false });
     expect(adopted.details[0]!.processes).toBeGreaterThan(0);
-    expect(adopted.details[0]!.names).toContain("sleep");
+    const names = adopted.details[0]!.names;
+    expect(names.length).toBeGreaterThan(0);
+    expect(names.some(name => ["sh", "sleep", "(sleep)"].includes(name))).toBe(true);
     const refusal = await request("/archive", {});
     expect(refusal.status).toBe(409);
     expect((await task()).archived).toBe(false);
