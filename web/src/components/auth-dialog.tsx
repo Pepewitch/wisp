@@ -12,9 +12,12 @@ import { cn } from "@/lib/utils"
  */
 export function AuthDialog() {
   const auth = useSyncExternalStore(authStore.subscribe, authStore.snapshot)
+  return auth.open ? <OpenAuthDialog /> : null
+}
+
+function OpenAuthDialog() {
   const [value, setValue] = useState("")
   const mint = useVerifyToken()
-  if (!auth.open) return null
 
   const submit = () => {
     const token = value.trim()
@@ -37,6 +40,9 @@ export function AuthDialog() {
         </p>
         <input
           autoFocus
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
