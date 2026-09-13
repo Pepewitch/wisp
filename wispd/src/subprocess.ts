@@ -17,6 +17,7 @@
  */
 import { CommandGroup } from "./command-group";
 import { CappedOutput } from "./capped-output";
+import type { SpawnResult } from "./doctor";
 
 /** A read probe should answer or get out of the way; a push may legitimately take longer. */
 export const READ_TIMEOUT_MS = 20_000;
@@ -184,6 +185,30 @@ export async function runBounded(options: RunOptions): Promise<RunResult> {
     stdout.close();
     stderr.close();
   }
+}
+
+/**
+ * Strict adapter for callers that need complete command output.
+ *
+ * Unlike diff callers, probes and update identity checks cannot use a prefix
+ * as if it were a complete protocol response. Convert every incomplete run
+ * into an error and expose only the ordinary spawn-result shape they consume.
+ */
+export async function runBoundedCommand(
+  options: RunOptions,
+  label = "command",
+): Promise<SpawnResult> {
+  const result = await runBounded(options);
+  if (result.cleanupError) throw new Error(result.cleanupError);
+  if (result.timedOut) throw new Error(`${label} timed out`);
+  if (result.cancelled) throw new Error(`${label} was cancelled`);
+  if (result.truncated) throw new Error(`${label} exceeded its output budget`);
+  if (result.exitCode === null) throw new Error(`${label} exited without a status`);
+  return {
+    exitCode: result.exitCode,
+    stdout: result.out.trim(),
+    stderr: result.err.trim(),
+  };
 }
 
 /**

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, DROID_MODEL_PROBE_SENTINEL, type AdapterDef } from "../src/adapters";
-import { ModelProbeCache, type ModelProbeCacheOptions } from "../src/model-probes";
+import {
+  bunModelProbeSpawn,
+  MODEL_PROBE_MAX_BYTES,
+  ModelProbeCache,
+  type ModelProbeCacheOptions,
+} from "../src/model-probes";
 import type { SpawnFn } from "../src/doctor";
 
 const help = "  -m, --model <id>  Model ID to use (default: gpt-5.6-sol)\n";
@@ -16,6 +21,13 @@ function droidSpawn(seen: string[][] = []): SpawnFn {
 }
 
 describe("daemon model probe cache", () => {
+  test("production model probes stop on output floods", async () => {
+    const error = await bunModelProbeSpawn(
+      ["bash", "-c", `head -c ${MODEL_PROBE_MAX_BYTES + 1} /dev/zero | tr '\\0' x`],
+    ).catch((value) => value instanceof Error ? value.message : String(value));
+    expect(error).toContain("output budget");
+  });
+
   test("populates from the named adapter strategy without making the first response wait", async () => {
     const cache = new ModelProbeCache({ droid: BUILTIN_ADAPTERS.droid }, { spawn: droidSpawn() });
     expect(cache.snapshot("droid").models).toBeNull();

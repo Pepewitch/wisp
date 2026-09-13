@@ -14,6 +14,8 @@ export const MAX_PROTOCOL_FRAME_CHARS = 16 * 1_048_576;
 export interface JsonLineBufferOptions {
   /** Called once per dropped frame, with the character count that was discarded. */
   onDrop?: (chars: number) => void;
+  /** Called as soon as a partial frame crosses the cap, before its newline. */
+  onOverflow?: (chars: number) => void;
   maxFrameChars?: number;
 }
 
@@ -25,10 +27,12 @@ export class JsonLineBuffer {
   private skipped = 0;
   private readonly max: number;
   private readonly onDrop: (chars: number) => void;
+  private readonly onOverflow: (chars: number) => void;
 
   constructor(options: JsonLineBufferOptions = {}) {
     this.max = options.maxFrameChars ?? MAX_PROTOCOL_FRAME_CHARS;
     this.onDrop = options.onDrop ?? (() => {});
+    this.onOverflow = options.onOverflow ?? (() => {});
   }
 
   push(chunk: string): string[] {
@@ -76,6 +80,7 @@ export class JsonLineBuffer {
     this.skipping = true;
     this.skipped = this.pending.length;
     this.pending = "";
+    this.onOverflow(this.skipped);
   }
 
   private endSkip(): void {

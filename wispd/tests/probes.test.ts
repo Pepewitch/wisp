@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   BUILTIN_ADAPTERS,
   PROBE_STRATEGIES,
@@ -11,9 +14,17 @@ import {
   type RpcFactory,
   type RpcSession,
 } from "../src/adapters";
-import { TaskProbeCache } from "../src/probes";
+import {
+  bunProbeSpawn,
+  bunRpcFactory,
+  PROBE_MAX_BYTES,
+  PROBE_RPC_MAX_FRAME_CHARS,
+  PROBE_RPC_MAX_OUTPUT_BYTES,
+  TaskProbeCache,
+} from "../src/probes";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, type Task } from "../src/store";
 import type { SpawnResult } from "../src/doctor";
+import { DEFAULT_MAX_ERROR_BYTES } from "../src/subprocess";
 
 const claude = BUILTIN_ADAPTERS.claude!;
 const droid = BUILTIN_ADAPTERS.droid!;
@@ -319,6 +330,98 @@ describe("TaskProbeCache", () => {
     await cache.probe(probeTask(), claude, "context");
     expect(aborted).toBe(true);
   });
+});
+
+describe("production probe process bounds", () => {
+  test("one-shot probes stop on output floods", async () => {
+    const error = await bunProbeSpawn(
+      ["bash", "-c", `head -c ${PROBE_MAX_BYTES + 1} /dev/zero | tr '\\0' x`],
+      {},
+    ).catch(message);
+    expect(error).toContain("output budget");
+  });
+
+  test("one-shot probes cap finite stderr floods", async () => {
+    const result = await bunProbeSpawn(
+      ["bash", "-c", `head -c ${DEFAULT_MAX_ERROR_BYTES * 2} /dev/zero | tr '\\0' e >&2; exit 1`],
+      {},
+    );
+    expect(result.exitCode).toBe(1);
+    expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(DEFAULT_MAX_ERROR_BYTES);
+  });
+
+  test("RPC probes stop on a newline-free oversized frame", async () => {
+    const rpc = bunRpcFactory(
+      ["bash", "-c", `head -c ${PROBE_RPC_MAX_FRAME_CHARS + 1} /dev/zero | tr '\\0' x; sleep 60`],
+      { envelope: "plain" },
+    );
+    const error = await rpc.call("probe", {}).catch(message);
+    expect(error).toContain("frame limit");
+    rpc.close();
+  });
+
+  test("RPC cancellation preserves a caller's timeout error", async () => {
+    const controller = new AbortController();
+    const rpc = bunRpcFactory(["bash", "-c", "sleep 60"], { envelope: "plain", signal: controller.signal });
+    const pending = rpc.call("probe", {}).catch((error) => error as ProbeError);
+    controller.abort(new ProbeError("probe timed out", 504));
+    const error = await pending;
+    expect(error.message).toBe("probe timed out");
+    expect(error.status).toBe(504);
+  });
+
+  test("RPC EOF closes the session instead of leaving later calls pending", async () => {
+    const rpc = bunRpcFactory(["bash", "-c", "exit 0"], { envelope: "plain" });
+    await Bun.sleep(50);
+    const error = await rpc.call("too-late", {}).catch(message);
+    expect(error).toContain("closed the probe channel");
+    rpc.close();
+  });
+
+  test("RPC probes cap total protocol output and stderr", async () => {
+    const rpc = bunRpcFactory(
+      ["bash", "-c", [
+        "head -c 1048576 /dev/zero | tr '\\0' e >&2",
+        "i=0",
+        `while [ $i -lt ${Math.ceil(PROBE_RPC_MAX_OUTPUT_BYTES / 65_536) + 1} ]; do`,
+        "  head -c 65535 /dev/zero | tr '\\0' x; echo",
+        "  i=$((i + 1))",
+        "done",
+        "sleep 60",
+      ].join("\n")],
+      { envelope: "plain" },
+    );
+    const error = await rpc.call("probe", {}).catch(message);
+    expect(error).toContain("output budget");
+    expect(error.length).toBeLessThan(500);
+    rpc.close();
+  });
+
+  test("closing an RPC probe kills descendants that retain its pipes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-probe-group-"));
+    const pidFile = join(dir, "child.pid");
+    const rpc = bunRpcFactory(
+      ["bash", "-c", `sleep 60 & echo $! > ${JSON.stringify(pidFile)}; wait`],
+      { envelope: "plain" },
+    );
+    try {
+      const readyBy = Date.now() + 5_000;
+      while (!existsSync(pidFile) && Date.now() < readyBy) await Bun.sleep(10);
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      expect(Number.isInteger(pid) && pid > 1).toBe(true);
+      rpc.close();
+      const stoppedBy = Date.now() + 5_000;
+      const alive = (): boolean => {
+        try { process.kill(pid, 0); return true; }
+        catch { return false; }
+      };
+      while (alive() && Date.now() < stoppedBy) await Bun.sleep(20);
+      expect(alive()).toBe(false);
+    } finally {
+      rpc.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });
 
 describe("probe validation (A3)", () => {

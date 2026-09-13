@@ -1,33 +1,21 @@
 import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
 import type { SpawnResult } from "./doctor";
 import { assertExecutableAllowed } from "./launch-policy";
+import { DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
 
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
+export const MODEL_PROBE_MAX_BYTES = 2 * 1024 * 1024;
 
 /** Production async process runner; unlike bunSpawn it never blocks the event loop. */
 export const bunModelProbeSpawn: ModelProbeSpawnFn = async (cmd, signal): Promise<SpawnResult> => {
   assertExecutableAllowed(cmd, "model discovery probe");
-  const child = Bun.spawn({ cmd, stdout: "pipe", stderr: "pipe" });
-  let aborted = false;
-  const kill = (): void => {
-    if (aborted) return;
-    aborted = true;
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // The process may have exited between the abort and kill calls.
-    }
-  };
-  if (signal?.aborted) kill();
-  else signal?.addEventListener("abort", kill, { once: true });
-  try {
-    const stdout = new Response(child.stdout).text();
-    const stderr = new Response(child.stderr).text();
-    const [exitCode, out, err] = await Promise.all([child.exited, stdout, stderr]);
-    return { exitCode, stdout: out.trim(), stderr: err.trim() };
-  } finally {
-    signal?.removeEventListener("abort", kill);
-  }
+  return runBoundedCommand({
+    cmd,
+    signal,
+    timeoutMs: MODEL_PROBE_TIMEOUT_MS,
+    maxBytes: MODEL_PROBE_MAX_BYTES,
+    maxErrorBytes: DEFAULT_MAX_ERROR_BYTES,
+  }, "model discovery probe");
 };
 
 export interface CachedModels {
@@ -98,8 +86,9 @@ export class ModelProbeCache {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        controller.abort();
-        reject(new Error(`model probe timed out after ${this.timeoutMs / 1000}s`));
+        const error = new Error(`model probe timed out after ${this.timeoutMs / 1000}s`);
+        reject(error);
+        controller.abort(error);
       }, this.timeoutMs);
     });
     try {

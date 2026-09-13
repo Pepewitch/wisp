@@ -2,9 +2,9 @@
  * The daemon's out-of-turn read machinery (v0.3 A3): production process IO
  * for the named strategies in adapters/probe.ts, plus the cache that keeps a
  * click from spinning up a harness session per press. Mirrors
- * model-probes.ts's posture: timeout-bounded, cached, and honest on failure —
- * a probe that cannot run answers with a named error, never a fabricated
- * report.
+ * model-probes.ts's posture: timeout/output-bounded, cached, and honest on
+ * failure — a probe that cannot run answers with a named error, never a
+ * fabricated report.
  *
  * What is deliberately NOT here: a turn. A probe writes no turn row, fires no
  * transition, and emits no outbox event (the plan's A3: routing a read
@@ -23,10 +23,17 @@ import {
 } from "./adapters";
 import type { SpawnResult } from "./doctor";
 import { assertExecutableAllowed } from "./launch-policy";
+import { CappedOutput } from "./capped-output";
+import { CommandGroup } from "./command-group";
+import { JsonLineBuffer } from "./adapters/live/json-lines";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
 import type { Task } from "./types";
 
 export const PROBE_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
 export const PROBE_CACHE_TTL_MS = 120_000;
+export const PROBE_MAX_BYTES = 2 * 1024 * 1024;
+export const PROBE_RPC_MAX_FRAME_CHARS = 2 * 1024 * 1024;
+export const PROBE_RPC_MAX_OUTPUT_BYTES = DEFAULT_MAX_BYTES;
 
 /**
  * droid's envelope constant, read out of the 0.213.0 binary. A zero-token
@@ -38,31 +45,17 @@ export const PROBE_CACHE_TTL_MS = 120_000;
  */
 export const FACTORY_PROTOCOL_VERSION = "1.204.0";
 
-/** Production one-shot process runner: spawn with a cwd, collect everything. */
+/** Production one-shot process runner: spawn with a cwd and bounded output. */
 export const bunProbeSpawn: ProbeSpawnFn = async (cmd, opts): Promise<SpawnResult> => {
   assertExecutableAllowed(cmd, "harness probe", opts.cwd);
-  const child = Bun.spawn({ cmd, cwd: opts.cwd, stdout: "pipe", stderr: "pipe" });
-  let aborted = false;
-  const kill = (): void => {
-    if (aborted) return;
-    aborted = true;
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // exited between the abort and the kill
-    }
-  };
-  const signal = opts.signal;
-  if (signal?.aborted) kill();
-  else signal?.addEventListener("abort", kill, { once: true });
-  try {
-    const stdout = new Response(child.stdout).text();
-    const stderr = new Response(child.stderr).text();
-    const [exitCode, out, err] = await Promise.all([child.exited, stdout, stderr]);
-    return { exitCode, stdout: out.trim(), stderr: err.trim() };
-  } finally {
-    signal?.removeEventListener("abort", kill);
-  }
+  return runBoundedCommand({
+    cmd,
+    cwd: opts.cwd,
+    signal: opts.signal,
+    timeoutMs: PROBE_TIMEOUT_MS,
+    maxBytes: PROBE_MAX_BYTES,
+    maxErrorBytes: DEFAULT_MAX_ERROR_BYTES,
+  }, "harness probe");
 };
 
 /**
@@ -86,7 +79,12 @@ function safeMatch(match: (p: unknown) => boolean, params: unknown): boolean {
 
 export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
   assertExecutableAllowed(cmd, "harness rpc session", opts.cwd);
-  const child = Bun.spawn({ cmd, cwd: opts.cwd, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn({ cmd, cwd: opts.cwd, stdin: "pipe", stdout: "pipe", stderr: "pipe", detached: true });
+  // Bun does not finalize pipe EOF until the exit promise is observed.
+  void child.exited.catch(() => {});
+  const group = new CommandGroup(child);
+  const stdout = child.stdout.getReader();
+  const stderr = new CappedOutput(child.stderr, DEFAULT_MAX_ERROR_BYTES);
   const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   const waiters: {
     method: string;
@@ -96,46 +94,64 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
   }[] = [];
   let nextId = 0;
   let closed = false;
-  let stderrTail = "";
+  let closedError = new ProbeError("the probe channel is closed");
 
-  const failAll = (reason: string): void => {
-    for (const [, p] of pending) p.reject(new ProbeError(reason));
+  const failAll = (reason: string | ProbeError): void => {
+    const error = reason instanceof ProbeError ? reason : new ProbeError(reason);
+    for (const [, p] of pending) p.reject(error);
     pending.clear();
-    for (const w of waiters) w.reject(new ProbeError(reason));
+    for (const w of waiters) w.reject(error);
     waiters.length = 0;
   };
 
-  const close = (): void => {
+  const close = (reason: string | ProbeError = "the probe channel is closed"): void => {
     if (closed) return;
     closed = true;
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // already gone
-    }
+    closedError = reason instanceof ProbeError ? reason : new ProbeError(reason);
+    failAll(closedError);
+    try { child.stdin.end(); } catch { /* already gone */ }
+    void stdout.cancel().catch(() => {});
+    stderr.close();
+    void (async () => {
+      try {
+        if (child.exitCode !== null || child.signalCode !== null) await group.captureExit();
+        if (!await group.inspect("SIGKILL")) {
+          for (let attempt = 0; attempt < 20 && !await group.inspect(); attempt++) await Bun.sleep(50);
+        }
+      } catch {
+        try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      } finally {
+        group.close();
+      }
+    })();
   };
 
   const signal = opts.signal;
-  if (signal?.aborted) close();
-  else signal?.addEventListener("abort", close, { once: true });
-
-  // stderr is not protocol — but when the child dies before answering, its
-  // first line is usually the honest reason (flag moved, version rejected)
-  void (async () => {
-    const text = await new Response(child.stderr).text();
-    stderrTail = text.trim().split("\n")[0] ?? "";
-  })();
+  const abort = (): void => close(signal?.reason instanceof ProbeError ? signal.reason : "the probe channel is closed");
+  if (signal?.aborted) abort();
+  else signal?.addEventListener("abort", abort, { once: true });
 
   void (async () => {
     const decoder = new TextDecoder();
-    let buf = "";
+    const frameLimit = `the harness exceeded the probe channel's ${PROBE_RPC_MAX_FRAME_CHARS}-character frame limit`;
+    const lines = new JsonLineBuffer({
+      maxFrameChars: PROBE_RPC_MAX_FRAME_CHARS,
+      onOverflow: () => { throw new ProbeError(frameLimit); },
+      onDrop: () => { throw new ProbeError(frameLimit); },
+    });
+    let bytes = 0;
+    let failure: string | null = null;
     try {
-      for await (const chunk of child.stdout) {
-        buf += decoder.decode(chunk, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf("\n")) >= 0) {
-          const line = buf.slice(0, idx).trim();
-          buf = buf.slice(idx + 1);
+      for (;;) {
+        const { value: chunk, done } = await stdout.read();
+        if (done) break;
+        bytes += chunk.byteLength;
+        if (bytes > PROBE_RPC_MAX_OUTPUT_BYTES) {
+          failure = `the harness exceeded the probe channel's ${PROBE_RPC_MAX_OUTPUT_BYTES}-byte output budget`;
+          break;
+        }
+        for (const raw of lines.push(decoder.decode(chunk, { stream: true }))) {
+          const line = raw.trim();
           if (!line) continue;
           let msg: { id?: unknown; result?: unknown; error?: unknown };
           try {
@@ -171,15 +187,24 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
           }
         }
       }
+    } catch (error) {
+      if (!closed) {
+        failure = error instanceof ProbeError
+          ? error.message
+          : `the harness probe channel failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
     } finally {
       // the stream ended — normal close or a crash: nobody gets an answer late
-      failAll(`the harness closed the probe channel${stderrTail ? `: ${stderrTail}` : ""}`);
+      const stderrLine = stderr.text.trim().split("\n")[0] ?? "";
+      const reason = failure ?? `the harness closed the probe channel${stderrLine ? `: ${stderrLine}` : ""}`;
+      if (!closed) close(reason);
+      stdout.releaseLock();
     }
   })();
 
   return {
     call(method, params) {
-      if (closed) return Promise.reject(new ProbeError("the probe channel is closed"));
+      if (closed) return Promise.reject(closedError);
       const id = ++nextId;
       const frame =
         opts.envelope === "factory"
@@ -205,7 +230,7 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
       });
     },
     onNotification(method, match) {
-      if (closed) return Promise.reject(new ProbeError("the probe channel is closed"));
+      if (closed) return Promise.reject(closedError);
       return new Promise((resolve, reject) => {
         waiters.push({ method, match, resolve, reject });
       });
@@ -264,8 +289,9 @@ export class TaskProbeCache {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        controller.abort();
-        reject(new ProbeError(`the ${task.harness} probe timed out after ${this.timeoutMs / 1000}s`, 504));
+        const error = new ProbeError(`the ${task.harness} probe timed out after ${this.timeoutMs / 1000}s`, 504);
+        reject(error);
+        controller.abort(error);
       }, this.timeoutMs);
     });
 

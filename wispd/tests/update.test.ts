@@ -17,6 +17,8 @@ import {
   compareVersions,
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
+  runUpdateCommand,
+  UPDATE_COMMAND_MAX_BYTES,
   UpdateManager,
 } from "../src/update";
 import { updateRoute } from "../src/routes/update";
@@ -141,6 +143,13 @@ describe("supervisor detection", () => {
 });
 
 describe("UpdateManager", () => {
+  test("production update commands stop on output floods", async () => {
+    const error = await runUpdateCommand(
+      ["bash", "-c", `head -c ${UPDATE_COMMAND_MAX_BYTES + 1} /dev/zero | tr '\\0' x`],
+    ).catch((value) => value instanceof Error ? value.message : String(value));
+    expect(error).toContain("output budget");
+  });
+
   test("coalesces concurrent release refreshes", async () => {
     let requests = 0;
     let complete!: (response: Response) => void;
