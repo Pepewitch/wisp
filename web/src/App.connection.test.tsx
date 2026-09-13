@@ -165,6 +165,10 @@ vi.mock("@/hooks/queries", () => ({
   useTaskSearch: () => ({ data: undefined, isPending: false, error: null }),
   useUpdateStatus: () => ({ data: UPDATE }),
   useTaskSkills: () => ({ data: undefined }),
+  useWispSettings: () => ({
+    data: { autoRenameTasksFromPullRequests: true },
+    error: null,
+  }),
 }))
 
 vi.mock("@/hooks/mutations", () => ({
@@ -176,6 +180,11 @@ vi.mock("@/hooks/mutations", () => ({
   useAddProject: () => ({
     mutateAsync: vi.fn(),
     reset: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
+  useUpdateWispSettings: () => ({
+    mutate: vi.fn(),
     isPending: false,
     error: null,
   }),

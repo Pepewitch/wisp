@@ -1,7 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, it } from "vitest"
+import { QueryClient } from "@tanstack/react-query"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
+import type { DaemonTransport } from "@/lib/transport"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { SettingsDialog } from "./settings-dialog"
 
@@ -10,13 +13,30 @@ afterEach(() => {
   localStorage.clear()
 })
 
+function renderSettings(request = vi.fn().mockResolvedValue({
+  autoRenameTasksFromPullRequests: true,
+})) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const transport = fakeDaemonTransport("local", {
+    request: request as DaemonTransport["request"],
+  })
+  return {
+    request,
+    ...render(<SettingsDialog open onOpenChange={() => {}} />, {
+      wrapper: runtimeWrapper(transport, client),
+    }),
+  }
+}
+
 function openThemeMenu() {
   fireEvent.click(screen.getByRole("button", { name: "Theme" }))
 }
 
 describe("Wisp settings", () => {
   it("picks light from the appearance section, applies it and remembers it", async () => {
-    render(<SettingsDialog open onOpenChange={() => {}} />)
+    renderSettings()
 
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument()
     // the trigger reads as the field, and shows the value it holds
@@ -33,7 +53,7 @@ describe("Wisp settings", () => {
 
   it("reports which theme System landed on", async () => {
     themeStore.set("system")
-    render(<SettingsDialog open onOpenChange={() => {}} />)
+    renderSettings()
     openThemeMenu()
 
     const system = await screen.findByRole("menuitemradio", { name: /System/ })
@@ -45,9 +65,45 @@ describe("Wisp settings", () => {
 
   it("closes on Done, because a preference is already applied", () => {
     let open = true
-    render(<SettingsDialog open onOpenChange={(next) => { open = next }} />)
+    const request = vi.fn().mockResolvedValue({
+      autoRenameTasksFromPullRequests: true,
+    })
+    const client = new QueryClient()
+    const transport = fakeDaemonTransport("local", {
+      request: request as DaemonTransport["request"],
+    })
+    render(<SettingsDialog open onOpenChange={(next) => { open = next }} />, {
+      wrapper: runtimeWrapper(transport, client),
+    })
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }))
     expect(open).toBe(false)
+  })
+
+  it("enables PR-title renaming by default and saves an opt-out", async () => {
+    const request = vi.fn().mockImplementation(
+      (_path: string, options?: { body?: unknown }) =>
+        Promise.resolve(
+          options?.body ?? { autoRenameTasksFromPullRequests: true },
+        ),
+    )
+    renderSettings(request)
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Use pull request titles",
+    })
+    await waitFor(() => expect(toggle).toBeEnabled())
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    fireEvent.click(toggle)
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("/api/settings", {
+        method: "PATCH",
+        body: { autoRenameTasksFromPullRequests: false },
+      }),
+    )
+    expect(await screen.findByRole("switch", {
+      name: "Use pull request titles",
+    })).toHaveAttribute("aria-checked", "false")
   })
 })

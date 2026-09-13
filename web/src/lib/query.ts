@@ -50,6 +50,7 @@ export interface ConnectionQueryKeys {
   attach(id: string, session: string): readonly [string, "attach", string, string]
   search(query: string): readonly [string, "search", string]
   readonly repos: readonly [string, "repos"]
+  readonly settings: readonly [string, "settings"]
   readonly suffixPrompts: readonly [string, "suffix-prompts"]
   readonly harnesses: readonly [string, "harnesses"]
   readonly update: readonly [string, "update"]
@@ -82,6 +83,7 @@ export function createConnectionQueryKeys(
       Object.freeze([connectionId, "attach", id, session] as const),
     search: (query: string) => Object.freeze([connectionId, "search", query] as const),
     repos: Object.freeze([connectionId, "repos"] as const),
+    settings: Object.freeze([connectionId, "settings"] as const),
     suffixPrompts: Object.freeze([connectionId, "suffix-prompts"] as const),
     harnesses: Object.freeze([connectionId, "harnesses"] as const),
     update: Object.freeze([connectionId, "update"] as const),

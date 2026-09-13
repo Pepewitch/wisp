@@ -26,6 +26,7 @@ import {
   githubRepository,
   unavailableBranches,
 } from "./pull-request-github";
+import { reportPullRequest, reportPullRequestOverview, type PullRequestFound } from "./pull-request-notify";
 import { bunProbeSpawn } from "./probes";
 import type { Task } from "./types";
 
@@ -95,6 +96,10 @@ export interface PullRequestCacheOptions {
   overviewBackoffBaseMs?: number;
   overviewBackoffMaxMs?: number;
   now?: () => Date;
+  /**
+   * Called with the already-selected PR whenever a public read reports one.
+   */
+  onPullRequestFound?: PullRequestFound;
 }
 
 interface CachedPullRequest {
@@ -155,6 +160,7 @@ export class PullRequestCache {
   private readonly overviewBackoffBaseMs: number;
   private readonly overviewBackoffMaxMs: number;
   private readonly now: () => Date;
+  private readonly onPullRequestFound: PullRequestFound | undefined;
 
   constructor(options: PullRequestCacheOptions = {}) {
     this.run = options.run ?? bunProbeSpawn;
@@ -168,16 +174,24 @@ export class PullRequestCache {
     this.overviewBackoffBaseMs = options.overviewBackoffBaseMs ?? PULL_REQUEST_OVERVIEW_BACKOFF_BASE_MS;
     this.overviewBackoffMaxMs = options.overviewBackoffMaxMs ?? PULL_REQUEST_OVERVIEW_BACKOFF_MAX_MS;
     this.now = options.now ?? (() => new Date());
+    this.onPullRequestFound = options.onPullRequestFound;
   }
 
   status(task: Task): Promise<PullRequestStatus> {
+    return this.lookupStatus(task).then((status) => {
+      reportPullRequest(this.onPullRequestFound, task, status);
+      return status;
+    });
+  }
+
+  private lookupStatus(task: Task): Promise<PullRequestStatus> {
     if (task.mode === "local" || !task.branch) {
       return Promise.resolve({ kind: "unsupported", provider: null });
     }
     if (this.overviewInFlight) {
       return this.overviewInFlight.then(() => {
         const overview = this.overviewEntries.get(task.id);
-        return overview ? overview.status : this.status(task);
+        return overview ? overview.status : this.lookupStatus(task);
       });
     }
     const hit = this.entries.get(task.id);
@@ -261,9 +275,11 @@ export class PullRequestCache {
     const now = this.now().getTime();
     if (this.overviewInFlight) {
       await this.overviewInFlight;
-      return this.overviewSnapshot(live);
+      return reportPullRequestOverview(this.onPullRequestFound, live, this.overviewSnapshot(live));
     }
-    if (now < this.overviewNextRefreshAt) return this.overviewSnapshot(live);
+    if (now < this.overviewNextRefreshAt) {
+      return reportPullRequestOverview(this.onPullRequestFound, live, this.overviewSnapshot(live));
+    }
 
     const controller = new AbortController();
     const lookup = this.refreshOverview(live, controller.signal).catch(
@@ -310,7 +326,7 @@ export class PullRequestCache {
         this.overviewInFlight = null;
       });
     await this.overviewInFlight;
-    return this.overviewSnapshot(live);
+    return reportPullRequestOverview(this.onPullRequestFound, live, this.overviewSnapshot(live));
   }
 
   private async refreshOverview(tasks: Task[], signal: AbortSignal): Promise<OverviewRefresh> {

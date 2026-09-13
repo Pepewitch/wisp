@@ -108,6 +108,12 @@ export interface WispConfig {
   turnLogMaxBytes?: number;
   /** Archived turn logs expire after 90 days by default. Live logs are never eligible. */
   turnLogRetentionDays?: number;
+  /**
+   * Keep a task's display title aligned with the pull request selected for it.
+   * Optional on the type for callers holding legacy/partial config objects;
+   * absent is enabled, matching the persisted default.
+   */
+  autoRenameTasksFromPullRequests?: boolean;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
   /** repo path or repo basename -> untracked files to copy into new worktrees (e.g. [".env"]) */
@@ -202,6 +208,7 @@ const DEFAULTS: WispConfig = {
   turnLogRetentionEnabled: true,
   turnLogMaxBytes: 1024 * 1024 * 1024,
   turnLogRetentionDays: 90,
+  autoRenameTasksFromPullRequests: true,
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
@@ -225,6 +232,7 @@ const CONFIG_KEYS = [
   "turnLogRetentionEnabled",
   "turnLogMaxBytes",
   "turnLogRetentionDays",
+  "autoRenameTasksFromPullRequests",
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
@@ -256,6 +264,19 @@ function assertTerminalShell(path: string): void {
   } catch {
     throw new Error(`config.json: terminalShell is not an executable file: ${JSON.stringify(path)}`);
   }
+}
+
+function optionalBooleanConfig(
+  raw: Record<string, unknown>,
+  out: Partial<WispConfig>,
+  key: "diagnosticEnabled" | "turnLogRetentionEnabled" | "autoRenameTasksFromPullRequests",
+): void {
+  const value = raw[key];
+  if (value === undefined) return;
+  if (typeof value !== "boolean") {
+    throw new Error(`config.json: ${key} must be a boolean, got ${typeName(value)}`);
+  }
+  out[key] = value;
 }
 
 /** A short-lived bind is the only reliable cross-platform answer to “is this loopback port free?”. */
@@ -364,18 +385,11 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
       "config.json: turnTranscriptBytes and its legacy alias logMaxBytes must match when both are set",
     );
   }
-  if (raw.diagnosticEnabled !== undefined) {
-    if (typeof raw.diagnosticEnabled !== "boolean") {
-      throw new Error(`config.json: diagnosticEnabled must be a boolean, got ${typeName(raw.diagnosticEnabled)}`);
-    }
-    out.diagnosticEnabled = raw.diagnosticEnabled;
-  }
+  optionalBooleanConfig(raw, out, "diagnosticEnabled");
   num("diagnosticMaxBytes");
   num("diagnosticRetentionDays");
-  if (raw.turnLogRetentionEnabled !== undefined) {
-    if (typeof raw.turnLogRetentionEnabled !== "boolean") throw new Error("config.json: turnLogRetentionEnabled must be a boolean");
-    out.turnLogRetentionEnabled = raw.turnLogRetentionEnabled;
-  }
+  optionalBooleanConfig(raw, out, "turnLogRetentionEnabled");
+  optionalBooleanConfig(raw, out, "autoRenameTasksFromPullRequests");
   num("turnLogMaxBytes");
   num("turnLogRetentionDays");
   for (const key of ["diagnosticMaxBytes", "diagnosticRetentionDays", "turnLogMaxBytes", "turnLogRetentionDays"] as const) {
@@ -570,6 +584,54 @@ function persistConfig(value: Record<string, unknown>): void {
   } finally {
     rmSync(temporary, { force: true });
   }
+}
+
+// a type alias, not an interface, so the settings object is assignable to
+// patchConfig's Record<string, unknown> without a cast
+export type WispSettings = {
+  autoRenameTasksFromPullRequests: boolean;
+};
+
+/** The public daemon-wide preferences, with legacy configs inheriting defaults. */
+export function wispSettings(
+  cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests">,
+): WispSettings {
+  return {
+    autoRenameTasksFromPullRequests:
+      cfg.autoRenameTasksFromPullRequests !== false,
+  };
+}
+
+/**
+ * Read-modify-write specific top-level config.json keys, preserving unknown
+ * ones a newer or older Wisp owns. The write is atomic (temp + rename) and
+ * the caller holds the home lock, so it cannot race another config writer.
+ */
+export function patchConfig(keys: Record<string, unknown>): void {
+  let raw: Record<string, unknown> = {};
+  if (existsSync(CONFIG_PATH)) {
+    const parsed = readUserJson(CONFIG_PATH);
+    if (!isRecord(parsed)) {
+      throw new Error(`config.json: top level must be an object, got ${typeName(parsed)}`);
+    }
+    raw = parsed;
+  }
+  persistConfig({ ...raw, ...keys });
+}
+
+/**
+ * Persist only settings owned by the global settings API. Updating the
+ * in-memory config is load bearing, not bookkeeping: the daemon serves
+ * reads (and the title sync) from `cfg` until restart, so persisting the
+ * file without the mutation would leave the new value invisible to this run.
+ */
+export function persistWispSettings(
+  cfg: WispConfig,
+  settings: WispSettings,
+): void {
+  patchConfig(settings);
+  cfg.autoRenameTasksFromPullRequests =
+    settings.autoRenameTasksFromPullRequests;
 }
 
 function mintToken(): string {

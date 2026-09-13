@@ -100,6 +100,7 @@ export function creatingTasks(): Task[] {
  */
 const TASK_FIELDS = [
   "title",
+  "custom_title",
   "worktree_path",
   "branch",
   "base_commit",

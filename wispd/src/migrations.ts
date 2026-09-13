@@ -497,6 +497,32 @@ END;
 `);
     },
   },
+  {
+    id: 10,
+    name: "task-custom-title",
+    up: (db) => {
+      // A name the user typed is authority the PR-title sync never overrides.
+      // The backfill infers past renames from the one derivation creation
+      // uses — the title is the first TASK_TITLE_MAX characters of the first
+      // prompt — so a title that is no longer a PREFIX of turn 1's prompt was
+      // chosen by a person. A suffix-prompt task stays a prefix match because
+      // the suffix is appended after the raw prompt. The failure direction is
+      // deliberate: an astral character straddling the 80-unit cut reads as
+      // renamed, which merely leaves the sync off for that task.
+      const cols = (db.query("PRAGMA table_info(tasks)").all() as { name: string }[]).map((c) => c.name);
+      if (!cols.includes("custom_title")) {
+        db.exec("ALTER TABLE tasks ADD COLUMN custom_title INTEGER NOT NULL DEFAULT 0");
+      }
+      db.exec(`
+UPDATE tasks SET custom_title = 1
+WHERE EXISTS (
+  SELECT 1 FROM turns
+  WHERE turns.task_id = tasks.id AND turns.n = 1
+    AND substr(turns.prompt, 1, length(tasks.title)) != tasks.title
+);
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

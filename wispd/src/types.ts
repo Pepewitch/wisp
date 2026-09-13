@@ -28,6 +28,8 @@ export type TaskMode = (typeof TASK_MODES)[number];
 export interface Task {
   id: string;
   title: string;
+  /** 1 once a person has named the task; the PR-title sync never overwrites a user's name. */
+  custom_title?: number;
   repo_path: string;
   /** the worktree for a `worktree` task; the repo checkout itself for a `local` one */
   worktree_path: string | null;

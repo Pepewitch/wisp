@@ -1,6 +1,5 @@
-import { chmodSync, existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
-import { CONFIG_PATH, type RepoConfig, type WispConfig } from "../config";
+import { patchConfig, type RepoConfig, type WispConfig } from "../config";
 import { emit } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
 import { beginProjectRemoval } from "../project-removals";
@@ -25,28 +24,7 @@ export function repoEntryName(path: string, entry?: RepoEntry): string {
 
 /** Persist only the API-managed repos key, preserving unknown config keys. */
 export function persistRepos(cfg: WispConfig, repos: RepoEntry[]): void {
-  let raw: Record<string, unknown> = {};
-  if (existsSync(CONFIG_PATH)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    } catch (error) {
-      throw new Error(`config.json: invalid JSON — ${error instanceof Error ? error.message : String(error)}`, { cause: error });
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error(`config.json: top level must be an object, got ${Array.isArray(parsed) ? "array" : typeName(parsed)}`);
-    }
-    raw = parsed as Record<string, unknown>;
-  }
-  raw.repos = repos;
-  const temp = `${CONFIG_PATH}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    writeFileSync(temp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
-    chmodSync(temp, 0o600);
-    renameSync(temp, CONFIG_PATH);
-  } finally {
-    if (existsSync(temp)) unlinkSync(temp);
-  }
+  patchConfig({ repos });
   cfg.repos = repos;
 }
 

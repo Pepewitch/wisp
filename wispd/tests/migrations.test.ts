@@ -84,6 +84,43 @@ describe("the ledger", () => {
     db.close();
   });
 
+  test("upgrading locks tasks whose title a person chose, inferred from the first prompt", () => {
+    const db = freshDatabase("custom-title");
+    migrate(db);
+    db.exec("ALTER TABLE tasks DROP COLUMN custom_title; DELETE FROM schema_migrations WHERE id = 10");
+    const insertTask = (id: string, title: string) =>
+      db.query(
+        "INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES (?, ?, '/fixture', 'fake', 'done', 'now', 'now')",
+      ).run(id, title);
+    const insertTurn = (id: string, prompt: string) =>
+      db.query(
+        "INSERT INTO turns (task_id, n, prompt, status, log_file, started_at) VALUES (?, 1, ?, 'done', '/fixture/log', 'now')",
+      ).run(id, prompt);
+
+    insertTask("tmatch", "do the thing");
+    insertTurn("tmatch", "do the thing");
+    insertTask("trenamed", "A name I chose myself");
+    insertTurn("trenamed", "do the thing");
+    // a suffix prompt is appended AFTER the raw prompt, so the title stays a prefix
+    insertTask("tsuffix", "do the thing");
+    insertTurn("tsuffix", "do the thing\n\n---\nfollow the house rules");
+    // creation truncates at 80 characters; a longer prompt is not a rename
+    insertTask("tlong", "x".repeat(80));
+    insertTurn("tlong", "x".repeat(120));
+    // never launched: the title still came from the prompt, nothing to infer against
+    insertTask("tnoturn", "never got a turn");
+
+    expect(migrate(db).applied).toEqual([10]);
+    const locked = (id: string) =>
+      (db.query("SELECT custom_title FROM tasks WHERE id = ?").get(id) as { custom_title: number }).custom_title;
+    expect(locked("tmatch")).toBe(0);
+    expect(locked("trenamed")).toBe(1);
+    expect(locked("tsuffix")).toBe(0);
+    expect(locked("tlong")).toBe(0);
+    expect(locked("tnoturn")).toBe(0);
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);

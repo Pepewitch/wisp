@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react"
 
 import { ChevronDown, FolderAdd, Gear, Plus, Search } from "@/components/icons"
-import { Button, Eyebrow } from "@/components/primitives"
+import { Button, Eyebrow, SwitchTrack } from "@/components/primitives"
 import {
   ProjectSearchInput,
   ProjectSearchResults,
@@ -209,21 +209,7 @@ export function Sidebar({
             touch ? "h-11 flex-1 px-1.5 active:bg-hover" : ""
           )}
         >
-          <span
-            className={cn(
-              "relative h-[15px] w-[26px] shrink-0 rounded-full transition-colors",
-              showArchived ? "bg-primary" : "bg-border-strong"
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-0.5 size-[11px] rounded-full transition-all",
-                showArchived
-                  ? "left-[13px] bg-primary-foreground"
-                  : "left-0.5 bg-muted-foreground"
-              )}
-            />
-          </span>
+          <SwitchTrack checked={showArchived} />
           <span
             className={cn(
               "text-muted-foreground",

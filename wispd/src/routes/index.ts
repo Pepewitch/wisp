@@ -36,6 +36,8 @@ import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
+import { settingsRoute } from "./settings";
+import { pullRequestTitleSync } from "../task-update";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -79,7 +81,10 @@ function compactorFor(adapters: Record<string, AdapterDef>, options?: TaskCompac
 function pullRequestCacheFor(cfg: WispConfig, options?: PullRequestCacheOptions): PullRequestCache {
   const existing = standalonePullRequestCaches.get(cfg);
   if (existing) return existing;
-  const cache = new PullRequestCache(options);
+  const cache = new PullRequestCache({
+    ...options,
+    onPullRequestFound: pullRequestTitleSync(cfg),
+  });
   standalonePullRequestCaches.set(cfg, cache);
   return cache;
 }
@@ -175,6 +180,8 @@ export function route(
   const updates = updateManager ?? updateManagerFor(cfg);
 
   if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
+  const settingsResponse = settingsRoute(req, path, m, cfg);
+  if (settingsResponse !== null) return settingsResponse;
   // The terminal socket's own gate, asked as a plain request: a page whose
   // upgrade died cannot read the 403 that explained it, so it asks here.
   if (path === "/api/terminal-origin" && m === "POST") return terminalOriginRoute(req, url);

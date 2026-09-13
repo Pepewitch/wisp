@@ -4,7 +4,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus } from "@/lib/types";
+import type { ApiTask, ConversationDetail, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -357,6 +357,22 @@ export function useRemoveProject() {
       void client.invalidateQueries({ queryKey: qk.repos });
       void client.invalidateQueries({ queryKey: qk.tasks });
       void client.invalidateQueries({ queryKey: qk.status });
+    },
+  });
+}
+
+/** PATCH /api/settings — persist daemon-wide behavior and update this client immediately. */
+export function useUpdateWispSettings() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: (settings: WispSettings) =>
+      transport.request<WispSettings>("/api/settings", {
+        method: "PATCH",
+        body: settings,
+      }),
+    onSuccess: (settings) => {
+      client.setQueryData(qk.settings, settings);
     },
   });
 }
