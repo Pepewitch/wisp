@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getTask, listTasks } from "./store";
 import { purgeTask, RetentionError, taskStorage } from "./task-retention";
 import { homeIsDraining } from "./home-lifetime";
+import { deleteTaskFromCaches, type TaskCache } from "./task-cache";
 import type { Task } from "./types";
 
 export interface PurgeCandidate { id: string; title: string; updatedAt: string; bytes: number | null; error?: string }
@@ -30,7 +31,12 @@ export async function planBulkPurge(cutoff: string): Promise<PurgePlan> {
 }
 
 /** Freeze the selection, then let the existing per-task owner enforce every deletion barrier. */
-export async function executeBulkPurge(plan: PurgePlan, confirmCount: unknown, confirmFingerprint: unknown): Promise<PurgeResult> {
+export async function executeBulkPurge(
+  plan: PurgePlan,
+  confirmCount: unknown,
+  confirmFingerprint: unknown,
+  taskCaches: readonly TaskCache[] = [],
+): Promise<PurgeResult> {
   if (!Number.isSafeInteger(confirmCount) || confirmCount !== plan.tasks.length) {
     throw new RetentionError(`Stale confirmation: found ${plan.tasks.length} archived tasks. Run the dry run again and confirm its count.`);
   }
@@ -45,6 +51,7 @@ export async function executeBulkPurge(plan: PurgePlan, confirmCount: unknown, c
       if (!task?.archived || task.updated_at !== row.updatedAt) throw new RetentionError("Task is no longer the archived task shown in the preview.");
       if (row.bytes === null) throw new RetentionError(row.error ?? "Could not measure task storage. Inspect its files before deleting.");
       await purgeTask(task);
+      deleteTaskFromCaches(task.id, taskCaches);
       result.reclaimedBytes += row.bytes;
       result.purged.push(row.id);
     } catch (error) {

@@ -8,6 +8,7 @@ import { bulkPurgeRoute } from "../src/routes/bulk-purge";
 import { retentionCommand } from "../src/cli-retention";
 import { purgeTask } from "../src/task-retention";
 import { parseArgs } from "../src/cli-args";
+import type { TaskCache } from "../src/task-cache";
 
 const ids: string[] = [];
 const cutoff = "2001-01-01T00:00:00.000Z";
@@ -24,9 +25,18 @@ function fixture(archived = true) {
 afterEach(async () => {
   for (const id of ids.splice(0)) if (getTask(id)) { setTaskFields(id, { archived: 1 }); await purgeTask(getTask(id)!); }
 });
-async function request(path: string, method = "GET", body?: unknown): Promise<any> {
+async function request(
+  path: string,
+  method = "GET",
+  body?: unknown,
+  taskCaches: readonly TaskCache[] = [],
+): Promise<any> {
   const url = new URL(path, "http://fixture");
-  const response = await bulkPurgeRoute(new Request(url, { method, body: body === undefined ? undefined : JSON.stringify(body) }), url);
+  const response = await bulkPurgeRoute(
+    new Request(url, { method, body: body === undefined ? undefined : JSON.stringify(body) }),
+    url,
+    taskCaches,
+  );
   const data = await response.json() as any;
   if (!response.ok) throw new Error(data.error);
   return data;
@@ -73,8 +83,18 @@ test("a task becoming live after preview is refused; other archived deletions co
 
 test("confirmed batch deletes files through purgeTask and reports bytes", async () => {
   const f = fixture(), plan = await request("/api/purge?archivedBefore=2001-01-01");
-  const result = await request("/api/purge", "DELETE", { cutoff: plan.cutoff, fingerprint: plan.fingerprint, confirmCount: 1 });
+  const deleted: string[] = [];
+  const result = await request(
+    "/api/purge",
+    "DELETE",
+    { cutoff: plan.cutoff, fingerprint: plan.fingerprint, confirmCount: 1 },
+    [
+      { deleteTask: (taskId) => deleted.push(`probe:${taskId}`) },
+      { deleteTask: (taskId) => deleted.push(`skills:${taskId}`) },
+    ],
+  );
   expect(result).toEqual({ purged: [f.id], failed: [], reclaimedBytes: 10 });
+  expect(deleted).toEqual([`probe:${f.id}`, `skills:${f.id}`]);
   expect(getTask(f.id)).toBeNull();
   expect(existsSync(f.log)).toBe(false);
 });

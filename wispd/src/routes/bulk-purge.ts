@@ -1,10 +1,15 @@
 import { executeBulkPurge, planBulkPurge } from "../bulk-purge";
 import { trackHomeWork } from "../home-lifetime";
 import { archivedBefore } from "../storage-scan";
+import type { TaskCache } from "../task-cache";
 import { RetentionError } from "../task-retention";
 import { err, json, jsonObjectBody } from "./http";
 
-export function bulkPurgeRoute(req: Request, url: URL): Promise<Response> {
+export function bulkPurgeRoute(
+  req: Request,
+  url: URL,
+  taskCaches: readonly TaskCache[] = [],
+): Promise<Response> {
   return trackHomeWork((async () => {
     try {
       if (req.method === "GET") {
@@ -19,7 +24,14 @@ export function bulkPurgeRoute(req: Request, url: URL): Promise<Response> {
           !Number.isFinite(Date.parse(body.cutoff)) || new Date(body.cutoff).toISOString() !== body.cutoff) {
         return err("Provide the cutoff returned by the purge preview.", 400);
       }
-      return json(await executeBulkPurge(await planBulkPurge(body.cutoff), body.confirmCount, body.fingerprint));
+      return json(
+        await executeBulkPurge(
+          await planBulkPurge(body.cutoff),
+          body.confirmCount,
+          body.fingerprint,
+          taskCaches,
+        ),
+      );
     } catch (error) {
       if (error instanceof RetentionError) return err(error.message, error.status);
       if (error instanceof Error && error.message.startsWith("--archived-before")) return err(error.message, 400);

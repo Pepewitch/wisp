@@ -57,6 +57,10 @@ activity and checkpoint the result independently of retained history.
 On restart, the daemon checks saved process identity using PID and start time,
 or finalizes a dead turn from its persisted record. Pending messages remain
 in a per-task FIFO; uncertain native delivery can be replayed at least once.
+Out-of-turn probe and skill results use short-lived, size-bounded caches.
+Expired entries are swept opportunistically, and permanent task deletion
+removes that task's entries and prevents an in-flight result from restoring
+them.
 See the [CLI reference](../skills/wisp/references/cli.md) for the user-facing
 states, diagnostics, and stop behavior.
 

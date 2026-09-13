@@ -8,6 +8,7 @@ import { exportTask, purgeTask, taskStorage } from "../src/task-retention";
 import { archiveTaskWithCleanup, clearArchiveCleanup } from "../src/archive-jobs";
 import { retentionRoute } from "../src/routes/retention";
 import { deliverOutbox, taskDeliveryActive } from "../src/outbox";
+import type { TaskCache } from "../src/task-cache";
 
 function fixture() {
   const id = newTaskId(), repo = mkdtempSync(join(tmpdir(), "wisp-retention-repo-"));
@@ -33,7 +34,22 @@ test("export is a readable snapshot; purge removes managed files/records and kee
   expect(data.turns).toHaveLength(1);
   expect(data.files.map(x => Buffer.from(x.dataBase64, "base64").toString()).sort()).toEqual(["attachment bytes", "transcript bytes"]);
   expect((await taskStorage(f.task)).files).toBe(2);
-  await purgeTask(f.task);
+  const deleted: string[] = [];
+  const taskCaches: TaskCache[] = [
+    { deleteTask: (taskId) => deleted.push(`probe:${taskId}`) },
+    { deleteTask: (taskId) => deleted.push(`skills:${taskId}`) },
+  ];
+  const purge = await retentionRoute(
+    new Request("http://fixture/purge", {
+      method: "DELETE",
+      body: JSON.stringify({ confirmTaskId: f.id }),
+    }),
+    f.task,
+    "purge",
+    taskCaches,
+  );
+  expect(purge.status).toBe(200);
+  expect(deleted).toEqual([`probe:${f.id}`, `skills:${f.id}`]);
   expect(getTask(f.id)).toBeNull();
   expect(existsSync(f.log)).toBe(false);
   expect(existsSync(join(TASKS_DIR, f.id))).toBe(false);
