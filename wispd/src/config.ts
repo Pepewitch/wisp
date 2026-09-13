@@ -193,10 +193,12 @@ chmodSync(WISP_HOME, 0o700);
 mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
 mkdirSync(WORKTREE_ROOT, { recursive: true, mode: 0o700 });
 
+export const LOOPBACK_HOST = "127.0.0.1";
+
 const DEFAULTS: WispConfig = {
   instanceId: "",
   port: 8710,
-  host: "127.0.0.1",
+  host: LOOPBACK_HOST,
   token: "",
   webhooks: [],
   repos: [],
@@ -246,6 +248,14 @@ export const PREFERRED_PORT = 8710;
 export const FALLBACK_PORT_END = 8799;
 
 export type PortAvailable = (host: string, port: number) => boolean;
+
+export function assertLoopbackHost(host: string, label = "config.json: host"): void {
+  if (host !== LOOPBACK_HOST) {
+    throw new Error(
+      `${label} must be exactly ${LOOPBACK_HOST}; Wisp refuses direct network binds. Use a private proxy or SSH tunnel instead (docs/REMOTE-ACCESS.md)`,
+    );
+  }
+}
 
 function assertPort(port: number, label = "config.json: port"): void {
   if (!Number.isInteger(port) || port < MIN_CONFIGURED_PORT || port > MAX_CONFIGURED_PORT) {
@@ -364,6 +374,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     throw new Error("config.json: instanceId must be a UUID");
   }
   str("host");
+  if (out.host !== undefined) assertLoopbackHost(out.host);
   str("token");
   if (raw.webhooks !== undefined) out.webhooks = stringArray(raw.webhooks, "config.json: webhooks");
   if (raw.repos !== undefined) out.repos = validateRepos(raw.repos);

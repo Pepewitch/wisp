@@ -57,7 +57,8 @@ remaining platform gaps, and native dependency advisory scope.
 
 ## Safe deployment
 
-1. Keep the daemon on its configured `127.0.0.1` loopback bind.
+1. The daemon enforces the literal `127.0.0.1` loopback bind. Reach it through
+   a private transport rather than changing `host` or `WISP_HOST`.
 2. Reach it through a private mesh proxy or an SSH tunnel. Never publish port
    `8710`, or any replacement Wisp port, directly to the internet.
 3. Keep `~/.wisp` private. Wisp creates it as mode `0700` and repairs

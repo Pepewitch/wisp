@@ -176,12 +176,13 @@ the authentication screen. The Wisp port stays loopback-only on both ends.
 Closing Wisp Desktop or the browser does not stop the remote daemon or agents;
 closing the SSH session only makes that connection temporarily unreachable.
 
-## Direct bind is not the supported shortcut
+## Direct binds are refused
 
-Changing `host` or `WISP_HOST` to `0.0.0.0` makes every network interface a
-potential control surface. A bearer token does not provide TLS, user
-separation, brute-force controls, or an audit boundary. Keep the loopback bind
-and proxy it through a private transport instead.
+The configured `host` and the `WISP_HOST` override must both be the literal
+`127.0.0.1`. Wisp refuses wildcard, LAN, hostname, and IPv6 binds at startup.
+A bearer token does not provide TLS, user separation, brute-force controls, or
+an audit boundary. Keep the loopback bind and proxy it through a private
+transport instead.
 
 If the page loads but API calls fail, verify the private proxy carries HTTP,
 SSE, and WebSocket traffic and that `/api/health` is reachable at the URL

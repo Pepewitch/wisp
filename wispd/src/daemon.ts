@@ -5,7 +5,7 @@ import {
   resetAttachmentUploads,
   startAttachmentUploadCleanupLoop,
 } from "./attachment-uploads";
-import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
+import { assertLoopbackHost, checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
 import { startOutboxLoop } from "./outbox";
@@ -299,9 +299,8 @@ export interface ServeOptions {
 }
 
 async function occupiedListener(host: string, port: number): Promise<string> {
-  const probeHost = host === "0.0.0.0" ? "127.0.0.1" : host === "::" ? "[::1]" : host;
   try {
-    const response = await fetch(`http://${probeHost}:${port}/api/health`, {
+    const response = await fetch(`http://${host}:${port}/api/health`, {
       signal: AbortSignal.timeout(750),
     });
     const body = (await response.json()) as { ok?: unknown; version?: unknown; commit?: unknown };
@@ -346,6 +345,8 @@ function homeConflictMessage(reason: string): string {
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
+  const hostOverride = process.env.WISP_HOST;
+  if (hostOverride !== undefined) assertLoopbackHost(hostOverride, "WISP_HOST");
   let ownership;
   try {
     ownership = acquireHomeOwnership();
@@ -361,7 +362,7 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   try {
     const appHtml = await bundledAppHtml();
     const cfg = loadConfig();
-    const hostname = process.env.WISP_HOST ?? cfg.host;
+    const hostname = hostOverride ?? cfg.host;
     const port = options.port ?? cfg.port;
     return await lifetime.run(() => serveOwned(options, cfg, hostname, port, appHtml, ownership, lifetime));
   } catch (error) {
