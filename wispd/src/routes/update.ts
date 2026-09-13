@@ -1,5 +1,5 @@
 import { UpdateManager } from "../update";
-import { err, json } from "./http";
+import { err, json, jsonObjectBody } from "./http";
 
 export function updateRoute(
   req: Request,
@@ -13,13 +13,14 @@ export function updateRoute(
     return (refresh ? updates.refreshStatus() : updates.getStatus()).then((status) => json(status));
   }
   if (method !== "POST") return err("not found", 404);
-  return req
-    .json()
-    .catch(() => ({}))
-    .then((body) => updates.start((body as { version?: unknown }).version))
-    .then((status) => json(status, 202))
-    .catch((error) => {
+  return (async () => {
+    const body = await jsonObjectBody(req);
+    if (body instanceof Response) return body;
+    try {
+      return json(await updates.start(body.version), 202);
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return err(message, message === "an update is already in progress" ? 409 : 400);
-    });
+    }
+  })();
 }

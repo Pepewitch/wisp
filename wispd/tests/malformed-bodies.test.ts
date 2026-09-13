@@ -145,6 +145,7 @@ describe("every mutating route answers a malformed body with a named 4xx", () =>
     { name: "archive a task", path: `/api/tasks/${taskId}/archive`, method: "POST" },
     { name: "create a suffix prompt", path: "/api/suffix-prompts", method: "POST" },
     { name: "add a project", path: "/api/repos", method: "POST" },
+    { name: "install an update", path: "/api/update", method: "POST" },
     // A route that EDITS rather than creates, so "no side effect" means more
     // than an unchanged row count (a review's note).
     { name: "edit a queued message", path: `/api/tasks/${taskId}/messages/${messageId}`, method: "PATCH" },
@@ -193,6 +194,16 @@ describe("the two shapes that are not errors", () => {
 });
 
 describe("the messages name what arrived", () => {
+  test("the update route distinguishes malformed bodies from a missing version", async () => {
+    const invalidJson = await call("/api/update", "POST", "{");
+    expect(invalidJson.status).toBe(400);
+    expect(((await invalidJson.json()) as { error: string }).error).toContain("not valid JSON");
+
+    const array = await call("/api/update", "POST", "[]");
+    expect(array.status).toBe(400);
+    expect(((await array.json()) as { error: string }).error).toBe("request body must be a JSON object, got array");
+  });
+
   test("a non-object body says which type it was", async () => {
     const response = await call("/api/suffix-prompts", "POST", "[]");
     expect(response.status).toBe(400);
