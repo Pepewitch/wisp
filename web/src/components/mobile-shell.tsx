@@ -11,14 +11,14 @@ import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 
-type MobileTab = "chat" | "changes" | "terminal"
+type MobileTab = "chat" | "changes" | "workflows" | "terminal"
 
 /**
  * Below the `md` breakpoint (useIsMobile). The three-pane grid does not shrink
  * into a phone, so it is replaced rather than squeezed:
  *
  *  - the sidebar becomes a swipe-dismissable drawer, reached from one hamburger
- *  - the three panes become ONE tab strip, so there is exactly one mechanism
+ *  - the task surfaces become ONE tab strip, so there is exactly one mechanism
  *    for "which surface am I looking at"
  *  - no resizable groups mount at all, so saved desktop geometry is neither
  *    applied nor overwritten by phone dimensions
@@ -36,16 +36,17 @@ type MobileTab = "chat" | "changes" | "terminal"
  *     task's overflow menu, all centred on the same axis
  *  3. the pull request, when there is one, on its own full-width row rather
  *     than splitting the header with the title
- *  4. the tab strip — three equal thirds, a segmented control rather than
- *     left-packed pills with a dead right half
+ *  4. the tab strip — equal-width segments rather than left-packed pills with
+ *     a dead right half
  *
  * Two deliberate departures from the desktop language, because touch is not a
  * small mouse:
  *
  *  - drawer task rows are the TWO-LINE touch variant. The desktop row defers
  *    branch and state to a hover card, and a finger cannot hover.
- *  - the composer is pinned on Chat and Changes but NOT on Terminal, where the
- *    shell itself is the input and a second one would fight the keyboard.
+ *  - the composer is pinned on Chat, Changes, and Workflows but NOT on
+ *    Terminal, where the shell itself is the input and a second one would
+ *    fight the keyboard.
  *
  * Everything is inset for `safe-area-inset-*` so the composer clears a home
  * bar and the header clears a notch.
@@ -56,6 +57,7 @@ export function MobileShell({
   sidebar,
   conversation,
   changes,
+  workflows,
   terminal,
   composer,
   firstRun,
@@ -69,6 +71,8 @@ export function MobileShell({
   sidebar: (dismiss: () => void) => ReactNode
   conversation: ReactNode
   changes: ReactNode
+  /** Absent when the connected daemon does not support task workflows. */
+  workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode
   /**
@@ -89,6 +93,9 @@ export function MobileShell({
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
+  const tabs: MobileTab[] = workflows === undefined
+    ? ["chat", "changes", "terminal"]
+    : ["chat", "changes", "workflows", "terminal"]
 
   // a task switch is always about reading the conversation next
   const [seenTask, setSeenTask] = useState(task?.id)
@@ -204,9 +211,9 @@ export function MobileShell({
         aria-label="Task surface"
         className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-1.5"
       >
-        {(["chat", "changes", "terminal"] as const).map((t) => (
+        {tabs.map((t) => (
           <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 justify-center">
-            {t === "chat" ? "Chat" : t === "changes" ? "Changes" : "Terminal"}
+            {t === "chat" ? "Chat" : t === "changes" ? "Changes" : t === "workflows" ? "Workflows" : "Terminal"}
           </Tab>
         ))}
       </div>
@@ -218,6 +225,7 @@ export function MobileShell({
         {firstRun}
         {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
         {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
+        {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
         {!firstRun && (
           <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
         )}
