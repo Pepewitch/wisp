@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import type { WispConfig } from "../src/config";
 import { deliverOutbox } from "../src/outbox";
 import { createTask, db, freeSlot, newTaskId, transition, undeliveredOutbox } from "../src/store";
@@ -44,15 +44,14 @@ function stubWebhook() {
 }
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
-
-beforeAll(() => {
-  // the test db may be shared with other files in this process; retire any
-  // rows they left behind so delivery passes here only touch this file's rows
-  db.run(`UPDATE outbox SET delivered_at = ? WHERE delivered_at IS NULL`, [new Date().toISOString()]);
-});
+const taskIds: string[] = [];
 
 afterAll(() => {
   for (const s of servers) s.stop(true);
+  for (const taskId of taskIds) {
+    db.run("DELETE FROM outbox WHERE task_id = ?", [taskId]);
+    db.run("DELETE FROM tasks WHERE id = ?", [taskId]);
+  }
 });
 
 /** Create a real outbox row the way production does: a notify-worthy transition. */
@@ -65,6 +64,7 @@ function makeRow(event: TaskState = "done"): OutboxRow {
     model: null,
     slot: freeSlot(),
   });
+  taskIds.push(task.id);
   transition(task.id, event, "test detail");
   return undeliveredOutbox().find((r) => r.task_id === task.id)!;
 }
@@ -87,7 +87,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     const b = stubWebhook();
     const row = makeRow("done");
 
-    await deliverOutbox({ ...baseCfg, webhooks: [a.url, b.url] });
+    await deliverOutbox({ ...baseCfg, webhooks: [a.url, b.url] }, row.task_id);
 
     expect(a.received.length).toBe(1);
     expect(b.received.length).toBe(1);
@@ -98,9 +98,19 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
   test("with no webhooks configured, rows drain immediately", async () => {
     const row = makeRow("failed");
 
-    await deliverOutbox(baseCfg);
+    await deliverOutbox(baseCfg, row.task_id);
 
     expect(rowById(row.id)).toBeUndefined();
+  });
+
+  test("a task-scoped pass is not hidden behind the global batch limit", async () => {
+    const older = Array.from({ length: 21 }, () => makeRow());
+    const target = makeRow();
+
+    await deliverOutbox(baseCfg, target.task_id);
+
+    expect(rowById(target.id)).toBeUndefined();
+    expect(older.every((row) => rowById(row.id) !== undefined)).toBe(true);
   });
 
   test("a failing URL schedules a retry with backoff and records last_error", async () => {
@@ -109,7 +119,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     const row = makeRow();
     const cfg = { ...baseCfg, webhooks: [bad.url] };
 
-    await deliverOutbox(cfg);
+    await deliverOutbox(cfg, row.task_id);
 
     const after = rowById(row.id)!;
     expect(after).toBeDefined(); // still pending
@@ -121,7 +131,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     expect(retryInSec(after)).toBeLessThanOrEqual(10.5);
 
     // ...and the row is NOT retried before that time comes
-    await deliverOutbox(cfg);
+    await deliverOutbox(cfg, row.task_id);
     expect(bad.received.length).toBe(1);
   });
 
@@ -131,9 +141,9 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     const row = makeRow();
     const cfg = { ...baseCfg, webhooks: [bad.url] };
 
-    await deliverOutbox(cfg); // attempt 1 → 10s
+    await deliverOutbox(cfg, row.task_id); // attempt 1 → 10s
     forceDue(row.id);
-    await deliverOutbox(cfg); // attempt 2 → 20s
+    await deliverOutbox(cfg, row.task_id); // attempt 2 → 20s
     const second = rowById(row.id)!;
     expect(second.attempts).toBe(2);
     expect(retryInSec(second)).toBeGreaterThan(18);
@@ -142,7 +152,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     // simulate a row that has already failed 10 times: 2^11 * 5s would be ~2.8h
     db.run(`UPDATE outbox SET attempts = 10 WHERE id = ?`, [row.id]);
     forceDue(row.id);
-    await deliverOutbox(cfg);
+    await deliverOutbox(cfg, row.task_id);
     const capped = rowById(row.id)!;
     expect(capped.attempts).toBe(11);
     expect(retryInSec(capped)).toBeGreaterThan(895);
@@ -156,7 +166,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     const cfg = { ...baseCfg, webhooks: [good.url, bad.url] };
     const row = makeRow("needs-input");
 
-    await deliverOutbox(cfg);
+    await deliverOutbox(cfg, row.task_id);
 
     expect(good.received.length).toBe(1); // the healthy URL accepted the event...
     expect(rowById(row.id)).toBeDefined(); // ...but the ROW stays undelivered:
@@ -165,7 +175,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
 
     bad.setStatus(200); // the bad URL recovers
     forceDue(row.id);
-    await deliverOutbox(cfg);
+    await deliverOutbox(cfg, row.task_id);
 
     expect(rowById(row.id)).toBeUndefined(); // delivered now
     // ...and the retry went to EVERY url, so the healthy consumer sees the
@@ -181,7 +191,7 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     dead.stop(); // nothing is listening now — fetch will refuse the connection
     const row = makeRow();
 
-    await deliverOutbox({ ...baseCfg, webhooks: [url] });
+    await deliverOutbox({ ...baseCfg, webhooks: [url] }, row.task_id);
 
     const after = rowById(row.id)!;
     expect(after.attempts).toBe(1);

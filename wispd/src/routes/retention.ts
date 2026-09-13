@@ -1,9 +1,15 @@
 import { exportTask, purgeTask, taskStorage, RetentionError } from "../task-retention";
 import { trackHomeWork } from "../home-lifetime";
+import { deleteTaskFromCaches, type TaskCache } from "../task-cache";
 import type { Task } from "../types";
 import { err, json, jsonObjectBody } from "./http";
 
-export function retentionRoute(req: Request, task: Task, action: string): Promise<Response> {
+export function retentionRoute(
+  req: Request,
+  task: Task,
+  action: string,
+  taskCaches: readonly TaskCache[] = [],
+): Promise<Response> {
   return trackHomeWork((async () => {
     try {
       if (action === "export" && req.method === "GET") return json(await exportTask(task));
@@ -13,6 +19,7 @@ export function retentionRoute(req: Request, task: Task, action: string): Promis
         if (body instanceof Response) return body;
         if (body.confirmTaskId !== task.id) return err("Confirm permanent deletion by providing confirmTaskId matching this task. Export anything you want to keep first.", 400);
         await purgeTask(task);
+        deleteTaskFromCaches(task.id, taskCaches);
         return json({ ok: true });
       }
       return err("method not allowed", 405);

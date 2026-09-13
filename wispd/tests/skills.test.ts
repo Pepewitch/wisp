@@ -333,6 +333,21 @@ describe("TaskSkillCache", () => {
     expect(answer.result.partialNote).toBeNull();
   });
 
+  test("task deletion removes a settled discovery result", async () => {
+    const { io, calls } = scriptedRpc({
+      "droid.load_session": {},
+      "droid.list_skills": { skills: [] },
+      "droid.list_commands": { commands: [] },
+    });
+    const cache = new TaskSkillCache({ openRpc: io.openRpc });
+    const task = skillTask("droid");
+    await cache.skills(task, droid);
+    cache.deleteTask(task.id);
+    const answer = await cache.skills(task, droid);
+    expect(answer.cached).toBe(false);
+    expect(calls.filter((call) => call === "droid.list_skills")).toHaveLength(2);
+  });
+
   test("a failure is NOT cached — the next ask retries", async () => {
     let opens = 0;
     const io: ProbeIo = {

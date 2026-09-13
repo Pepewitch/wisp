@@ -629,7 +629,12 @@ export function taskRoute(
     })();
   }
 
-  if (action === "export" || action === "purge" || action === "storage") return retentionRoute(req, task, action);
+  if (action === "export" || action === "purge" || action === "storage") {
+    const taskCaches = [probes, skills].filter(
+      (cache): cache is TaskProbeCache | TaskSkillCache => cache !== undefined,
+    );
+    return retentionRoute(req, task, action, taskCaches);
+  }
 
   if (action === "cleanup") return cleanupRoute(req, task.id);
 

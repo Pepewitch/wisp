@@ -134,11 +134,15 @@ describe("Wisp Desktop release metadata", () => {
     expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
 
     const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
-    expect(workflow.indexOf("name: build shared UI bundle")).toBeGreaterThan(-1);
-    expect(workflow.indexOf("name: build shared UI bundle")).toBeGreaterThan(
-      workflow.indexOf("uses: Swatinem/rust-cache"),
-    );
-    expect(workflow.indexOf("name: build shared UI bundle")).toBeLessThan(workflow.indexOf("name: formatting"));
+    const cacheRestore = workflow.indexOf("uses: Swatinem/rust-cache");
+    const cleanPackage = workflow.indexOf("name: discard cached Wisp build artifacts");
+    const cleanCommand = workflow.indexOf("run: cargo clean --package wisp-desktop");
+    const buildUi = workflow.indexOf("name: build shared UI bundle");
+    expect(cacheRestore).toBeGreaterThan(-1);
+    expect(cleanPackage).toBeGreaterThan(cacheRestore);
+    expect(cleanCommand).toBeGreaterThan(cleanPackage);
+    expect(buildUi).toBeGreaterThan(cleanCommand);
+    expect(buildUi).toBeLessThan(workflow.indexOf("name: formatting"));
   });
 
   test("detects the Mach-O UUID required by current macOS", () => {

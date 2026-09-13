@@ -18,6 +18,7 @@ import {
   type SkillDiscoveryResult,
 } from "./adapters";
 import { bunProbeSpawn, bunRpcFactory } from "./probes";
+import { TaskCacheEntries } from "./task-cache";
 import type { Task } from "./types";
 
 export const SKILL_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
@@ -46,30 +47,37 @@ export interface TaskSkillCacheOptions {
  * the next ask retries.
  */
 export class TaskSkillCache {
-  private readonly entries = new Map<string, { result: SkillDiscoveryResult; at: number }>();
-  private readonly inFlight = new Map<string, Promise<SkillAnswer>>();
+  private readonly entries: TaskCacheEntries<SkillDiscoveryResult>;
+  private readonly inFlight = new Map<
+    string,
+    {
+      promise: Promise<SkillAnswer>;
+      controller: AbortController;
+      state: { deleted: boolean };
+    }
+  >();
   private readonly io: ProbeIo;
   private readonly timeoutMs: number;
-  private readonly ttlMs: number;
   private readonly now: () => Date;
 
   constructor(options: TaskSkillCacheOptions = {}) {
     this.io = { spawnOnce: options.spawnOnce ?? bunProbeSpawn, openRpc: options.openRpc ?? bunRpcFactory };
     this.timeoutMs = options.timeoutMs ?? SKILL_TIMEOUT_MS;
-    this.ttlMs = options.ttlMs ?? SKILL_CACHE_TTL_MS;
     this.now = options.now ?? (() => new Date());
+    this.entries = new TaskCacheEntries(options.ttlMs ?? SKILL_CACHE_TTL_MS);
   }
 
   skills(task: Task, def: AdapterDef): Promise<SkillAnswer> {
     const key = task.id;
-    const hit = this.entries.get(key);
-    if (hit && this.now().getTime() - hit.at < this.ttlMs) {
-      return Promise.resolve({ result: hit.result, probedAt: new Date(hit.at).toISOString(), cached: true });
+    const hit = this.entries.get(key, this.now().getTime());
+    if (hit) {
+      return Promise.resolve({ result: hit.value, probedAt: new Date(hit.at).toISOString(), cached: true });
     }
     const running = this.inFlight.get(key);
-    if (running) return running;
+    if (running) return running.promise;
 
     const controller = new AbortController();
+    const state = { deleted: false };
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
@@ -90,7 +98,7 @@ export class TaskSkillCache {
     ])
       .then((result): SkillAnswer => {
         const at = this.now();
-        this.entries.set(key, { result, at: at.getTime() });
+        if (!state.deleted) this.entries.set(task.id, key, result, at.getTime());
         return { result, probedAt: at.toISOString(), cached: false };
       })
       .finally(() => {
@@ -98,8 +106,16 @@ export class TaskSkillCache {
         controller.abort(); // a finished discovery never leaves its child alive
         this.inFlight.delete(key);
       });
-    this.inFlight.set(key, attempt);
+    this.inFlight.set(key, { promise: attempt, controller, state });
     return attempt;
+  }
+
+  deleteTask(taskId: string): void {
+    this.entries.deleteTask(taskId);
+    const flight = this.inFlight.get(taskId);
+    if (!flight) return;
+    flight.state.deleted = true;
+    flight.controller.abort(new ProbeError("the task was permanently deleted", 410));
   }
 }
 

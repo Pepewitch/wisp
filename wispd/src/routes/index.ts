@@ -189,7 +189,7 @@ export function route(
   // The terminal socket's own gate, asked as a plain request: a page whose
   // upgrade died cannot read the 403 that explained it, so it asks here.
   if (path === "/api/terminal-origin" && m === "POST") return terminalOriginRoute(req, url);
-  if (path === "/api/purge") return bulkPurgeRoute(req, url);
+  if (path === "/api/purge") return bulkPurgeRoute(req, url, [probes, skills]);
   if (path === "/api/attachments" && m === "POST") return attachmentUploadRoute(req, url);
   const uploadMatch = path.match(/^\/api\/attachments\/([A-Za-z0-9-]+)$/);
   if (uploadMatch && m === "DELETE") return discardAttachmentUploadRoute(uploadMatch[1]!);

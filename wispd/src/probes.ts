@@ -27,6 +27,7 @@ import { CappedOutput } from "./capped-output";
 import { CommandGroup } from "./command-group";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
+import { TaskCacheEntries } from "./task-cache";
 import type { Task } from "./types";
 
 export const PROBE_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
@@ -262,30 +263,38 @@ export interface TaskProbeCacheOptions {
  * cached — the next click retries.
  */
 export class TaskProbeCache {
-  private readonly entries = new Map<string, { report: ProbeReport; at: number }>();
-  private readonly inFlight = new Map<string, Promise<ProbeAnswer>>();
+  private readonly entries: TaskCacheEntries<ProbeReport>;
+  private readonly inFlight = new Map<
+    string,
+    {
+      taskId: string;
+      promise: Promise<ProbeAnswer>;
+      controller: AbortController;
+      state: { deleted: boolean };
+    }
+  >();
   private readonly io: ProbeIo;
   private readonly timeoutMs: number;
-  private readonly ttlMs: number;
   private readonly now: () => Date;
 
   constructor(options: TaskProbeCacheOptions = {}) {
     this.io = { spawnOnce: options.spawnOnce ?? bunProbeSpawn, openRpc: options.openRpc ?? bunRpcFactory };
     this.timeoutMs = options.timeoutMs ?? PROBE_TIMEOUT_MS;
-    this.ttlMs = options.ttlMs ?? PROBE_CACHE_TTL_MS;
     this.now = options.now ?? (() => new Date());
+    this.entries = new TaskCacheEntries(options.ttlMs ?? PROBE_CACHE_TTL_MS);
   }
 
   probe(task: Task, def: AdapterDef, command: ProbeCommand): Promise<ProbeAnswer> {
     const key = `${task.id}:${command}`;
-    const hit = this.entries.get(key);
-    if (hit && this.now().getTime() - hit.at < this.ttlMs) {
-      return Promise.resolve({ report: hit.report, probedAt: new Date(hit.at).toISOString(), cached: true });
+    const hit = this.entries.get(key, this.now().getTime());
+    if (hit) {
+      return Promise.resolve({ report: hit.value, probedAt: new Date(hit.at).toISOString(), cached: true });
     }
     const running = this.inFlight.get(key);
-    if (running) return running;
+    if (running) return running.promise;
 
     const controller = new AbortController();
+    const state = { deleted: false };
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
@@ -305,7 +314,7 @@ export class TaskProbeCache {
     ])
       .then((report): ProbeAnswer => {
         const at = this.now();
-        this.entries.set(key, { report, at: at.getTime() });
+        if (!state.deleted) this.entries.set(task.id, key, report, at.getTime());
         return { report, probedAt: at.toISOString(), cached: false };
       })
       .finally(() => {
@@ -313,7 +322,16 @@ export class TaskProbeCache {
         controller.abort(); // a finished probe never leaves its child alive
         this.inFlight.delete(key);
       });
-    this.inFlight.set(key, attempt);
+    this.inFlight.set(key, { taskId: task.id, promise: attempt, controller, state });
     return attempt;
+  }
+
+  deleteTask(taskId: string): void {
+    this.entries.deleteTask(taskId);
+    for (const flight of this.inFlight.values()) {
+      if (flight.taskId !== taskId) continue;
+      flight.state.deleted = true;
+      flight.controller.abort(new ProbeError("the task was permanently deleted", 410));
+    }
   }
 }

@@ -8,6 +8,7 @@ import { exportTask, purgeTask, taskStorage } from "../src/task-retention";
 import { archiveTaskWithCleanup, clearArchiveCleanup } from "../src/archive-jobs";
 import { retentionRoute } from "../src/routes/retention";
 import { deliverOutbox, taskDeliveryActive } from "../src/outbox";
+import type { TaskCache } from "../src/task-cache";
 
 function fixture() {
   const id = newTaskId(), repo = mkdtempSync(join(tmpdir(), "wisp-retention-repo-"));
@@ -33,7 +34,22 @@ test("export is a readable snapshot; purge removes managed files/records and kee
   expect(data.turns).toHaveLength(1);
   expect(data.files.map(x => Buffer.from(x.dataBase64, "base64").toString()).sort()).toEqual(["attachment bytes", "transcript bytes"]);
   expect((await taskStorage(f.task)).files).toBe(2);
-  await purgeTask(f.task);
+  const deleted: string[] = [];
+  const taskCaches: TaskCache[] = [
+    { deleteTask: (taskId) => deleted.push(`probe:${taskId}`) },
+    { deleteTask: (taskId) => deleted.push(`skills:${taskId}`) },
+  ];
+  const purge = await retentionRoute(
+    new Request("http://fixture/purge", {
+      method: "DELETE",
+      body: JSON.stringify({ confirmTaskId: f.id }),
+    }),
+    f.task,
+    "purge",
+    taskCaches,
+  );
+  expect(purge.status).toBe(200);
+  expect(deleted).toEqual([`probe:${f.id}`, `skills:${f.id}`]);
   expect(getTask(f.id)).toBeNull();
   expect(existsSync(f.log)).toBe(false);
   expect(existsSync(join(TASKS_DIR, f.id))).toBe(false);
@@ -73,7 +89,10 @@ test("an in-flight webhook holds deletion; deletion-pending tasks never send new
   const ready = new Promise<void>(resolve => { finish = resolve; });
   let hits = 0;
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => { const payload = await req.json() as { task_id: string }; if (payload.task_id === f.id) { hits++; await ready; } return new Response("ok"); } });
-  const delivery = deliverOutbox({ ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] });
+  const delivery = deliverOutbox(
+    { ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] },
+    f.id,
+  );
   try {
     for (const deadline = Date.now() + 3000; !taskDeliveryActive(f.id);) { if (Date.now() > deadline) throw new Error("delivery did not start"); await Bun.sleep(5); }
     await expect(purgeTask(f.task)).rejects.toThrow(/webhook delivery/);
@@ -83,7 +102,10 @@ test("an in-flight webhook holds deletion; deletion-pending tasks never send new
     transition(f.id, "done", "new pending delivery");
     setTaskFields(f.id, { purge_pending: 1 });
     const before = hits;
-    await deliverOutbox({ ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] });
+    await deliverOutbox(
+      { ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] },
+      f.id,
+    );
     expect(hits).toBe(before);
     await purgeTask(getTask(f.id)!);
   } finally { server.stop(true); }

@@ -273,6 +273,40 @@ describe("TaskProbeCache", () => {
     expect(calls).toHaveLength(3);
   });
 
+  test("an expired entry is deleted and the next click probes again", async () => {
+    let now = 1_000;
+    const { spawn, calls } = scriptedSpawn({ exitCode: 0, stdout: MD_RESULT, stderr: "" });
+    const cache = new TaskProbeCache({ spawnOnce: spawn, ttlMs: 100, now: () => new Date(now) });
+    const task = probeTask();
+    await cache.probe(task, claude, "context");
+    now += 100;
+    const answer = await cache.probe(task, claude, "context");
+    expect(answer.cached).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("task deletion removes all commands and blocks an in-flight result from restoring itself", async () => {
+    let calls = 0;
+    let finish!: (result: SpawnResult) => void;
+    const spawn: ProbeSpawnFn = () => {
+      calls += 1;
+      if (calls > 1) return Promise.resolve({ exitCode: 0, stdout: MD_RESULT, stderr: "" });
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    };
+    const cache = new TaskProbeCache({ spawnOnce: spawn });
+    const task = probeTask();
+    const pending = cache.probe(task, claude, "context");
+    cache.deleteTask(task.id);
+    finish({ exitCode: 0, stdout: MD_RESULT, stderr: "" });
+    await pending;
+
+    const answer = await cache.probe(task, claude, "context");
+    expect(answer.cached).toBe(false);
+    expect(calls).toBe(2);
+  });
+
   test("a failure is NOT cached — the next click retries", async () => {
     let calls = 0;
     const spawn: ProbeSpawnFn = () => {
