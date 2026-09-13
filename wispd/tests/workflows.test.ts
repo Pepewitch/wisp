@@ -29,7 +29,10 @@ function arm(type = "heartbeat", params: WorkflowParams = {}) {
     ? { prompt: "Check the objective" }
     : type === "schedule-steer"
       ? { prompt: "Use the staged rollout", scheduledAt: new Date(base.getTime() + 10 * 60_000).toISOString() }
-      : { prUrl: "https://github.com/example/project/pull/42" };
+      : {
+          prUrl: "https://github.com/example/project/pull/42",
+          ...(type === "pr-review" ? { reviewers: "reviewer" } : {}),
+        };
   return createWorkflow(id, def, validateWorkflowParams(def, { ...defaults, ...params }), base);
 }
 function pr(): WorkflowPr {
@@ -55,6 +58,9 @@ test("parameters are typed, bounded, defaulted, and PR identity is pinned", () =
   expect(() => parsePrUrl("https://github.com.attacker.test/example/project/pull/42")).toThrow();
   expect(() => parsePrUrl("https://user:secret@github.com/example/project/pull/42")).toThrow();
   expect(() => validateWorkflowParams(BUILTIN_WORKFLOWS[0]!, { prompt: null })).toThrow();
+  const review = BUILTIN_WORKFLOWS.find(item => item.id === "pr-review")!;
+  expect(() => validateWorkflowParams(review, { prUrl: "https://github.com/example/project/pull/42" })).toThrow("Trusted feedback authors");
+  expect(() => validateWorkflowParams(review, { prUrl: "https://github.com/example/project/pull/42", reviewers: "reviewer, invalid user" })).toThrow("GitHub logins");
   const item = arm("pr-ci");
   expect(item.params.everyMinutes).toBe(5);
   expect(item.params.allowMerge).toBe(false);
@@ -156,15 +162,18 @@ test("CI pending costs no turn; unchanged failures do not repeat across restart"
   expect(messagesFor(item.taskId)[0]?.text).toContain("Leave this workflow active");
 });
 
-test("review comments, edits, selected bots, and quiet completion do not depend on approval status", () => {
+test("review comments, edits, trusted authors, and quiet completion do not depend on approval status", () => {
   const item = arm("pr-review");
   const snapshot = pr();
-  snapshot.feedback = [feedback(), feedback("self", "agent"), { ...feedback("bot", "review-bot"), bot: true }];
+  snapshot.feedback = [feedback(), feedback("untrusted", "stranger"), feedback("self", "agent"), { ...feedback("bot", "review-bot"), bot: true }];
   const first = evaluateReview(item, snapshot, {}, base, true, null);
   expect(first.action).toBe("wake");
   expect(first.message).toContain("Please fix this nit");
+  expect(first.message).not.toContain('"author":"stranger"');
   expect(first.message).not.toContain('"author":"agent"');
   expect(first.message).not.toContain('"author":"review-bot"');
+  const broadBots = evaluateReview({ ...item, params: { ...item.params, includeBots: true } }, snapshot, {}, base, true, null);
+  expect(broadBots.message).not.toContain('"author":"review-bot"');
   const quiet = evaluateReview(item, snapshot, first.checkpoint, new Date(base.getTime() + 31 * 60_000), true, null);
   expect(quiet.action).toBe("complete");
   expect(quiet.reason).toContain("does not mean approval");
@@ -173,6 +182,18 @@ test("review comments, edits, selected bots, and quiet completion do not depend 
   expect(evaluateReview(item, snapshot, first.checkpoint, new Date(base.getTime() + 31 * 60_000), true, null).action).toBe("wake");
   const selected = evaluateReview({ ...item, params: { ...item.params, reviewers: "review-bot" } }, snapshot, {}, base, true, null);
   expect(selected.message).toContain('"author":"review-bot"');
+});
+
+test("legacy review watches without trusted authors pause before accepting feedback", () => {
+  const item = arm("pr-review");
+  const snapshot = pr();
+  snapshot.feedback = [feedback()];
+  const decision = evaluateReview({ ...item, params: { ...item.params, reviewers: "" } }, snapshot, {}, base, true, null);
+  expect(decision).toEqual({
+    action: "pause",
+    reason: "No trusted feedback authors configured",
+    checkpoint: {},
+  });
 });
 
 test("review fixes and head updates restart the quiet window; pending feedback remains unhandled", () => {

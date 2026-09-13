@@ -12,8 +12,8 @@ export const COMMON_PARAMETERS: WorkflowParameter[] = [
   number("everyMinutes", "Check every (minutes)", 5, 1, 1440, "Polling is token-free. An actionable check can wake the agent; Heartbeat wakes on every eligible tick."),
   number("maxWakeups", "Maximum agent wake-ups", 20, 1, 200, "Pause when this budget is reached."),
   number("lifetimeHours", "Expires after (hours)", 24, 1, 168, "A safety limit, including time spent paused."),
-  boolean("allowPush", "Allow pushing changes", "Authorize the agent to push task changes. Workflows are not an OS sandbox."),
-  boolean("allowMerge", "Allow merging the watched PR", "Only after rechecking current checks, reviews, and branch rules. Off by default."),
+  boolean("allowPush", "Ask agent to push changes", "Tell workflow turns to push after validating changes. This is guidance, not a process sandbox."),
+  boolean("allowMerge", "Ask agent to merge the watched PR", "Only after rechecking current checks, reviews, and branch rules. This is guidance, not a process sandbox."),
 ];
 const pr = { ...text("prUrl", "Pull request URL", "", "A specific github.com pull request. This workflow never follows a different PR."), required: true };
 
@@ -51,9 +51,9 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       pr,
       text("prompt", "When new feedback arrives", "Read the new feedback in context. Fix valid issues and nits, run relevant tests, and push if authorized. Explain feedback you cannot address or disagree with. Do not change correct code merely to satisfy a mistaken comment.", "", true),
       number("quietMinutes", "Stop after quiet (minutes)", 30, 5, 1440, "Resets after new feedback, a changed PR head, or a completed workflow turn. Never completes while task work is pending."),
-      text("reviewers", "Only these reviewers", "", "Optional comma-separated GitHub logins. Listed review bots are included."),
+      { ...text("reviewers", "Trusted feedback authors", "", "Required comma-separated GitHub logins. Only feedback from these trusted authors can instruct the agent; listed review bots are included."), required: true },
       text("excludeAuthors", "Ignore these authors", "", "Comma-separated logins. The authenticated GitHub user is always excluded."),
-      boolean("includeBots", "Include other bots", "By default only humans and explicitly listed reviewers trigger a wake-up."),
+      boolean("includeBots", "Include bot feedback", "Deprecated compatibility option. Only bots named as trusted feedback authors are included."),
       ...COMMON_PARAMETERS.map(p => p.key === "everyMinutes" ? { ...p, default: 2 } : p),
     ],
   },
@@ -67,6 +67,10 @@ export function parsePrUrl(value: unknown): { owner: string; repo: string; numbe
       !Number.isSafeInteger(Number(match[3]))) throw new Error("Use https://github.com/owner/repo/pull/number");
   return { owner: match[1]!, repo: match[2]!, number: Number(match[3]), url: `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}` };
 }
+
+const GITHUB_LOGIN = /^(?!-)(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
+export const workflowLogins = (value: unknown): Set<string> =>
+  new Set(String(value ?? "").split(",").map(part => part.trim().toLowerCase()).filter(Boolean));
 
 export function validateWorkflowParams(def: WorkflowDefinition, input: unknown): WorkflowParams {
   if (!isRecord(input)) throw new Error("params must be an object");
@@ -89,5 +93,12 @@ export function validateWorkflowParams(def: WorkflowDefinition, input: unknown):
     output.scheduledAt = new Date(value).toISOString();
   }
   if (def.id === "pr-ci" || def.id === "pr-review") output.prUrl = parsePrUrl(output.prUrl).url;
+  if (def.id === "pr-review") {
+    const reviewers = workflowLogins(output.reviewers);
+    if (!reviewers.size) throw new Error("Trusted feedback authors must include at least one GitHub login");
+    if ([...reviewers].some(login => login.length > 100 || !GITHUB_LOGIN.test(login))) {
+      throw new Error("Trusted feedback authors must be comma-separated GitHub logins");
+    }
+  }
   return output;
 }

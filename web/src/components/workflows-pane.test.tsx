@@ -20,7 +20,8 @@ const definition: WorkflowDefinition = {
     { key: "prompt", label: "When new feedback arrives", type: "string", default: "Fix valid nits.", multiline: true, description: "" },
     { key: "everyMinutes", label: "Check every (minutes)", type: "number", default: 2, min: 1, max: 1440, description: "" },
     { key: "quietMinutes", label: "Stop after quiet (minutes)", type: "number", default: 30, min: 5, max: 1440, description: "" },
-    { key: "allowPush", label: "Allow pushing changes", type: "boolean", default: false, description: "" },
+    { key: "reviewers", label: "Trusted feedback authors", type: "string", default: "", required: true, description: "Only feedback from these authors can instruct the agent." },
+    { key: "allowPush", label: "Ask agent to push changes", type: "boolean", default: false, description: "" },
   ],
 }
 const scheduleDefinition: WorkflowDefinition = {
@@ -33,7 +34,7 @@ const scheduleDefinition: WorkflowDefinition = {
 }
 const task = { ...TASKS[0]!, state: "done" as const }
 const item: Workflow = {
-  id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])) },
+  id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])), reviewers: "reviewer" },
   state: "active", reason: "Waiting for feedback", revision: 1, contextN: 1, wakeCount: 2, checkCount: 5,
   lastCheckedAt: new Date().toISOString(), nextCheckAt: new Date().toISOString(),
   expiresAt: "2026-12-01T00:00:00Z", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -59,6 +60,7 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
   expect(screen.getByRole("textbox", { name: "Pull request URL" })).toHaveValue("https://github.com/example/project/pull/42")
   expect(screen.getByRole("spinbutton", { name: "Stop after quiet (minutes)" })).toHaveValue(30)
   fireEvent.change(screen.getByRole("textbox", { name: "When new feedback arrives" }), { target: { value: "Fix nits and run tests." } })
+  fireEvent.change(screen.getByRole("textbox", { name: /Trusted feedback authors/ }), { target: { value: "reviewer" } })
   fireEvent.click(screen.getByRole("button", { name: "Start" }))
   await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true))
   const call = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!
@@ -66,7 +68,7 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
     ? `/api/tasks/${task.id}/workflows`
     : `http://127.0.0.1:45678/fixture/connections/remote-fixture/1/api/tasks/${task.id}/workflows`)
   expect(JSON.parse(String(call[1]?.body))).toEqual({
-    type: "pr-review", params: { prUrl: "https://github.com/example/project/pull/42", prompt: "Fix nits and run tests.", everyMinutes: 2, quietMinutes: 30, allowPush: false },
+    type: "pr-review", params: { prUrl: "https://github.com/example/project/pull/42", prompt: "Fix nits and run tests.", everyMinutes: 2, quietMinutes: 30, reviewers: "reviewer", allowPush: false },
   })
 })
 
@@ -182,7 +184,7 @@ it("keeps an edited PR pinned and permits explicit push authorization", () => {
   render(<WorkflowForm definition={definition} existing={{ ...item, params: { ...item.params, prUrl: "https://github.com/example/project/pull/42" } }} pending={false} onSubmit={submit} onCancel={() => {}} />)
   expect(screen.getByRole("textbox", { name: "Pull request URL" })).toBeDisabled()
   fireEvent.click(screen.getByText("Limits and permissions"))
-  const checkbox = within(screen.getByText("Allow pushing changes").closest("label")!).getByRole("checkbox")
+  const checkbox = within(screen.getByText("Ask agent to push changes").closest("label")!).getByRole("checkbox")
   fireEvent.click(checkbox)
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ allowPush: true }))
