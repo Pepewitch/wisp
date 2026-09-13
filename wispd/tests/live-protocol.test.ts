@@ -97,6 +97,14 @@ describe("bounded live protocol transport", () => {
     expect(dropped).toEqual([14]);
   });
 
+  test("an overflow hook fires as soon as a partial frame crosses the cap", () => {
+    const overflowed: number[] = [];
+    const frames = new JsonLineBuffer({ maxFrameChars: 8, onOverflow: (chars) => overflowed.push(chars) });
+
+    expect(frames.push("x".repeat(9))).toEqual([]);
+    expect(overflowed).toEqual([9]);
+  });
+
   test("a stream that ends mid-overflow reports the drop and emits no fragment", () => {
     const dropped: number[] = [];
     const frames = new JsonLineBuffer({ maxFrameChars: 8, onDrop: (chars) => dropped.push(chars) });

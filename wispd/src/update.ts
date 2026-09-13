@@ -17,6 +17,7 @@ import {
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
 } from "./update-supervisor";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
 
 export { compareVersions } from "../../shared/release-version";
@@ -33,6 +34,8 @@ const RELEASE_CACHE_MS = 6 * 60 * 60 * 1000;
 const RESTART_DELAY_MS = 500;
 const MAX_CHANNEL_BYTES = 16 * 1024;
 const MAX_ARTIFACT_BYTES = 250 * 1024 * 1024;
+export const UPDATE_COMMAND_MAX_BYTES = DEFAULT_MAX_BYTES;
+const UPDATE_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 const SHA256 = /^[0-9a-f]{64}$/;
 
 export type InstallMethod = "homebrew" | "managed-linux" | "unsupported";
@@ -110,19 +113,13 @@ function output(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("utf8").trim();
 }
 
-async function runCommand(cmd: string[]): Promise<CommandResult> {
-  const child = Bun.spawn({
+export async function runUpdateCommand(cmd: string[]): Promise<CommandResult> {
+  return runBoundedCommand({
     cmd,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  return { exitCode, stdout: stdout.trim(), stderr: stderr.trim() };
+    timeoutMs: UPDATE_COMMAND_TIMEOUT_MS,
+    maxBytes: UPDATE_COMMAND_MAX_BYTES,
+    maxErrorBytes: DEFAULT_MAX_ERROR_BYTES,
+  }, cmd[0] ?? "update command");
 }
 
 function commandFailure(cmd: string[], result: CommandResult): Error {
@@ -345,7 +342,7 @@ export class UpdateManager {
 
   constructor(options: UpdateManagerOptions = {}) {
     this.fetcher = options.fetch ?? fetch;
-    this.run = options.run ?? runCommand;
+    this.run = options.run ?? runUpdateCommand;
     this.detector = options.detectInstallation ?? detectInstallation;
     this.restart = options.restart ?? (() => process.kill(process.pid, "SIGTERM"));
     this.now = options.now ?? (() => new Date());

@@ -41,8 +41,9 @@ export class TaskCompactor {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        controller.abort();
-        reject(new ProbeError(`the ${task.harness} compaction timed out after ${this.timeoutMs / 1000}s`, 504));
+        const error = new ProbeError(`the ${task.harness} compaction timed out after ${this.timeoutMs / 1000}s`, 504);
+        reject(error);
+        controller.abort(error);
       }, this.timeoutMs);
     });
 
