@@ -32,6 +32,18 @@ const scheduleDefinition: WorkflowDefinition = {
     { key: "scheduledAt", label: "Scheduled time", type: "string", default: "", required: true, description: "" },
   ],
 }
+const heartbeatDefinition: WorkflowDefinition = {
+  id: "heartbeat", version: "1", name: "Heartbeat",
+  description: "Revisit an objective on a timer.",
+  parameters: [
+    { key: "prompt", label: "Instructions", type: "string", default: "", required: true, multiline: true, description: "" },
+    { key: "everyMinutes", label: "Check every (minutes)", type: "number", default: 5, min: 1, max: 1440, description: "" },
+    { key: "maxWakeups", label: "Maximum wake-ups", type: "number", default: 20, min: 1, max: 200, description: "" },
+    { key: "lifetimeHours", label: "Expires after (hours)", type: "number", default: 24, min: 1, max: 168, description: "" },
+    { key: "allowPush", label: "Ask agent to push changes", type: "boolean", default: true, description: "" },
+    { key: "allowMerge", label: "Ask agent to merge changes", type: "boolean", default: true, description: "" },
+  ],
+}
 const task = { ...TASKS[0]!, state: "done" as const }
 const item: Workflow = {
   id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])), reviewers: "reviewer" },
@@ -188,6 +200,30 @@ it("keeps an edited PR pinned and permits explicit push authorization", () => {
   fireEvent.click(checkbox)
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ allowPush: true }))
+})
+
+it("makes heartbeat push and merge permissions implicit", () => {
+  const submit = vi.fn()
+  const existing = {
+    ...item,
+    id: "wheartbeat",
+    type: "heartbeat",
+    params: {
+      ...Object.fromEntries(heartbeatDefinition.parameters.map(p => [p.key, p.default])),
+      prompt: "Continue after a temporary limit.",
+      allowPush: false,
+      allowMerge: false,
+    },
+  }
+  render(<WorkflowForm definition={heartbeatDefinition} existing={existing} pending={false} onSubmit={submit} onCancel={() => {}} />)
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
+  expect(screen.queryByText("Ask agent to push changes")).not.toBeInTheDocument()
+  expect(screen.queryByText("Ask agent to merge changes")).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }))
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+    allowPush: false,
+    allowMerge: false,
+  }))
 })
 
 it("schedules one steer using an explicit wall time and time zone", () => {

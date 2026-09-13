@@ -35,6 +35,14 @@ to run `wisp workflow complete <workflow-id>` when the objective is satisfied.
 Otherwise the agent should leave the workflow active and end its turn, not
 sleep and poll on its own. Snapshots remain with task data until purge.
 
+A heartbeat can start a new turn after a settled task reports `failed` or
+`needs-input`, which lets it resume an objective after a temporary harness
+limit or an unanswered agent question. It never starts alongside a live or
+stuck turn, queued user input, a stop operation, or tracked background work.
+Heartbeat turns allow pushing and merging by default without asking two extra
+questions in the form. Explicit permission values already stored on an
+existing heartbeat remain in effect.
+
 ### PR CI watch
 
 ```sh
@@ -114,15 +122,17 @@ wisp workflow complete <workflow-id>
 
 `types --json` describes each type's parameter names, types, defaults, and
 bounds. Use `--params '{"parameterName":"value"}'` for any declared parameter,
-including custom plugins. For example, `--params '{"allowPush":false}'`
-removes the push request from future workflow instructions.
+including custom plugins. For PR and custom workflows,
+`--params '{"allowPush":false}'` removes the push request from future workflow
+instructions. Heartbeat defaults to authorizing pushing and merging.
 
-Common defaults are 20 wake-ups and a 24-hour lifetime, with no requests to
-push or merge. Intervals must be whole minutes from 1 to 1440, wake-up limits
-from 1 to 200, and lifetimes whole hours from 1 to 168. `--lifetime 48h` sets
-the expiry relative to the original attachment time. Reaching a limit pauses
-the workflow. A task also has a safety ceiling of 200 workflow wake-ups in 24
-hours and at most 10 unfinished instances.
+Common defaults are 20 wake-ups and a 24-hour lifetime. PR and custom
+workflows do not request pushing or merging by default. Intervals must be whole
+minutes from 1 to 1440, wake-up limits from 1 to 200, and lifetimes whole hours
+from 1 to 168. `--lifetime 48h` sets the expiry relative to the original
+attachment time. Reaching a limit pauses the workflow. A task also has a
+safety ceiling of 200 workflow wake-ups in 24 hours and at most 10 unfinished
+instances.
 
 Edits affect future checks and cancel undelivered instructions. The watched PR
 cannot be retargeted; create another instance instead. Completed instances
@@ -134,9 +144,10 @@ archive the task or stop a turn that already received an instruction.
 - The daemon owns scheduling. Closing the UI does not stop it, but sleeping or
   shutting down the host does. On recovery, Wisp checks current conditions once
   rather than replaying missed ticks.
-- Automated instructions do not steer a live turn or pile up in its queue.
-  User input and existing work take priority. Only a settled `done` task can
-  receive a wake-up; human-input, failed, stuck, and stopping tasks are blocked.
+- Recurring workflow instructions do not steer a live turn or pile up in its
+  queue. User input and existing work take priority. PR and custom workflows
+  only wake a settled `done` task. Heartbeat can also wake settled `failed` and
+  `needs-input` tasks; creating, live, stuck, and stopping tasks remain blocked.
 - **Stop turn pauses attached workflows.** Archive completes them before
   teardown. Changing the agent configuration or context pauses them for review.
 - Local observations and message identities are durable. An uncertain process

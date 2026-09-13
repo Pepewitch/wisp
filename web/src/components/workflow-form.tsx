@@ -1,5 +1,11 @@
 import { useState } from "react"
-import type { Workflow, WorkflowDefinition, WorkflowParameter, WorkflowParams } from "../../../shared/workflows"
+import {
+  workflowPermissionIsImplicit,
+  type Workflow,
+  type WorkflowDefinition,
+  type WorkflowParameter,
+  type WorkflowParams,
+} from "../../../shared/workflows"
 import { cn } from "@/lib/utils"
 import { Button } from "./primitives"
 
@@ -254,6 +260,8 @@ export function WorkflowForm({
   )
   const scheduleError = definition.id === "schedule-steer" &&
     (!Number.isFinite(Date.parse(String(params.scheduledAt))) || Date.parse(String(params.scheduledAt)) <= openedAt)
+  const visibleParameters = definition.parameters.filter((p) => !workflowPermissionIsImplicit(definition.id, p.key))
+  const safetyParameters = visibleParameters.filter((p) => SAFETY.has(p.key))
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (!scheduleError) onSubmit(params) }} className="px-1.5 pt-1">
       <h3 className="text-[12.5px] font-medium">
@@ -262,7 +270,7 @@ export function WorkflowForm({
       <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">{definition.description}</p>
 
       <div className="mt-3 flex flex-col gap-3">
-        {definition.parameters.filter((p) => !SAFETY.has(p.key) && p.key !== "scheduledAt").map(field)}
+        {visibleParameters.filter((p) => !SAFETY.has(p.key) && p.key !== "scheduledAt").map(field)}
         {definition.id === "schedule-steer" && (
           <ScheduleField
             value={String(params.scheduledAt)}
@@ -274,14 +282,16 @@ export function WorkflowForm({
         {scheduleError && <p role="alert" className="text-[11.5px] text-destructive">Choose a time in the future.</p>}
       </div>
 
-      {definition.parameters.some((p) => SAFETY.has(p.key)) && <details className="mt-3 border-t border-border pt-2">
+      {safetyParameters.length > 0 && <details className="mt-3 border-t border-border pt-2">
         <summary className="cursor-pointer py-1 text-[12px] text-muted-foreground hover:text-foreground">
           Limits and permissions
         </summary>
         <p className="mt-1 text-[11.5px] leading-relaxed text-faint">
-          Defaults: 20 wake-ups, 24 hours, no pushing or merging. Instructions guide the agent; they are not a sandbox.
+          {definition.id === "heartbeat"
+            ? "Defaults: 20 wake-ups and 24 hours. Heartbeat allows pushing and merging by default."
+            : "Defaults: 20 wake-ups, 24 hours, no pushing or merging. Instructions guide the agent; they are not a sandbox."}
         </p>
-        <div className="mt-2.5 flex flex-col gap-3">{definition.parameters.filter((p) => SAFETY.has(p.key)).map(field)}</div>
+        <div className="mt-2.5 flex flex-col gap-3">{safetyParameters.map(field)}</div>
       </details>}
 
       {definition.custom && (
