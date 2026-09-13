@@ -96,8 +96,17 @@ handoff command while the evaluator captures live daemon and browser state.
 The collector releases that barrier before the model exits.
 
 The baseline pins Ubuntu by digest, Node and Chrome archives by SHA-256, and
-Droid, agent-browser, and proxy packages by exact version. Each case also
+Droid and agent-browser by exact version. Every evaluator Python package is
+locked by exact version and approved distribution hashes, and image builds use
+pip's `--require-hashes` mode without source distributions. Each case also
 records the exact evaluator image ID.
+
+After reviewing a proxy dependency update, regenerate the Python lock for the
+evaluator's Ubuntu 24.04, Python 3.12 target:
+
+```sh
+wispd/scripts/evaluator/compile-requirements.sh
+```
 
 ## Objective task
 

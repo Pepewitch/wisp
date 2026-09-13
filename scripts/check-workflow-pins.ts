@@ -19,6 +19,8 @@
  *      be.
  *   4. No workflow grants `write-all`, and no top-level block grants write
  *      scopes: a job that needs one says so itself.
+ *   5. Registry-installed Cargo tools use an exact `=x.y.z` version and that
+ *      release's lockfile. A range executes newly published code.
  *
  * Local actions (`uses: ./…`) are exempt: they are this repository's own code,
  * already reviewed as part of the commit. A same-repo REUSABLE WORKFLOW
@@ -42,6 +44,7 @@ const IMAGE_REFERENCE =
   /(?:^\s*(?:image|container):\s*|\b(?:docker|podman)\s+(?:run|pull|create)\b[^\n]*?\s)([a-z0-9][a-z0-9._/-]*(?::[\w.-]+|@sha256:[0-9a-f]{64}))/gim;
 /** Words that appear in a docker-run line but are not images. */
 const NOT_AN_IMAGE = /^(--|-)/;
+const EXACT_CARGO_VERSION = /^=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 export interface PolicyProblem {
   file: string;
@@ -75,6 +78,18 @@ export function checkWorkflow(file: string, source: string): PolicyProblem[] {
     // a comment that mentions it is documentation, not a grant.
     if (/^\s*permissions:\s*write-all\s*$/.test(line)) {
       problems.push({ file, line: index + 1, problem: "write-all grants every scope; name the ones the job needs" });
+    }
+    const cargoInstall = /\bcargo\s+install\s+([A-Za-z0-9_-]+)(?:\s|$)/.exec(line);
+    if (cargoInstall && !/\s--(?:path|git)\s/.test(line)) {
+      const version = /(?:^|\s)--version\s+(?:'([^']+)'|"([^"]+)"|(\S+))/.exec(line);
+      const value = version?.[1] ?? version?.[2] ?? version?.[3] ?? "";
+      if (!EXACT_CARGO_VERSION.test(value) || !/(?:^|\s)--locked(?:\s|$)/.test(line)) {
+        problems.push({
+          file,
+          line: index + 1,
+          problem: `cargo install ${cargoInstall[1]} must use --locked and an exact --version '=x.y.z'`,
+        });
+      }
     }
   });
 
@@ -129,5 +144,5 @@ if (import.meta.main) {
     console.error(`\n${problems.length} workflow policy problem(s) in ${files} workflow(s)`);
     process.exit(1);
   }
-  console.log(`checked ${files} workflows: every third-party action and container is pinned`);
+  console.log(`checked ${files} workflows: third-party actions, containers, and Cargo tools are pinned`);
 }
