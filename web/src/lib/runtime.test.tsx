@@ -14,6 +14,7 @@ function fakeTransport(connectionId: string): DaemonTransport {
   return {
     connectionId,
     request: <T,>() => Promise.resolve({} as T),
+    upload: <T,>() => Promise.resolve({} as T),
     openEventStream: () => ({}) as DaemonEventStream,
     openWebSocket: () => ({}) as WebSocket,
     assetUrl: (path) => path,

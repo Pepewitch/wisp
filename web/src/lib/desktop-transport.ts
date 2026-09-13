@@ -1,6 +1,6 @@
 import { adaptEventSource } from "./fetch-event-source"
 import {
-  ApiError,
+  daemonJsonResponse,
   type DaemonRequestOptions,
   type DaemonTransport,
 } from "./transport"
@@ -63,25 +63,23 @@ export function createDesktopTransport(
       credentials: "omit",
       redirect: "error",
     })
-    const data = (await response.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >
-    if (!response.ok) {
-      throw new ApiError(
-        typeof data.error === "string"
-          ? data.error
-          : `${response.status} ${response.statusText}`,
-        response.status,
-        response.headers.get("x-wisp-proxy-error")
-      )
-    }
-    return data as T
+    return await daemonJsonResponse<T>(response)
   }
 
   const transport: DaemonTransport = {
     connectionId,
     request,
+    upload: async <T,>(path: string, body: Blob, signal?: AbortSignal): Promise<T> => {
+      const response = await fetch(qualify(path), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body,
+        signal,
+        credentials: "omit",
+        redirect: "error",
+      })
+      return await daemonJsonResponse<T>(response)
+    },
     // The native proxy injects the credential on this hop, so the browser's
     // own EventSource is still the right client here — unlike the web
     // transport, which has to carry a bearer header itself (SEC-01).

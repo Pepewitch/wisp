@@ -5,9 +5,11 @@ import {
   formatBytes,
   MAX_ATTACHMENTS_PER_TURN,
   MAX_TURN_ATTACHMENT_BYTES,
-  sniffAttachmentType,
+  MAX_ATTACHMENT_BYTES,
+  SNIFF_WINDOW_BYTES,
+  sniffAttachmentHeader,
   SUPPORTED_ATTACHMENTS,
-  type AttachmentPayload,
+  type StagedAttachmentPayload,
 } from "./attachments";
 
 /** The two flags that name files; `--image` is what `--attach` used to be called. */
@@ -26,13 +28,13 @@ function flagPaths(raw: string | boolean | string[] | undefined, flag: string): 
 }
 
 /**
- * `--attach ./orders.csv` → the wire payload the create/send routes take (A1b).
+ * `--attach ./orders.csv` → a one-shot upload reference for create/send (A1b).
  *
  * The daemon is still the authority: it re-sniffs the magic bytes and re-checks
  * every cap on the request. What this does is fail EARLY and locally on the
  * three things only the CLI can see — a path that does not exist, a file wisp
- * does not take, and one that is over its kind's cap — because the alternative
- * is base64-ing 50 MB of someone's video up a socket to be told the same thing.
+ * does not take, and one that is over its kind's cap. It reads only the sniff
+ * window locally; the actual file streams to the daemon as a raw body.
  *
  * `--image` still works and means the same thing: it was the flag's name while
  * images were the only attachment, and a flag in someone's shell history is a
@@ -41,7 +43,21 @@ function flagPaths(raw: string | boolean | string[] | undefined, flag: string): 
  * Exits rather than throwing: a bad path is a usage error, and the caller
  * has not sent anything yet.
  */
-export async function readAttachmentFlags(flags: AttachmentFlags): Promise<AttachmentPayload[] | undefined> {
+export type UploadAttachment = (path: string, name: string) => Promise<StagedAttachmentPayload>;
+export type DiscardAttachment = (uploadId: string) => Promise<unknown>;
+
+export async function discardAttachmentPayloads(
+  files: StagedAttachmentPayload[],
+  discard: DiscardAttachment,
+): Promise<void> {
+  await Promise.allSettled(files.map((file) => discard(file.uploadId)));
+}
+
+export async function readAttachmentFlags(
+  flags: AttachmentFlags,
+  upload: UploadAttachment,
+  discard: DiscardAttachment,
+): Promise<StagedAttachmentPayload[] | undefined> {
   const named: [string, string][] = [
     ...flagPaths(flags.attach, "--attach").map((p): [string, string] => ["--attach", p]),
     ...flagPaths(flags.image, "--image").map((p): [string, string] => ["--image", p]),
@@ -51,7 +67,7 @@ export async function readAttachmentFlags(flags: AttachmentFlags): Promise<Attac
     console.error(`at most ${MAX_ATTACHMENTS_PER_TURN} attachments per turn, got ${named.length}`);
     process.exit(1);
   }
-  const out: AttachmentPayload[] = [];
+  const validated: Array<{ path: string; name: string }> = [];
   let total = 0;
   for (const [flag, p] of named) {
     const file = Bun.file(resolve(p));
@@ -59,30 +75,43 @@ export async function readAttachmentFlags(flags: AttachmentFlags): Promise<Attac
       console.error(`${flag} ${p}: no such file`);
       process.exit(1);
     }
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const mediaType = sniffAttachmentType(bytes);
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      console.error(`${flag} ${p}: ${formatBytes(file.size)} exceeds the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit`);
+      process.exit(1);
+    }
+    const head = new Uint8Array(await file.slice(0, SNIFF_WINDOW_BYTES).arrayBuffer());
+    const mediaType = sniffAttachmentHeader(head);
     if (!mediaType) {
       console.error(`${flag} ${p}: not a supported attachment (magic-byte sniff) — wisp takes ${SUPPORTED_ATTACHMENTS}`);
       process.exit(1);
     }
     const kind = attachmentKind(mediaType);
     const limit = ATTACHMENT_KIND_LIMITS[kind];
-    if (bytes.byteLength > limit) {
+    if (file.size > limit) {
       console.error(
-        `${flag} ${p}: ${formatBytes(bytes.byteLength)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
+        `${flag} ${p}: ${formatBytes(file.size)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
       );
       process.exit(1);
     }
-    total += bytes.byteLength;
-    // the turn's budget, before the encode rather than after it: ten legal
-    // 20 MB texts are 200 MB of base64 to be told the same thing by the daemon
+    total += file.size;
+    // The turn's budget is checked before upload, so several individually
+    // legal files cannot spend bandwidth only to be rejected as a group.
     if (total > MAX_TURN_ATTACHMENT_BYTES) {
       console.error(
         `${flag} ${p}: these attachments total ${formatBytes(total)}, over the ${formatBytes(MAX_TURN_ATTACHMENT_BYTES)} limit for one turn`,
       );
       process.exit(1);
     }
-    out.push({ name: basename(p), dataBase64: Buffer.from(bytes).toString("base64") });
+    validated.push({ path: resolve(p), name: basename(p) });
   }
-  return out;
+  const uploaded: StagedAttachmentPayload[] = [];
+  try {
+    for (const file of validated) {
+      uploaded.push(await upload(file.path, file.name));
+    }
+    return uploaded;
+  } catch (error) {
+    await discardAttachmentPayloads(uploaded, discard);
+    throw error;
+  }
 }

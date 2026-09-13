@@ -1,4 +1,11 @@
 import { HELP } from "./cli-help";
+import {
+  api,
+  daemonRequest,
+  discardAttachment,
+  exitApi,
+  uploadAttachment,
+} from "./cli-api";
 import { workflowCommand } from "./cli-workflow";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
@@ -8,8 +15,11 @@ import { doctorCommand } from "./cli-doctor";
 import { updateCommand } from "./cli-update";
 import { resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
-import { formatBytes } from "./attachments";
-import { readAttachmentFlags } from "./cli-attach";
+import { formatBytes, type StagedAttachmentPayload } from "./attachments";
+import {
+  discardAttachmentPayloads,
+  readAttachmentFlags,
+} from "./cli-attach";
 import { searchCommand } from "./cli-search";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
@@ -22,29 +32,6 @@ import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type Tas
 import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
-
-
-async function api(path: string, method = "GET", body?: unknown): Promise<any> {
-  const cfg = loadConfig();
-  const url = `http://${cfg.host}:${cfg.port}${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method,
-      headers: { authorization: `Bearer ${cfg.token}`, "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-  } catch {
-    console.error(`cannot reach wispd at ${url} — is it running? start it with: ${COMMAND} serve`);
-    process.exit(1);
-  }
-  const data = (await res.json().catch(() => ({}))) as any;
-  if (!res.ok) {
-    console.error(`error: ${data.error ?? res.statusText}`);
-    process.exit(1);
-  }
-  return data;
-}
 
 function ago(iso: string): string {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -143,16 +130,28 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     console.error("--base requires a value (e.g. --base origin/develop)");
     process.exit(1);
   }
-  const task = (await api("/api/tasks", "POST", {
-    repoPath: resolve(repo),
-    prompt,
-    harness,
-    model: typeof flags.model === "string" ? flags.model : undefined,
-    effort: typeof flags.effort === "string" ? flags.effort : undefined,
-    mode: flags.local ? "local" : undefined,
-    base: typeof flags.base === "string" ? flags.base : undefined,
-    attachments: await readAttachmentFlags(flags),
-  })) as ApiTask;
+  let attachments: StagedAttachmentPayload[] | undefined;
+  try {
+    attachments = await readAttachmentFlags(flags, uploadAttachment, discardAttachment);
+  } catch (error) {
+    exitApi(error);
+  }
+  let task: ApiTask;
+  try {
+    task = await daemonRequest("/api/tasks", "POST", JSON.stringify({
+      repoPath: resolve(repo),
+      prompt,
+      harness,
+      model: typeof flags.model === "string" ? flags.model : undefined,
+      effort: typeof flags.effort === "string" ? flags.effort : undefined,
+      mode: flags.local ? "local" : undefined,
+      base: typeof flags.base === "string" ? flags.base : undefined,
+      attachments,
+    })) as ApiTask;
+  } catch (error) {
+    if (attachments) await discardAttachmentPayloads(attachments, discardAttachment);
+    exitApi(error);
+  }
   const where = task.mode === "local" ? ", local" : "";
   console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}) — ${task.title}`);
 }
@@ -490,8 +489,12 @@ export async function cli(args: string[]): Promise<void> {
         positional,
         attachmentFlags: flags,
         commandName: COMMAND,
-        readAttachments: readAttachmentFlags,
-        request: api,
+        readAttachments: (attachmentFlags) =>
+          readAttachmentFlags(attachmentFlags, uploadAttachment, discardAttachment),
+        discardAttachment,
+        requestError: exitApi,
+        request: (path, method, body) =>
+          daemonRequest(path, method, body === undefined ? undefined : JSON.stringify(body)),
       });
       break;
     }

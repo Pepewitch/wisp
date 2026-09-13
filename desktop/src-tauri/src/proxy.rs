@@ -118,11 +118,12 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// the response/socket: once headers arrive, response bodies and WebSocket
 /// frames may stream for as long as their callers keep them open.
 const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// One turn's 50 MiB attachment budget expands under base64 plus JSON framing —
-/// ten 5 MiB images or a single 50 MiB video are the same bytes on the wire.
-/// Keeping one bounded copy makes a Local request safely replayable after token
-/// rotation, and this ceiling stays above the daemon's own body limit, which is
-/// derived from that same budget.
+/// A raw 50 MiB upload may cross a slow tunnel. Keep it bounded without
+/// treating request-body transmission as an ordinary response-header wait.
+const ATTACHMENT_UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+/// Ordinary JSON writes remain safely replayable after Local token rotation.
+/// Raw attachment uploads take a separate streaming path below and never enter
+/// this buffer.
 const MAX_REPLAYABLE_REQUEST_BODY: usize = 80 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -512,7 +513,17 @@ async fn handle_trusted(state: Arc<ProxyState>, request: Request) -> Response {
         return proxy_websocket(state, target, credential, upstream, &mut parts).await;
     }
 
-    proxy_http(&state, &target, credential, upstream, parts, body).await
+    let streaming_upload = is_streaming_upload(route.rest, &parts.method);
+    proxy_http(
+        &state,
+        &target,
+        credential,
+        upstream,
+        parts,
+        body,
+        streaming_upload,
+    )
+    .await
 }
 
 /// Anything that is not a read. The daemon's own refusals still apply; this is
@@ -523,6 +534,10 @@ fn is_write(method: &http::Method) -> bool {
         *method,
         http::Method::GET | http::Method::HEAD | http::Method::OPTIONS
     )
+}
+
+fn is_streaming_upload(path: &str, method: &http::Method) -> bool {
+    *method == http::Method::POST && path == "api/attachments"
 }
 
 /// Confirm immediately before a consequential operation that the daemon behind
@@ -792,9 +807,30 @@ async fn proxy_http(
     upstream: Url,
     parts: http::request::Parts,
     body: Body,
+    streaming_upload: bool,
 ) -> Response {
     if !state.registry.route_is_current(target) {
         return stale_route();
+    }
+    if streaming_upload {
+        // A browser File is already a replayable source at the caller. Relay
+        // it chunk by chunk instead of creating an 80 MiB native copy too.
+        // Identity was freshly checked immediately before this call; if the
+        // credential rotates in this narrow window, the UI can retry by
+        // uploading the same File again with a new one-shot reference.
+        let stream = body.into_data_stream();
+        let builder = upstream_request(state, &parts, upstream, &credential)
+            .body(reqwest::Body::wrap_stream(stream));
+        return match send_upstream_with_timeout(
+            builder,
+            ATTACHMENT_UPLOAD_TIMEOUT,
+            "the attachment upload did not complete in time",
+        )
+        .await
+        {
+            Ok(response) => relay_http_response(response),
+            Err(response) => response,
+        };
     }
     let request_has_body = has_request_body(&parts.headers);
     let buffered_body = if request_has_body {
@@ -889,7 +925,20 @@ async fn send_upstream(
     state: &ProxyState,
     builder: reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, Response> {
-    match tokio::time::timeout(state.upstream_handshake_timeout, builder.send()).await {
+    send_upstream_with_timeout(
+        builder,
+        state.upstream_handshake_timeout,
+        "the daemon did not send response headers in time",
+    )
+    .await
+}
+
+async fn send_upstream_with_timeout(
+    builder: reqwest::RequestBuilder,
+    timeout: std::time::Duration,
+    timeout_message: &'static str,
+) -> Result<reqwest::Response, Response> {
+    match tokio::time::timeout(timeout, builder.send()).await {
         Ok(Ok(response)) => Ok(response),
         Ok(Err(error)) => Err(refuse(
             StatusCode::BAD_GATEWAY,
@@ -899,7 +948,7 @@ async fn send_upstream(
         Err(_) => Err(refuse(
             StatusCode::GATEWAY_TIMEOUT,
             "upstream-timeout",
-            "the daemon did not send response headers in time",
+            timeout_message,
         )),
     }
 }
@@ -1198,7 +1247,9 @@ fn upstream_message_to_client(message: tungstenite::Message) -> Option<axum::ext
 
 #[cfg(test)]
 mod tests {
-    use super::{has_request_body, is_websocket_upgrade, is_write, ProxyRoute};
+    use super::{
+        has_request_body, is_streaming_upload, is_websocket_upgrade, is_write, ProxyRoute,
+    };
     use http::header::{CONTENT_LENGTH, TRANSFER_ENCODING, UPGRADE};
     use http::{HeaderMap, HeaderValue, Method};
 
@@ -1241,6 +1292,14 @@ mod tests {
         assert!(is_write(&Method::PATCH));
         assert!(is_write(&Method::PUT));
         assert!(is_write(&Method::DELETE));
+    }
+
+    #[test]
+    fn only_raw_attachment_posts_bypass_the_replay_buffer() {
+        assert!(is_streaming_upload("api/attachments", &Method::POST));
+        assert!(!is_streaming_upload("api/attachments", &Method::GET));
+        assert!(!is_streaming_upload("api/tasks", &Method::POST));
+        assert!(!is_streaming_upload("api/attachments/other", &Method::POST));
     }
 
     #[test]

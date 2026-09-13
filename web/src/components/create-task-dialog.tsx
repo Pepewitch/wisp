@@ -11,7 +11,10 @@ import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
 import { failureReason } from "@/lib/api"
-import { usePendingAttachments } from "@/lib/attachments"
+import {
+  discardAttachmentPayloads,
+  usePendingAttachments,
+} from "@/lib/attachments"
 import { effortOptions, rememberEffort } from "@/lib/effort"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
@@ -49,9 +52,9 @@ import { cn } from "@/lib/utils"
  *    the configured default plus anything used before (lib/effort.ts). No
  *    hardcoded ladder — the daemon's own tests assert codex taking `xhigh`, so
  *    a low/medium/high menu would hide the level the owner actually uses.
- *  - Attachments ride inline in the create body, encoded when the dialog
- *    submits. A harness with no image mechanism refuses a pasted IMAGE with
- *    its named reason and takes every other kind (A1d).
+ *  - Attachments upload as raw bodies when the dialog submits; the create
+ *    body carries only one-shot references. A harness with no image mechanism
+ *    refuses a pasted IMAGE and takes every other kind (A1d).
  *  - Creation errors carry named reasons from the daemon and stay inline here.
  */
 export function CreateTaskDialog({
@@ -126,7 +129,7 @@ function Form({
   onCreated: (id: string) => void
   onClose: () => void
 }) {
-  const { connectionId } = useDaemonRuntime()
+  const { connectionId, transport } = useDaemonRuntime()
   const [repoPath, setRepoPath] = useState(initialRepoPath ?? repos[0]?.path ?? "")
   const [prompt, setPrompt] = useState("")
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() =>
@@ -163,14 +166,13 @@ function Form({
   /**
    * A create is in flight, from the FIRST click rather than from the mutation.
    *
-   * Encoding moved to submit (A1d), and a 50 MB video's base64 takes seconds
-   * on the main thread — `createTask.isPending` does not go true until that
-   * finishes, so between the click and the mutation the button was live and a
-   * second ⌘↵ made a second task. The ref is what actually closes the window:
+   * Uploading starts before `createTask.isPending` goes true, so between the
+   * click and the mutation the button would otherwise stay live and a second
+   * ⌘↵ could make a second task. The ref is what actually closes the window:
    * state updates are batched, and two clicks can land inside one batch.
    */
   const submitting = useRef(false)
-  const [encoding, setEncoding] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
   const anyUsable = harnesses.some(isUsable)
@@ -179,7 +181,7 @@ function Form({
   const project = repos.find((r) => r.path === repoPath)
   const model = choice?.model ?? ""
   const ready =
-    repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending && !encoding
+    repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending && !uploading
 
   const pickChoice = (value: string) => {
     const next = decode(value)
@@ -202,10 +204,12 @@ function Form({
     setValidationError(null)
     const chosen = choice
     submitting.current = true
-    setEncoding(true)
-    // encoded at submit rather than at paste (A1d): the dialog can hold a
-    // 50 MB video without holding its base64 too
-    void attachments.payloads().then(
+    setUploading(true)
+    // Uploaded only at submit (A1d): the dialog holds the File, never a second
+    // base64 copy of a 50 MB video.
+    const discardUpload = (uploadId: string) =>
+      transport.request(`/api/attachments/${encodeURIComponent(uploadId)}`, { method: "DELETE" })
+    void attachments.payloads(transport.upload, discardUpload).then(
       (payloads) =>
         createTask.mutate(
           {
@@ -229,17 +233,20 @@ function Form({
               onCreated(task.id)
               onClose()
             },
+            onError: () => {
+              if (payloads) void discardAttachmentPayloads(payloads, discardUpload)
+            },
             // a refused create must be retryable, so the guard is released on
             // both outcomes rather than only on the happy one
             onSettled: () => {
               submitting.current = false
-              setEncoding(false)
+              setUploading(false)
             },
           },
         ),
       (error) => {
         submitting.current = false
-        setEncoding(false)
+        setUploading(false)
         setValidationError(error instanceof Error ? error.message : String(error))
       },
     )
@@ -346,7 +353,7 @@ function Form({
         effort={effort}
         suffixPromptId={suffixPromptId}
         ready={ready}
-        pending={createTask.isPending || encoding}
+        pending={createTask.isPending || uploading}
         reprobePending={reprobe.isPending}
         onPickChoice={pickChoice}
         onTogglePreferredChoice={togglePreferredChoice}

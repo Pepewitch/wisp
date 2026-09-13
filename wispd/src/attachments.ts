@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   closeSync,
+  createReadStream,
   mkdirSync,
   openSync,
   readSync,
@@ -14,49 +15,56 @@ import {
 import { rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { IMAGE_DELIVERY_STRATEGIES, type AdapterDef } from "./adapters";
+import {
+  AttachmentUploadError,
+  claimAttachmentUpload,
+  consumeAttachmentUpload,
+  releaseAttachmentUpload,
+  type StagedAttachment,
+} from "./attachment-uploads";
+import {
+  attachmentKind,
+  sniffAttachmentHeader,
+  sniffAttachmentType,
+  SNIFF_WINDOW_BYTES,
+  type AttachmentKind,
+  type AttachmentMediaType,
+} from "../../shared/attachment-sniff";
 import { TASKS_DIR } from "./config";
 import { formatBytes } from "./text";
 import { isRecord, typeName } from "./validate";
 
 /** Re-exported: attachment sizes are formatted everywhere attachments are named. */
 export { formatBytes };
+export {
+  attachmentKind,
+  looksLikeUtf8Text,
+  sniffAttachmentHeader,
+  sniffAttachmentType,
+  sniffImageType,
+  SNIFF_WINDOW_BYTES,
+  type AttachmentKind,
+  type AttachmentMediaType,
+  type DocumentMediaType,
+  type ImageMediaType,
+  type VideoMediaType,
+} from "../../shared/attachment-sniff";
 
 /**
  * Per-turn attachments (S3, spike ts7efd; widened past images in A1d). The
  * currency is PATHS on disk — codex consumes them directly (`-i <path>… --`),
  * the claude stdin strategy encodes from the file, and everything that is not
  * an image is READ FROM ITS PATH by the harness's own file tools — so the
- * daemon decodes + validates the request body's base64 and stores the bytes
- * under `~/.wisp/tasks/<id>/attachments/turn-<n>/<name>` before the turn
- * spawns. The files belong to exactly the turn whose request carried them: no
- * upload endpoint, no queue, no orphan files (resume turns re-attach
- * nothing — all three harnesses keep the image in session context).
+ * daemon validates either a one-shot staged upload or the legacy base64 body,
+ * then stores the bytes under
+ * `~/.wisp/tasks/<id>/attachments/turn-<n>/<name>` before the turn spawns.
+ * Resume turns re-attach nothing: all harnesses keep the file in session
+ * context.
  *
  * Validation never trusts the client: magic bytes decide the type (not the
  * pasted mime), and every rejection is a named 400 — a silently dropped
  * image is droid's failure mode, and wisp's rule is loud, never silent.
  */
-
-/** The Anthropic-standard mime set every harness image mechanism accepts (spike-verified). */
-export type ImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-/** Documents wisp stores for path delivery: a pdf, or anything that is honestly utf-8 text. */
-export type DocumentMediaType = "application/pdf" | "text/plain";
-/** Container formats a person actually pastes: mp4/m4v, quicktime, webm. */
-export type VideoMediaType = "video/mp4" | "video/quicktime" | "video/webm";
-export type AttachmentMediaType = ImageMediaType | DocumentMediaType | VideoMediaType;
-
-/**
- * What a stored attachment IS, as the rest of wisp reasons about it: the caps,
- * the delivery mechanism, and the composer's rendering all key off this rather
- * than off a mime-string prefix test written four times.
- */
-export type AttachmentKind = "image" | "pdf" | "text" | "video";
-
-export function attachmentKind(mediaType: string): AttachmentKind {
-  if (mediaType.startsWith("image/")) return "image";
-  if (mediaType.startsWith("video/")) return "video";
-  return mediaType === "application/pdf" ? "pdf" : "text";
-}
 
 /**
  * Per-kind size caps. Images stay at droid's hard 5 MB per-file limit (it also
@@ -79,11 +87,9 @@ export const MAX_ATTACHMENTS_PER_TURN = 10;
  * The whole turn's raw byte budget, and the load-bearing number of A1d.
  *
  * Before video, the worst case was already 10 × 5 MB = 50 MB, so holding the
- * TOTAL here means the daemon's request ceiling and memory profile do not move
- * when a 50 MB video becomes attachable — and the derived body limit stays
- * under the desktop proxy's 80 MB replayable-body cap, which is the real wall
- * for anything sent through Desktop. The consequence is deliberate and honest:
- * a 50 MB video is the entire turn's budget, not a video plus screenshots.
+ * TOTAL here means neither daemon memory nor temporary disk use grows with a
+ * mixed batch. The consequence is deliberate and honest: a 50 MB video is the
+ * entire turn's budget, not a video plus screenshots.
  */
 export const MAX_TURN_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
@@ -107,6 +113,13 @@ export const MAX_TURN_BASE64_CHARS =
 /** An attachments rejection; the message IS the API's named 400 reason. */
 export class AttachError extends Error {
   override name = "AttachError";
+
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
+    super(message);
+  }
 }
 
 /**
@@ -114,17 +127,31 @@ export class AttachError extends Error {
  * `decodeAttachments` is what validates it — a client that builds this (the web
  * composer, `wisp new --attach`) is building input for that function.
  */
-export interface AttachmentPayload {
+export interface InlineAttachmentPayload {
   name: string;
   dataBase64: string;
 }
 
-/** One validated, still-in-memory attachment (the request body decoded). */
-export interface DecodedAttachment {
+export interface StagedAttachmentPayload {
+  name: string;
+  uploadId: string;
+}
+
+export type AttachmentPayload = InlineAttachmentPayload | StagedAttachmentPayload;
+
+/** One validated legacy attachment whose request body was decoded in memory. */
+export interface InlineDecodedAttachment {
   name: string;
   mediaType: AttachmentMediaType;
   data: Buffer;
+  size?: number;
+  contentHash?: string;
 }
+
+/** One validated staged attachment. Its bytes stay on disk throughout submission. */
+export type StagedDecodedAttachment = StagedAttachment;
+
+export type DecodedAttachment = InlineDecodedAttachment | StagedDecodedAttachment;
 
 /** One stored attachment: the turn's file on disk, ready for argv/stdin/path. */
 export interface StoredAttachment {
@@ -142,12 +169,15 @@ function hashPart(hash: ReturnType<typeof createHash>, value: string | Uint8Arra
   hash.update(bytes);
 }
 
-/** Stable attachment identity, including names, types, order, and bytes. */
+/** Stable legacy attachment identity, including names, types, order, and bytes. */
 export function taskMessageAttachmentsFingerprint(files: DecodedAttachment[]): string {
   const hash = createHash("sha256");
   hash.update("wisp-task-message-attachments-v1:");
   hashPart(hash, String(files.length));
   for (const file of files) {
+    if ("uploadId" in file) {
+      throw new Error("staged attachments require the asynchronous fingerprint");
+    }
     hashPart(hash, file.name);
     hashPart(hash, file.mediaType);
     hashPart(hash, file.data);
@@ -155,140 +185,56 @@ export function taskMessageAttachmentsFingerprint(files: DecodedAttachment[]): s
   return hash.digest("hex");
 }
 
-/** Sniff the magic bytes; the pasted filename/mime is never trusted. */
-export function sniffImageType(data: Uint8Array): ImageMediaType | null {
-  if (data.length >= 8 && data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47) {
-    return "image/png"; // ‰PNG…
+/** New submissions hash the upload-time digest, avoiding a second full disk read. */
+export function taskMessageAttachmentsFingerprintV2(files: DecodedAttachment[]): string {
+  const hash = createHash("sha256");
+  hash.update("wisp-task-message-attachments-v2:");
+  hashPart(hash, String(files.length));
+  for (const file of files) {
+    hashPart(hash, file.name);
+    hashPart(hash, file.mediaType);
+    hashPart(
+      hash,
+      "uploadId" in file
+        ? file.contentHash
+        : file.contentHash ?? createHash("sha256").update(file.data).digest("hex"),
+    );
   }
-  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return "image/jpeg";
-  if (data.length >= 6 && data[0] === 0x47 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x38) {
-    return "image/gif"; // GIF87a / GIF89a
-  }
-  if (
-    data.length >= 12 &&
-    data[0] === 0x52 && // RIFF….WEBP
-    data[1] === 0x49 &&
-    data[2] === 0x46 &&
-    data[3] === 0x46 &&
-    data[8] === 0x57 &&
-    data[9] === 0x45 &&
-    data[10] === 0x42 &&
-    data[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-  return null;
-}
-
-function ascii(data: Uint8Array, offset: number, length: number): string {
-  let out = "";
-  for (let i = offset; i < offset + length && i < data.length; i++) out += String.fromCharCode(data[i]!);
-  return out;
-}
-
-/** `%PDF-` at byte 0. A pdf that hides its header behind junk is not one wisp stores. */
-function sniffPdf(data: Uint8Array): DocumentMediaType | null {
-  return data.length >= 5 && ascii(data, 0, 5) === "%PDF-" ? "application/pdf" : null;
+  return hash.digest("hex");
 }
 
 /**
- * The ISO-BMFF brands that actually mean VIDEO.
- *
- * An allowlist rather than "anything with an ftyp box", because the container
- * is not the format: HEIC and AVIF photos, and M4A audio, are ISO-BMFF too. A
- * `qt  ` brand is QuickTime; the rest are the mp4 family, and a `<video>`
- * element wants to be told which it got. Trailing spaces are trimmed first —
- * the brand field is four bytes, so `M4V ` is how "M4V" is spelled.
- *
- * A video whose brand is not here is refused by name (it falls through to the
- * text scan and fails), which is the safe direction: storing a photo as a
- * video would tell the model to run ffmpeg on a still.
+ * The persisted v1 fingerprint, streamed for staged files so retries remain
+ * compatible with messages written by older daemons without loading the file.
  */
-const MP4_BRANDS = new Set([
-  "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "mp71", "mmp4",
-  "avc1", "dash", "M4V", "M4VH", "M4VP", "3gp4", "3gp5", "3g2a",
-]);
-
-/** ISO-BMFF (`….ftyp<brand>`) and Matroska/WebM (EBML magic). */
-function sniffVideo(data: Uint8Array): VideoMediaType | null {
-  if (data.length >= 4 && data[0] === 0x1a && data[1] === 0x45 && data[2] === 0xdf && data[3] === 0xa3) {
-    return "video/webm"; // EBML — matroska or webm; the browser reads both as webm
+export async function taskMessageAttachmentsFingerprintForSubmission(
+  files: DecodedAttachment[],
+): Promise<string> {
+  if (files.every((file) => !("uploadId" in file))) {
+    return taskMessageAttachmentsFingerprint(files);
   }
-  if (data.length >= 12 && ascii(data, 4, 4) === "ftyp") {
-    const brand = ascii(data, 8, 4).replace(/ +$/, "");
-    if (brand === "qt") return "video/quicktime";
-    return MP4_BRANDS.has(brand) ? "video/mp4" : null;
-  }
-  return null;
-}
-
-/** The control bytes real text files carry: tab, newline, form feed, CR, and ESC (ANSI logs). */
-const TEXT_CONTROL_BYTES = new Set([0x09, 0x0a, 0x0c, 0x0d, 0x1b]);
-
-/**
- * "Is this honestly utf-8 text?" — wisp's only sniff without magic bytes, so
- * it is a scan rather than a prefix test: no NUL, no stray control bytes, and
- * every multi-byte sequence well-formed (no overlongs, no surrogates, nothing
- * past U+10FFFF).
- *
- * `truncated` is what makes the same rule usable on a 4 KiB window: a window
- * ending mid-character must not be called binary, so an incomplete sequence at
- * the very end passes there and fails on a whole file. That direction matters —
- * the upload path scans the WHOLE buffer, and promotion re-checks only the
- * window, so anything that got in must still pass on the way through.
- */
-export function looksLikeUtf8Text(data: Uint8Array, truncated = false): boolean {
-  let i = 0;
-  while (i < data.length) {
-    const b = data[i]!;
-    if (b < 0x80) {
-      if ((b < 0x20 && !TEXT_CONTROL_BYTES.has(b)) || b === 0x7f) return false;
-      i += 1;
+  const hash = createHash("sha256");
+  hash.update("wisp-task-message-attachments-v1:");
+  hashPart(hash, String(files.length));
+  for (const file of files) {
+    hashPart(hash, file.name);
+    hashPart(hash, file.mediaType);
+    if (!("uploadId" in file)) {
+      hashPart(hash, file.data);
       continue;
     }
-    const length = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc2 ? 2 : 0;
-    if (length === 0 || b > 0xf4) return false; // continuation byte, overlong lead, or out of range
-    if (i + length > data.length) return truncated;
-    const second = data[i + 1]!;
-    if ((second & 0xc0) !== 0x80) return false;
-    if (b === 0xe0 && second < 0xa0) return false; // overlong 3-byte
-    if (b === 0xed && second > 0x9f) return false; // utf-16 surrogate half
-    if (b === 0xf0 && second < 0x90) return false; // overlong 4-byte
-    if (b === 0xf4 && second > 0x8f) return false; // past U+10FFFF
-    for (let k = 2; k < length; k++) {
-      if ((data[i + k]! & 0xc0) !== 0x80) return false;
+    hash.update(String(file.size));
+    hash.update(":");
+    let bytes = 0;
+    for await (const chunk of createReadStream(file.path)) {
+      bytes += chunk.length;
+      hash.update(chunk);
     }
-    i += length;
+    if (bytes !== file.size) {
+      throw new Error(`attachment upload '${file.uploadId}' changed while being submitted`);
+    }
   }
-  return true;
-}
-
-/** How much of a stored file the header sniff reads back (promotion revalidation). */
-export const SNIFF_WINDOW_BYTES = 4096;
-
-/**
- * The whole-buffer sniff, in the order the formats can be told apart: magic
- * bytes first, utf-8 text last (it is the only rule that can accept bytes no
- * signature claims). Text is scanned in full here — the strict end of the
- * pair `looksLikeUtf8Text` documents.
- */
-export function sniffAttachmentType(data: Uint8Array): AttachmentMediaType | null {
-  return (
-    sniffImageType(data) ??
-    sniffPdf(data) ??
-    sniffVideo(data) ??
-    (data.length > 0 && looksLikeUtf8Text(data) ? "text/plain" : null)
-  );
-}
-
-/** The same sniff against a leading window, tolerant of a character split by its edge. */
-export function sniffAttachmentHeader(head: Uint8Array): AttachmentMediaType | null {
-  return (
-    sniffImageType(head) ??
-    sniffPdf(head) ??
-    sniffVideo(head) ??
-    (head.length > 0 && looksLikeUtf8Text(head, true) ? "text/plain" : null)
-  );
+  return hash.digest("hex");
 }
 
 /** The one sentence that lists what wisp takes, used by every unsupported-type rejection. */
@@ -326,62 +272,99 @@ export function decodeAttachments(harness: string, def: AdapterDef, raw: unknown
   if (raw.length > MAX_ATTACHMENTS_PER_TURN) {
     throw new AttachError(`at most ${MAX_ATTACHMENTS_PER_TURN} attachments per turn, got ${raw.length}`);
   }
+  const claimed: DecodedAttachment[] = [];
   let total = 0;
-  return raw.map((item, i) => {
-    const label = `attachments[${i}]`;
-    if (!isRecord(item)) throw new AttachError(`${label} must be an object with name and dataBase64, got ${typeName(item)}`);
-    if (typeof item.name !== "string" || item.name === "") {
-      const got = typeof item.name === "string" ? (item.name === "" ? '""' : "string") : typeName(item.name);
-      throw new AttachError(`${label}.name must be a non-empty string, got ${got}`);
-    }
-    if (typeof item.dataBase64 !== "string") {
-      throw new AttachError(`${label} (${item.name}): dataBase64 must be a string, got ${typeName(item.dataBase64)}`);
-    }
-    const b64 = item.dataBase64;
-    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64) || b64.length % 4 !== 0) {
-      throw new AttachError(`${label} (${item.name}): dataBase64 is not valid base64`);
-    }
-    if (b64.length > MAX_BASE64_CHARS) {
-      throw new AttachError(
-        `${label} (${item.name}): over the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit`,
-      );
-    }
-    const data = Buffer.from(b64, "base64");
-    if (data.length === 0) throw new AttachError(`${label} (${item.name}): empty file`);
-    const mediaType = sniffAttachmentType(data);
-    if (!mediaType) {
-      throw new AttachError(
-        `${label} (${item.name}): not a supported attachment (magic-byte sniff) — wisp takes ${SUPPORTED_ATTACHMENTS}`,
-      );
-    }
-    const kind = attachmentKind(mediaType);
-    if (kind === "image") {
-      if (!hasImageCapability(def)) {
+  try {
+    return raw.map((item, i) => {
+      const label = `attachments[${i}]`;
+      if (!isRecord(item)) {
+        throw new AttachError(`${label} must be an object with name and dataBase64, got ${typeName(item)}`);
+      }
+      if (typeof item.name !== "string" || item.name === "") {
+        const got = typeof item.name === "string" ? (item.name === "" ? '""' : "string") : typeName(item.name);
+        throw new AttachError(`${label}.name must be a non-empty string, got ${got}`);
+      }
+      let file: DecodedAttachment;
+      if (typeof item.uploadId === "string" && item.dataBase64 === undefined) {
+        try {
+          file = claimAttachmentUpload(item.uploadId, item.name);
+        } catch (error) {
+          throw new AttachError(
+            error instanceof Error ? error.message : String(error),
+            error instanceof AttachmentUploadError ? error.status : 400,
+          );
+        }
+      } else {
+        if (item.uploadId !== undefined) {
+          throw new AttachError(`${label} (${item.name}): provide uploadId or dataBase64, not both`);
+        }
+        if (typeof item.dataBase64 !== "string") {
+          throw new AttachError(`${label} (${item.name}): dataBase64 must be a string, got ${typeName(item.dataBase64)}`);
+        }
+        const b64 = item.dataBase64;
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64) || b64.length % 4 !== 0) {
+          throw new AttachError(`${label} (${item.name}): dataBase64 is not valid base64`);
+        }
+        if (b64.length > MAX_BASE64_CHARS) {
+          throw new AttachError(
+            `${label} (${item.name}): over the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit`,
+          );
+        }
+        const data = Buffer.from(b64, "base64");
+        if (data.length === 0) throw new AttachError(`${label} (${item.name}): empty file`);
+        const mediaType = sniffAttachmentType(data);
+        if (!mediaType) {
+          throw new AttachError(
+            `${label} (${item.name}): not a supported attachment (magic-byte sniff) — wisp takes ${SUPPORTED_ATTACHMENTS}`,
+          );
+        }
+        file = {
+          name: item.name,
+          mediaType,
+          data,
+          size: data.length,
+          contentHash: createHash("sha256").update(data).digest("hex"),
+        };
+      }
+      claimed.push(file);
+      const kind = attachmentKind(file.mediaType);
+      if (kind === "image" && !hasImageCapability(def)) {
         throw new AttachError(
           `harness '${harness}' has no image-attachment capability (its adapter declares no image/imageInput/imageDelivery field)`,
         );
       }
-      if (accepts && !accepts.includes(mediaType)) {
+      if (kind === "image" && accepts && !accepts.includes(file.mediaType)) {
         const list = accepts.map((t) => t.replace("image/", "")).join(" and ");
         throw new AttachError(
-          `${label} (${item.name}): harness '${harness}' reads images from a path with its own file tool, which accepts only ${list} — this is ${mediaType}`,
+          `${label} (${item.name}): harness '${harness}' reads images from a path with its own file tool, which accepts only ${list} — this is ${file.mediaType}`,
         );
       }
-    }
-    const limit = ATTACHMENT_KIND_LIMITS[kind];
-    if (data.length > limit) {
-      throw new AttachError(
-        `${label} (${item.name}): ${formatBytes(data.length)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
-      );
-    }
-    total += data.length;
-    if (total > MAX_TURN_ATTACHMENT_BYTES) {
-      throw new AttachError(
-        `attachments total ${formatBytes(total)}, over the ${formatBytes(MAX_TURN_ATTACHMENT_BYTES)} limit for one turn`,
-      );
-    }
-    return { name: item.name, mediaType, data };
-  });
+      const size = "uploadId" in file ? file.size : file.data.length;
+      const limit = ATTACHMENT_KIND_LIMITS[kind];
+      if (size > limit) {
+        throw new AttachError(
+          `${label} (${item.name}): ${formatBytes(size)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
+        );
+      }
+      total += size;
+      if (total > MAX_TURN_ATTACHMENT_BYTES) {
+        throw new AttachError(
+          `attachments total ${formatBytes(total)}, over the ${formatBytes(MAX_TURN_ATTACHMENT_BYTES)} limit for one turn`,
+        );
+      }
+      return file;
+    });
+  } catch (error) {
+    releaseDecodedAttachments(claimed);
+    throw error;
+  }
+}
+
+/** Release one-shot uploads that validation or submission did not consume. */
+export function releaseDecodedAttachments(files: DecodedAttachment[]): void {
+  for (const file of files) {
+    if ("uploadId" in file) releaseAttachmentUpload(file.uploadId);
+  }
 }
 
 /** The name a file falls back to when the client's is empty or dot-only. */
@@ -423,17 +406,33 @@ export function writeTurnAttachments(taskId: string, turn: number, files: Decode
 function writeAttachmentsToDir(dir: string, files: DecodedAttachment[]): StoredAttachment[] {
   mkdirSync(dir, { recursive: true });
   const used = new Set(readdirSync(dir).map((name) => name.toLowerCase()));
-  return files.map((file) => {
-    const base = sanitizeName(file.name, attachmentKind(file.mediaType));
-    let name = base;
-    for (let n = 2; used.has(name.toLowerCase()) || existsSync(join(dir, name)); n++) {
-      name = withSuffix(base, n);
+  const stored: StoredAttachment[] = [];
+  try {
+    for (const file of files) {
+      const base = sanitizeName(file.name, attachmentKind(file.mediaType));
+      let name = base;
+      for (let n = 2; used.has(name.toLowerCase()) || existsSync(join(dir, name)); n++) {
+        name = withSuffix(base, n);
+      }
+      used.add(name.toLowerCase());
+      const path = join(dir, name);
+      if ("uploadId" in file) {
+        consumeAttachmentUpload(file.uploadId, path);
+      } else {
+        writeFileSync(path, file.data, { mode: 0o600 });
+      }
+      stored.push({
+        name,
+        path,
+        size: "uploadId" in file ? file.size : file.data.length,
+        mediaType: file.mediaType,
+      });
     }
-    used.add(name.toLowerCase());
-    const path = join(dir, name);
-    writeFileSync(path, file.data);
-    return { name, path, size: file.data.length, mediaType: file.mediaType };
-  });
+    return stored;
+  } catch (error) {
+    for (const file of stored) rmSync(file.path, { force: true });
+    throw error;
+  }
 }
 
 /** Store a submission's bytes before it has a concrete turn number. */

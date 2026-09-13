@@ -11,6 +11,8 @@ export function fakeDaemonTransport(
   return {
     connectionId,
     request: async <T,>() => ({} as T),
+    upload: async <T,>() =>
+      ({ uploadId: "test-upload", contentHash: "test-content-hash" } as T),
     openEventStream: () => ({}) as DaemonEventStream,
     openWebSocket: () => ({}) as WebSocket,
     assetUrl: (path) => path,

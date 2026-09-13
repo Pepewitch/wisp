@@ -21,6 +21,21 @@ export class ApiError extends Error {
   }
 }
 
+/** Decode the daemon's JSON envelope and preserve native-proxy error codes. */
+export async function daemonJsonResponse<T>(response: Response): Promise<T> {
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>
+  if (!response.ok) {
+    throw new ApiError(
+      typeof data.error === "string"
+        ? data.error
+        : `${response.status} ${response.statusText}`,
+      response.status,
+      response.headers.get("x-wisp-proxy-error"),
+    )
+  }
+  return data as T
+}
+
 /**
  * A server-sent event stream, as much of `EventSource` as the app uses.
  *
@@ -52,6 +67,8 @@ export interface DaemonEventStream {
 export interface DaemonTransport {
   readonly connectionId: string
   request<T>(path: string, options?: DaemonRequestOptions): Promise<T>
+  /** Stream one raw blob body without converting it to JSON or base64. */
+  upload<T>(path: string, body: Blob, signal?: AbortSignal): Promise<T>
   openEventStream(path: string): DaemonEventStream
   openWebSocket(path: string): WebSocket
   /**

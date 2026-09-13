@@ -6,7 +6,12 @@ import { cleanupProgress } from "../archive-progress";
 import { trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
 import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
-import { AttachError, decodeAttachments, type DecodedAttachment } from "../attachments";
+import {
+  AttachError,
+  decodeAttachments,
+  releaseDecodedAttachments,
+  type DecodedAttachment,
+} from "../attachments";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
 import { emit } from "../events";
 import { pathExists } from "../fsutil";
@@ -187,40 +192,46 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     try {
       attachments = decodeAttachments(harness, def, body.attachments);
     } catch (e) {
-      if (e instanceof AttachError) return err(e.message, 400);
+      if (e instanceof AttachError) return err(e.message, e.status);
       throw e;
     }
-    // L4: 5-char ids are birthday-bound (~1.7% collision at 1k tasks) — retry
-    // on a UNIQUE violation instead of 500ing the create request.
-    let task: Task | null = null;
-    // A removal can begin while attachment decoding and defaults are resolved.
-    // Check again at the last point before the row exists.
-    if (isProjectRemovalInProgress(repoPath)) {
-      return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
-    }
-    try { assertTaskCapacity(cfg); } catch (error) { if (error instanceof TaskCapacityError) return err(error.message, 429); throw error; }
-    for (let attempt = 0; attempt < 5 && !task; attempt++) {
-      try {
-        task = createTask({
-          id: newTaskId(),
-          title: rawPrompt.slice(0, TASK_TITLE_MAX),
-          repo_path: repoPath,
-          harness,
-          model,
-          effort,
-          mode,
-          slot: freeSlot(),
-        });
-      } catch (e) {
-        if (!String(e instanceof Error ? e.message : e).includes("UNIQUE constraint")) throw e;
+    let handedOff = false;
+    try {
+      // L4: 5-char ids are birthday-bound (~1.7% collision at 1k tasks) — retry
+      // on a UNIQUE violation instead of 500ing the create request.
+      let task: Task | null = null;
+      // A removal can begin while attachment decoding and defaults are resolved.
+      // Check again at the last point before the row exists.
+      if (isProjectRemovalInProgress(repoPath)) {
+        return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
       }
+      try { assertTaskCapacity(cfg); } catch (error) { if (error instanceof TaskCapacityError) return err(error.message, 429); throw error; }
+      for (let attempt = 0; attempt < 5 && !task; attempt++) {
+        try {
+          task = createTask({
+            id: newTaskId(),
+            title: rawPrompt.slice(0, TASK_TITLE_MAX),
+            repo_path: repoPath,
+            harness,
+            model,
+            effort,
+            mode,
+            slot: freeSlot(),
+          });
+        } catch (e) {
+          if (!String(e instanceof Error ? e.message : e).includes("UNIQUE constraint")) throw e;
+        }
+      }
+      if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
+      const release = reserveTaskCapacity(task.id, cfg);
+      handedOff = true;
+      void trackHomeWork(
+        launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
+      );
+      return json(apiTask(task), 201);
+    } finally {
+      if (!handedOff) releaseDecodedAttachments(attachments);
     }
-    if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
-    const release = reserveTaskCapacity(task.id, cfg);
-    void trackHomeWork(
-      launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
-    );
-    return json(apiTask(task), 201);
   })();
 }
 
@@ -322,8 +333,9 @@ async function sendTaskResponse(
   const { harness, model, effort, harnessChanged, def } = resolved;
   const message = promptWithSuffix(body.message as string, body.suffixPromptId as string | undefined);
   if (message === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
+  let decoded: DecodedAttachment[] = [];
   try {
-    const decoded = decodeAttachments(harness, def, body.attachments);
+    decoded = decodeAttachments(harness, def, body.attachments);
     // The switch and the queue row commit in ONE transaction inside
     // submitTaskMessage: a crash can expose neither a switched task without
     // its first message nor a message attributed to an agent the task never
@@ -349,7 +361,7 @@ async function sendTaskResponse(
     });
   } catch (error) {
     if (error instanceof TaskCapacityError) return err(error.message, 429);
-    if (error instanceof AttachError) return err(error.message, 400);
+    if (error instanceof AttachError) return err(error.message, error.status);
     if (error instanceof InterruptConflict) return err(error.message, 409);
     const detail = error instanceof Error ? error.message : String(error);
     if (detail.includes("was already used for different content") || detail.endsWith("was cancelled")) {
@@ -362,6 +374,10 @@ async function sendTaskResponse(
       return err(detail, 409);
     }
     throw error;
+  } finally {
+    // Consumed uploads already left the registry. Errors and stable-id retries
+    // retire whichever fresh one-shot references remain.
+    releaseDecodedAttachments(decoded);
   }
 }
 

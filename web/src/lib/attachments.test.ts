@@ -27,8 +27,8 @@ afterEach(() => {
 
 /**
  * The client mirror of the daemon's attachment rules (S3): caps and the
- * magic-byte sniffer track src/attachments.ts by hand — the daemon
- * re-validates everything on the wire, these tests pin the client side.
+ * caps track src/attachments.ts by hand; the magic-byte sniffer is shared.
+ * The daemon still re-validates everything on the wire.
  */
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 4, 5]);
@@ -118,7 +118,7 @@ describe("readAttachment", () => {
     expect(r.attachment.mediaType).toBe("image/png");
     expect(r.attachment.kind).toBe("image");
     expect(r.attachment.bytes).toBe(PNG.byteLength);
-    // the FILE is kept, not its base64: encoding waits for the submit (A1d)
+    // the FILE is kept directly; uploading waits for submit
     expect(r.attachment.file.name).toBe("shot.png");
   });
 
@@ -133,6 +133,14 @@ describe("readAttachment", () => {
       ["text", "text/plain"],
       ["video", "video/mp4"],
     ]);
+  });
+
+  it("sniffs a large File from a bounded slice instead of reading it whole", async () => {
+    const selected = new File([PNG, new Uint8Array(1024 * 1024)], "large.png");
+    const wholeRead = vi.spyOn(selected, "arrayBuffer").mockRejectedValue(new Error("whole read"));
+    const result = await readAttachment(selected);
+    expect(result.ok).toBe(true);
+    expect(wholeRead).not.toHaveBeenCalled();
   });
 
   it("names a nameless clipboard file 'pasted image'", async () => {
@@ -187,7 +195,7 @@ describe("noImageReason", () => {
 });
 
 describe("attachmentPayloads", () => {
-  it("encodes each row's file into the wire shape { name, dataBase64 }", async () => {
+  it("streams each File through the uploader and returns its one-shot reference", async () => {
     const list: PendingAttachment[] = [
       {
         id: "a1",
@@ -199,7 +207,30 @@ describe("attachmentPayloads", () => {
         url: "",
       },
     ];
-    expect(await attachmentPayloads(list)).toEqual([{ name: "a.txt", dataBase64: "QUJD" }]);
+    const upload = vi.fn(async () => ({ uploadId: "upload-a", contentHash: "sha256-a" }));
+    expect(await attachmentPayloads(list, upload, vi.fn())).toEqual([
+      { name: "a.txt", uploadId: "upload-a", contentHash: "sha256-a" },
+    ]);
+    expect(upload).toHaveBeenCalledWith("/api/attachments?name=a.txt", list[0]!.file);
+  });
+
+  it("discards sibling uploads when any file fails to stage", async () => {
+    const list: PendingAttachment[] = ["a.txt", "b.txt"].map((name, index) => ({
+      id: `a${index}`,
+      name,
+      mediaType: "text/plain",
+      kind: "text",
+      file: new File([name], name),
+      bytes: name.length,
+      url: "",
+    }));
+    const upload = vi.fn()
+      .mockResolvedValueOnce({ uploadId: "upload-a", contentHash: "sha256-a" })
+      .mockRejectedValueOnce(new Error("upload b failed"));
+    const discard = vi.fn(async () => undefined);
+
+    await expect(attachmentPayloads(list, upload, discard)).rejects.toThrow("upload b failed");
+    expect(discard).toHaveBeenCalledWith("upload-a");
   });
 
   it("the caps constants mirror the daemon's", () => {
@@ -289,7 +320,8 @@ describe("remembered desktop attachments", () => {
 
     const second = renderHook(() => usePendingAttachments(options));
     expect(second.result.current.list).toHaveLength(1);
-    expect(await second.result.current.payloads()).toEqual([
+    const upload = async () => ({ uploadId: "remembered", contentHash: "sha256-remembered" });
+    expect(await second.result.current.payloads(upload, vi.fn())).toEqual([
       expect.objectContaining({ name: "shot.png" }),
     ]);
     act(() => second.result.current.clear());
@@ -330,7 +362,12 @@ describe("remembered desktop attachments", () => {
 
     const reopened = renderHook(() => usePendingAttachments(options));
     expect(reopened.result.current.list).toEqual([]);
-    expect(await reopened.result.current.payloads()).toBeUndefined();
+    expect(await reopened.result.current.payloads(
+      async () => {
+        throw new Error("empty list must not upload");
+      },
+      vi.fn(),
+    )).toBeUndefined();
     expect(urls.createObjectURL).not.toHaveBeenCalled();
   });
 

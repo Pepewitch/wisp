@@ -1,7 +1,8 @@
 import {
   attachmentManifest,
   removeMessageAttachments,
-  taskMessageAttachmentsFingerprint,
+  taskMessageAttachmentsFingerprintForSubmission,
+  taskMessageAttachmentsFingerprintV2,
   type DecodedAttachment,
   writeMessageAttachments,
 } from "./attachments"
@@ -28,7 +29,7 @@ function sameMessage(
   existing: TaskMessage,
   task: Task,
   text: string,
-  attachmentHash: string,
+  attachmentHashes: readonly string[],
 ): boolean {
   return (
     existing.task_id === task.id &&
@@ -38,7 +39,7 @@ function sameMessage(
     existing.model === task.model &&
     existing.effort === task.effort &&
     (existing.attachment_hash === "" ||
-      existing.attachment_hash === attachmentHash)
+      attachmentHashes.includes(existing.attachment_hash))
   )
 }
 
@@ -46,9 +47,9 @@ async function reuseTaskMessage(
   existing: TaskMessage,
   task: Task,
   text: string,
-  attachmentHash: string,
+  attachmentHashes: readonly string[],
 ): Promise<TaskMessage> {
-  if (!sameMessage(existing, task, text, attachmentHash)) {
+  if (!sameMessage(existing, task, text, attachmentHashes)) {
     throw new Error(`message id ${existing.id} was already used for different content`)
   }
   if (existing.status === "queued" && existing.claim !== null) {
@@ -70,14 +71,23 @@ export async function persistTaskSubmission(
   agent?: TaskAgentSelection,
 ): Promise<{ task: Task; message: TaskMessage }> {
   const id = clientMessageId ?? newTaskMessageId()
-  const attachmentHash = taskMessageAttachmentsFingerprint(attachments)
   const existing = getTaskMessage(id)
+  const attachmentHash = taskMessageAttachmentsFingerprintV2(attachments)
   if (existing) {
+    const attachmentHashes = [attachmentHash]
+    if (existing.attachment_hash !== "" && existing.attachment_hash !== attachmentHash) {
+      attachmentHashes.push(
+        await taskMessageAttachmentsFingerprintForSubmission(attachments),
+      )
+    }
     // A stable-id retry: the first attempt committed the switch WITH the
     // message (one transaction), so the stored task row is already the
     // resolved agent. Compare against it, not the caller's pre-switch copy.
     const storedTask = getTask(existing.task_id) ?? task
-    return { task: storedTask, message: await reuseTaskMessage(existing, storedTask, text, attachmentHash) }
+    return {
+      task: storedTask,
+      message: await reuseTaskMessage(existing, storedTask, text, attachmentHashes),
+    }
   }
 
   try {

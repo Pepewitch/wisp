@@ -120,6 +120,7 @@ function specimenTransport(connectionId: string, items: Workflow[]): DaemonTrans
     connectionId,
     request: async <T,>(path: string) =>
       (path === "/api/workflow-types" ? TYPES : path.startsWith("/api/workflows/") ? HISTORY : items) as T,
+    upload: async <T,>() => ({} as T),
     openEventStream: () => ({}) as DaemonEventStream,
     openWebSocket: () => ({}) as WebSocket,
     assetUrl: (path: string) => path,
