@@ -58,6 +58,11 @@ test("parameters are typed, bounded, defaulted, and PR identity is pinned", () =
   expect(() => parsePrUrl("https://github.com.attacker.test/example/project/pull/42")).toThrow();
   expect(() => parsePrUrl("https://user:secret@github.com/example/project/pull/42")).toThrow();
   expect(() => validateWorkflowParams(BUILTIN_WORKFLOWS[0]!, { prompt: null })).toThrow();
+  const heartbeat = BUILTIN_WORKFLOWS.find(item => item.id === "heartbeat")!;
+  expect(validateWorkflowParams(heartbeat, { prompt: "Continue", allowPush: false, allowMerge: false })).toMatchObject({
+    allowPush: false,
+    allowMerge: false,
+  });
   const review = BUILTIN_WORKFLOWS.find(item => item.id === "pr-review")!;
   expect(() => validateWorkflowParams(review, { prUrl: "https://github.com/example/project/pull/42" })).toThrow("Trusted feedback authors");
   expect(() => validateWorkflowParams(review, { prUrl: "https://github.com/example/project/pull/42", reviewers: "reviewer, invalid user" })).toThrow("GitHub logins");
@@ -103,6 +108,7 @@ test("scheduled steer queues behind a non-live running turn and still completes"
 
 test("heartbeat is durable, writes its completion footer outside the worktree, and skips missed ticks", async () => {
   const item = arm();
+  expect(item.params).toMatchObject({ allowPush: true, allowMerge: true });
   const clock = new Date(base.getTime() + 60 * 60_000);
   const runtime = new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch });
   await runtime.tick();
@@ -111,8 +117,25 @@ test("heartbeat is durable, writes its completion footer outside the worktree, a
   const file = join(TASKS_DIR, item.taskId, "workflows", item.id, "wake-1", "HEARTBEAT.md");
   expect(existsSync(file)).toBe(true);
   expect(readFileSync(file, "utf8")).toContain(`workflow complete ${item.id}`);
+  expect(readFileSync(file, "utf8")).toContain("Push permission: authorized for task changes.");
+  expect(readFileSync(file, "utf8")).toContain("Merge permission: authorized after rechecking current provider protections.");
   await new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch }).tick();
   expect(messagesFor(item.taskId)).toHaveLength(1);
+});
+
+test("heartbeat preserves explicit permission denials from existing instances", async () => {
+  const item = arm();
+  db.run("UPDATE workflows SET params_json = ? WHERE id = ?", [
+    JSON.stringify({ ...item.params, allowPush: false, allowMerge: false }),
+    item.id,
+  ]);
+  await new WorkflowRuntime(loadConfig(), {}, {
+    now: () => new Date(base.getTime() + 6 * 60_000),
+    dispatch,
+  }).tick();
+  const file = join(TASKS_DIR, item.taskId, "workflows", item.id, "wake-1", "HEARTBEAT.md");
+  expect(readFileSync(file, "utf8")).toContain("Push permission: not authorized by this workflow.");
+  expect(readFileSync(file, "utf8")).toContain("Merge permission: not authorized by this workflow.");
 });
 
 test("busy heartbeat creates no queued reminders", async () => {
@@ -124,11 +147,42 @@ test("busy heartbeat creates no queued reminders", async () => {
   expect(getWorkflow(item.id)?.reason).toContain("Waiting for task");
 });
 
-test("default dispatch starts and records one synthetic harness turn through the runner", async () => {
+test("heartbeat recovers settled failed and needs-input tasks", async () => {
+  for (const state of ["failed", "needs-input"] as const) {
+    const item = arm();
+    transition(item.taskId, state);
+    const runtime = new WorkflowRuntime(loadConfig(), {}, {
+      now: () => new Date(base.getTime() + 6 * 60_000),
+      dispatch,
+    });
+    await runtime.tick();
+    expect(messagesFor(item.taskId)).toHaveLength(1);
+    expect(getWorkflow(item.id)?.wake_count).toBe(1);
+    expect(getWorkflow(item.id)?.reason).toBe("Heartbeat due");
+  }
+});
+
+test("PR workflows still wait for failed tasks", async () => {
+  const item = arm("pr-ci");
+  const snapshot = pr();
+  snapshot.checks = [{ id: "run", name: "Tests", state: "failed", url: "" }];
+  transition(item.taskId, "failed");
+  const runtime = new WorkflowRuntime(loadConfig(), {}, {
+    now: () => new Date(base.getTime() + 6 * 60_000),
+    readPr: async () => snapshot,
+    dispatch,
+  });
+  await runtime.tick();
+  expect(messagesFor(item.taskId)).toHaveLength(0);
+  expect(getWorkflow(item.id)?.reason).toBe("Waiting for task (failed); no instruction queued");
+});
+
+test("default dispatch recovers a failed task and records one synthetic harness turn", async () => {
   const { validateAdapters } = await import("../src/adapters");
   const item = arm();
   const dir = mkdtempSync(join(tmpdir(), "wisp-workflow-runner-"));
   setTaskFields(item.taskId, { worktree_path: dir });
+  transition(item.taskId, "failed", "Prior turn failed");
   const adapters = validateAdapters({ fake: { bin: "bash", exec: ["-c", "printf 'Workflow finished\\n'"], parse: { format: "text" } } });
   const runtime = new WorkflowRuntime(loadConfig(), adapters, { now: () => new Date(base.getTime() + 6 * 60_000) });
   await runtime.tick();

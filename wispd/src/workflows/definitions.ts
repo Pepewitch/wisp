@@ -1,4 +1,9 @@
-import type { WorkflowDefinition, WorkflowParameter, WorkflowParams } from "../../../shared/workflows";
+import {
+  workflowPermissionIsImplicit,
+  type WorkflowDefinition,
+  type WorkflowParameter,
+  type WorkflowParams,
+} from "../../../shared/workflows";
 import { isRecord } from "../validate";
 
 const text = (key: string, label: string, value: string, description = "", multiline = false): WorkflowParameter =>
@@ -31,7 +36,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     description: "Revisit an objective on a timer. Each eligible check wakes the agent and can spend tokens.",
     parameters: [
       { ...text("prompt", "Instructions", "", "What should the agent do, and when is the objective complete?", true), required: true },
-      ...COMMON_PARAMETERS,
+      ...COMMON_PARAMETERS.map(p => workflowPermissionIsImplicit("heartbeat", p.key) ? { ...p, default: true } : p),
     ],
   },
   {

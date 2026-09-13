@@ -20,6 +20,9 @@ export interface WorkflowDefinition {
   parameters: WorkflowParameter[];
   custom?: boolean;
 }
+export function workflowPermissionIsImplicit(workflowId: string, parameter: string): boolean {
+  return workflowId === "heartbeat" && (parameter === "allowPush" || parameter === "allowMerge");
+}
 export type WorkflowState = "active" | "paused" | "completed";
 export interface Workflow {
   id: string;
