@@ -107,6 +107,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
+      # Dependencies stay cached, but Tauri's generated asset map belongs to
+      # this package and can survive with stale frontendDist contents even
+      # when Cargo notices a newer build input.
+      - name: discard cached Wisp build artifacts
+        run: cargo clean --package wisp-desktop
       # Build after restoring Rust artifacts. Cargo tracks frontendDist through
       # build.rs timestamps; restoring the cache after this file was generated
       # made stale embedded assets look newer and skipped the rebuild.

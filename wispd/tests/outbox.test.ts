@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import type { WispConfig } from "../src/config";
 import { deliverOutbox } from "../src/outbox";
 import { createTask, db, freeSlot, newTaskId, transition, undeliveredOutbox } from "../src/store";
@@ -44,15 +44,14 @@ function stubWebhook() {
 }
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
-
-beforeAll(() => {
-  // the test db may be shared with other files in this process; retire any
-  // rows they left behind so delivery passes here only touch this file's rows
-  db.run(`UPDATE outbox SET delivered_at = ? WHERE delivered_at IS NULL`, [new Date().toISOString()]);
-});
+const taskIds: string[] = [];
 
 afterAll(() => {
   for (const s of servers) s.stop(true);
+  for (const taskId of taskIds) {
+    db.run("DELETE FROM outbox WHERE task_id = ?", [taskId]);
+    db.run("DELETE FROM tasks WHERE id = ?", [taskId]);
+  }
 });
 
 /** Create a real outbox row the way production does: a notify-worthy transition. */
@@ -65,6 +64,7 @@ function makeRow(event: TaskState = "done"): OutboxRow {
     model: null,
     slot: freeSlot(),
   });
+  taskIds.push(task.id);
   transition(task.id, event, "test detail");
   return undeliveredOutbox().find((r) => r.task_id === task.id)!;
 }
@@ -101,6 +101,16 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     await deliverOutbox(baseCfg, row.task_id);
 
     expect(rowById(row.id)).toBeUndefined();
+  });
+
+  test("a task-scoped pass is not hidden behind the global batch limit", async () => {
+    const older = Array.from({ length: 21 }, () => makeRow());
+    const target = makeRow();
+
+    await deliverOutbox(baseCfg, target.task_id);
+
+    expect(rowById(target.id)).toBeUndefined();
+    expect(older.every((row) => rowById(row.id) !== undefined)).toBe(true);
   });
 
   test("a failing URL schedules a retry with backoff and records last_error", async () => {

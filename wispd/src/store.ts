@@ -500,11 +500,18 @@ export function runningTurn(taskId: string): Turn | null {
   );
 }
 
-export function pendingOutbox(limit = 20): OutboxRow[] {
+export function pendingOutbox(taskId?: string, limit = 20): OutboxRow[] {
+  if (taskId !== undefined) {
+    return db
+      .query(
+        `SELECT * FROM outbox
+         WHERE delivered_at IS NULL AND next_attempt_at <= ? AND task_id = ?
+         ORDER BY id ASC LIMIT ?`,
+      )
+      .all(now(), taskId, limit) as OutboxRow[];
+  }
   return db
-    .query(
-      `SELECT * FROM outbox WHERE delivered_at IS NULL AND next_attempt_at <= ? ORDER BY id ASC LIMIT ?`,
-    )
+    .query(`SELECT * FROM outbox WHERE delivered_at IS NULL AND next_attempt_at <= ? ORDER BY id ASC LIMIT ?`)
     .all(now(), limit) as OutboxRow[];
 }
 
