@@ -94,7 +94,7 @@ RUN curl --fail --silent --show-error --location \
 # The key is mounted only into the sidecars, never either model container.
 COPY requirements.lock /opt/evaluator/requirements.lock
 RUN python3 -m venv /opt/mitmproxy \
-    && /opt/mitmproxy/bin/pip install --no-cache-dir --requirement /opt/evaluator/requirements.lock \
+    && /opt/mitmproxy/bin/pip install --no-cache-dir --only-binary=:all: --require-hashes --requirement /opt/evaluator/requirements.lock \
     && /opt/mitmproxy/bin/mitmdump --version
 
 COPY auth-proxy.py /opt/evaluator/auth-proxy.py

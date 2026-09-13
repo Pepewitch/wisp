@@ -167,6 +167,15 @@ jobs:
     expect(problems).toHaveLength(1);
     expect(problems[0]!.problem).toContain("write-all");
   });
+
+  test("a registry Cargo tool installed from a version range", () => {
+    const problems = checkWorkflow(
+      "cargo-range.yml",
+      `${PINNED_HEADER}      - run: cargo install cargo-audit --locked --version ^0.22\n`,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.problem).toContain("exact --version '=x.y.z'");
+  });
 });
 
 describe("what the policy allows", () => {
@@ -192,6 +201,7 @@ jobs:
       - run: |
           docker run --rm \\
             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 git .
+      - run: cargo install cargo-audit --locked --version '=0.22.2'
 `,
       ),
     ).toEqual([]);
