@@ -1,6 +1,10 @@
 import { recoverCleanupProgress } from "./archive-progress";
 import { loadAdapters } from "./adapters";
 import { MAX_TURN_BASE64_CHARS } from "./attachments";
+import {
+  resetAttachmentUploads,
+  startAttachmentUploadCleanupLoop,
+} from "./attachment-uploads";
 import { checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
@@ -88,19 +92,15 @@ export function parseTerminalSize(params: URLSearchParams): PtySize | null | str
  * The largest body the daemon will read, DERIVED from what the attachment
  * validator accepts rather than guessed.
  *
- * A create or send request carries its attachments as base64 inside the JSON,
- * so the biggest valid one is the turn's whole byte budget encoded —
- * `MAX_TURN_BASE64_CHARS`, about 67 MiB. A flat 32 MiB (the first version of
- * this) was BELOW that: Bun would answer 413 to a payload `decodeAttachments`
- * still calls valid, and the refusal would land before any validator could name
- * a reason (a review caught it). The headroom covers the JSON envelope: keys,
- * file names, the message text, the suffix prompt id.
+ * Older clients may still carry attachments as base64 inside create/send JSON,
+ * so compatibility keeps the ceiling at the turn's encoded byte budget —
+ * `MAX_TURN_BASE64_CHARS`, about 67 MiB. Bundled clients instead stream a raw
+ * file to `/api/attachments`, whose stricter cap is enforced during reading.
+ * The headroom here covers the legacy JSON envelope.
  *
  * A1d added 50 MB video without moving this number, because the budget it is
  * derived from is a TOTAL rather than a per-file cap: ten 5 MB images and one
- * 50 MB video are the same 50 MB of bytes. That also keeps the ceiling under
- * the desktop proxy's 80 MB replayable-body limit, which is the real wall for
- * a request sent through Desktop.
+ * 50 MB video are the same 50 MB of bytes.
  *
  * The point of the ceiling is unchanged — far below Bun's 128 MB default, and
  * the only thing between "a request arrived" and "the daemon allocated
@@ -424,6 +424,9 @@ async function serveOwned(
   // harnessDefaults against — warn at every boot, never crash
   checkHarnessDefaults(cfg, adapters);
   maintainDiagnosticArchives(cfg);
+  // Upload capabilities are process-local. Anything left by a prior process
+  // can never be claimed safely, so remove it before requests are admitted.
+  resetAttachmentUploads();
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
@@ -550,6 +553,7 @@ async function serveOwned(
   const outboxTimer = startOutboxLoop(cfg);
   const stuckTimer = startStuckLoop(cfg);
   const cleanupTimer = startArchiveCleanupLoop();
+  const attachmentUploadTimer = startAttachmentUploadCleanupLoop();
   // Catch-up work for turns that ended before the prose index existed. After
   // Bun.serve on purpose: listening never waits on a disk sweep.
   const proseTimer = options.proseBackfill === false ? null : startTurnTextBackfillLoop(adapters);
@@ -566,6 +570,7 @@ async function serveOwned(
       clearInterval(outboxTimer);
       clearInterval(stuckTimer);
       clearInterval(cleanupTimer);
+      clearInterval(attachmentUploadTimer);
       if (proseTimer !== null) clearInterval(proseTimer);
       clearInterval(turnLogTimer);
       // Stop admitting requests first, but keep ownership through handlers and

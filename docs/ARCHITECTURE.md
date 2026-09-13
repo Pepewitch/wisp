@@ -190,17 +190,21 @@ which is the point of the mode. Passing a base to one is a 400.
 ## Attachments
 
 A message can carry files: images, pdf, text of any extension, and short video.
-They arrive base64-encoded inside the create/send JSON, are validated by
-MAGIC BYTES rather than by the pasted name or mime, and are written under
-`~/.wisp/tasks/<id>/attachments/` — never into the worktree, where they would
-show up in the task's own diff and in the dirty check archive refuses on.
+Official clients stream each raw file to an authenticated staging route, then
+put only the returned one-shot references in create/send JSON. The daemon
+enforces the limit while reading, writes mode-0600 temporary files, validates
+MAGIC BYTES rather than the pasted name or mime, and atomically promotes the
+files under `~/.wisp/tasks/<id>/attachments/` — never into the worktree, where
+they would show up in the task's own diff and in the dirty check archive
+refuses on. Unclaimed references expire; failed submissions release claims.
+The legacy `{name, dataBase64}` request shape remains accepted for older
+clients, but no bundled client generates it.
 
 The caps are per kind (5 MB image, 20 MB pdf, 20 MB text, 50 MB video) under
-one 50 MB budget for the whole turn, and the daemon's request-body ceiling is
-DERIVED from that budget rather than guessed. Holding the total where the
-old ten-images worst case already was keeps the ceiling under the desktop
-proxy's 80 MB replayable-body limit; the visible consequence is that a 50 MB
-video is the whole turn's budget.
+one 50 MB budget for the whole turn. The daemon enforces the raw upload cap
+during streaming, and Desktop relays that route without entering its ordinary
+JSON replay buffer. The visible consequence is that a 50 MB video is the whole
+turn's budget.
 
 How a file reaches the harness depends only on whether it is an image:
 

@@ -80,9 +80,13 @@ describe("SteerBox attachments", () => {
     fireEvent.change(box, { target: { value: "look at this" } })
     fireEvent.click(screen.getByLabelText("Send"))
 
-    // the bytes are encoded at submit now (A1d), so the call lands a tick later
+    // the bytes upload at submit now, so the call lands a tick later
     await waitFor(() =>
-      expect(onSend).toHaveBeenCalledWith("look at this", [{ name: "shot.png", dataBase64: expect.any(String) }]),
+      expect(onSend).toHaveBeenCalledWith("look at this", [{
+        name: "shot.png",
+        uploadId: "test-upload",
+        contentHash: "test-content-hash",
+      }]),
     )
     // the queue clears only once the send has RESOLVED — a refusal keeps it
     await waitFor(() => expect(screen.queryByTestId("pending-attachment")).toBeNull())

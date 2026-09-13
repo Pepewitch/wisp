@@ -7,7 +7,11 @@
  * itself rather than in a rejected promise.
  */
 import type { AdapterDef } from "../adapters";
-import { writeTurnAttachments, type DecodedAttachment } from "../attachments";
+import {
+  releaseDecodedAttachments,
+  writeTurnAttachments,
+  type DecodedAttachment,
+} from "../attachments";
 import type { WispConfig } from "../config";
 import { homeIsDraining } from "../home-lifetime";
 import { startTurn, taskEnv } from "../runner";
@@ -80,5 +84,9 @@ export async function launchTask(
   } catch (e) {
     if (getTask(task.id)?.archived) return;
     transition(task.id, "failed", String(e instanceof Error ? e.message : e).slice(0, 300));
+  } finally {
+    // A successful write consumed staged files. Every other exit, including
+    // archive/drain during setup, must retire the one-shot upload references.
+    releaseDecodedAttachments(attachments);
   }
 }

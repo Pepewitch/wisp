@@ -34,6 +34,8 @@ describe("desktop daemon transport", () => {
       method: "POST",
       body: { value: 1 },
     })
+    const file = new File(["raw bytes"], "notes.txt")
+    await transport.upload("/api/attachments?name=notes.txt", file)
     transport.openEventStream("/api/events")
     transport.openWebSocket("/api/tasks/synthetic/terminal?shell=0")
 
@@ -46,6 +48,16 @@ describe("desktop daemon transport", () => {
         credentials: "omit",
         redirect: "error",
       })
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/attachments?name=notes.txt",
+      expect.objectContaining({
+        method: "POST",
+        body: file,
+        headers: { "content-type": "application/octet-stream" },
+        credentials: "omit",
+        redirect: "error",
+      }),
     )
     expect(eventUrls).toEqual([
       "http://127.0.0.1:45123/per-launch-capability/connections/remote-one/7/api/events",

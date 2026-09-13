@@ -1,12 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, DragEvent } from "react";
+import {
+  attachmentKind,
+  sniffAttachmentHeader,
+  SNIFF_WINDOW_BYTES,
+  type AttachmentKind,
+} from "../../../shared/attachment-sniff";
+
+export {
+  attachmentKind,
+  looksLikeUtf8Text,
+  sniffAttachmentType,
+  sniffImageType,
+  type AttachmentKind,
+} from "../../../shared/attachment-sniff";
 
 /**
  * The client half of S3 attachments. The daemon's src/attachments.ts is the
- * AUTHORITY — it re-sniffs magic bytes and re-checks every cap on the wire;
- * these mirrors exist so a bad paste fails quietly-inline instead of
- * round-tripping. The two files share caps and wording by hand (the classic
- * UI's key-sharing contract, one level up).
+ * AUTHORITY — it re-sniffs magic bytes and re-checks every cap on the wire.
+ * Pure byte classifiers come from shared/attachment-sniff.ts; the cap mirrors
+ * here let a bad paste fail quietly inline instead of round-tripping.
  *
  * Paste- and drop-fed this slice: a picked, pasted or DROPPED file all land in
  * the same `addFiles` read/validate path (the drop chrome itself is
@@ -33,24 +46,14 @@ export const MAX_ATTACHMENTS = 10;
 export const ATTACHMENT_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,video/mp4,video/quicktime,video/webm,text/*,.csv,.log,.json,.md,.txt,.tsv,.yaml,.yml";
 
-export type AttachmentKind = keyof typeof ATTACHMENT_KIND_LIMITS;
-
-export function attachmentKind(mediaType: string): AttachmentKind {
-  if (mediaType.startsWith("image/")) return "image";
-  if (mediaType.startsWith("video/")) return "video";
-  return mediaType === "application/pdf" ? "pdf" : "text";
-}
-
 export interface PendingAttachment {
   id: string;
   name: string;
   mediaType: string;
   kind: AttachmentKind;
   /**
-   * The picked/pasted file itself, encoded to base64 only when the composer
-   * submits. A 50 MB video encodes to a 67 MB string, and holding that in
-   * composer state from the moment of the paste — for a file the user may
-   * still remove — is the one thing this feature could do to a phone.
+   * The picked/pasted file itself. Submission hands this Blob directly to the
+   * transport, so a 50 MB video never becomes a 67 MB base64 string in JS.
    */
   file: File;
   bytes: number;
@@ -75,16 +78,44 @@ export function messageAttachmentUrl(taskId: string, messageId: string, name: st
   return `/api/tasks/${taskId}/messages/${messageId}/attachments/${encodeURIComponent(name)}`
 }
 
-/** POST /api/tasks and /send accept attachments as { name, dataBase64 }. */
+/** POST /api/tasks and /send accept one-shot upload references. */
 export interface AttachmentPayload {
   name: string;
-  dataBase64: string;
+  uploadId: string;
+  /** Stable across re-uploads, so a failed send keeps its idempotency key. */
+  contentHash: string;
 }
 
-export async function attachmentPayloads(list: PendingAttachment[]): Promise<AttachmentPayload[]> {
-  return await Promise.all(
-    list.map(async (a) => ({ name: a.name, dataBase64: base64Encode(new Uint8Array(await a.file.arrayBuffer())) })),
-  );
+export type AttachmentUploader = (
+  path: string,
+  body: Blob,
+) => Promise<{ uploadId: string; contentHash: string }>;
+export type AttachmentDiscarder = (uploadId: string) => Promise<unknown>;
+
+export async function discardAttachmentPayloads(
+  payloads: AttachmentPayload[],
+  discard: AttachmentDiscarder,
+): Promise<void> {
+  await Promise.allSettled(payloads.map((payload) => discard(payload.uploadId)));
+}
+
+export async function attachmentPayloads(
+  list: PendingAttachment[],
+  upload: AttachmentUploader,
+  discard: AttachmentDiscarder,
+): Promise<AttachmentPayload[]> {
+  const staged = await Promise.allSettled(list.map(async (attachment) => {
+    const path = `/api/attachments?name=${encodeURIComponent(attachment.name)}`;
+    const result = await upload(path, attachment.file);
+    return { name: attachment.name, uploadId: result.uploadId, contentHash: result.contentHash };
+  }));
+  const payloads = staged
+    .filter((result): result is PromiseFulfilledResult<AttachmentPayload> => result.status === "fulfilled")
+    .map((result) => result.value);
+  const failure = staged.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (!failure) return payloads;
+  await discardAttachmentPayloads(payloads, discard);
+  throw failure.reason;
 }
 
 /**
@@ -101,84 +132,6 @@ export function noImageReason(harness: string): string {
   return `harness '${harness}' has no image-attachment capability`;
 }
 
-/** src/attachments.ts's sniffer, mirrored: png/jpeg/gif/webp by magic bytes, never the pasted mime. */
-export function sniffImageType(b: Uint8Array): string | null {
-  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
-  if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif";
-  if (
-    b.length >= 12 &&
-    b[0] === 0x52 && // RIFF….WEBP
-    b[1] === 0x49 &&
-    b[2] === 0x46 &&
-    b[3] === 0x46 &&
-    b[8] === 0x57 &&
-    b[9] === 0x45 &&
-    b[10] === 0x42 &&
-    b[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-  return null;
-}
-
-function ascii(b: Uint8Array, offset: number, length: number): string {
-  let out = "";
-  for (let i = offset; i < offset + length && i < b.length; i++) out += String.fromCharCode(b[i]!);
-  return out;
-}
-
-/** The control bytes real text files carry: tab, newline, form feed, CR, and ESC. */
-const TEXT_CONTROL_BYTES = new Set([0x09, 0x0a, 0x0c, 0x0d, 0x1b]);
-
-/** src/attachments.ts's utf-8 scan, mirrored: no NUL, no stray controls, no malformed sequences. */
-export function looksLikeUtf8Text(b: Uint8Array): boolean {
-  let i = 0;
-  while (i < b.length) {
-    const byte = b[i]!;
-    if (byte < 0x80) {
-      if ((byte < 0x20 && !TEXT_CONTROL_BYTES.has(byte)) || byte === 0x7f) return false;
-      i += 1;
-      continue;
-    }
-    const length = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc2 ? 2 : 0;
-    if (length === 0 || byte > 0xf4 || i + length > b.length) return false;
-    const second = b[i + 1]!;
-    if ((second & 0xc0) !== 0x80) return false;
-    if (byte === 0xe0 && second < 0xa0) return false;
-    if (byte === 0xed && second > 0x9f) return false;
-    if (byte === 0xf0 && second < 0x90) return false;
-    if (byte === 0xf4 && second > 0x8f) return false;
-    for (let k = 2; k < length; k++) if ((b[i + k]! & 0xc0) !== 0x80) return false;
-    i += length;
-  }
-  return true;
-}
-
-/**
- * src/attachments.ts's ISO-BMFF brand allowlist, mirrored. The container is not
- * the format: HEIC and AVIF photos and M4A audio are ISO-BMFF too, so only
- * these brands are video.
- */
-const MP4_BRANDS = new Set([
-  "isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "mp71", "mmp4",
-  "avc1", "dash", "M4V", "M4VH", "M4VP", "3gp4", "3gp5", "3g2a",
-]);
-
-/** src/attachments.ts's whole-buffer sniff, mirrored: magic bytes first, utf-8 text last. */
-export function sniffAttachmentType(b: Uint8Array): string | null {
-  const image = sniffImageType(b);
-  if (image) return image;
-  if (b.length >= 5 && ascii(b, 0, 5) === "%PDF-") return "application/pdf";
-  if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return "video/webm";
-  if (b.length >= 12 && ascii(b, 4, 4) === "ftyp") {
-    const brand = ascii(b, 8, 4).replace(/ +$/, "");
-    if (brand === "qt") return "video/quicktime";
-    return MP4_BRANDS.has(brand) ? "video/mp4" : null;
-  }
-  return b.length > 0 && looksLikeUtf8Text(b) ? "text/plain" : null;
-}
-
 /** src/attachments.ts's formatBytes, mirrored: "320 B" / "12 KB" / "1.2 MB". */
 export function formatBytes(n: number): string {
   const trimmed = (v: number): string => (Number.isInteger(v) ? String(v) : v.toFixed(1));
@@ -186,15 +139,6 @@ export function formatBytes(n: number): string {
   const kb = n / 1024;
   if (kb < 1024) return `${trimmed(kb)} KB`;
   return `${trimmed(kb / 1024)} MB`;
-}
-
-/** base64 without the spread-stack blowup (50MB of bytes never hits one apply). */
-function base64Encode(bytes: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(bin);
 }
 
 /**
@@ -236,12 +180,13 @@ export function pastedTextFile(text: string, n: number): File {
 export async function readAttachment(
   file: File,
 ): Promise<{ ok: true; attachment: Omit<PendingAttachment, "id" | "url"> } | { ok: false; reason: string }> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
+  const sample = file.size > SNIFF_WINDOW_BYTES ? file.slice(0, SNIFF_WINDOW_BYTES) : file;
+  const bytes = new Uint8Array(await sample.arrayBuffer());
   // A clipboard file often arrives nameless (a screenshot), so the fallback is
   // built from what the bytes turn out to BE rather than assumed to be an image.
   const unnamed = (kind: string) => `pasted ${kind}`;
-  if (bytes.byteLength === 0) return { ok: false, reason: `${file.name || unnamed("file")}: empty file` };
-  const mediaType = sniffAttachmentType(bytes);
+  if (file.size === 0) return { ok: false, reason: `${file.name || unnamed("file")}: empty file` };
+  const mediaType = sniffAttachmentHeader(bytes);
   if (!mediaType) {
     return {
       ok: false,
@@ -251,13 +196,13 @@ export async function readAttachment(
   const kind = attachmentKind(mediaType);
   const name = file.name || unnamed(kind);
   const limit = ATTACHMENT_KIND_LIMITS[kind];
-  if (bytes.byteLength > limit) {
+  if (file.size > limit) {
     return {
       ok: false,
-      reason: `${name}: ${formatBytes(bytes.byteLength)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
+      reason: `${name}: ${formatBytes(file.size)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
     };
   }
-  return { ok: true, attachment: { name, mediaType, kind, file, bytes: bytes.byteLength } };
+  return { ok: true, attachment: { name, mediaType, kind, file, bytes: file.size } };
 }
 
 /**
@@ -290,9 +235,12 @@ export interface PendingAttachments {
   note: string | null;
   /**
    * Wire payloads for the submit body; undefined = omit the field entirely.
-   * Async because the bytes are encoded HERE rather than at paste time (A1d).
+   * Async because the raw files upload only when the user submits.
    */
-  payloads: () => Promise<AttachmentPayload[] | undefined>;
+  payloads: (
+    upload: AttachmentUploader,
+    discard: AttachmentDiscarder,
+  ) => Promise<AttachmentPayload[] | undefined>;
   /**
    * File half of composer paste. Text is left to handleComposerPaste — this
    * only preventDefaults when there are files.
@@ -559,7 +507,8 @@ export function usePendingAttachments({
   return {
     list,
     note,
-    payloads: async () => (list.length > 0 ? await attachmentPayloads(list) : undefined),
+    payloads: async (upload, discard) =>
+      list.length > 0 ? await attachmentPayloads(list, upload, discard) : undefined,
     onPaste,
     addFiles,
     addPastedText,

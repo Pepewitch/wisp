@@ -2,7 +2,12 @@ import { useRef, type Dispatch, type SetStateAction } from "react"
 
 import { useInterruptTask, useSendMessage } from "@/hooks/mutations"
 import { failureNote, type SteerNote } from "@/hooks/useSteerCommands"
-import type { AttachmentPayload, PendingAttachments } from "@/lib/attachments"
+import {
+  discardAttachmentPayloads,
+  type AttachmentPayload,
+  type PendingAttachments,
+} from "@/lib/attachments"
+import { useDaemonTransport } from "@/lib/runtime"
 import type { ApiTask, SendResponse } from "@/lib/types"
 import type { SlashToken } from "@/lib/slash"
 
@@ -31,7 +36,9 @@ const sameAgent = (a: AgentSubmission | null, b: AgentSubmission | null) =>
 function sameAttachments(a: AttachmentPayload[] | undefined, b: AttachmentPayload[] | undefined) {
   if (a === b) return true
   if (!a || !b || a.length !== b.length) return false
-  return a.every((item, index) => item.name === b[index]?.name && item.dataBase64 === b[index]?.dataBase64)
+  return a.every((item, index) =>
+    item.name === b[index]?.name && item.contentHash === b[index]?.contentHash
+  )
 }
 
 export function useSteerSubmit({
@@ -70,6 +77,9 @@ export function useSteerSubmit({
 }) {
   const sendMessage = useSendMessage()
   const interruptTask = useInterruptTask()
+  const transport = useDaemonTransport()
+  const discardUpload = (uploadId: string) =>
+    transport.request(`/api/attachments/${encodeURIComponent(uploadId)}`, { method: "DELETE" })
   const pendingSend = useRef<PendingSend | null>(null)
 
   const send = (agent: AgentSubmission | null = null) => {
@@ -79,9 +89,9 @@ export function useSteerSubmit({
     setPalette(null)
     setNote(null)
     setSending(true)
-    // The bytes are encoded HERE rather than at paste time (A1d), so a 50 MB
-    // video costs its base64 once, at the moment the user asked for work.
-    void attachments.payloads().then(
+    // Raw bytes stream only when the user asks for work; no base64 copy enters
+    // composer state or the eventual JSON request.
+    void attachments.payloads(transport.upload, discardUpload).then(
       (payloads) => post(id, message, payloads, agent),
       (error) => {
         setSending(false)
@@ -126,6 +136,7 @@ export function useSteerSubmit({
       }
     }
     const failed = (error: unknown) => {
+      if (payloads) void discardAttachmentPayloads(payloads, discardUpload)
       setSending(false)
       setNote(failureNote(id, error))
     }

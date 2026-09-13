@@ -38,6 +38,10 @@ import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
 import { settingsRoute } from "./settings";
 import { pullRequestTitleSync } from "../task-update";
+import {
+  attachmentUploadRoute,
+  discardAttachmentUploadRoute,
+} from "./attachment-uploads";
 
 const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
 const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
@@ -186,6 +190,9 @@ export function route(
   // upgrade died cannot read the 403 that explained it, so it asks here.
   if (path === "/api/terminal-origin" && m === "POST") return terminalOriginRoute(req, url);
   if (path === "/api/purge") return bulkPurgeRoute(req, url);
+  if (path === "/api/attachments" && m === "POST") return attachmentUploadRoute(req, url);
+  const uploadMatch = path.match(/^\/api\/attachments\/([A-Za-z0-9-]+)$/);
+  if (uploadMatch && m === "DELETE") return discardAttachmentUploadRoute(uploadMatch[1]!);
 
   const updateResponse = updateRoute(req, path, m, updates);
   if (updateResponse !== null) return updateResponse;

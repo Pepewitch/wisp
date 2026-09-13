@@ -45,6 +45,30 @@ describe("the same-origin web transport", () => {
     })
   })
 
+  it("posts a Blob directly for attachment staging", async () => {
+    localStorage.setItem("wisp_token", "synthetic-browser-token")
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse({ uploadId: "u1", contentHash: "h1" }, 201))
+    const file = new File(["raw bytes"], "notes.txt")
+
+    await expect(
+      sameOriginWebTransport.upload("/api/attachments?name=notes.txt", file),
+    ).resolves.toEqual({ uploadId: "u1", contentHash: "h1" })
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/attachments?name=notes.txt", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer synthetic-browser-token",
+        "content-type": "application/octet-stream",
+      },
+      body: file,
+      signal: undefined,
+      credentials: "omit",
+      redirect: "error",
+    })
+  })
+
   it("parks a 401 once and retries with the replacement token", async () => {
     localStorage.setItem("wisp_token", "stale-synthetic-token")
     const fetchMock = vi

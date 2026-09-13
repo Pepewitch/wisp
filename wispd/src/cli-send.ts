@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
-import type { AttachmentPayload } from "./attachments";
-import type { AttachmentFlags } from "./cli-attach";
+import type { StagedAttachmentPayload } from "./attachments";
+import {
+  discardAttachmentPayloads,
+  type AttachmentFlags,
+} from "./cli-attach";
 import type { ApiTask, SendResult, TaskMessage } from "./types";
 
 interface SendCommandOptions {
   positional: string[];
   attachmentFlags: AttachmentFlags;
   commandName: string;
-  readAttachments: (flags: AttachmentFlags) => Promise<AttachmentPayload[] | undefined>;
+  readAttachments: (flags: AttachmentFlags) => Promise<StagedAttachmentPayload[] | undefined>;
+  discardAttachment: (uploadId: string) => Promise<unknown>;
+  requestError: (error: unknown) => never;
   request: (path: string, method: string, body: unknown) => Promise<unknown>;
 }
 
@@ -18,11 +23,23 @@ export async function sendCommand(options: SendCommandOptions): Promise<void> {
     console.error(`usage: ${options.commandName} send <task> "message" [--attach <path>]…`);
     process.exit(1);
   }
-  const result = (await options.request(`/api/tasks/${id}/send`, "POST", {
-    message: message.join(" "),
-    clientMessageId: randomUUID(),
-    attachments: await options.readAttachments(options.attachmentFlags),
-  })) as ApiTask & SendResult;
+  let attachments: StagedAttachmentPayload[] | undefined;
+  try {
+    attachments = await options.readAttachments(options.attachmentFlags);
+  } catch (error) {
+    options.requestError(error);
+  }
+  let result: ApiTask & SendResult;
+  try {
+    result = (await options.request(`/api/tasks/${id}/send`, "POST", {
+      message: message.join(" "),
+      clientMessageId: randomUUID(),
+      attachments,
+    })) as ApiTask & SendResult;
+  } catch (error) {
+    if (attachments) await discardAttachmentPayloads(attachments, options.discardAttachment);
+    options.requestError(error);
+  }
   const uncertain = result.message.delivery_uncertain
     ? " (prior delivery may already have succeeded)"
     : "";

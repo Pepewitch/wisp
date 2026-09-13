@@ -172,6 +172,8 @@ export const DIAGNOSTIC_DIR = join(WISP_HOME, "diagnostics");
 export const WORKTREE_ROOT = join(WISP_HOME, "worktrees");
 /** per-turn image attachments live at tasks/<id>/attachments/turn-<n>/ (S3; dirs are created at write time) */
 export const TASKS_DIR = join(WISP_HOME, "tasks");
+/** Short-lived one-shot attachment uploads, promoted into TASKS_DIR on submission. */
+export const UPLOADS_DIR = join(WISP_HOME, "attachment-uploads");
 export const DB_PATH = join(WISP_HOME, "wisp.db");
 /**
  * The file whose exclusive lock means "this daemon owns this home" (ENG-02).

@@ -32,10 +32,9 @@ const harness: HarnessInfo = {
 }
 
 /**
- * A1d moved base64 encoding from paste to submit, which opened a window the
- * dialog did not close: `createTask.isPending` only goes true once the encode
- * finishes, so during a 50 MB video's encode the Create button stayed live and
- * ⌘↵ still fired. Two clicks meant two tasks.
+ * Uploading starts before `createTask.isPending` goes true, so the dialog must
+ * guard the gap between the first click and the JSON create request. Two
+ * clicks must still mean one task.
  */
 describe("create task dialog submission", () => {
   async function mountWithRequest(request: ReturnType<typeof vi.fn>) {
@@ -121,7 +120,11 @@ describe("create task dialog submission", () => {
       "/api/tasks",
       expect.objectContaining({
         body: expect.objectContaining({
-          attachments: [{ name: "orders.csv", dataBase64: expect.any(String) }],
+          attachments: [{
+            name: "orders.csv",
+            uploadId: "test-upload",
+            contentHash: "test-content-hash",
+          }],
         }),
       }),
     )

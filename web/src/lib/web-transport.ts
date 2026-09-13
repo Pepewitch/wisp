@@ -2,6 +2,7 @@ import { clearAssetCache } from "./asset-src"
 import { openFetchEventStream } from "./fetch-event-source"
 import {
   ApiError,
+  daemonJsonResponse,
   LOCAL_CONNECTION_ID,
   type DaemonRequestOptions,
   type DaemonTransport,
@@ -151,19 +152,28 @@ async function request<T>(
       continue
     }
 
-    const data = (await response.json().catch(() => ({}))) as Record<
-      string,
-      unknown
-    >
-    if (!response.ok) {
-      throw new ApiError(
-        typeof data.error === "string"
-          ? data.error
-          : `${response.status} ${response.statusText}`,
-        response.status
-      )
+    return await daemonJsonResponse<T>(response)
+  }
+}
+
+async function upload<T>(path: string, body: Blob, signal?: AbortSignal): Promise<T> {
+  for (;;) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "content-type": "application/octet-stream",
+      },
+      body,
+      signal,
+      credentials: "omit",
+      redirect: "error",
+    })
+    if (response.status === 401) {
+      await requireAuth()
+      continue
     }
-    return data as T
+    return await daemonJsonResponse<T>(response)
   }
 }
 
@@ -215,6 +225,7 @@ function webSocketUrl(path: string): string {
 export const sameOriginWebTransport: Readonly<DaemonTransport> = Object.freeze({
   connectionId: LOCAL_CONNECTION_ID,
   request,
+  upload,
   openEventStream: (path: string) =>
     openFetchEventStream(path, { headers: authHeaders }),
   openWebSocket: (path: string) => new WebSocket(webSocketUrl(path)),
