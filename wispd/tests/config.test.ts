@@ -9,6 +9,7 @@ import {
   FALLBACK_PORT_END,
   INSTANCE_ID_PATH,
   loadConfig,
+  LOOPBACK_HOST,
   MAX_CONFIGURED_PORT,
   MIN_CONFIGURED_PORT,
   PREFERRED_PORT,
@@ -51,7 +52,7 @@ describe("validateConfig (a prior audit)", () => {
     const raw = {
       instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 9000,
-      host: "0.0.0.0",
+      host: LOOPBACK_HOST,
       token: "t",
       webhooks: ["https://example.test/hook"],
       repos: ["/repo/a", "/repo/b"],
@@ -151,6 +152,15 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ envAllowlist: { repo: [".env", 5] } }))).toBe(
       "config.json: envAllowlist['repo'][1] must be a string, got number",
     );
+  });
+
+  test("host accepts only the exact loopback bind", () => {
+    expect(validateConfig({ host: LOOPBACK_HOST })).toEqual({ host: LOOPBACK_HOST });
+    for (const host of ["0.0.0.0", "::", "::1", "localhost", "192.0.2.1", ""]) {
+      expect(thrownMessage(() => validateConfig({ host }))).toBe(
+        `config.json: host must be exactly ${LOOPBACK_HOST}; Wisp refuses direct network binds. Use a private proxy or SSH tunnel instead (docs/REMOTE-ACCESS.md)`,
+      );
+    }
   });
 
   test("terminalShell must be an absolute executable file", () => {
