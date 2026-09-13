@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { testSseReader as sseReader } from "./helpers/sse-reader";
 
 const ROOT = resolve(import.meta.dir, "..");
 const SEEDER = join(import.meta.dir, "helpers", "seed-transport-daemon.ts");
@@ -238,45 +239,6 @@ function authenticatedFetch(
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bearer ${token}`);
   return fetch(`${daemon.base}${path}`, { ...init, headers });
-}
-
-interface SseFrame {
-  event: string | null;
-  data: string;
-}
-
-function sseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
-  const decoder = new TextDecoder();
-  let buffered = "";
-  let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
-  return {
-    async nextFrame(timeoutMs = 5_000): Promise<SseFrame> {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const boundary = buffered.indexOf("\n\n");
-        if (boundary >= 0) {
-          const raw = buffered.slice(0, boundary);
-          buffered = buffered.slice(boundary + 2);
-          if (raw.startsWith(":")) continue;
-          let event: string | null = null;
-          let data = "";
-          for (const line of raw.split("\n")) {
-            if (line.startsWith("event: ")) event = line.slice(7);
-            if (line.startsWith("data: ")) data += `${data ? "\n" : ""}${line.slice(6)}`;
-          }
-          return { event, data };
-        }
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error("timed out waiting for an SSE frame");
-        pending ??= reader.read();
-        const chunk = await Promise.race([pending, Bun.sleep(remaining).then(() => null)]);
-        if (chunk === null) continue;
-        pending = null;
-        if (chunk.done) throw new Error("SSE stream ended before the next frame");
-        buffered += decoder.decode(chunk.value, { stream: true });
-      }
-    },
-  };
 }
 
 async function websocketRejected(url: string, token: string): Promise<boolean> {

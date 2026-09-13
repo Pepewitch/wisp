@@ -4,8 +4,11 @@ export interface SseFrame {
 }
 
 /** Incrementally decode SSE frames across arbitrary network chunk boundaries. */
-export async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncGenerator<SseFrame> {
-  const reader = stream.getReader();
+export async function* readSseFrames(
+  source: ReadableStream<Uint8Array> | ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<SseFrame> {
+  const ownsReader = source instanceof ReadableStream;
+  const reader = ownsReader ? source.getReader() : source;
   const decoder = new TextDecoder();
   let pending = "";
   try {
@@ -29,6 +32,6 @@ export async function* readSseFrames(stream: ReadableStream<Uint8Array>): AsyncG
       if (done) return;
     }
   } finally {
-    reader.releaseLock();
+    if (ownsReader) reader.releaseLock();
   }
 }

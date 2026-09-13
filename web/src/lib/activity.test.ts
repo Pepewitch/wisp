@@ -168,6 +168,20 @@ describe("fetchTurnActivity", () => {
     expect(fake.isClosed()).toBe(true)
   })
 
+  it("rejects malformed frames immediately with the daemon version", async () => {
+    const fake = createFakeSse()
+    const promise = fetchTurnActivity("t5qmha", 1, {
+      factory: () => fake.source,
+      timeoutMs: 10_000,
+    })
+    fake.emit("hello", { version: "0.5.7-test" })
+    fake.emitRaw("append", '{"turn":1,"activity":"wrong"}')
+    await expect(promise).rejects.toThrow(
+      'Log stream protocol error in "append" from daemon 0.5.7-test',
+    )
+    expect(fake.isClosed()).toBe(true)
+  })
+
   it("rejects instead of presenting a partial timeline when the read times out", async () => {
     const fake = createFakeSse()
     const promise = fetchTurnActivity("t5qmha", 3, {

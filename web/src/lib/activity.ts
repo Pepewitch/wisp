@@ -1,6 +1,10 @@
 import { SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse"
 import type { DaemonTransport } from "@/lib/transport"
-import type { ActivityLogStreamFrames, Turn } from "@/lib/types"
+import {
+  addDecodedLogStreamListener,
+  createLogStreamDecoder,
+} from "@/lib/log-stream-protocol"
+import type { Turn } from "@/lib/types"
 import {
   initialStreamState,
   streamReducer,
@@ -120,6 +124,7 @@ export function fetchTurnActivity(
   return new Promise((resolve, reject) => {
     let state: StreamState = initialStreamState
     let settled = false
+    const decoder = createLogStreamDecoder()
     const path = `/api/tasks/${taskId}/log/stream?format=activity&turn=${n}`
     const source: SseLike = factory
       ? factory(path)
@@ -163,8 +168,24 @@ export function fetchTurnActivity(
     }
     signal?.addEventListener("abort", abort, { once: true })
 
-    source.addEventListener("backlog", (ev) => {
-      const d = JSON.parse(ev.data) as ActivityLogStreamFrames["backlog"]
+    const onFrame = <T,>(
+      event: "hello" | "backlog" | "append" | "turn-end",
+      decode: (data: string) => T,
+      consume: (frame: T) => void,
+    ) =>
+      addDecodedLogStreamListener({
+        source,
+        event,
+        active: () => !settled,
+        decode,
+        consume,
+        fail: (error) => {
+          fail(error instanceof Error ? error.message : String(error))
+        },
+      })
+
+    onFrame("hello", decoder.hello, () => undefined)
+    onFrame("backlog", decoder.activityBacklog, (d) => {
       if (d.turn !== n) return
       state = streamReducer(state, {
         type: "backlog",
@@ -173,13 +194,11 @@ export function fetchTurnActivity(
         activity: d.activity,
       })
     })
-    source.addEventListener("append", (ev) => {
-      const d = JSON.parse(ev.data) as ActivityLogStreamFrames["append"]
+    onFrame("append", decoder.activityAppend, (d) => {
       if (d.turn !== n) return
       state = streamReducer(state, { type: "append", turn: d.turn, activity: d.activity })
     })
-    source.addEventListener("turn-end", (ev) => {
-      const d = JSON.parse(ev.data) as ActivityLogStreamFrames["turn-end"]
+    onFrame("turn-end", decoder.turnEnd, (d) => {
       if (d.turn === n) finish()
     })
     source.onerror = () => {

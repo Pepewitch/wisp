@@ -9,6 +9,8 @@ import { ALLOWED_ORIGINS_ENV, originVerdict } from "../src/routes/auth";
 import { closeTurnBroker, openTurnBroker, TurnBroker } from "../src/recording/broker";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
 import { formatSteerNote } from "../src/turn-notes";
+import { BUILD_INFO } from "../src/version";
+import { testSseReader as sseReader } from "./helpers/sse-reader";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -47,51 +49,6 @@ function makeTask() {
     model: null,
     slot: freeSlot(),
   });
-}
-
-interface Frame {
-  event: string | null;
-  data: string;
-}
-
-/**
- * Incremental SSE frame reader. Heartbeats are comments and skipped; timeouts
- * fail loudly so a broken stream can never hang the suite. A timed-out read
- * KEEPS its pending reader.read() promise — abandoning it would silently eat
- * the next chunk (a read that resolves into the void).
- */
-function sseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
-  const dec = new TextDecoder();
-  let text = "";
-  let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
-  return {
-    async nextFrame(timeoutMs = 5_000): Promise<Frame> {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const idx = text.indexOf("\n\n");
-        if (idx >= 0) {
-          const raw = text.slice(0, idx);
-          text = text.slice(idx + 2);
-          if (raw.startsWith(":")) continue; // ": hb" heartbeat
-          let event: string | null = null;
-          let data = "";
-          for (const line of raw.split("\n")) {
-            if (line.startsWith("event: ")) event = line.slice("event: ".length);
-            else if (line.startsWith("data: ")) data += (data === "" ? "" : "\n") + line.slice("data: ".length);
-          }
-          return { event, data };
-        }
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error(`timed out waiting for an SSE frame (buffered: ${JSON.stringify(text)})`);
-        pending ??= reader.read();
-        const chunk = await Promise.race([pending, Bun.sleep(remaining).then(() => "timeout" as const)]);
-        if (chunk === "timeout") continue; // `pending` survives — the deadline check above throws on the next pass
-        pending = null;
-        if (chunk.done) throw new Error("stream ended before the next SSE frame");
-        text += dec.decode(chunk.value, { stream: true });
-      }
-    },
-  };
 }
 
 describe("POST /api/session (token verification for the browser auth dialog)", () => {
@@ -311,6 +268,7 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
     try {
       const backlog = await sse.nextFrame();
       expect(backlog.event).toBe("backlog");
+      expect(sse.daemonVersion()).toBe(BUILD_INFO.version);
       const { text } = JSON.parse(backlog.data) as { text: string };
       expect(text).toContain("THE VERY FIRST LINE");
       expect(text).toContain("THE LAST LINE");

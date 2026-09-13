@@ -96,6 +96,12 @@ terminal socket authenticates in its first frame (a WebSocket handshake cannot
 set headers either), and media is fetched and rendered from a blob URL.
 Tokens never belong in URLs, and no cookie is a credential.
 
+Task log streams start with a named `hello` frame carrying the daemon version.
+Browser and Desktop clients validate every consumed named frame at runtime. A
+malformed frame closes that stream as a non-retryable protocol error, naming
+its event and daemon version, instead of reconnecting and replaying the same
+bad backlog.
+
 This runtime intentionally represents one daemon. Remote browser access is a
 networking concern handled with a private HTTPS proxy or SSH tunnel, not a
 multi-daemon connection registry.

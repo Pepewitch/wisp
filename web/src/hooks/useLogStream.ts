@@ -1,9 +1,13 @@
 import { useEffect, useReducer } from "react";
 
 import { connectionStore } from "@/lib/conn";
+import {
+  addDecodedLogStreamListener,
+  createLogStreamDecoder,
+  LogStreamProtocolError,
+} from "@/lib/log-stream-protocol";
 import { useDaemonRuntime } from "@/lib/runtime";
 import { SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse";
-import type { ActivityLogStreamFrames, LogStreamFrames } from "@/lib/types";
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer";
 
 /**
@@ -47,30 +51,50 @@ export function useLogStream(
       const next = factory
         ? factory(`/api/tasks/${taskId}/log/stream?format=${format}`)
         : runtime.transport.openEventStream(`/api/tasks/${taskId}/log/stream?format=${format}`);
-      const isCurrent = () => !closed && source === next;
-      next.addEventListener("backlog", (ev) => {
-        if (!isCurrent()) return;
-        if (format === "activity") {
-          const d = JSON.parse(ev.data) as ActivityLogStreamFrames["backlog"]
-          dispatch({ type: "backlog", turn: d.turn, prompt: d.prompt, activity: d.activity })
-        } else {
-          const d = JSON.parse(ev.data) as LogStreamFrames["backlog"]
-          dispatch({ type: "raw-backlog", turn: d.turn, prompt: d.prompt, text: d.text })
-        }
-      });
-      next.addEventListener("append", (ev) => {
-        if (!isCurrent()) return;
-        if (format === "activity") {
-          const d = JSON.parse(ev.data) as ActivityLogStreamFrames["append"]
-          dispatch({ type: "append", turn: d.turn, activity: d.activity })
-        } else {
-          const d = JSON.parse(ev.data) as LogStreamFrames["append"]
-          dispatch({ type: "raw-append", turn: d.turn, text: d.text })
-        }
-      });
-      next.addEventListener("turn-end", (ev) => {
-        if (!isCurrent()) return;
-        const d = JSON.parse(ev.data) as LogStreamFrames["turn-end"];
+      const decoder = createLogStreamDecoder();
+      let protocolFailed = false;
+      const isCurrent = () => !closed && !protocolFailed && source === next;
+      const failProtocol = (error: unknown) => {
+        if (closed || protocolFailed || source !== next) return;
+        protocolFailed = true;
+        next.close();
+        conn.set("log", false);
+        const message =
+          error instanceof LogStreamProtocolError
+            ? error.message
+            : "Log stream protocol error: malformed daemon frame";
+        dispatch({ type: "reset", note: message });
+      };
+      const listen = <T,>(
+        event: "hello" | "backlog" | "append" | "turn-end",
+        decode: (data: string) => T,
+        consume: (frame: T) => void,
+      ) =>
+        addDecodedLogStreamListener({
+          source: next,
+          event,
+          active: isCurrent,
+          decode,
+          consume,
+          fail: failProtocol,
+        });
+      listen("hello", decoder.hello, () => undefined);
+      if (format === "activity") {
+        listen("backlog", decoder.activityBacklog, (d) => {
+          dispatch({ type: "backlog", turn: d.turn, prompt: d.prompt, activity: d.activity });
+        });
+        listen("append", decoder.activityAppend, (d) => {
+          dispatch({ type: "append", turn: d.turn, activity: d.activity });
+        });
+      } else {
+        listen("backlog", decoder.textBacklog, (d) => {
+          dispatch({ type: "raw-backlog", turn: d.turn, prompt: d.prompt, text: d.text });
+        });
+        listen("append", decoder.textAppend, (d) => {
+          dispatch({ type: "raw-append", turn: d.turn, text: d.text });
+        });
+      }
+      listen("turn-end", decoder.turnEnd, (d) => {
         dispatch({ type: "turn-end", turn: d.turn, status: d.status });
       });
       next.onopen = () => {

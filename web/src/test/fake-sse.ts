@@ -26,8 +26,11 @@ export function createFakeSse() {
       readyState = 2
       source.onerror?.()
     },
+    emitRaw(type: string, data: string) {
+      for (const listener of listeners.get(type) ?? []) listener({ data })
+    },
     emit(type: string, data: unknown) {
-      for (const listener of listeners.get(type) ?? []) listener({ data: JSON.stringify(data) })
+      this.emitRaw(type, JSON.stringify(data))
     },
   }
 }
