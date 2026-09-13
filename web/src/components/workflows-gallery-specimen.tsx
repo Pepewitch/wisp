@@ -42,8 +42,8 @@ const TYPES: WorkflowDefinition[] = [
       { key: "onGreen", label: "When checks pass", type: "string", multiline: true, description: "", default: "Report that CI passed and identify remaining merge blockers." },
       { key: "everyMinutes", label: "Check every (minutes)", type: "number", default: 5, min: 1, max: 1440, description: "Polling is token-free. An actionable check can wake the agent." },
       { key: "maxWakeups", label: "Maximum wake-ups", type: "number", default: 20, min: 1, max: 200, description: "" },
-      { key: "allowPush", label: "Allow pushing changes", type: "boolean", default: false, description: "" },
-      { key: "allowMerge", label: "Allow merging the watched PR", type: "boolean", default: false, description: "" },
+      { key: "allowPush", label: "Ask agent to push changes", type: "boolean", default: false, description: "" },
+      { key: "allowMerge", label: "Ask agent to merge the watched PR", type: "boolean", default: false, description: "" },
     ],
   },
   {

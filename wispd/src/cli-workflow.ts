@@ -88,7 +88,8 @@ export async function workflowCommand(args: string[], flags: Flags, api: Api): P
   } else {
     console.log(`${wispCommand()} workflow types | start <task> <type> | list <task> | show <id> | set <id> | pause <id> | resume <id> | complete <id>
 Parameters: --every 5m --prompt "..." --file instructions.md --at <ISO-8601> --pr <url>
-            --on-red "..." --on-green "..." --quiet-for 30m --reviewers login,bot
+            --on-red "..." --on-green "..." --quiet-for 30m --reviewers trusted-login,bot
+            (--reviewers is required for pr-review)
             --lifetime 24h --max-wakeups 20 --allow-push --allow-merge
             --params '{"customParameter":"value"}' --json`);
     return;

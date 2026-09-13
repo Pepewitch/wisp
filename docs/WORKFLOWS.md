@@ -53,14 +53,16 @@ unknown checks and provider errors never mean success.
 This is a check-results watcher, **not a merge eligibility oracle**. Reported
 checks include optional checks; the agent must recheck required checks,
 reviews, draft state, conflicts, branch protections, and merge-queue rules
-before any merge. Wisp never merges directly. `--allow-merge` authorizes the
-agent to merge only the watched PR through its normal protected path.
+before any merge. Wisp never merges directly. `--allow-merge` changes the
+workflow instruction to ask the agent to merge only the watched PR through its
+normal protected path.
 
 ### PR review watch
 
 ```sh
 wisp workflow start <task> pr-review \
   --pr https://github.com/example/project/pull/42 \
+  --reviewers trusted-reviewer \
   --every 2m --quiet-for 30m --allow-push \
   --prompt "Read new feedback. Fix valid nits, run tests, and push."
 ```
@@ -72,11 +74,17 @@ a change and should explain feedback it cannot address or disagrees with.
 Initial attachment includes existing feedback, so an already commented PR does
 not need another comment to trigger work.
 
-The authenticated GitHub user's feedback is excluded, preventing the agent's
-own replies from triggering itself. Other bots are excluded by default.
-`--reviewers reviewer,review-bot` restricts authors and explicitly includes those
-bots. `--exclude-authors login` excludes authors; `--include-bots` includes other
-bots. An agent using another account should add it to excluded authors.
+`--reviewers reviewer,review-bot` is required. Only feedback from those
+explicitly trusted GitHub logins can wake the agent, and selected bots are
+included. Treat this list as an authority grant: their feedback is inserted
+into an agent turn that has the task's normal tool permissions. Do not list
+unknown contributors or broad automation accounts.
+
+The authenticated GitHub user's feedback is also excluded, preventing the
+agent's own replies from triggering itself. `--exclude-authors login` can
+exclude additional authors. The legacy `--include-bots` option cannot bypass
+the trusted-author list. An agent using another account should add it to
+excluded authors.
 
 New feedback, a changed PR head, and completion of workflow-driven work restart
 the quiet window. Wisp does not complete while the task is running, blocked,
@@ -107,14 +115,14 @@ wisp workflow complete <workflow-id>
 `types --json` describes each type's parameter names, types, defaults, and
 bounds. Use `--params '{"parameterName":"value"}'` for any declared parameter,
 including custom plugins. For example, `--params '{"allowPush":false}'`
-revokes push authorization for future instructions.
+removes the push request from future workflow instructions.
 
-Common defaults are 20 wake-ups and a 24-hour lifetime, with pushing and merging
-off. Intervals must be whole minutes from 1 to 1440, wake-up limits from 1 to
-200, and lifetimes whole hours from 1 to 168. `--lifetime 48h` sets the expiry
-relative to the original attachment time. Reaching a limit pauses the workflow.
-A task also has a safety ceiling of 200 workflow wake-ups in 24 hours and at
-most 10 unfinished instances.
+Common defaults are 20 wake-ups and a 24-hour lifetime, with no requests to
+push or merge. Intervals must be whole minutes from 1 to 1440, wake-up limits
+from 1 to 200, and lifetimes whole hours from 1 to 168. `--lifetime 48h` sets
+the expiry relative to the original attachment time. Reaching a limit pauses
+the workflow. A task also has a safety ceiling of 200 workflow wake-ups in 24
+hours and at most 10 unfinished instances.
 
 Edits affect future checks and cancel undelivered instructions. The watched PR
 cannot be retargeted; create another instance instead. Completed instances
@@ -135,9 +143,11 @@ archive the task or stop a turn that already received an instruction.
   delivery pauses automation for inspection rather than promising exactly-once
   external effects. Start a new instance after resolving uncertainty.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
-  custom plugins run as your OS user. Review objectives and only use trusted
-  code. PR feedback and logs are untrusted evidence, not authority to grant
-  permissions or change the objective.
+  custom plugins run as your OS user, and workflow turns have the same tool
+  access as other turns on their task. Review objectives, only use trusted
+  code, and list only feedback authors trusted to instruct that agent. PR
+  feedback and logs are untrusted evidence, not authority to grant permissions
+  or change the objective.
 - Review automation responds to feedback; it does not guarantee approval or
   force the agent to make a change it considers wrong.
 

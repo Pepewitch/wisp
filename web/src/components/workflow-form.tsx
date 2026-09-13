@@ -18,7 +18,7 @@ const FIELD =
   "mt-1 block w-full rounded-md border border-input bg-surface px-2 py-1.5 text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 
 /** Limits and permissions: real, but not the question you are here to answer. */
-const SAFETY = new Set(["maxWakeups", "lifetimeHours", "allowPush", "allowMerge", "reviewers", "excludeAuthors", "includeBots"])
+const SAFETY = new Set(["maxWakeups", "lifetimeHours", "allowPush", "allowMerge", "excludeAuthors", "includeBots"])
 const pad = (value: number) => String(value).padStart(2, "0")
 const offsetLabel = (minutes: number) => {
   const sign = minutes < 0 ? "-" : "+"

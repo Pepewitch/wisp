@@ -24,7 +24,7 @@ are named while the rest continue; any failure exits nonzero.
 wisp workflow types [--json]
 wisp workflow start <task> heartbeat --every 5m --prompt "Objective and stop condition"
 wisp workflow start <task> pr-ci --pr <url> --every 5m
-wisp workflow start <task> pr-review --pr <url> --quiet-for 30m
+wisp workflow start <task> pr-review --pr <url> --reviewers <trusted-login>[,<trusted-login>…] --quiet-for 30m
 wisp workflow list <task> [--json]
 wisp workflow show <workflow-id> [--json]
 wisp workflow set <workflow-id> --every 10m
@@ -35,9 +35,11 @@ wisp workflow complete <workflow-id>
 
 Workflows persist in the daemon and wake settled tasks between turns. Stop
 pauses them; archive completes them. Configure prompts, timers, limits, and
-explicit push/merge permissions through flags or `--params` JSON. See
+push/merge instructions through flags or `--params` JSON. See
 [Task workflows](../../../docs/WORKFLOWS.md) for defaults, review quiet-window
-semantics, recovery limits, and the trusted executable plugin contract.
+semantics, required trusted feedback authors, recovery limits, and the trusted
+executable plugin contract. Push/merge flags guide the agent; they are not a
+process sandbox.
 
 ## Tasks
 
