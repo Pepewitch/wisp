@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import { connectionStore } from "@/lib/conn"
 import { useLogStream } from "./useLogStream"
@@ -22,6 +22,7 @@ describe("useLogStream", () => {
     expect(url).toBe("/api/tasks/task-1/log/stream?format=activity")
 
     act(() => {
+      fake.emit("hello", { version: "0.5.7-test" })
       fake.emit("backlog", {
         turn: 1,
         prompt: "delegate",
@@ -91,5 +92,32 @@ describe("useLogStream", () => {
     })
     expect(result.current.currentTurn).toBe(2)
     expect(connectionStore(connectionId).isLive()).toBe(true)
+  })
+
+  it("closes malformed frames as versioned protocol errors without retrying them", async () => {
+    const fake = createFakeSse()
+    const ensureReady = vi.fn(async () => undefined)
+    const connectionId = "connection-malformed-log"
+    const transport = fakeDaemonTransport(connectionId, {
+      ensureReady,
+      openEventStream: () => fake.source,
+    })
+    const { result } = renderHook(() => useLogStream("task-1", "raw", 0), {
+      wrapper: runtimeWrapper(transport),
+    })
+
+    act(() => {
+      fake.emit("hello", { version: "0.5.7-test" })
+      fake.emitRaw("backlog", "{")
+    })
+
+    await waitFor(() =>
+      expect(result.current.note).toContain(
+        'Log stream protocol error in "backlog" from daemon 0.5.7-test: invalid JSON',
+      ),
+    )
+    expect(fake.isClosed()).toBe(true)
+    expect(connectionStore(connectionId).isLive()).toBe(false)
+    expect(ensureReady).not.toHaveBeenCalled()
   })
 })

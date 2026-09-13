@@ -5,6 +5,7 @@ import { subscribeTurnBroker, type BrokerGap, type TurnBrokerSubscription } from
 import { latestTurnForTask, turnForTask } from "../store";
 import { acquireTranscriptRead, TRANSCRIPT_EVICTED_NOTICE } from "../transcript-access";
 import type { Task, Turn } from "../types";
+import { BUILD_INFO } from "../version";
 import { err, integerQueryParam } from "./http";
 
 /**
@@ -402,6 +403,10 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
       controller = c;
+      // Additive handshake: older clients ignore the named frame, while new
+      // clients can identify the daemon precisely if a later frame violates
+      // the stream contract.
+      send("hello", { version: BUILD_INFO.version });
       unsubscribe = subscribeLogEvents(task.id, send, tick);
       poll = setInterval(() => void tick(), LOG_STREAM_POLL_MS);
       hb = setInterval(() => {

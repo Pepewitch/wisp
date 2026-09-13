@@ -582,6 +582,7 @@ export interface TaskSkills {
 
 /** Named frames of GET /api/tasks/:id/log/stream. */
 export interface LogStreamFrames {
+  hello: { version: string };
   backlog: { turn: number; prompt: string; text: string };
   append: { turn: number; text: string };
   "turn-end": { turn: number; status: TurnStatus };
@@ -590,6 +591,7 @@ export interface LogStreamFrames {
 
 /** Named frames when `format=activity`. */
 export interface ActivityLogStreamFrames {
+  hello: { version: string }
   backlog: { turn: number; prompt: string; activity: ActivityEvent[] }
   append: { turn: number; activity: ActivityEvent[] }
   "turn-end": { turn: number; status: TurnStatus }
