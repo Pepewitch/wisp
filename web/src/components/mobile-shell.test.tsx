@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
@@ -63,11 +63,20 @@ describe("the mobile header", () => {
     expect(screen.getByText("claude-opus-5")).toBeInTheDocument()
   })
 
-  it("splits the tab strip into equal thirds, each a full-height thumb target", () => {
+  it("puts Workflows beside the other task surfaces in equal-width thumb targets", () => {
+    mount({ workflows: <div>Workflow content</div> })
+
+    const tabs = screen.getAllByRole("button", { name: /^(Chat|Changes|Workflows|Terminal)$/ })
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Changes", "Workflows", "Terminal"])
+    for (const tab of tabs) expect(tab.className).toContain("flex-1")
+
+    fireEvent.click(screen.getByRole("button", { name: "Workflows" }))
+    expect(screen.getByText("Workflow content").parentElement).not.toHaveAttribute("aria-hidden", "true")
+  })
+
+  it("omits Workflows when the connected daemon does not support it", () => {
     mount()
 
-    const tabs = screen.getAllByRole("button", { name: /^(Chat|Changes|Terminal)$/ })
-    expect(tabs).toHaveLength(3)
-    for (const tab of tabs) expect(tab.className).toContain("flex-1")
+    expect(screen.queryByRole("button", { name: "Workflows" })).not.toBeInTheDocument()
   })
 })

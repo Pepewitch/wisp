@@ -17,7 +17,6 @@ import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
-import { FileViewerProvider } from "@/components/file-viewer"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
@@ -26,12 +25,11 @@ import { SettingsDialog } from "@/components/settings-dialog"
 import { StartHere } from "@/components/start-here"
 import { Gear, WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
-import { TaskPanel } from "@/components/task-panel"
 import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
-import { TerminalSection } from "@/components/terminal-pane"
+import { buildTaskSurfaces } from "@/components/task-surfaces"
 import {
   useHarnesses,
   useHarnessFeatures,
@@ -58,7 +56,6 @@ import {
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { revealFileHandler } from "@/lib/external-links"
 import { groupTasksByProject } from "@/lib/projects"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -365,27 +362,16 @@ function MainView({
       touch={isMobile}
     />
   )
-  const panelNode = (
-    // The diff pane's double-click opens a file the way a path in prose does,
-    // so it gets the same provider. An archived task's worktree is gone — no
-    // opener, which is exactly what the pane's own "unavailable" note says.
-    <FileViewerProvider
-      taskId={archived ? null : selectedId}
-      onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
-    >
-      <TaskPanel task={task} taskId={selectedId} archived={archived} prUrl={prUrlOf(pullRequests.selected)} onRefresh={refreshDiff} touch={isMobile} />
-    </FileViewerProvider>
-  )
-  const terminalNode = (
-    <TerminalSection
-      taskId={selectedId}
-      // the list row is what the SSE bridge refreshes; a just-created task has
-      // no worktree yet, so the pane waits instead of failing to connect
-      worktreePath={task?.worktree_path ?? null}
-      archived={archived}
-      touch={isMobile}
-    />
-  )
+  const taskSurfaces = buildTaskSurfaces({
+    mobile: isMobile,
+    workflowsSupported: searchFeature.data?.taskWorkflows === true,
+    connectionId: runtime.connectionId,
+    task,
+    taskId: selectedId,
+    archived,
+    pullRequest: pullRequests.selected,
+    onRefresh: refreshDiff,
+  })
   // Replaces the whole centre column — including the "Select a task" band,
   // which had nothing to select and said so over a panel already saying it.
   const firstRunNode = firstRun.show && selectedId === null ? (
@@ -421,8 +407,9 @@ function MainView({
       pullRequest={pullRequests.selected}
       sidebar={sidebarNode}
       conversation={conversationNode}
-      changes={panelNode}
-      terminal={terminalNode}
+      changes={taskSurfaces.changes}
+      workflows={taskSurfaces.workflows}
+      terminal={taskSurfaces.terminal}
       composer={composerNode}
       firstRun={firstRunNode}
       taskHeader={
@@ -447,6 +434,7 @@ function AppShell({
   sidebar,
   conversation,
   changes,
+  workflows,
   terminal,
   composer,
   taskHeader,
@@ -465,6 +453,7 @@ function AppShell({
   }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
+  workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode
   taskHeader: ReactNode
@@ -487,6 +476,7 @@ function AppShell({
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
           changes={changes}
+          workflows={workflows}
           terminal={terminal}
           composer={composer}
           connectionStatus={!desktop ? <MobileConnectionStatus /> : undefined}
@@ -555,11 +545,6 @@ function AppShell({
       {dialogs}
     </div>
   )
-}
-
-/** The watched PR a workflow form should prefill with, when there is one. */
-function prUrlOf(status: PullRequestStatus | undefined): string | undefined {
-  return status?.kind === "found" ? status.pullRequest.url : undefined
 }
 
 function queryError(tasksError: unknown, statusError: unknown): string | null {
