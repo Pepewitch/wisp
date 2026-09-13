@@ -89,7 +89,10 @@ test("an in-flight webhook holds deletion; deletion-pending tasks never send new
   const ready = new Promise<void>(resolve => { finish = resolve; });
   let hits = 0;
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: async req => { const payload = await req.json() as { task_id: string }; if (payload.task_id === f.id) { hits++; await ready; } return new Response("ok"); } });
-  const delivery = deliverOutbox({ ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] });
+  const delivery = deliverOutbox(
+    { ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] },
+    f.id,
+  );
   try {
     for (const deadline = Date.now() + 3000; !taskDeliveryActive(f.id);) { if (Date.now() > deadline) throw new Error("delivery did not start"); await Bun.sleep(5); }
     await expect(purgeTask(f.task)).rejects.toThrow(/webhook delivery/);
@@ -99,7 +102,10 @@ test("an in-flight webhook holds deletion; deletion-pending tasks never send new
     transition(f.id, "done", "new pending delivery");
     setTaskFields(f.id, { purge_pending: 1 });
     const before = hits;
-    await deliverOutbox({ ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] });
+    await deliverOutbox(
+      { ...loadConfig(), webhooks: [`http://127.0.0.1:${server.port}`] },
+      f.id,
+    );
     expect(hits).toBe(before);
     await purgeTask(getTask(f.id)!);
   } finally { server.stop(true); }

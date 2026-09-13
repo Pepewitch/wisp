@@ -15,8 +15,9 @@ export const taskDeliveryActive = (id: string): boolean => activeTasks.has(id);
  * will see duplicates and must dedup on (task_id, seq). Per-URL tracking
  * isn't worth the additional schema for this local daemon.
  */
-export async function deliverOutbox(cfg: WispConfig): Promise<void> {
+export async function deliverOutbox(cfg: WispConfig, onlyTaskId?: string): Promise<void> {
   for (const row of pendingOutbox()) {
+    if (onlyTaskId !== undefined && row.task_id !== onlyTaskId) continue;
     if (!getTask(row.task_id) || getTask(row.task_id)?.purge_pending || activeTasks.has(row.task_id)) continue;
     activeTasks.add(row.task_id);
     try {
