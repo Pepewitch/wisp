@@ -136,3 +136,23 @@ export function formatUsage(def: AdapterDef, blob: unknown): UsageSummary | null
   }
   return formatter(blob);
 }
+
+const USAGE_FIELDS = [
+  "inputTokens",
+  "outputTokens",
+  "cachedInputTokens",
+  "cacheWriteTokens",
+  "reasoningTokens",
+] as const satisfies readonly (keyof UsageSummary)[];
+
+/** Add normalized task telemetry while preserving fields no turn reported as absent. */
+export function totalUsage(usages: UsageSummary[]): UsageSummary {
+  const total: UsageSummary = {};
+  for (const usage of usages) {
+    for (const key of USAGE_FIELDS) {
+      const value = usage[key];
+      if (value !== undefined) total[key] = (total[key] ?? 0) + value;
+    }
+  }
+  return total;
+}

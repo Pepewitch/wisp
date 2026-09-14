@@ -283,12 +283,18 @@ when a line should look technical.
 The centre column is ONE conversation — prompt, the tool calls it made, then the
 result — not a raw stream pane stacked on a chat pane. Five rules:
 
-1. **One scroller owns the whole task.** No per-turn clamp, no nested
-   `overflow`, no separate stream pane.
-   `GET /api/tasks/:id/conversation` returns every turn without Git work, so
-   scrolling from turn 7 back to turn 1 costs nothing. The UI falls back to
-   legacy `GET /api/tasks/:id` for older protocol-1 daemons. Do not paginate
-   turns.
+1. **One scroller owns the visible conversation window.** No per-turn clamp,
+   nested `overflow`, or separate stream pane. The UI requests 50 newest turns
+   from `GET /api/tasks/:id/conversation?limit=50`; **Load earlier turns**
+   prepends cursor pages in chronological order and compensates `scrollTop` by
+   the added height. A cross-project search hit automatically loads pages until
+   its named turn is mounted. The endpoint remains unpaginated when `limit` is
+   absent for older clients, and the UI still falls back to legacy
+   `GET /api/tasks/:id` when a protocol-1 daemon lacks the conversation route.
+   `/tokens` does not total only the mounted window: while its panel is open,
+   `GET /api/tasks/:id/usage` fetches task-wide totals and at most 50 newest
+   reporting-turn rows. A 404 falls back to the full turns supplied by an older
+   daemon.
 2. **Activity rows render as summary lines only.** The live stream retains
    only its current turn. A settled turn's structured activity is fetched when
    someone chooses **Show activity**, its SSE closes at `turn-end`, and the

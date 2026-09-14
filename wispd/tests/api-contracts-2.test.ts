@@ -3,7 +3,18 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { createTask, createTurn, finishTurn, freeSlot, newTaskId, setTaskFields, transition } from "../src/store";
+import {
+  createTask,
+  createTaskMessage,
+  createTurn,
+  finishTurn,
+  freeSlot,
+  markTaskMessageDelivered,
+  newTaskId,
+  setTaskFields,
+  setTurnUsage,
+  transition,
+} from "../src/store";
 
 const token = "web-test-token";
 let server: Awaited<ReturnType<typeof serve>> | null = null;
@@ -297,6 +308,118 @@ describe("daemon API contracts, batch 2", () => {
       diffstat: null,
       worktreeReason: null,
     });
+  });
+
+  test("pages conversation turns and their messages with an exclusive cursor", async () => {
+    const base = await startServer();
+    const task = makeTask();
+    for (let n = 1; n <= 55; n += 1) {
+      const turnId = createTurn(task.id, n, `prompt ${n}`, null, `/tmp/turn-${n}.log`);
+      finishTurn(turnId, "done", 0, `result ${n}`);
+      setTurnUsage(turnId, JSON.stringify({ input_tokens: n, output_tokens: 1 }));
+    }
+    for (const n of [1, 6, 55]) {
+      const message = createTaskMessage({
+        id: `message-${n}`,
+        taskId: task.id,
+        text: `steer ${n}`,
+        attachmentHash: "",
+      }, false);
+      markTaskMessageDelivered(message.id, "steered", n);
+    }
+    createTaskMessage({
+      id: "message-pending",
+      taskId: task.id,
+      text: "next turn",
+      attachmentHash: "",
+    }, false);
+
+    const newest = await json<{
+      turns: Array<{ n: number }>;
+      messages: Array<{ id: string }>;
+      has_older_turns: boolean;
+      older_turns_before: number | null;
+      latest_turn_has_result: boolean;
+    }>(await api(base, `/api/tasks/${task.id}/conversation?limit=50`));
+    expect(newest.turns.map((turn) => turn.n)).toEqual(Array.from({ length: 50 }, (_, index) => index + 6));
+    expect(newest.messages.map((message) => message.id)).toEqual(["message-6", "message-55", "message-pending"]);
+    expect(newest.has_older_turns).toBe(true);
+    expect(newest.older_turns_before).toBe(6);
+    expect(newest.latest_turn_has_result).toBe(true);
+
+    const older = await json<{
+      turns: Array<{ n: number }>;
+      messages: Array<{ id: string }>;
+      has_older_turns: boolean;
+      older_turns_before: number | null;
+      latest_turn_has_result: boolean;
+    }>(await api(base, `/api/tasks/${task.id}/conversation?limit=50&before=6`));
+    expect(older.turns.map((turn) => turn.n)).toEqual([1, 2, 3, 4, 5]);
+    expect(older.messages.map((message) => message.id)).toEqual(["message-1"]);
+    expect(older.has_older_turns).toBe(false);
+    expect(older.older_turns_before).toBeNull();
+    expect(older.latest_turn_has_result).toBe(true);
+
+    const compatible = await json<Record<string, unknown>>(
+      await api(base, `/api/tasks/${task.id}/conversation`),
+    );
+    expect((compatible.turns as Array<{ n: number }>).map((turn) => turn.n)).toEqual(
+      Array.from({ length: 55 }, (_, index) => index + 1),
+    );
+    expect(compatible).not.toHaveProperty("has_older_turns");
+    expect(compatible).not.toHaveProperty("older_turns_before");
+
+    const usage = await json<{
+      total: { inputTokens: number; outputTokens: number };
+      reporting_turns: number;
+      turns: Array<{ id: number; n: number; usage: { inputTokens: number; outputTokens: number } }>;
+      has_older_turns: boolean;
+    }>(await api(base, `/api/tasks/${task.id}/usage`));
+    expect(usage.total).toEqual({ inputTokens: 1_540, outputTokens: 55 });
+    expect(usage.reporting_turns).toBe(55);
+    expect(usage.turns).toHaveLength(50);
+    expect(usage.turns.map((turn) => turn.n)).toEqual(
+      Array.from({ length: 50 }, (_, index) => index + 6),
+    );
+    expect(usage.has_older_turns).toBe(true);
+  });
+
+  test("the newest empty page still includes queued messages", async () => {
+    const base = await startServer();
+    const task = makeTask();
+    createTaskMessage({
+      id: "message-pending-empty",
+      taskId: task.id,
+      text: "start the first turn",
+      attachmentHash: "",
+    }, false);
+
+    const detail = await json<{
+      turns: unknown[];
+      messages: Array<{ id: string }>;
+      has_older_turns: boolean;
+    }>(await api(base, `/api/tasks/${task.id}/conversation?limit=50`));
+    expect(detail.turns).toEqual([]);
+    expect(detail.messages.map((message) => message.id)).toEqual(["message-pending-empty"]);
+    expect(detail.has_older_turns).toBe(false);
+  });
+
+  test("validates opt-in conversation page parameters", async () => {
+    const base = await startServer();
+    const task = makeTask();
+    await expectError(
+      base,
+      `/api/tasks/${task.id}/conversation?limit=0`,
+      400,
+      'limit must be a positive integer, got "0"',
+    );
+    await expectError(base, `/api/tasks/${task.id}/conversation?limit=101`, 400, "limit must be at most 100");
+    await expectError(
+      base,
+      `/api/tasks/${task.id}/conversation?limit=50&before=nope`,
+      400,
+      'before must be a positive integer, got "nope"',
+    );
   });
 
   test("archived task detail remains readable and marks archived true", async () => {

@@ -448,6 +448,47 @@ export function turnsFor(taskId: string): Turn[] {
   return db.query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n ASC`).all(taskId) as Turn[];
 }
 
+export interface TurnPage {
+  turns: Turn[];
+  hasOlder: boolean;
+}
+
+export interface TurnUsageRow {
+  id: number;
+  n: number;
+  harness: string;
+  usage_json: string;
+}
+
+/** The narrow, on-demand ledger behind `/tokens`; transcript pages stay bounded. */
+export function turnUsageFor(taskId: string): TurnUsageRow[] {
+  return db
+    .query(
+      `SELECT id, n, harness, usage_json FROM turns
+       WHERE task_id = ? AND usage_json IS NOT NULL
+       ORDER BY n ASC`,
+    )
+    .all(taskId) as TurnUsageRow[];
+}
+
+/**
+ * Read one newest-first cursor page, then restore transcript order for callers.
+ * The extra row answers `hasOlder` without a second count over the task.
+ */
+export function turnPageFor(taskId: string, before: number | null, limit: number): TurnPage {
+  const rows = (before === null
+    ? db
+      .query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT ?`)
+      .all(taskId, limit + 1)
+    : db
+      .query(`SELECT * FROM turns WHERE task_id = ? AND n < ? ORDER BY n DESC LIMIT ?`)
+      .all(taskId, before, limit + 1)) as Turn[];
+  const hasOlder = rows.length > limit;
+  if (hasOlder) rows.pop();
+  rows.reverse();
+  return { turns: rows, hasOlder };
+}
+
 export function turnForTask(taskId: string, n: number): Turn | null {
   return (
     (db.query(`SELECT * FROM turns WHERE task_id = ? AND n = ?`).get(taskId, n) as Turn | null) ?? null
@@ -477,6 +518,7 @@ export {
   getTaskMessage,
   markTaskMessageDelivered,
   messagesFor,
+  messagesForTurnPage,
   newTaskMessageId,
   nextQueuedMessage,
   releaseOrphanedTaskMessageClaims,

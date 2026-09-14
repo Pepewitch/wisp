@@ -1,5 +1,5 @@
 import { formatTokens } from "@/lib/format";
-import type { Turn, UsageSummary } from "@/lib/types";
+import type { TurnUsage, UsageSummary } from "@/lib/types";
 
 const USAGE_FIELDS = [
   { key: "inputTokens", label: "in" },
@@ -14,8 +14,12 @@ const USAGE_FIELDS = [
 }[];
 
 /** A missing report is not a zero-token turn. */
-export function reportedUsageTurns(turns: Turn[] | undefined): (Turn & { usage: UsageSummary })[] {
-  return (turns ?? []).filter((turn): turn is Turn & { usage: UsageSummary } => turn.usage !== null);
+export function reportedUsageTurns(
+  turns: TurnUsage[] | undefined,
+): (TurnUsage & { usage: UsageSummary })[] {
+  return (turns ?? []).filter(
+    (turn): turn is TurnUsage & { usage: UsageSummary } => turn.usage !== null,
+  );
 }
 
 /** Compact field labels in the one canonical display order. */

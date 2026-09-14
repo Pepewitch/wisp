@@ -1,8 +1,6 @@
 import {
   Fragment,
-  useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -26,6 +24,10 @@ import { TurnAttachments } from "@/components/turn-attachments"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { useFindInTask } from "@/hooks/useFindInTask"
+import {
+  useConversationPagination,
+  useRevealTurnPage,
+} from "@/hooks/useConversationPagination"
 import { TurnCaptureNotice } from "@/components/turn-capture-notice"
 import {
   activityByTurn,
@@ -46,9 +48,9 @@ import type { StreamState } from "@/stream/reducer"
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
 
-   1. ONE scroller owns the whole task. Every turn from
-      GET /api/tasks/:id/conversation renders eagerly — no clamp, no nested
-      overflow, no pagination.
+   1. ONE scroller owns the visible history window. The newest turns arrive
+      first; older cursor pages prepend in transcript order without a nested
+      scroller or moving the reader's line.
    2. Activity rows are SUMMARY LINES, in the order the harness emitted them:
       a tool call, the prose that explains the next one, the next call. A live
       turn's timeline comes from the log stream; a settled turn's is fetched on
@@ -65,13 +67,15 @@ import type { StreamState } from "@/stream/reducer"
       falls back to the turn's head rather than being hidden.
    ──────────────────────────────────────────────────────────────────────── */
 
-const PIN_THRESHOLD = 60
-
 export function Conversation({
   task,
   stream,
   note,
   touch = false,
+  hasOlderTurns = false,
+  isLoadingOlderTurns = false,
+  olderTurnsError = null,
+  onLoadOlderTurns,
 }: {
   task: ConversationDetail | null
   /** the live log follow; its blocks belong to the newest turn(s) */
@@ -80,11 +84,13 @@ export function Conversation({
   note?: string | null
   /** touch mode: the find bar spans the column and takes 44px hit boxes */
   touch?: boolean
+  hasOlderTurns?: boolean
+  isLoadingOlderTurns?: boolean
+  olderTurnsError?: unknown
+  onLoadOlderTurns?: () => Promise<unknown>
 }) {
   const runtime = useDaemonRuntime()
   const uiIntents = uiIntentsFor(runtime.connectionId)
-  const viewport = useRef<HTMLDivElement>(null)
-  const [pinned, setPinned] = useState(true)
 
   const live = activityByTurn(stream.blocks)
   const { queuedMessages, steeredMessages, uncertainStarts } = useMemo(() => {
@@ -108,49 +114,40 @@ export function Conversation({
   // `/log` (A2): the palette asks, this scroller answers. A monotonic counter,
   // so a second request while already pinned is still a request.
   const focusRequests = useSyncExternalStore(uiIntents.subscribe, uiIntents.streamFocusRequests)
+  const {
+    viewport,
+    pinned,
+    onScroll,
+    loadOlderTurns,
+    compensate,
+    jumpToLatest,
+  } = useConversationPagination({
+    connectionId: runtime.connectionId,
+    task,
+    streamBlocks: stream.blocks,
+    focusRequests,
+    isLoadingOlderTurns,
+    onLoadOlderTurns,
+  })
   // ⌘F, the overflow menu and a picked cross-project result all land here.
   const find = useFindInTask(viewport, uiIntents)
-
-  useLayoutEffect(() => {
-    const el = viewport.current
-    if (pinned && el) el.scrollTop = el.scrollHeight
-  }, [runtime.connectionId, task?.id, task?.turns.length, task?.messages?.length, stream.blocks, pinned, focusRequests])
-
-  // a task switch is a fresh read: pin to the tail again (adjusted during
-  // render so the first paint of the new task is already pinned). A `/log`
-  // request is the same move, asked for out loud.
-  const taskIdentity = `${runtime.connectionId}:${task?.id ?? ""}`
-  const [seenTask, setSeenTask] = useState(taskIdentity)
-  const [seenFocus, setSeenFocus] = useState(focusRequests)
-  if (seenTask !== taskIdentity) {
-    setSeenTask(taskIdentity)
-    setPinned(true)
-  }
-  if (seenFocus !== focusRequests) {
-    setSeenFocus(focusRequests)
-    setPinned(true)
-  }
-
-  const onScroll = () => {
-    const el = viewport.current
-    if (!el) return
-    setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < PIN_THRESHOLD)
-  }
-
-
-
-  /** Rule 3: keep the reader's line still when something above it grows. */
-  const compensate = useCallback((node: HTMLElement | null, before: number) => {
-    const el = viewport.current
-    if (!el || !node) return
-    if (node.getBoundingClientRect().top >= el.getBoundingClientRect().top) return
-    el.scrollTop += el.scrollHeight - before
-  }, [])
 
   const taskId = task?.id
   useEffect(() => (
     taskId ? scheduleConversationPaint() : undefined
   ), [taskId])
+
+  // A project-search hit names its turn. Pull cursor pages until that turn is
+  // mounted, then the existing find hook reveals activity and walks the match.
+  const revealTurn = find.revealTurn
+  useRevealTurnPage({
+    revealTurn,
+    firstTurn: task?.turns.at(0)?.n,
+    hasOlderTurns,
+    isLoadingOlderTurns,
+    olderTurnsError,
+    loadOlderTurns,
+  })
 
   if (!task) {
     return (
@@ -176,7 +173,7 @@ export function Conversation({
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 z-(--z-pane) h-6 bg-gradient-to-b from-background from-30% to-transparent"
         />
-        {find.open && <FindBar state={find} touch={touch} />}
+        {find.open && <FindBar state={find} touch={touch} historyIncomplete={hasOlderTurns} />}
 
         <div
           ref={viewport}
@@ -206,6 +203,23 @@ export function Conversation({
               two-line conversation belongs just above the composer, not floating
               at the top of 600px of nothing. Once it overflows, this is inert. */}
           <div className="flex min-h-full flex-col justify-end pt-6">
+            {hasOlderTurns && (
+              <div className="pb-4 text-center">
+                <button
+                  type="button"
+                  disabled={isLoadingOlderTurns}
+                  onClick={loadOlderTurns}
+                  className="text-[11.5px] text-muted-foreground transition-colors hover:text-foreground disabled:cursor-wait disabled:text-faint"
+                >
+                  {isLoadingOlderTurns ? "Loading earlier turns…" : "Load earlier turns"}
+                </button>
+                {olderTurnsError instanceof Error && (
+                  <p role="alert" className="mt-1 text-[10.5px] text-destructive">
+                    Could not load earlier turns: {olderTurnsError.message}
+                  </p>
+                )}
+              </div>
+            )}
             {task.turns.length === 0 && note && <div className="pt-4 text-[12.5px] text-faint">{note}</div>}
             {task.turns.map((turn, i) => (
               <Fragment key={`${runtime.connectionId}:${task.id}:${turn.n}`}>
@@ -248,7 +262,7 @@ export function Conversation({
         {!pinned && (
           <button
             type="button"
-            onClick={() => setPinned(true)}
+            onClick={jumpToLatest}
             className={cn(
               "absolute right-4 bottom-3 flex h-7 items-center gap-1.5 rounded-full",
               "border border-border-strong bg-card px-3 text-[11.5px] text-fg-secondary",

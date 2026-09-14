@@ -55,16 +55,21 @@ export type ApiTurn = Omit<Turn, "attachments_json" | "usage_json" | "outcome_js
   capture_categories: Record<string, { records: number; bytes: number }> | null;
 };
 
-export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
-  const { attachments_json, usage_json, outcome_json: _outcome, capture_categories_json, ...rest } = t;
+/** Parse and normalize one stored usage blob without exposing its storage shape. */
+export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageSummary | null {
   let rawUsage: unknown = null;
-  if (usage_json !== null) {
+  if (usageJson !== null) {
     try {
-      rawUsage = JSON.parse(usage_json);
+      rawUsage = JSON.parse(usageJson);
     } catch {
       rawUsage = null; // a corrupt blob is no usage report, not a 500
     }
   }
+  return def ? formatUsage(def, rawUsage) : null;
+}
+
+export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
+  const { attachments_json, usage_json, outcome_json: _outcome, capture_categories_json, ...rest } = t;
   let captureCategories: Record<string, { records: number; bytes: number }> | null = null;
   if (capture_categories_json !== null) {
     try {
@@ -81,7 +86,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
     capture_state: turnCaptureState(t),
     diagnostic_state: turnDiagnosticState(t),
     attachments: parseAttachmentManifest(attachments_json),
-    usage: def ? formatUsage(def, rawUsage) : null,
+    usage: apiTurnUsage(usage_json, def),
     capture_categories: captureCategories,
   };
 }
