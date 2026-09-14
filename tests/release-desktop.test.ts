@@ -89,20 +89,22 @@ describe("Wisp Desktop release metadata", () => {
     expect(desktopTargetDir(root, resolve(root, "outside-target"))).toBe(resolve(root, "outside-target"));
   });
 
-  test("clean-rebuilds the reproducibility payload at one stable Cargo target path", () => {
+  test("reproduces the macOS payload on two independent clean runners", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-    expect(workflow).not.toContain("wisp-desktop-release-first");
-    expect(workflow).not.toContain("wisp-desktop-release-second");
-    expect(workflow.match(/wisp-desktop-release-repro/g)).toHaveLength(3);
-    expect(workflow).toContain("cargo clean --manifest-path desktop/src-tauri/Cargo.toml");
+    expect(workflow).toContain("macos-repro:");
+    expect(workflow).toContain("copy: [a, b]");
+    expect(workflow).toContain("name: release-macos-repro-${{ matrix.copy }}");
+    expect(workflow).toContain("require independent byte-identical macOS payloads");
+    expect(workflow).not.toContain("cargo clean --manifest-path desktop/src-tauri/Cargo.toml");
+    expect(workflow).toContain("cache-targets: false");
   });
 
   test("hands one reproducible UI bundle from Linux to every macOS release pass", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-    expect(workflow.match(/name: release-ui-bundle/g)).toHaveLength(2);
+    expect(workflow.match(/name: canonical-ui-bundle/g)).toHaveLength(4);
     expect(workflow).toContain("sha256sum index.html > SHA256SUMS");
     expect(workflow).toContain("shasum -a 256 -c SHA256SUMS");
-    expect(workflow.match(/WISP_PREBUILT_UI=1/g)).toHaveLength(3);
+    expect(workflow.match(/WISP_PREBUILT_UI=1/g)).toHaveLength(2);
     expect(workflow).not.toContain("committed web bundle is current");
 
     const pullRequestWorkflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -126,6 +128,37 @@ describe("Wisp Desktop release metadata", () => {
     expect(buildScript).toContain("0) bun run build:ui");
     expect(buildScript).toContain("test -f web/ui-dist/index.html");
     expect(buildScript).toContain("WISP_PREBUILT_UI must be 0 or 1");
+  });
+
+  test("builds the transferred updater verifier once in the trusted target", () => {
+    const releaseScript = readFileSync(new URL("../scripts/release-desktop.ts", import.meta.url), "utf8");
+    const desktopCargo = readFileSync(new URL("../desktop/src-tauri/Cargo.toml", import.meta.url), "utf8");
+    const verifierCargo = readFileSync(new URL("../scripts/update-verifier/Cargo.toml", import.meta.url), "utf8");
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    expect(releaseScript).toContain('"scripts/update-verifier/Cargo.toml"');
+    expect(releaseScript).toContain('"--release",\n      "--target",\n      "aarch64-apple-darwin"');
+    expect(desktopCargo).not.toContain("release-verifier");
+    expect(desktopCargo).not.toContain("minisign-verify");
+    expect(verifierCargo).toContain('name = "verify-update-signature"');
+    expect(verifierCargo).toContain('base64 = "0.22"');
+    expect(verifierCargo).toContain('minisign-verify = "0.2.5"');
+    expect(workflow).toContain("name: release-update-verifier");
+    expect(workflow).toContain("shasum -a 256 verify-update-signature > SHA256SUMS");
+    expect(workflow).toContain('WISP_UPDATE_VERIFIER=$RUNNER_TEMP/release-verifier/verify-update-signature');
+  });
+
+  test("keeps credentials in the parallel trusted job and publication build-free", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const trusted = workflow.slice(workflow.indexOf("  desktop-trusted:"), workflow.indexOf("  publish:"));
+    const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  promote:"));
+
+    expect(trusted).toContain("secrets.APPLE_CERTIFICATE");
+    expect(trusted).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY");
+    expect(publish).toContain("needs: [release-linux, macos-repro, desktop-trusted]");
+    expect(publish).not.toContain("secrets.APPLE_");
+    expect(publish).not.toContain("scripts/release-desktop.ts");
+    expect(publish).not.toContain("wispd/scripts/release-macos.ts");
+    expect(publish).not.toContain("cargo run");
   });
 
   test("binds cached native outputs to the UI generated before Tauri compiles", () => {

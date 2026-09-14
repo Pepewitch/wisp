@@ -22,3 +22,4 @@ skills-lock.json
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/icons/icon.icns
+scripts/update-verifier/target/

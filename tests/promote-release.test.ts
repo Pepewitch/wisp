@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
 import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
@@ -18,6 +19,7 @@ import {
   unpublishedTapFiles,
   validateReleaseMetadata,
 } from "../scripts/release-promotion";
+import { updateVerifierInvocation } from "../scripts/promote-release";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 const tag = `v${VERSION}`;
@@ -215,6 +217,7 @@ describe("release promotion", () => {
       // change to one of them never reaches this job.
       expect(dryRun.split(`- "${path}"`).length - 1).toBe(2);
     }
+    expect(dryRun.split('- "scripts/update-verifier/**"').length - 1).toBe(2);
   });
 
   test("refuses to create a colliding audit tap on an operator machine", () => {
@@ -256,5 +259,45 @@ describe("release promotion", () => {
     expect(dryRun).toContain("--release-root");
     expect(dryRun).not.toContain("--publish");
     expect(packageJson.scripts["release:promote"]).toBe("bun run scripts/promote-release.ts");
+  });
+
+  test("uses a transferred verifier for tag promotion and keeps recovery source-buildable", () => {
+    expect(updateVerifierInvocation("/release", "/trusted/verify-update-signature")).toEqual({
+      command: ["/trusted/verify-update-signature"],
+    });
+    expect(() => updateVerifierInvocation("/release", "relative/verifier")).toThrow("absolute path");
+    const currentRoot = resolve(import.meta.dir, "..");
+    expect(updateVerifierInvocation(currentRoot, "")).toEqual({
+      command: [
+        "cargo",
+        "run",
+        "--quiet",
+        "--locked",
+        "--manifest-path",
+        resolve(currentRoot, "scripts/update-verifier/Cargo.toml"),
+        "--bin",
+        "verify-update-signature",
+        "--",
+      ],
+      environment: {
+        CARGO_TARGET_DIR: expect.stringContaining("desktop/src-tauri/target"),
+      },
+    });
+    expect(updateVerifierInvocation("/historical-release", "")).toMatchObject({
+      command: [
+        "cargo",
+        "run",
+        "--quiet",
+        "--locked",
+        "--manifest-path",
+        "/historical-release/desktop/src-tauri/Cargo.toml",
+        "--bin",
+        "verify-update-signature",
+        "--features",
+        "release-verifier",
+        "--",
+      ],
+      frontendBuildInput: "/historical-release/web/ui-dist/index.html",
+    });
   });
 });
