@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { arch, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assertDisposableAuditHost,
@@ -26,6 +26,15 @@ const DESKTOP_CHANNEL_URL =
   "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json";
 const DAEMON_CHANNEL_URL =
   "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
+const SECURE_CURL_ARGS = [
+  "--proto",
+  "=https",
+  "--tlsv1.2",
+  "--fail",
+  "--silent",
+  "--show-error",
+  "--location",
+] as const;
 
 interface CommandOptions {
   cwd?: string;
@@ -113,27 +122,25 @@ function publicRelease(tag: string): ReleaseMetadata {
 
 function downloadPublicAssets(tag: string, version: string, directory: string): void {
   mkdirSync(directory, { recursive: true });
+  const curl = [
+    "curl",
+    ...SECURE_CURL_ARGS,
+    "--retry",
+    "4",
+    "--retry-all-errors",
+    "--parallel",
+    "--parallel-immediate",
+    "--parallel-max",
+    "5",
+  ];
   for (const file of expectedReleaseAssets(version)) {
-    run(
-      [
-        "curl",
-        "--proto",
-        "=https",
-        "--tlsv1.2",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--location",
-        "--retry",
-        "4",
-        "--retry-all-errors",
-        `https://github.com/${REPOSITORY}/releases/download/${tag}/${file}`,
-        "--output",
-        join(directory, file),
-      ],
-      { quiet: true },
+    curl.push(
+      "--output",
+      join(directory, file),
+      `https://github.com/${REPOSITORY}/releases/download/${tag}/${file}`,
     );
   }
+  run(curl, { quiet: true });
 }
 
 function readManifests(directory: string): PromotionManifests {
@@ -150,6 +157,52 @@ function readManifests(directory: string): PromotionManifests {
   };
 }
 
+export interface UpdateVerifierInvocation {
+  command: string[];
+  environment?: Record<string, string>;
+  frontendBuildInput?: string;
+}
+
+/**
+ * Normal tag publication transfers the verifier already built and negatively
+ * tested by the credential-isolated Desktop job. Recovery and local dry runs
+ * retain the source-build fallback because artifacts from an older workflow
+ * run are intentionally not discoverable by a manual dispatch.
+ */
+export function updateVerifierInvocation(
+  root: string,
+  configured = process.env.WISP_UPDATE_VERIFIER,
+): UpdateVerifierInvocation {
+  if (configured) {
+    if (!isAbsolute(configured)) {
+      throw new Error("WISP_UPDATE_VERIFIER must be an absolute path");
+    }
+    return { command: [configured] };
+  }
+  const minimalManifest = resolve(root, "scripts/update-verifier/Cargo.toml");
+  const historical = !existsSync(minimalManifest);
+  return {
+    command: [
+      "cargo",
+      "run",
+      "--quiet",
+      "--locked",
+      "--manifest-path",
+      historical
+        ? resolve(root, "desktop/src-tauri/Cargo.toml")
+        : minimalManifest,
+      "--bin",
+      "verify-update-signature",
+      ...(historical ? ["--features", "release-verifier"] : []),
+      "--",
+    ],
+    environment: {
+      CARGO_TARGET_DIR: resolve(SCRIPT_ROOT, "desktop/src-tauri/target"),
+    },
+    ...(historical ? { frontendBuildInput: resolve(root, "web/ui-dist/index.html") } : {}),
+  };
+}
+
 function verifyPublicAssets(root: string, directory: string, version: string): void {
   run(["shasum", "-a", "256", "-c", "SHA256SUMS"], { cwd: directory });
   run(["shasum", "-a", "256", "-c", "SHA256SUMS-darwin-arm64"], { cwd: directory });
@@ -157,49 +210,45 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
 
   const desktop = join(directory, `wisp-desktop-v${version}-darwin-arm64.tar.gz`);
   const signature = `${desktop}.sig`;
-  // Cargo builds the package library alongside this standalone verifier. The
-  // library's Tauri context requires frontendDist at compile time even though
-  // the verifier never links or executes the application UI. Tagged source
-  // checkouts correctly omit the generated bundle, so provide and later remove
-  // one inert ignored input instead of rebuilding unrelated frontend bytes.
-  const verifierFrontend = resolve(root, "web/ui-dist/index.html");
-  const createdVerifierFrontend = !existsSync(verifierFrontend);
-  if (createdVerifierFrontend) {
-    mkdirSync(dirname(verifierFrontend), { recursive: true });
-    writeFileSync(verifierFrontend, "<!doctype html><title>release verifier build input</title>\n", {
-      mode: 0o644,
-    });
+  const verifier = updateVerifierInvocation(root);
+  const createdFrontend = verifier.frontendBuildInput
+    ? !existsSync(verifier.frontendBuildInput)
+    : false;
+  if (createdFrontend && verifier.frontendBuildInput) {
+    mkdirSync(dirname(verifier.frontendBuildInput), { recursive: true });
+    writeFileSync(
+      verifier.frontendBuildInput,
+      "<!doctype html><title>historical release verifier build input</title>\n",
+      { mode: 0o644 },
+    );
   }
-  const verifierEnvironment = {
-    CARGO_TARGET_DIR: resolve(SCRIPT_ROOT, "desktop/src-tauri/target"),
-  };
-  const verifier = [
-    "cargo",
-    "run",
-    "--quiet",
-    "--locked",
-    "--manifest-path",
-    resolve(root, "desktop/src-tauri/Cargo.toml"),
-    "--bin",
-    "verify-update-signature",
-    "--features",
-    "release-verifier",
-    "--",
-  ];
   try {
-    run([...verifier, desktop, signature, resolve(root, "desktop/src-tauri/updater-public.key")], {
-      env: verifierEnvironment,
-    });
+    run(
+      [
+        ...verifier.command,
+        desktop,
+        signature,
+        resolve(root, "desktop/src-tauri/updater-public.key"),
+      ],
+      { env: verifier.environment },
+    );
     const tampered = join(directory, "tampered-desktop.tar.gz");
     copyFileSync(desktop, tampered);
     appendFileSync(tampered, "tampered");
     const tamperedResult = command(
-      [...verifier, tampered, signature, resolve(root, "desktop/src-tauri/updater-public.key")],
-      { allowFailure: true, quiet: true, env: verifierEnvironment },
+      [
+        ...verifier.command,
+        tampered,
+        signature,
+        resolve(root, "desktop/src-tauri/updater-public.key"),
+      ],
+      { allowFailure: true, quiet: true, env: verifier.environment },
     );
     if (tamperedResult.exitCode === 0) throw new Error("updater signature accepted a changed artifact");
   } finally {
-    if (createdVerifierFrontend) rmSync(verifierFrontend, { force: true });
+    if (createdFrontend && verifier.frontendBuildInput) {
+      rmSync(verifier.frontendBuildInput, { force: true });
+    }
   }
 
   const extracted = join(directory, "desktop-extracted");
@@ -342,55 +391,45 @@ function publishTap(tapDir: string, state: "prepared" | "already-promoted"): str
   return run(["git", "-C", tapDir, "rev-parse", "HEAD"], { quiet: true });
 }
 
-function waitForPublicFile(
-  expectedPath: string,
-  destination: string,
-  url: string,
-  label: string,
-): void {
+function waitForPublicChannels(tapDir: string, workDir: string): void {
+  const channels = [
+    {
+      expected: join(tapDir, "updates/wisp-desktop-alpha.json"),
+      destination: join(workDir, "public-desktop-channel.json"),
+      url: DESKTOP_CHANNEL_URL,
+      label: "Desktop update channel",
+    },
+    {
+      expected: join(tapDir, "updates/wisp-daemon.json"),
+      destination: join(workDir, "public-daemon-channel.json"),
+      url: DAEMON_CHANNEL_URL,
+      label: "daemon update channel",
+    },
+  ];
   for (let attempt = 1; attempt <= 24; attempt++) {
-    const result = command(
-      [
-        "curl",
-        "--proto",
-        "=https",
-        "--tlsv1.2",
-        "--fail",
-        "--silent",
-        "--show-error",
-        "--location",
-        url,
-        "--output",
-        destination,
-      ],
-      { allowFailure: true, quiet: true },
-    );
-    if (
-      result.exitCode === 0 &&
-      existsSync(destination) &&
-      readFileSync(destination).equals(readFileSync(expectedPath))
-    ) {
-      return;
+    const curl = [
+      "curl",
+      ...SECURE_CURL_ARGS,
+      "--parallel",
+      "--parallel-immediate",
+    ];
+    for (const channel of channels) {
+      curl.push("--output", channel.destination, channel.url);
     }
-    console.log(`promotion: ${label} not converged (attempt ${attempt}/24)`);
+    command(curl, { allowFailure: true, quiet: true });
+    const pending = channels.filter(
+      ({ expected, destination }) =>
+        !existsSync(destination) ||
+        !readFileSync(destination).equals(readFileSync(expected)),
+    );
+    if (pending.length === 0) return;
+    console.log(
+      `promotion: ${pending.map(({ label }) => label).join(" and ")} not converged ` +
+        `(attempt ${attempt}/24)`,
+    );
     if (attempt < 24) command(["sleep", "15"], { quiet: true });
   }
-  throw new Error(`public ${label} did not converge`);
-}
-
-function waitForPublicChannels(tapDir: string, workDir: string): void {
-  waitForPublicFile(
-    join(tapDir, "updates/wisp-desktop-alpha.json"),
-    join(workDir, "public-desktop-channel.json"),
-    DESKTOP_CHANNEL_URL,
-    "Desktop update channel",
-  );
-  waitForPublicFile(
-    join(tapDir, "updates/wisp-daemon.json"),
-    join(workDir, "public-daemon-channel.json"),
-    DAEMON_CHANNEL_URL,
-    "daemon update channel",
-  );
+  throw new Error("public update channels did not converge");
 }
 
 function auditAfterPromotion(): void {

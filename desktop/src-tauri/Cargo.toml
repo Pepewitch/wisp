@@ -26,9 +26,6 @@ description = "Native core for the Wisp desktop shell"
 license = "MIT"
 publish = false
 
-[features]
-release-verifier = []
-
 [lib]
 name = "wisp_desktop"
 path = "src/lib.rs"
@@ -37,18 +34,12 @@ path = "src/lib.rs"
 name = "wisp-desktop"
 path = "src/main.rs"
 
-[[bin]]
-name = "verify-update-signature"
-path = "src/bin/verify-update-signature.rs"
-required-features = ["release-verifier"]
-
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 block2 = "0.6"
-base64 = "0.22"
 bytes = "1"
 futures-util = "0.3"
 getrandom = "0.4"
@@ -72,7 +63,6 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
   "UNNotificationTrigger",
   "UNUserNotificationCenter",
 ] }
-minisign-verify = "0.2.5"
 percent-encoding = "2"
 reqwest = { version = "0.12", default-features = false, features = [
   "charset",

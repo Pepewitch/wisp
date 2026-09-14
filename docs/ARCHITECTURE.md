@@ -274,7 +274,8 @@ The compiled daemon needs no Node runtime or sibling asset directory, but it
 is not dependency-free. It embeds the UI and the `@xterm/headless` and
 `@xterm/addon-serialize` terminal packages. `bun.lock` and
 `desktop/src-tauri/Cargo.lock` inventory the JavaScript and native dependency
-trees; CI audits both.
+trees. `scripts/update-verifier/Cargo.lock` separately pins the two-dependency
+signature-verifier tree transferred between release jobs. CI audits all three.
 
 The public macOS distribution keeps the service and interface composable:
 

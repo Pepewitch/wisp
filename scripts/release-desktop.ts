@@ -355,7 +355,12 @@ function annotatedTagDate(root: string): string {
   return parsed.toISOString();
 }
 
-function signUpdaterArtifact(root: string, artifactPath: string, publicKey: string): DesktopReleaseManifest["updater"] {
+function signUpdaterArtifact(
+  root: string,
+  artifactPath: string,
+  publicKey: string,
+  targetDir: string,
+): DesktopReleaseManifest["updater"] {
   run(["bun", "run", "tauri", "signer", "sign", artifactPath], root, process.env);
   const signaturePath = `${artifactPath}.sig`;
   const signature = readFileSync(signaturePath, "utf8").trim();
@@ -366,18 +371,23 @@ function signUpdaterArtifact(root: string, artifactPath: string, publicKey: stri
       "run",
       "--quiet",
       "--locked",
+      "--release",
+      "--target",
+      "aarch64-apple-darwin",
       "--manifest-path",
-      "desktop/src-tauri/Cargo.toml",
+      "scripts/update-verifier/Cargo.toml",
       "--bin",
       "verify-update-signature",
-      "--features",
-      "release-verifier",
       "--",
       artifactPath,
       signaturePath,
       "desktop/src-tauri/updater-public.key",
     ],
     root,
+    {
+      ...process.env,
+      CARGO_TARGET_DIR: targetDir,
+    },
   );
   return {
     algorithm: "minisign-ed25519",
@@ -420,7 +430,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
   const artifactName = `wisp-desktop-v${VERSION}-${DESKTOP_TARGET}.tar.gz`;
   const artifactPath = resolve(outDir, artifactName);
   writeFileSync(artifactPath, deterministicAppTarGz(app), { mode: 0o644 });
-  const updater = signed ? signUpdaterArtifact(root, artifactPath, updaterPublicKey!) : null;
+  const updater = signed ? signUpdaterArtifact(root, artifactPath, updaterPublicKey!, targetDir) : null;
 
   const temp = mkdtempSync(join(tmpdir(), "wisp-desktop-release-"));
   try {

@@ -7,8 +7,8 @@ name: dependency-advisories
 # request the day it lands.
 #
 # Both ecosystems are checked, because both ship: the npm tree builds the UI
-# bundle embedded in the daemon binary, and the Cargo lock is the macOS desktop
-# shell.
+# bundle embedded in the daemon binary, while Cargo locks cover the macOS
+# desktop shell and its minimal independent update verifier.
 on:
   schedule:
     # Mondays, early UTC: a week's disclosures, reviewed before the week starts.
@@ -19,6 +19,8 @@ on:
       - ".github/workflows/dependency-advisories.yml"
       - "bun.lock"
       - "desktop/src-tauri/Cargo.lock"
+      - "scripts/update-verifier/Cargo.toml"
+      - "scripts/update-verifier/Cargo.lock"
 
 permissions:
   contents: read
@@ -59,4 +61,7 @@ jobs:
       # not a reason to redden every week's run.
       - name: audit the locked Cargo tree
         working-directory: desktop/src-tauri
+        run: cargo audit
+      - name: audit the locked updater verifier
+        working-directory: scripts/update-verifier
         run: cargo audit

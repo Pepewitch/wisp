@@ -31,10 +31,15 @@ permissions:
   contents: read
 
 jobs:
-  release-linux:
+  # This credential-free gate owns source identity, history scanning, and the
+  # canonical UI bytes. Every platform build starts only after it succeeds.
+  release-source:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      checks: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -60,6 +65,40 @@ jobs:
             echo "tag $GITHUB_REF_NAME does not point at a commit on origin/main" >&2
             exit 1
           }
+
+      # The candidate workflow exercises this exact main commit through the
+      # installer and activation containers before publication is allowed. A
+      # short poll handles a tag pushed while the main check is still running.
+      - name: require the exact commit's release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for attempt in $(seq 1 90); do
+            all_succeeded=1
+            for check_name in linux-contract update-verifier; do
+              state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" \
+                --jq "[.check_runs[] |
+                  select(.name == \"$check_name\" and .app.slug == \"github-actions\")] |
+                  sort_by(.started_at) | last |
+                  if . == null then \"missing\" else \"\\(.status):\\(.conclusion // \"\")\" end")"
+              case "$state" in
+                completed:success) ;;
+                completed:*)
+                  echo "release-candidate/$check_name failed for $GITHUB_SHA: $state" >&2
+                  exit 1
+                  ;;
+                *) all_succeeded=0 ;;
+              esac
+            done
+            if [ "$all_succeeded" = 1 ]; then
+              break
+            fi
+            if [ "$attempt" = 90 ]; then
+              echo "release candidate did not pass for $GITHUB_SHA within 15 minutes" >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       # releasing.md step 5: scan full history before building anything.
       - name: scan history with Gitleaks
@@ -87,19 +126,47 @@ jobs:
       - name: stage the shared UI bundle for macOS packaging
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-ui-bundle
+          name: canonical-ui-bundle
           path: |
             ${{ runner.temp }}/release-ui/index.html
             ${{ runner.temp }}/release-ui/SHA256SUMS
           retention-days: 7
           if-no-files-found: error
 
-      # releasing.md step 4: build under the strict gates, then prove the
-      # three files reproduce byte for byte on a clean rebuild.
-      - name: build Linux release artifact
-        run: bun run wispd/scripts/release-linux.ts --require-tag
-      - name: rebuild and require byte-identical assets
+  # Linux and all three macOS builds fan out after the source gate. This keeps
+  # the same checks while removing their old serial critical path.
+  release-linux:
+    needs: release-source
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: restore and verify the annotated release tag
         run: |
+          git fetch --force origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: collect and verify the shared UI bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: canonical-ui-bundle
+          path: ${{ runner.temp }}/release-ui
+      - name: install the shared UI bundle
+        run: |
+          (cd "$RUNNER_TEMP/release-ui" && sha256sum -c SHA256SUMS)
+          mkdir -p web/ui-dist
+          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
+      - name: build and reproduce the Linux release artifact
+        run: |
+          bun run wispd/scripts/release-linux.ts --require-tag
           dir="dist/release/$GITHUB_REF_NAME"
           first="$(mktemp -d)"
           cp "$dir"/* "$first"/
@@ -111,33 +178,30 @@ jobs:
             }
           done
           (cd "$dir" && sha256sum -c SHA256SUMS)
-
-      # releasing.md step 4: exercise the artifact through the public
-      # installer contract and the fake-harness activation journey.
       - name: exercise installer and activation contracts
         run: |
           artifact="dist/release/$GITHUB_REF_NAME/wisp-v${GITHUB_REF_NAME#v}-linux-x86_64"
           WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:install
           WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:activation
-
-      - name: stage Linux assets for the publish job
+      - name: stage Linux assets for publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: linux-release-assets
+          name: release-linux-assets
           path: dist/release/${{ github.ref_name }}/*
           retention-days: 7
           if-no-files-found: error
 
-  publish:
-    needs: release-linux
+  # Independent clean runners are a stronger reproducibility check than two
+  # serial builds in one workspace. Both consume the exact Linux-produced UI.
+  macos-repro:
+    needs: release-source
     if: github.event_name == 'push'
-    # release-macos.ts refuses any host except arm64 macOS, so the Mac asset
-    # must build here. This job is also the single publication point: nothing
-    # is public until it runs, so a Linux-side failure cannot half-publish.
+    strategy:
+      fail-fast: false
+      matrix:
+        copy: [a, b]
     runs-on: macos-15
-    timeout-minutes: 120
-    permissions:
-      contents: write # create the GitHub release
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -159,6 +223,61 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: desktop/src-tauri
+          cache-targets: false
+      - name: collect and verify the shared UI bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: canonical-ui-bundle
+          path: ${{ runner.temp }}/release-ui
+      - name: install the shared UI bundle
+        run: |
+          (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
+          mkdir -p web/ui-dist
+          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
+      - name: build clean macOS reproducibility payload
+        run: |
+          bun run wispd/scripts/release-macos.ts --require-tag
+          WISP_PREBUILT_UI=1 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
+            bun run scripts/release-desktop.ts --require-tag
+      - name: stage macOS reproducibility payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-macos-repro-${{ matrix.copy }}
+          path: dist/release/${{ github.ref_name }}/*
+          retention-days: 7
+          if-no-files-found: error
+
+  # Secrets are isolated to the one job that needs them. It builds, signs,
+  # notarizes, staples, updater-signs, and negatively tests the public payload
+  # in parallel with the two credential-free reproducibility runners.
+  desktop-trusted:
+    needs: release-source
+    if: github.event_name == 'push'
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: restore and verify the annotated release tag
+        run: |
+          git fetch --force origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: 1.96.1
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri
+          cache-targets: false
       - name: require Desktop release credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -187,50 +306,14 @@ jobs:
       - name: collect and verify the shared UI bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: release-ui-bundle
+          name: canonical-ui-bundle
           path: ${{ runner.temp }}/release-ui
-      - name: install the shared UI bundle for macOS packaging
+      - name: install the shared UI bundle
         run: |
           (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
           mkdir -p web/ui-dist
           cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
-      - name: build macOS release artifacts
-        run: |
-          bun run wispd/scripts/release-macos.ts --require-tag
-          WISP_PREBUILT_UI=1 \
-            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
-            bun run scripts/release-desktop.ts --require-tag
-      - name: rebuild and require byte-identical assets
-        run: |
-          dir="dist/release/$GITHUB_REF_NAME"
-          first="$(mktemp -d)"
-          cp "$dir"/* "$first"/
-          bun run wispd/scripts/release-macos.ts --require-tag
-          # Apple's LC_UUID is stable for a clean rebuild at the same target
-          # path, but changes when Cargo's absolute target path changes. Clear
-          # every cached artifact, then rebuild at the identical normalized
-          # path so this remains a genuine from-scratch reproducibility proof.
-          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
-            cargo clean --manifest-path desktop/src-tauri/Cargo.toml
-          WISP_PREBUILT_UI=1 \
-            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-repro" \
-            bun run scripts/release-desktop.ts --require-tag
-          for file in "$first"/*; do
-            cmp -s "$file" "$dir/$(basename "$file")" || {
-              echo "non-reproducible asset: $(basename "$file")" >&2
-              exit 1
-            }
-          done
-          (cd "$dir" &&
-            shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
-            shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
-
-      # Timestamped Apple signatures are intentionally not byte-reproducible.
-      # The two builds above prove the unsigned/ad-hoc payload; this final pass
-      # signs, notarizes, staples, archives once, and updater-signs those exact
-      # bytes. release-desktop re-extracts the archive and runs every Apple
-      # trust check again before returning.
-      - name: build the trusted Desktop release archive
+      - name: build and verify the trusted Desktop release
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -240,9 +323,124 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          WISP_PREBUILT_UI=1 \
-            CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
+          target="$RUNNER_TEMP/wisp-desktop-release-signed"
+          WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$target" \
             bun run scripts/release-desktop.ts --require-tag --signed
+          dir="dist/release/$GITHUB_REF_NAME"
+          artifact="$dir/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
+          signature="$artifact.sig"
+          verifier="$target/aarch64-apple-darwin/release/verify-update-signature"
+          test -x "$verifier"
+          "$verifier" "$artifact" "$signature" desktop/src-tauri/updater-public.key
+          tampered="$(mktemp)"
+          cp "$artifact" "$tampered"
+          printf 'tampered' >> "$tampered"
+          if "$verifier" "$tampered" "$signature" desktop/src-tauri/updater-public.key; then
+            echo "updater signature accepted a changed artifact" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/release-verifier"
+          cp "$verifier" "$RUNNER_TEMP/release-verifier/verify-update-signature"
+          (cd "$RUNNER_TEMP/release-verifier" &&
+            shasum -a 256 verify-update-signature > SHA256SUMS)
+      - name: stage trusted Desktop assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-trusted-desktop-assets
+          path: dist/release/${{ github.ref_name }}/*
+          retention-days: 7
+          if-no-files-found: error
+      - name: stage updater verifier
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-update-verifier
+          path: ${{ runner.temp }}/release-verifier/*
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    needs: [release-linux, macos-repro, desktop-trusted]
+    if: github.event_name == 'push'
+    # This remains the single publication point. It receives only verified
+    # artifacts, compares the independent Mac payloads, and has no Apple or tap
+    # write credential.
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write # create the GitHub release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: restore and verify the annotated release tag
+        run: |
+          git fetch --force origin \
+            "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: collect release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: ${{ runner.temp }}/release-artifacts
+          merge-multiple: false
+      - name: require independent byte-identical macOS payloads
+        run: |
+          artifacts="$RUNNER_TEMP/release-artifacts"
+          first="$artifacts/release-macos-repro-a"
+          second="$artifacts/release-macos-repro-b"
+          expected="$(printf '%s\n' \
+            SHA256SUMS-darwin-arm64 \
+            SHA256SUMS-desktop-darwin-arm64 \
+            release-manifest-darwin-arm64.json \
+            release-manifest-desktop-darwin-arm64.json \
+            "wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" | LC_ALL=C sort)"
+          for directory in "$first" "$second"; do
+            actual="$(for file in "$directory"/*; do basename "$file"; done | LC_ALL=C sort)"
+            test "$actual" = "$expected"
+          done
+          trusted="$artifacts/release-trusted-desktop-assets"
+          trusted_expected="$(printf '%s\n' \
+            SHA256SUMS-desktop-darwin-arm64 \
+            release-manifest-desktop-darwin-arm64.json \
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" | LC_ALL=C sort)"
+          trusted_actual="$(for file in "$trusted"/*; do basename "$file"; done | LC_ALL=C sort)"
+          test "$trusted_actual" = "$trusted_expected"
+          for file in "$first"/*; do
+            cmp -s "$file" "$second/$(basename "$file")" || {
+              echo "non-reproducible asset: $(basename "$file")" >&2
+              exit 1
+            }
+          done
+          dir="dist/release/$GITHUB_REF_NAME"
+          mkdir -p "$dir"
+          cp "$first"/* "$dir"/
+          cp "$trusted"/* "$dir"/
+          cp "$artifacts/release-linux-assets"/* "$dir"/
+          (cd "$dir" &&
+            shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
+            shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
+          verifier_dir="$artifacts/release-update-verifier"
+          (cd "$verifier_dir" &&
+            shasum -a 256 -c SHA256SUMS &&
+            chmod 0755 verify-update-signature)
+          verifier="$verifier_dir/verify-update-signature"
+          artifact="$dir/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
+          signature="$artifact.sig"
+          "$verifier" "$artifact" "$signature" desktop/src-tauri/updater-public.key
+          tampered="$(mktemp)"
+          cp "$artifact" "$tampered"
+          printf 'tampered' >> "$tampered"
+          if "$verifier" "$tampered" "$signature" desktop/src-tauri/updater-public.key; then
+            echo "updater signature accepted a changed artifact" >&2
+            exit 1
+          fi
 
       - name: resolve version and require release notes
         id: version
@@ -256,12 +454,6 @@ jobs:
             appendFileSync(process.env.GITHUB_OUTPUT,
               `version=${version}\nnotes=${notes}\nprerelease=${version.includes("-")}\n`);
           '
-
-      - name: collect the Linux assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: linux-release-assets
-          path: dist/release/${{ github.ref_name }}
 
       - name: verify all ten assets through their checksum sets
         run: |
@@ -354,26 +546,40 @@ jobs:
         run: |
           dir="dist/release/$GITHUB_REF_NAME"
           anon="$(mktemp -d)"
-          for file in \
-            "wisp-${GITHUB_REF_NAME}-linux-x86_64" \
-            release-manifest.json \
-            SHA256SUMS \
-            "wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
-            release-manifest-darwin-arm64.json \
-            SHA256SUMS-darwin-arm64 \
-            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
-            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
-            release-manifest-desktop-darwin-arm64.json \
-            SHA256SUMS-desktop-darwin-arm64
-          do
-            ok=0
+          download() {
+            file="$1"
             for _ in 1 2 3 4 5; do
               curl --proto '=https' --tlsv1.2 -fsSL \
                 "https://github.com/Pepewitch/wisp/releases/download/$GITHUB_REF_NAME/$file" \
-                -o "$anon/$file" && { ok=1; break; }
+                -o "$anon/$file" && return 0
               sleep 10
             done
-            [ "$ok" = 1 ] || { echo "public asset missing: $file" >&2; exit 1; }
+            echo "public asset missing: $file" >&2
+            return 1
+          }
+          files=(
+            "wisp-${GITHUB_REF_NAME}-linux-x86_64"
+            release-manifest.json
+            SHA256SUMS
+            "wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
+            release-manifest-darwin-arm64.json
+            SHA256SUMS-darwin-arm64
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
+            "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig"
+            release-manifest-desktop-darwin-arm64.json
+            SHA256SUMS-desktop-darwin-arm64
+          )
+          pids=()
+          for file in "${files[@]}"; do
+            download "$file" &
+            pids+=("$!")
+          done
+          failed=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || failed=1
+          done
+          [ "$failed" = 0 ] || exit 1
+          for file in "${files[@]}"; do
             cmp -s "$dir/$file" "$anon/$file" || {
               echo "public asset differs: $file" >&2
               exit 1
@@ -383,20 +589,15 @@ jobs:
             shasum -a 256 -c SHA256SUMS &&
             shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
             shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
-          cargo run --quiet --locked \
-            --manifest-path desktop/src-tauri/Cargo.toml \
-            --bin verify-update-signature \
-            --features release-verifier -- \
+          verifier="$RUNNER_TEMP/release-artifacts/release-update-verifier/verify-update-signature"
+          "$verifier" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
             desktop/src-tauri/updater-public.key
           tampered="$(mktemp)"
           cp "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" "$tampered"
           printf 'tampered' >> "$tampered"
-          if cargo run --quiet --locked \
-            --manifest-path desktop/src-tauri/Cargo.toml \
-            --bin verify-update-signature \
-            --features release-verifier -- \
+          if "$verifier" \
             "$tampered" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" \
             desktop/src-tauri/updater-public.key
@@ -449,12 +650,27 @@ jobs:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        if: github.event_name == 'workflow_dispatch'
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: github.event_name == 'workflow_dispatch'
         with:
           workspaces: desktop/src-tauri
+      - name: collect updater verifier
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-update-verifier
+          path: ${{ runner.temp }}/release-verifier
+      - name: verify updater verifier
+        if: github.event_name == 'push'
+        run: |
+          (cd "$RUNNER_TEMP/release-verifier" &&
+            shasum -a 256 -c SHA256SUMS &&
+            chmod 0755 verify-update-signature)
+          echo "WISP_UPDATE_VERIFIER=$RUNNER_TEMP/release-verifier/verify-update-signature" >> "$GITHUB_ENV"
       - name: checkout the Homebrew tap
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

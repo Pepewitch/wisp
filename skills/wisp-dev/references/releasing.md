@@ -36,10 +36,15 @@ Accept that only when no PNG asset changes in the release and tag CI runs the
 full gate, which it always does.
 
 The installer and activation contracts (`test:install`, `test:activation`)
-need a container runtime. On a host without one, tag CI is the only place they
-run and each diagnosis costs a full workflow round trip — so when a change
-touches the release contract, land the failure-path diagnostics (the daemon's
-wait status and the cgroup memory/pid counters) in the same PR as the change.
+need a container runtime. `.github/workflows/release-candidate.yml` builds the
+real Linux artifact and validates the standalone updater verifier on relevant
+pull requests and on every `main` commit. The tag workflow refuses publication
+until that exact commit's `linux-contract` and `update-verifier` checks pass.
+This keeps a missing local container
+runtime from turning an installer or activation failure into an unpublished
+tag recovery. When a change touches the release contract, keep failure-path
+diagnostics (the daemon's wait status and cgroup memory/pid counters) in the
+same PR as the change.
 
 `main` does not hold still while the gates run. If something lands, take it
 before opening the PR, so the release describes what it actually ships:
@@ -72,6 +77,9 @@ git fetch origin && git switch --detach origin/main
 bun run build
 test -z "$(git status --porcelain=v1 --untracked-files=normal)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+# Also require release-candidate / linux-contract and update-verifier to have
+# passed for this exact origin/main commit. The tag workflow independently
+# enforces both.
 
 git tag -a "v$version" -m "Wisp $version"
 git push origin "refs/tags/v$version"   # this is the publish authorization
@@ -87,7 +95,7 @@ pending, so the qualification ledger is where the result actually lands:
 ```sh
 git switch -c "release/$version-closeout" origin/main
 # add a "## <version> publication" section to docs/v<major>.<minor>/QUALIFICATION.md:
-# the workflow run and its three job outcomes, the tag's commit and its PR,
+# the workflow run and its job outcomes, the tag's commit and its PR,
 # the promotion receipt time and tap commit, and anything the gates do NOT
 # prove. A superseded release keeps its evidence and loses only claims that
 # are now false, such as "latest".
@@ -151,29 +159,39 @@ hardened runtime, notarization, staple, and a separate updater signature.
 `.github/workflows/release.yml` automates the publish steps below. The
 maintainer's push of the annotated `v<version>` tag is the explicit publish
 authorization. One repository-wide concurrency group serializes releases so
-two tags cannot race to advance the Homebrew or Desktop channels. It runs
-three jobs:
+two tags cannot race to advance the Homebrew or Desktop channels. The
+credential-free source gate runs first; all expensive platform work then fans
+out:
 
-1. `release-linux` requires the tag to point at `origin/main`, scans history
-   with Gitleaks, builds the Linux asset with `--require-tag`, proves the
-   three files reproduce byte for byte on a clean rebuild, and exercises the
-   artifact through `wispd/scripts/test-install.sh` and
-   `wispd/scripts/test-activation.sh`.
-2. `publish` runs on arm64 macOS, builds and reproducibility-checks the Mac
-   daemon and unsigned Desktop payloads the same way, then creates and verifies
-   one trusted Desktop archive. It verifies all ten assets, renders and audits
-   both Homebrew recipes plus both update channels offline, creates the
-   "Wisp <version>" GitHub release with the release notes as its body
-   (a prerelease only for alpha tags),
-   and verifies the ten public URLs and both Desktop trust chains anonymously.
-   This is the immutable publication boundary.
-3. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
-   and verifies the public assets again, renders and audits the Formula, Cask,
-   Desktop update channel, and daemon update channel in an isolated Homebrew
-   tap, pushes exactly those four files to `Pepewitch/homebrew-tap` in one
-   commit, waits for both fixed raw channel URLs to converge, then requires the
-   full livecheck audit. It emits a timing log and machine-readable promotion
-   receipt.
+1. `release-source` requires the tag to point at `origin/main`, requires that
+   exact commit's pre-tag `linux-contract` and `update-verifier` success, scans
+   full history with Gitleaks, and builds the canonical UI twice.
+2. `release-linux`, two clean `macos-repro` matrix runners, and
+   `desktop-trusted` run concurrently. Linux still reproduces its asset and
+   repeats the installer/activation journey. The two independent Mac runners
+   build byte-identical ad-hoc daemon/Desktop payloads without target caches.
+   The credential-isolated trusted runner builds, Developer ID signs,
+   notarizes, staples, updater-signs, and negatively tests the public Desktop
+   archive. It also transfers the already-built verifier with its checksum.
+3. `publish` receives those outputs, compares the two independent Mac payloads,
+   verifies all ten checksum-bound assets and the updater signature, renders
+   and audits both Homebrew recipes plus both update channels offline, creates
+   the "Wisp <version>" GitHub release, and verifies all ten anonymous public
+   downloads and both Desktop trust chains. It has publication rights but no
+   Apple or Homebrew write credential. This is the immutable boundary.
+4. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
+   and verifies the public assets again, reuses the checksummed verifier during
+   a normal tag run, audits the Formula, Cask, Desktop channel, and daemon
+   channel in an isolated Homebrew tap, pushes exactly those four files, waits
+   for both fixed URLs to converge, then requires the full livecheck audit. A
+   manual recovery still builds the verifier from the immutable tag source.
+
+The performance target is **under ten minutes from tag push to immutable
+GitHub release** when GitHub-hosted runners and Apple notarization respond
+normally. Promotion follows as a separate resumable operation and may finish
+later. This is a target, not a weakened timeout: runner queues, GitHub asset
+availability, and Apple's service can vary, and every trust gate remains
+fail-closed.
 
 Promotion is deliberately a separate job. If it fails after the immutable
 GitHub release exists, rerun only the failed `promote` job. The workflow also
@@ -473,12 +491,14 @@ archive contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
 and a clean source tree after packaging. Tag CI builds and reproduces the UI on
-Linux, transfers it with a checksum, and sets `WISP_PREBUILT_UI=1` for every
-Desktop pass so the daemon and application package one canonical bundle.
-Apple's linker changes the
-required Mach-O UUID when Cargo's absolute target path changes. Use the same
-`CARGO_TARGET_DIR` for both reproducibility builds, but run `cargo clean` in
-that exact target between them so the second pass cannot be a cache hit.
+Linux, transfers it with a checksum, and sets `WISP_PREBUILT_UI=1` for all
+three parallel Desktop builds so the daemon and application package one
+canonical bundle. CI's two reproducibility copies run on independent clean
+macOS hosts with target caching disabled; publication compares their six
+outputs before accepting the separate trusted archive. For the sequential
+manual fallback above, Apple's linker changes the required Mach-O UUID when
+Cargo's absolute target path changes, so keep one `CARGO_TARGET_DIR` and run
+`cargo clean` between the two builds.
 
 Exercise the Linux artifact through the public installer contract and the
 fake-model evaluator before spending model quota:
@@ -670,9 +690,9 @@ done
   shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
   shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 cargo run --quiet --locked \
-  --manifest-path desktop/src-tauri/Cargo.toml \
+  --manifest-path scripts/update-verifier/Cargo.toml \
   --bin verify-update-signature \
-  --features release-verifier -- \
+  -- \
   "$anon/wisp-desktop-v$version-darwin-arm64.tar.gz" \
   "$anon/wisp-desktop-v$version-darwin-arm64.tar.gz.sig" \
   desktop/src-tauri/updater-public.key
@@ -680,9 +700,9 @@ tampered="$(mktemp)"
 cp "$anon/wisp-desktop-v$version-darwin-arm64.tar.gz" "$tampered"
 printf 'tampered' >> "$tampered"
 if cargo run --quiet --locked \
-  --manifest-path desktop/src-tauri/Cargo.toml \
+  --manifest-path scripts/update-verifier/Cargo.toml \
   --bin verify-update-signature \
-  --features release-verifier -- \
+  -- \
   "$tampered" \
   "$anon/wisp-desktop-v$version-darwin-arm64.tar.gz.sig" \
   desktop/src-tauri/updater-public.key
