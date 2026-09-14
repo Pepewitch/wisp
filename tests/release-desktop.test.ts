@@ -128,21 +128,22 @@ describe("Wisp Desktop release metadata", () => {
     expect(buildScript).toContain("WISP_PREBUILT_UI must be 0 or 1");
   });
 
-  test("generates the ignored UI after cache restore and before native checks compile Tauri", () => {
+  test("binds cached native outputs to the UI generated before Tauri compiles", () => {
     const checkScript = readFileSync(new URL("../scripts/desktop/check.sh", import.meta.url), "utf8");
     expect(checkScript.indexOf("bun run build:ui")).toBeGreaterThan(-1);
     expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
 
     const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
-    const cacheRestore = workflow.indexOf("uses: Swatinem/rust-cache");
-    const cleanPackage = workflow.indexOf("name: discard cached Wisp build artifacts");
-    const cleanCommand = workflow.indexOf("run: cargo clean --package wisp-desktop");
     const buildUi = workflow.indexOf("name: build shared UI bundle");
-    expect(cacheRestore).toBeGreaterThan(-1);
-    expect(cleanPackage).toBeGreaterThan(cacheRestore);
-    expect(cleanCommand).toBeGreaterThan(cleanPackage);
-    expect(buildUi).toBeGreaterThan(cleanCommand);
+    const cacheRestore = workflow.indexOf("uses: Swatinem/rust-cache");
+    const bundleKey = workflow.indexOf("key: ${{ hashFiles('web/ui-dist/index.html') }}");
+    expect(buildUi).toBeGreaterThan(-1);
+    expect(cacheRestore).toBeGreaterThan(buildUi);
+    expect(bundleKey).toBeGreaterThan(cacheRestore);
     expect(buildUi).toBeLessThan(workflow.indexOf("name: formatting"));
+    expect(workflow).not.toContain("cargo clean --package wisp-desktop");
+    expect(workflow).not.toContain("cache-targets: false");
+    expect(workflow).toContain('WISP_PREBUILT_UI: "1"');
   });
 
   test("detects the Mach-O UUID required by current macOS", () => {

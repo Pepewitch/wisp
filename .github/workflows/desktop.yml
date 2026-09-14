@@ -104,20 +104,16 @@ jobs:
           toolchain: 1.96.1
           components: clippy, rustfmt
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: desktop/src-tauri
-      # Dependencies stay cached, but Tauri's generated asset map belongs to
-      # this package and can survive with stale frontendDist contents even
-      # when Cargo notices a newer build input.
-      - name: discard cached Wisp build artifacts
-        run: cargo clean --package wisp-desktop
-      # Build after restoring Rust artifacts. Cargo tracks frontendDist through
-      # build.rs timestamps; restoring the cache after this file was generated
-      # made stale embedded assets look newer and skipped the rebuild.
       - name: build shared UI bundle
         run: bun run build:ui
         working-directory: .
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri
+          # Tauri's generated asset map is compiled into both the library and
+          # integration tests. Bind restored native outputs to the exact ignored
+          # bundle bytes they embedded, not only to Cargo's tracked inputs.
+          key: ${{ hashFiles('web/ui-dist/index.html') }}
       # `tauri::generate_context!()` embeds this file at compile time and
       # tests/webview.rs asserts against what it embedded, so a bundle that is
       # missing or empty has to fail HERE, naming itself, rather than a minute
@@ -135,6 +131,8 @@ jobs:
         run: cargo test --locked
       - name: build and verify the release application
         working-directory: .
+        env:
+          WISP_PREBUILT_UI: "1"
         run: bun run scripts/release-desktop.ts
       - name: verify the complete ad-hoc signature and architecture
         working-directory: .
