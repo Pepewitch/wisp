@@ -283,19 +283,27 @@ describe("the composer control bar answers its own width", () => {
     expect(screen.getByText("codex").closest("span.hidden")?.className).toContain("@lg:flex")
   })
 
-  it("puts the timer, running context, and attachment action in one row above the input", () => {
+  it("puts the timer and the running note on the line above the input, and the paperclip in the bar", () => {
     mount(<SteerBox task={task()} runningSince="2026-09-14T12:00:00.000Z" />)
 
-    const row = screen.getByTestId("composer-utility-row")
+    const row = screen.getByTestId("composer-running-row")
     const composer = screen.getByTestId("steer-composer")
     const status = screen.getByText("running · send won't interrupt")
     const attach = screen.getByRole("button", { name: "Attach a file" })
 
     expect(row).toContainElement(status)
-    expect(row).toContainElement(attach)
-    expect(row.querySelector('[aria-live="off"]')).not.toBeNull()
+    expect(row).toHaveAttribute("aria-live", "off")
+    // the paperclip belongs to the control bar, beside the other composer
+    // actions — not floating above the box
+    expect(composer).toContainElement(attach)
+    expect(row).not.toContainElement(attach)
     expect(composer).not.toContainElement(status)
-    expect(composer).not.toContainElement(attach)
+  })
+
+  it("leaves no row above the input when nothing is running", () => {
+    mount(<SteerBox task={task("done")} />)
+
+    expect(screen.queryByTestId("composer-running-row")).toBeNull()
   })
 
   it("keeps the keyboard hint for the wide arrangement alone", () => {

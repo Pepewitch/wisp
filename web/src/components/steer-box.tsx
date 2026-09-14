@@ -266,13 +266,14 @@ export function SteerBox({
           touch={touch}
           runningSince={runningSince}
           composerStatus={runtimeStatus}
-          attachments={attachments}
           note={shown}
         />
 
-        {/* The resume hint hugs the composer's right edge; the overlays'
-            in-flow rows (running note, command notes) sit above it. */}
-        {task && <ResumeHint task={task} />}
+        {/* The resume hint hugs the composer's right edge — the same row the
+            running note takes over for as long as there is live work. One
+            line either way: the footer never grows a second one under the
+            reader, and the session id comes back the moment the work ends. */}
+        {task && !runtimeStatus && <ResumeHint task={task} />}
 
         <SteerComposer
           task={task}
@@ -572,6 +573,7 @@ function SteerComposer({
         canSend={canSend}
         canStop={canStop}
         touch={touch}
+        attachments={attachments}
         harnesses={harnesses}
         canSwitchAgent={canSwitchAgent}
         agentChoice={agentChoice}

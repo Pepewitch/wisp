@@ -1,10 +1,12 @@
 import { ArrowUp, Stop } from "@/components/icons"
+import { AttachButton } from "@/components/pending-attachments"
 import { TaskIdentity } from "@/components/steer-box-overlays"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import {
   TaskAgentPicker,
   type TaskAgentChoice,
 } from "@/components/task-agent-picker"
+import { type PendingAttachments } from "@/lib/attachments"
 import { backgroundNames } from "@/lib/state"
 import type { ApiTask, HarnessInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -13,19 +15,23 @@ import { cn } from "@/lib/utils"
  * The composer's control bar: who will answer, what rides along with the
  * draft, and the one violet button on the screen.
  *
- * Four things want one row, and the row is often not wide enough: a phone, a
+ * Five things want one row, and the row is often not wide enough: a phone, a
  * dragged-in centre pane, and — the case a media query would never catch —
  * Desktop's zoom, which leaves the window alone and shrinks every pane in CSS
- * pixels. So the bar answers ITS OWN width (§5c-ii), in two steps, and both
- * things that yield are things the task header two rows up still says.
+ * pixels. So the bar answers ITS OWN width (§5c-ii), in two steps, and what
+ * yields is what the task header two rows up still says.
  *
- *   always       suffix · send
+ *   always       attach · suffix · send
  *   @lg  512px   + harness · model · effort, which truncates before it wraps
  *   @2xl 672px   + the ↵ hint
  *
+ * What a send will and will not do mid-turn is NOT in this bar: it belongs to
+ * the line above the composer, where it takes the resume hint's place for as
+ * long as the turn runs.
+ *
  * `touch` is a different question — how big a thumb is, not how wide the bar
  * is — and it answers with ONE row of 44px targets: the model, the effort
- * glyph, the suffix glyph, the send. An optional control at its
+ * glyph, the paperclip, the suffix glyph, the send. An optional control at its
  * default is a glyph; choosing a value brings the value back as text. Only the
  * model chip yields width, because the task header still names it in full.
  */
@@ -39,6 +45,7 @@ export function ComposerControls({
   canSend,
   canStop,
   touch,
+  attachments,
   harnesses,
   canSwitchAgent,
   agentChoice,
@@ -56,6 +63,7 @@ export function ComposerControls({
   canSend: boolean
   canStop: boolean
   touch: boolean
+  attachments: PendingAttachments
   harnesses: HarnessInfo[]
   canSwitchAgent: boolean
   agentChoice: TaskAgentChoice | null
@@ -98,6 +106,7 @@ export function ComposerControls({
         {/* A phone gets no hairline: the chips beside it are already spaced
             for fingers, and one more mark is one more thing to read. */}
         {picker && !touch && <Hairline />}
+        <AttachButton pending={attachments} touch={touch} />
         <SuffixPromptPicker
           key={taskId ?? "no-task"}
           value={suffixPromptId}
@@ -128,9 +137,8 @@ function Hairline() {
 }
 
 /**
- * What the widest arrangement puts beside the button: the note if there is
- * one, otherwise the keyboard hint. Never on touch, where there is no keyboard
- * to hint at and no width to spend on it.
+ * What the widest arrangement puts beside the button: the keyboard hint. Never
+ * on touch, where there is no keyboard to hint at and no width to spend on it.
  */
 function WideEnd() {
   return (
