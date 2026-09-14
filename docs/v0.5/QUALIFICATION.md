@@ -2,7 +2,50 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.7 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.8 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.8 publication
+
+**Published and promoted on 2026-09-14.**
+[Wisp 0.5.8](https://github.com/Pepewitch/wisp/releases/tag/v0.5.8) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+08:51:14 UTC with ten release assets. The annotated tag resolves to clean main
+commit
+[`87ae2cd094a8a9cf7551210fc335e678929ef31e`](https://github.com/Pepewitch/wisp/commit/87ae2cd094a8a9cf7551210fc335e678929ef31e),
+landed through [PR #211](https://github.com/Pepewitch/wisp/pull/211) (release
+preparation) and [PR #212](https://github.com/Pepewitch/wisp/pull/212)
+(activation release-contract fix).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34823302811)
+completed all three jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release preparation and activation-fix PR checks passed across test, browser-security, native-core, npm, Rust, supply-chain, and public-promotion dry-run coverage |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `87ae2cd`; the downloaded Linux binary reported 0.5.8 at that commit |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+The promotion receipt completed at 08:59:33 UTC with Homebrew tap commit
+[`d977c9b0ea47db822caecb1732e0bf667e77a10c`](https://github.com/Pepewitch/homebrew-tap/commit/d977c9b0ea47db822caecb1732e0bf667e77a10c)
+and both update channels serving 0.5.8.
+
+An earlier run failed before any asset was public because the activation
+fixture repeatedly launched the roughly 70 MB CLI while its daemon initialized
+on a one-CPU emulated container. Its effective readiness window expired while
+the daemon remained alive. PR #212 replaced that work with a bounded socket
+probe, one post-readiness registration, and complete timeout diagnostics. The
+unpublished tag was deleted and re-cut per the recovery rule; no public bytes
+were replaced.
+
+0.5.8 adds database migrations 10 and 11, so a 0.5.7 daemon cannot reopen a
+profile that 0.5.8 has opened. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, an updater
+journey across this version, or the paid evaluator panel — was performed, and
+this record does not claim them. The published assets and release body remain
+immutable; this ledger records the completed outcome separately.
 
 ## 0.5.7 publication
 
