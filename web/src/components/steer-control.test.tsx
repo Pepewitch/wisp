@@ -269,10 +269,6 @@ describe("changing the task agent", () => {
 })
 
 describe("the composer control bar answers its own width", () => {
-  /** jsdom evaluates no container query, so both arrangements are in the DOM. */
-  const shown = (text: string) =>
-    screen.getAllByText(text).map((node) => node.className)
-
   it("marks the bar a container rather than reading the window", () => {
     const { container } = mount(<SteerBox task={task("done")} />)
 
@@ -287,14 +283,19 @@ describe("the composer control bar answers its own width", () => {
     expect(screen.getByText("codex").closest("span.hidden")?.className).toContain("@lg:flex")
   })
 
-  it("gives the running note its own line until the bar is wide enough to inline it", () => {
-    mount(<SteerBox task={task()} />)
+  it("puts the timer, running context, and attachment action in one row above the input", () => {
+    mount(<SteerBox task={task()} runningSince="2026-09-14T12:00:00.000Z" />)
 
-    const notes = shown("running · send won't interrupt")
-    expect(notes).toHaveLength(2)
-    // the stacked one disappears once the row is wide enough for the inline one
-    expect(notes.some((c) => c.includes("@2xl:hidden"))).toBe(true)
-    expect(notes.some((c) => c.includes("@2xl:block") && c.includes("whitespace-nowrap"))).toBe(true)
+    const row = screen.getByTestId("composer-utility-row")
+    const composer = screen.getByTestId("steer-composer")
+    const status = screen.getByText("running · send won't interrupt")
+    const attach = screen.getByRole("button", { name: "Attach a file" })
+
+    expect(row).toContainElement(status)
+    expect(row).toContainElement(attach)
+    expect(row.querySelector('[aria-live="off"]')).not.toBeNull()
+    expect(composer).not.toContainElement(status)
+    expect(composer).not.toContainElement(attach)
   })
 
   it("keeps the keyboard hint for the wide arrangement alone", () => {

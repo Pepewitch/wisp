@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
+import { composerStatus } from "@/components/composer-status"
 import { FreshContextDialog } from "@/components/fresh-context-dialog"
 import { PendingAttachmentRows } from "@/components/pending-attachments"
 import { ResumeHint } from "@/components/resume-hint"
@@ -238,6 +239,7 @@ export function SteerBox({
   const groups = slashGroups(task, probeCommands, skills, compact)
   const shownReport =
     report && task && report.taskId === task.id ? report : null
+  const runtimeStatus = composerStatus(task, blocked)
 
   return (
     <div
@@ -263,6 +265,8 @@ export function SteerBox({
           commandRef={command}
           touch={touch}
           runningSince={runningSince}
+          composerStatus={runtimeStatus}
+          attachments={attachments}
           note={shown}
         />
 
@@ -568,7 +572,6 @@ function SteerComposer({
         canSend={canSend}
         canStop={canStop}
         touch={touch}
-        attachments={attachments}
         harnesses={harnesses}
         canSwitchAgent={canSwitchAgent}
         agentChoice={agentChoice}
