@@ -3,7 +3,8 @@ import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { api, ApiError } from "@/lib/api"
-import type { ApiTask, StatusEntry, TaskSkills, Turn } from "@/lib/types"
+import type { DaemonRequestOptions, DaemonTransport } from "@/lib/transport"
+import type { ApiTask, StatusEntry, TaskSkills, TaskUsage, Turn } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { SteerBox } from "./steer-box"
@@ -70,9 +71,21 @@ const GIT: StatusEntry = {
   worktreeReason: null,
 }
 
-function mount(node: ReactNode) {
+function mount(node: ReactNode, taskUsage?: TaskUsage) {
+  const request: DaemonTransport["request"] = async <T,>(
+    path: string,
+    options?: DaemonRequestOptions,
+  ) => {
+    if (path.endsWith("/usage")) {
+      if (taskUsage) return taskUsage as T
+      throw new ApiError("not found", 404)
+    }
+    return api<T>(path, options)
+  }
   return render(node, {
-    wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: api })),
+    wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", {
+      request,
+    })),
   })
 }
 
@@ -396,6 +409,7 @@ describe("Tier-1 dispatch", () => {
     fireEvent.keyDown(box(), { key: "Enter" })
 
     const panel = await screen.findByTestId("tokens-panel")
+    await screen.findByTestId("tokens-total")
     expect(panel).toHaveTextContent("Task total")
     expect(screen.getByTestId("tokens-total")).toHaveTextContent("15.0k in · 150 out · 3.0k cached")
     expect(panel).toHaveTextContent("Sum of 2 reporting turns")
@@ -406,6 +420,33 @@ describe("Tier-1 dispatch", () => {
 
     fireEvent.keyDown(box(), { key: "Escape" })
     expect(screen.queryByTestId("tokens-panel")).toBeNull()
+  })
+
+  it("/tokens uses the task-wide total while bounding its per-turn list", async () => {
+    mount(
+      <SteerBox
+        task={task({ harness: "cursor" })}
+        turns={[{ id: 60, n: 60, usage: { inputTokens: 1 } } as Turn]}
+        onSend={async () => {}}
+      />,
+      {
+        total: { inputTokens: 60_000, outputTokens: 600 },
+        reporting_turns: 60,
+        turns: [{ id: 60, n: 60, usage: { inputTokens: 1_000, outputTokens: 10 } }],
+        has_older_turns: true,
+      },
+    )
+
+    type("/tokens")
+    await screen.findByTestId("slash-palette")
+    fireEvent.click(screen.getByTestId("slash-tokens"))
+
+    await waitFor(() =>
+      expect(screen.getByTestId("tokens-total")).toHaveTextContent("60.0k in · 600 out"),
+    )
+    const panel = screen.getByTestId("tokens-panel")
+    expect(panel).toHaveTextContent("Sum of 60 reporting turns")
+    expect(panel).toHaveTextContent("Showing the newest 1 reporting turn")
   })
 
   it("/tokens explains when Cursor has not reported a settled turn yet", async () => {
@@ -420,9 +461,9 @@ describe("Tier-1 dispatch", () => {
     await screen.findByTestId("slash-palette")
     fireEvent.click(screen.getByTestId("slash-tokens"))
 
-    expect(await screen.findByTestId("tokens-panel")).toHaveTextContent(
+    expect(await screen.findByText(
       "No turn has reported token usage yet. Usage arrives after a turn settles.",
-    )
+    )).toBeInTheDocument()
   })
 
   it("/interrupt POSTs, and its 409 is an expected state — muted, never red", async () => {

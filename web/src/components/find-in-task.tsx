@@ -13,7 +13,15 @@ import { cn } from "@/lib/utils"
  * argument as the composer's palette — a find box is chrome over one pane,
  * not a screen of its own.
  */
-export function FindBar({ state, touch = false }: { state: FindState; touch?: boolean }) {
+export function FindBar({
+  state,
+  touch = false,
+  historyIncomplete = false,
+}: {
+  state: FindState
+  touch?: boolean
+  historyIncomplete?: boolean
+}) {
   const { close, count, collapsed, focusToken, position, query, setQuery, step } = state
   const input = useRef<HTMLInputElement | null>(null)
   const empty = query !== "" && count === 0
@@ -107,6 +115,11 @@ export function FindBar({ state, touch = false }: { state: FindState; touch?: bo
         <p className={cn("text-[10.5px] leading-normal text-faint", !touch && "max-w-[300px]")}>
           {collapsed === 1 ? "One turn's activity is" : `${collapsed} turns' activity is`} still collapsed — open it
           to search inside it.
+        </p>
+      )}
+      {empty && historyIncomplete && (
+        <p className={cn("text-[10.5px] leading-normal text-faint", !touch && "max-w-[300px]")}>
+          Earlier turns are not loaded. Load them to search the full conversation.
         </p>
       )}
       {!canPaintMatches() && count > 0 && (

@@ -28,12 +28,10 @@ import {
   getTask,
   latestTurnOutcomes,
   listTasks,
-  messagesFor,
   newTaskId,
   setTaskContextFields,
   setTaskFields,
   switchTaskAgent,
-  turnsFor,
 } from "../store";
 import { promptWithSuffix } from "../suffix-prompts";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
@@ -41,30 +39,9 @@ import { typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
-import { apiTask, apiTaskMessage, apiTurn, err, json, jsonObjectBody } from "./http";
+import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
+import { conversationDetail, conversationResponse, taskUsageResponse } from "./task-conversation";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
-
-/** The conversation payload is SQLite-only; repository state belongs to Status/Changes. */
-function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): Record<string, unknown> {
-  const turns = turnsFor(task.id);
-  const latest = turns.at(-1);
-  return {
-    ...apiTask(task),
-    latest_turn_model: latest?.model ?? null,
-    latest_turn_exit_code: latest?.exit_code ?? null,
-    latest_turn_has_result: latest ? latest.result !== null : false,
-    turns: turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
-    messages: messagesFor(task.id).map(apiTaskMessage),
-  };
-}
-
-/** GET /api/tasks/:id/conversation — task history without filesystem or Git work. */
-function conversationResponse(task: Task, adapters: Record<string, AdapterDef>): Response {
-  const started = performance.now();
-  const response = json(conversationDetail(task, adapters));
-  response.headers.set("server-timing", `conversation;dur=${(performance.now() - started).toFixed(1)}`);
-  return response;
-}
 
 /** GET /api/tasks */
 export function listTasksRoute(url: URL): Response {
@@ -385,10 +362,14 @@ function basicTaskAction(
   task: Task,
   action: string | undefined,
   method: string,
+  url: URL,
   adapters: Record<string, AdapterDef>,
 ): Response | Promise<Response> | null {
   if (action === "conversation" && method === "GET") {
-    return conversationResponse(task, adapters);
+    return conversationResponse(task, url, adapters);
+  }
+  if (action === "usage" && method === "GET") {
+    return taskUsageResponse(task, adapters);
   }
   if (action === "interrupt" && method === "POST") {
     return (async () => {
@@ -513,7 +494,7 @@ export function taskRoute(
 
   if (action === "pull-request" && m === "GET") return pullRequestResponse(task, pullRequests);
 
-  const basicActionResponse = basicTaskAction(task, action, m, adapters);
+  const basicActionResponse = basicTaskAction(task, action, m, url, adapters);
   if (basicActionResponse !== null) return basicActionResponse;
 
   // A3: an out-of-turn harness READ. No turn row, no transition, no outbox

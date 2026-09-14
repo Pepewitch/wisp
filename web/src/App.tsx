@@ -349,6 +349,10 @@ function MainView({
       stream={stream}
       note={stream.note}
       touch={isMobile}
+      hasOlderTurns={detailQuery.hasOlderTurns}
+      isLoadingOlderTurns={detailQuery.isLoadingOlderTurns}
+      olderTurnsError={detailQuery.olderTurnsError}
+      onLoadOlderTurns={detailQuery.loadOlderTurns}
     />
   )
   const composerNode = (

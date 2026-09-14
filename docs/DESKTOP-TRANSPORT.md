@@ -60,10 +60,19 @@ The UI reads or mutates these route families:
 - task content: diffs, skills, probes, queued messages, and attachment bytes.
 
 Selected history prefers the SQLite-only
-`GET /api/tasks/:id/conversation`. Because it is an additive protocol-1 route,
-the shared UI retries `GET /api/tasks/:id` only after a 404, preserving saved
-Desktop remotes that run an older protocol-1 daemon. The fallback includes Git
-detail and can therefore be slower, but it must remain routable by the proxy.
+`GET /api/tasks/:id/conversation?limit=50` and follows its exclusive `before`
+cursor when someone loads earlier turns. The daemon keeps a request without
+`limit` unpaginated for older clients. Because the conversation endpoint is an
+additive protocol-1 route, the shared UI retries `GET /api/tasks/:id` only
+after a 404, preserving saved Desktop remotes that run an older protocol-1
+daemon. The fallback includes Git detail and can therefore be slower, but it
+must remain routable by the proxy.
+
+`GET /api/tasks/:id/usage` is the narrow, on-demand report for `/tokens`. It
+returns task-wide totals and the newest 50 reporting-turn rows, so totals stay
+complete without replacing one unbounded transcript with an unbounded report.
+Older daemons answer 404, in which case their unpaginated task detail remains
+the compatibility source.
 
 JSON errors are part of the user-facing contract. A transport must preserve the
 upstream status, response body, and relevant content headers. It must not turn a

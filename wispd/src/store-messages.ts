@@ -130,6 +130,43 @@ export function messagesFor(taskId: string): TaskMessage[] {
     .all(taskId) as TaskMessage[];
 }
 
+/**
+ * Messages attached to the visible turn range. The newest page also owns
+ * pending/uncertain unassigned messages, which render after the latest turn.
+ */
+export function messagesForTurnPage(
+  taskId: string,
+  firstTurn: number | null,
+  lastTurn: number | null,
+  includePending: boolean,
+): TaskMessage[] {
+  type OrderedMessage = TaskMessage & { page_rowid: number };
+  const page = firstTurn === null || lastTurn === null
+    ? []
+    : db
+      .query(
+        `SELECT *, rowid AS page_rowid FROM task_messages
+         WHERE task_id = ? AND turn_n BETWEEN ? AND ?`,
+      )
+      .all(taskId, firstTurn, lastTurn) as OrderedMessage[];
+  const pending = includePending
+    ? db
+      .query(
+        `SELECT *, rowid AS page_rowid FROM task_messages
+         WHERE task_id = ? AND (
+           status = 'queued'
+           OR (status = 'cancelled' AND delivery_uncertain = 1)
+         )`,
+      )
+      .all(taskId) as OrderedMessage[]
+    : [];
+  const unique = new Map<string, OrderedMessage>();
+  for (const message of [...page, ...pending]) unique.set(message.id, message);
+  return [...unique.values()]
+    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.page_rowid - b.page_rowid)
+    .map(({ page_rowid: _pageRowId, ...message }) => message);
+}
+
 export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskMessage | null {
   return (
     (db

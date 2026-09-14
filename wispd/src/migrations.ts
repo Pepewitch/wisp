@@ -523,6 +523,15 @@ WHERE EXISTS (
 `);
     },
   },
+  {
+    id: 11,
+    name: "conversation-message-pages",
+    up: (db) => {
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_task_messages_turn ON task_messages(task_id, turn_n)",
+      );
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

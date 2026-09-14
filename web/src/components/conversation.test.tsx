@@ -1,13 +1,146 @@
 import { QueryClient } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { utcIso } from "@/lib/time"
 import type { ActivityEvent, ConversationDetail, TaskMessage } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { Conversation } from "./conversation"
+
+function pagedTask(turns: number[]): ConversationDetail {
+  return {
+    id: "tpaged",
+    title: "Page a long conversation",
+    repo_path: "/tmp/repo",
+    worktree_path: "/tmp/worktree",
+    branch: "wisp/tpaged",
+    base_commit: "abc123",
+    harness: "droid",
+    model: "fake",
+    effort: null,
+    slot: 0,
+    state: "done",
+    state_detail: null,
+    session_id: "session-1",
+    seq: 1,
+    turn_count: 51,
+    archived: false,
+    mode: "worktree",
+    created_at: "2026-09-03T00:00:00Z",
+    updated_at: "2026-09-03T00:00:01Z",
+    turns: turns.map((n) => ({
+      id: n,
+      task_id: "tpaged",
+      n,
+      prompt: `prompt ${n}`,
+      result: `result ${n}`,
+      status: "done",
+      model: "fake",
+      usage: null,
+      attachments: [],
+      log_file: `/tmp/turn-${n}.log`,
+      started_at: "2026-09-03T00:00:00Z",
+      ended_at: "2026-09-03T00:00:01Z",
+    })),
+  } as ConversationDetail
+}
+
+describe("Conversation history pages", () => {
+  it("prepends earlier turns without moving the reader's line", async () => {
+    let scrollHeight = 1_000
+    let updateStream!: () => void
+    let finishLoad!: () => void
+    const loadGate = new Promise<void>((resolve) => {
+      finishLoad = resolve
+    })
+    function Harness() {
+      const [task, setTask] = useState(() => pagedTask([51]))
+      const [stream, setStream] = useState(initialStreamState)
+      updateStream = () => setStream(
+        streamReducer(initialStreamState, {
+          type: "backlog",
+          turn: 51,
+          prompt: "prompt 51",
+          activity: [],
+        }),
+      )
+      return (
+        <Conversation
+          task={task}
+          stream={stream}
+          hasOlderTurns={task.turns[0]?.n !== 1}
+          onLoadOlderTurns={async () => {
+            await loadGate
+            scrollHeight = 1_500
+            setTask(pagedTask([1, 51]))
+          }}
+        />
+      )
+    }
+    render(<Harness />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport("pagination-scroll")),
+    })
+    const viewport = screen.getByTestId("conversation-viewport")
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, get: () => scrollHeight })
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 400 })
+    viewport.scrollTop = 200
+    fireEvent.scroll(viewport)
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier turns" }))
+
+    act(() => updateStream())
+    expect(viewport.scrollTop).toBe(200)
+    await act(async () => {
+      finishLoad()
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(screen.getByText("prompt 1")).toBeInTheDocument())
+    expect(viewport.scrollTop).toBe(700)
+    expect(screen.queryByRole("button", { name: "Load earlier turns" })).toBeNull()
+  })
+
+  it("restores live-tail pinning when an earlier page fails", async () => {
+    render(
+      <Conversation
+        task={pagedTask([51])}
+        stream={initialStreamState}
+        hasOlderTurns
+        onLoadOlderTurns={() => Promise.reject(new Error("offline"))}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport("pagination-error")) },
+    )
+    const viewport = screen.getByTestId("conversation-viewport")
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1_000 })
+    Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 400 })
+    viewport.scrollTop = 600
+    fireEvent.scroll(viewport)
+    fireEvent.click(screen.getByRole("button", { name: "Load earlier turns" }))
+
+    await waitFor(() => expect(viewport.scrollTop).toBe(1_000))
+  })
+
+  it("loads toward a cross-project search hit outside the visible page", async () => {
+    const onLoadOlderTurns = vi.fn().mockResolvedValue(undefined)
+    const connectionId = "pagination-search"
+    render(
+      <Conversation
+        task={pagedTask([51])}
+        stream={initialStreamState}
+        hasOlderTurns
+        onLoadOlderTurns={onLoadOlderTurns}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport(connectionId)) },
+    )
+
+    act(() => uiIntentsFor(connectionId).openFind("prompt 1", 1))
+
+    await waitFor(() => expect(onLoadOlderTurns).toHaveBeenCalledOnce())
+    expect(screen.getByText(/Earlier turns are not loaded/)).toBeInTheDocument()
+  })
+})
 
 describe("Conversation top fade", () => {
   it("reserves the fade's height before the first prompt", () => {

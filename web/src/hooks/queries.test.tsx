@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { renderHook, waitFor } from "@testing-library/react"
+import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
@@ -17,6 +17,7 @@ import {
   usePullRequests,
   usePullRequestStatus,
   useTaskDetail,
+  useTaskUsage,
   useUpdateStatus,
 } from "./queries"
 
@@ -69,9 +70,48 @@ describe("useTaskDetail", () => {
     renderHook(() => useTaskDetail("tdetail"), { wrapper })
     await waitFor(() =>
       expect(mocks.request).toHaveBeenCalledWith(
-        "/api/tasks/tdetail/conversation"
+        "/api/tasks/tdetail/conversation?limit=50"
       )
     )
+  })
+
+  it("prepends older pages in turn and message order", async () => {
+    mocks.request.mockReset()
+    mocks.request
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 51 }, { n: 52 }],
+        messages: [{ id: "message-51" }],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 1 }, { n: 2 }],
+        messages: [{ id: "message-1" }],
+        has_older_turns: false,
+        older_turns_before: null,
+      })
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() => expect(result.result.current.hasOlderTurns).toBe(true))
+
+    await act(async () => {
+      await result.result.current.loadOlderTurns()
+    })
+
+    expect(mocks.request.mock.calls.map(([path]) => path)).toEqual([
+      "/api/tasks/tdetail/conversation?limit=50",
+      "/api/tasks/tdetail/conversation?limit=50&before=51",
+    ])
+    await waitFor(() =>
+      expect(result.result.current.data?.turns.map((turn) => turn.n)).toEqual([1, 2, 51, 52]),
+    )
+    expect(result.result.current.data?.messages?.map((message) => message.id)).toEqual([
+      "message-1",
+      "message-51",
+    ])
+    expect(result.result.current.hasOlderTurns).toBe(false)
   })
 
   it("does not read conversation detail when no task is selected", () => {
@@ -79,6 +119,168 @@ describe("useTaskDetail", () => {
     const { wrapper } = harness()
     renderHook(() => useTaskDetail(null), { wrapper })
     expect(mocks.request).not.toHaveBeenCalled()
+  })
+
+  it("keeps loaded history but replaces the latest page and pending messages on refetch", async () => {
+    mocks.request.mockReset()
+    mocks.request
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        title: "before",
+        turns: [{ n: 51 }, { n: 52 }],
+        messages: [
+          { id: "message-51", turn_n: 51 },
+          { id: "message-queued", turn_n: null, status: "queued" },
+        ],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        title: "before",
+        turns: [{ n: 1 }],
+        messages: [{ id: "message-1", turn_n: 1 }],
+        has_older_turns: false,
+        older_turns_before: null,
+      })
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        title: "after",
+        turns: [{ n: 52 }, { n: 53 }],
+        messages: [{ id: "message-52", turn_n: 52 }],
+        has_older_turns: true,
+        older_turns_before: 52,
+      })
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() => expect(result.result.current.hasOlderTurns).toBe(true))
+    await act(async () => {
+      await result.result.current.loadOlderTurns()
+    })
+    await act(async () => {
+      await result.result.current.refetch()
+    })
+
+    await waitFor(() => expect(result.result.current.data?.title).toBe("after"))
+    expect(result.result.current.data?.turns.map((turn) => turn.n)).toEqual([1, 51, 52, 53])
+    expect(result.result.current.data?.messages?.map((message) => message.id)).toEqual([
+      "message-1",
+      "message-51",
+      "message-52",
+    ])
+    expect(result.result.current.hasOlderTurns).toBe(false)
+  })
+
+  it("discards an older page if a realtime refresh advances its request cursor", async () => {
+    mocks.request.mockReset()
+    let resolveOlder!: (page: unknown) => void
+    const older = new Promise((resolve) => {
+      resolveOlder = resolve
+    })
+    mocks.request
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 51 }, { n: 52 }],
+        messages: [],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+      .mockReturnValueOnce(older)
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 52 }, { n: 53 }],
+        messages: [],
+        has_older_turns: true,
+        older_turns_before: 52,
+      })
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() => expect(result.result.current.hasOlderTurns).toBe(true))
+
+    const olderRequest = result.result.current.loadOlderTurns()
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await result.result.current.refetch()
+    })
+    await waitFor(() =>
+      expect(result.result.current.data?.turns.map((turn) => turn.n)).toEqual([52, 53]),
+    )
+    resolveOlder({
+      id: "tdetail",
+      turns: [{ n: 1 }, { n: 50 }],
+      messages: [],
+      has_older_turns: false,
+      older_turns_before: null,
+    })
+    await act(async () => {
+      await olderRequest
+    })
+
+    expect(result.result.current.data?.turns.map((turn) => turn.n)).toEqual([52, 53])
+    expect(result.result.current.data?.older_turns_before).toBe(52)
+  })
+
+  it("rejects an earlier page that does not advance the cursor", async () => {
+    mocks.request.mockReset()
+    mocks.request
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 51 }],
+        messages: [],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+      .mockResolvedValueOnce({
+        id: "tdetail",
+        turns: [{ n: 51 }],
+        messages: [],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+    const { wrapper } = harness()
+    const result = renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() => expect(result.result.current.hasOlderTurns).toBe(true))
+
+    await expect(result.result.current.loadOlderTurns()).rejects.toThrow(
+      "invalid earlier-turn page",
+    )
+    await waitFor(() =>
+      expect(result.result.current.olderTurnsError).toBeInstanceOf(Error),
+    )
+    expect(result.result.current.data?.turns.map((turn) => turn.n)).toEqual([51])
+    expect(mocks.request).toHaveBeenCalledTimes(2)
+  })
+
+  it("clears an older-page error when the selected task changes", async () => {
+    mocks.request.mockReset()
+    mocks.request
+      .mockResolvedValueOnce({
+        id: "task-a",
+        turns: [{ n: 51 }],
+        messages: [],
+        has_older_turns: true,
+        older_turns_before: 51,
+      })
+      .mockRejectedValueOnce(new Error("task A failed"))
+      .mockResolvedValueOnce({
+        id: "task-b",
+        turns: [{ n: 1 }],
+        messages: [],
+        has_older_turns: false,
+        older_turns_before: null,
+      })
+    const { wrapper } = harness()
+    const result = renderHook(({ id }) => useTaskDetail(id), {
+      wrapper,
+      initialProps: { id: "task-a" },
+    })
+    await waitFor(() => expect(result.result.current.data?.id).toBe("task-a"))
+    await expect(result.result.current.loadOlderTurns()).rejects.toThrow("task A failed")
+    await waitFor(() => expect(result.result.current.olderTurnsError).toBeInstanceOf(Error))
+
+    result.rerender({ id: "task-b" })
+    await waitFor(() => expect(result.result.current.data?.id).toBe("task-b"))
+    await waitFor(() => expect(result.result.current.olderTurnsError).toBeNull())
   })
 
   it("falls back to legacy detail when a protocol-1 daemon lacks the route", async () => {
@@ -91,7 +293,7 @@ describe("useTaskDetail", () => {
 
     await waitFor(() => expect(result.result.current.data).toEqual({ id: "tlegacy" }))
     expect(mocks.request.mock.calls.map(([path]) => path)).toEqual([
-      "/api/tasks/tlegacy/conversation",
+      "/api/tasks/tlegacy/conversation?limit=50",
       "/api/tasks/tlegacy",
     ])
   })
@@ -104,6 +306,27 @@ describe("useTaskDetail", () => {
 
     await waitFor(() => expect(result.result.current.error).toMatchObject({ status: 500 }))
     expect(mocks.request).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("useTaskUsage", () => {
+  it("reads task-wide telemetry only while the report is open", async () => {
+    mocks.request.mockReset()
+    mocks.request.mockResolvedValue({ turns: [{ id: 1, n: 1, usage: { inputTokens: 7 } }] })
+    const { wrapper } = harness()
+    const result = renderHook(
+      ({ enabled }) => useTaskUsage("tdetail", enabled),
+      { wrapper, initialProps: { enabled: false } },
+    )
+    expect(mocks.request).not.toHaveBeenCalled()
+
+    result.rerender({ enabled: true })
+    await waitFor(() =>
+      expect(mocks.request).toHaveBeenCalledWith("/api/tasks/tdetail/usage"),
+    )
+    await waitFor(() =>
+      expect(result.result.current.data?.turns[0]?.usage).toEqual({ inputTokens: 7 }),
+    )
   })
 })
 

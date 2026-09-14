@@ -1,8 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
 
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
+import { prependConversationPage, refreshConversationPage } from "@/lib/conversation-pages";
 import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
@@ -18,6 +19,7 @@ import type {
   StatusEntry,
   SuffixPrompt,
   TaskSkills,
+  TaskUsage,
   UpdateStatus,
   WispSettings,
   WorktreeFileResponse,
@@ -84,13 +86,24 @@ export function useUpdateStatus(
  * daemons do not advertise the additive route, so only its 404 falls back to
  * the legacy Git-aware detail endpoint.
  */
+export const CONVERSATION_PAGE_SIZE = 50;
+
 export function useTaskDetail(id: string | null) {
   const { transport, qk } = useDaemonRuntime();
-  return useQuery({
+  const client = useQueryClient();
+  const query = useQuery({
     queryKey: qk.task(id ?? ""),
     queryFn: async () => {
       try {
-        return await transport.request<ConversationDetail>(`/api/tasks/${id}/conversation`)
+        const fresh = await transport.request<ConversationDetail>(
+          `/api/tasks/${id}/conversation?limit=${CONVERSATION_PAGE_SIZE}`,
+        )
+        const current = id ? client.getQueryData<ConversationDetail>(qk.task(id)) : undefined
+        // SSE and mutations refresh the latest page. Keep history the reader
+        // explicitly loaded, while letting fresh rows replace overlapping turns.
+        return current && current.turns.length > fresh.turns.length
+          ? refreshConversationPage(current, fresh)
+          : fresh
       } catch (error) {
         if (!(error instanceof ApiError) || error.status !== 404) throw error
         return transport.request<ConversationDetail>(`/api/tasks/${id}`)
@@ -98,6 +111,63 @@ export function useTaskDetail(id: string | null) {
     },
     enabled: id !== null,
   });
+  const older = useMutation({
+    mutationFn: async () => {
+      if (!id || !query.data?.has_older_turns || query.data.older_turns_before == null) return null
+      const requestedBefore = query.data.older_turns_before
+      const page = await transport.request<ConversationDetail>(
+        `/api/tasks/${id}/conversation?limit=${CONVERSATION_PAGE_SIZE}&before=${requestedBefore}`,
+      )
+      const firstPageTurn = page.turns.at(0)?.n
+      const nextBefore = page.older_turns_before
+      if (
+        page.turns.length === 0 ||
+        page.turns.some((turn, index) =>
+          turn.n >= requestedBefore ||
+          (index > 0 && page.turns[index - 1]!.n >= turn.n)
+        ) ||
+        (page.has_older_turns === true && (
+          typeof nextBefore !== "number" ||
+          nextBefore !== firstPageTurn ||
+          nextBefore >= requestedBefore
+        )) ||
+        (page.has_older_turns !== true && nextBefore != null)
+      ) {
+        throw new Error("The daemon returned an invalid earlier-turn page")
+      }
+      let merged = false
+      client.setQueryData<ConversationDetail>(qk.task(id), (current) => {
+        if (
+          current?.has_older_turns !== true ||
+          current.older_turns_before !== requestedBefore
+        ) return current
+        merged = true
+        return prependConversationPage(current, page)
+      })
+      return merged
+    },
+  })
+  const resetOlder = older.reset
+  useEffect(() => {
+    resetOlder()
+  }, [id, resetOlder])
+  return {
+    ...query,
+    hasOlderTurns: query.data?.has_older_turns === true,
+    loadOlderTurns: older.mutateAsync,
+    isLoadingOlderTurns: older.isPending,
+    olderTurnsError: older.error,
+  }
+}
+
+/** Task-wide token telemetry is fetched only when `/tokens` is visible. */
+export function useTaskUsage(id: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime()
+  return useQuery({
+    queryKey: [...qk.task(id ?? ""), "usage"],
+    queryFn: () => transport.request<TaskUsage>(`/api/tasks/${id}/usage`),
+    enabled: enabled && id !== null,
+  })
 }
 
 export const PULL_REQUEST_POLL_MS = 30_000;

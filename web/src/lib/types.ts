@@ -127,6 +127,20 @@ export interface UsageSummary {
   cacheWriteTokens?: number;
 }
 
+/** Narrow task-wide usage row returned only when the `/tokens` panel opens. */
+export interface TurnUsage {
+  id: number;
+  n: number;
+  usage: UsageSummary | null;
+}
+
+export interface TaskUsage {
+  total: UsageSummary;
+  reporting_turns: number;
+  turns: TurnUsage[];
+  has_older_turns: boolean;
+}
+
 /**
  * One stored image on a turn (A1a). No URL and no path: the bytes come from
  * `GET /api/tasks/:id/attachments/:turn/:name`, authenticated like every other
@@ -233,6 +247,10 @@ export interface UpdateStatus {
 export interface ConversationDetail extends ApiTask {
   turns: Turn[];
   messages?: TaskMessage[];
+  /** Present on bounded responses. Absent means a legacy daemon returned full history. */
+  has_older_turns?: boolean;
+  /** Exclusive cursor for the next older page. */
+  older_turns_before?: number | null;
 }
 
 /** GET /api/tasks/:id — the legacy Git-aware detail contract retained for clients and CLI. */

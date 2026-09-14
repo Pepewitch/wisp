@@ -2,7 +2,7 @@ import { memo, useMemo } from "react"
 
 import { Eyebrow } from "@/components/primitives"
 import { ReportPanel } from "@/components/report-panel"
-import type { Turn } from "@/lib/types"
+import type { TurnUsage, UsageSummary } from "@/lib/types"
 import { reportedUsageTurns, totalUsage, usageParts } from "@/lib/usage"
 
 /**
@@ -12,16 +12,28 @@ import { reportedUsageTurns, totalUsage, usageParts } from "@/lib/usage"
 function TokensPanelView({
   harness,
   turns,
+  total: taskTotal,
+  reportingTurns,
+  hasOlderTurns = false,
+  loading = false,
+  error = null,
   onClose,
   className,
 }: {
   harness: string
-  turns: Turn[] | undefined
+  turns: TurnUsage[] | undefined
+  total?: UsageSummary
+  reportingTurns?: number
+  hasOlderTurns?: boolean
+  loading?: boolean
+  error?: unknown
   onClose: () => void
   className?: string
 }) {
   const reported = useMemo(() => reportedUsageTurns(turns), [turns])
-  const total = useMemo(() => totalUsage(reported.map((turn) => turn.usage)), [reported])
+  const visibleTotal = useMemo(() => totalUsage(reported.map((turn) => turn.usage)), [reported])
+  const total = taskTotal ?? visibleTotal
+  const reportCount = reportingTurns ?? reported.length
 
   return (
     <ReportPanel
@@ -31,7 +43,13 @@ function TokensPanelView({
       onClose={onClose}
       className={className}
     >
-      {reported.length === 0 ? (
+      {loading ? (
+        <p className="text-[11.5px] text-muted-foreground">Loading task token usage…</p>
+      ) : error instanceof Error ? (
+        <p role="alert" className="text-[11.5px] text-destructive">
+          Could not load token usage: {error.message}
+        </p>
+      ) : reportCount === 0 ? (
         <p className="text-[11.5px] text-muted-foreground">
           No turn has reported token usage yet. Usage arrives after a turn settles.
         </p>
@@ -43,7 +61,7 @@ function TokensPanelView({
               {usageParts(total).join(" · ")}
             </p>
             <p className="mt-0.5 text-[10.5px] text-faint">
-              Sum of {reported.length} reporting turn{reported.length === 1 ? "" : "s"}
+              Sum of {reportCount} reporting turn{reportCount === 1 ? "" : "s"}
             </p>
           </div>
 
@@ -59,6 +77,11 @@ function TokensPanelView({
                 </div>
               ))}
             </div>
+            {hasOlderTurns && (
+              <p className="mt-1 text-[10.5px] text-faint">
+                Showing the newest {reported.length} reporting turn{reported.length === 1 ? "" : "s"}.
+              </p>
+            )}
           </div>
         </div>
       )}
