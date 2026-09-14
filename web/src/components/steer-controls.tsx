@@ -1,12 +1,10 @@
 import { ArrowUp, Stop } from "@/components/icons"
-import { AttachButton } from "@/components/pending-attachments"
 import { TaskIdentity } from "@/components/steer-box-overlays"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import {
   TaskAgentPicker,
   type TaskAgentChoice,
 } from "@/components/task-agent-picker"
-import { type PendingAttachments } from "@/lib/attachments"
 import { backgroundNames } from "@/lib/state"
 import type { ApiTask, HarnessInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -15,23 +13,19 @@ import { cn } from "@/lib/utils"
  * The composer's control bar: who will answer, what rides along with the
  * draft, and the one violet button on the screen.
  *
- * Five things want one row, and the row is often not wide enough: a phone, a
+ * Four things want one row, and the row is often not wide enough: a phone, a
  * dragged-in centre pane, and — the case a media query would never catch —
  * Desktop's zoom, which leaves the window alone and shrinks every pane in CSS
  * pixels. So the bar answers ITS OWN width (§5c-ii), in two steps, and both
  * things that yield are things the task header two rows up still says.
  *
- *   always       attach · suffix · send, and the running note on its own line
+ *   always       suffix · send
  *   @lg  512px   + harness · model · effort, which truncates before it wraps
- *   @2xl 672px   + the note or the ↵ hint inline, and the stacked note goes
- *
- * The note takes a line of its own rather than wrapping four words deep
- * between the suffix picker and the send button, which is what a bar with no
- * opinion about its width did.
+ *   @2xl 672px   + the ↵ hint
  *
  * `touch` is a different question — how big a thumb is, not how wide the bar
  * is — and it answers with ONE row of 44px targets: the model, the effort
- * glyph, the paperclip, the suffix glyph, the send. An optional control at its
+ * glyph, the suffix glyph, the send. An optional control at its
  * default is a glyph; choosing a value brings the value back as text. Only the
  * model chip yields width, because the task header still names it in full.
  */
@@ -45,7 +39,6 @@ export function ComposerControls({
   canSend,
   canStop,
   touch,
-  attachments,
   harnesses,
   canSwitchAgent,
   agentChoice,
@@ -63,7 +56,6 @@ export function ComposerControls({
   canSend: boolean
   canStop: boolean
   touch: boolean
-  attachments: PendingAttachments
   harnesses: HarnessInfo[]
   canSwitchAgent: boolean
   agentChoice: TaskAgentChoice | null
@@ -78,15 +70,9 @@ export function ComposerControls({
   // Name the programs here too: this note sits beside the Stop button, which
   // is the moment the reader has to decide whether stopping is safe.
   const running = backgroundNames(task?.background)
-  const note = composerNote(blocked, backgroundOnly, running)
   const picker = Boolean(task && agentChoice && canSwitchAgent && harnesses.length > 0)
   return (
-    <div className={cn("flex flex-col gap-1", touch ? "mt-1" : "mt-2")}>
-      {/* On touch this is the only place the note fits: the row below it is
-          five thumb targets wide and has nothing left to give. */}
-      {note && (
-        <span className={cn("px-0.5 text-[11px] text-faint", !touch && "@2xl:hidden")}>{note}</span>
-      )}
+    <div className={touch ? "mt-1" : "mt-2"}>
       <div className={cn("flex items-center", touch ? "gap-1" : "gap-2")}>
         {picker && agentChoice ? (
           // the extra right margin on touch is the hairline's job done quietly:
@@ -112,7 +98,6 @@ export function ComposerControls({
         {/* A phone gets no hairline: the chips beside it are already spaced
             for fingers, and one more mark is one more thing to read. */}
         {picker && !touch && <Hairline />}
-        <AttachButton pending={attachments} touch={touch} />
         <SuffixPromptPicker
           key={taskId ?? "no-task"}
           value={suffixPromptId}
@@ -121,7 +106,7 @@ export function ComposerControls({
           touch={touch}
         />
         <span className="flex-1" />
-        {!touch && <WideEnd note={note} />}
+        {!touch && <WideEnd />}
         <SendButton
           blocked={blocked}
           backgroundOnly={backgroundOnly}
@@ -137,13 +122,6 @@ export function ComposerControls({
   )
 }
 
-/** The one line under the composer: what a send will and will not do here. */
-function composerNote(blocked: boolean, backgroundOnly: boolean, running: string | null): string | null {
-  if (blocked) return "running · send won't interrupt"
-  if (!backgroundOnly) return null
-  return `background work${running ? ` (${running})` : ""} · send won't stop it`
-}
-
 /** The bar's one separator: what will answer on the left, what to send on the right. */
 function Hairline() {
   return <span aria-hidden className="h-3 w-px shrink-0 bg-border-strong" />
@@ -154,11 +132,7 @@ function Hairline() {
  * one, otherwise the keyboard hint. Never on touch, where there is no keyboard
  * to hint at and no width to spend on it.
  */
-function WideEnd({ note }: { note: string | null }) {
-  if (note)
-    return (
-      <span className="hidden shrink-0 whitespace-nowrap text-[10.5px] text-faint @2xl:block">{note}</span>
-    )
+function WideEnd() {
   return (
     <span
       className="hidden shrink-0 font-mono text-[10.5px] text-faint @2xl:block"
