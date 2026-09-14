@@ -30,7 +30,16 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
   --env WISP_SHA256="$SHA256" \
   --env WISP_COMMIT="$COMMIT" \
   --env WISP_INSTALL_SERVICE=no \
-  "$IMAGE" /bin/sh -eu -c '
+  "$IMAGE" /bin/bash -euo pipefail -c '
+    cgroup_diagnostics() {
+      for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.events; do
+        if test -r "$f"; then
+          echo "$f:" >&2
+          cat "$f" >&2
+        fi
+      done
+    }
+
     mkdir -p "$HOME/fake-bin" /workspace/repo
     cat > "$HOME/fake-bin/droid" <<EOF
 #!/bin/sh
@@ -68,12 +77,16 @@ EOF
     DAEMON_PID=$!
     trap "kill \$DAEMON_PID 2>/dev/null || true" EXIT HUP INT TERM
 
-    REGISTERED=no
+    READY=no
     ATTEMPT=0
-    while [ "$ATTEMPT" -lt 100 ]; do
+    while [ "$ATTEMPT" -lt 300 ]; do
       ATTEMPT=$((ATTEMPT + 1))
-      if wisp project add /workspace/repo >"$HOME/project.log" 2>&1; then
-        REGISTERED=yes
+      # The cross-compiled CLI is roughly 70 MB. Starting a fresh copy every
+      # 200 ms starves the daemon on this one-CPU emulated runner and turns
+      # readiness into a race. Probe the socket in Bash, then invoke the CLI
+      # once after the server is listening.
+      if (: <> /dev/tcp/127.0.0.1/8710) 2>/dev/null; then
+        READY=yes
         break
       fi
       kill -0 "$DAEMON_PID" || {
@@ -86,21 +99,24 @@ EOF
         wait "$DAEMON_PID" 2>/dev/null || daemon_status=$?
         echo "activation daemon exited; wait status: $daemon_status (attempt $ATTEMPT)" >&2
         cat "$HOME/daemon.log" >&2
-        cat "$HOME/project.log" >&2
-        for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.events; do
-          if test -r "$f"; then
-            echo "$f:" >&2
-            cat "$f" >&2
-          fi
-        done
+        cgroup_diagnostics
         echo "activation daemon exited before it became ready" >&2
         exit 1
       }
       sleep 0.2
     done
-    [ "$REGISTERED" = "yes" ] || {
+    [ "$READY" = "yes" ] || {
+      cat "$HOME/daemon.log" >&2
+      cgroup_diagnostics
+      echo "activation daemon did not listen after $ATTEMPT attempts" >&2
+      exit 1
+    }
+
+    wisp project add /workspace/repo >"$HOME/project.log" 2>&1 || {
       cat "$HOME/daemon.log" >&2
       cat "$HOME/project.log" >&2
+      cgroup_diagnostics
+      echo "activation project registration failed after readiness" >&2
       exit 1
     }
 
