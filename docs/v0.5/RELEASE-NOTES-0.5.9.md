@@ -31,7 +31,8 @@ and attachment controls.
 - Internal release hygiene: Linux and macOS release payloads can build in
   parallel behind candidate checks, promotion handles concurrent verification
   safely, and updater verification is built as a standalone locked tool.
-  The 0.5.8 qualification record is also current. (#213, #214)
+  The Desktop TLS stack is also locked to the fix for RUSTSEC-2026-0285, and
+  the 0.5.8 qualification record is current. (#213, #214)
 
 ## Install or upgrade
 
