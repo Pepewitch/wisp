@@ -140,7 +140,7 @@ export function AttachButton({
         title="Attach a file"
         onClick={() => input.current?.click()}
         className={cn(
-          "flex items-center justify-center rounded-md text-muted-foreground transition-colors",
+          "flex shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors",
           "hover:text-foreground disabled:opacity-40 disabled:hover:text-muted-foreground",
           touch ? "size-11 active:bg-hover" : "size-6",
           className,
