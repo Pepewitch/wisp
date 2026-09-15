@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { ADAPTERS_PATH, CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { createTask, createTurn, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTurn, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition } from "../src/store";
 
 /**
  * POST /api/tasks/:id/compact (A5) — the out-of-turn ACTION route. The
@@ -66,11 +66,11 @@ afterEach(async () => {
   rmSync(ADAPTERS_PATH, { force: true });
 });
 
-async function api(base: string, path: string): Promise<Response> {
+async function api(base: string, path: string, body: Record<string, unknown> = {}): Promise<Response> {
   return fetch(`${base}${path}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify(body),
   });
 }
 
@@ -84,7 +84,10 @@ function compactTask(overrides: Partial<Parameters<typeof createTask>[0]> = {}) 
     slot: freeSlot(),
     ...overrides,
   });
-  setTaskFields(task.id, { session_id: "s-1" });
+  setTaskFields(task.id, {
+    session_id: "s-1",
+    worktree_path: "/tmp/wisp-compact-worktree",
+  });
   transition(task.id, "done", "finished");
   return task.id;
 }
@@ -105,6 +108,48 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     const again = await api(base, `/api/tasks/${id}/compact`);
     expect(again.status).toBe(200);
     expect(state.calls).toEqual(["droid.load_session", "droid.compact_session", "droid.load_session", "droid.compact_session"]);
+  });
+
+  test("a message is refused, not steered or queued, while action compaction is in flight", async () => {
+    let announceStart!: () => void;
+    const started = new Promise<void>((resolve) => { announceStart = resolve; });
+    let finish!: (value: unknown) => void;
+    const base = await startServer({
+      compactOpenRpc: () => ({
+        call(method: string) {
+          if (method === "droid.load_session") return Promise.resolve({ sessionId: "s-1" });
+          if (method === "droid.compact_session") {
+            announceStart();
+            return new Promise((resolve) => { finish = resolve; });
+          }
+          return Promise.reject(new Error(`unexpected ${method}`));
+        },
+        close() {},
+      }),
+    });
+    const id = compactTask();
+    const pendingCompact = api(base, `/api/tasks/${id}/compact`);
+    await started;
+
+    const steer = await api(base, `/api/tasks/${id}/send`, { message: "change direction" });
+    expect(steer.status).toBe(409);
+    expect((await steer.json()).error).toBe("compaction is still running — wait for it to finish");
+    expect(messagesFor(id)).toEqual([]);
+
+    finish({ newSessionId: "s-2", removedCount: 3 });
+    expect((await pendingCompact).status).toBe(200);
+  });
+
+  test("a message is refused while a prompt-based compact turn is running", async () => {
+    const base = await startServer();
+    const id = compactTask({ harness: "claude" });
+    transition(id, "running", "turn 1");
+    createTurn(id, 1, "/compact", 99999, "/tmp/prompt-compact-test.out.log");
+
+    const steer = await api(base, `/api/tasks/${id}/send`, { message: "change direction" });
+    expect(steer.status).toBe(409);
+    expect((await steer.json()).error).toBe("compaction is still running — wait for it to finish");
+    expect(messagesFor(id)).toEqual([]);
   });
 
   test("the refusal ladder: unknown task, archived, creating, running — all named 409s", async () => {
@@ -165,7 +210,7 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     const res = await api(base, `/api/tasks/${id}/compact`);
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe(
-      "harness 'claude' compacts as an ordinary turn — send /compact as a prompt",
+      "harness 'claude' compacts as a dedicated turn — send /compact as a prompt",
     );
     expect(opens).toBe(0);
   });
@@ -244,5 +289,7 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     expect(byName.claude.compact).toEqual({ kind: "prompt", prompt: "/compact" });
     expect(byName.droid.compact).toEqual({ kind: "action", recordsTurn: false });
     expect(byName.codex.compact).toEqual({ kind: "action", recordsTurn: true });
+    expect(byName.cursor.compact).toBeNull();
+    expect(byName.opencode.compact).toBeNull();
   });
 });

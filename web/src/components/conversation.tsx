@@ -21,6 +21,7 @@ import { MessageAttachments } from "@/components/message-attachments"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
 import { TurnAttachments } from "@/components/turn-attachments"
+import { TurnProgress } from "@/components/turn-progress"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { useFindInTask } from "@/hooks/useFindInTask"
@@ -414,12 +415,7 @@ function TurnBlock({
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
 
-      {running && !live?.items.length && (
-        <div className="mt-3.5 flex items-center gap-2 text-[11.5px] text-faint">
-          <span className="size-1.5 animate-pulse rounded-full bg-state-running" />
-          Working…
-        </div>
-      )}
+      <TurnProgress turn={turn} hasLiveItems={Boolean(live?.items.length)} />
 
       {failure && (
         <div className="mt-3.5 rounded-md border border-border bg-card px-3 py-2">
@@ -651,6 +647,7 @@ function Activity({
 
   const activity = live ?? loaded
   const items = activity?.items
+  const quietEmpty = turn.operation === "compact"
   const segments = useMemo(() => splitByMessage(items ?? []), [items])
 
   const load = () => {
@@ -698,6 +695,7 @@ function Activity({
     // nothing rendered for a turn with no tool calls to show yet — one quiet
     // affordance, and only for turns that actually ran
     if (turn.status === "running") return null
+    if (quietEmpty) return null
     return (
       // the find bar counts these: a collapsed timeline is text the page does
       // not have, so it explains a miss instead of being one
@@ -738,7 +736,7 @@ function Activity({
           {segment.messageId && renderMessage(segment.messageId)}
         </Fragment>
       ))}
-      {!items?.length && <span className="text-[11px] text-faint">No activity in this turn</span>}
+      {!items?.length && !quietEmpty && <span className="text-[11px] text-faint">No activity in this turn</span>}
     </div>
   )
 }

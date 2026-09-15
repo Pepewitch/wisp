@@ -33,6 +33,11 @@ export class TaskCompactor {
     this.timeoutMs = options.timeoutMs ?? COMPACT_TIMEOUT_MS;
   }
 
+  /** True only while this daemon owns an unfinished compaction for the task. */
+  isCompacting(taskId: string): boolean {
+    return this.inFlight.has(taskId);
+  }
+
   compact(task: Task, def: AdapterDef): Promise<CompactResult> {
     const running = this.inFlight.get(task.id);
     if (running) return running;

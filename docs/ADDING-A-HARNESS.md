@@ -171,9 +171,13 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    prefilling rather than immediately running them.
 8. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
    both together). A strategy when the harness has an RPC for it; the prompt
-   when its `/compact` runs headless as an ordinary turn. Set the strategy's
-   `recordsTurn` truthfully — the palette tells the user what a compact
-   costs.
+   when its `/compact` runs headless as a dedicated recorded turn. Prompt
+   compaction is idle-only: `/send` refuses it while a turn is active, and an
+   admission race may leave it queued for the next turn, but it must never be
+   delivered as a live steer. While either compaction shape is running,
+   `/send` also refuses ordinary messages before queueing them: a steer cannot
+   target context that is being rewritten. Set the strategy's `recordsTurn`
+   truthfully — the palette tells the user what a compact costs.
 9. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
    for IMAGES (argv template, stdin envelope, prompt-path preamble), mutually
    exclusive. The trailing `--` in an argv template is mandatory. A harness

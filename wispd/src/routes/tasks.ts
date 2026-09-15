@@ -5,7 +5,7 @@ import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
 import { trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
-import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
+import { buildAttachArgv, isCompactPrompt, ProbeError, probeCommands, type AdapterDef } from "../adapters";
 import {
   AttachError,
   decodeAttachments,
@@ -293,6 +293,7 @@ async function sendTaskResponse(
   req: Request,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
+  compacts?: TaskCompactor,
 ): Promise<Response> {
   const parsed = await jsonObjectBody(req);
   if (parsed instanceof Response) return parsed;
@@ -305,11 +306,31 @@ async function sendTaskResponse(
   if (task.archived) return err("task is archived — archived tasks are read-only", 409);
   if (task.state === "creating") return err("task is still being created", 409);
   if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
+  const running = hasRunningTurn(task.id);
+  if (
+    compacts?.isCompacting(task.id) ||
+    (running && isCompactPrompt(adapters[running.harness], running.prompt))
+  ) {
+    // Compaction rewrites the context a steer would target. Action compactors
+    // have no turn row, while native prompt compactors do; guard both shapes
+    // before a message is persisted so it is refused, never silently queued.
+    return err("compaction is still running — wait for it to finish", 409);
+  }
   const resolved = resolveSendAgent(task, body, cfg, adapters);
   if (resolved instanceof Response) return resolved;
   const { harness, model, effort, harnessChanged, def } = resolved;
   const message = promptWithSuffix(body.message as string, body.suffixPromptId as string | undefined);
   if (message === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
+  const operation = isCompactPrompt(def, message) ? "compact" as const : undefined;
+  if (operation) {
+    // A native compact command owns the whole harness turn. In particular it
+    // must never enter Claude's live-input path as if it were a correction to
+    // the work already in flight. Action-based compactors use this same
+    // refusal sentence in POST /compact; a race after this check is kept for
+    // the next turn by submitTaskMessage's delivery policy below.
+    const unavailable = idleTaskError(task, " — compaction waits for it");
+    if (unavailable) return unavailable;
+  }
   let decoded: DecodedAttachment[] = [];
   try {
     decoded = decodeAttachments(harness, def, body.attachments);
@@ -330,11 +351,13 @@ async function sendTaskResponse(
       body.clientMessageId as string | undefined,
       adapters,
       agent,
+      operation ? "next-turn-only" : "allow-steer",
     );
     return json({
       ...apiTask(getTask(task.id)!),
       disposition: result.disposition,
       message: apiTaskMessage(result.message),
+      ...(operation ? { operation } : {}),
     });
   } catch (error) {
     if (error instanceof TaskCapacityError) return err(error.message, 429);
@@ -489,7 +512,7 @@ export function taskRoute(
   }
 
   if (action === "send" && m === "POST") {
-    return sendTaskResponse(task, req, cfg, adapters);
+    return sendTaskResponse(task, req, cfg, adapters, compacts);
   }
 
   if (action === "pull-request" && m === "GET") return pullRequestResponse(task, pullRequests);
@@ -584,7 +607,7 @@ export function taskRoute(
         // prefills def.compactPrompt and never calls this route for it)
         return err(
           def.compactPrompt
-            ? `harness '${task.harness}' compacts as an ordinary turn — send ${def.compactPrompt} as a prompt`
+            ? `harness '${task.harness}' compacts as a dedicated turn — send ${def.compactPrompt} as a prompt`
             : `harness '${task.harness}' declares no compaction`,
           400,
         );

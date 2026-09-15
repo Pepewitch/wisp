@@ -15,6 +15,8 @@ import {
   createTurn,
   finishTurn,
   freeSlot,
+  markTaskMessageDelivered,
+  messagesFor,
   newTaskId,
   setTaskFields,
   transition,
@@ -116,7 +118,7 @@ describe("daemon API contracts", () => {
     const logFile = join(LOG_DIR, `${task.id}-turn1.out.log`);
     writeFileSync(logFile, "stdout\n");
     writeFileSync(logFile.replace(/\.out\.log$/, ".err.log"), "stderr\n");
-    const turnId = createTurn(task.id, 1, "inspect the API", null, logFile);
+    const turnId = createTurn(task.id, 1, "/compact keep implementation decisions", null, logFile);
     finishTurn(turnId, "done", 0, "finished");
     setTaskFields(task.id, { turn_count: 1 });
     transition(task.id, "done", "finished");
@@ -151,7 +153,13 @@ describe("daemon API contracts", () => {
     }>(detail);
     expect(detailBody).toMatchObject({ id: task.id, archived: false, diffstat: null });
     expect(detailBody.turns).toHaveLength(1);
-    expect(detailBody.turns[0]).toMatchObject({ n: 1, prompt: "inspect the API", status: "done", result: "finished" });
+    expect(detailBody.turns[0]).toMatchObject({
+      n: 1,
+      prompt: "/compact keep implementation decisions",
+      operation: "compact",
+      status: "done",
+      result: "finished",
+    });
 
     const log = await api(base, `/api/tasks/${task.id}/log?offset=0`);
     expect(log.status).toBe(200);
@@ -371,10 +379,51 @@ describe("daemon API contracts", () => {
       { message: "hi" },
     );
 
+    // A stable retry avoids launching a real harness while pinning the send
+    // response metadata that lets the composer show the compact lifecycle.
+    const completedCompact = makeTask();
+    setTaskFields(completedCompact.id, {
+      worktree_path: mkdtempSync(join(tmpdir(), "wisp-send-compact-")),
+      turn_count: 1,
+    });
+    const compactTurn = createTurn(
+      completedCompact.id,
+      1,
+      "/compact",
+      null,
+      join(LOG_DIR, `${completedCompact.id}-turn1.out.log`),
+    );
+    finishTurn(compactTurn, "done", 0, null);
+    transition(completedCompact.id, "done", "finished");
+    createTaskMessage({
+      id: "compact-retry-0001",
+      taskId: completedCompact.id,
+      text: "/compact",
+      attachmentHash: taskMessageAttachmentsFingerprint([]),
+    });
+    markTaskMessageDelivered("compact-retry-0001", "started", 1);
+    const compactRetry = await json<{ disposition: string; operation?: string }>(
+      await api(base, `/api/tasks/${completedCompact.id}/send`, "POST", {
+        message: "/compact",
+        clientMessageId: "compact-retry-0001",
+      }),
+    );
+    expect(compactRetry).toMatchObject({ disposition: "started", operation: "compact" });
+
     const running = makeTask();
     setTaskFields(running.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-send-worktree-")) });
     createTurn(running.id, 1, "running", null, join(LOG_DIR, `${running.id}-turn1.out.log`));
     transition(running.id, "running", "turn 1");
+    await expectError(
+      base,
+      `/api/tasks/${running.id}/send`,
+      409,
+      "turn 1 is still running — compaction waits for it",
+      "POST",
+      { message: "/compact keep implementation decisions", clientMessageId: "compact-must-wait" },
+    );
+    expect(messagesFor(running.id)).toHaveLength(0); // refusal happens before a queue row or live steer
+
     const queuedRes = await api(base, `/api/tasks/${running.id}/send`, "POST", {
       message: "hi",
       clientMessageId: "retry-safe-0001",

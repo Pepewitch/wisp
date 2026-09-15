@@ -28,6 +28,20 @@ function archivedTask(): ConversationDetail {
   }
 }
 
+function compactionTask(status: "running" | "done"): ConversationDetail {
+  const task = archivedTask()
+  return {
+    ...task, id: "tcompact", archived: false, state: status,
+    state_detail: status === "running" ? "turn 1" : "finished",
+    turns: [{
+      ...task.turns[0]!, task_id: "tcompact", prompt: "/compact",
+      operation: "compact", result: null, status, capture_state: "complete",
+      capture_detail: null,
+      ended_at: status === "done" ? "2026-01-01T00:01:00Z" : null,
+    }],
+  }
+}
+
 it.each(["browser", "desktop"] as const)("names evicted activity through the %s transport without requesting a lost log", async (runtime) => {
   const payload = archivedTask()
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(payload)))
@@ -44,4 +58,19 @@ it.each(["browser", "desktop"] as const)("names evicted activity through the %s 
   expect(openStream).not.toHaveBeenCalled()
   expect(String(fetch.mock.calls[0]?.[0])).toBe(runtime === "browser" ? "/api/tasks/tretained/conversation"
     : "http://127.0.0.1:45123/synthetic-capability/connections/remote-one/7/api/tasks/tretained/conversation")
+})
+
+it.each(["browser", "desktop"] as const)("renders the prompt-compaction lifecycle in the shared %s UI", (runtime) => {
+  const transport = runtime === "browser" ? sameOriginWebTransport
+    : createDesktopTransport("http://127.0.0.1:45123/synthetic-capability/", "remote-one", 7)
+  const view = render(<Conversation task={compactionTask("running")} stream={initialStreamState} />, {
+    wrapper: runtimeWrapper(transport),
+  })
+  expect(screen.getByTestId("turn-operation-status")).toHaveTextContent("compacting the session…")
+  expect(screen.queryByText("Working…")).not.toBeInTheDocument()
+  expect(screen.queryByText("No activity in this turn")).not.toBeInTheDocument()
+
+  view.rerender(<Conversation task={compactionTask("done")} stream={initialStreamState} />)
+  expect(screen.getByTestId("turn-operation-status")).toHaveTextContent("compacted")
+  expect(screen.queryByText("Show activity")).not.toBeInTheDocument()
 })

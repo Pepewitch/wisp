@@ -673,10 +673,20 @@ The harness group also carries `compact` (A5), the ONE entry among the free
 reads that costs — so the marking rule gains a clause: cost is marked
 per-entry first (`costLabel`), and the group marker is the default.
 "runs a turn" is said only where it is literally true: claude's compact IS
-an ordinary recorded turn (a prefill, not a dispatch), codex's is a turn in
+a dedicated recorded turn (a prefill, not a dispatch), codex's is a turn in
 codex's own thread; droid's summarizes without one and says "costs tokens".
-A compaction failure names what failed and points at `/fresh` — Q7's
-fallback doing its job on the path where it is actually needed.
+Prompt compact turns are identified by the daemon so browser and Desktop show
+the same `compacting the session…` / `compacted` lifecycle as action-based
+compaction without parsing private harness transcripts. A recorded prompt
+compact owns that copy in its transcript row; an out-of-band action owns one
+composer note instead. Never echo either lifecycle in both places. They are idle-only:
+an active turn gets the same `compaction waits for it` refusal as the action
+route, never a live steer. Harnesses with no declared compaction (currently
+cursor and opencode) keep honest absence—no dead palette command. A compaction
+owns the session until it settles: the composer disables send immediately,
+and the daemon refuses a racing message before it can be steered or queued.
+A compaction failure names what failed and points at `/fresh` — Q7's fallback
+doing its job on the path where it is actually needed.
 
 Tier 2's entries come from the adapter's declared `probeCommands`, never from
 a hardcoded list — availability is uneven (claude: both; droid: context only;

@@ -24,6 +24,21 @@ import type {
   ProbeIo,
 } from "./types";
 
+/**
+ * Whether a turn prompt invokes this adapter's native compaction command.
+ *
+ * Arguments and suffix prompts are part of the same command (`/compact keep
+ * the decisions`, for example), while a longer slash name such as
+ * `/compacter` is ordinary prompt text. Keeping this at the adapter boundary
+ * lets routing and API presentation agree without teaching either one about
+ * Claude specifically.
+ */
+export function isCompactPrompt(def: AdapterDef | undefined, prompt: string): boolean {
+  const command = def?.compactPrompt;
+  if (!command || !prompt.startsWith(command)) return false;
+  return prompt.length === command.length || /\s/u.test(prompt.charAt(command.length));
+}
+
 function noSession(): never {
   throw new ProbeError("no session yet — compaction needs a session to compact; run a turn first", 409);
 }

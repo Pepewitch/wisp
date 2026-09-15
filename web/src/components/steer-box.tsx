@@ -116,6 +116,7 @@ export function SteerBox({
 }: SteerBoxProps) {
   const [value, setValue] = useRememberedDraft(task?.id ?? null)
   const [sending, setSending] = useState(false)
+  const [compactingTaskId, setCompactingTaskId] = useState<string | null>(null)
   const [note, setNote] = useState<SteerNote | null>(null)
   const initialTaskId = task?.id ?? null
   const [suffixSelection, setSuffixSelection] = useState<SuffixSelection>({
@@ -123,13 +124,15 @@ export function SteerBox({
     value: null,
   })
   const agent = useTaskAgentSelection(task, harnesses)
-  const { taskId, suffixPromptId, disabled, blocked, canSend, canStop, shown } =
+  const { taskId, suffixPromptId, disabled, blocked, compacting, canSend, canStop, shown } =
     steerState({
       task,
       value,
       sending,
       note,
+      turns,
       suffixSelection,
+      compactingTaskId,
     })
   // A draft may survive a task switch, but a reusable instruction must be
   // chosen deliberately for the task that will receive it.
@@ -141,7 +144,6 @@ export function SteerBox({
   /** One task-keyed report: either a harness probe or Wisp's task-level tokens. */
   const [report, setReport] = useState<ReportState>(null)
   const dismissReport = useCallback(() => setReport(null), [])
-
   const box = useRef<HTMLTextAreaElement>(null)
   const command = useRef<HTMLDivElement>(null)
   /** where the caret goes after a pick rewrote the draft */
@@ -159,9 +161,8 @@ export function SteerBox({
     hasImage: agent.selectedHarness?.hasImage ?? hasImage,
     imageNote: agent.selectedHarness?.imageNote ?? imageNote,
   })
-  const commands = useSteerCommands({ task, status, setNote, setReport })
+  const commands = useSteerCommands({ task, status, setNote, setReport, setCompactingTaskId })
   const archive = commands.archive
-
   useEffect(() => {
     const pos = caret.current
     if (pos === null) return
@@ -239,7 +240,7 @@ export function SteerBox({
   const groups = slashGroups(task, probeCommands, skills, compact)
   const shownReport =
     report && task && report.taskId === task.id ? report : null
-  const runtimeStatus = composerStatus(task, blocked)
+  const runtimeStatus = composerStatus(task, blocked, compacting)
 
   return (
     <div
@@ -273,7 +274,7 @@ export function SteerBox({
             running note takes over for as long as there is live work. One
             line either way: the footer never grows a second one under the
             reader, and the session id comes back the moment the work ends. */}
-        {task && !runtimeStatus && <ResumeHint task={task} />}
+        {task && !runtimeStatus && !compacting && <ResumeHint task={task} />}
 
         <SteerComposer
           task={task}
@@ -337,18 +338,31 @@ interface SuffixSelection {
   value: string | null
 }
 
+function settledCompactionNote(note: SteerNote, turns?: Turn[]): SteerNote | null {
+  if (note.compactTurn === undefined) return note
+  const turn = turns?.find((turn) => turn.n === note.compactTurn)
+  // Once its recorded turn arrives, the transcript owns running, completion,
+  // and failure presentation. Keep this note only across the response-to-SSE
+  // handoff so there is never a moment with no feedback.
+  return turn ? null : note
+}
+
 function steerState({
   task,
   value,
   sending,
   note,
+  turns,
   suffixSelection,
+  compactingTaskId,
 }: {
   task: ApiTask | null
   value: string
   sending: boolean
   note: SteerNote | null
+  turns?: Turn[]
   suffixSelection: SuffixSelection
+  compactingTaskId: string | null
 }) {
   const taskId = task?.id ?? null
   const suffixPromptId =
@@ -357,12 +371,25 @@ function steerState({
   // A stuck task still owns a live turn; it must stop/steer like running,
   // rather than offering a send the daemon will reject.
   const blocked = task?.state === "running" || task?.state === "stuck"
+  const compacting = compactionIsRunning(taskId, note, turns, compactingTaskId)
   const hasMessage = value.trim().length > 0
-  const canSend = hasMessage && !disabled && !sending
+  const canSend = hasMessage && !disabled && !sending && !compacting
   const hasBackground = task?.background && task.background.state !== "none"
   const canStop = (blocked || hasBackground) && !hasMessage && !disabled && !sending
-  const shown = note && task && note.taskId === task.id ? note : null
-  return { taskId, suffixPromptId, disabled, blocked, canSend, canStop: Boolean(canStop), shown }
+  const shown = note && task && note.taskId === task.id ? settledCompactionNote(note, turns) : null
+  return { taskId, suffixPromptId, disabled, blocked, compacting, canSend, canStop: Boolean(canStop), shown }
+}
+
+function compactionIsRunning(
+  taskId: string | null,
+  note: SteerNote | null,
+  turns: Turn[] | undefined,
+  compactingTaskId: string | null
+): boolean {
+  if (taskId !== null && compactingTaskId === taskId) return true
+  if (turns?.some((turn) => turn.operation === "compact" && turn.status === "running")) return true
+  if (note?.taskId !== taskId || note.compactTurn === undefined) return false
+  return !turns?.some((turn) => turn.n === note.compactTurn)
 }
 
 function slashGroups(

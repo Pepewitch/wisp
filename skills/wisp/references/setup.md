@@ -219,7 +219,8 @@ it; it mints no credential. Every other API route requires
 - `POST /api/tasks/:id/probe` (`{command: "context"|"usage"}`) ·
   `GET /api/tasks/:id/skills`
 - `POST /api/tasks/:id/compact` — run the harness's own compaction out of band
-  (droid/codex; for claude send `/compact` as an ordinary turn)
+  (droid/codex; for claude send `/compact` as a dedicated recorded turn);
+  `/send` returns 409 while either shape is still compacting
 - `GET /api/status` · `GET /api/repos` · `POST|DELETE /api/projects` ·
   `POST /api/projects/copy-preview`
 - `GET|POST /api/suffix-prompts` ·

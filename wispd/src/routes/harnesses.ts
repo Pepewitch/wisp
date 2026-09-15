@@ -74,8 +74,8 @@ export function harnessesRoute(
       // A5: how this harness compacts, if it does. "action" = the daemon runs
       // it out of band (recordsTurn tells the entry whether to say "runs a
       // turn" — codex does, droid doesn't); "prompt" = the harness's own
-      // compact command rides an ordinary turn, so the palette prefills it
-      // (claude). null = compaction is honestly absent.
+      // compact command rides a dedicated, idle-only turn, so the palette
+      // prefills it (claude). null = compaction is honestly absent.
       compact: def.compact
         ? { kind: "action" as const, recordsTurn: COMPACT_STRATEGIES[def.compact]?.recordsTurn ?? false }
         : def.compactPrompt

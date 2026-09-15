@@ -233,11 +233,12 @@ export interface AdapterDef {
    */
   compact?: string | null;
   /**
-   * The harness's own compact command, sent as an ORDINARY turn prompt
+   * The harness's own compact command, sent as a dedicated turn prompt
    * (v0.3 A5): claude's `/compact` runs headless under print mode (the
    * v0.2-observed path), so Wisp needs no out-of-band machinery — the
-   * palette prefills it and the turn is recorded like any other. The value
-   * is the prompt itself ("/compact"), so the UI never hardcodes it.
+   * palette prefills it and the turn is recorded like any other. It is
+   * idle-only and must never use live steering. The value is the prompt
+   * itself ("/compact"), so the UI never hardcodes it.
    */
   compactPrompt?: string;
 }

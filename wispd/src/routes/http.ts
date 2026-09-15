@@ -1,5 +1,5 @@
 import { cleanupSummary } from "../archive-progress";
-import { formatUsage, type AdapterDef, type UsageSummary } from "../adapters";
+import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
 import { typeName } from "../validate";
@@ -50,6 +50,8 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
  * rather than guessing at a shape.
  */
 export type ApiTurn = Omit<Turn, "attachments_json" | "usage_json" | "outcome_json" | "capture_categories_json"> & {
+  /** Adapter-declared lifecycle the client can present without parsing private harness logs. */
+  operation?: "compact";
   attachments: AttachmentRecord[];
   usage: UsageSummary | null;
   capture_categories: Record<string, { records: number; bytes: number }> | null;
@@ -83,6 +85,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
   }
   return {
     ...rest,
+    ...(isCompactPrompt(def, t.prompt) ? { operation: "compact" as const } : {}),
     capture_state: turnCaptureState(t),
     diagnostic_state: turnDiagnosticState(t),
     attachments: parseAttachmentManifest(attachments_json),
