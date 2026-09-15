@@ -11,11 +11,18 @@ OpenCode. Wisp runs as your user, not in a sandbox.
 ## Install the desktop app and daemon
 
 ```sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 open -a Wisp
 ```
 
-The Cask includes the CLI/daemon Formula. Neither needs Bun or Node.
+That installs the CLI/daemon Formula and the Desktop Cask. Neither needs Bun
+or Node. Name both: since Homebrew 6.0 a non-official tap must be trusted, and
+Homebrew trusts only the fully qualified names you pass it, never their
+dependencies. `brew install --cask Pepewitch/tap/wisp-desktop` on its own
+stops with `Refusing to load formula pepewitch/tap/wisp from untrusted tap`
+because the Cask depends on that Formula. See
+[Tap Trust](https://docs.brew.sh/Tap-Trust).
+
 Homebrew checks the release checksums; current Desktop releases are Developer
 ID signed and notarized. If macOS rejects a current app, stop and verify the
 download and signature. Do not disable Gatekeeper or remove quarantine to
@@ -107,6 +114,7 @@ command synchronizes it. For a damaged app, quit it and run
 
 | Problem | Next step |
 | --- | --- |
+| Homebrew refuses to load `pepewitch/tap/wisp` from an untrusted tap | Install both names, or trust the Formula with `brew trust --formula Pepewitch/tap/wisp` and install again. `brew trust Pepewitch/tap` is broader: it accepts every current and future item in the tap. |
 | Local daemon is unavailable | Run `brew services info wisp`, then `wisp doctor`. Start it with `brew services start wisp` if needed. |
 | A green auth check but a failed task | Check the daemon's credentials, not just your shell's; see [service credentials](INSTALL.md#harness-credentials-under-a-service-manager). |
 | Port is occupied | Inspect it with `lsof -nP -iTCP:8710 -sTCP:LISTEN`, substituting the port in `~/.wisp/config.json`. Stop the unintended listener or change Wisp's port, then restart the service. |

@@ -110,13 +110,15 @@ ${bullets}
 Apple Silicon macOS (12.3 configured minimum):
 
 \`\`\`sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 open -a Wisp
 \`\`\`
 
-The Cask installs the separate daemon Formula as a dependency. Existing
-updater-capable Desktop builds can use **Updates → Check now**, then **Update
-Desktop and relaunch**. Update **Local daemon** separately. The legacy alpha
+The Cask installs the separate daemon Formula as a dependency. Name both:
+Homebrew trusts only the fully qualified names you install from a non-official
+tap, so the Cask alone refuses to load that Formula. Existing updater-capable
+Desktop builds can use **Updates → Check now**, then **Update Desktop and
+relaunch**. Update **Local daemon** separately. The legacy alpha
 channel URL remains compatible and advertises the regular ${version} version.
 For Homebrew recovery or older builds without an updater:
 
