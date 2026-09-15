@@ -36,13 +36,16 @@ usable without Wisp Desktop.
 On Apple Silicon, install the desktop interface and daemon together with:
 
 ```sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 ```
 
 The Cask depends on the separate `wisp` Formula, so Homebrew installs the
-CLI/daemon too when needed. The app does not bundle or own a child daemon;
-Local uses the standard `~/.wisp` profile and Homebrew service. Public alpha.8
-is ad-hoc signed and not notarized. Starting with alpha.12, releases fail
+CLI/daemon too when needed. Both names are passed because Homebrew trusts only
+the fully qualified names it is given from a non-official tap, not their
+dependencies; the Cask alone stops with `Refusing to load formula
+pepewitch/tap/wisp from untrusted tap`. The app does not bundle or own a child
+daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Public
+alpha.8 is ad-hoc signed and not notarized. Starting with alpha.12, releases fail
 closed unless Developer ID signing and notarization pass; do not bypass
 Gatekeeper for a current artifact that fails verification. The public
 alpha.12-to-alpha.13 self-update passed end to end on one Apple Silicon Mac.

@@ -892,7 +892,7 @@ worktree, and dirty path. Never infer preservation from a successful command.
 For a fresh Mac:
 
 ```sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 wisp init
 brew services start wisp
 wisp doctor --harness droid
@@ -900,12 +900,19 @@ brew test Pepewitch/tap/wisp
 open -a Wisp
 ```
 
+Use fully qualified names everywhere. A fresh Mac has an empty Homebrew trust
+store, and Homebrew trusts only the names it is given, never their
+dependencies: `brew install --cask Pepewitch/tap/wisp-desktop` alone stops with
+`Refusing to load formula pepewitch/tap/wisp from untrusted tap`. A machine
+that trusted these items in an earlier release cannot reproduce that failure,
+so read `brew trust` before believing a fresh-install result from it.
+
 For an existing installation:
 
 ```sh
 brew update
-brew upgrade wisp
-brew upgrade --cask --greedy wisp-desktop
+brew upgrade Pepewitch/tap/wisp
+brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop
 brew services restart wisp
 wisp version --json
 wisp doctor --harness droid

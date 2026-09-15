@@ -308,13 +308,16 @@ an ad-hoc development build may require the normal Finder Open confirmation.
 The public desktop package is a Homebrew Cask:
 
 ```sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 ```
 
 The Cask installs `Wisp.app` and declares the separate Wisp Formula as a
 required dependency, so a machine without the CLI/daemon receives it in the
-same Homebrew transaction. The app never bundles or owns a daemon child; Local
-uses the standard Formula service and asks before initializing or starting it.
+same Homebrew transaction. Both names are given because Homebrew's tap trust
+covers only the fully qualified names on the command line: installing the Cask
+alone refuses to load the Formula it depends on. The app never bundles or owns
+a daemon child; Local uses the standard Formula service and asks before
+initializing or starting it.
 
 `scripts/release-desktop.ts` builds from a clean source identity, checks that
 the Cargo, Tauri, plist, and compiled user-agent versions agree, verifies the

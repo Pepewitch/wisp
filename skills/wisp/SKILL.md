@@ -32,11 +32,13 @@ and daemon reachability, exiting nonzero and naming what failed. Daemon down →
 start it under the host's supervisor, never a bare `wisp serve &` (recipes:
 [references/setup.md](references/setup.md)).
 
-On Apple Silicon, `brew install --cask Pepewitch/tap/wisp-desktop` installs the
-optional Wisp Desktop app and pulls in the separate daemon Formula when it is
-absent. Desktop Local uses the standard Wisp profile; each saved remote tab is
-a separate reachable daemon. Installation, connections, native project
-picking, and removal behavior are in the setup reference.
+On Apple Silicon, `brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop`
+installs the optional Wisp Desktop app together with the separate daemon
+Formula it depends on; Homebrew's tap trust covers only the names passed to it,
+so the Cask alone fails on that Formula. Desktop Local uses the standard Wisp
+profile; each saved remote tab is a separate reachable daemon. Installation,
+connections, native project picking, and removal behavior are in the setup
+reference.
 
 Desktop and daemon releases are independent. In Desktop, use the **Updates**
 popover: **Wisp Desktop** is the global signed application update and the named

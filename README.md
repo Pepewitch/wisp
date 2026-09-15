@@ -37,12 +37,14 @@ agent. Wisp itself needs no Node or Bun runtime.
 ### macOS, Apple Silicon
 
 ```sh
-brew install --cask Pepewitch/tap/wisp-desktop
+brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 open -a Wisp
 ```
 
-This installs both Desktop and the CLI/daemon. In the app, finish Local setup,
-add a repository, and create a task. For CLI-only installation and
+This installs both the CLI/daemon and Desktop. Name both: Homebrew trusts only
+the fully qualified names you install from a non-official tap, so installing
+the Cask alone stops on the Formula it depends on. In the app, finish Local
+setup, add a repository, and create a task. For CLI-only installation and
 troubleshooting, see the [macOS guide](docs/INSTALL-MACOS.md).
 
 ### Linux, x86_64
