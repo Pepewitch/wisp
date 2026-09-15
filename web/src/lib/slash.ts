@@ -87,6 +87,8 @@ export interface SlashEntry {
   compact?: boolean;
   /** A custom harness command, namespaced so it cannot collide with a skill. */
   command?: boolean;
+  /** A local harness command whose honest equivalent is an external page. */
+  externalHref?: string;
   /**
    * A5/Q6: the cost marker, overriding the group's `costsTurn` marker. The
    * harness group is free reads EXCEPT compact, so the one costing entry
@@ -246,6 +248,26 @@ const TIER2_READS: Record<ProbeCommandName, { hint: string; keywords: string[] }
 
 export function tier2Entries(commands: ProbeCommandName[] | undefined): SlashEntry[] {
   return (commands ?? []).map((name) => ({ name, probe: name, ...TIER2_READS[name] }));
+}
+
+/**
+ * Droid's `/limits` is a local account-management pane, not a model prompt
+ * and not an out-of-turn JSON-RPC read. Wisp cannot embed that terminal pane,
+ * so it opens the same Factory usage destination Droid uses when the pane is
+ * unavailable (including enterprise accounts).
+ */
+export function limitsEntry(harness: string): SlashEntry[] {
+  if (harness !== "droid") return [];
+  return [
+    {
+      name: "limits",
+      hint: "manage token usage limits and overage preferences",
+      // Deliberately no "usage" alias: /usage is a separate harness read,
+      // and Droid does not expose one through its headless protocol.
+      keywords: ["quota", "credits", "overage", "billing"],
+      externalHref: "https://app.factory.ai/settings/usage",
+    },
+  ];
 }
 
 /**

@@ -60,6 +60,24 @@ export function externalLinkProps(
 }
 
 /**
+ * Activate a trusted external destination from a command rather than an
+ * anchor. Browser activation must stay synchronous so popup blockers see the
+ * originating key or pointer event; Desktop uses the same narrow native
+ * bridge as external anchors.
+ */
+export function openExternalLink(href: string): void {
+  const url = safeHttpUrl(href)
+  if (!url) return
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener,noreferrer")
+    return
+  }
+  void desktopBridge.openExternalUrl(url).catch((error: unknown) => {
+    console.error("could not open a link outside the app", error)
+  })
+}
+
+/**
  * A handler that reveals one of a task's worktree files, or `undefined` when
  * this client cannot — which is most of the time, and deliberately visible as
  * an absent button rather than one that fails.

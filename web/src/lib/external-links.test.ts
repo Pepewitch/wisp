@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { externalLinkProps, revealFileHandler } from "./external-links"
+import {
+  externalLinkProps,
+  openExternalLink,
+  revealFileHandler,
+} from "./external-links"
 
 const isTauri = vi.hoisted(() => vi.fn(() => false))
 vi.mock("@tauri-apps/api/core", () => ({ isTauri }))
@@ -115,6 +119,34 @@ describe("external link props", () => {
     externalLinkProps("https://example.test/a")!.onClick(click() as unknown as Click)
     await Promise.resolve()
     expect(error).toHaveBeenCalled()
+  })
+})
+
+describe("openExternalLink", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    isTauri.mockReturnValue(false)
+    openExternalUrl.mockReset()
+    openExternalUrl.mockResolvedValue(undefined)
+  })
+
+  it("opens a safe URL in a new browser tab without an opener", () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null)
+    openExternalLink("https://example.test/settings")
+    expect(open).toHaveBeenCalledWith(
+      "https://example.test/settings",
+      "_blank",
+      "noopener,noreferrer"
+    )
+  })
+
+  it("uses the native bridge on Desktop and refuses unsafe schemes", () => {
+    isTauri.mockReturnValue(true)
+    openExternalLink("https://example.test/settings")
+    openExternalLink("javascript:alert(1)")
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(
+      "https://example.test/settings"
+    )
   })
 })
 
