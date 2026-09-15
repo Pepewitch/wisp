@@ -25,6 +25,15 @@ const LOCAL = {
   ready: true,
 } as const
 
+const REMOTE = {
+  id: "remote-one",
+  kind: "remote",
+  name: "Remote one",
+  url: "https://remote.example.test",
+  instanceId: "wisp-instance-remote-one",
+  ready: true,
+} as const
+
 const REPLACEMENT_RECONNECT = {
   connectionId: "remote-one",
   url: "https://replacement.example.test",
@@ -689,6 +698,55 @@ describe("desktop connection chrome", () => {
     expect(
       screen.getByRole("button", { name: "At most 8 connections" })
     ).toBeDisabled()
+  })
+})
+
+/**
+ * The "…" that manages a connection belongs to the connection, so it is drawn
+ * inside that connection's tab rather than past the row of them.
+ */
+describe("the active tab's manage menu", () => {
+  it("keeps the manage menu inside the tab it manages", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    renderChrome(bootstrap([LOCAL, REMOTE]), bridge())
+
+    // "…" two controls past the tab row read as "more connections" while it
+    // opened the ACTIVE connection's settings; it lives in the chip now
+    const chips = screen.getAllByTestId("connection-tab-chip")
+    expect(chips).toHaveLength(1)
+    expect(chips[0]).toContainElement(screen.getByRole("tab", { name: "Local" }))
+    expect(chips[0]).toContainElement(
+      screen.getByRole("button", { name: "Manage Local" })
+    )
+    // and nothing manages a connection you are not looking at
+    expect(screen.queryByRole("button", { name: "Manage Remote one" })).toBeNull()
+  })
+
+  it("moves the manage menu to whichever connection is selected", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    renderChrome(bootstrap([LOCAL, REMOTE]), bridge())
+
+    fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+
+    const chip = screen.getByTestId("connection-tab-chip")
+    expect(chip).toContainElement(screen.getByRole("tab", { name: "Remote one" }))
+    expect(chip).toContainElement(
+      screen.getByRole("button", { name: "Manage Remote one" })
+    )
+    expect(screen.queryByRole("button", { name: "Manage Local" })).toBeNull()
+  })
+
+  it("leaves the tablist's arrow keys reading tabs alone", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    renderChrome(bootstrap([LOCAL, REMOTE]), bridge())
+
+    // the menu is a sibling of the tab inside the chip, never a child of it:
+    // a button inside a button is invalid, and roving focus must skip it
+    const tablist = screen.getByRole("tablist", { name: "Daemon connections" })
+    expect(tablist.querySelectorAll("[role=tab]")).toHaveLength(2)
+    expect(
+      screen.getByRole("tab", { name: "Local" }).querySelector("button")
+    ).toBeNull()
   })
 })
 

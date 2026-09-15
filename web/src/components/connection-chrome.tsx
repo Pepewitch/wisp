@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
 
 import {
   ConnectionDialogs,
@@ -35,8 +42,11 @@ import { useDesktopConnections } from "@/lib/desktop-connections"
 import { STATE_LABEL } from "@/lib/state"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import type { TaskState } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 const DIRECT_CONNECTION_LIMIT = 4
+/** The trailing control inside a tab chip: shorter than the 26px standalone glyph. */
+const TAB_ACTION_SIZE = "size-5 shrink-0 rounded-[5px]"
 const ADD_CONNECTION_ACTION = "__add_connection__"
 
 function errorMessage(error: unknown): string {
@@ -88,22 +98,40 @@ function connectionIssue(
   return null
 }
 
+/**
+ * One connection tab, and — when it is the selected one — the menu that
+ * manages it, inside the same chip.
+ *
+ * The menu used to sit past the `+` button, two controls away from the tab it
+ * acted on, so "…" beside a row of connections read as "more connections"
+ * while it actually opened the ACTIVE one's settings. It belongs to the tab,
+ * so it is drawn in the tab: the chip carries the selected background and the
+ * tab button goes transparent inside it, which keeps one accent shape on
+ * screen rather than a chip with a second button bolted to its side.
+ *
+ * `actions` is a slot rather than a prop bundle because a `role="tab"` button
+ * cannot contain another button — the menu is a SIBLING of the tab inside the
+ * chip, and the tablist's arrow keys still find `[role=tab]` alone.
+ */
 export function ConnectionTab({
   connection,
   active,
   attention,
   reachability = "unknown",
   onSelect,
+  actions,
 }: {
   connection: DesktopConnectionMetadata
   active: boolean
   attention?: Exclude<TaskState, "done"> | null
   reachability?: ConnectionReachability
   onSelect: () => void
+  /** The active tab's own menu; nothing at all on the others. */
+  actions?: ReactNode
 }) {
   const issue = connectionIssue(connection, reachability)
   const unavailable = issue !== null
-  return (
+  const tab = (
     <Tab
       role="tab"
       aria-selected={active}
@@ -111,7 +139,7 @@ export function ConnectionTab({
       active={active}
       onClick={onSelect}
       title={`${connection.name} · ${connection.kind === "local" ? "This Mac" : "Remote"}${issue ? ` · ${issue}` : ""}`}
-      className="max-w-40"
+      className={cn("max-w-40", actions && "bg-transparent pr-1")}
     >
       <span className="[&>svg]:size-3.5 [&>svg]:text-muted-foreground">
         <ConnectionGlyph kind={connection.kind} />
@@ -129,6 +157,19 @@ export function ConnectionTab({
         </span>
       )}
     </Tab>
+  )
+  if (!actions) return tab
+  return (
+    <span
+      data-testid="connection-tab-chip"
+      className={cn(
+        "flex min-w-0 shrink-0 items-center rounded-md pr-0.5",
+        active && "bg-accent"
+      )}
+    >
+      {tab}
+      {actions}
+    </span>
   )
 }
 
@@ -176,14 +217,23 @@ export function ConnectionChromeSpecimen() {
               index === 1 ? "needs-input" : index === 2 ? "running" : null
             }
             onSelect={() => undefined}
+            actions={
+              index === 0 ? (
+                <Button
+                  size="sm"
+                  icon
+                  aria-label="Manage Local"
+                  className={TAB_ACTION_SIZE}
+                >
+                  <More />
+                </Button>
+              ) : undefined
+            }
           />
         ))}
       </div>
       <Button size="sm" icon aria-label="Add remote connection">
         <Plus />
-      </Button>
-      <Button size="sm" icon aria-label="Manage Local">
-        <More />
       </Button>
     </div>
   )
@@ -286,6 +336,15 @@ function DesktopConnections() {
                 attention={attention}
                 reachability={desktop.reachability.get(entry.metadata.id)}
                 onSelect={() => void desktop.select(entry.metadata.id)}
+                actions={
+                  active ? (
+                    <ActiveConnectionActions
+                      onDialog={setDialog}
+                      onError={setActionError}
+                      disabled={desktop.pendingAction !== null}
+                    />
+                  ) : undefined
+                }
               />
             )
           })}
@@ -339,11 +398,6 @@ function DesktopConnections() {
         >
           <Plus />
         </Button>
-        <ActiveConnectionActions
-          onDialog={setDialog}
-          onError={setActionError}
-          disabled={desktop.pendingAction !== null}
-        />
       </div>
       <ConnectionDialogs
         dialog={dialog}
@@ -454,8 +508,11 @@ function ActiveConnectionActions({
       icon={<More />}
       iconOnly
       disabled={disabled}
-      align="end"
-      className={mobile ? "size-11" : undefined}
+      // The trigger sits in the tab row now, not at the right edge of the
+      // chrome: a menu that opened leftward from here would reach for an edge
+      // that is no longer beside it.
+      align={mobile ? "end" : "start"}
+      className={mobile ? "size-11" : TAB_ACTION_SIZE}
     >
       <MenuItem onClick={() => onDialog("rename")}>
         <span className="flex items-center gap-2 [&>svg]:size-3.5">
