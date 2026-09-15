@@ -677,7 +677,9 @@ a dedicated recorded turn (a prefill, not a dispatch), codex's is a turn in
 codex's own thread; droid's summarizes without one and says "costs tokens".
 Prompt compact turns are identified by the daemon so browser and Desktop show
 the same `compacting the session…` / `compacted` lifecycle as action-based
-compaction without parsing private harness transcripts. They are idle-only:
+compaction without parsing private harness transcripts. A recorded prompt
+compact owns that copy in its transcript row; an out-of-band action owns one
+composer note instead. Never echo either lifecycle in both places. They are idle-only:
 an active turn gets the same `compaction waits for it` refusal as the action
 route, never a live steer. Harnesses with no declared compaction (currently
 cursor and opencode) keep honest absence—no dead palette command. A compaction

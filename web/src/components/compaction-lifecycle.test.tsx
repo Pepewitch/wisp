@@ -6,6 +6,7 @@ import type { ApiTask, HarnessCompact, SendResponse, Turn } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { SteerBox } from "./steer-box"
+import { TurnProgress } from "./turn-progress"
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -89,13 +90,17 @@ describe("prompt compaction lifecycle", () => {
     )
 
     view.rerender(
-      <SteerBox
-        task={task({ state: "done", turn_count: 4 })}
-        compact={compact}
-        turns={[compactTurn("done")]}
-      />
+      <>
+        <TurnProgress turn={compactTurn("done")} hasLiveItems={false} />
+        <SteerBox
+          task={task({ state: "done", turn_count: 4 })}
+          compact={compact}
+          turns={[compactTurn("done")]}
+        />
+      </>
     )
-    expect(screen.getByTestId("steer-note")).toHaveTextContent("compacted")
+    expect(screen.getAllByText("compacted")).toHaveLength(1)
+    expect(screen.queryByTestId("steer-note")).toBeNull()
   })
 
   it("keeps the compact draft when an active turn refuses it", async () => {
@@ -126,13 +131,17 @@ describe("prompt compaction lifecycle", () => {
 
   it("blocks steering while the compact turn is running", () => {
     const onSend = vi.fn()
+    const turn = compactTurn("running")
     render(
-      <SteerBox
-        task={task({ state: "running", turn_count: 4 })}
-        compact={compact}
-        turns={[compactTurn("running")]}
-        onSend={onSend}
-      />,
+      <>
+        <TurnProgress turn={turn} hasLiveItems={false} />
+        <SteerBox
+          task={task({ state: "running", turn_count: 4 })}
+          compact={compact}
+          turns={[turn]}
+          onSend={onSend}
+        />
+      </>,
       { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection")) }
     )
     const box = screen.getByPlaceholderText(
@@ -143,9 +152,9 @@ describe("prompt compaction lifecycle", () => {
     expect(send).toBeDisabled()
     fireEvent.keyDown(box, { key: "Enter" })
     expect(onSend).not.toHaveBeenCalled()
-    expect(screen.getByTestId("composer-running-row")).toHaveTextContent(
-      "compacting the session…"
-    )
+    expect(screen.getAllByText("compacting the session…")).toHaveLength(1)
+    expect(screen.queryByTestId("composer-running-row")).toBeNull()
+    expect(screen.queryByTestId("steer-note")).toBeNull()
   })
 })
 
@@ -180,6 +189,7 @@ describe("action compaction lifecycle", () => {
     expect(await screen.findByTestId("steer-note")).toHaveTextContent(
       "compacting the session…"
     )
+    expect(screen.getAllByText("compacting the session…")).toHaveLength(1)
 
     fireEvent.change(box, { target: { value: "change direction" } })
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled()

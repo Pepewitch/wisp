@@ -31,7 +31,6 @@ import {
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
-import { COMPACTED_TEXT } from "@/lib/compaction"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   commandEntries,
@@ -275,7 +274,7 @@ export function SteerBox({
             running note takes over for as long as there is live work. One
             line either way: the footer never grows a second one under the
             reader, and the session id comes back the moment the work ends. */}
-        {task && !runtimeStatus && <ResumeHint task={task} />}
+        {task && !runtimeStatus && !compacting && <ResumeHint task={task} />}
 
         <SteerComposer
           task={task}
@@ -339,16 +338,13 @@ interface SuffixSelection {
   value: string | null
 }
 
-function settledCompactionNote(note: SteerNote, turns?: Turn[]): SteerNote {
-  if (!note.compactTurn) return note
+function settledCompactionNote(note: SteerNote, turns?: Turn[]): SteerNote | null {
+  if (note.compactTurn === undefined) return note
   const turn = turns?.find((turn) => turn.n === note.compactTurn)
-  if (turn?.status === "done") return { taskId: note.taskId, tone: "muted", text: COMPACTED_TEXT }
-  if (turn?.status !== "failed" && turn?.status !== "interrupted") return note
-  return {
-    taskId: note.taskId,
-    tone: "error",
-    text: turn.status === "interrupted" ? "compaction interrupted" : "compaction failed",
-  }
+  // Once its recorded turn arrives, the transcript owns running, completion,
+  // and failure presentation. Keep this note only across the response-to-SSE
+  // handoff so there is never a moment with no feedback.
+  return turn ? null : note
 }
 
 function steerState({
