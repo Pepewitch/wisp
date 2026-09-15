@@ -1,7 +1,6 @@
 import type { RefObject } from "react"
 
 import { CopyButton } from "@/components/copy-button"
-import { AttachButton } from "@/components/pending-attachments"
 import { Meta, StateDot } from "@/components/primitives"
 import { ProbePanel } from "@/components/probe-panel"
 import { SlashPalette } from "@/components/slash-palette"
@@ -10,7 +9,6 @@ import { useTaskUsage } from "@/hooks/queries"
 import type { ReportState, SteerNote } from "@/hooks/useSteerCommands"
 import { useTick } from "@/hooks/useTick"
 import { ApiError } from "@/lib/api"
-import type { PendingAttachments } from "@/lib/attachments"
 import { elapsed } from "@/lib/state"
 import type { ApiTask, Turn } from "@/lib/types"
 import type { SlashEntry, SlashGroup, SlashToken } from "@/lib/slash"
@@ -28,7 +26,6 @@ export function SteerOverlays({
   touch,
   runningSince,
   composerStatus,
-  attachments,
   note,
 }: {
   shownReport: ReportState
@@ -42,7 +39,6 @@ export function SteerOverlays({
   touch: boolean
   runningSince: string | null
   composerStatus: string | null
-  attachments: PendingAttachments
   note: SteerNote | null
 }) {
   const tokensOpen = shownReport?.kind === "tokens" && task !== null
@@ -81,13 +77,7 @@ export function SteerOverlays({
           touch={touch}
         />
       )}
-      <ComposerUtilityRow
-        task={task}
-        startedAt={runningSince}
-        status={composerStatus}
-        attachments={attachments}
-        touch={touch}
-      />
+      <RunningRow startedAt={runningSince} status={composerStatus} />
       {note && <SteerNoteRow note={note} />}
     </>
   )
@@ -137,33 +127,44 @@ export function TaskIdentity({ task }: { task: ApiTask }) {
   )
 }
 
-function ComposerUtilityRow({
-  task,
+/**
+ * The one line above the composer while a turn runs: how long it has been
+ * running on the left, and on the right what a send will and will not do.
+ *
+ * It occupies the row the resume hint owns the rest of the time — the hint
+ * shows only once the turn has ended — so the space above the composer stays
+ * one line either way, and never an empty one.
+ */
+function RunningRow({
   startedAt,
   status,
-  attachments,
-  touch,
 }: {
-  task: ApiTask | null
   startedAt: string | null
   status: string | null
-  attachments: PendingAttachments
-  touch: boolean
 }) {
   const now = useTick(Boolean(startedAt))
   const text = startedAt ? elapsed(startedAt, now) : null
-  if (!task && !text && !status) return null
+  if (!text && !status) return null
   return (
-    <div data-testid="composer-utility-row" className="mb-1.5 flex min-h-6 items-center gap-2 pl-1.5">
+    <div
+      data-testid="composer-running-row"
+      className="mb-1.5 flex items-center gap-2 pl-1.5"
+      aria-live="off"
+    >
       {text && (
-        <span className="flex min-w-0 items-center gap-2" aria-live="off">
+        <span className="flex min-w-0 items-center gap-2">
           <StateDot state="running" className="animate-breathe" />
-          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">{text}</span>
+          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+            {text}
+          </span>
         </span>
       )}
       <span className="flex-1" />
-      {status && <span className="min-w-0 truncate text-right text-[11px] text-faint">{status}</span>}
-      {task && <AttachButton pending={attachments} touch={touch} className={touch ? "-my-2" : undefined} />}
+      {status && (
+        <span className="min-w-0 truncate text-right text-[11.5px] text-faint">
+          {status}
+        </span>
+      )}
     </div>
   )
 }

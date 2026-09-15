@@ -16,7 +16,6 @@ import {
 } from "@/lib/model-choice"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { HarnessInfo } from "@/lib/types"
-import { cn } from "@/lib/utils"
 
 export interface TaskAgentChoice {
   harness: string
@@ -70,7 +69,9 @@ export function TaskAgentPicker({
         }
         aria-label={touch ? `${value.harness} · ${value.model}` : undefined}
         disabled={disabled || ordered.length === 0}
-        className={cn("min-w-0 max-w-full", touch && "shrink")}
+        // the one control in the bar allowed to yield width: it truncates
+        // inside its own box, the way the create dialog's harness chip does
+        className="min-w-0 max-w-full shrink"
       >
         {ordered.length === 0 ? (
           <MenuNote>No harnesses reported by the daemon.</MenuNote>

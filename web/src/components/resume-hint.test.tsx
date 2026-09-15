@@ -145,6 +145,37 @@ describe("ResumeHint", () => {
     await waitFor(() => expect(screen.queryByTestId("resume-hint")).toBeNull())
   })
 
+  it("a running turn puts the send note in the hint's place, above the composer", async () => {
+    stubApi((path) =>
+      path.endsWith("/attach")
+        ? { status: 200, body: { argv: ["claude", "--resume", "s-1"], cwd: "/tmp/wt", message: null } }
+        : { status: 404, body: { error: "unstubbed" } },
+    )
+    mount(<SteerBox task={task({ state: "running" })} onSend={async () => {}} />)
+
+    // one line above the composer either way: mid-turn it says what a send
+    // will not do, and the session id comes back when the turn ends
+    const note = await screen.findByText("running · send won't interrupt")
+    const composer = screen.getByTestId("steer-composer")
+    expect(screen.queryByTestId("resume-hint")).toBeNull()
+    expect(
+      note.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it("background work holds the row too — one line, not two stacked", async () => {
+    stubApi((path) =>
+      path.endsWith("/attach")
+        ? { status: 200, body: { argv: ["claude", "--resume", "s-1"], cwd: "/tmp/wt", message: null } }
+        : { status: 404, body: { error: "unstubbed" } },
+    )
+    const background = { state: "running", groups: 1 } as ApiTask["background"]
+    mount(<SteerBox task={task({ background })} onSend={async () => {}} />)
+
+    await screen.findByText(/send won't stop it/)
+    expect(screen.queryByTestId("resume-hint")).toBeNull()
+  })
+
   it("sits inside the steer box, directly above the composer", async () => {
     stubApi((path) =>
       path.endsWith("/attach")

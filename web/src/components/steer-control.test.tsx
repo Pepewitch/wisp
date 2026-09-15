@@ -283,19 +283,57 @@ describe("the composer control bar answers its own width", () => {
     expect(screen.getByText("codex").closest("span.hidden")?.className).toContain("@lg:flex")
   })
 
-  it("puts the timer, running context, and attachment action in one row above the input", () => {
+  it("puts the timer and the running note on the line above the input, and the paperclip in the bar", () => {
     mount(<SteerBox task={task()} runningSince="2026-09-14T12:00:00.000Z" />)
 
-    const row = screen.getByTestId("composer-utility-row")
+    const row = screen.getByTestId("composer-running-row")
     const composer = screen.getByTestId("steer-composer")
     const status = screen.getByText("running · send won't interrupt")
     const attach = screen.getByRole("button", { name: "Attach a file" })
 
     expect(row).toContainElement(status)
-    expect(row).toContainElement(attach)
-    expect(row.querySelector('[aria-live="off"]')).not.toBeNull()
+    expect(row).toHaveAttribute("aria-live", "off")
+    // the paperclip belongs to the control bar, beside the other composer
+    // actions — not floating above the box
+    expect(composer).toContainElement(attach)
+    expect(row).not.toContainElement(attach)
     expect(composer).not.toContainElement(status)
-    expect(composer).not.toContainElement(attach)
+  })
+
+  it("leaves no row above the input when nothing is running", () => {
+    mount(<SteerBox task={task("done")} />)
+
+    expect(screen.queryByTestId("composer-running-row")).toBeNull()
+  })
+
+  it("orders the bar like the create dialog: paperclip first, no divider", () => {
+    const { container } = mount(
+      <SteerBox task={task("done")} harnesses={harnesses} onSend={() => {}} />,
+    )
+
+    const composer = screen.getByTestId("steer-composer")
+    const controls: HTMLElement[] = [...composer.querySelectorAll("button")]
+    const attach = screen.getByRole("button", { name: "Attach a file" })
+    const suffix = screen.getByRole("button", { name: /suffix prompt/i })
+    // the paperclip leads, as it does in the create dialog — it used to sit
+    // third, behind the agent chip and a rule
+    expect(controls[0]).toBe(attach)
+    expect(controls.indexOf(attach)).toBeLessThan(controls.indexOf(suffix))
+    // and the dialog separates these controls with space, not a rule
+    expect(container.querySelector("span.w-px")).toBeNull()
+  })
+
+  it("wraps the controls onto a second line rather than squeezing them over each other", () => {
+    mount(<SteerBox task={task("done")} harnesses={harnesses} onSend={() => {}} />)
+
+    // The overlap this replaces came from a shrinking wrapper around menu
+    // triggers that are shrink-0: they overflowed it and painted on top of
+    // their neighbours. A wrapping group cannot do that.
+    const group = screen
+      .getByRole("button", { name: "Attach a file" })
+      .closest("div")
+    expect(group?.className).toContain("flex-wrap")
+    expect(group?.className).toContain("min-w-0")
   })
 
   it("keeps the keyboard hint for the wide arrangement alone", () => {
