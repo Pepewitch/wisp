@@ -107,7 +107,7 @@ export function renderRow(row: CheckRow): string[] {
   const out: string[] = [];
   const installed = row.installed.version ?? `— (${row.installed.error})`;
   const latest = row.latest ? `   latest ${row.latest.version ?? `— (${row.latest.error})`}` : "";
-  out.push(`${row.harness.padEnd(8)}installed ${installed}${latest}`);
+  out.push(`${row.harness.padEnd(8)} installed ${installed}${latest}`);
   for (const cost of ["free", "live"] as SurfaceCost[]) {
     const current = group(row.surfaces, cost, "current");
     const behind = group(row.surfaces, cost, "behind");

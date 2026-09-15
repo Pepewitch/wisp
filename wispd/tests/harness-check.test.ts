@@ -126,6 +126,16 @@ describe("latestVersion", () => {
     expect(result).toEqual({ version: "2026.09.08-6caf4ff", error: null });
   });
 
+  test("reads opencode's version from its official GitHub release", async () => {
+    const source = UPSTREAM_SOURCES.opencode!;
+    expect(describeSource(source)).toBe("github releases anomalyco/opencode");
+    const result = await latestVersion(source, async (url) => {
+      expect(url).toBe("https://api.github.com/repos/anomalyco/opencode/releases/latest");
+      return okFetch('{"tag_name":"v1.18.31"}')();
+    });
+    expect(result).toEqual({ version: "1.18.31", error: null });
+  });
+
   test("a harness with no published source says so without fetching", async () => {
     const result = await latestVersion({ kind: "none", why: "no verified source" }, async () => {
       throw new Error("must not fetch");
@@ -224,5 +234,10 @@ describe("the report", () => {
     });
     expect(renderRow(clean).join("\n")).toContain("up to date");
     expect(hasDrift([clean])).toBe(false);
+  });
+
+  test("keeps a separator after the longest builtin harness name", () => {
+    const text = renderRow(row({ harness: "opencode", bin: "opencode" }))[0]!;
+    expect(text).toStartWith("opencode installed ");
   });
 });

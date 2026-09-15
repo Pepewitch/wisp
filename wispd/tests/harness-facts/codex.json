@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "0.153.4",
+      "verifiedAgainst": "0.154.0",
       "source": "union of supported_reasoning_levels across 'codex debug models'",
       "note": "codex's effort enum is per-model; this union is what the picker may offer",
       "lists": {
@@ -36,7 +36,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "0.153.4",
+      "verifiedAgainst": "0.154.0",
       "source": "flag tokens parsed out of 'codex exec --json --dangerously-bypass-approvals-and-sandbox --help'",
       "lists": {
         "values": [
@@ -67,6 +67,7 @@
           "--strict-config",
           "--thread-source",
           "--version",
+          "--worktree",
           "-C",
           "-V",
           "-c",
@@ -81,7 +82,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "0.153.4",
+      "verifiedAgainst": "0.154.0",
       "source": "case-insensitive fixed-string search of the installed codex binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -99,7 +100,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "0.153.4",
+      "verifiedAgainst": "0.154.0",
       "source": "'codex debug models' catalog, in codex's own priority order",
       "lists": {
         "ids": [

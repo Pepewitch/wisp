@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "1.18.29",
+      "verifiedAgainst": "1.18.31",
       "source": "union of the 'variants' keys across 'opencode models --verbose'",
       "note": "opencode's effort is a per-model variant; this union is what the picker may offer",
       "lists": {
@@ -33,7 +33,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "1.18.29",
+      "verifiedAgainst": "1.18.31",
       "source": "flag tokens parsed out of 'opencode run --help'",
       "lists": {
         "values": [
@@ -75,7 +75,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "1.18.29",
+      "verifiedAgainst": "1.18.31",
       "source": "case-insensitive fixed-string search of the installed opencode binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -95,7 +95,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "1.18.29",
+      "verifiedAgainst": "1.18.31",
       "source": "'opencode models' — the configured providers' catalog",
       "lists": {
         "ids": [

@@ -3,24 +3,27 @@
  *
  * **Probe before pin, same rule as the adapters.** Every source below was
  * confirmed by fetching it and matching the version it reports against the
- * locally probed CLI on 2026-09-09 — not taken from a README:
+ * locally probed CLI on 2026-09-15 — not taken from a README:
  *
- *  - claude  npm @anthropic-ai/claude-code → 2.1.266, and the package's own
+ *  - claude  npm @anthropic-ai/claude-code → 2.1.272, and the package's own
  *            `bin` entry is `claude`
- *  - codex   npm @openai/codex             → 0.153.4, `bin` entry `codex`
- *  - droid   formulae.brew.sh cask 'droid' → 0.215.1. Install-method
+ *  - codex   npm @openai/codex             → 0.154.0, `bin` entry `codex`
+ *  - droid   formulae.brew.sh cask 'droid' → 0.219.0. Install-method
  *            specific: it is the truth for a Homebrew install, which is how
  *            droid arrives on macOS, and honest noise otherwise.
- *  - cursor  formulae.brew.sh cask 'cursor-cli' → 2026.09.08-6caf4ff.
+ *  - cursor  formulae.brew.sh cask 'cursor-cli' → 2026.09.10-fd3934a.
  *            Its version matches `cursor-agent --version` and the download
  *            URL names that same build. Like droid, this is Homebrew's
  *            published version, not a guarantee about other release channels.
+ *  - opencode GitHub release anomalyco/opencode → 1.18.31. The official tap's
+ *             formula downloads that release directly from the same repo.
  */
 import type { ModelProbeSpawnFn } from "../../src/adapters";
 
 export type UpstreamSource =
   | { kind: "npm"; pkg: string }
   | { kind: "brew-cask"; token: string }
+  | { kind: "github-release"; repo: string }
   | { kind: "none"; why: string };
 
 export const UPSTREAM_SOURCES: Record<string, UpstreamSource> = {
@@ -28,11 +31,13 @@ export const UPSTREAM_SOURCES: Record<string, UpstreamSource> = {
   codex: { kind: "npm", pkg: "@openai/codex" },
   droid: { kind: "brew-cask", token: "droid" },
   cursor: { kind: "brew-cask", token: "cursor-cli" },
+  opencode: { kind: "github-release", repo: "anomalyco/opencode" },
 };
 
 export function describeSource(source: UpstreamSource): string {
   if (source.kind === "npm") return `npm ${source.pkg}`;
   if (source.kind === "brew-cask") return `homebrew cask ${source.token}`;
+  if (source.kind === "github-release") return `github releases ${source.repo}`;
   return source.why;
 }
 
@@ -81,12 +86,19 @@ export async function latestVersion(
   const url =
     source.kind === "npm"
       ? `https://registry.npmjs.org/${source.pkg}/latest`
-      : `https://formulae.brew.sh/api/cask/${source.token}.json`;
+      : source.kind === "brew-cask"
+        ? `https://formulae.brew.sh/api/cask/${source.token}.json`
+        : `https://api.github.com/repos/${source.repo}/releases/latest`;
   try {
     const res = await fetchFn(url);
     if (!res.ok) return { version: null, error: `${url} answered ${res.status}` };
     const data: unknown = JSON.parse(await res.text());
-    const version = (data as { version?: unknown })?.version;
+    const rawVersion = source.kind === "github-release"
+      ? (data as { tag_name?: unknown })?.tag_name
+      : (data as { version?: unknown })?.version;
+    const version = source.kind === "github-release" && typeof rawVersion === "string"
+      ? rawVersion.replace(/^v/, "")
+      : rawVersion;
     if (typeof version !== "string") return { version: null, error: `${url} returned no version field` };
     return { version, error: null };
   } catch (e) {
