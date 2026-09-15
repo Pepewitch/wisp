@@ -46,6 +46,7 @@ import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
 import { useTaskSwitchPerformance } from "@/hooks/useTaskSwitchPerformance"
+import { useDesktopTaskNavigation } from "@/hooks/useDesktopTaskNavigation"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -284,6 +285,7 @@ function MainView({
     [tasks, reposQuery.data]
   )
   const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
+  useDesktopTaskNavigation(desktop !== null, groups, archivedTasks, selectedId, selectTask)
 
   const sideError = queryError(tasksQuery.error, statusQuery.error)
 
