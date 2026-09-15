@@ -15,7 +15,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.08-6caf4ff",
+      "verifiedAgainst": "2026.09.10-fd3934a",
       "source": "flag tokens parsed out of 'cursor-agent --help'",
       "lists": {
         "values": [
@@ -58,7 +58,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.08-6caf4ff",
+      "verifiedAgainst": "2026.09.10-fd3934a",
       "source": "'cursor-agent models' (requires an authenticated CLI)",
       "note": "cursor's shipped list is an owner-curated subset of this catalog, by design",
       "lists": {
