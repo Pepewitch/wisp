@@ -2,7 +2,45 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.8 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.9 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.9 publication
+
+**Published and promoted on 2026-09-15.**
+[Wisp 0.5.9](https://github.com/Pepewitch/wisp/releases/tag/v0.5.9) is the latest
+regular GitHub release (`draft: false`, `prerelease: false`), published at
+07:25:12 UTC with ten release assets. The annotated tag resolves to clean main
+commit
+[`29a57719b68207882125e977a57a14dcbc850716`](https://github.com/Pepewitch/wisp/commit/29a57719b68207882125e977a57a14dcbc850716),
+landed through [PR #222](https://github.com/Pepewitch/wisp/pull/222).
+
+The [release workflow](https://github.com/Pepewitch/wisp/actions/runs/34940849484)
+completed all seven jobs successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, native-core, npm, Rust, supply-chain, release-candidate, and public-promotion dry-run checks passed |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| Desktop trust | Developer ID timestamp and hardened runtime, Apple notarization and staple, Gatekeeper, updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `29a5771`; the downloaded Linux binary reported 0.5.9 at that commit |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+The promotion receipt completed at 07:26:36 UTC with Homebrew tap commit
+[`677d7e50e78860ab9a2283be833c718e2df9c1d2`](https://github.com/Pepewitch/homebrew-tap/commit/677d7e50e78860ab9a2283be833c718e2df9c1d2)
+and both update channels serving 0.5.9.
+
+The first Linux release job failed before any asset was public when the
+activation fixture exhausted its readiness window at the container's 1.5 GiB
+memory ceiling without an OOM kill. The same contract had passed for the exact
+main candidate, and the workflow retry passed without a source change before
+immutable publication.
+
+0.5.9 adds no database migration. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, an updater
+journey across this version, or the paid evaluator panel — was performed, and
+this record does not claim them. The published assets and release body remain
+immutable; this ledger records the completed outcome separately.
 
 ## 0.5.8 publication
 
