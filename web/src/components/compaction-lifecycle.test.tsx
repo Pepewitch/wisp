@@ -10,6 +10,7 @@ import { SteerBox } from "./steer-box"
 afterEach(() => vi.restoreAllMocks())
 
 const compact: HarnessCompact = { kind: "prompt", prompt: "/compact" }
+const actionCompact: HarnessCompact = { kind: "action", recordsTurn: false }
 
 const task = (over: Partial<ApiTask> = {}): ApiTask =>
   ({
@@ -121,5 +122,72 @@ describe("prompt compaction lifecycle", () => {
       )
     )
     expect(box).toHaveValue("/compact")
+  })
+
+  it("blocks steering while the compact turn is running", () => {
+    const onSend = vi.fn()
+    render(
+      <SteerBox
+        task={task({ state: "running", turn_count: 4 })}
+        compact={compact}
+        turns={[compactTurn("running")]}
+        onSend={onSend}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection")) }
+    )
+    const box = screen.getByPlaceholderText(
+      "Ask for changes, or / for commands"
+    )
+    fireEvent.change(box, { target: { value: "change direction" } })
+    const send = screen.getByRole("button", { name: "Send safely" })
+    expect(send).toBeDisabled()
+    fireEvent.keyDown(box, { key: "Enter" })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByTestId("composer-running-row")).toHaveTextContent(
+      "compacting the session…"
+    )
+  })
+})
+
+describe("action compaction lifecycle", () => {
+  it("blocks steering until the action completes", async () => {
+    let finish!: (answer: {
+      ok: boolean
+      removedCount: number | null
+      sessionReplaced: boolean
+      note: string | null
+    }) => void
+    const transport = fakeDaemonTransport("test-connection", {
+      request: <T,>() => new Promise<T>((resolve) => {
+        finish = (answer) => resolve(answer as T)
+      }),
+    })
+    const onSend = vi.fn()
+    render(
+      <SteerBox
+        task={task({ harness: "droid", model: "kimi-k3" })}
+        compact={actionCompact}
+        turns={[]}
+        onSend={onSend}
+      />,
+      { wrapper: runtimeWrapper(transport) }
+    )
+    const box = screen.getByPlaceholderText(
+      "Ask for changes, or / for commands"
+    )
+    fireEvent.change(box, { target: { value: "/comp", selectionStart: 5 } })
+    fireEvent.click(screen.getByTestId("slash-compact"))
+    expect(await screen.findByTestId("steer-note")).toHaveTextContent(
+      "compacting the session…"
+    )
+
+    fireEvent.change(box, { target: { value: "change direction" } })
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled()
+    fireEvent.keyDown(box, { key: "Enter" })
+    expect(onSend).not.toHaveBeenCalled()
+
+    finish({ ok: true, removedCount: 3, sessionReplaced: true, note: null })
+    await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent("compacted"))
+    expect(screen.getByRole("button", { name: "Send" })).toBeEnabled()
   })
 })

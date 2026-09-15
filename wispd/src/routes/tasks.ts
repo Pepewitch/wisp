@@ -293,6 +293,7 @@ async function sendTaskResponse(
   req: Request,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
+  compacts?: TaskCompactor,
 ): Promise<Response> {
   const parsed = await jsonObjectBody(req);
   if (parsed instanceof Response) return parsed;
@@ -305,6 +306,16 @@ async function sendTaskResponse(
   if (task.archived) return err("task is archived — archived tasks are read-only", 409);
   if (task.state === "creating") return err("task is still being created", 409);
   if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
+  const running = hasRunningTurn(task.id);
+  if (
+    compacts?.isCompacting(task.id) ||
+    (running && isCompactPrompt(adapters[running.harness], running.prompt))
+  ) {
+    // Compaction rewrites the context a steer would target. Action compactors
+    // have no turn row, while native prompt compactors do; guard both shapes
+    // before a message is persisted so it is refused, never silently queued.
+    return err("compaction is still running — wait for it to finish", 409);
+  }
   const resolved = resolveSendAgent(task, body, cfg, adapters);
   if (resolved instanceof Response) return resolved;
   const { harness, model, effort, harnessChanged, def } = resolved;
@@ -501,7 +512,7 @@ export function taskRoute(
   }
 
   if (action === "send" && m === "POST") {
-    return sendTaskResponse(task, req, cfg, adapters);
+    return sendTaskResponse(task, req, cfg, adapters, compacts);
   }
 
   if (action === "pull-request" && m === "GET") return pullRequestResponse(task, pullRequests);

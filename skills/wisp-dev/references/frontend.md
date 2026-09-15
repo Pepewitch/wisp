@@ -681,8 +681,10 @@ compaction without parsing private harness transcripts. They are idle-only:
 an active turn gets the same `compaction waits for it` refusal as the action
 route, never a live steer. Harnesses with no declared compaction (currently
 cursor and opencode) keep honest absence—no dead palette command. A compaction
-failure names what failed and points at `/fresh` — Q7's fallback doing its job
-on the path where it is actually needed.
+owns the session until it settles: the composer disables send immediately,
+and the daemon refuses a racing message before it can be steered or queued.
+A compaction failure names what failed and points at `/fresh` — Q7's fallback
+doing its job on the path where it is actually needed.
 
 Tier 2's entries come from the adapter's declared `probeCommands`, never from
 a hardcoded list — availability is uneven (claude: both; droid: context only;

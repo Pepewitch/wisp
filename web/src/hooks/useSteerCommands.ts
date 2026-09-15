@@ -41,11 +41,13 @@ export function useSteerCommands({
   status,
   setNote,
   setReport,
+  setCompactingTaskId,
 }: {
   task: ApiTask | null
   status?: StatusEntry
   setNote: Dispatch<SetStateAction<SteerNote | null>>
   setReport: Dispatch<SetStateAction<ReportState>>
+  setCompactingTaskId: Dispatch<SetStateAction<string | null>>
 }) {
   const runtime = useDaemonRuntime()
   const transport = runtime.transport
@@ -132,7 +134,10 @@ export function useSteerCommands({
     if (!task) return
     setReport((current) => (current?.kind === "tokens" ? null : current))
     setNote({ taskId: task.id, tone: "muted", text: COMPACTING_TEXT })
-    void compactSession(transport, task.id, setNote)
+    setCompactingTaskId(task.id)
+    void compactSession(transport, task.id, setNote).finally(() =>
+      setCompactingTaskId((current) => current === task.id ? null : current)
+    )
   }
 
   return { archive, compact, dispatch, probe }
