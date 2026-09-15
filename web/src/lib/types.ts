@@ -162,6 +162,8 @@ export interface Turn {
   requested_model?: string | null;
   requested_effort?: string | null;
   prompt: string;
+  /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
+  operation?: "compact";
   result: string | null;
   status: TurnStatus;
   /** the model the turn ACTUALLY ran on; null = the harness never reported one */
@@ -217,6 +219,7 @@ export type SendDisposition = "started" | "steered" | "queued-next"
 export interface SendResponse extends ApiTask {
   disposition: SendDisposition
   message: TaskMessage
+  operation?: "compact"
 }
 
 /**
@@ -468,7 +471,7 @@ export interface HarnessInfo {
    * A5: how this harness compacts, if it does — "action" runs out of band
    * through POST /api/tasks/:id/compact (recordsTurn tells the entry whether
    * to say "runs a turn"), "prompt" prefills the harness's own compact
-   * command as an ordinary turn. null (or absent, on a stale daemon) means
+   * command as a dedicated turn. null (or absent, on a stale daemon) means
    * compaction is honestly absent and the palette shows no entry.
    */
   compact?: HarnessCompact | null;

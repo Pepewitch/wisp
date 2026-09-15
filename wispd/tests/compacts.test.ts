@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   BUILTIN_ADAPTERS,
   COMPACT_STRATEGIES,
+  isCompactPrompt,
   ProbeError,
   runCompact,
   type AdapterDef,
@@ -15,7 +16,7 @@ import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/
 /**
  * A5 unit tests — the compaction strategies and the compactor, with scripted
  * RPC peers. No real harness CLI is spawned here (and claude needs none at
- * all: its compact rides the ordinary turn path via compactPrompt).
+ * all: its compact rides the dedicated turn path via compactPrompt).
  */
 
 const claude = BUILTIN_ADAPTERS.claude!;
@@ -78,9 +79,17 @@ describe("compact strategy wiring (A5)", () => {
     expect(droid.compact).toBe("factory-jsonrpc");
     expect(codex.compact).toBe("codex-app-server");
     expect(claude.compact).toBeUndefined();
-    expect(claude.compactPrompt).toBe("/compact"); // an ordinary turn, recorded like any other
+    expect(claude.compactPrompt).toBe("/compact"); // a dedicated turn, recorded like any other
     expect(COMPACT_STRATEGIES["codex-app-server"]!.recordsTurn).toBe(true);
     expect(COMPACT_STRATEGIES["factory-jsonrpc"]!.recordsTurn).toBe(false);
+  });
+
+  test("prompt compaction recognizes arguments and suffix text, but not longer slash names", () => {
+    expect(isCompactPrompt(claude, "/compact")).toBe(true);
+    expect(isCompactPrompt(claude, "/compact keep implementation decisions")).toBe(true);
+    expect(isCompactPrompt(claude, "/compact\n\nReusable suffix instructions")).toBe(true);
+    expect(isCompactPrompt(claude, "/compacter")).toBe(false);
+    expect(isCompactPrompt(droid, "/compact")).toBe(false);
   });
 
   test("runCompact is loud about an unknown strategy on a hand-built def", async () => {

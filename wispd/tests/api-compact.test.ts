@@ -165,7 +165,7 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     const res = await api(base, `/api/tasks/${id}/compact`);
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe(
-      "harness 'claude' compacts as an ordinary turn — send /compact as a prompt",
+      "harness 'claude' compacts as a dedicated turn — send /compact as a prompt",
     );
     expect(opens).toBe(0);
   });
@@ -244,5 +244,7 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     expect(byName.claude.compact).toEqual({ kind: "prompt", prompt: "/compact" });
     expect(byName.droid.compact).toEqual({ kind: "action", recordsTurn: false });
     expect(byName.codex.compact).toEqual({ kind: "action", recordsTurn: true });
+    expect(byName.cursor.compact).toBeNull();
+    expect(byName.opencode.compact).toBeNull();
   });
 });

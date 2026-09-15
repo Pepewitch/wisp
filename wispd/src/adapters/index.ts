@@ -66,4 +66,4 @@ export {
 } from "./discovery";
 export { PROBE_STRATEGIES, ProbeError, probeCommands, runProbe } from "./probe";
 export { discoverSkills, scanSkillDirs, SKILL_STRATEGIES } from "./skills";
-export { COMPACT_STRATEGIES, runCompact } from "./compact";
+export { COMPACT_STRATEGIES, isCompactPrompt, runCompact } from "./compact";

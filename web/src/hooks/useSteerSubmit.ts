@@ -8,6 +8,7 @@ import {
   type PendingAttachments,
 } from "@/lib/attachments"
 import { useDaemonTransport } from "@/lib/runtime"
+import { COMPACTING_TEXT } from "@/lib/compaction"
 import type { ApiTask, SendResponse } from "@/lib/types"
 import type { SlashToken } from "@/lib/slash"
 
@@ -123,6 +124,21 @@ export function useSteerSubmit({
       onSent(id)
       attachments.clear()
       if (result?.disposition) {
+        if (result.operation === "compact") {
+          const turn = result.message.turn_n
+          const delivery = result.disposition === "queued-next"
+            ? "compaction queued for the next turn"
+            : COMPACTING_TEXT
+          setNote({
+            taskId: id,
+            tone: "muted",
+            text: result.message.delivery_uncertain
+              ? `${delivery}; prior delivery may already have succeeded`
+              : delivery,
+            ...(turn !== null ? { compactTurn: turn } : {}),
+          })
+          return
+        }
         const delivery =
           result.disposition === "steered"
             ? "sent to the running turn"

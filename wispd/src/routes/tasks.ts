@@ -5,7 +5,7 @@ import { cleanupRoute } from "./cleanup";
 import { cleanupProgress } from "../archive-progress";
 import { trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
-import { buildAttachArgv, ProbeError, probeCommands, type AdapterDef } from "../adapters";
+import { buildAttachArgv, isCompactPrompt, ProbeError, probeCommands, type AdapterDef } from "../adapters";
 import {
   AttachError,
   decodeAttachments,
@@ -310,6 +310,16 @@ async function sendTaskResponse(
   const { harness, model, effort, harnessChanged, def } = resolved;
   const message = promptWithSuffix(body.message as string, body.suffixPromptId as string | undefined);
   if (message === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
+  const operation = isCompactPrompt(def, message) ? "compact" as const : undefined;
+  if (operation) {
+    // A native compact command owns the whole harness turn. In particular it
+    // must never enter Claude's live-input path as if it were a correction to
+    // the work already in flight. Action-based compactors use this same
+    // refusal sentence in POST /compact; a race after this check is kept for
+    // the next turn by submitTaskMessage's delivery policy below.
+    const unavailable = idleTaskError(task, " — compaction waits for it");
+    if (unavailable) return unavailable;
+  }
   let decoded: DecodedAttachment[] = [];
   try {
     decoded = decodeAttachments(harness, def, body.attachments);
@@ -330,11 +340,13 @@ async function sendTaskResponse(
       body.clientMessageId as string | undefined,
       adapters,
       agent,
+      operation ? "next-turn-only" : "allow-steer",
     );
     return json({
       ...apiTask(getTask(task.id)!),
       disposition: result.disposition,
       message: apiTaskMessage(result.message),
+      ...(operation ? { operation } : {}),
     });
   } catch (error) {
     if (error instanceof TaskCapacityError) return err(error.message, 429);
@@ -584,7 +596,7 @@ export function taskRoute(
         // prefills def.compactPrompt and never calls this route for it)
         return err(
           def.compactPrompt
-            ? `harness '${task.harness}' compacts as an ordinary turn — send ${def.compactPrompt} as a prompt`
+            ? `harness '${task.harness}' compacts as a dedicated turn — send ${def.compactPrompt} as a prompt`
             : `harness '${task.harness}' declares no compaction`,
           400,
         );

@@ -1,6 +1,7 @@
 import { useFreshSession, useInterruptTask, usePushTask } from "@/hooks/mutations"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { ApiError, failureDisplay } from "@/lib/api"
+import { COMPACTED_TEXT, COMPACTING_TEXT } from "@/lib/compaction"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { statusNote, type Tier1CommandName } from "@/lib/slash"
 import type {
@@ -21,6 +22,8 @@ export interface SteerNote {
   text: string
   title?: string
   copyable?: string
+  /** A prompt-based compact turn whose terminal state should replace this note. */
+  compactTurn?: number
 }
 
 export type ReportState =
@@ -128,7 +131,7 @@ export function useSteerCommands({
   const compact = () => {
     if (!task) return
     setReport((current) => (current?.kind === "tokens" ? null : current))
-    setNote({ taskId: task.id, tone: "muted", text: "compacting the session…" })
+    setNote({ taskId: task.id, tone: "muted", text: COMPACTING_TEXT })
     void compactSession(transport, task.id, setNote)
   }
 
@@ -164,7 +167,7 @@ async function compactSession(
     const bits: string[] = []
     if (response.removedCount !== null) bits.push(`${response.removedCount} messages dropped`)
     if (response.sessionReplaced) bits.push("the session continues as a new one")
-    const summary = bits.length > 0 ? `compacted — ${bits.join("; ")}` : "compacted"
+    const summary = bits.length > 0 ? `${COMPACTED_TEXT} — ${bits.join("; ")}` : COMPACTED_TEXT
     setNote((current) =>
       current?.taskId === taskId
         ? {

@@ -326,6 +326,7 @@ export async function submitTaskMessage(
   clientMessageId?: string,
   adapters: Readonly<Record<string, AdapterDef>> = { [task.harness]: def },
   agent?: TaskAgentSelection,
+  deliveryPolicy: "allow-steer" | "next-turn-only" = "allow-steer",
 ): Promise<SendResult> {
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
@@ -341,6 +342,13 @@ export async function submitTaskMessage(
     return { disposition: message.delivery ?? "queued-next", message };
   }
   assertTaskCapacity(cfg, task.id);
+  // Prompt-based compaction is admitted only while idle. The HTTP route
+  // refuses the ordinary active case before persistence; this second guard
+  // closes the concurrency window without ever delivering the command as a
+  // live steer. A request that loses that race remains durably next in line.
+  if (deliveryPolicy === "next-turn-only" && hasRunningTurn(task.id)) {
+    return { disposition: "queued-next", message };
+  }
   const delivery = await deliverToRunningTurn(task, message);
   if (delivery.result) return delivery.result;
   if (!delivery.running) {

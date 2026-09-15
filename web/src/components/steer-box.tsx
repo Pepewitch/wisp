@@ -31,6 +31,7 @@ import {
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
+import { COMPACTED_TEXT } from "@/lib/compaction"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   commandEntries,
@@ -129,6 +130,7 @@ export function SteerBox({
       value,
       sending,
       note,
+      turns,
       suffixSelection,
     })
   // A draft may survive a task switch, but a reusable instruction must be
@@ -337,17 +339,31 @@ interface SuffixSelection {
   value: string | null
 }
 
+function settledCompactionNote(note: SteerNote, turns?: Turn[]): SteerNote {
+  if (!note.compactTurn) return note
+  const turn = turns?.find((turn) => turn.n === note.compactTurn)
+  if (turn?.status === "done") return { taskId: note.taskId, tone: "muted", text: COMPACTED_TEXT }
+  if (turn?.status !== "failed" && turn?.status !== "interrupted") return note
+  return {
+    taskId: note.taskId,
+    tone: "error",
+    text: turn.status === "interrupted" ? "compaction interrupted" : "compaction failed",
+  }
+}
+
 function steerState({
   task,
   value,
   sending,
   note,
+  turns,
   suffixSelection,
 }: {
   task: ApiTask | null
   value: string
   sending: boolean
   note: SteerNote | null
+  turns?: Turn[]
   suffixSelection: SuffixSelection
 }) {
   const taskId = task?.id ?? null
@@ -361,7 +377,7 @@ function steerState({
   const canSend = hasMessage && !disabled && !sending
   const hasBackground = task?.background && task.background.state !== "none"
   const canStop = (blocked || hasBackground) && !hasMessage && !disabled && !sending
-  const shown = note && task && note.taskId === task.id ? note : null
+  const shown = note && task && note.taskId === task.id ? settledCompactionNote(note, turns) : null
   return { taskId, suffixPromptId, disabled, blocked, canSend, canStop: Boolean(canStop), shown }
 }
 

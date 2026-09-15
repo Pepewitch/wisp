@@ -102,6 +102,30 @@ describe("what may start a queued message", () => {
     expect(turnsFor(task.id).map((turn) => turn.prompt)).toEqual(["create pr"]);
   });
 
+  test("an idle-only prompt can lose an admission race without becoming a live steer", async () => {
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", 'IFS= read -r first; sleep 0.15; printf \'%s\\n\' \'{"type":"result","result":"done","session_id":"session-compact"}\''],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+
+    const result = await submitTaskMessage(
+      getTask(task.id)!, "/compact", def, cfg, [], undefined,
+      { fake: def }, undefined, "next-turn-only",
+    );
+    expect(result.disposition).toBe("queued-next");
+    expect(result.message).toMatchObject({ status: "queued", delivery: null, turn_n: null });
+
+    await until(() => turnsFor(task.id).length === 2 && turnsFor(task.id)[1]?.status === "done");
+    expect(turnsFor(task.id).map((turn) => turn.prompt)).toEqual(["original", "/compact"]);
+    expect(messagesFor(task.id)[0]).toMatchObject({ delivery: "started", turn_n: 2 });
+  });
+
   test(
     "a turn killed for force-archive leaves its queue where it is",
     async () => {

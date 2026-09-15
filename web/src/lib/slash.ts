@@ -53,7 +53,7 @@ import type {
  * is a harness capability rather than a Wisp one. It is the exception Q6's
  * marking law has to name: a free-reads group entry that COSTS, so it
  * carries its own label — "runs a turn" where that is literally true (codex
- * records it in its thread; claude's is an ordinary turn via prefill),
+ * records it in its thread; claude's is a dedicated turn via prefill),
  * "costs tokens" where it isn't (droid summarizes without recording a turn).
  * A failure does Q7's job one layer lower: the note names what failed and
  * points at /fresh, which is the lever that always works.
@@ -250,7 +250,7 @@ export function tier2Entries(commands: ProbeCommandName[] | undefined): SlashEnt
 
 /**
  * A5: the harness's compaction, one entry in its own group. "prompt" prefills
- * the harness's own command (claude's /compact — an ordinary recorded turn);
+ * the harness's own command (claude's /compact — a dedicated recorded turn);
  * "action" dispatches the daemon's out-of-band strategy, and `recordsTurn`
  * (codex's truth, SP1) decides whether the label says "runs a turn" or only
  * "costs tokens". null means compaction is honestly absent — no entry.
