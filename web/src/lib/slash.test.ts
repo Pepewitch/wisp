@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   commandEntries,
   compactEntry,
+  limitsEntry,
   slashName,
   slashScore,
   slashTokenAt,
@@ -53,6 +54,24 @@ describe("tier2Entries (A3)", () => {
     expect(tier2Entries(["usage"]).map((e) => e.name)).toEqual(["usage"])
     expect(tier2Entries([])).toEqual([])
     expect(tier2Entries(undefined)).toEqual([])
+  })
+})
+
+describe("limitsEntry", () => {
+  it("offers Droid's local account command as its matching Factory page", () => {
+    expect(limitsEntry("droid")).toEqual([
+      {
+        name: "limits",
+        hint: "manage token usage limits and overage preferences",
+        keywords: expect.any(Array),
+        externalHref: "https://app.factory.ai/settings/usage",
+      },
+    ])
+  })
+
+  it("does not invent the command for other harnesses", () => {
+    expect(limitsEntry("claude")).toEqual([])
+    expect(limitsEntry("codex")).toEqual([])
   })
 })
 

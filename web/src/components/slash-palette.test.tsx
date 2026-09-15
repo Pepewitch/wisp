@@ -689,6 +689,38 @@ describe("Tier 2 — the harness's own reads (A3)", () => {
     report: { format: "markdown", text: "## Context Usage\n\n**Tokens:** 13.3k / 1m" },
   }
 
+  it("typing /limits on a Droid task opens Factory usage settings without sending a turn", async () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null)
+    const onSend = vi.fn(async () => {})
+    mount(
+      <SteerBox
+        task={task({ harness: "droid" })}
+        probeCommands={["context"]}
+        onSend={onSend}
+      />,
+    )
+
+    type("/limits")
+    await waitFor(() => expect(selectedRow()).toBe("slash-limits"))
+    fireEvent.keyDown(box(), { key: "Enter" })
+
+    expect(open).toHaveBeenCalledWith(
+      "https://app.factory.ai/settings/usage",
+      "_blank",
+      "noopener,noreferrer",
+    )
+    expect(box().value).toBe("")
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it("does not offer /limits for harnesses that do not own it", async () => {
+    mount(<SteerBox task={task({ harness: "claude" })} probeCommands={["context", "usage"]} onSend={async () => {}} />)
+    type("/")
+
+    await screen.findByTestId("slash-palette")
+    expect(screen.queryByTestId("slash-limits")).toBeNull()
+  })
+
   it("a claude task keeps /tokens under Wisp and the familiar /usage under the harness", async () => {
     mount(<SteerBox task={task()} probeCommands={["context", "usage"]} onSend={async () => {}} />)
     type("/")

@@ -31,11 +31,13 @@ import {
   type AttachmentPayload,
   type PendingAttachments,
 } from "@/lib/attachments"
+import { openExternalLink } from "@/lib/external-links"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   commandEntries,
   compactEntry,
   isTier1Command,
+  limitsEntry,
   slashTokenAt,
   TIER1_ENTRIES,
   tier2Entries,
@@ -43,6 +45,7 @@ import {
   type SlashEntry,
   type SlashGroup,
   type SlashToken,
+  type Tier1CommandName,
 } from "@/lib/slash"
 import type {
   ApiTask,
@@ -209,22 +212,17 @@ export function SteerBox({
     if (palette) suppressed.current = palette.start
     setPalette(null)
   }
-
   const pick = (entry: SlashEntry) => {
     const token = palette
     setPalette(null)
     if (!token || !task) return
     const tier1Command = isTier1Command(entry.name) ? entry.name : null
-    if (tier1Command || entry.probe || entry.compact) {
-      // a wisp command, a probe, or a compaction is not text the harness
-      // should ever see: the token is consumed and whatever surrounded it is
-      // left as typed
+    if (tier1Command || entry.probe || entry.compact || entry.externalHref) {
+      // Local actions consume the token without sending it to the harness.
       setValue(value.slice(0, token.start) + value.slice(token.end))
       caret.current = token.start
       suppressed.current = null
-      if (entry.probe) commands.probe(entry.probe)
-      else if (entry.compact) commands.compact()
-      else if (tier1Command) commands.dispatch(tier1Command)
+      runLocalSlashAction(entry, tier1Command, commands)
       return
     }
     // Tier 3 is prompt text the harness honors, and a skill may take arguments:
@@ -333,6 +331,17 @@ export function SteerBox({
   )
 }
 
+function runLocalSlashAction(
+  entry: SlashEntry,
+  tier1Command: Tier1CommandName | null,
+  commands: ReturnType<typeof useSteerCommands>
+): void {
+  if (entry.probe) commands.probe(entry.probe)
+  else if (entry.compact) commands.compact()
+  else if (entry.externalHref) openExternalLink(entry.externalHref)
+  else if (tier1Command) commands.dispatch(tier1Command)
+}
+
 interface SuffixSelection {
   taskId: string | null
   value: string | null
@@ -402,7 +411,11 @@ function slashGroups(
   if (task) {
     groups.push({
       label: task.harness,
-      entries: [...tier2Entries(probeCommands), ...compactEntry(compact)],
+      entries: [
+        ...tier2Entries(probeCommands),
+        ...limitsEntry(task.harness),
+        ...compactEntry(compact),
+      ],
     })
   }
   const skillGroup: SlashGroup = {
