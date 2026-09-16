@@ -12,6 +12,7 @@ import {
   freeSlot,
   getTask,
   newTaskId,
+  setTaskContextFields,
   setTaskFields,
   transition,
   turnsFor,
@@ -111,6 +112,17 @@ describe("POST /api/tasks/:id/fresh-session (S3)", () => {
     expect(after.session_id).toBeNull();
     expect(after.state).toBe(before.state); // a field update, not a transition
     expect(after.seq).toBe(before.seq); // seq/notify untouched (the freeze)
+  });
+
+  test("the context reading is retired with the session it described", async () => {
+    // The header shows this number. A fresh context has run no turn, so a
+    // surviving reading would describe a conversation that no longer exists.
+    const id = readyTask("sess-1");
+    setTaskContextFields(id, getTask(id)!.context_n, { context_tokens: 467_964 });
+    expect(getTask(id)!.context_tokens).toBe(467_964);
+
+    expect((await call(`/api/tasks/${id}/fresh-session`)).status).toBe(200);
+    expect(getTask(id)!.context_tokens).toBeNull();
   });
 
   test("an already-clear session is an idempotent 200, not an error", async () => {

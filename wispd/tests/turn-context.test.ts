@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
+import { subscribe } from "../src/events";
 import { finalizeTurn } from "../src/runner";
 import { createTask, createTurn, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 
@@ -82,6 +83,27 @@ describe("the session's context reading", () => {
     });
     const task = await runTurn(id, 1, `${call(468_951)}\n${boundary}\n${RESULT_LINE}\n`);
     expect(task.context_tokens).toBe(9472);
+  });
+
+  test("the row carries the new reading BEFORE the event that tells clients to refetch", async () => {
+    // This is what makes the header update on the compaction rather than one
+    // turn later. The web client refetches the task LIST on the `task` event
+    // (sse.ts), so a write ordered after the emit would serve the number the
+    // compaction just retired, and nothing would arrive to correct it.
+    const id = contextTask();
+    const seen: (number | null)[] = [];
+    const stop = subscribe((event) => {
+      if ("taskId" in event && event.taskId === id && event.type === "task") {
+        seen.push(getTask(id)!.context_tokens);
+      }
+    });
+    try {
+      await runTurn(id, 1, `${call(123_456)}\n${RESULT_LINE}\n`);
+    } finally {
+      stop();
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.at(-1)).toBe(123_456);
   });
 
   test("a harness with no tracker never gets a number, however much usage it reports", async () => {

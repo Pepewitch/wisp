@@ -168,8 +168,13 @@ export function switchTaskAgentBody(
       [taskId, contextN, harness, model, effort, timestamp, timestamp],
     );
     db.run(
+      // context_tokens joins session_id and skills_json in being cleared: they
+      // all describe the session being retired, and a fresh context has run no
+      // turn yet. A reading that outlived its session is the bug this column
+      // exists to avoid.
       `UPDATE tasks
-       SET harness = ?, model = ?, effort = ?, context_n = ?, session_id = NULL, skills_json = NULL, updated_at = ?
+       SET harness = ?, model = ?, effort = ?, context_n = ?, session_id = NULL, skills_json = NULL,
+           context_tokens = NULL, updated_at = ?
        WHERE id = ?`,
       [harness, model, effort, contextN, timestamp, taskId],
     );

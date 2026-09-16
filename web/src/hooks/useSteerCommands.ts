@@ -1,3 +1,5 @@
+import { useQueryClient } from "@tanstack/react-query"
+
 import { useFreshSession, useInterruptTask, usePushTask } from "@/hooks/mutations"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { ApiError, failureDisplay } from "@/lib/api"
@@ -51,6 +53,7 @@ export function useSteerCommands({
 }) {
   const runtime = useDaemonRuntime()
   const transport = runtime.transport
+  const client = useQueryClient()
   const uiIntents = uiIntentsFor(runtime.connectionId)
   const interruptTask = useInterruptTask()
   const pushTask = usePushTask()
@@ -135,9 +138,16 @@ export function useSteerCommands({
     setReport((current) => (current?.kind === "tokens" ? null : current))
     setNote({ taskId: task.id, tone: "muted", text: COMPACTING_TEXT })
     setCompactingTaskId(task.id)
-    void compactSession(transport, task.id, setNote).finally(() =>
-      setCompactingTaskId((current) => current === task.id ? null : current)
-    )
+    void compactSession(transport, task.id, setNote)
+      .then(() => {
+        // Action compaction records no turn, so no daemon event arrives to
+        // refresh the row. The header's context reading was just retired by
+        // this very request; without this it would keep showing a number about
+        // a conversation that no longer exists.
+        void client.invalidateQueries({ queryKey: runtime.qk.tasks })
+        void client.invalidateQueries({ queryKey: runtime.qk.task(task.id) })
+      })
+      .finally(() => setCompactingTaskId((current) => (current === task.id ? null : current)))
   }
 
   return { archive, compact, dispatch, probe }

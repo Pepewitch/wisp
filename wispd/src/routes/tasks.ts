@@ -615,11 +615,17 @@ export function taskRoute(
       if (!task.session_id) return err("no session yet — compaction needs a session to compact; run a turn first", 409);
       try {
         const result = await compacts.compact(task, def);
-        if (result.newSessionId) {
+        // The compaction happened outside any turn, so no stream reported the
+        // model call that followed it and wisp does not know the new size. The
+        // reading it replaces is now a number about a conversation that no
+        // longer exists, so it is cleared rather than left standing: "not
+        // observed" is true, and the next turn re-establishes it.
+        setTaskContextFields(task.id, task.context_n, {
           // SP1: droid compaction MINTS the session that holds the summary —
           // a field update on an existing column, the freeze holds
-          setTaskContextFields(task.id, task.context_n, { session_id: result.newSessionId });
-        }
+          ...(result.newSessionId ? { session_id: result.newSessionId } : {}),
+          context_tokens: null,
+        });
         // This action records no turn row, so a cached /context from before it
         // would survive the compaction and report the tokens it just dropped.
         probes?.invalidateTask(task.id);
