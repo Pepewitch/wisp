@@ -206,7 +206,7 @@ export function switchTaskAgent(
 export function setTaskContextFields(
   taskId: string,
   contextN: number,
-  fields: { session_id?: string | null; skills_json?: string | null },
+  fields: { session_id?: string | null; skills_json?: string | null; context_tokens?: number | null },
 ): void {
   db.transaction(
     (id: string, n: number, updates: typeof fields): void => {

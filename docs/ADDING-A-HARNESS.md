@@ -98,6 +98,7 @@ field holds a *key* into one. The existing inventory:
 | `ACTIVITY_NORMALIZERS` (activity.ts) | `activity` | `claude-stream-json`, `droid-stream-json`, `cursor-stream-json`, `codex-jsonl`, `opencode-json` |
 | `ERROR_STRATEGIES` (errors.ts) | `errors` | `claude-stream-json`, `codex-jsonl`, `droid-stream-json`, `opencode-json` |
 | `USAGE_FORMATTERS` (usage.ts) | `usageFormat` | `snake-tokens`, `codex-usage`, `opencode-tokens` |
+| `CONTEXT_TRACKERS` (context.ts) | `contextFormat` | `claude-stream-json`, `codex-jsonl`, `opencode-json` |
 | `MODEL_DISCOVERY` (discovery.ts) | `modelDiscovery` | `droid-models`, `codex-models`, `opencode-models` |
 | `PROBE_STRATEGIES` (probe.ts) | `probe` | `print-slash`, `factory-jsonrpc`, `codex-app-server` |
 | `SKILL_STRATEGIES` (skills.ts) | `skillDiscovery` | `claude-init`, `factory-jsonrpc`, `codex-app-server` |
@@ -136,13 +137,25 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    the API boundary. Copy values, never compute or invent them;
    `snake-tokens` now accepts both cache-read key spellings. Money fields
    stay out of the normalized shape (token counts are facts; prices rot).
-4. **`errors` + `limitMarkers` / `transientMarkers`** — how a failed turn
+4. **`contextFormat`** — how much conversation the harness's model is
+   carrying, so the header can show it without anyone running `/context`.
+   A tracker is a pure function of ONE event returning the reading that event
+   reveals, or null; the reducer keeps the last non-null, which is the turn's
+   final model call. Two rules decide whether a harness can have one at all:
+   the number must come from a single call (a per-turn usage blob is billing —
+   droid's summed 20,095,847 cache reads over 261 calls), and the fields must
+   be added only if the harness keeps them disjoint (claude does; codex nests
+   `cached_input_tokens` inside `input_tokens`, so adding them double-counts
+   the conversation). Exclude anything a subagent emitted — it carries its own
+   context. No tracker is the right answer for a harness that reports only a
+   sum; the header then shows nothing, which beats a wrong number.
+5. **`errors` + `limitMarkers` / `transientMarkers`** — how a failed turn
    names its cause, and which causes mean quota vs flake. **Never invent the
    markers**: they must be read off real captured failures. Cursor still has
    no errors strategy — its pre-flight failures (unknown model, auth) write a
    clear message to stderr, and the runner's stderr-tail fallback surfaces it
    verbatim. That was *proven* live; until then the field was simply absent.
-5. **`modelDiscovery`** vs **`staticModels` + `defaultModel`** — prefer a
+6. **`modelDiscovery`** vs **`staticModels` + `defaultModel`** — prefer a
    probe of the installed CLI (`wisp models` is honest when there is none).
    A probed list may be *narrowed*, but only by a fact the CLI itself states
    about the model, and only fail-open: opencode's catalog marks each model's
@@ -157,11 +170,11 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    `defaultModel` must be *in* the static list (validate enforces it) and
    loses to both a probed default and the user's `harnessDefaults` config.
    Cursor is static *by owner decision*: the pinned list is the product.
-6. **`probe`** — out-of-turn reads (`context`, the harness's own `usage`).
+7. **`probe`** — out-of-turn reads (`context`, the harness's own `usage`).
    The strategy declares which commands it can answer; a surface never fakes
    the other one. The two JSON-RPC envelopes (`factory` adds droid's
    `type:"request"` framing) already exist.
-7. **`skillDiscovery`** — how the palette's Tier 3 lists the harness's own
+8. **`skillDiscovery`** — how the palette's Tier 3 lists the harness's own
    skills, plus `invoke: "slash" | "prompt"` — how a pick becomes prompt
    text. A harness with no headless slash surface is `"prompt"`, and the
    palette says the pick costs a turn. A strategy may also return the
@@ -169,7 +182,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    exposes it. Keep commands separate from skills: commands can carry argument
    hints or execute scripts, and the palette must label those facts while
    prefilling rather than immediately running them.
-8. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
+9. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
    both together). A strategy when the harness has an RPC for it; the prompt
    when its `/compact` runs headless as a dedicated recorded turn. Prompt
    compaction is idle-only: `/send` refuses it while a turn is active, and an
@@ -178,7 +191,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    `/send` also refuses ordinary messages before queueing them: a steer cannot
    target context that is being rewritten. Set the strategy's `recordsTurn`
    truthfully — the palette tells the user what a compact costs.
-9. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
+10. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
    for IMAGES (argv template, stdin envelope, prompt-path preamble), mutually
    exclusive. The trailing `--` in an argv template is mandatory. A harness
    that declares none refuses images by name; it still takes every other
@@ -186,7 +199,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    absolute paths in the prompt (`adapters/delivery.ts`) and every harness has
    file tools. Nothing is copied into the worktree — an attachment must never
    show up in the task's own diff.
-10. **`liveInput`** — only for a protocol verified to admit a message without
+11. **`liveInput`** — only for a protocol verified to admit a message without
    terminating the active turn. Admission must have a native acknowledgement,
    stable client message id, and a terminal event. No field means Wisp
    persists active submissions for the next turn. Never implement this with
@@ -195,7 +208,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    builtin's `bin` or `exec` disables inherited live input; re-declare it only
    after verifying the custom command preserves that protocol and every
    required execution-policy flag.
-11. **`attach`** — interactive attach argv; `null` means "not known yet",
+12. **`attach`** — interactive attach argv; `null` means "not known yet",
    which is a legitimate state.
 
 ## 4. Honest absence is a feature

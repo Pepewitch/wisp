@@ -532,6 +532,28 @@ WHERE EXISTS (
       );
     },
   },
+  {
+    id: 12,
+    name: "session-context-tokens",
+    up: (db) => {
+      // How much conversation the harness's model is carrying, read off the
+      // turn stream (adapters/context.ts). A property of the SESSION, so it
+      // lives beside session_id on both the context row and the denormalized
+      // task row — `/fresh` mints a context with a NULL here, which is the
+      // honest answer for a session that has not run a turn yet.
+      //
+      // No backfill: the number is only derivable from a turn's events, and a
+      // finished turn's log is the evidence ledger, not a source to re-fold on
+      // upgrade. NULL means "not observed", which reads correctly everywhere —
+      // including for the two harnesses that can never report it.
+      for (const table of ["tasks", "task_contexts"] as const) {
+        const columns = (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]);
+        if (!columns.some((column) => column.name === "context_tokens")) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN context_tokens INTEGER`);
+        }
+      }
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

@@ -48,6 +48,7 @@ export function parseOutput(def: AdapterDef, raw: string): ParsedTurn {
     isError: false,
     model: null,
     usage: null,
+    context: null,
     skills: null,
   };
 }

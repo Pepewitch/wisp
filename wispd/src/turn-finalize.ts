@@ -56,6 +56,7 @@ function emptyFailedOutcome(): ParsedTurn {
     isError: true,
     model: null,
     usage: null,
+    context: null,
     skills: null,
   };
 }
@@ -66,6 +67,10 @@ function persistOutcomeMetadata(taskId: string, turnId: number, parsed: ParsedTu
     setTaskContextFields(taskId, turn.context_n, {
       ...(parsed.session ? { session_id: parsed.session } : {}),
       ...(parsed.skills !== null ? { skills_json: JSON.stringify(parsed.skills) } : {}),
+      // A turn that made no model call (an interrupt, claude's `/compact`
+      // before its boundary event) leaves the last known reading standing
+      // rather than erasing it — absent is not zero.
+      ...(parsed.context ? { context_tokens: parsed.context.usedTokens } : {}),
     });
   }
   if (parsed.model) setTurnModel(turnId, parsed.model);

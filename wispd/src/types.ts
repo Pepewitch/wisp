@@ -58,6 +58,12 @@ export interface Task {
    * sends one). Read it through JSON.parse at the boundary that needs it.
    */
   skills_json: string | null;
+  /**
+   * Tokens the harness's model was carrying on its last call in this session,
+   * read off the turn stream (adapters/context.ts). NULL = not observed: a
+   * fresh context, or a harness whose stream never reveals it.
+   */
+  context_tokens: number | null;
   seq: number;
   turn_count: number;
   archived: number;
@@ -79,6 +85,7 @@ export interface TaskContext {
   effort: string | null;
   session_id: string | null;
   skills_json: string | null;
+  context_tokens: number | null;
   created_at: string;
   updated_at: string;
 }

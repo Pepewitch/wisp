@@ -1,3 +1,4 @@
+import { readContextPoint, type ContextPoint } from "./context";
 import type { AdapterDef, ParsedTurn } from "./types";
 import { isRecord } from "../validate";
 import { boundJsonRecord, truncateUtf8 } from "../recording/bounds";
@@ -34,6 +35,8 @@ export interface OutcomeCheckpointV1 {
   opencodeMessage: string | null;
   /** One verbatim `{tokens, cost}` per step_finish; opencode reports no turn total. */
   opencodeSteps: unknown[];
+  /** Last context reading the adapter's tracker recognized; absent in checkpoints written before it existed. */
+  context?: ContextPoint | null;
   firstStderr: string | null;
   stderrTail: string[];
 }
@@ -98,6 +101,7 @@ export class IncrementalOutcomeReducer {
   private opencodeError: string | null = null;
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
+  private context: ContextPoint | null = null;
   private firstStderr: string | null = null;
   private stderrTail: string[] = [];
 
@@ -147,6 +151,12 @@ export class IncrementalOutcomeReducer {
       }
     }
 
+    // Last non-null wins: a tracker answers only for the events that reveal a
+    // model call, so the survivor is the turn's final one. Rides the pass the
+    // reducer already makes — no second read of the stream.
+    const point = readContextPoint(this.def, event);
+    if (point) this.context = point;
+
     if (this.kind === "codex-jsonl") this.pushCodex(event);
     else if (this.kind === "cursor-stream-json") this.pushCursor(event);
     else if (this.kind === "opencode-json") this.pushOpencode(event);
@@ -173,6 +183,7 @@ export class IncrementalOutcomeReducer {
         isError,
         model: this.earlyModel,
         usage: this.usage,
+        context: this.context,
         skills: null,
       };
     }
@@ -188,6 +199,7 @@ export class IncrementalOutcomeReducer {
           isError: true,
           model: this.earlyModel,
           usage: null,
+          context: this.context,
           skills: null,
         };
       }
@@ -201,6 +213,7 @@ export class IncrementalOutcomeReducer {
         isError: this.resultEvent.is_error === true,
         model: this.earlyModel,
         usage: isRecord(this.resultEvent.usage) ? this.resultEvent.usage : null,
+        context: this.context,
         skills: null,
       };
     }
@@ -214,6 +227,7 @@ export class IncrementalOutcomeReducer {
         isError: false,
         model: this.earlyModel,
         usage: null,
+        context: this.context,
         skills: this.earlySkills,
       };
     }
@@ -230,6 +244,7 @@ export class IncrementalOutcomeReducer {
       isError: event.isError === true || event.is_error === true,
       model: typeof rawModel === "string" ? rawModel : this.earlyModel,
       usage: isRecord(rawUsage) ? rawUsage : null,
+      context: this.context,
       skills: this.earlySkills,
     };
   }
@@ -247,6 +262,7 @@ export class IncrementalOutcomeReducer {
       // opencode reports no model under --format json; see builtins.ts.
       model: null,
       usage: this.opencodeSteps.length > 0 ? { steps: [...this.opencodeSteps] } : null,
+      context: this.context,
       skills: null,
     };
   }
@@ -287,6 +303,7 @@ export class IncrementalOutcomeReducer {
       opencodeError: this.opencodeError,
       opencodeMessage: this.opencodeMessage,
       opencodeSteps: [...this.opencodeSteps],
+      context: this.context,
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
     };
@@ -315,6 +332,7 @@ export class IncrementalOutcomeReducer {
     this.opencodeError = checkpoint.opencodeError ?? null;
     this.opencodeMessage = checkpoint.opencodeMessage ?? null;
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
+    this.context = checkpoint.context ?? null;
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
   }

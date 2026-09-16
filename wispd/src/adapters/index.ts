@@ -50,6 +50,7 @@ export {
   type OutcomeReducerOptions,
 } from "./outcome";
 export { USAGE_FORMATTERS, formatUsage } from "./usage";
+export { CONTEXT_TRACKERS, readContextPoint, type ContextPoint, type ContextTracker } from "./context";
 export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
 export { attachmentPreamble, type DeliveredFile } from "./delivery";
 export { ERROR_STRATEGIES, errorDetail, isLimitError, isTransientError } from "./errors";
