@@ -31,7 +31,10 @@ function writeConfig(): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg));
 }
 
-const MD_RESULT = '{"type":"result","session_id":"s-1","result":"## Context Usage\\n\\n**Tokens:** 13.3k"}\n';
+const contextReport = (tokens: string): string =>
+  `{"type":"result","session_id":"s-1","result":"## Context Usage\\n\\n**Tokens:** ${tokens}"}\n`;
+
+const MD_RESULT = contextReport("13.3k");
 
 async function startServer(opts: Parameters<typeof serve>[0] = {}): Promise<string> {
   writeConfig();
@@ -91,6 +94,34 @@ describe("POST /api/tasks/:id/probe (A3)", () => {
     const again = await (await api(base, `/api/tasks/${id}/probe`, { command: "context" })).json();
     expect(again.cached).toBe(true);
     expect(again.probedAt).toBe(body.probedAt);
+  });
+
+  test("a turn retires the cached answer — claude compacts AS a turn, so the next read is the new number", async () => {
+    let spawns = 0;
+    const base = await startServer({
+      probeSpawnOnce: async () => {
+        spawns += 1;
+        return { exitCode: 0, stdout: contextReport(`${spawns}00k`), stderr: "" };
+      },
+    });
+    const id = probeTask();
+
+    const before = await (await api(base, `/api/tasks/${id}/probe`, { command: "context" })).json();
+    expect(before.report.text).toContain("100k");
+    // the stampede guard still holds: nothing has moved, so the re-click is the same answer
+    expect((await (await api(base, `/api/tasks/${id}/probe`, { command: "context" })).json()).cached).toBe(true);
+    expect(spawns).toBe(1);
+
+    // what the runner records when a turn starts — for claude, `/compact` is one
+    setTaskFields(id, { turn_count: 1 });
+    const after = await (await api(base, `/api/tasks/${id}/probe`, { command: "context" })).json();
+    expect(after.cached).toBe(false);
+    expect(after.report.text).toContain("200k"); // never the pre-turn 100k
+
+    // a replaced session is a different session, not a stale one (droid mints one)
+    setTaskFields(id, { session_id: "s-2" });
+    expect((await (await api(base, `/api/tasks/${id}/probe`, { command: "context" })).json()).cached).toBe(false);
+    expect(spawns).toBe(3);
   });
 
   test("the refusal ladder: unknown task, missing command, unknown command names what IS available", async () => {

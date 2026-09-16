@@ -256,11 +256,25 @@ export interface TaskProbeCacheOptions {
 }
 
 /**
+ * A probe answer describes ONE harness session at one point in its history,
+ * so the key names that point: the task's active context, the session id, and
+ * how many turns have run. A turn moves the point — `/compact` IS a turn on
+ * claude — and a moved point can no longer be answered from an entry taken
+ * before it. Without this the TTL wins the argument: a `/context` run right
+ * after a compaction serves the pre-compaction number and marks it `cached`,
+ * which reads as "compaction did nothing".
+ */
+function cacheKey(task: Task, command: ProbeCommand): string {
+  return `${task.id}:${command}:${task.context_n}:${task.turn_count}:${task.session_id ?? "-"}`;
+}
+
+/**
  * The daemon-owned probe cache. droid's read costs ~10–12s and spins up the
  * user's real MCP servers as a side effect of opening the session (SP1), so a
  * re-click inside the TTL serves the previous report and says so (`cached`),
  * and a stampede of clicks shares one in-flight probe. Failures are NOT
- * cached — the next click retries.
+ * cached — the next click retries. What the TTL never outlives is the session
+ * it describes: see cacheKey.
  */
 export class TaskProbeCache {
   private readonly entries: TaskCacheEntries<ProbeReport>;
@@ -270,7 +284,8 @@ export class TaskProbeCache {
       taskId: string;
       promise: Promise<ProbeAnswer>;
       controller: AbortController;
-      state: { deleted: boolean };
+      /** set once this answer must not be stored: the task is gone, or its session moved under it */
+      state: { uncacheable: boolean };
     }
   >();
   private readonly io: ProbeIo;
@@ -285,7 +300,7 @@ export class TaskProbeCache {
   }
 
   probe(task: Task, def: AdapterDef, command: ProbeCommand): Promise<ProbeAnswer> {
-    const key = `${task.id}:${command}`;
+    const key = cacheKey(task, command);
     const hit = this.entries.get(key, this.now().getTime());
     if (hit) {
       return Promise.resolve({ report: hit.value, probedAt: new Date(hit.at).toISOString(), cached: true });
@@ -294,7 +309,7 @@ export class TaskProbeCache {
     if (running) return running.promise;
 
     const controller = new AbortController();
-    const state = { deleted: false };
+    const state = { uncacheable: false };
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
@@ -314,7 +329,7 @@ export class TaskProbeCache {
     ])
       .then((report): ProbeAnswer => {
         const at = this.now();
-        if (!state.deleted) this.entries.set(task.id, key, report, at.getTime());
+        if (!state.uncacheable) this.entries.set(task.id, key, report, at.getTime());
         return { report, probedAt: at.toISOString(), cached: false };
       })
       .finally(() => {
@@ -326,11 +341,25 @@ export class TaskProbeCache {
     return attempt;
   }
 
+  /**
+   * Forget this task's answers because something outside the turn loop moved
+   * its session: an out-of-turn compaction (droid, codex) writes no turn row,
+   * so the key alone cannot see it happen. An in-flight probe keeps running
+   * for the caller that asked — it just no longer earns a cache entry, having
+   * read the session on the far side of the move.
+   */
+  invalidateTask(taskId: string): void {
+    this.entries.deleteTask(taskId);
+    for (const flight of this.inFlight.values()) {
+      if (flight.taskId === taskId) flight.state.uncacheable = true;
+    }
+  }
+
   deleteTask(taskId: string): void {
     this.entries.deleteTask(taskId);
     for (const flight of this.inFlight.values()) {
       if (flight.taskId !== taskId) continue;
-      flight.state.deleted = true;
+      flight.state.uncacheable = true;
       flight.controller.abort(new ProbeError("the task was permanently deleted", 410));
     }
   }

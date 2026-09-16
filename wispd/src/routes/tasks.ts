@@ -620,6 +620,9 @@ export function taskRoute(
           // a field update on an existing column, the freeze holds
           setTaskContextFields(task.id, task.context_n, { session_id: result.newSessionId });
         }
+        // This action records no turn row, so a cached /context from before it
+        // would survive the compaction and report the tokens it just dropped.
+        probes?.invalidateTask(task.id);
         return json({
           ok: true,
           removedCount: result.removedCount,
