@@ -263,6 +263,38 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     expect(getTask(id)!.session_id).toBe("t-1"); // same thread, less context
   });
 
+  test("the action retires this task's cached reads — it writes no turn row for the key to notice", async () => {
+    let reads = 0;
+    const base = await startServer({
+      compactOpenRpc: () => ({
+        call: () => Promise.resolve({}),
+        close() {},
+      }),
+      probeOpenRpc: () => ({
+        call(method: string) {
+          if (method !== "account/rateLimits/read") return Promise.resolve({});
+          reads += 1;
+          return Promise.resolve({ primary: { usedPercent: reads * 10 } });
+        },
+        close() {},
+      }),
+    });
+    // codex compacts the SAME thread, so nothing in the cache key moves: the
+    // route has to say so itself, or the panel reports the dropped tokens
+    const id = compactTask({ harness: "codex" });
+    setTaskFields(id, { session_id: "t-1" });
+
+    const before = await (await api(base, `/api/tasks/${id}/probe`, { command: "usage" })).json();
+    expect(before.report.usage.primary.usedPercent).toBe(10);
+    expect((await (await api(base, `/api/tasks/${id}/probe`, { command: "usage" })).json()).cached).toBe(true);
+
+    expect((await api(base, `/api/tasks/${id}/compact`)).status).toBe(200);
+
+    const after = await (await api(base, `/api/tasks/${id}/probe`, { command: "usage" })).json();
+    expect(after.cached).toBe(false);
+    expect(after.report.usage.primary.usedPercent).toBe(20);
+  });
+
   test("a harness failure is the named reason (Q7's fallback: the palette adds the /fresh offer)", async () => {
     const base = await startServer({
       compactOpenRpc: () => ({
