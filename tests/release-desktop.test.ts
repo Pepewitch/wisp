@@ -176,6 +176,9 @@ describe("Wisp Desktop release metadata", () => {
     expect(buildUi).toBeLessThan(workflow.indexOf("name: formatting"));
     expect(workflow).not.toContain("cargo clean --package wisp-desktop");
     expect(workflow).not.toContain("cache-targets: false");
+    expect(workflow.match(/CARGO_BUILD_JOBS: "1"/g)).toHaveLength(2);
+    expect(checkScript).toContain("cargo clippy --jobs 1");
+    expect(checkScript).toContain("cargo test --jobs 1");
     expect(workflow).toContain('WISP_PREBUILT_UI: "1"');
   });
 

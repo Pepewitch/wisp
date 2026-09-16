@@ -14,5 +14,9 @@ bun run build:ui
 cd desktop/src-tauri
 
 cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --locked
+# `tauri-codegen` writes every target's compressed frontend asset to the same
+# content-addressed path using a non-atomic exists/create sequence. Serializing
+# this package's targets prevents one compiler from embedding another's partial
+# Brotli stream. Keep this until upstream makes that write atomic.
+cargo clippy --jobs 1 --all-targets --all-features -- -D warnings
+cargo test --jobs 1 --locked
