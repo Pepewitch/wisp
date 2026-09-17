@@ -54,7 +54,9 @@ export function PullRequestStatusLink({
   others?: number
   compact?: boolean
 }) {
-  const lifecycle = LIFECYCLE[pullRequest.lifecycle]
+  const lifecycle = pullRequest.lifecycle === "open" && pullRequest.queuedToMerge
+    ? "Queued to merge"
+    : LIFECYCLE[pullRequest.lifecycle]
   const checks = CHECKS[pullRequest.checks]
   const review = REVIEW[pullRequest.review]
   // A task with several branches shows its NEWEST pull request, so the count

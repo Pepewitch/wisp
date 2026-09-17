@@ -26,6 +26,7 @@ const PR: PullRequestInfo = {
   url: "https://github.com/acme/widgets/pull/42",
   title: "Show pull request status",
   lifecycle: "open",
+  queuedToMerge: false,
   checks: "pending",
   review: "required",
   mergeState: "blocked",

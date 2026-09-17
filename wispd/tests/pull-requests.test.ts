@@ -98,6 +98,7 @@ function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     mergedAt: null,
     updatedAt: "2026-09-04T12:00:00Z",
     reviewDecision: "REVIEW_REQUIRED",
+    mergeQueueEntry: null,
     statusCheckRollup: [],
     mergeStateStatus: "BLOCKED",
     ...overrides,
@@ -151,6 +152,7 @@ describe("PullRequestCache", () => {
     expect(calls[2]).toEqual(["git", "symbolic-ref", "--quiet", "--short", "HEAD"]);
     expect(calls[3]).toContain("name=widgets");
     expect(calls[3]!.join(" ")).not.toContain("credential");
+    expect(calls[3]!.join(" ")).toContain("mergeQueueEntry");
     expect(calls[3]!.join(" ")).toContain("mergeStateStatus");
     expect(calls[3]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
     expect(result).toEqual({
@@ -161,10 +163,29 @@ describe("PullRequestCache", () => {
         url: "https://github.com/acme/widgets/pull/42",
         title: "Show pull request status",
         lifecycle: "draft",
+        queuedToMerge: false,
         checks: "pending",
         review: "changes-requested",
         mergeState: "blocked",
         updatedAt: "2026-09-04T12:00:00Z",
+      },
+    });
+  });
+
+  test("reports when an open pull request is queued to merge", async () => {
+    const { run } = githubRun([
+      row({
+        mergeQueueEntry: { id: "MQE_kwDOExample" },
+        reviewDecision: "APPROVED",
+        mergeStateStatus: "CLEAN",
+      }),
+    ]);
+
+    expect(await new PullRequestCache({ run }).status(task())).toMatchObject({
+      kind: "found",
+      pullRequest: {
+        lifecycle: "open",
+        queuedToMerge: true,
       },
     });
   });

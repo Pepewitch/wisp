@@ -18,6 +18,7 @@ const FOUND: PullRequestStatus = {
     url: "https://github.com/acme/widgets/pull/42",
     title: "Show pull request status",
     lifecycle: "open",
+    queuedToMerge: false,
     checks: "failed",
     review: "changes-requested",
     mergeState: "blocked",
@@ -67,6 +68,11 @@ describe("PullRequestStatusLink", () => {
     tone: string
   }>([
     {
+      label: "orange while queued to merge",
+      overrides: { queuedToMerge: true, checks: "passed", review: "approved", mergeState: "ready" },
+      tone: "text-merge-queue",
+    },
+    {
       label: "green when every merge requirement passes",
       overrides: { checks: "passed", review: "approved", mergeState: "ready" },
       tone: "text-state-done",
@@ -94,6 +100,14 @@ describe("PullRequestStatusLink", () => {
   ])("$label", ({ overrides, tone }) => {
     render(<PullRequestStatusLink pullRequest={{ ...FOUND.pullRequest, ...overrides }} />)
     expect(screen.getByTestId("pull-request-icon")).toHaveClass(tone)
+  })
+
+  it("replaces the open lifecycle with the queued-to-merge status", () => {
+    render(<PullRequestStatusLink pullRequest={{ ...FOUND.pullRequest, queuedToMerge: true }} />)
+
+    const link = screen.getByTestId("pull-request-status")
+    expect(link).toHaveTextContent("PR #42 · Queued to merge · CI failed · Changes requested")
+    expect(link).not.toHaveTextContent("PR #42 · Open")
   })
 
   it("keeps all three facts in the mobile two-line target", () => {

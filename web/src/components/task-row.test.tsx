@@ -60,6 +60,7 @@ const PR: PullRequestInfo = {
   url: "https://github.com/acme/widgets/pull/42",
   title: "Show pull request status",
   lifecycle: "open",
+  queuedToMerge: false,
   checks: "passed",
   review: "approved",
   mergeState: "ready",
@@ -186,6 +187,11 @@ describe("the git-marks slot yields", () => {
 describe("the sidebar pull-request status", () => {
   it.each([
     {
+      label: "orange for a PR queued to merge",
+      entry: found({ queuedToMerge: true }),
+      tone: "text-merge-queue",
+    },
+    {
       label: "gray for an ordinary open PR",
       entry: found(),
       tone: "text-muted-foreground",
@@ -213,6 +219,18 @@ describe("the sidebar pull-request status", () => {
     const icon = screen.getByTestId("sidebar-pull-request-icon")
     expect(icon.querySelector("svg")).toHaveClass(tone)
     expect(icon.closest("a")).toBeNull()
+  })
+
+  it("names a queued PR in the sidebar tooltip", () => {
+    mount(
+      <TaskRow
+        task={TASK}
+        pullRequest={found({ queuedToMerge: true })}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    )
+    expect(screen.getByRole("img", { name: "PR #42 · Queued to merge" })).toBeInTheDocument()
   })
 
   /** Open the hover card the way base-ui's own interaction sees it. */

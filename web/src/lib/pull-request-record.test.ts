@@ -12,6 +12,7 @@ const PR: PullRequestInfo = {
   url: "https://github.com/acme/widgets/pull/111",
   title: "Add post-creation harness switching",
   lifecycle: "open",
+  queuedToMerge: false,
   checks: "pending",
   review: "none",
   mergeState: "blocked",
