@@ -254,9 +254,11 @@ function SidebarPullRequestStatus({
       ? "Closed"
       : pullRequest.lifecycle === "draft"
         ? "Draft"
-        : pullRequestSidebarTone(pullRequest) === "text-destructive"
-          ? "Blocked"
-          : "Open"
+        : pullRequest.queuedToMerge
+          ? "Queued to merge"
+          : pullRequestSidebarTone(pullRequest) === "text-destructive"
+            ? "Blocked"
+            : "Open"
   const freshness = entry.stale
     ? ` · Status stale, last checked ${since(entry.checkedAt)}`
     : ""
@@ -379,7 +381,7 @@ export function TaskCard({
           <>
             <Key>Pull request</Key>
             <Val>
-              #{pr.number} · {pr.lifecycle}
+              #{pr.number} · {pr.lifecycle === "open" && pr.queuedToMerge ? "queued to merge" : pr.lifecycle}
               {others > 0 && ` · newest of ${others + 1}`}
               {pullRequest?.stale &&
                 ` · stale, checked ${since(pullRequest.checkedAt)}`}

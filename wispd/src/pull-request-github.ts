@@ -81,6 +81,7 @@ export async function githubPullRequestBatch(
       mergedAt
       updatedAt
       reviewDecision
+      mergeQueueEntry { id }
       mergeStateStatus
       statusCheckRollup { state }
     }`;
@@ -206,6 +207,7 @@ function parsePullRequest(raw: unknown, repository: string): PullRequestInfo | n
     url,
     title,
     lifecycle,
+    queuedToMerge: isRecord(raw.mergeQueueEntry),
     checks: checkState(raw.statusCheckRollup),
     review: reviewState(raw.reviewDecision),
     mergeState: mergeState(raw.mergeStateStatus),

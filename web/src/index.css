@@ -131,6 +131,7 @@
   --color-state-needs-input: var(--state-needs-input);
   --color-state-stuck: var(--state-stuck);
   --color-state-failed: var(--state-failed);
+  --color-merge-queue: var(--merge-queue);
 
   /* diff — the second and third places hue survives */
   --color-diff-add: var(--diff-add);
@@ -284,6 +285,7 @@
   --state-needs-input: #ddb055;
   --state-stuck: #c4844f;
   --state-failed: #df605c;
+  --merge-queue: #db6d28; /* GitHub Primer severe foreground */
 
   --diff-add: #6bc48d;
   --diff-add-bg: rgb(107 196 141 / 0.10);
@@ -411,6 +413,7 @@
   --state-needs-input: #8a600c;
   --state-stuck: #9a5a1c;
   --state-failed: #c0332e;
+  --merge-queue: #bc4c00; /* GitHub Primer severe foreground */
 
   --diff-add: #157f4c;
   --diff-add-bg: rgb(21 127 76 / 0.09);

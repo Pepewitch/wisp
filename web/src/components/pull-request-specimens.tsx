@@ -23,6 +23,12 @@ export function PullRequestSpecimens() {
           request, and counts the rest. That count is the only thing the row would otherwise be hiding.
         </span>
       </div>
+      <div className="mt-4 flex items-center gap-3">
+        <PullRequestStatusLink pullRequest={{ ...PR_SPECIMEN, queuedToMerge: true }} />
+        <span className="text-[11.5px] text-muted-foreground">
+          Queue membership replaces the open state and uses GitHub&apos;s merge-queue orange.
+        </span>
+      </div>
     </>
   )
 }

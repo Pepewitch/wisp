@@ -81,7 +81,8 @@ export function Gallery() {
               </div>
               <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
                 A 6px state dot, the truncating name, a glanceable PR icon, and the git marks /api/status serves.
-                Gray means associated, red means blocked, and violet means merged; the icon is status, not an action.
+                Gray means associated, orange means queued to merge, red means blocked, and violet means merged; the
+                icon is status, not an action.
                 Selection is the background and nothing else; hover any row for the rest. The last row's
                 worktree is one git has forgotten: that slot carries muted words rather than nothing, because an empty
                 slot reads as clean. Hover a row and that same right edge becomes its archive control: PR and git

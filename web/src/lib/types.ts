@@ -299,6 +299,7 @@ export interface PullRequestInfo {
   url: string;
   title: string;
   lifecycle: PullRequestLifecycle;
+  queuedToMerge: boolean;
   checks: PullRequestChecks;
   review: PullRequestReview;
   mergeState: PullRequestMergeState;

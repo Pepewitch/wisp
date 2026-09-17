@@ -13,6 +13,7 @@ export const PR_SPECIMEN: PullRequestInfo = {
   url: "https://github.com/acme/widgets/pull/42",
   title: "Show pull request status",
   lifecycle: "open",
+  queuedToMerge: false,
   checks: "passed",
   review: "approved",
   mergeState: "ready",
@@ -65,7 +66,19 @@ export const ROW_PR_SPECIMENS: Array<PullRequestOverviewEntry | undefined> = [
     checkedAt: "2026-09-05T08:00:00Z",
     stale: false,
   },
-  undefined,
+  {
+    status: {
+      kind: "found",
+      provider: "github",
+      pullRequest: {
+        ...PR_SPECIMEN,
+        number: 45,
+        queuedToMerge: true,
+      },
+    },
+    checkedAt: "2026-09-05T08:00:00Z",
+    stale: false,
+  },
 ]
 
 /** The palette as a claude task sees it: all three tiers (A3 Tier 2, A4 Tier 3, A5 compact). */
