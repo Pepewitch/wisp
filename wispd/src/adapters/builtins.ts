@@ -57,6 +57,11 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
       needsInput: "needs_input",
     },
     usageFormat: "snake-tokens",
+    // No contextFormat: droid reports usage ONLY on its terminal `completion`
+    // event and reports it SUMMED over the turn (measured: 20,095,847 cache
+    // reads across 261 tool calls), so the stream cannot say what the model is
+    // carrying. `droid.get_context_breakdown` still answers it exactly, and
+    // with a budget — but that is the out-of-turn probe, not a free read.
     events: "droid-stream-json",
     activity: "droid-stream-json",
     errors: "droid-stream-json",
@@ -147,6 +152,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
       skills: "skills",
     },
     usageFormat: "snake-tokens",
+    // Every assistant event carries the call's own message.usage, so the
+    // session's size is free to read — see adapters/context.ts for why the
+    // result blob's totals are the wrong number for this.
+    contextFormat: "claude-stream-json",
     events: "claude-stream-json",
     activity: "claude-stream-json",
     errors: "claude-stream-json",
@@ -220,6 +229,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the captured fixture tests/fixtures/codex-first-turn.jsonl).
     parse: { format: "json", strategy: "codex-jsonl" },
     usageFormat: "codex-usage",
+    // turn.completed reports the FINAL call, not a sum — the one harness whose
+    // billing event happens to already be the context reading.
+    contextFormat: "codex-jsonl",
     events: "codex-jsonl",
     activity: "codex-jsonl",
     errors: "codex-jsonl",
@@ -296,6 +308,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // event (its displayName — the result event has no model field).
     parse: { format: "json", strategy: "cursor-stream-json" },
     usageFormat: "snake-tokens",
+    // No contextFormat: cursor reports usage only on its result event and
+    // sums it (1,693,696 cache reads over 81 tool calls), same as droid.
     events: "cursor-stream-json",
     activity: "cursor-stream-json",
     // Images by PATH IN THE PROMPT (the read-tool-path strategy, shared with
@@ -383,6 +397,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // turn. See the `opencode-json` reducer in outcome.ts.
     parse: { format: "json", strategy: "opencode-json" },
     usageFormat: "opencode-tokens",
+    // Per-step usage makes this the easy case: a step IS a model call.
+    contextFormat: "opencode-json",
     events: "opencode-json",
     activity: "opencode-json",
     errors: "opencode-json",

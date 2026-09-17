@@ -3,6 +3,7 @@ import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
+import { formatTokens } from "@/lib/format"
 import { stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { oneLine } from "@/lib/utils"
@@ -91,6 +92,16 @@ export function TaskHeader({
               </>
             )}
           </span>,
+          // Read off the turn stream, never asked for: on the harnesses that
+          // can answer `/context`, asking writes the report INTO the session
+          // and grows the number it came to read. Absent stays absent — a
+          // harness that reports only per-turn billing has no honest number
+          // here, and a blank is better than someone's sum.
+          typeof task.context_tokens === "number" && (
+            <span key="context" className="shrink-0 tabular-nums" title="conversation the model is carrying, as of its last call">
+              {formatTokens(task.context_tokens)} context
+            </span>
+          ),
         ]}
       />
 

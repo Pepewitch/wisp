@@ -397,6 +397,7 @@ describe("parseOutput (stream-json)", () => {
       isError: false,
       model: null,
       usage: null,
+      context: null,
       skills: null,
     });
   });
@@ -440,6 +441,7 @@ describe("parseOutput (codex, captured fixtures)", () => {
       isError: true,
       model: null,
       usage: null,
+      context: null,
       skills: null,
     });
   });
@@ -464,6 +466,7 @@ describe("parseOutput (codex, captured fixtures)", () => {
       isError: false,
       model: null,
       usage: null,
+      context: null,
       skills: null,
     });
   });
@@ -476,6 +479,7 @@ describe("parseOutput (codex, captured fixtures)", () => {
       isError: false,
       model: null,
       usage: null,
+      context: null,
       skills: null,
     });
   });
@@ -1066,7 +1070,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, probe, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });

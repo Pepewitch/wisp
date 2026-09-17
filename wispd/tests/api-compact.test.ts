@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { ADAPTERS_PATH, CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { createTask, createTurn, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTurn, freeSlot, getTask, messagesFor, newTaskId, setTaskContextFields, setTaskFields, transition } from "../src/store";
 
 /**
  * POST /api/tasks/:id/compact (A5) — the out-of-turn ACTION route. The
@@ -261,6 +261,32 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
       note: "codex recorded it as a turn in its own thread",
     });
     expect(getTask(id)!.session_id).toBe("t-1"); // same thread, less context
+  });
+
+  test("the action retires the header's context reading — it happened outside every turn", async () => {
+    // codex compacts its own thread with no stream wisp can read, so after
+    // this the daemon does not KNOW the new size. The stale number described
+    // a conversation that no longer exists; absent is the true answer until
+    // the next turn reports one.
+    const base = await startServer({
+      compactOpenRpc: () => ({ call: () => Promise.resolve({}), close() {} }),
+    });
+    const id = compactTask({ harness: "codex" });
+    setTaskFields(id, { session_id: "t-1" });
+    setTaskContextFields(id, getTask(id)!.context_n, { context_tokens: 166_151 });
+
+    expect((await api(base, `/api/tasks/${id}/compact`)).status).toBe(200);
+    expect(getTask(id)!.context_tokens).toBeNull();
+  });
+
+  test("droid's minted session and the retired reading are one update", async () => {
+    const state = { calls: [] as string[], closed: false };
+    const base = await startServer({ compactOpenRpc: droidRpc(state) });
+    const id = compactTask();
+    setTaskContextFields(id, getTask(id)!.context_n, { context_tokens: 400_000 });
+
+    expect((await api(base, `/api/tasks/${id}/compact`)).status).toBe(200);
+    expect(getTask(id)).toMatchObject({ session_id: "s-2", context_tokens: null });
   });
 
   test("the action retires this task's cached reads — it writes no turn row for the key to notice", async () => {

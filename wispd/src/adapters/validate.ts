@@ -14,6 +14,7 @@ import { PROBE_STRATEGIES } from "./probe";
 import { SKILL_STRATEGIES } from "./skills";
 import type { AdapterDef } from "./types";
 import { USAGE_FORMATTERS } from "./usage";
+import { CONTEXT_TRACKERS } from "./context";
 
 const LIVE_INPUT_STRATEGIES = {
   "claude-stream-json": true,
@@ -45,6 +46,7 @@ const ADAPTER_KEYS = [
   "attach",
   "modelDiscovery",
   "usageFormat",
+  "contextFormat",
   "probe",
   "skillDiscovery",
   "compact",
@@ -301,6 +303,14 @@ function applyDiscoveryFields(raw: Record<string, any>, merged: AdapterDef, labe
       `${label}.usageFormat`,
       USAGE_FORMATTERS,
       "usage formatter",
+    );
+  }
+  if (raw.contextFormat !== undefined) {
+    merged.contextFormat = namedStrategy(
+      raw.contextFormat,
+      `${label}.contextFormat`,
+      CONTEXT_TRACKERS,
+      "context tracker",
     );
   }
   if (raw.probe !== undefined) {

@@ -98,6 +98,14 @@ export interface ApiTask {
   state_detail: string | null;
   context_n?: number;
   session_id: string | null;
+  /**
+   * Tokens the harness's model was carrying on its last call in this session,
+   * read off the turn stream — never asked for, because asking costs context
+   * on the harnesses that can answer. null/absent = not observed: a fresh
+   * context, a task whose first turn has not settled, or a harness whose
+   * stream only ever reports a per-turn billing total.
+   */
+  context_tokens?: number | null;
   seq: number;
   turn_count: number;
   archived: boolean;

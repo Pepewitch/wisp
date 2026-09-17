@@ -1,4 +1,5 @@
 import type { SpawnResult } from "../doctor";
+import type { ContextPoint } from "./context";
 
 /**
  * A harness adapter is declarative config (D7): how to run one headless turn,
@@ -205,6 +206,16 @@ export interface AdapterDef {
    */
   usageFormat?: string;
   /**
+   * Named context tracker (keys into CONTEXT_TRACKERS): how this harness's
+   * turn events reveal how much conversation its model is carrying, so wisp
+   * can show it without asking — claude's `/context` costs no model tokens but
+   * writes its own report into the session, which grows the very number it
+   * came to read. Omitted = the harness reveals no context wisp can read (it
+   * reports usage only as a per-turn SUM, which is billing, not context), and
+   * the number is honestly absent rather than wrong.
+   */
+  contextFormat?: string;
+  /**
    * Named out-of-turn probe strategy (keys into PROBE_STRATEGIES, v0.3 A3):
    * how the daemon asks this harness for a READ (`/context`, the harness's
    * own `/usage`) against the stored session, out of band — no turn row, no
@@ -328,6 +339,13 @@ export interface ParsedTurn {
    * adapter's `usageFormat`; token counts are facts and no shape is invented.
    */
   usage: unknown | null;
+  /**
+   * How much conversation the harness's model was carrying on its last call of
+   * this turn, per the adapter's `contextFormat` tracker. null = the harness
+   * reveals no such number, or this turn made no model call. Distinct from
+   * `usage`, which is the turn's billing total — see adapters/context.ts.
+   */
+  context: ContextPoint | null;
   /**
    * The skill names the session announced on its init event (A4 — claude's
    * init carries `skills`, names only; SP2). null = the stream carried no

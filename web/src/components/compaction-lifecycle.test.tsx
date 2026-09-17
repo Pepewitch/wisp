@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -199,5 +200,32 @@ describe("action compaction lifecycle", () => {
     finish({ ok: true, removedCount: 3, sessionReplaced: true, note: null })
     await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent("compacted"))
     expect(screen.getByRole("button", { name: "Send" })).toBeEnabled()
+  })
+
+  it("refetches the task list, because this compaction fires no daemon event", async () => {
+    // The header's context reading lives on the task LIST row, and an action
+    // compaction writes no turn and emits nothing — so the client that ran it
+    // is the only thing that can tell the UI the old number is retired.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const invalidated = vi.spyOn(client, "invalidateQueries")
+    const transport = fakeDaemonTransport("test-connection", {
+      request: async <T,>() =>
+        ({ ok: true, removedCount: 3, sessionReplaced: true, note: null }) as T,
+    })
+    render(
+      <SteerBox
+        task={task({ harness: "droid", model: "kimi-k3" })}
+        compact={actionCompact}
+        turns={[]}
+      />,
+      { wrapper: runtimeWrapper(transport, client) }
+    )
+    const box = screen.getByPlaceholderText("Ask for changes, or / for commands")
+    fireEvent.change(box, { target: { value: "/comp", selectionStart: 5 } })
+    fireEvent.click(screen.getByTestId("slash-compact"))
+
+    await waitFor(() => expect(screen.getByTestId("steer-note")).toHaveTextContent("compacted"))
+    const keys = invalidated.mock.calls.map(([arg]) => JSON.stringify(arg?.queryKey))
+    expect(keys.some((key) => key?.includes("tasks"))).toBe(true)
   })
 })
