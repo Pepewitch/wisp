@@ -126,6 +126,41 @@ describe("bounded live protocol transport", () => {
 });
 
 describe("Codex live terminal events", () => {
+  test("a resumed thread omits historical turns from the RPC response", async () => {
+    const sink = new MemorySink();
+    const driver = new CodexLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.codex!,
+      cwd: "/tmp/worktree",
+      sessionId: "existing-thread",
+      model: "gpt-test",
+      effort: "high",
+      initialMessageId: "initial-message",
+      initialInput: [{ type: "text", text: "hello", text_elements: [] }],
+      emit: () => {},
+      onTerminal: () => {},
+    });
+
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: {} });
+    expect((await requestAt(sink, 1)).method).toBe("initialized");
+    const resume = await requestAt(sink, 2);
+    expect(resume).toMatchObject({
+      method: "thread/resume",
+      params: {
+        threadId: "existing-thread",
+        cwd: "/tmp/worktree",
+        model: "gpt-test",
+        excludeTurns: true,
+      },
+    });
+    driver.handle({ id: resume.id, result: { thread: { id: "existing-thread", turns: [] } } });
+    const startTurn = await requestAt(sink, 3);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+    await driver.close();
+  });
+
   test("a failed completion emits one failed terminal with usage", async () => {
     const sink = new MemorySink();
     const events: Record<string, any>[] = [];
