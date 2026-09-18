@@ -355,3 +355,54 @@ describe("you-block display rule", () => {
     expect(youBlockDisplay(long).summary).toBe(`you: ${"z".repeat(120)}…`)
   })
 })
+
+describe("questionnaires", () => {
+  const asked: Extract<ActivityEvent, { kind: "question" }> = {
+    kind: "question",
+    id: "ask-1",
+    parentId: null,
+    phase: "asked",
+    questions: [
+      { index: 1, topic: "Travel", question: "Where to?", multiSelect: false, options: ["Japan", "Italy"] },
+    ],
+  }
+
+  it("is one item however many events describe it", () => {
+    // The AskUser tool call and the structured request carry the same
+    // questions under the same id; whichever lands first creates the card.
+    const items = reduceActivity([], [asked, { ...asked, questions: undefined }])
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: "question", id: "ask-1", status: "asked", reason: null })
+    expect((items[0] as { questions: unknown[] }).questions).toHaveLength(1)
+  })
+
+  it("later phases settle it, carrying the questions forward", () => {
+    const items = reduceActivity(
+      [],
+      [asked, { kind: "question", id: "ask-1", parentId: null, phase: "answered", answers: [{ index: 1, answer: "Japan" }] }],
+    )
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      status: "answered",
+      answers: [{ index: 1, answer: "Japan" }],
+      questions: asked.questions,
+    })
+  })
+
+  it("keeps the cancel reason, because superseded and stopped read differently", () => {
+    const items = reduceActivity(
+      [],
+      [asked, { kind: "question", id: "ask-1", parentId: null, phase: "cancelled", reason: "superseded" }],
+    )
+    expect(items[0]).toMatchObject({ status: "cancelled", reason: "superseded" })
+  })
+
+  it("a replay of the same bytes changes nothing", () => {
+    const first = reduceActivity([], [asked])
+    expect(reduceActivity(first, [asked])).toBe(first)
+  })
+
+  it("a question with nothing to render is dropped rather than shown empty", () => {
+    expect(reduceActivity([], [{ ...asked, questions: [] }])).toEqual([])
+  })
+})

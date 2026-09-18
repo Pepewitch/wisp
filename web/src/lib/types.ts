@@ -48,6 +48,26 @@ export type ActivityEvent =
       durationMs?: number | null
       background?: boolean
     })
+  /** The harness stopped to ask a multiple-choice question. `id` is the tool
+   *  call the answer resolves; the three phases replay in log order. */
+  | (ActivityEventBase & {
+      kind: "question"
+      phase: "asked" | "answered" | "cancelled"
+      /** Why a cancelled question was released, which is what the card says. */
+      reason?: "superseded" | "stopped"
+      questions?: QuestionPrompt[]
+      answers?: { index: number; answer: string }[]
+    })
+
+/** One question, as every harness that has this tool describes it. */
+export interface QuestionPrompt {
+  index: number
+  topic: string | null
+  question: string
+  multiSelect: boolean
+  /** 2–4 labels. An own answer is always offered on top of these. */
+  options: string[]
+}
 
 /** Task as GET /api/tasks serializes it (archived is a boolean at the boundary). */
 export interface CleanupSummary {

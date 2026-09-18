@@ -4,6 +4,7 @@ import { codex } from "./activity-codex";
 import { eventId, type NormalizeContext, status } from "./activity-context";
 import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
+import { parseQuestionnaire } from "./questionnaire";
 import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
 import { createEventLineDecoder, cursorToolCall } from "./wire";
 
@@ -291,6 +292,17 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
       ...taskFields(input),
     }];
   }
+  // AskUser renders as the questionnaire card, not as a tool row. The card is
+  // built from the plain text here and upgraded in place by the structured
+  // `question` event a live turn also emits — same tool call id, so they are
+  // one item either way.
+  if (name === "AskUser") {
+    const questions = parseQuestionnaire(string(record(input).questionnaire) ?? "");
+    if (questions.length > 0) {
+      context.questions.add(id);
+      return [{ kind: "question", id, parentId: null, timestamp: timestamp(event), phase: "asked", questions }];
+    }
+  }
   const childId = ["TaskOutput", "TaskStop"].includes(name) ? string(record(input).task_id) : null;
   if (childId) context.toolParents.set(id, childId);
   return [{
@@ -306,6 +318,9 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
 
 function droidToolResult(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const id = eventId(event.id ?? event.toolCallId ?? event.toolId, context, "tool");
+  // The questionnaire card already shows the answers it collected; Droid's
+  // echo of them would otherwise land beside it as a second, raw row.
+  if (context.questions.has(id)) return [];
   const value = text(event.value ?? event.error);
   const error = event.isError === true ? value ?? "Tool failed" : null;
   const parentId = string(event.parent_tool_use_id);
@@ -337,11 +352,52 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
   }];
 }
 
+/**
+ * A questionnaire the harness is blocked on. The three phases replay in log
+ * order, so a reconnect rebuilds the card's final state from the same bytes
+ * rather than showing a settled question as still open.
+ */
+function droidQuestion(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+  const id = eventId(event.id, context, "question");
+  const phase = event.phase === "answered" || event.phase === "cancelled" ? event.phase : "asked";
+  context.questions.add(id);
+  const questions = Array.isArray(event.questions)
+    ? event.questions.map(record).map((entry, position) => ({
+        index: number(entry.index) ?? position + 1,
+        topic: string(entry.topic),
+        question: trunc(string(entry.question) ?? "", 1_000),
+        multiSelect: entry.multiSelect === true,
+        options: (Array.isArray(entry.options) ? entry.options : [])
+          .map((option: unknown) => string(option))
+          .filter((option: string | null): option is string => option !== null)
+          .map((option: string) => trunc(option, 300)),
+      }))
+    : undefined;
+  const answers = Array.isArray(event.answers)
+    ? event.answers.map(record).map((entry, position) => ({
+        index: number(entry.index) ?? position + 1,
+        answer: trunc(string(entry.answer) ?? "", 2_000),
+      }))
+    : undefined;
+  const reason = event.reason === "superseded" || event.reason === "stopped" ? event.reason : undefined;
+  return [{
+    kind: "question",
+    id,
+    parentId: null,
+    timestamp: timestamp(event),
+    phase,
+    ...(reason ? { reason } : {}),
+    ...(questions ? { questions } : {}),
+    ...(answers ? { answers } : {}),
+  }];
+}
+
 function droid(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   if (event.type === "message") return droidMessage(event, context);
   if (event.type === "reasoning") return droidReasoning(event, context);
   if (event.type === "tool_call") return droidToolCall(event, context);
   if (event.type === "tool_result") return droidToolResult(event, context);
+  if (event.type === "question") return droidQuestion(event, context);
   return [];
 }
 
@@ -528,6 +584,7 @@ export function createActivityFormatter(def?: AdapterDef): (line: string, record
     background: new Map(),
     toolParents: new Map(),
     models: new Map(),
+    questions: new Set(),
     rootThread: null,
     settled: new Map(),
   };

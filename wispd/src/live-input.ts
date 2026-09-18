@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import type { AdapterDef, ImageInputStrategy } from "./adapters";
 import { CodexLiveDriver, type CodexLiveInput } from "./adapters/live/codex";
 import { liveCommand } from "./adapters/live/command";
-import { DroidLiveDriver, type DroidLiveImage } from "./adapters/live/droid";
+import { DroidLiveDriver, type DroidLiveImage, type QuestionAnswer } from "./adapters/live/droid";
+import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
 import {
   formatAttachNote,
@@ -10,6 +11,7 @@ import {
   readMessageAttachments,
   type StoredAttachment,
 } from "./attachments";
+import { transition } from "./store";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage } from "./types";
@@ -25,6 +27,14 @@ export interface ActiveLiveInput {
   turnId: number;
   turn: number;
   send: (message: TaskMessage) => Promise<void>;
+  /**
+   * Answer a questionnaire the harness is blocked on, in its own protocol.
+   * Absent on harnesses with no such channel — for those the operator answers
+   * by sending, which is the send path above.
+   */
+  answer?: (questionId: string, answers: QuestionAnswer[]) => Promise<void>;
+  /** The questionnaire this turn is waiting on, if any. */
+  question?: () => { id: string; questions: QuestionPrompt[] } | null;
   close: () => Promise<void>;
 }
 
@@ -275,6 +285,16 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
     initialImages: droidImages(options.def, options.attachments),
     emit,
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
+    // A suspended turn is still a running turn, so only the task STATE moves.
+    // It also takes the task out of stuck-detection's reach, which skips
+    // anything that is not running or already stuck — a turn idling on a
+    // question is neither quiet nor broken, it is waiting on purpose.
+    onWaiting: (waiting) =>
+      transition(
+        options.task.id,
+        waiting ? "needs-input" : "running",
+        waiting ? `turn ${options.turn} is asking you` : `turn ${options.turn}`,
+      ),
   });
   liveInputs.set(options.task.id, {
     turnId: options.turnId,
@@ -284,6 +304,8 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
       await driver.send(message.id, steerText(options.def, message, files), droidImages(options.def, files));
       noteDelivery(options.recorder, message, files);
     },
+    answer: (questionId, answers) => driver.answer(questionId, answers),
+    question: () => driver.pendingQuestion(),
     close: () => driver.close(),
   });
   return Promise.all([

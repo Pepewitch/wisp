@@ -11,6 +11,27 @@ export interface DroidLiveImage {
   mediaType: string;
 }
 
+/** One question as Droid poses it over `droid.ask_user`. */
+export interface DroidQuestion {
+  index: number;
+  topic: string | null;
+  question: string;
+  multiSelect: boolean;
+  options: string[];
+}
+
+export interface QuestionAnswer {
+  index: number;
+  answer: string;
+}
+
+interface PendingQuestion {
+  /** Droid's own frame id, which its result has to echo. */
+  frameId: unknown;
+  toolCallId: string;
+  questions: DroidQuestion[];
+}
+
 interface DroidLiveOptions {
   sink: WritableRpcSink;
   def: AdapterDef;
@@ -23,6 +44,15 @@ interface DroidLiveOptions {
   initialImages: DroidLiveImage[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
+  /**
+   * The turn is now waiting on a person, or has stopped waiting. Distinct from
+   * onTerminal: the turn is still open either way, so only the task's STATE
+   * moves — which is also what keeps stuck-detection off a turn that is idle
+   * on purpose.
+   */
+  onWaiting?: (waiting: boolean) => void;
+  /** Test seam for ASK_USER_GRACE_MS; production never sets it. */
+  askUserGraceMs?: number;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -32,6 +62,36 @@ function record(value: unknown): Record<string, any> {
 function errorMessage(value: unknown): string {
   const message = record(value).message;
   return typeof message === "string" && message.trim() ? message.trim() : "unknown JSON-RPC error";
+}
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+/**
+ * Droid's questions, defensively. A question with no options is not a
+ * questionnaire the UI can render, so it is dropped rather than shown as an
+ * empty list; if that leaves nothing, the caller falls back to ending the turn.
+ */
+function droidQuestions(value: unknown): DroidQuestion[] {
+  if (!Array.isArray(value)) return [];
+  const questions: DroidQuestion[] = [];
+  for (const [position, entry] of value.entries()) {
+    const raw = record(entry);
+    const question = str(raw.question);
+    const options = Array.isArray(raw.options)
+      ? raw.options.map((option) => str(option)).filter((option): option is string => option !== null)
+      : [];
+    if (!question || options.length === 0) continue;
+    questions.push({
+      index: typeof raw.index === "number" ? raw.index : position + 1,
+      topic: str(raw.topic),
+      question,
+      multiSelect: raw.multiSelect === true,
+      options,
+    });
+  }
+  return questions;
 }
 
 function droidUsage(value: unknown): Record<string, number> | null {
@@ -82,6 +142,13 @@ function messageParams(
 }
 
 /**
+ * How long an AskUser tool_use waits for its `droid.ask_user` request before
+ * the turn ends as needs-input instead. The two arrive together in practice;
+ * this only catches a Droid that does not speak the request at all.
+ */
+const ASK_USER_GRACE_MS = 10_000;
+
+/**
  * A single long-lived Droid JSON-RPC peer.
  *
  * Session start, completion, actual-model and usage shapes plus the versioned
@@ -90,10 +157,17 @@ function messageParams(
  * notifications rather than content blocks on `create_message`.
  * Steering was last live-probed on 0.205.0. Admission is the
  * response to droid.add_user_message. Completion is agent_turn_completed
- * (any reason) or an AskUser tool_use — both close stdin immediately, the
- * same way Codex closes on turn/completed. Idle is only a fallback if that
- * close raced. A correction admitted while a tool was sleeping completed in
- * the original turn and replaced its requested final answer.
+ * (any reason), which closes stdin immediately, the same way Codex closes on
+ * turn/completed. Idle is only a fallback if that close raced. A correction
+ * admitted while a tool was sleeping completed in the original turn and
+ * replaced its requested final answer.
+ *
+ * AskUser is the one tool that suspends rather than ends the turn: Droid
+ * follows the tool_use with a `droid.ask_user` REQUEST and blocks on our
+ * reply, so the turn stays open, idle, until the operator answers. Wisp used
+ * to end the turn there because `JsonRpcPeer.handle` swallowed the request.
+ * A harness that never sends it (or sends nothing we can render) still gets
+ * the old behaviour, via ASK_USER_GRACE_MS.
  */
 export class DroidLiveDriver {
   readonly ready: Promise<void>;
@@ -104,6 +178,8 @@ export class DroidLiveDriver {
   private model: string | null;
   private finalText = "";
   private subagents: DroidSubagentStream | null = null;
+  private question: PendingQuestion | null = null;
+  private askUserGrace: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly options: DroidLiveOptions) {
     this.sessionId = options.sessionId;
@@ -120,6 +196,14 @@ export class DroidLiveDriver {
         id,
         method,
         params,
+      }),
+      responseFrame: (id, result) => ({
+        jsonrpc: "2.0",
+        type: "response",
+        factoryApiVersion: "1.0.0",
+        factoryProtocolVersion: FACTORY_PROTOCOL_VERSION,
+        id,
+        result,
       }),
     });
     this.ready = this.boot().catch(async (error) => {
@@ -178,9 +262,17 @@ export class DroidLiveDriver {
     );
   }
 
+  /**
+   * Steering while a questionnaire is open answers it by other means: "none of
+   * those — do X instead" is a legitimate reply, and the operator is never
+   * required to use the card. Droid is BLOCKED inside the AskUser tool though,
+   * so the request has to be released first or the message it queues can never
+   * be reached.
+   */
   async send(messageId: string, text: string, images: DroidLiveImage[]): Promise<void> {
     await this.ready;
     if (this.terminal) throw new Error("Droid turn already completed");
+    await this.cancelQuestion("superseded");
     await this.call("droid.add_user_message", messageParams(messageId, text, images));
   }
 
@@ -191,8 +283,111 @@ export class DroidLiveDriver {
   /** Consume one parsed stdout frame. */
   handle(frame: RpcFrame): void {
     if (this.peer.handle(frame)) return;
+    if (frame.method === "droid.ask_user") {
+      this.handleAskUser(frame);
+      return;
+    }
     if (frame.method !== "droid.session_notification") return;
     this.handleNotification(record(record(frame.params).notification), Date.now());
+  }
+
+  /**
+   * Droid is blocked on us. Publish the questionnaire and leave the turn open;
+   * `answer` or `close` is what unblocks it. A request we cannot render is
+   * declined at once rather than left hanging.
+   */
+  private handleAskUser(frame: RpcFrame): void {
+    const params = record(frame.params);
+    const questions = droidQuestions(params.questions);
+    const toolCallId = str(params.toolCallId) ?? String(frame.id);
+    if (questions.length === 0 || this.terminal) {
+      void this.peer.respond(frame.id, { cancelled: true, answers: [] }).catch(() => {});
+      if (!this.terminal) this.endAsNeedsInput();
+      return;
+    }
+    this.clearAskUserGrace();
+    this.question = { frameId: frame.id, toolCallId, questions };
+    this.options.onWaiting?.(true);
+    this.options.emit({
+      type: "question",
+      phase: "asked",
+      id: toolCallId,
+      questions,
+      timestamp: Date.now(),
+      session_id: this.sessionId,
+    });
+  }
+
+  /** The pending questionnaire, for the route that answers it. */
+  pendingQuestion(): { id: string; questions: DroidQuestion[] } | null {
+    return this.question ? { id: this.question.toolCallId, questions: this.question.questions } : null;
+  }
+
+  /**
+   * Hand Droid the operator's answers. Every question must be answered —
+   * Droid validates completeness and would reject a partial result — so the
+   * caller's list is matched against the questions we published.
+   */
+  async answer(questionId: string, answers: QuestionAnswer[]): Promise<void> {
+    const pending = this.question;
+    if (!pending || pending.toolCallId !== questionId) {
+      throw new Error("that question is no longer waiting for an answer");
+    }
+    const byIndex = new Map(answers.map((entry) => [entry.index, entry.answer]));
+    const resolved = pending.questions.map((question) => ({
+      index: question.index,
+      question: question.question,
+      answer: (byIndex.get(question.index) ?? "").trim(),
+    }));
+    const missing = resolved.filter((entry) => !entry.answer);
+    if (missing.length > 0) {
+      throw new Error(`answer every question first (${missing.length} still empty)`);
+    }
+    this.question = null;
+    this.options.onWaiting?.(false);
+    await this.peer.respond(pending.frameId, { answers: resolved });
+    this.options.emit({
+      type: "question",
+      phase: "answered",
+      id: pending.toolCallId,
+      answers: resolved.map(({ index, answer }) => ({ index, answer })),
+      timestamp: Date.now(),
+      session_id: this.sessionId,
+    });
+  }
+
+  /**
+   * Release Droid without answering. Left undone, its daemon keeps the request
+   * pending and the session cannot be resumed cleanly. The reason is what the
+   * card says about itself afterwards — "you replied in the message below" and
+   * "the agent was stopped" are different facts.
+   */
+  private async cancelQuestion(reason: "superseded" | "stopped"): Promise<void> {
+    const pending = this.question;
+    if (!pending) return;
+    this.question = null;
+    if (reason !== "stopped") this.options.onWaiting?.(false);
+    this.options.emit({
+      type: "question",
+      phase: "cancelled",
+      reason,
+      id: pending.toolCallId,
+      timestamp: Date.now(),
+      session_id: this.sessionId,
+    });
+    await this.peer.respond(pending.frameId, { cancelled: true, answers: [] }).catch(() => {});
+  }
+
+  private clearAskUserGrace(): void {
+    if (!this.askUserGrace) return;
+    clearTimeout(this.askUserGrace);
+    this.askUserGrace = null;
+  }
+
+  /** The pre-0.193 behaviour: no reply path, so the operator answers by sending. */
+  private endAsNeedsInput(): void {
+    this.clearAskUserGrace();
+    this.emitCompletion({ usage: null, isError: false, needsInput: ["AskUser"] });
   }
 
   private handleNotification(notification: Record<string, any>, receivedAt: number): void {
@@ -243,6 +438,7 @@ export class DroidLiveDriver {
     needsInput?: string[];
   }): void {
     if (this.terminal) return;
+    this.clearAskUserGrace();
     this.options.emit({
       type: "completion",
       finalText: this.finalText,
@@ -289,11 +485,16 @@ export class DroidLiveDriver {
         if (block.name === "Task" && typeof block.id === "string") {
           this.subagents?.follow(block.id);
         }
-        // Wisp has no reply path for Droid AskUser. End the turn as
-        // needs-input so the operator answers with send, rather than waiting
-        // forever for a questionnaire nothing can fill in.
-        if (block.name === "AskUser") {
-          this.emitCompletion({ usage: null, isError: false, needsInput: ["AskUser"] });
+        // The turn suspends here rather than ending: `droid.ask_user` is on
+        // its way with the same questions in a shape the UI can render. Only
+        // if it never arrives does the turn fall back to needs-input, so a
+        // Droid without the request never leaves the task waiting forever.
+        if (block.name === "AskUser" && !this.question && !this.askUserGrace) {
+          this.askUserGrace = setTimeout(() => {
+            this.askUserGrace = null;
+            if (!this.question) this.endAsNeedsInput();
+          }, this.options.askUserGraceMs ?? ASK_USER_GRACE_MS);
+          this.askUserGrace.unref?.();
         }
       } else if (block.type === "tool_result") {
         this.emitToolResult(block, message.createdAt);
@@ -316,9 +517,10 @@ export class DroidLiveDriver {
     this.peer.failPending(message);
   }
 
-  close(): Promise<void> {
-    return this.subagents
-      ? this.subagents.close().then(() => this.peer.close())
-      : this.peer.close();
+  async close(): Promise<void> {
+    this.clearAskUserGrace();
+    await this.cancelQuestion("stopped");
+    if (this.subagents) await this.subagents.close();
+    await this.peer.close();
   }
 }

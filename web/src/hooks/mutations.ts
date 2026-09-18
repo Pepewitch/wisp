@@ -288,6 +288,34 @@ export function useArchiveTask() {
   });
 }
 
+/**
+ * POST /api/tasks/:id/answer — hand the harness the answers to the questions
+ * it paused on, in its own protocol, so the turn resumes rather than restarts.
+ *
+ * A 409 here is not an error to retry: it means the reply channel is gone (the
+ * turn ended, the daemon restarted), and the card's own copy tells the reader
+ * to answer in a message instead. The call site owns that sentence.
+ */
+export function useAnswerQuestion() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: ({ id, questionId, answers }: {
+      id: string;
+      questionId: string;
+      answers: { index: number; answer: string }[];
+    }) =>
+      transport.request<TaskVerbResult>(`/api/tasks/${id}/answer`, {
+        method: "POST",
+        body: { questionId, answers },
+      }),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: qk.tasks });
+      void client.invalidateQueries({ queryKey: qk.status });
+    },
+  });
+}
+
 /** POST /api/tasks/:id/fresh-session — drop `session_id` so the next turn starts clean. */
 export function useFreshSession() {
   const client = useQueryClient();

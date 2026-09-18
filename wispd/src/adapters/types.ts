@@ -321,7 +321,31 @@ export type ActivityEvent =
       error?: string | null;
       durationMs?: number | null;
       background?: boolean;
+    })
+  | (ActivityEventBase & {
+      /**
+       * The harness stopped to ask the operator a multiple-choice question.
+       * Harness-neutral on purpose: Droid's AskUser and Claude's
+       * AskUserQuestion pose the same shape, and the UI renders one card for
+       * both. `id` is the tool call the answer resolves.
+       */
+      kind: "question";
+      phase: "asked" | "answered" | "cancelled";
+      /** Why a cancelled question was released, which is what the card says. */
+      reason?: "superseded" | "stopped";
+      questions?: QuestionPrompt[];
+      answers?: { index: number; answer: string }[];
     });
+
+/** One question, as every harness that has this tool describes it. */
+export interface QuestionPrompt {
+  index: number;
+  topic: string | null;
+  question: string;
+  multiSelect: boolean;
+  /** 2–4 labels. An own-answer row is always offered on top of these. */
+  options: string[];
+}
 
 export interface ParsedTurn {
   result: string | null;

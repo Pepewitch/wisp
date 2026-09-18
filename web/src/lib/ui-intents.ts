@@ -40,6 +40,8 @@ export interface UiIntents {
   subscribe(fn: () => void): () => void;
   streamFocusRequests(): number;
   focusStream(): void;
+  composerFocusRequests(): number;
+  focusComposer(): void;
   taskFocusRequest(): TaskFocusRequest | null;
   focusTask(taskId: string): void;
   findRequest(): FindRequest | null;
@@ -51,6 +53,7 @@ export interface UiIntents {
 function createUiIntents(): UiIntents {
   const listeners = new Set<() => void>();
   let streamFocusRequests = 0;
+  let composerFocusRequests = 0;
   let taskFocusRequest: TaskFocusRequest | null = null;
   let findRequest: FindRequest | null = null;
   let localSetupRequests = 0;
@@ -70,6 +73,14 @@ function createUiIntents(): UiIntents {
     },
     focusStream(): void {
       streamFocusRequests += 1;
+      notify();
+    },
+    /** Escape out of a questionnaire card — the composer is always the way out */
+    composerFocusRequests(): number {
+      return composerFocusRequests;
+    },
+    focusComposer(): void {
+      composerFocusRequests += 1;
       notify();
     },
     /** the latest task the desktop shell asked this connection's view to show */

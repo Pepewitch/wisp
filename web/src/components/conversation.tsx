@@ -9,6 +9,7 @@ import {
 } from "react"
 
 import { ActivityList } from "@/components/activity-list"
+import { ConversationFloat } from "@/components/conversation-float"
 import { FindBar } from "@/components/find-in-task"
 import {
   BUBBLE_ACTION,
@@ -16,15 +17,17 @@ import {
   PersonBubble,
   UserMessageCopyButton,
 } from "@/components/person-bubble"
-import { ArrowUp, ChevronRight, Dismiss, Pencil } from "@/components/icons"
+import { ChevronRight, Dismiss, Pencil } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
+import { QuestionnaireProvider } from "@/components/questionnaire-context"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { TurnProgress } from "@/components/turn-progress"
 import { revealFileHandler } from "@/lib/external-links"
 import { useCancelQueuedMessage, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { useFindInTask } from "@/hooks/useFindInTask"
+import { useQuestionnaireController } from "@/hooks/useQuestionnaire"
 import {
   useConversationPagination,
   useRevealTurnPage,
@@ -38,6 +41,7 @@ import {
   splitByMessage,
   type TurnActivity,
 } from "@/lib/activity"
+import { countAskedQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
@@ -132,6 +136,15 @@ export function Conversation({
   })
   // ⌘F, the overflow menu and a picked cross-project result all land here.
   const find = useFindInTask(viewport, uiIntents)
+  // Answering a questionnaire card, and what each card is allowed to offer.
+  const questionnaire = useQuestionnaireController(task, touch)
+  const waitingQuestions = useMemo(() => {
+    if (task?.state !== "needs-input") return 0
+    return stream.blocks.reduce(
+      (open, block) => open + (block.kind === "activity" ? countAskedQuestions(block.items) : 0),
+      0,
+    )
+  }, [stream.blocks, task?.state])
 
   const taskId = task?.id
   useEffect(() => (
@@ -169,6 +182,7 @@ export function Conversation({
       taskId={task?.id ?? null}
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
+     <QuestionnaireProvider value={questionnaire}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           aria-hidden
@@ -260,24 +274,13 @@ export function Conversation({
           </div>
         </div>
 
-        {!pinned && (
-          <button
-            type="button"
-            onClick={jumpToLatest}
-            className={cn(
-              "absolute right-4 bottom-3 flex h-7 items-center gap-1.5 rounded-full",
-              "border border-border-strong bg-card px-3 text-[11.5px] text-fg-secondary",
-              "shadow-float transition-colors hover:text-foreground",
-            )}
-          >
-            <ArrowUp className="size-3 rotate-180" />
-            Jump to latest
-          </button>
-        )}
+        {!pinned && <ConversationFloat waitingQuestions={waitingQuestions} onJump={jumpToLatest} />}
       </div>
+     </QuestionnaireProvider>
     </FileViewerProvider>
   )
 }
+
 
 function ContextDivider({ turn }: { turn: Turn }) {
   return (
