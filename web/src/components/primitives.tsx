@@ -17,7 +17,8 @@ import { cn } from "@/lib/utils"
  *
  *  - FILL says whose state it is. A filled dot is the agent's own outcome;
  *    a RING is ambient work attached to the task but outside the turn —
- *    background processes here, archive cleanup in `TaskStateDot`.
+ *    background processes and workflows here, archive cleanup in
+ *    `TaskStateDot`.
  *  - HUE says how that work is going, and it is the same hue family either
  *    way, so a ring never needs a colour the filled dots do not already own.
  *
@@ -32,10 +33,20 @@ import { cn } from "@/lib/utils"
  * for the running indicator (see index.css: a second blinking thing competes
  * with the one that means "this task is alive").
  */
-export function StateDot({ state, background, className }: { state: TaskState; background?: ApiTask["background"]; className?: string }) {
+export function StateDot({
+  state,
+  background,
+  workflow = false,
+  className,
+}: {
+  state: TaskState
+  background?: ApiTask["background"]
+  workflow?: boolean
+  className?: string
+}) {
   const label = backgroundLabel(background)
-  const backgroundOnly = label && state === "done"
-  const word = label ? `${STATE_LABEL[state]} · ${label}` : STATE_LABEL[state]
+  const ambientOnly = (workflow && state !== "running") || (Boolean(label) && state === "done")
+  const word = [STATE_LABEL[state], label, workflow ? "Workflow attached" : null].filter(Boolean).join(" · ")
   // The word says something is running; the detail says what, so the reader
   // can judge Stop without guessing. Screen readers get the same text.
   // Subscribes only when there IS background work, so the thirty idle dots in
@@ -51,8 +62,8 @@ export function StateDot({ state, background, className }: { state: TaskState; b
       title={title}
       className={cn(
         "size-1.5 shrink-0 rounded-full",
-        backgroundOnly
-          ? background?.state === "unknown"
+        ambientOnly
+          ? background?.state === "unknown" && !workflow
             ? "border-2 border-state-creating bg-transparent"
             : "border-2 border-state-background bg-transparent"
           : STATE_DOT[state],

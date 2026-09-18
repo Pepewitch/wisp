@@ -38,6 +38,7 @@ import { promptWithSuffix } from "../suffix-prompts";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
+import { taskIdsWithAttachedWorkflows } from "../workflows/store";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
@@ -50,10 +51,12 @@ export function listTasksRoute(url: URL): Response {
   // on (P5b), and the exit facts that let a client say "exited 1" instead of
   // "failed" when the work landed but the harness CLI exited badly (Theme B)
   const outcomes = latestTurnOutcomes();
+  const attachedWorkflows = taskIdsWithAttachedWorkflows();
   return json(
     listTasks(url.searchParams.get("archived") === "1" || url.searchParams.get("cleanup") === "1")
       .filter(t => !t.archived || url.searchParams.get("archived") === "1" || cleanupProgress(t.id) !== null).map((t) => ({
       ...apiTask(t),
+      has_workflow: attachedWorkflows.has(t.id),
       latest_turn_model: outcomes.get(t.id)?.model ?? null,
       latest_turn_exit_code: outcomes.get(t.id)?.exitCode ?? null,
       latest_turn_has_result: outcomes.get(t.id)?.hasResult ?? false,

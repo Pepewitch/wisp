@@ -10,6 +10,7 @@ import type { WorkflowPr } from "../src/workflows/github";
 import { WorkflowRuntime } from "../src/workflows/runtime";
 import { changeWorkflowState, createWorkflow, getWorkflow, listWorkflows, reserveWorkflowWake, updateWorkflow, workflow } from "../src/workflows/store";
 import { workflowRoute } from "../src/routes/workflows";
+import { listTasksRoute } from "../src/routes/tasks";
 import { validateDecision } from "../src/workflows/plugins";
 import { workflowDuration, workflowFlags, workflowCommand } from "../src/cli-workflow";
 import { parseArgs } from "../src/cli-args";
@@ -364,6 +365,17 @@ test("workflow API creates, edits with revision checks, and completes idempotent
   expect((await request(`/api/workflows/${row.id}/complete`, "POST", {})).status).toBe(200);
   expect((await request(`/api/workflows/${row.id}/complete`, "POST", {})).status).toBe(200);
   expect(listWorkflows(item.taskId)).toHaveLength(2);
+});
+
+test("task list marks only unfinished workflows as attached", async () => {
+  const item = arm();
+  const listed = async () => await listTasksRoute(new URL("http://wisp.test/api/tasks")).json() as Array<{
+    id: string;
+    has_workflow: boolean;
+  }>;
+  expect((await listed()).find(task => task.id === item.taskId)?.has_workflow).toBe(true);
+  changeWorkflowState(item.id, "completed", "Done", base);
+  expect((await listed()).find(task => task.id === item.taskId)?.has_workflow).toBe(false);
 });
 
 test("CLI flags preserve custom parameters and target the API", async () => {

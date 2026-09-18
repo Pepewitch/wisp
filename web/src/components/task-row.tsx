@@ -32,7 +32,7 @@ interface TaskRowProps {
 function TaskStateDot({ task, className }: { task: ApiTask; className?: string }) {
   return task.cleanup && task.cleanup.state !== "complete"
     ? <span role="img" aria-label={CLEANUP_LABEL[task.cleanup.state]} title={CLEANUP_LABEL[task.cleanup.state]} className={cn("size-1.5 shrink-0 rounded-full border-2", task.cleanup.state === "needs-attention" ? "border-state-stuck" : "border-state-background", className)} />
-    : <StateDot state={task.state} background={task.background} className={className} />
+    : <StateDot state={task.state} background={task.background} workflow={task.has_workflow} className={className} />
 }
 
 /**
@@ -363,7 +363,7 @@ export function TaskCard({
       <div className="text-[12.5px] leading-snug font-medium text-foreground">{task.title}</div>
 
       <div className="mt-2 flex items-center gap-1.5">
-        <StateDot state={task.state} background={task.background} className="size-1.5" />
+        <TaskStateDot task={task} className="size-1.5" />
         <span className={cn("text-[11.5px]", STATE_TEXT[task.state])}>{stateWord(task)}</span>
         {task.archived && <span className="text-[11.5px] text-faint">· archived</span>}
       </div>

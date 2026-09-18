@@ -26,6 +26,11 @@ export function getWorkflow(id: string): WorkflowRow | null {
 export function listWorkflows(taskId: string): Workflow[] {
   return (db.query("SELECT * FROM workflows WHERE task_id = ? ORDER BY created_at DESC, id").all(taskId) as WorkflowRow[]).map(workflow);
 }
+/** Task ids with standing workflow state; completed history is no longer attached. */
+export function taskIdsWithAttachedWorkflows(): Set<string> {
+  const rows = db.query("SELECT DISTINCT task_id FROM workflows WHERE state != 'completed'").all() as { task_id: string }[];
+  return new Set(rows.map(row => row.task_id));
+}
 export function workflowHistory(id: string): WorkflowHistory[] {
   return db.query("SELECT id, at, kind, detail, message_id AS messageId FROM workflow_history WHERE workflow_id = ? ORDER BY id DESC LIMIT 100").all(id) as WorkflowHistory[];
 }

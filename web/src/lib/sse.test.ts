@@ -103,15 +103,21 @@ function seed(client: QueryClient): void {
   client.setQueryData(qk.diff("t1"), { kind: "ok", diff: "", truncated: false, untracked: [] });
 }
 
-it("workflow events invalidate only the originating connection's workflow state", () => {
+it("workflow events refresh workflow state and task dots only on the originating connection", () => {
   const h = bridge("t1", "remote-a");
   const a = [...h.qk.task("t1"), "workflows"];
   const b = [...createConnectionQueryKeys("remote-b").task("t1"), "workflows"];
+  const aTasks = h.qk.tasksList(false);
+  const bTasks = createConnectionQueryKeys("remote-b").tasksList(false);
   h.client.setQueryData(a, []);
   h.client.setQueryData(b, []);
+  h.client.setQueryData(aTasks, []);
+  h.client.setQueryData(bTasks, []);
   h.sources[0]!.emit({ type: "workflow", taskId: "t1" });
   expect(h.client.getQueryState(a)?.isInvalidated).toBe(true);
   expect(h.client.getQueryState(b)?.isInvalidated).toBe(false);
+  expect(h.client.getQueryState(aTasks)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(bTasks)?.isInvalidated).toBe(false);
   h.close();
 });
 
