@@ -7,6 +7,7 @@ import { Archive, Pencil, ArrowUp, BranchRequest } from "@/components/icons"
 import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { pullRequestSidebarTone } from "@/lib/pull-request-tone"
+import { serviceTierLabel } from "@/lib/service-tier"
 import { STATE_TEXT, stateWord, since } from "@/lib/state"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn, oneLine } from "@/lib/utils"
@@ -403,6 +404,7 @@ export function TaskCard({
           {task.harness}
           {task.model && <span className="font-mono"> · {task.model}</span>}
           {task.effort && ` · ${task.effort}`}
+          {task.service_tier && ` · ${serviceTierLabel(task.service_tier)}`}
         </Val>
 
         <Key>Turns</Key>

@@ -26,6 +26,14 @@ export interface AdapterDef {
   model?: string[];
   /** appended when a reasoning effort is set; "{effort}" is substituted (P5b) */
   effort?: string[];
+  /** appended when a service tier is set; "{serviceTier}" is substituted */
+  serviceTier?: string[];
+  /**
+   * Safe service-tier fallback when a request and task do not name one.
+   * Codex uses "default" for Standard; leaving this unset lets the harness
+   * choose, which can be a paid Fast tier on account-controlled catalogs.
+   */
+  defaultServiceTier?: string;
   /**
    * The values `effort` actually accepts, so the web picker can OFFER them
    * instead of asking someone to guess a level into a text box.
@@ -474,6 +482,8 @@ export interface CompactCtx {
   sessionId: string | null;
   /** the task's worktree (or repo, when there is no worktree) */
   cwd: string | null;
+  /** selected inference speed/cost tier, when the harness supports one */
+  serviceTier?: string | null;
   /** aborted by the caller's timeout — strategies wire it to the child's kill */
   signal?: AbortSignal;
 }
@@ -612,8 +622,16 @@ export interface ModelDiscovery {
   defaultModel: string | null;
   /** the models the installed CLI advertises; null when it exposes no list */
   models: string[] | null;
+  /** Optional paid speed tiers advertised for each model. Standard is implicit. */
+  serviceTiers?: Record<string, ModelServiceTier[]>;
   /** provenance/caveats worth showing the user (where the info came from, why it's partial) */
   notes: string[];
+}
+
+export interface ModelServiceTier {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /**

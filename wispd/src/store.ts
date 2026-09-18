@@ -51,6 +51,7 @@ export function createTask(t: {
   model: string | null;
   /** creation-time reasoning-effort snapshot (config harnessDefaults, P5b); optional like createTurn's pid_start_time */
   effort?: string | null;
+  service_tier?: string | null;
   /** where turns run; omitted = 'worktree', the behaviour every task had before local mode */
   mode?: TaskMode;
   slot: number;
@@ -58,16 +59,16 @@ export function createTask(t: {
   return db.transaction((input: typeof t): Task => {
     const timestamp = now();
     db.run(
-      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, mode, slot, state, context_n, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?)`,
-      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, input.mode ?? "worktree", input.slot, timestamp, timestamp],
+      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, service_tier, mode, slot, state, context_n, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?)`,
+      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, input.service_tier ?? null, input.mode ?? "worktree", input.slot, timestamp, timestamp],
     );
     // A task's first durable context is born with it — one row, one boundary.
     db.run(
       `INSERT INTO task_contexts
-         (task_id, n, harness, model, effort, session_id, skills_json, created_at, updated_at)
-       VALUES (?, 1, ?, ?, ?, NULL, NULL, ?, ?)`,
-      [input.id, input.harness, input.model, input.effort ?? null, timestamp, timestamp],
+         (task_id, n, harness, model, effort, service_tier, session_id, skills_json, created_at, updated_at)
+       VALUES (?, 1, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [input.id, input.harness, input.model, input.effort ?? null, input.service_tier ?? null, timestamp, timestamp],
     );
     return getTask(input.id)!;
   })(t);
@@ -146,26 +147,39 @@ export function getTaskContext(taskId: string, n: number): TaskContext | null {
 }
 
 /** Transaction body, exported so store-messages can nest it inside its own transaction. */
+export interface TaskAgentSelection {
+  harness: string;
+  model: string | null;
+  effort: string | null;
+  serviceTier: string | null;
+  freshContext: boolean;
+}
+
+export function taskAgentChanged(task: Task, agent: TaskAgentSelection): boolean {
+  return agent.freshContext
+    || agent.harness !== task.harness
+    || agent.model !== task.model
+    || agent.effort !== task.effort
+    || agent.serviceTier !== task.service_tier;
+}
+
 export function switchTaskAgentBody(
   taskId: string,
-  harness: string,
-  model: string | null,
-  effort: string | null,
-  freshContext: boolean,
+  agent: TaskAgentSelection,
 ): Task {
   const task = getTask(taskId);
   if (!task) throw new Error(`no such task: ${taskId}`);
   const timestamp = now();
-  if (freshContext) {
+  if (agent.freshContext) {
     const row = db.query(`SELECT MAX(n) AS max_n FROM task_contexts WHERE task_id = ?`).get(taskId) as {
       max_n: number | null;
     };
     const contextN = (row.max_n ?? task.context_n) + 1;
     db.run(
       `INSERT INTO task_contexts
-         (task_id, n, harness, model, effort, session_id, skills_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-      [taskId, contextN, harness, model, effort, timestamp, timestamp],
+         (task_id, n, harness, model, effort, service_tier, session_id, skills_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      [taskId, contextN, agent.harness, agent.model, agent.effort, agent.serviceTier, timestamp, timestamp],
     );
     db.run(
       // context_tokens joins session_id and skills_json in being cleared: they
@@ -173,19 +187,19 @@ export function switchTaskAgentBody(
       // turn yet. A reading that outlived its session is the bug this column
       // exists to avoid.
       `UPDATE tasks
-       SET harness = ?, model = ?, effort = ?, context_n = ?, session_id = NULL, skills_json = NULL,
+       SET harness = ?, model = ?, effort = ?, service_tier = ?, context_n = ?, session_id = NULL, skills_json = NULL,
            context_tokens = NULL, updated_at = ?
        WHERE id = ?`,
-      [harness, model, effort, contextN, timestamp, taskId],
+      [agent.harness, agent.model, agent.effort, agent.serviceTier, contextN, timestamp, taskId],
     );
   } else {
     db.run(
-      `UPDATE task_contexts SET model = ?, effort = ?, updated_at = ? WHERE task_id = ? AND n = ?`,
-      [model, effort, timestamp, taskId, task.context_n],
+      `UPDATE task_contexts SET model = ?, effort = ?, service_tier = ?, updated_at = ? WHERE task_id = ? AND n = ?`,
+      [agent.model, agent.effort, agent.serviceTier, timestamp, taskId, task.context_n],
     );
     db.run(
-      `UPDATE tasks SET model = ?, effort = ?, updated_at = ? WHERE id = ?`,
-      [model, effort, timestamp, taskId],
+      `UPDATE tasks SET model = ?, effort = ?, service_tier = ?, updated_at = ? WHERE id = ?`,
+      [agent.model, agent.effort, agent.serviceTier, timestamp, taskId],
     );
   }
   return getTask(taskId)!;
@@ -198,13 +212,10 @@ export function switchTaskAgentBody(
  */
 export function switchTaskAgent(
   taskId: string,
-  harness: string,
-  model: string | null,
-  effort: string | null,
-  freshContext: boolean,
+  agent: TaskAgentSelection,
 ): Task {
   // db.transaction at CALL time: `db` is undefined until the daemon initializes it.
-  return db.transaction(switchTaskAgentBody)(taskId, harness, model, effort, freshContext);
+  return db.transaction(switchTaskAgentBody)(taskId, agent);
 }
 
 /** Persist provider-owned metadata on the context that produced it. */
@@ -294,6 +305,7 @@ export function createTurn(
     harness: string;
     model: string | null;
     effort: string | null;
+    service_tier: string | null;
   },
 ): number {
   const captureState: TurnCaptureState = capture_mode === null ? "legacy" : "complete";
@@ -302,12 +314,13 @@ export function createTurn(
   const harness = agent?.harness ?? task?.harness ?? "";
   const requestedModel = agent?.model ?? task?.model ?? null;
   const requestedEffort = agent?.effort ?? task?.effort ?? null;
+  const requestedServiceTier = agent?.service_tier ?? task?.service_tier ?? null;
   const res = db.run(
     `INSERT INTO turns
-       (task_id, n, context_n, harness, requested_model, requested_effort,
+       (task_id, n, context_n, harness, requested_model, requested_effort, requested_service_tier,
         prompt, status, pid, pid_start_time, log_file, started_at, attachments_json,
         capture_mode, capture_state, captured_bytes, omitted_bytes, omitted_records, diagnostic_state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
     [
       task_id,
       n,
@@ -315,6 +328,7 @@ export function createTurn(
       harness,
       requestedModel,
       requestedEffort,
+      requestedServiceTier,
       prompt,
       pid,
       pid_start_time,
@@ -529,7 +543,6 @@ export {
   releaseOrphanedTaskMessageClaims,
   releaseTaskMessageClaim,
   updateQueuedTaskMessage,
-  type TaskAgentSelection,
 } from "./store-messages";
 
 export function runningTurns(taskId?: string): Turn[] {

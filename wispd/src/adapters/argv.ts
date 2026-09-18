@@ -17,6 +17,7 @@ export function buildArgv(
     session?: string | null;
     model?: string | null;
     effort?: string | null;
+    serviceTier?: string | null;
     /**
      * This turn's stored attachment paths (S3). With def.image they expand
      * into argv immediately before the prompt positional; with def.imageInput
@@ -32,11 +33,14 @@ export function buildArgv(
     s
       .replaceAll("{session}", opts.session ?? "")
       .replaceAll("{model}", opts.model ?? "")
-      .replaceAll("{effort}", opts.effort ?? "");
+      .replaceAll("{effort}", opts.effort ?? "")
+      .replaceAll("{serviceTier}", opts.serviceTier ?? def.defaultServiceTier ?? "");
   const argv = [def.bin, ...def.exec];
   if (opts.session && def.resume) argv.push(...def.resume.map(sub));
   if (opts.model && def.model) argv.push(...def.model.map(sub));
   if (opts.effort && def.effort) argv.push(...def.effort.map(sub));
+  const serviceTier = opts.serviceTier ?? def.defaultServiceTier;
+  if (serviceTier && def.serviceTier) argv.push(...def.serviceTier.map(sub));
   const images = opts.images ?? [];
   // Droid's live channel is JSON-RPC, not an IMAGE_INPUT_STRATEGY. The runner
   // swaps its command and owns that protocol; buildArgv remains useful for
@@ -66,7 +70,16 @@ export function buildArgv(
   return argv;
 }
 
-export function buildAttachArgv(def: AdapterDef, session: string): string[] | null {
+export function buildAttachArgv(def: AdapterDef, session: string, requestedServiceTier?: string | null): string[] | null {
   if (!def.attach) return null;
-  return [def.bin, ...def.attach.map((s) => s.replaceAll("{session}", session))];
+  const serviceTier = requestedServiceTier ?? def.defaultServiceTier;
+  const sub = (value: string) =>
+    value
+      .replaceAll("{session}", session)
+      .replaceAll("{serviceTier}", serviceTier ?? "");
+  return [
+    def.bin,
+    ...def.attach.map(sub),
+    ...(serviceTier && def.serviceTier ? def.serviceTier.map(sub) : []),
+  ];
 }

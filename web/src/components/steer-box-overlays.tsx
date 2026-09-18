@@ -10,6 +10,7 @@ import type { ReportState, SteerNote } from "@/hooks/useSteerCommands"
 import { useTick } from "@/hooks/useTick"
 import { ApiError } from "@/lib/api"
 import { elapsed } from "@/lib/state"
+import { serviceTierLabel } from "@/lib/service-tier"
 import type { ApiTask, Turn } from "@/lib/types"
 import type { SlashEntry, SlashGroup, SlashToken } from "@/lib/slash"
 import { cn } from "@/lib/utils"
@@ -120,6 +121,11 @@ export function TaskIdentity({ task }: { task: ApiTask }) {
         task.effort ? (
           <span key="effort" className="shrink-0 whitespace-nowrap">
             {task.effort} effort
+          </span>
+        ) : null,
+        task.service_tier ? (
+          <span key="service-tier" className="shrink-0 whitespace-nowrap">
+            {serviceTierLabel(task.service_tier)}
           </span>
         ) : null,
       ]}

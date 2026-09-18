@@ -113,7 +113,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--service-tier <tier>] [--local] [--base <ref>] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -124,6 +124,10 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
   }
   if (flags.effort !== undefined && typeof flags.effort !== "string") {
     console.error("--effort requires a value");
+    process.exit(1);
+  }
+  if (flags["service-tier"] !== undefined && typeof flags["service-tier"] !== "string") {
+    console.error("--service-tier requires a value");
     process.exit(1);
   }
   if (flags.base !== undefined && typeof flags.base !== "string") {
@@ -144,6 +148,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
       harness,
       model: typeof flags.model === "string" ? flags.model : undefined,
       effort: typeof flags.effort === "string" ? flags.effort : undefined,
+      serviceTier: typeof flags["service-tier"] === "string" ? flags["service-tier"] : undefined,
       mode: flags.local ? "local" : undefined,
       base: typeof flags.base === "string" ? flags.base : undefined,
       attachments,
@@ -188,6 +193,10 @@ async function showCommand(positional: string[]): Promise<void> {
     `harness: ${task.harness}${task.model ? ` (${task.model})` : ""}   session: ${task.session_id ?? "-"}`,
   );
   if (task.effort) console.log(`effort: ${task.effort}`);
+  if (task.service_tier) {
+    const tier = task.service_tier === "default" ? "Standard" : task.service_tier === "priority" ? "Fast" : task.service_tier;
+    console.log(`service tier: ${tier}`);
+  }
   console.log(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
   if (task.worktreeReason) console.log(task.worktreeReason);
   printBackground(task);

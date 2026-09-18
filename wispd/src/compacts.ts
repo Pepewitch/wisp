@@ -55,7 +55,12 @@ export class TaskCompactor {
     const attempt = Promise.race([
       runCompact(
         def,
-        { sessionId: task.session_id, cwd: task.worktree_path ?? task.repo_path, signal: controller.signal },
+        {
+          sessionId: task.session_id,
+          cwd: task.worktree_path ?? task.repo_path,
+          serviceTier: task.service_tier ?? def.defaultServiceTier ?? null,
+          signal: controller.signal,
+        },
         this.io,
       ),
       timedOut,

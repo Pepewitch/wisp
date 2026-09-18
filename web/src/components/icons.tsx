@@ -38,6 +38,7 @@ export {
   ChevronUpRegular as ChevronUp,
   CodeRegular as Code,
   FlowchartRegular as Flowchart,
+  FlashRegular as Fast,
   DismissRegular as Dismiss,
   EditRegular as Pencil,
   FolderAddRegular as FolderAdd,

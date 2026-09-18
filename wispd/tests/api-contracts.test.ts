@@ -446,6 +446,27 @@ describe("daemon API contracts", () => {
     expect(queued.message).not.toHaveProperty("claim");
     expect(turnsFor(running.id)[0]?.status).toBe("running"); // send never interrupts
 
+    const codexRunning = makeTask({
+      harness: "codex",
+      model: "gpt-test",
+      service_tier: "default",
+    });
+    setTaskFields(codexRunning.id, {
+      worktree_path: mkdtempSync(join(tmpdir(), "wisp-send-codex-worktree-")),
+    });
+    createTurn(codexRunning.id, 1, "running", null, join(LOG_DIR, `${codexRunning.id}-turn1.out.log`));
+    transition(codexRunning.id, "running", "turn 1");
+    const fast = await api(base, `/api/tasks/${codexRunning.id}/send`, "POST", {
+      message: "use Fast next",
+      clientMessageId: "codex-fast-0001",
+      serviceTier: "priority",
+    });
+    expect(fast.status).toBe(200);
+    expect(messagesFor(codexRunning.id)[0]).toMatchObject({
+      service_tier: "priority",
+      status: "queued",
+    });
+
     // Retrying the same stable id is idempotent, and a queued message can be edited/cancelled.
     const retry = await json<{ message: { id: string } }>(
       await api(base, `/api/tasks/${running.id}/send`, "POST", {
@@ -742,6 +763,8 @@ describe("daemon API contracts", () => {
         name: string;
         hasModel: boolean;
         hasEffort: boolean;
+        hasServiceTier: boolean;
+        defaultServiceTier: string | null;
         hasImage: boolean;
         attachmentKinds: string[];
         imageNote?: string;
@@ -797,6 +820,8 @@ describe("daemon API contracts", () => {
     expect(body.harnesses.find((harness) => harness.name === "codex")).toMatchObject({
       hasModel: true,
       hasEffort: true,
+      hasServiceTier: true,
+      defaultServiceTier: "default",
       defaults: {},
     });
     // cursor (slice 9): a static owner-pinned list WITH an explicit default,

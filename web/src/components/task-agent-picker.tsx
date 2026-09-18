@@ -7,6 +7,7 @@ import {
   MenuRadioItem,
 } from "@/components/menu"
 import { effortOptions } from "@/lib/effort"
+import { ServiceTierPicker } from "@/components/service-tier-picker"
 import {
   defaultModelFor,
   isUsable,
@@ -14,6 +15,7 @@ import {
   orderHarnesses,
   unusableReason,
 } from "@/lib/model-choice"
+import { defaultServiceTierFor, serviceTierForModel } from "@/lib/service-tier"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { HarnessInfo } from "@/lib/types"
 
@@ -21,6 +23,7 @@ export interface TaskAgentChoice {
   harness: string
   model: string
   effort: string | null
+  serviceTier: string | null
 }
 
 const encode = (harness: string, model: string) => `${harness}\t${model}`
@@ -90,6 +93,10 @@ export function TaskAgentPicker({
                   harness === value.harness
                     ? value.effort
                     : destination?.defaults.reasoningEffort ?? null,
+                serviceTier:
+                  harness === value.harness
+                    ? serviceTierForModel(destination, model, value.serviceTier)
+                    : defaultServiceTierFor(destination),
               })
             }}
           >
@@ -154,6 +161,16 @@ export function TaskAgentPicker({
             ))}
           </MenuRadioGroup>
         </Menu>
+      )}
+      {selected && (
+        <ServiceTierPicker
+          harness={selected}
+          model={value.model}
+          value={value.serviceTier}
+          disabled={disabled}
+          touch={touch}
+          onChange={(serviceTier) => onChange({ ...value, serviceTier })}
+        />
       )}
     </>
   )

@@ -21,6 +21,7 @@ export function offeredCachedModels(def: AdapterDef, cached: ModelCacheEntry): C
   return {
     list: offered.list,
     defaultModel: offered.defaultModel,
+    ...(probed?.serviceTiers ? { serviceTiers: probed.serviceTiers } : {}),
     probedAt: probed?.probedAt ?? new Date().toISOString(),
   };
 }
@@ -46,6 +47,8 @@ export function harnessesRoute(
       name,
       hasModel: def.model !== undefined,
       hasEffort: def.effort !== undefined,
+      hasServiceTier: def.serviceTier !== undefined,
+      defaultServiceTier: def.defaultServiceTier ?? null,
       // S3: paste is disabled-with-reason without one of the three mechanisms
       // (truthiness, not !== undefined: adapters.json null CLEARS a builtin's)
       hasImage: Boolean(def.image ?? def.imageInput ?? def.imageDelivery),

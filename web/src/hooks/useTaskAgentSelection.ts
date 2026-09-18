@@ -14,13 +14,14 @@ interface AgentState {
 const stateFor = (task: ApiTask | null): AgentState | null =>
   task?.model
     ? {
-        sourceKey: `${task.id}:${task.context_n ?? 1}:${task.harness}:${task.model}:${task.effort ?? ""}`,
+        sourceKey: `${task.id}:${task.context_n ?? 1}:${task.harness}:${task.model}:${task.effort ?? ""}:${task.service_tier ?? ""}`,
         taskId: task.id,
         contextN: task.context_n ?? 1,
         choice: {
           harness: task.harness,
           model: task.model,
           effort: task.effort ?? null,
+          serviceTier: task.service_tier ?? null,
         },
       }
     : null
@@ -65,6 +66,7 @@ export function useTaskAgentSelection(
       choice.harness !== task.harness ||
       choice.model !== task.model ||
       choice.effort !== (task.effort ?? null)
+      || choice.serviceTier !== (task.service_tier ?? null)
     if (!changed) return submit()
     if (choice.harness !== task.harness) {
       setConfirmFresh(true)

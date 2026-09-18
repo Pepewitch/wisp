@@ -29,20 +29,24 @@ function scriptedRpc(
 ): {
   openRpc: RpcFactory;
   calls: string[];
+  requests: { method: string; params: unknown }[];
   state: { closed: boolean };
   resolveWaiter: (params: unknown) => void;
 } {
   const calls: string[] = [];
+  const requests: { method: string; params: unknown }[] = [];
   const state = { closed: false };
   let waiter: { resolve: (v: unknown) => void } | null = null;
   return {
     calls,
+    requests,
     state,
     resolveWaiter: (params) => waiter?.resolve(params),
     openRpc: () => {
       const session: RpcSession = {
-        call(method) {
+        call(method, params) {
           calls.push(method);
+          requests.push({ method, params });
           if (!(method in table)) {
             return Promise.reject(new ProbeError(`the harness rejected the probe: unknown method ${method}`));
           }
@@ -175,6 +179,23 @@ describe("codex-app-server compact (codex)", () => {
     const result = await runCompact(codex, { sessionId: "t-1", cwd: null }, ioOf(openRpc));
     expect(result.note).toBe("started — codex records it as a turn in its own thread");
     expect(calls).toEqual(["initialize", "thread/resume", "thread/compact/start"]);
+  });
+
+  test("resume preserves the selected Fast tier without replaying history", async () => {
+    const requests: { method: string; params: unknown }[] = [];
+    const openRpc: RpcFactory = () => ({
+      call(method, params) {
+        requests.push({ method, params });
+        return Promise.resolve(TABLE[method as keyof typeof TABLE] ?? {});
+      },
+      close() {},
+    });
+    await runCompact(codex, { sessionId: "t-1", cwd: null, serviceTier: "priority" }, ioOf(openRpc));
+    expect(requests.find((request) => request.method === "thread/resume")?.params).toEqual({
+      threadId: "t-1",
+      excludeTurns: true,
+      serviceTier: "priority",
+    });
   });
 
   test("no session is a 409, not a spawn", async () => {

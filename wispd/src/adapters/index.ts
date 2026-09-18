@@ -17,6 +17,7 @@ export type {
   ImageInputStrategy,
   ModelDiscovery,
   ModelDiscoveryFn,
+  ModelServiceTier,
   OfferedModels,
   ModelProbeSpawnFn,
   ParsedTurn,

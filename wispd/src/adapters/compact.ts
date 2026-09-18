@@ -98,7 +98,11 @@ export const COMPACT_STRATEGIES: Record<string, CompactStrategy> = {
         await rpc.call("initialize", { clientInfo: { name: "wisp", version: VERSION } });
         // Compaction needs the live thread, not a copy of its historical
         // turns. Avoid hydrating that unused history into one RPC response.
-        await rpc.call("thread/resume", { threadId: ctx.sessionId, excludeTurns: true });
+        await rpc.call("thread/resume", {
+          threadId: ctx.sessionId,
+          excludeTurns: true,
+          ...(ctx.serviceTier ? { serviceTier: ctx.serviceTier } : {}),
+        });
         // registered BEFORE the start call so a fast compaction can't race us
         const completed = rpc.onNotification
           ? rpc.onNotification(

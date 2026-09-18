@@ -8,7 +8,13 @@
  */
 import { db } from "./store-database";
 import { emit } from "./events";
-import { getTask, randomId, switchTaskAgentBody } from "./store";
+import {
+  getTask,
+  randomId,
+  switchTaskAgentBody,
+  taskAgentChanged,
+  type TaskAgentSelection,
+} from "./store";
 import type { Task, TaskMessage, TaskMessageDelivery } from "./types";
 
 const now = () => new Date().toISOString();
@@ -24,25 +30,19 @@ interface CreateTaskMessageInput {
   harness?: string;
   model?: string | null;
   effort?: string | null;
+  serviceTier?: string | null;
   text: string;
   attachmentHash: string;
   attachmentsJson?: string | null;
-}
-
-export interface TaskAgentSelection {
-  harness: string;
-  model: string | null;
-  effort: string | null;
-  freshContext: boolean;
 }
 
 function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessage {
   const timestamp = now();
   db.run(
     `INSERT INTO task_messages
-      (id, task_id, context_n, harness, model, effort, text, status, delivery, turn_n,
+      (id, task_id, context_n, harness, model, effort, service_tier, text, status, delivery, turn_n,
        attachment_hash, attachments_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -50,6 +50,7 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       input.harness ?? task.harness,
       input.model === undefined ? task.model : input.model,
       input.effort === undefined ? task.effort : input.effort,
+      input.serviceTier === undefined ? task.service_tier : input.serviceTier,
       input.text,
       input.attachmentHash,
       input.attachmentsJson ?? null,
@@ -77,19 +78,8 @@ export function createTaskMessageWithAgent(
     // the transaction re-asks before committing the switch and the row.
     if (task.archived) throw new Error("task is archived — archived tasks are read-only");
     if (task.state === "creating") throw new Error("task is still being created");
-    if (
-      agent.freshContext ||
-      agent.harness !== task.harness ||
-      agent.model !== task.model ||
-      agent.effort !== task.effort
-    ) {
-      task = switchTaskAgentBody(
-        input.taskId,
-        agent.harness,
-        agent.model,
-        agent.effort,
-        agent.freshContext,
-      );
+    if (taskAgentChanged(task, agent)) {
+      task = switchTaskAgentBody(input.taskId, agent);
       switched = true;
     }
     return { task, message: insertTaskMessage(input, task) };

@@ -29,6 +29,8 @@ const ADAPTER_KEYS = [
   "resume",
   "model",
   "effort",
+  "serviceTier",
+  "defaultServiceTier",
   "effortLevels",
   "staticModels",
   "defaultModel",
@@ -125,6 +127,22 @@ function validateParse(name: string, raw: unknown, warn: (msg: string) => void):
   return parse;
 }
 
+function applyServiceTierFields(label: string, raw: Record<string, any>, merged: AdapterDef): void {
+  if (raw.serviceTier !== undefined) merged.serviceTier = stringArray(raw.serviceTier, `${label}.serviceTier`);
+  if (raw.defaultServiceTier !== undefined) {
+    if (typeof raw.defaultServiceTier !== "string" || raw.defaultServiceTier.length === 0) {
+      throw new Error(`${label}.defaultServiceTier must be a non-empty string, got ${typeName(raw.defaultServiceTier)}`);
+    }
+    merged.defaultServiceTier = raw.defaultServiceTier;
+  }
+  if (merged.defaultServiceTier !== undefined && merged.serviceTier === undefined) {
+    throw new Error(`${label}.defaultServiceTier requires a serviceTier argv template`);
+  }
+  if (merged.serviceTier !== undefined && !merged.serviceTier.some((part) => part.includes("{serviceTier}"))) {
+    throw new Error(`${label}.serviceTier must contain a {serviceTier} placeholder`);
+  }
+}
+
 function applyCoreFields(
   name: string,
   raw: Record<string, any>,
@@ -156,6 +174,7 @@ function applyCoreFields(
   if (raw.resume !== undefined) merged.resume = stringArray(raw.resume, `${label}.resume`);
   if (raw.model !== undefined) merged.model = stringArray(raw.model, `${label}.model`);
   if (raw.effort !== undefined) merged.effort = stringArray(raw.effort, `${label}.effort`);
+  applyServiceTierFields(label, raw, merged);
   if (raw.effortLevels !== undefined) merged.effortLevels = stringArray(raw.effortLevels, `${label}.effortLevels`);
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);
   if (raw.defaultModel !== undefined) {

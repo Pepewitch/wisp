@@ -2,6 +2,7 @@ import { Dialog } from "@base-ui/react/dialog"
 
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import type { TaskAgentChoice } from "@/components/task-agent-picker"
+import { serviceTierLabel } from "@/lib/service-tier"
 import { cn } from "@/lib/utils"
 
 export function FreshContextDialog({
@@ -32,7 +33,10 @@ export function FreshContextDialog({
             Start with fresh context?
           </Dialog.Title>
           <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">
-            Switching to {choice.harness} · <span className="font-mono">{choice.model}</span> starts a new harness
+            Switching to {choice.harness} · <span className="font-mono">{choice.model}</span>
+            {choice.serviceTier && choice.serviceTier !== "default"
+              ? ` · ${serviceTierLabel(choice.serviceTier)}`
+              : ""} starts a new harness
             session. The existing conversation stays visible, but the new harness will not receive its context.
           </p>
           <div className="mt-4 flex justify-end gap-2">

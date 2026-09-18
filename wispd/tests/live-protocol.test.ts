@@ -135,6 +135,7 @@ describe("Codex live terminal events", () => {
       sessionId: "existing-thread",
       model: "gpt-test",
       effort: "high",
+      serviceTier: "priority",
       initialMessageId: "initial-message",
       initialInput: [{ type: "text", text: "hello", text_elements: [] }],
       emit: () => {},
@@ -151,6 +152,7 @@ describe("Codex live terminal events", () => {
         threadId: "existing-thread",
         cwd: "/tmp/worktree",
         model: "gpt-test",
+        serviceTier: "priority",
         excludeTurns: true,
       },
     });

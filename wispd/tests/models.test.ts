@@ -133,14 +133,23 @@ describe("codex-models strategy", () => {
       BUILTIN_ADAPTERS.codex,
       codexSpawn(
         catalog([
-          { slug: "gpt-5.6-sol", visibility: "list", priority: 9, supported_in_api: true },
-          { slug: "gpt-6-astra", visibility: "list", priority: 1, supported_in_api: true },
+          {
+            slug: "gpt-5.6-sol",
+            visibility: "list",
+            priority: 9,
+            supported_in_api: true,
+            service_tiers: [{ id: "priority", name: "Fast", description: "Lower latency." }],
+          },
+          { slug: "gpt-6-astra", visibility: "list", priority: 1, supported_in_api: true, service_tiers: [] },
           { slug: "gpt-internal", visibility: "hide", priority: 0, supported_in_api: true },
         ]),
       ),
     );
     expect(d.models).toEqual(["gpt-6-astra", "gpt-5.6-sol"]);
     expect(d.defaultModel).toBe("gpt-6-astra");
+    expect(d.serviceTiers).toEqual({
+      "gpt-5.6-sol": [{ id: "priority", name: "Fast", description: "Lower latency." }],
+    });
   });
 
   test("codex's own fallback: nothing picker-visible → first entry by priority", async () => {

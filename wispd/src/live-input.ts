@@ -315,6 +315,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     sessionId: options.task.session_id,
     model: options.task.model,
     effort: options.task.effort,
+    serviceTier: options.task.service_tier,
     initialMessageId: options.initialMessageId,
     initialInput: codexInput(options.def, options.prompt, options.attachments),
     emit,

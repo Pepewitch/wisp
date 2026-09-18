@@ -93,6 +93,8 @@ export interface ApiTask {
   harness: string;
   model: string | null;
   effort: string | null;
+  /** Codex "default" is Standard; "priority" is the higher-usage Fast tier. */
+  service_tier?: string | null;
   slot: number;
   state: TaskState;
   state_detail: string | null;
@@ -169,6 +171,7 @@ export interface Turn {
   harness?: string;
   requested_model?: string | null;
   requested_effort?: string | null;
+  requested_service_tier?: string | null;
   prompt: string;
   /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
   operation?: "compact";
@@ -433,7 +436,15 @@ export type TaskMode = "worktree" | "local";
 export interface ProbedModels {
   list: string[];
   defaultModel: string | null;
+  /** Paid speed tiers advertised by each model. Standard is implicit. */
+  serviceTiers?: Record<string, ServiceTierInfo[]>;
   probedAt: string;
+}
+
+export interface ServiceTierInfo {
+  id: string;
+  name: string;
+  description: string;
 }
 
 /**
@@ -445,6 +456,9 @@ export interface HarnessInfo {
   name: string;
   hasModel: boolean;
   hasEffort: boolean;
+  hasServiceTier?: boolean;
+  /** Safe tier selected when a request omits one. */
+  defaultServiceTier?: string | null;
   /** S3: the adapter declares one of the three image mechanisms — without it a pasted IMAGE is refused by name */
   hasImage: boolean;
   /**

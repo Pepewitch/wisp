@@ -9,7 +9,9 @@ import { PromptField } from "@/components/create-prompt-field"
 import { AttachButton } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
+import { ServiceTierPicker } from "@/components/service-tier-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
+import { useCreateAgentChoice } from "@/hooks/useCreateAgentChoice"
 import { failureReason } from "@/lib/api"
 import {
   discardAttachmentPayloads,
@@ -19,7 +21,6 @@ import { effortOptions, rememberEffort } from "@/lib/effort"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
   defaultModelFor,
-  initialChoice,
   isUsable,
   loadPreferredModel,
   modelOptionsFor,
@@ -135,10 +136,8 @@ function Form({
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() =>
     loadPreferredModel(connectionId),
   )
-  const [choice, setChoice] = useState<ModelChoice | null>(() => initialChoice(harnesses, preferredChoice))
-  const [effort, setEffort] = useState(() => {
-    return harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? ""
-  })
+  const { choice, effort, serviceTier, pickChoice: pickAgentChoice, setEffort, setServiceTier } =
+    useCreateAgentChoice(harnesses, preferredChoice)
   const [mode, setMode] = useState<TaskMode>("worktree")
   // "" means "whatever this project resolves to" — the base picker only ever
   // holds a deliberate one-off override, never the resolved default, so it
@@ -184,10 +183,7 @@ function Form({
     repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending && !uploading
 
   const pickChoice = (value: string) => {
-    const next = decode(value)
-    setChoice(next)
-    // a harness switch reseeds effort from ITS OWN config default
-    setEffort(harnesses.find((c) => c.name === next.harness)?.defaults.reasoningEffort ?? "")
+    pickAgentChoice(decode(value))
   }
 
   const togglePreferredChoice = (next: ModelChoice) => {
@@ -220,6 +216,7 @@ function Form({
             mode,
             ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
             ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
+            ...(harness?.hasServiceTier && serviceTier ? { serviceTier } : {}),
             ...(suffixPromptId ? { suffixPromptId } : {}),
             ...(payloads ? { attachments: payloads } : {}),
           },
@@ -351,6 +348,7 @@ function Form({
         choice={choice}
         preferredChoice={preferredChoice}
         effort={effort}
+        serviceTier={serviceTier}
         suffixPromptId={suffixPromptId}
         ready={ready}
         pending={createTask.isPending || uploading}
@@ -359,6 +357,7 @@ function Form({
         onTogglePreferredChoice={togglePreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
+        onServiceTierChange={setServiceTier}
         onRestoreComposer={restoreComposer}
         onSuffixPromptChange={setSuffixPromptId}
         onSuffixPromptModalChange={setSuffixPromptModalOpen}
@@ -374,6 +373,7 @@ function TaskControls({
   choice,
   preferredChoice,
   effort,
+  serviceTier,
   suffixPromptId,
   ready,
   pending,
@@ -382,6 +382,7 @@ function TaskControls({
   onTogglePreferredChoice,
   onReprobe,
   onEffortChange,
+  onServiceTierChange,
   onRestoreComposer,
   onSuffixPromptChange,
   onSuffixPromptModalChange,
@@ -392,6 +393,7 @@ function TaskControls({
   choice: ModelChoice | null
   preferredChoice: ModelChoice | null
   effort: string
+  serviceTier: string | null
   suffixPromptId: string | null
   ready: boolean
   pending: boolean
@@ -400,6 +402,7 @@ function TaskControls({
   onTogglePreferredChoice: (choice: ModelChoice) => void
   onReprobe: () => void
   onEffortChange: (value: string) => void
+  onServiceTierChange: (value: string) => void
   onRestoreComposer: () => void
   onSuffixPromptChange: (value: string | null) => void
   onSuffixPromptModalChange: (open: boolean) => void
@@ -427,6 +430,15 @@ function TaskControls({
             onEffortChange={onEffortChange}
             onCustomChange={setCustomEffort}
             onRestoreComposer={onRestoreComposer}
+          />
+        )}
+        {harness && choice && (
+          <ServiceTierPicker
+            harness={harness}
+            model={choice.model}
+            value={serviceTier}
+            disabled={pending}
+            onChange={onServiceTierChange}
           />
         )}
         <SuffixPromptPicker

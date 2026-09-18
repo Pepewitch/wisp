@@ -1,6 +1,20 @@
 import { isRecord } from "../validate";
 import { buildArgv } from "./argv";
-import type { AdapterDef, ModelDiscovery, ModelDiscoveryFn, ModelProbeSpawnFn, OfferedModels } from "./types";
+import type {
+  AdapterDef,
+  ModelDiscovery,
+  ModelDiscoveryFn,
+  ModelProbeSpawnFn,
+  ModelServiceTier,
+  OfferedModels,
+} from "./types";
+
+export function isModelServiceTier(value: unknown): value is ModelServiceTier {
+  return isRecord(value)
+    && typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.description === "string";
+}
 
 /**
  * Sentinel for droid's invalid-model probe. It is deliberately NOT a real
@@ -194,6 +208,15 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
         // codex's own rule is show_in_picker = (visibility == "list")
         listed: m.visibility === undefined ? true : m.visibility === "list",
         priority: typeof m.priority === "number" ? m.priority : 1_000_000 + i,
+        serviceTiers: Array.isArray(m.service_tiers)
+          ? m.service_tiers
+            .filter(isModelServiceTier)
+            .map((tier) => ({
+              id: tier.id,
+              name: tier.name,
+              description: tier.description,
+            }))
+          : [],
       }))
       .sort((a, b) => a.priority - b.priority);
     if (entries.length === 0) {
@@ -204,6 +227,9 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
     return {
       defaultModel: pool[0]!.slug,
       models: pool.map((e) => e.slug),
+      serviceTiers: Object.fromEntries(
+        pool.filter((entry) => entry.serviceTiers.length > 0).map((entry) => [entry.slug, entry.serviceTiers]),
+      ),
       notes: [
         `list + default from '${def.bin} debug models' (catalog by priority; codex's default is its first list-visible entry)`,
       ],

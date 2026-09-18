@@ -138,6 +138,70 @@ describe("create task dialog submission", () => {
     fireEvent.drop(field, { dataTransfer: { types: ["text/plain"], files: [] } })
     expect(screen.queryByTestId("pending-attachments")).toBeNull()
   })
+
+  it("offers Standard and Fast separately and sends the explicit choice", async () => {
+    const request = vi.fn().mockResolvedValue({ id: "tk9zdy" })
+    const codex: HarnessInfo = {
+      name: "codex",
+      hasModel: true,
+      hasEffort: true,
+      hasServiceTier: true,
+      defaultServiceTier: "default",
+      hasImage: true,
+      defaults: { model: "gpt-test" },
+      models: {
+        list: ["gpt-test"],
+        defaultModel: "gpt-test",
+        serviceTiers: {
+          "gpt-test": [
+            {
+              id: "priority",
+              name: "Fast",
+              description: "Lower latency.",
+            },
+          ],
+        },
+        probedAt: "2026-09-18T00:00:00.000Z",
+      },
+    }
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={[codex]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      {
+        wrapper: runtimeWrapper(
+          fakeDaemonTransport("test-connection", {
+            request: request as unknown as DaemonTransport["request"],
+          }),
+        ),
+      },
+    )
+
+    const speed = await screen.findByRole("button", {
+      name: "Response speed: Standard",
+    })
+    fireEvent.click(speed)
+    expect(screen.getByText("Fast returns responses sooner but uses more quota.")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Fast/ }))
+    fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), {
+      target: { value: "ship it" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() => expect(request).toHaveBeenCalledOnce())
+    expect(request).toHaveBeenCalledWith(
+      "/api/tasks",
+      expect.objectContaining({
+        body: expect.objectContaining({ serviceTier: "priority" }),
+      }),
+    )
+  })
 })
 
 describe("create task dialog layout", () => {

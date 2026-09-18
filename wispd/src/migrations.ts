@@ -554,6 +554,46 @@ WHERE EXISTS (
       }
     },
   },
+  {
+    id: 13,
+    name: "task-service-tier",
+    up: (db) => {
+      const add = (table: string, column: string): void => {
+        const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+        if (!columns.some((entry) => entry.name === column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+        }
+      };
+      add("tasks", "service_tier");
+      add("task_contexts", "service_tier");
+      add("task_messages", "service_tier");
+      add("turns", "requested_service_tier");
+
+      // Pin future work to Standard without rewriting historical provenance:
+      // old turns and delivered messages did not record which tier they used.
+      db.exec(`
+UPDATE tasks SET service_tier = 'default' WHERE harness = 'codex' AND service_tier IS NULL;
+UPDATE task_contexts
+SET service_tier = 'default'
+WHERE harness = 'codex' AND service_tier IS NULL
+  AND EXISTS (
+    SELECT 1 FROM tasks
+    WHERE tasks.id = task_contexts.task_id AND tasks.context_n = task_contexts.n
+  );
+UPDATE task_messages
+SET service_tier = 'default'
+WHERE harness = 'codex' AND service_tier IS NULL AND status = 'queued';
+
+DROP TRIGGER IF EXISTS workflows_context;
+CREATE TRIGGER workflows_context AFTER UPDATE OF context_n, harness, model, effort, service_tier ON tasks
+WHEN NEW.context_n != OLD.context_n OR NEW.harness != OLD.harness OR NEW.model IS NOT OLD.model
+  OR NEW.effort IS NOT OLD.effort OR NEW.service_tier IS NOT OLD.service_tier BEGIN
+  UPDATE workflows SET state = 'paused', reason = 'Task agent or context changed; review and resume', revision = revision + 1 WHERE task_id = NEW.id AND state = 'active';
+  UPDATE task_messages SET status = 'cancelled' WHERE task_id = NEW.id AND workflow_id IS NOT NULL AND status = 'queued' AND claim IS NULL;
+END;
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

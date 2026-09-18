@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { chmod, rename, unlink, writeFile } from "node:fs/promises";
-import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
+import { discoverModels, type AdapterDef, type ModelProbeSpawnFn, type ModelServiceTier } from "./adapters";
+import { isModelServiceTier } from "./adapters/discovery";
 import type { SpawnResult } from "./doctor";
 import { emit } from "./events";
 import { trackHomeWork } from "./home-lifetime";
@@ -28,6 +29,7 @@ export const bunModelProbeSpawn: ModelProbeSpawnFn = async (cmd, signal): Promis
 export interface CachedModels {
   list: string[];
   defaultModel: string | null;
+  serviceTiers?: Record<string, ModelServiceTier[]>;
   probedAt: string;
 }
 
@@ -61,11 +63,20 @@ function adapterSignature(def: AdapterDef): string {
 }
 
 function validCachedModels(value: unknown): value is CachedModels {
+  const tiers = isRecord(value) ? value.serviceTiers : undefined;
+  const validTiers = tiers === undefined || (
+    isRecord(tiers) &&
+    Object.values(tiers).every((options) =>
+      Array.isArray(options) &&
+      options.every(isModelServiceTier)
+    )
+  );
   return isRecord(value)
     && Array.isArray(value.list)
     && value.list.length <= 10_000
     && value.list.every((model) => typeof model === "string")
     && (value.defaultModel === null || typeof value.defaultModel === "string")
+    && validTiers
     && typeof value.probedAt === "string"
     && Number.isFinite(Date.parse(value.probedAt));
 }
@@ -83,7 +94,8 @@ function sameModelList(left: readonly string[] | null, right: readonly string[] 
 function sameAnswer(left: ModelCacheEntry, right: ModelCacheEntry): boolean {
   return left.modelsError === right.modelsError
     && left.models?.defaultModel === right.models?.defaultModel
-    && sameModelList(left.models?.list ?? null, right.models?.list ?? null);
+    && sameModelList(left.models?.list ?? null, right.models?.list ?? null)
+    && JSON.stringify(left.models?.serviceTiers ?? {}) === JSON.stringify(right.models?.serviceTiers ?? {});
 }
 
 /**
@@ -231,6 +243,7 @@ export class ModelProbeCache {
         models: {
           list: discovery.models ?? [],
           defaultModel: discovery.defaultModel,
+          ...(discovery.serviceTiers ? { serviceTiers: discovery.serviceTiers } : {}),
           probedAt: this.now().toISOString(),
         },
       };

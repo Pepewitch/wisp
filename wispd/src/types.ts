@@ -46,6 +46,8 @@ export interface Task {
   model: string | null;
   /** Reasoning effort requested for the task (config harnessDefaults at creation, P5b); NULL = harness default. */
   effort: string | null;
+  /** Requested inference service tier. Codex "default" is Standard; "priority" is Fast. */
+  service_tier: string | null;
   slot: number;
   state: TaskState;
   state_detail: string | null;
@@ -83,6 +85,7 @@ export interface TaskContext {
   harness: string;
   model: string | null;
   effort: string | null;
+  service_tier: string | null;
   session_id: string | null;
   skills_json: string | null;
   context_tokens: number | null;
@@ -233,6 +236,7 @@ export interface Turn {
   harness: string;
   requested_model: string | null;
   requested_effort: string | null;
+  requested_service_tier: string | null;
   prompt: string;
   result: string | null;
   status: TurnStatus;
@@ -311,6 +315,7 @@ export interface TaskMessage {
   harness: string;
   model: string | null;
   effort: string | null;
+  service_tier: string | null;
   text: string;
   status: TaskMessageStatus;
   delivery: TaskMessageDelivery;

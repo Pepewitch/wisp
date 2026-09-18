@@ -64,6 +64,7 @@ export interface CreateTaskBody {
   /** one-off override for where the worktree forks from; omitted = the project's base */
   base?: string;
   effort?: string;
+  serviceTier?: string;
   suffixPromptId?: string;
   attachments?: AttachmentPayload[];
 }
@@ -126,6 +127,7 @@ export function useSendMessage() {
       harness,
       model,
       effort,
+      serviceTier,
       startFreshContext,
     }: {
       id: string;
@@ -136,6 +138,7 @@ export function useSendMessage() {
       harness?: string;
       model?: string;
       effort?: string | null;
+      serviceTier?: string | null;
       startFreshContext?: boolean;
     }) =>
       // the field is OMITTED rather than sent empty: the daemon rejects
@@ -151,6 +154,7 @@ export function useSendMessage() {
           ...(harness ? { harness } : {}),
           ...(model ? { model } : {}),
           ...(effort !== undefined ? { effort } : {}),
+          ...(serviceTier !== undefined ? { serviceTier } : {}),
           ...(startFreshContext ? { startFreshContext: true } : {}),
         },
       }),

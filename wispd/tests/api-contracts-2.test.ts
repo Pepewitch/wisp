@@ -221,6 +221,7 @@ describe("daemon API contracts, batch 2", () => {
       "prompt",
       "requested_effort",
       "requested_model",
+      "requested_service_tier",
       "result",
       "started_at",
       "status",

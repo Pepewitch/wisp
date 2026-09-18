@@ -134,6 +134,22 @@ describe("buildArgv", () => {
       "--dangerously-bypass-approvals-and-sandbox",
       "-c",
       "model_reasoning_effort=xhigh",
+      "-c",
+      'service_tier="default"',
+      "go",
+    ]);
+  });
+
+  test("codex makes Standard explicit and only selects Fast when asked", () => {
+    expect(codex.defaultServiceTier).toBe("default");
+    expect(buildArgv(codex, { prompt: "go" }).slice(-3)).toEqual([
+      "-c",
+      'service_tier="default"',
+      "go",
+    ]);
+    expect(buildArgv(codex, { prompt: "go", serviceTier: "priority" }).slice(-3)).toEqual([
+      "-c",
+      'service_tier="priority"',
       "go",
     ]);
   });
@@ -147,7 +163,12 @@ describe("buildArgv", () => {
 
   test("attach argv substitutes the stored session for each interactive harness", () => {
     expect(buildAttachArgv(claude, "xyz")).toEqual(["claude", "--resume", "xyz"]);
-    expect(buildAttachArgv(codex, "xyz")).toEqual(["codex", "resume", "xyz"]);
+    expect(buildAttachArgv(codex, "xyz")).toEqual([
+      "codex", "resume", "xyz", "-c", 'service_tier="default"',
+    ]);
+    expect(buildAttachArgv(codex, "xyz", "priority")).toEqual([
+      "codex", "resume", "xyz", "-c", 'service_tier="priority"',
+    ]);
     expect(buildAttachArgv(droid, "xyz")).toEqual(["droid", "resume", "xyz"]);
   });
 
@@ -158,6 +179,7 @@ describe("buildArgv", () => {
     test("codex: the template inserts immediately before the prompt, -- mandatory", () => {
       expect(buildArgv(codex, { prompt: "look", images: ["/t/red.png"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-c", 'service_tier="default"',
         "-i", "/t/red.png", "--", "look",
       ]);
     });
@@ -165,6 +187,7 @@ describe("buildArgv", () => {
     test("codex multi-file: one -i, all paths, then --", () => {
       expect(buildArgv(codex, { prompt: "look", images: ["/t/a.png", "/t/b.jpg"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-c", 'service_tier="default"',
         "-i", "/t/a.png", "/t/b.jpg", "--", "look",
       ]);
     });
@@ -172,7 +195,8 @@ describe("buildArgv", () => {
     test("codex resume+model+images: the image slot stays immediately before the prompt", () => {
       expect(buildArgv(codex, { prompt: "again", session: "s-1", model: "gpt-5.6-luna", images: ["/t/a.png"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "s-1", "-m", "gpt-5.6-luna", "-i", "/t/a.png", "--", "again",
+        "resume", "s-1", "-m", "gpt-5.6-luna", "-c", 'service_tier="default"',
+        "-i", "/t/a.png", "--", "again",
       ]);
     });
 
@@ -220,6 +244,7 @@ describe("buildArgv", () => {
     test("first turn", () => {
       expect(buildArgv(codex, { prompt: "Reply with exactly the word: papaya" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-c", 'service_tier="default"',
         "Reply with exactly the word: papaya",
       ]);
     });
@@ -227,20 +252,23 @@ describe("buildArgv", () => {
     test("resume: the subcommand lands after exec's flags, before the model flag", () => {
       expect(buildArgv(codex, { prompt: "next", session: "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec", "next",
+        "resume", "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec",
+        "-c", 'service_tier="default"', "next",
       ]);
     });
 
     test("resume with the policy model", () => {
       expect(buildArgv(codex, { prompt: "next", session: "s-1", model: "gpt-5.6-luna" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "s-1", "-m", "gpt-5.6-luna", "next",
+        "resume", "s-1", "-m", "gpt-5.6-luna",
+        "-c", 'service_tier="default"', "next",
       ]);
     });
 
     test("model without a session (first turn)", () => {
       expect(buildArgv(codex, { prompt: "go", model: "gpt-5.6-luna" })).toEqual([
-        "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-luna", "go",
+        "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-m", "gpt-5.6-luna", "-c", 'service_tier="default"', "go",
       ]);
     });
   });
@@ -983,6 +1011,12 @@ describe("validateAdapters (a prior audit)", () => {
     ).toBe("b");
   });
 
+  test("a default service tier requires a template that forwards the selection", () => {
+    const base = { bin: "x", exec: [], parse: { format: "text" } as const };
+    expect(thrownMessage(() => validateAdapters({ foo: { ...base, defaultServiceTier: "default" } }))).toContain("defaultServiceTier requires a serviceTier argv template");
+    expect(thrownMessage(() => validateAdapters({ foo: { ...base, serviceTier: ["--tier", "fixed"] } }))).toContain("serviceTier must contain a {serviceTier} placeholder");
+  });
+
   test("parse.strategy must name a builtin strategy", () => {
     const base = { bin: "x", exec: [] };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, parse: { format: "json", strategy: "nope" } } }))).toBe(
@@ -1070,7 +1104,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, serviceTier, defaultServiceTier, effortLevels, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });

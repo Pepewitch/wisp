@@ -16,6 +16,7 @@ interface CodexLiveOptions {
   sessionId: string | null;
   model: string | null;
   effort: string | null;
+  serviceTier: string | null;
   initialMessageId: string;
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
@@ -48,6 +49,8 @@ function rpcError(value: unknown): string {
 function threadOptions(options: CodexLiveOptions): Record<string, unknown> {
   const params: Record<string, unknown> = { cwd: options.cwd };
   if (options.model) params.model = options.model;
+  const serviceTier = options.serviceTier ?? options.def.defaultServiceTier;
+  if (serviceTier) params.serviceTier = serviceTier;
   if (options.def.exec.includes("--dangerously-bypass-approvals-and-sandbox")) {
     params.approvalPolicy = "never";
     params.sandbox = "danger-full-access";

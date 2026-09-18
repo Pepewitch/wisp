@@ -5,6 +5,7 @@ import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { formatTokens } from "@/lib/format"
 import { stateWord } from "@/lib/state"
+import { serviceTierLabel } from "@/lib/service-tier"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { oneLine } from "@/lib/utils"
 
@@ -89,6 +90,12 @@ export function TaskHeader({
               <>
                 <span className="shrink-0 text-faint">·</span>
                 <span className="shrink-0">{task.effort} effort</span>
+              </>
+            )}
+            {task.service_tier && (
+              <>
+                <span className="shrink-0 text-faint">·</span>
+                <span className="shrink-0">{serviceTierLabel(task.service_tier)}</span>
               </>
             )}
           </span>,

@@ -128,6 +128,43 @@ describe("the ledger", () => {
     expect(SCHEMA_VERSION).toBe(Math.max(...ids));
   });
 
+  test("Codex tasks from before service tiers are pinned to Standard", () => {
+    const db = freshDatabase("service-tier");
+    migrate(db);
+    db.exec(`
+INSERT INTO tasks (id, title, repo_path, harness, model, state, created_at, updated_at)
+VALUES ('tcodex', 'codex', '/tmp/repo', 'codex', 'gpt-test', 'done', 'now', 'now');
+INSERT INTO task_contexts (task_id, n, harness, model, created_at, updated_at)
+VALUES ('tcodex', 1, 'codex', 'gpt-test', 'now', 'now');
+INSERT INTO turns (task_id, n, harness, prompt, status, log_file, started_at)
+VALUES ('tcodex', 1, 'codex', 'done already', 'done', '/tmp/log', 'now');
+INSERT INTO task_messages
+  (id, task_id, context_n, harness, text, status, attachment_hash, created_at, updated_at)
+VALUES
+  ('mdelivered', 'tcodex', 1, 'codex', 'done already', 'delivered', '', 'now', 'now'),
+  ('mqueued', 'tcodex', 1, 'codex', 'run next', 'queued', '', 'now', 'now');
+UPDATE tasks SET service_tier = NULL WHERE id = 'tcodex';
+UPDATE task_contexts SET service_tier = NULL WHERE task_id = 'tcodex';
+DELETE FROM schema_migrations WHERE id = 13;
+`);
+
+    expect(migrate(db).applied).toEqual([13]);
+    expect(db.query("SELECT service_tier FROM tasks WHERE id = 'tcodex'").get()).toEqual({
+      service_tier: "default",
+    });
+    expect(db.query("SELECT service_tier FROM task_contexts WHERE task_id = 'tcodex'").get()).toEqual({
+      service_tier: "default",
+    });
+    expect(db.query("SELECT requested_service_tier FROM turns WHERE task_id = 'tcodex'").get()).toEqual({
+      requested_service_tier: null,
+    });
+    expect(db.query("SELECT id, service_tier FROM task_messages ORDER BY id").all()).toEqual([
+      { id: "mdelivered", service_tier: null },
+      { id: "mqueued", service_tier: "default" },
+    ]);
+    db.close();
+  });
+
   /**
    * The refusal this whole change exists for. A build that quietly ignores a
    * column a newer release relies on does not look broken until data stops

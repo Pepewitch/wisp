@@ -38,6 +38,7 @@ function sameMessage(
     existing.harness === task.harness &&
     existing.model === task.model &&
     existing.effort === task.effort &&
+    existing.service_tier === task.service_tier &&
     (existing.attachment_hash === "" ||
       attachmentHashes.includes(existing.attachment_hash))
   )
@@ -108,6 +109,7 @@ export async function persistTaskSubmission(
         harness: task.harness,
         model: task.model,
         effort: task.effort,
+        serviceTier: task.service_tier,
         freshContext: false,
       },
     )
@@ -143,6 +145,7 @@ export async function deliverToRunningTurn(
     running.harness === message.harness &&
     running.requested_model === message.model &&
     running.requested_effort === message.effort
+    && running.requested_service_tier === message.service_tier
   const live = activeLiveInput(task.id)
   if (!sameAgent || live?.turnId !== running.id) {
     return { running: true, result: null }

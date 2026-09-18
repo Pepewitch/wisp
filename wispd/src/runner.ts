@@ -177,6 +177,7 @@ export function startTurn(
       session: task.session_id,
       model: task.model,
       effort: task.effort,
+      serviceTier: task.service_tier,
       images,
       live: def.liveInput === "claude-stream-json",
     });
@@ -231,7 +232,7 @@ export function startTurn(
       null,
       attachmentManifest(attachments),
       null,
-      { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort },
+      { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, service_tier: task.service_tier },
     );
     finishTurn(turnId, "failed", null, null);
     setTaskFields(task.id, { turn_count: n });
@@ -256,7 +257,7 @@ export function startTurn(
         // turn admits to owning
         attachmentManifest(attachments),
         recorderEligible ? "recorder-v1" : null,
-        { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort },
+        { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, service_tier: task.service_tier },
       );
       recordProcessGroup(id);
       return id;
@@ -413,6 +414,7 @@ export function startNextQueuedMessage(
     harness: message.harness,
     model: message.model,
     effort: message.effort,
+    service_tier: message.service_tier,
     session_id: context.session_id,
     skills_json: context.skills_json,
   };

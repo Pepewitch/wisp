@@ -205,6 +205,11 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-c", "model_reasoning_effort={effort}"],
+    // Codex's catalog can make the paid priority tier its own default. Wisp
+    // never leaves that spending choice implicit: "default" is Standard,
+    // while the model discovery response offers priority as Fast.
+    serviceTier: ["-c", 'service_tier="{serviceTier}"'],
+    defaultServiceTier: "default",
     // codex 0.154.0 — generated app-server schemas accept a non-empty effort
     // string and the current catalog includes xhigh/max models. `ultra` was
     // added on the evidence of `codex debug models` itself: gpt-6-astra lists

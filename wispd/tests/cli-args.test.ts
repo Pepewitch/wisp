@@ -9,11 +9,25 @@ describe("parseArgs", () => {
   });
 
   test("value flags consume the next token", () => {
-    const p = parseArgs(["repo", "do the thing", "--harness", "droid", "--model", "opus", "--effort", "high", "--name", "Demo"]);
+    const p = parseArgs([
+      "repo",
+      "do the thing",
+      "--harness",
+      "droid",
+      "--model",
+      "opus",
+      "--effort",
+      "high",
+      "--service-tier",
+      "priority",
+      "--name",
+      "Demo",
+    ]);
     expect(p.positional).toEqual(["repo", "do the thing"]);
     expect(p.flags.harness).toBe("droid");
     expect(p.flags.model).toBe("opus");
     expect(p.flags.effort).toBe("high");
+    expect(p.flags["service-tier"]).toBe("priority");
     expect(p.flags.name).toBe("Demo");
   });
 
