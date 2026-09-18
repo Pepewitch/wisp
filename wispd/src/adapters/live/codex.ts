@@ -209,7 +209,16 @@ export class CodexLiveDriver {
     const opened = record(
       await this.call(
         this.threadId ? "thread/resume" : "thread/start",
-        this.threadId ? { threadId: this.threadId, ...threadOptions(this.options) } : threadOptions(this.options),
+        this.threadId
+          ? {
+              threadId: this.threadId,
+              ...threadOptions(this.options),
+              // Resuming still loads the whole session into Codex, but Wisp
+              // does not replay old turns from this response. Omitting them
+              // keeps a long thread from becoming one enormous JSON-RPC line.
+              excludeTurns: true,
+            }
+          : threadOptions(this.options),
       ),
     );
     const thread = record(opened.thread);
