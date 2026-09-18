@@ -16,6 +16,7 @@ import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types"
  *                   changes invalidate the list and selected detail
  *   turn event    → the selected task's detail + diff (debounced)
  *   project event → the repos list (debounced; add/remove re-shape the sidebar)
+ *   harnesses event → the cached harness/model list
  *   settings event → the daemon-wide settings view
  *   any task/turn → /api/status git badges (debounced)
  *   reconnect     → invalidate everything once (a slept laptop resync)
@@ -117,6 +118,10 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       invalidateRepos();
       return;
     }
+    if (evt.type === "harnesses") {
+      void opts.client.invalidateQueries({ queryKey: qk.harnesses });
+      return;
+    }
     if (evt.type === "settings") {
       void opts.client.invalidateQueries({ queryKey: qk.settings });
       return;
@@ -178,6 +183,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     void opts.client.invalidateQueries({ queryKey: qk.tasks });
     void opts.client.invalidateQueries({ queryKey: qk.status });
     void opts.client.invalidateQueries({ queryKey: qk.repos });
+    void opts.client.invalidateQueries({ queryKey: qk.harnesses });
     void opts.client.invalidateQueries({ queryKey: qk.settings });
     const id = opts.getSelectedId();
     if (id) {
