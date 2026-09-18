@@ -597,7 +597,7 @@ async function serveOwned(
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
-  void modelCache.refreshIfStale();
+  void lifetime.track(modelCache.refreshIfStale());
   console.log(
     `wispd listening on http://${hostname}:${server.port} (token in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json)`,
   );

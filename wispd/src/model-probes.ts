@@ -10,8 +10,10 @@ import {
 import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
 import type { SpawnResult } from "./doctor";
 import { emit } from "./events";
+import { trackHomeWork } from "./home-lifetime";
 import { assertExecutableAllowed } from "./launch-policy";
 import { DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
+import { isRecord } from "./validate";
 
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
 export const MODEL_PROBE_MAX_BYTES = 2 * 1024 * 1024;
@@ -66,14 +68,13 @@ function adapterSignature(def: AdapterDef): string {
 }
 
 function validCachedModels(value: unknown): value is CachedModels {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return Array.isArray(record.list)
-    && record.list.length <= 10_000
-    && record.list.every((model) => typeof model === "string")
-    && (record.defaultModel === null || typeof record.defaultModel === "string")
-    && typeof record.probedAt === "string"
-    && Number.isFinite(Date.parse(record.probedAt));
+  return isRecord(value)
+    && Array.isArray(value.list)
+    && value.list.length <= 10_000
+    && value.list.every((model) => typeof model === "string")
+    && (value.defaultModel === null || typeof value.defaultModel === "string")
+    && typeof value.probedAt === "string"
+    && Number.isFinite(Date.parse(value.probedAt));
 }
 
 function sameAnswer(left: ModelCacheEntry, right: ModelCacheEntry): boolean {
@@ -121,7 +122,8 @@ export class ModelProbeCache {
   /** Refresh stale data in the background without repeatedly probing stable catalogs. */
   refreshIfStale(): Promise<void> {
     if (this.refreshInFlight) return this.refreshInFlight;
-    if (this.now().getTime() - this.lastRefreshAttemptAt < this.refreshIntervalMs) {
+    const age = this.now().getTime() - this.lastRefreshAttemptAt;
+    if (age >= 0 && age < this.refreshIntervalMs) {
       return Promise.resolve();
     }
     return this.refresh();
@@ -132,6 +134,7 @@ export class ModelProbeCache {
     if (this.refreshInFlight) return this.refreshInFlight;
     this.lastRefreshAttemptAt = this.now().getTime();
     let changed = false;
+    let cacheUpdated = false;
     this.refreshInFlight = Promise.all(
       Object.entries(this.adapters).map(async ([name, def]) => {
         const previous = this.snapshot(name);
@@ -139,16 +142,17 @@ export class ModelProbeCache {
         const answer = next.models ? next : { ...next, models: previous.models };
         this.entries.set(name, answer);
         if (!sameAnswer(previous, answer)) changed = true;
+        if (def.modelDiscovery && next.models) cacheUpdated = true;
       }),
     )
       .then(() => {
-        this.persist();
+        if (cacheUpdated) this.persist();
         if (changed) emit({ type: "harnesses" });
       })
       .finally(() => {
         this.refreshInFlight = null;
       });
-    return this.refreshInFlight;
+    return trackHomeWork(this.refreshInFlight);
   }
 
   private load(): void {
@@ -156,16 +160,16 @@ export class ModelProbeCache {
     try {
       if (!existsSync(this.cachePath) || statSync(this.cachePath).size > MODEL_PROBE_CACHE_MAX_BYTES) return;
       const parsed: unknown = JSON.parse(readFileSync(this.cachePath, "utf8"));
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+      if (!isRecord(parsed)) return;
       const store = parsed as Partial<PersistedModelCache>;
-      if (store.version !== 1 || !store.entries || typeof store.entries !== "object") return;
+      if (store.version !== 1 || !isRecord(store.entries)) return;
       let complete = true;
+      const probedTimes: number[] = [];
       for (const [name, def] of Object.entries(this.adapters)) {
         if (!def.modelDiscovery) continue;
         const cached = store.entries[name];
         if (
-          !cached
-          || typeof cached !== "object"
+          !isRecord(cached)
           || cached.adapterSignature !== adapterSignature(def)
           || !validCachedModels(cached.models)
         ) {
@@ -173,9 +177,9 @@ export class ModelProbeCache {
           continue;
         }
         this.entries.set(name, { models: cached.models });
-        this.lastRefreshAttemptAt = Math.max(this.lastRefreshAttemptAt, Date.parse(cached.models.probedAt));
+        probedTimes.push(Date.parse(cached.models.probedAt));
       }
-      if (!complete) this.lastRefreshAttemptAt = 0;
+      this.lastRefreshAttemptAt = complete && probedTimes.length > 0 ? Math.min(...probedTimes) : 0;
     } catch {
       // This file is only a cache. A partial or hand-edited file starts cold.
     }
@@ -189,9 +193,11 @@ export class ModelProbeCache {
       if (!def.modelDiscovery || !models) continue;
       entries[name] = { adapterSignature: adapterSignature(def), models };
     }
+    const text = JSON.stringify({ version: 1, entries }, null, 2) + "\n";
+    if (Buffer.byteLength(text) > MODEL_PROBE_CACHE_MAX_BYTES) return;
     const temporary = `${this.cachePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, JSON.stringify({ version: 1, entries }, null, 2) + "\n", {
+      writeFileSync(temporary, text, {
         mode: 0o600,
         flag: "wx",
       });

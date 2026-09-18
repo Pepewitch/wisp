@@ -120,6 +120,27 @@ describe("daemon model probe cache", () => {
     expect(JSON.parse(readFileSync(path, "utf8")).entries.droid.models.probedAt).toBe(now.toISOString());
   });
 
+  test("treats a future persisted timestamp as stale", async () => {
+    const path = cachePath();
+    const now = new Date("2026-09-18T12:00:00.000Z");
+    const adapters = { droid: BUILTIN_ADAPTERS.droid };
+    const future = new Date("2026-09-19T12:00:00.000Z");
+    const first = new ModelProbeCache(adapters, { cachePath: path, now: () => future, spawn: droidSpawn() });
+    await first.refresh();
+
+    let probes = 0;
+    const restored = new ModelProbeCache(adapters, {
+      cachePath: path,
+      now: () => now,
+      spawn: (cmd) => {
+        probes++;
+        return droidSpawn()(cmd);
+      },
+    });
+    await restored.refreshIfStale();
+    expect(probes).toBe(2);
+  });
+
   test("ignores persisted entries for a changed adapter", () => {
     const path = cachePath();
     writeFileSync(path, JSON.stringify({
