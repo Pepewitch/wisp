@@ -27,6 +27,7 @@ interface JsonRpcPeerOptions {
     method: string,
     params: Record<string, unknown>,
   ) => Record<string, unknown>;
+  responseFrame?: (id: unknown, result: Record<string, unknown>) => Record<string, unknown>;
   errorMessage: (error: unknown) => string;
 }
 
@@ -90,7 +91,21 @@ export class JsonRpcPeer {
     });
   }
 
+  /** Answer a request the harness made of us, echoing its own frame id. */
+  respond(id: unknown, result: Record<string, unknown>): Promise<void> {
+    return this.write(
+      this.options.responseFrame?.(id, result) ?? { jsonrpc: "2.0", id, result },
+    );
+  }
+
+  /**
+   * Claim a frame only if it answers a call WE made. A frame carrying a
+   * `method` is the harness calling US — it has an id, so matching on the id
+   * alone used to swallow it and leave the harness waiting for a reply that
+   * never came. That is what hid Droid's `droid.ask_user` for a whole release.
+   */
   handle(frame: RpcFrame): boolean {
+    if (typeof frame.method === "string") return false;
     if (frame.id === undefined || frame.id === null) return false;
     const id = String(frame.id);
     const call = this.pending.get(id);

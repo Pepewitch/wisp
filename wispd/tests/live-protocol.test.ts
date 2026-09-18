@@ -22,8 +22,12 @@ class MemorySink implements WritableRpcSink {
 }
 
 async function requestAt(sink: MemorySink, index: number): Promise<Record<string, any>> {
+  return JSON.parse(await lineAfter(sink, index)) as Record<string, any>;
+}
+
+async function lineAfter(sink: MemorySink, index: number): Promise<string> {
   while (sink.lines.length <= index) await Bun.sleep(0);
-  return JSON.parse(sink.lines[index]!) as Record<string, any>;
+  return sink.lines[index]!;
 }
 
 describe("bounded live protocol transport", () => {
@@ -40,6 +44,37 @@ describe("bounded live protocol transport", () => {
     expect(peer.handle({ id: 1, result: {} })).toBe(true);
     await peer.close();
     expect(sink.ended).toBe(true);
+  });
+
+  test("a frame carrying a method is the harness calling US, never our own answer", () => {
+    const sink = new MemorySink();
+    const peer = new JsonRpcPeer({ sink, label: "test peer", errorMessage: () => "error" });
+
+    // An inbound REQUEST has an id too. Matching on the id alone claimed it and
+    // left the harness waiting for a reply forever — the defect that hid
+    // Droid's `droid.ask_user` behind "Wisp has no reply path for AskUser".
+    expect(peer.handle({ id: "server-1", method: "droid.ask_user", params: {} })).toBe(false);
+    expect(peer.handle({ method: "droid.session_notification", params: {} })).toBe(false);
+    // A response with no matching call is still ours to swallow.
+    expect(peer.handle({ id: "stale", result: {} })).toBe(true);
+  });
+
+  test("respond echoes the request's own frame id", async () => {
+    const sink = new MemorySink();
+    const peer = new JsonRpcPeer({
+      sink,
+      label: "test peer",
+      errorMessage: () => "error",
+      responseFrame: (id, result) => ({ jsonrpc: "2.0", type: "response", id, result }),
+    });
+    await peer.respond("server-1", { answers: [] });
+    expect(JSON.parse(sink.lines[0]!)).toEqual({
+      jsonrpc: "2.0",
+      type: "response",
+      id: "server-1",
+      result: { answers: [] },
+    });
+    await peer.close();
   });
 
   test("closing the peer rejects every pending call", async () => {
@@ -544,7 +579,7 @@ describe("Droid live tool results", () => {
 });
 
 describe("Droid live turn completion", () => {
-  async function bootDroid(): Promise<{
+  async function bootDroid(askUserGraceMs?: number): Promise<{
     driver: DroidLiveDriver;
     sink: MemorySink;
     events: Record<string, any>[];
@@ -567,6 +602,7 @@ describe("Droid live turn completion", () => {
       onTerminal: () => {
         terminals.push(Date.now());
       },
+      ...(askUserGraceMs === undefined ? {} : { askUserGraceMs }),
     });
     const initialize = await requestAt(sink, 0);
     driver.handle({ id: initialize.id, result: { sessionId: "droid-session" } });
@@ -583,8 +619,8 @@ describe("Droid live turn completion", () => {
     });
   }
 
-  test("AskUser ends the turn as needs-input and closes stdin without waiting for idle", async () => {
-    const { driver, events, terminals } = await bootDroid();
+  /** The tool_use half of an AskUser, which arrives alongside the request. */
+  function askUserToolUse(driver: DroidLiveDriver, questionnaire = "pick one"): void {
     notify(driver, {
       type: "create_message",
       message: {
@@ -592,12 +628,122 @@ describe("Droid live turn completion", () => {
         role: "assistant",
         content: [
           { type: "text", text: "which option?" },
-          { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire: "pick one" } },
+          { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire } },
         ],
         modelId: "fake-droid-model",
         createdAt: 123,
       },
     });
+  }
+
+  const ASK_USER_REQUEST = {
+    jsonrpc: "2.0",
+    type: "request",
+    id: "droid-req-7",
+    method: "droid.ask_user",
+    params: {
+      toolCallId: "ask-1",
+      questions: [
+        { index: 1, topic: "Travel", question: "Where to?", options: ["Japan", "Italy"] },
+        { index: 2, topic: "Pizza", question: "Toppings?", multiSelect: true, options: ["Olives", "Basil"] },
+      ],
+    },
+  };
+
+  test("droid.ask_user suspends the turn instead of ending it, and publishes the questions", async () => {
+    const { driver, events, terminals } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+
+    // The turn is still open: Droid is blocked on our reply, not finished.
+    expect(terminals).toHaveLength(0);
+    expect(events.filter((event) => event.type === "completion")).toEqual([]);
+    expect(events.find((event) => event.type === "question")).toMatchObject({
+      type: "question",
+      phase: "asked",
+      id: "ask-1",
+      session_id: "droid-session",
+      questions: [
+        { index: 1, topic: "Travel", question: "Where to?", multiSelect: false, options: ["Japan", "Italy"] },
+        { index: 2, topic: "Pizza", question: "Toppings?", multiSelect: true, options: ["Olives", "Basil"] },
+      ],
+    });
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+    await driver.close();
+  });
+
+  test("answering replies on Droid's own frame id and leaves the turn running", async () => {
+    const { driver, sink, events, terminals } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+    await driver.answer("ask-1", [
+      { index: 1, answer: "Japan" },
+      { index: 2, answer: "Olives, Basil" },
+    ]);
+
+    const reply = JSON.parse(await lineAfter(sink, 2)) as Record<string, any>;
+    expect(reply).toMatchObject({
+      jsonrpc: "2.0",
+      type: "response",
+      id: "droid-req-7",
+      result: {
+        answers: [
+          { index: 1, question: "Where to?", answer: "Japan" },
+          { index: 2, question: "Toppings?", answer: "Olives, Basil" },
+        ],
+      },
+    });
+    expect(terminals).toHaveLength(0);
+    expect(sink.ended).toBe(false);
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({
+      phase: "answered",
+      id: "ask-1",
+      answers: [{ index: 1, answer: "Japan" }, { index: 2, answer: "Olives, Basil" }],
+    });
+    expect(driver.pendingQuestion()).toBeNull();
+    await driver.close();
+  });
+
+  test("a partial answer is refused — Droid validates completeness itself", async () => {
+    const { driver, sink } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+    const before = sink.lines.length;
+
+    await expect(driver.answer("ask-1", [{ index: 1, answer: "Japan" }])).rejects.toThrow(
+      "answer every question first (1 still empty)",
+    );
+    await expect(driver.answer("no-such-call", [])).rejects.toThrow("no longer waiting");
+    // Nothing was written, so Droid is still waiting on a reply we can still send.
+    expect(sink.lines).toHaveLength(before);
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+    await driver.close();
+  });
+
+  test("closing releases the question as stopped, so Droid keeps no pending request", async () => {
+    const { driver, sink, events } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+    await driver.close();
+
+    expect(JSON.parse(await lineAfter(sink, 2))).toMatchObject({
+      type: "response",
+      id: "droid-req-7",
+      result: { cancelled: true, answers: [] },
+    });
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({
+      phase: "cancelled",
+      reason: "stopped",
+    });
+  });
+
+  test("a Droid that never sends droid.ask_user still ends the turn as needs-input", async () => {
+    const { driver, events, terminals } = await bootDroid(5);
+    askUserToolUse(driver);
+
+    // Nothing has ended yet — the request is still allowed to arrive.
+    expect(terminals).toHaveLength(0);
+    await Bun.sleep(30);
 
     expect(terminals).toHaveLength(1);
     expect(events.filter((event) => event.type === "completion")).toEqual([
@@ -617,6 +763,116 @@ describe("Droid live turn completion", () => {
     );
     expect(parsed).toMatchObject({ result: "which option?", needsInput: true, isError: false });
     await expect(driver.send("later", "a reply", [])).rejects.toThrow("Droid turn already completed");
+    await driver.close();
+  });
+
+  test("a second questionnaire does not orphan the first — both stay answerable", async () => {
+    // Droid forwards ask-user requests for every session on the one channel,
+    // so a subagent can raise one while the parent's is still open. Dropping
+    // the first would leave Droid blocked on it forever, and a task parked in
+    // needs-input is exactly what stuck detection skips.
+    const { driver, sink, events, terminals } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+    driver.handle({
+      ...ASK_USER_REQUEST,
+      id: "droid-req-8",
+      params: {
+        toolCallId: "ask-2",
+        questions: [{ index: 1, question: "And then?", options: ["Ship", "Wait"] }],
+      },
+    });
+
+    expect(events.filter((event) => event.type === "question").map((event) => event.id)).toEqual([
+      "ask-1",
+      "ask-2",
+    ]);
+    expect(terminals).toHaveLength(0);
+
+    await driver.answer("ask-2", [{ index: 1, answer: "Ship" }]);
+    expect(JSON.parse(await lineAfter(sink, 2))).toMatchObject({ id: "droid-req-8" });
+    // The first is still ours to answer, not silently gone.
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+    await driver.answer("ask-1", [{ index: 1, answer: "Japan" }, { index: 2, answer: "Olives" }]);
+    expect(JSON.parse(await lineAfter(sink, 3))).toMatchObject({ id: "droid-req-7" });
+    expect(driver.pendingQuestion()).toBeNull();
+    await driver.close();
+  });
+
+  test("an answer that fails to write leaves the question answerable", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new DroidLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.droid!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialText: "hello",
+      initialImages: [],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: { sessionId: "droid-session" } });
+    const firstMessage = await requestAt(sink, 1);
+    driver.handle({ id: firstMessage.id, result: {} });
+    await driver.ready;
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+
+    // The pipe breaks exactly as the answer goes out. Clearing our own state
+    // before the write lands would strand the operator: no pending question to
+    // retry, a task already moved off needs-input, and Droid still blocked.
+    sink.write = () => {
+      throw new Error("broken pipe");
+    };
+    await expect(
+      driver.answer("ask-1", [{ index: 1, answer: "Japan" }, { index: 2, answer: "Olives" }]),
+    ).rejects.toThrow("broken pipe");
+
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({ phase: "asked" });
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+  });
+
+  test("steering ANSWERS the questionnaire rather than cancelling it", async () => {
+    // `cancelled: true` is Droid's own Escape-on-the-form path: it raises
+    // ToolAbortError and takes the interrupt branch, so a steer sent that way
+    // would tear down the very turn it means to steer.
+    const { driver, sink, events } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+
+    const send = driver.send("later", "none of those — use Temporal", []);
+    const released = JSON.parse(await lineAfter(sink, 2)) as Record<string, any>;
+    expect(released.result.cancelled).toBeUndefined();
+    expect(released.result.answers).toHaveLength(2);
+    expect(released.result.answers[0].answer).toContain("see the message that follows");
+    const steer = await requestAt(sink, 3);
+    expect(steer.method).toBe("droid.add_user_message");
+    driver.handle({ id: steer.id, result: {} });
+    await send;
+
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({
+      phase: "cancelled",
+      reason: "superseded",
+    });
+    await driver.close();
+  });
+
+  test("a questionnaire with nothing to click is declined, not shown empty", async () => {
+    const { driver, sink, events, terminals } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle({
+      ...ASK_USER_REQUEST,
+      params: { toolCallId: "ask-1", questions: [{ index: 1, question: "Where to?", options: [] }] },
+    });
+
+    expect(JSON.parse(await lineAfter(sink, 2))).toMatchObject({ result: { cancelled: true, answers: [] } });
+    expect(events.some((event) => event.type === "question")).toBe(false);
+    expect(terminals).toHaveLength(1);
     await driver.close();
   });
 

@@ -16,6 +16,7 @@ import { Button, DiffStat, Eyebrow, Meta, PaneHeader, POPOVER_SURFACE, Rule, Sta
 import { Prose } from "@/components/prose"
 import { ProseCodeSpecimen } from "@/components/prose-code-specimen"
 import { ProbePanel } from "@/components/probe-panel"
+import { QuestionnaireSpecimens } from "@/components/questionnaire-gallery-specimen"
 import { SearchSpecimens } from "@/components/search-gallery-specimen"
 import { StartHereSpecimen } from "@/components/start-here"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
@@ -349,6 +350,10 @@ function FoundationSpecimens() {
 function InteractionSpecimens() {
   return (
     <>
+      <Section title="Questions the agent asks you">
+          <QuestionnaireSpecimens />
+      </Section>
+
       <Section title="The / palette — three tiers, one of them costs you">
           <div className="grid grid-cols-2 gap-10">
             <div>

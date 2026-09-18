@@ -530,6 +530,54 @@ describe("daemon API contracts", () => {
 });
 
 describe("daemon API contracts", () => {
+  test("answer refuses every way its reply channel can be gone, by name", async () => {
+    const base = await startServer();
+
+    await expectError(base, "/api/tasks/tnope9/answer", 404, "no such task: tnope9", "POST");
+
+    const archived = makeTask();
+    setTaskFields(archived.id, { archived: 1 });
+    await expectError(
+      base,
+      `/api/tasks/${archived.id}/answer`,
+      409,
+      "task is archived — archived tasks are read-only",
+      "POST",
+      { questionId: "ask-1", answers: [{ index: 1, answer: "Japan" }] },
+    );
+
+    const task = makeTask();
+    await expectError(base, `/api/tasks/${task.id}/answer`, 400, "questionId is required", "POST", {
+      answers: [{ index: 1, answer: "Japan" }],
+    });
+    await expectError(base, `/api/tasks/${task.id}/answer`, 400, "answers is required", "POST", {
+      questionId: "ask-1",
+    });
+    await expectError(base, `/api/tasks/${task.id}/answer`, 400, "answers is required", "POST", {
+      questionId: "ask-1",
+      answers: [],
+    });
+    await expectError(base, `/api/tasks/${task.id}/answer`, 400, "every answer needs a numeric index", "POST", {
+      questionId: "ask-1",
+      answers: [{ answer: "Japan" }],
+    });
+    await expectError(base, `/api/tasks/${task.id}/answer`, 400, "every answer needs answer text", "POST", {
+      questionId: "ask-1",
+      answers: [{ index: 1 }],
+    });
+
+    // No live turn holds a reply channel, so the card is told to use the
+    // composer rather than being left with a button that resolves nothing.
+    await expectError(
+      base,
+      `/api/tasks/${task.id}/answer`,
+      409,
+      "this question is no longer waiting for an answer — send it as a message instead",
+      "POST",
+      { questionId: "ask-1", answers: [{ index: 1, answer: "Japan" }] },
+    );
+  });
+
   test("interrupt, push, attach, and diff expose their refusal and happy shapes", async () => {
     const base = await startServer();
 

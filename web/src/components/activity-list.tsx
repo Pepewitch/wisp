@@ -2,6 +2,8 @@ import { useRef, useState } from "react"
 
 import { Bot, ChevronRight } from "@/components/icons"
 import { Prose } from "@/components/prose"
+import { QuestionnaireCard } from "@/components/questionnaire-card"
+import { useQuestionnaire } from "@/components/questionnaire-context"
 import { Meta, StateDot } from "@/components/primitives"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { summarizeStep, toolDetails } from "@/lib/activity"
@@ -10,6 +12,7 @@ import type { TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import type {
   ActivityItem,
+  QuestionActivityItem,
   SubagentActivityItem,
   ThinkingActivityItem,
   ToolActivityItem,
@@ -38,6 +41,7 @@ export function ActivityList({
           return <ThinkingRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
         }
         if (item.kind === "tool") return <ToolRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
+        if (item.kind === "question") return <QuestionRow key={item.id} item={item} />
         return (
           <SubagentRow
             key={item.id}
@@ -48,6 +52,32 @@ export function ActivityList({
         )
       })}
     </div>
+  )
+}
+
+/**
+ * A questionnaire renders as a card, not a row. Without a provider — the
+ * gallery, an export, any transcript with no live turn behind it — it is
+ * read-only, which is the truth in every one of those places.
+ */
+function QuestionRow({ item }: { item: QuestionActivityItem }) {
+  const questionnaire = useQuestionnaire()
+  return (
+    <QuestionnaireCard
+      item={item}
+      state={questionnaire?.stateOf(item.id) ?? "expired"}
+      harness={questionnaire?.harness}
+      error={questionnaire?.errorOf(item.id)}
+      touch={questionnaire?.touch}
+      drafts={questionnaire?.draftsFor(item.id)}
+      onDraftChange={
+        questionnaire ? (index, change) => questionnaire.onDraftChange(item.id, index, change) : undefined
+      }
+      onSubmit={
+        questionnaire ? (answers) => questionnaire.onSubmit(item.id, answers) : undefined
+      }
+      onFocusComposer={questionnaire?.onFocusComposer}
+    />
   )
 }
 

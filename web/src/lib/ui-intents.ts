@@ -4,7 +4,7 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * FOUR intents. `/log` is the palette's one command that needs another
+ * FIVE intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
@@ -40,6 +40,8 @@ export interface UiIntents {
   subscribe(fn: () => void): () => void;
   streamFocusRequests(): number;
   focusStream(): void;
+  composerFocusRequests(): number;
+  focusComposer(): void;
   taskFocusRequest(): TaskFocusRequest | null;
   focusTask(taskId: string): void;
   findRequest(): FindRequest | null;
@@ -51,6 +53,7 @@ export interface UiIntents {
 function createUiIntents(): UiIntents {
   const listeners = new Set<() => void>();
   let streamFocusRequests = 0;
+  let composerFocusRequests = 0;
   let taskFocusRequest: TaskFocusRequest | null = null;
   let findRequest: FindRequest | null = null;
   let localSetupRequests = 0;
@@ -70,6 +73,14 @@ function createUiIntents(): UiIntents {
     },
     focusStream(): void {
       streamFocusRequests += 1;
+      notify();
+    },
+    /** Escape out of a questionnaire card — the composer is always the way out */
+    composerFocusRequests(): number {
+      return composerFocusRequests;
+    },
+    focusComposer(): void {
+      composerFocusRequests += 1;
       notify();
     },
     /** the latest task the desktop shell asked this connection's view to show */

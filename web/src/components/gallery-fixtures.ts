@@ -6,7 +6,7 @@ import type {
   PullRequestOverviewEntry,
   UpdateStatus,
 } from "@/lib/types"
-import type { ActivityItem } from "@/stream/reducer"
+import type { ActivityItem, QuestionActivityItem } from "@/stream/reducer"
 
 export const PR_SPECIMEN: PullRequestInfo = {
   number: 42,
@@ -252,3 +252,92 @@ export const ACCENTS = [
   { name: "Dim", cls: "bg-accent-dim", dark: "oklch(.46 .105 300)", light: "oklch(.72 .13 300)" },
   { name: "Wash", cls: "bg-accent-wash", dark: "15% α", light: "14% α" },
 ] as const
+
+/**
+ * One questionnaire in each state it can be read in. The pending card is the
+ * only one with controls; the rest are the record it leaves behind, which is
+ * what a reloaded transcript and an export actually show.
+ */
+export const QUESTIONNAIRE_SPECIMENS: { label: string; item: QuestionActivityItem }[] = [
+  {
+    label: "Pending — three questions, one of them multi",
+    item: {
+      kind: "question",
+      id: "question-pending",
+      status: "asked",
+      reason: null,
+      answers: null,
+      questions: [
+        {
+          index: 1,
+          topic: "Travel",
+          question: "Which place would you most like to visit?",
+          multiSelect: false,
+          options: ["Iceland", "Japan", "New Zealand", "Italy"],
+        },
+        {
+          index: 2,
+          topic: "Pizza",
+          question: "Which pizza toppings do you enjoy?",
+          multiSelect: true,
+          options: ["Mushrooms", "Pepperoni", "Pineapple", "Olives"],
+        },
+        {
+          index: 3,
+          topic: "Productivity",
+          question: "When are you most productive?",
+          multiSelect: false,
+          options: ["Early morning", "Afternoon", "Evening", "Late night"],
+        },
+      ],
+    },
+  },
+  {
+    label: "Answered — the record it leaves in the transcript",
+    item: {
+      kind: "question",
+      id: "question-answered",
+      status: "answered",
+      reason: null,
+      answers: [
+        { index: 1, answer: "Japan" },
+        { index: 2, answer: "Mushrooms, Olives" },
+      ],
+      questions: [
+        {
+          index: 1,
+          topic: "Travel",
+          question: "Which place would you most like to visit?",
+          multiSelect: false,
+          options: ["Iceland", "Japan"],
+        },
+        {
+          index: 2,
+          topic: "Pizza",
+          question: "Which pizza toppings do you enjoy?",
+          multiSelect: true,
+          options: ["Mushrooms", "Olives"],
+        },
+      ],
+    },
+  },
+  {
+    label: "Superseded — you typed an answer instead",
+    item: {
+      kind: "question",
+      id: "question-superseded",
+      status: "cancelled",
+      reason: "superseded",
+      answers: null,
+      questions: [
+        {
+          index: 1,
+          topic: "Library",
+          question: "Which library should we use for date formatting?",
+          multiSelect: false,
+          options: ["date-fns", "Day.js"],
+        },
+      ],
+    },
+  },
+]

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from "react"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { composerStatus } from "@/components/composer-status"
@@ -32,6 +39,8 @@ import {
   type PendingAttachments,
 } from "@/lib/attachments"
 import { openExternalLink } from "@/lib/external-links"
+import { useDaemonRuntime } from "@/lib/runtime"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { handleComposerPaste } from "@/lib/paste-links"
 import {
   commandEntries,
@@ -99,6 +108,23 @@ interface SteerBoxProps {
   onInterrupt?: () => Promise<void> | void
   runningSince?: string | null
   touch?: boolean
+}
+
+/**
+ * Escaping a questionnaire card lands here: the composer is the way out of
+ * every control in the centre column, and answering by typing instead is
+ * always allowed. The counter only moves on a real request, so this never
+ * steals focus on mount or on a task switch.
+ */
+function useComposerFocusRequests(box: RefObject<HTMLTextAreaElement | null>): void {
+  const intents = uiIntentsFor(useDaemonRuntime().connectionId)
+  const requests = useSyncExternalStore(intents.subscribe, intents.composerFocusRequests)
+  const seen = useRef(requests)
+  useEffect(() => {
+    if (requests === seen.current) return
+    seen.current = requests
+    box.current?.focus()
+  }, [box, requests])
 }
 
 export function SteerBox({
@@ -173,6 +199,8 @@ export function SteerBox({
     box.current?.focus()
     box.current?.setSelectionRange(pos, pos)
   })
+
+  useComposerFocusRequests(box)
 
   const { send: submit, stop } = useSteerSubmit({
     task,

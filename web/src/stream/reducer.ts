@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityStatus, TurnStatus } from "@/lib/types"
+import type { ActivityEvent, ActivityStatus, QuestionPrompt, TurnStatus } from "@/lib/types"
 
 export interface TextActivityItem {
   kind: "text"
@@ -56,12 +56,29 @@ export interface SubagentActivityItem {
   items: ActivityItem[]
 }
 
+/**
+ * A questionnaire the harness is blocked on. `asked` is the only state that
+ * can be answered, and only while the turn is still live — a reload of a
+ * settled turn replays the same three phases, so the card rebuilds its own
+ * conclusion rather than offering buttons that resolve nothing.
+ */
+export interface QuestionActivityItem {
+  kind: "question"
+  id: string
+  questions: QuestionPrompt[]
+  answers: { index: number; answer: string }[] | null
+  status: "asked" | "answered" | "cancelled"
+  /** Only on `cancelled`: whether a message replaced it or the agent stopped. */
+  reason: "superseded" | "stopped" | null
+}
+
 export type ActivityItem =
   | TextActivityItem
   | MessageActivityItem
   | ThinkingActivityItem
   | ToolActivityItem
   | SubagentActivityItem
+  | QuestionActivityItem
 
 export type StreamBlock =
   | { kind: "separator"; turn: number; end: TurnStatus | null }
@@ -266,6 +283,7 @@ class ActivityDraft {
   private readonly tools = new Map<string, Slot<ToolActivityItem>>()
   private readonly thoughts = new Map<string, Slot<ThinkingActivityItem>>()
   private readonly subagents = new Map<string, Slot<SubagentActivityItem>>()
+  private readonly questions = new Map<string, Slot<QuestionActivityItem>>()
 
   constructor(items: ActivityItem[]) {
     this.items = this.clone(items)
@@ -294,6 +312,8 @@ class ActivityDraft {
       this.tools.set(slot.item.id, slot as Slot<ToolActivityItem>)
     } else if (slot.item.kind === "thinking" && !this.thoughts.has(slot.item.id)) {
       this.thoughts.set(slot.item.id, slot as Slot<ThinkingActivityItem>)
+    } else if (slot.item.kind === "question" && !this.questions.has(slot.item.id)) {
+      this.questions.set(slot.item.id, slot as Slot<QuestionActivityItem>)
     }
   }
 
@@ -414,6 +434,49 @@ class ActivityDraft {
     this.changed = true
   }
 
+  /**
+   * The AskUser tool call and the structured request carry the same questions
+   * under the same id, so whichever lands first creates the card and the other
+   * only fills in what it knows. An `answered` phase never re-opens it.
+   */
+  private applyQuestion(event: Extract<ActivityEvent, { kind: "question" }>): void {
+    const previous = this.questions.get(event.id)
+    const prior = previous?.item ?? null
+    const item: QuestionActivityItem = {
+      kind: "question",
+      id: event.id,
+      questions: event.questions ?? prior?.questions ?? [],
+      answers: event.answers ?? prior?.answers ?? null,
+      status: event.phase,
+      reason: event.reason ?? prior?.reason ?? null,
+    }
+    if (item.questions.length === 0) return
+    // Droid's own parser is more permissive than ours, so an AskUser whose
+    // text we could not read was emitted as an ordinary tool row and the
+    // structured request now arrives for the SAME call id. The card is the
+    // better rendering of the two — take the row's place rather than sitting
+    // beside it, leaving a tool row that can never complete.
+    const tool = this.tools.get(event.id)
+    if (!previous && tool) {
+      tool.container[tool.index] = item
+      this.tools.delete(event.id)
+      this.questions.set(event.id, { container: tool.container, index: tool.index, item })
+      this.changed = true
+      return
+    }
+    if (previous) {
+      if (sameQuestion(previous.item, item)) return
+      previous.container[previous.index] = item
+      previous.item = item
+    } else {
+      const target = this.target(event.parentId)
+      const slot = { container: target, index: target.length, item }
+      target.push(item)
+      this.questions.set(event.id, slot)
+    }
+    this.changed = true
+  }
+
   apply(event: ActivityEvent): void {
     switch (event.kind) {
       case "text":
@@ -431,8 +494,48 @@ class ActivityDraft {
       case "subagent":
         this.applySubagent(event)
         break
+      case "question":
+        this.applyQuestion(event)
+        break
     }
   }
+}
+
+/**
+ * By VALUE, not by reference. Every backlog frame is freshly JSON-parsed, so a
+ * replay hands us equal-but-new arrays; comparing them by identity would make
+ * every reconnect rewrite the item, flip `changed`, and re-run the whole
+ * bounding pass over the tree for no change at all. The neighbouring
+ * `sameTool`/`sameSubagent` are scalar-only, which is why they never had this.
+ */
+function sameQuestion(left: QuestionActivityItem, right: QuestionActivityItem): boolean {
+  return left.status === right.status &&
+    left.reason === right.reason &&
+    samePrompts(left.questions, right.questions) &&
+    sameAnswers(left.answers, right.answers)
+}
+
+function samePrompts(left: QuestionPrompt[], right: QuestionPrompt[]): boolean {
+  if (left === right) return true
+  return left.length === right.length && left.every((prompt, index) => {
+    const other = right[index]!
+    return prompt.index === other.index &&
+      prompt.topic === other.topic &&
+      prompt.question === other.question &&
+      prompt.multiSelect === other.multiSelect &&
+      prompt.options.length === other.options.length &&
+      prompt.options.every((option, position) => option === other.options[position])
+  })
+}
+
+function sameAnswers(
+  left: { index: number; answer: string }[] | null,
+  right: { index: number; answer: string }[] | null,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return left.length === right.length &&
+    left.every((entry, index) => entry.index === right[index]!.index && entry.answer === right[index]!.answer)
 }
 
 function sameTool(left: ToolActivityItem, right: ToolActivityItem): boolean {

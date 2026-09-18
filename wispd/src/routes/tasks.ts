@@ -15,6 +15,7 @@ import {
 import { resolveHarnessDefaults, type WispConfig } from "../config";
 import { emit } from "../events";
 import { pathExists } from "../fsutil";
+import { answerQuestionResponse } from "./task-answer";
 import type { PullRequestCache } from "../pull-requests";
 import { isProjectRemovalInProgress } from "../project-removals";
 import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
@@ -385,9 +386,13 @@ function basicTaskAction(
   task: Task,
   action: string | undefined,
   method: string,
+  req: Request,
   url: URL,
   adapters: Record<string, AdapterDef>,
 ): Response | Promise<Response> | null {
+  if (action === "answer" && method === "POST") {
+    return answerQuestionResponse(task, req);
+  }
   if (action === "conversation" && method === "GET") {
     return conversationResponse(task, url, adapters);
   }
@@ -517,7 +522,7 @@ export function taskRoute(
 
   if (action === "pull-request" && m === "GET") return pullRequestResponse(task, pullRequests);
 
-  const basicActionResponse = basicTaskAction(task, action, m, url, adapters);
+  const basicActionResponse = basicTaskAction(task, action, m, req, url, adapters);
   if (basicActionResponse !== null) return basicActionResponse;
 
   // A3: an out-of-turn harness READ. No turn row, no transition, no outbox
