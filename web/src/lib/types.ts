@@ -132,6 +132,8 @@ export interface ApiTask {
   mode: TaskMode | null;
   created_at: string;
   updated_at: string;
+  /** List endpoint only; true while at least one active or paused workflow is attached. */
+  has_workflow?: boolean;
   /** the model the task's latest turn actually ran on (P5b) — list endpoint only */
   latest_turn_model?: string | null;
   /** the latest turn's exit code (Theme B) — the fact behind the "Exited N" word */

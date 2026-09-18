@@ -184,6 +184,26 @@ describe("the git-marks slot yields", () => {
   })
 })
 
+describe("workflow state in the sidebar dot", () => {
+  it("uses the ambient sky-blue ring while a workflow is attached", () => {
+    mount(<TaskRow task={{ ...TASK, has_workflow: true }} selected={false} onSelect={() => {}} />)
+    expect(screen.getByRole("img", { name: "Done · Workflow attached" }))
+      .toHaveClass("border-state-background", "bg-transparent")
+  })
+
+  it("keeps the running purple fill ahead of an attached workflow", () => {
+    mount(
+      <TaskRow
+        task={{ ...TASK, state: "running", has_workflow: true }}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    )
+    expect(screen.getByRole("img", { name: "Running · Workflow attached" }))
+      .toHaveClass("bg-state-running", "shadow-[0_0_0_3px_var(--accent-wash)]")
+  })
+})
+
 describe("the sidebar pull-request status", () => {
   it.each([
     {

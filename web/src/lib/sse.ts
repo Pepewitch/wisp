@@ -129,6 +129,9 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (!("taskId" in evt) || !evt.taskId) return;
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
+      // The task list carries has_workflow so every sidebar row can render
+      // standing workflow state without opening one request per task.
+      invalidateTasks();
       return;
     }
     // A rename carries the complete metadata delta. Patching it directly keeps
