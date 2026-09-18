@@ -36,6 +36,7 @@ export function harnessesRoute(
   // loaded adapter's argv templates, defaults from config harnessDefaults.
   // Probing is cached and async: this response never waits for a CLI.
   if (url.searchParams.get("refresh") === "1") void models.refresh();
+  else void models.refreshIfStale();
   return json({
     // Daemon-level feature flags. A client newer than its daemon reads a
     // missing flag as false and hides the feature, instead of offering a

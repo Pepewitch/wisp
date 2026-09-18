@@ -5,7 +5,14 @@ import {
   resetAttachmentUploads,
   startAttachmentUploadCleanupLoop,
 } from "./attachment-uploads";
-import { assertLoopbackHost, checkHarnessDefaults, CONFIG_PATH, loadConfig, type WispConfig } from "./config";
+import {
+  assertLoopbackHost,
+  checkHarnessDefaults,
+  CONFIG_PATH,
+  loadConfig,
+  MODEL_PROBE_CACHE_PATH,
+  type WispConfig,
+} from "./config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "./model-probes";
 import { TaskCompactor, type TaskCompactorOptions } from "./compacts";
 import { startOutboxLoop } from "./outbox";
@@ -398,6 +405,7 @@ async function serveOwned(
   const modelCache = new ModelProbeCache(adapters, {
     spawn: options.modelProbeSpawn,
     timeoutMs: options.modelProbeTimeoutMs,
+    cachePath: MODEL_PROBE_CACHE_PATH,
   });
   const probeCache = new TaskProbeCache({
     spawnOnce: options.probeSpawnOnce,
@@ -589,7 +597,7 @@ async function serveOwned(
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
-  void modelCache.refresh();
+  void modelCache.refreshIfStale();
   console.log(
     `wispd listening on http://${hostname}:${server.port} (token in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json)`,
   );

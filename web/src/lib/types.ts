@@ -385,6 +385,7 @@ export type WispEvent =
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
+  | { type: "harnesses" }
   | { type: "settings" };
 
 /** GET/PATCH /api/settings, the daemon-wide preferences safe to expose. */

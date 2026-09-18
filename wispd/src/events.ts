@@ -23,6 +23,7 @@ export type WispEvent =
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
+  | { type: "harnesses" }
   | { type: "settings" };
 
 export type WispEventListener = (evt: WispEvent) => void;

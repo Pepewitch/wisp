@@ -247,7 +247,7 @@ describe("daemon API contracts", () => {
 
       const unchanged = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "A clearer task name" });
       expect(await json<{ updated_at: string }>(unchanged)).toMatchObject({ updated_at: renamedBody.updated_at });
-      expect(events).toEqual([
+      expect(events.filter((event) => event.type === "task")).toEqual([
         expect.objectContaining({
           type: "task",
           taskId: task.id,
