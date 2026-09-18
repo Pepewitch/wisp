@@ -1,5 +1,6 @@
 import type { AdapterDef } from "../adapters";
 import { totalUsage } from "../adapters/usage";
+import { activeLiveInput } from "../live-input";
 import {
   latestTurnForTask,
   messagesFor,
@@ -19,6 +20,19 @@ import {
   json,
 } from "./http";
 
+/**
+ * The ONE question the harness is actually blocked on, if any.
+ *
+ * A transcript can hold several unreleased questions — an older Droid's
+ * fallback leaves one `asked` in the log with nothing to answer it — and the
+ * log cannot tell them apart, because "still open" and "open in this daemon,
+ * right now" are different facts. Only the live driver knows the second one,
+ * so the card asks it by id rather than inferring from the task's state.
+ */
+function pendingQuestionId(task: Task): string | null {
+  return activeLiveInput(task.id)?.question?.()?.id ?? null;
+}
+
 const MAX_CONVERSATION_PAGE_SIZE = 100;
 const TASK_USAGE_DETAIL_LIMIT = 50;
 
@@ -33,6 +47,7 @@ export function conversationDetail(task: Task, adapters: Record<string, AdapterD
     latest_turn_has_result: latest ? latest.result !== null : false,
     turns: turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
     messages: messagesFor(task.id).map(apiTaskMessage),
+    pending_question_id: pendingQuestionId(task),
   };
 }
 
@@ -53,6 +68,7 @@ function pagedConversationDetail(
     latest_turn_has_result: latest ? latest.result !== null : false,
     turns: page.turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
     messages: messagesForTurnPage(task.id, first, last, before === null).map(apiTaskMessage),
+    pending_question_id: pendingQuestionId(task),
     has_older_turns: page.hasOlder,
     older_turns_before: page.hasOlder ? first : null,
   };

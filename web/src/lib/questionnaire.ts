@@ -24,12 +24,28 @@ export function answerText(question: QuestionPrompt, draft: QuestionDraft): stri
   return chosen.join(", ")
 }
 
-/** Questions still open anywhere in an activity tree, for the waiting float. */
-export function countAskedQuestions(items: ActivityItem[]): number {
-  let open = 0
+/**
+ * How many questions the one pending card is asking, for the waiting float.
+ *
+ * Scoped to the id the daemon says is answerable, not to every unreleased
+ * question in the transcript: an older harness can leave one `asked` in the
+ * log forever, and counting that would send the reader to a card they cannot
+ * answer. The number is the questions INSIDE that card, which is what "3
+ * questions waiting" means to whoever reads it.
+ */
+export function countPendingQuestions(
+  items: ActivityItem[],
+  pendingId: string | null | undefined,
+): number {
+  if (!pendingId) return 0
   for (const item of items) {
-    if (item.kind === "question" && item.status === "asked") open += 1
-    else if (item.kind === "subagent") open += countAskedQuestions(item.items)
+    if (item.kind === "question" && item.id === pendingId && item.status === "asked") {
+      return item.questions.length
+    }
+    if (item.kind === "subagent") {
+      const nested = countPendingQuestions(item.items, pendingId)
+      if (nested > 0) return nested
+    }
   }
-  return open
+  return 0
 }

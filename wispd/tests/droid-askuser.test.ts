@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { activeLiveInput } from "../src/live-input";
+import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
 
@@ -125,6 +126,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       questions: [{ index: 1, topic: "Travel", question: "Where to?", multiSelect: false, options: ["Japan", "Italy"] }],
     });
 
+    // The conversation names the ONE question that can still be answered, so
+    // the UI never offers a form for a question nothing is waiting on.
+    expect(conversationDetail(getTask(task.id)!, {}).pending_question_id).toBe("ask-1");
+
     await live.answer!("ask-1", [{ index: 1, answer: "Japan" }]);
     await until(() => getTask(task.id)?.state === "done");
 
@@ -134,6 +139,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       id: "ask-request-1",
       result: { answers: [{ index: 1, question: "Where to?", answer: "Japan" }] },
     });
+    expect(conversationDetail(getTask(task.id)!, {}).pending_question_id).toBeNull();
     // ...and the SAME turn carried on to its conclusion — no second turn.
     expect(turnsFor(task.id)).toHaveLength(1);
     expect(turnsFor(task.id)[0]).toMatchObject({ n: 1, status: "done", result: "BOOKED_JAPAN" });

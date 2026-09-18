@@ -15,11 +15,14 @@ import { uiIntentsFor } from "@/lib/ui-intents"
  *
  * Everything a card SETTLED into comes from the log — answered, superseded by
  * a message, cancelled with the agent. The daemon writes that phase when it
- * releases the harness, so every viewer agrees and a reload rebuilds it. What
- * the log cannot say is whether the reply channel still EXISTS: that needs the
- * turn to still be running in this daemon, which only the task detail knows. A
- * question replayed from a settled turn, or from a daemon that has restarted
- * since, is `expired` — same card, no controls, copy pointing at the composer.
+ * releases the harness, so every viewer agrees and a reload rebuilds it.
+ *
+ * What the log cannot say is which unreleased question can still be ANSWERED.
+ * A transcript can hold more than one — an older Droid's fallback leaves a
+ * question `asked` with nothing behind it — and "still open in the log" is not
+ * "open in this daemon, right now". Only the live driver knows the second, so
+ * the daemon names it (`pending_question_id`) and everything else is
+ * `expired`: same card, no controls, copy pointing at the composer.
  */
 export function useQuestionnaireController(
   task: ConversationDetail | null,
@@ -31,12 +34,14 @@ export function useQuestionnaireController(
   const [errors, setErrors] = useState<Map<string, string>>(() => new Map())
 
   const taskId = task?.id ?? null
-  const live = Boolean(task && task.state === "needs-input" && hasRunningTurn(task))
+  const pendingId = task?.pending_question_id ?? null
 
   const stateOf = useCallback(
-    (questionId: string): QuestionnaireState =>
-      sending === questionId ? "submitting" : live ? "pending" : "expired",
-    [live, sending],
+    (questionId: string): QuestionnaireState => {
+      if (sending === questionId) return "submitting"
+      return questionId === pendingId ? "pending" : "expired"
+    },
+    [pendingId, sending],
   )
 
   const errorOf = useCallback((questionId: string) => errors.get(questionId) ?? null, [errors])
@@ -85,12 +90,4 @@ export function useQuestionnaireController(
     }),
     [errorOf, onFocusComposer, onSubmit, stateOf, task?.harness, touch],
   )
-}
-
-/**
- * Whether a turn is still open in the daemon. `needs-input` alone is not
- * enough: it is also the state of a turn that ENDED asking for something.
- */
-function hasRunningTurn(task: ConversationDetail): boolean {
-  return task.turns.some((turn) => turn.status === "running")
 }

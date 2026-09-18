@@ -277,6 +277,13 @@ export interface UpdateStatus {
 /** GET /api/tasks/:id/conversation — task history with no filesystem or Git work. */
 export interface ConversationDetail extends ApiTask {
   turns: Turn[];
+  /**
+   * The ONE question the harness is blocked on right now, if any. Absent on a
+   * daemon that predates questionnaires. The log says which questions are
+   * unreleased; only the live driver knows which one can still be answered,
+   * and a transcript can hold more than one of the first kind.
+   */
+  pending_question_id?: string | null;
   messages?: TaskMessage[];
   /** Present on bounded responses. Absent means a legacy daemon returned full history. */
   has_older_turns?: boolean;

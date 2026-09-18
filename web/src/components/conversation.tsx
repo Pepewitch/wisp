@@ -41,7 +41,7 @@ import {
   splitByMessage,
   type TurnActivity,
 } from "@/lib/activity"
-import { countAskedQuestions } from "@/lib/questionnaire"
+import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
@@ -138,13 +138,16 @@ export function Conversation({
   const find = useFindInTask(viewport, uiIntents)
   // Answering a questionnaire card, and what each card is allowed to offer.
   const questionnaire = useQuestionnaireController(task, touch)
-  const waitingQuestions = useMemo(() => {
-    if (task?.state !== "needs-input") return 0
-    return stream.blocks.reduce(
-      (open, block) => open + (block.kind === "activity" ? countAskedQuestions(block.items) : 0),
-      0,
-    )
-  }, [stream.blocks, task?.state])
+  const pendingQuestionId = task?.pending_question_id ?? null
+  const waitingQuestions = useMemo(
+    () =>
+      stream.blocks.reduce(
+        (open, block) =>
+          open || (block.kind === "activity" ? countPendingQuestions(block.items, pendingQuestionId) : 0),
+        0,
+      ),
+    [pendingQuestionId, stream.blocks],
+  )
 
   const taskId = task?.id
   useEffect(() => (
