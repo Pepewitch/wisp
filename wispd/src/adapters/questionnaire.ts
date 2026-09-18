@@ -14,8 +14,8 @@ import type { QuestionPrompt } from "./types";
  *     [option] Auth handling
  *     [option] Login Page
  *
- * 1–4 questions, 2–4 options each, `(multi)` marking multi-select. An own
- * answer is never listed: every interface offers it.
+ * 1–4 questions, `(multi)` marking multi-select. An own answer is never
+ * listed: every interface offers it.
  */
 export function parseQuestionnaire(text: string): QuestionPrompt[] {
   const questions: QuestionPrompt[] = [];
@@ -23,12 +23,15 @@ export function parseQuestionnaire(text: string): QuestionPrompt[] {
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
-    const question = line.match(/^(?:(\d+)\s*[.)]\s*)?\[question\]\s*(.+)$/i);
+    const question = line.match(/^(?:\d+\s*[.)]\s*)?\[question\]\s*(.+)$/i);
     if (question) {
-      const label = question[2]!.trim();
+      const label = question[1]!.trim();
       const multiSelect = /\(multi\)\s*$/i.test(label);
       current = {
-        index: question[1] ? Number(question[1]) : questions.length + 1,
+        // Position, never the number in the text. Droid assigns indices
+        // sequentially and matches an answer on ITS index, so honouring a
+        // model's "3." here would build a card whose answers it then rejects.
+        index: questions.length + 1,
         topic: null,
         question: multiSelect ? label.replace(/\s*\(multi\)\s*$/i, "").trim() : label,
         multiSelect,
@@ -50,34 +53,4 @@ export function parseQuestionnaire(text: string): QuestionPrompt[] {
   // A question with nothing to click is not a questionnaire; the raw tool row
   // says more than an empty card would.
   return questions.filter((entry) => entry.question && entry.options.length > 0);
-}
-
-/**
- * The answers as a message, for the paths where no reply channel is left: a
- * question that outlived its turn, or a harness that never offered one. Keeps
- * the question text because the tool call never got a result, so this is all
- * the model has to bind an answer to.
- */
-export function formatAnswerMessage(
-  questions: QuestionPrompt[],
-  answers: { index: number; answer: string }[],
-): string {
-  const byIndex = new Map(answers.map((entry) => [entry.index, entry.answer]));
-  return questions
-    .map((question, position) => {
-      const answer = byIndex.get(question.index) ?? "";
-      return `${position + 1}. ${question.question} → ${answer}`;
-    })
-    .join("\n");
-}
-
-/**
- * A multi-select answer as one string. Joined in the order the harness listed
- * the options rather than click order, so two operators who pick the same set
- * send the same answer.
- */
-export function joinAnswer(options: string[], selected: Set<string>, own: string): string {
-  const chosen = options.filter((option) => selected.has(option));
-  if (own.trim()) chosen.push(own.trim());
-  return chosen.join(", ");
 }

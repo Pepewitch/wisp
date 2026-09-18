@@ -1,4 +1,5 @@
 import { activeLiveInput } from "../live-input";
+import { assertTaskNotStopping, InterruptConflict } from "../turn-interrupt";
 import type { Task } from "../types";
 import { err, json, jsonObjectBody } from "./http";
 
@@ -34,6 +35,14 @@ export function answerQuestionResponse(task: Task, req: Request): Promise<Respon
       }
       if (typeof row.answer !== "string") return err("every answer needs answer text", 400);
       answers.push({ index: row.index, answer: row.answer.slice(0, ANSWER_MAX) });
+    }
+    // An answer is a write into a live turn, the same as a steer, so it owes
+    // the same refusal while that turn is being stopped.
+    try {
+      assertTaskNotStopping(task.id);
+    } catch (error) {
+      if (error instanceof InterruptConflict) return err(error.message, 409);
+      throw error;
     }
     const live = activeLiveInput(task.id);
     if (!live?.answer) {

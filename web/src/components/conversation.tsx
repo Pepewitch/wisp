@@ -185,7 +185,7 @@ export function Conversation({
       taskId={task?.id ?? null}
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
-     <QuestionnaireProvider value={questionnaire}>
+      <QuestionnaireProvider value={questionnaire}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           aria-hidden
@@ -279,7 +279,7 @@ export function Conversation({
 
         {!pinned && <ConversationFloat waitingQuestions={waitingQuestions} onJump={jumpToLatest} />}
       </div>
-     </QuestionnaireProvider>
+      </QuestionnaireProvider>
     </FileViewerProvider>
   )
 }

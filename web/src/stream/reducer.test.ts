@@ -398,8 +398,17 @@ describe("questionnaires", () => {
   })
 
   it("a replay of the same bytes changes nothing", () => {
+    // Freshly parsed, the way a real backlog frame arrives: identity is not
+    // what makes a replay a no-op, equality is.
+    const replay = JSON.parse(JSON.stringify(asked)) as typeof asked
     const first = reduceActivity([], [asked])
-    expect(reduceActivity(first, [asked])).toBe(first)
+    expect(reduceActivity(first, [replay])).toBe(first)
+  })
+
+  it("a question whose content actually changed is not mistaken for a replay", () => {
+    const first = reduceActivity([], [asked])
+    const edited = { ...asked, questions: [{ ...asked.questions![0]!, options: ["Japan", "Peru"] }] }
+    expect(reduceActivity(first, [edited])).not.toBe(first)
   })
 
   it("a question with nothing to render is dropped rather than shown empty", () => {

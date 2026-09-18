@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 
 import { Button, StateDot } from "@/components/primitives"
 import { answerText, emptyDraft, type QuestionDraft } from "@/lib/questionnaire"
@@ -43,6 +43,8 @@ export function QuestionnaireCard({
   harness,
   error,
   touch = false,
+  drafts,
+  onDraftChange,
   onSubmit,
   onFocusComposer,
 }: {
@@ -53,26 +55,37 @@ export function QuestionnaireCard({
   error?: string | null
   /** Thumb sizing. Same prop the composer takes, from `hasCoarsePointer`. */
   touch?: boolean
+  /** Owned above the card: it unmounts on a task switch and every reconnect. */
+  drafts?: ReadonlyMap<number, QuestionDraft>
+  onDraftChange?: (index: number, change: (draft: QuestionDraft) => QuestionDraft) => void
   onSubmit?: (answers: { index: number; answer: string }[]) => void
   onFocusComposer?: () => void
 }) {
-  const [drafts, setDrafts] = useState<Map<number, QuestionDraft>>(() => new Map())
+  const [ownDrafts, setOwnDrafts] = useState<Map<number, QuestionDraft>>(() => new Map())
   const node = useRef<HTMLDivElement>(null)
+  const focused = useRef(false)
   // The log wins: a question the daemon already released is settled for every
   // viewer, whatever this one thinks it could still send.
   const settled = item.status !== "asked" || state === "expired"
 
-  const draftFor = useCallback(
-    (index: number) => drafts.get(index) ?? emptyDraft(),
-    [drafts],
+  // The gallery and any other provider-less surface still need a working card,
+  // so local state is the fallback rather than a requirement.
+  const store = drafts ?? ownDrafts
+  const draftFor = useCallback((index: number) => store.get(index) ?? emptyDraft(), [store])
+  const update = useCallback(
+    (index: number, change: (draft: QuestionDraft) => QuestionDraft) => {
+      if (onDraftChange) {
+        onDraftChange(index, change)
+        return
+      }
+      setOwnDrafts((previous) => {
+        const next = new Map(previous)
+        next.set(index, change(previous.get(index) ?? emptyDraft()))
+        return next
+      })
+    },
+    [onDraftChange],
   )
-  const update = useCallback((index: number, change: (draft: QuestionDraft) => QuestionDraft) => {
-    setDrafts((previous) => {
-      const next = new Map(previous)
-      next.set(index, change(previous.get(index) ?? emptyDraft()))
-      return next
-    })
-  }, [])
 
   const answers = useMemo(
     () =>
@@ -90,18 +103,26 @@ export function QuestionnaireCard({
     onSubmit(answers)
   }, [answers, complete, onSubmit, state])
 
-  // The card is the one thing on screen waiting on a person, so it takes focus
-  // when it arrives. Escape hands focus back to the composer WITHOUT discarding
-  // what is picked — in a GUI, Escape means "leave this control", and Stop is
-  // already a button. (The harness's own TUI stops the agent on Escape.)
+  // The card is the one thing on screen waiting on a person, so it reaches for
+  // focus once — but only if nothing else holds it. A questionnaire can become
+  // answerable a beat AFTER it appears (the daemon's answer arrives behind a
+  // debounce), and by then the reader may already be typing a reply into the
+  // composer; pulling the caret out mid-sentence loses their keystrokes to a
+  // div. Anything already focused outranks us.
   useEffect(() => {
-    if (state !== "pending") return
+    if (state !== "pending" || focused.current) return
+    focused.current = true
+    const active = document.activeElement
+    if (active && active !== document.body) return
     node.current?.focus({ preventScroll: true })
   }, [state])
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault()
+      // Escape hands focus back to the composer WITHOUT discarding what is
+      // picked — in a GUI, Escape means "leave this control", and Stop is
+      // already a button. (The harness's own TUI stops the agent on Escape.)
       onFocusComposer?.()
       return
     }
@@ -127,7 +148,7 @@ export function QuestionnaireCard({
     >
       <div className="flex items-center gap-2.5 px-3 py-2">
         <StateDot state="needs-input" />
-        <span className="text-[12.5px] font-medium text-foreground">
+        <span aria-live="polite" className="text-[12.5px] font-medium text-foreground">
           {harness ? `${labelFor(harness)} is asking you` : "The agent is asking you"}
         </span>
         <span className="ml-auto text-[11px] text-faint">{countLabel(item.questions.length)}</span>
@@ -146,11 +167,15 @@ export function QuestionnaireCard({
         ))}
       </div>
 
+      {error && (
+        <p role="alert" className="border-t border-border px-3 pt-2 text-[11px] text-destructive">
+          {error}
+        </p>
+      )}
       <div className="flex items-center gap-2.5 border-t border-border px-3 py-2">
         <span className="text-[11px] tabular-nums text-faint">
           {answered} of {item.questions.length} answered
         </span>
-        {error && <span className="min-w-0 flex-1 truncate text-[11px] text-state-failed">{error}</span>}
         <span className={cn("ml-auto hidden text-[10px] text-faint pointer:inline", !complete && "opacity-0")}>
           <kbd className="rounded border border-border-strong px-1 py-px font-mono">⌘↵</kbd>
         </span>
@@ -181,6 +206,7 @@ function QuestionBlock({
   onChange: (change: (draft: QuestionDraft) => QuestionDraft) => void
 }) {
   const own = useRef<HTMLInputElement>(null)
+  const labelId = useId()
 
   const pick = (option: string) => {
     onChange((current) => {
@@ -196,13 +222,41 @@ function QuestionBlock({
     })
   }
 
+  // Opening the row is not yet ANSWERING with it: someone who clicks to see
+  // what it offers must not silently lose the option they already picked. The
+  // pick is retired when they actually type (see `onText`), not before.
   const openOwn = () => {
+    onChange((current) => ({ ...current, ownOpen: true }))
+    requestAnimationFrame(() => own.current?.focus())
+  }
+
+  const onOwnText = (value: string) => {
     onChange((current) => ({
       ...current,
+      own: value,
       ownOpen: true,
-      selected: question.multiSelect ? current.selected : new Set(),
+      // On a single-choice question a typed answer and a listed one are
+      // alternatives; an empty box is neither, so it retires nothing.
+      selected: question.multiSelect || !value.trim() ? current.selected : new Set(),
     }))
-    requestAnimationFrame(() => own.current?.focus())
+  }
+
+  // An empty box that loses focus was a look, not an answer — collapse it so
+  // the list goes back to one uniform column and the row can be re-entered.
+  const onOwnBlur = () => {
+    onChange((current) => (current.own.trim() ? current : { ...current, ownOpen: false }))
+  }
+
+  // The digit beside an option promises a shortcut, so the promise is kept
+  // here: 1-9 picks within the question that holds focus, the same way the
+  // harness's own TUI does. A hint for a key that does nothing is worse than
+  // no hint.
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (disabled || event.metaKey || event.ctrlKey || event.altKey) return
+    const slot = Number(event.key)
+    if (!Number.isInteger(slot) || slot < 1 || slot > question.options.length) return
+    event.preventDefault()
+    pick(question.options[slot - 1]!)
   }
 
   return (
@@ -211,11 +265,19 @@ function QuestionBlock({
         <span className="text-[10.5px] tabular-nums text-faint">{question.index}</span>
         {question.topic && <span className="text-[10.5px] text-faint">{question.topic}</span>}
         {question.multiSelect && <span className="text-[10.5px] text-faint">· select all that apply</span>}
-        <span className="mt-px basis-full text-[13px] leading-snug font-medium text-foreground">
+        <span
+          id={labelId}
+          className="mt-px basis-full text-[13px] leading-snug font-medium text-foreground"
+        >
           {question.question}
         </span>
       </div>
-      <div className="flex flex-col gap-0.5" role={question.multiSelect ? "group" : "radiogroup"}>
+      <div
+        className="flex flex-col gap-0.5"
+        role={question.multiSelect ? "group" : "radiogroup"}
+        aria-labelledby={labelId}
+        onKeyDown={onKeyDown}
+      >
         {question.options.map((option, position) => {
           const selected = draft.selected.has(option)
           return (
@@ -230,7 +292,7 @@ function QuestionBlock({
                 "group flex w-full items-center gap-2.5 rounded-md px-2.5 text-left transition-colors",
                 "disabled:pointer-events-none",
                 "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                touch ? "min-h-11 text-[13px]" : "min-h-[31px] text-[12.5px]",
+                touch ? "min-h-11 text-[13px]" : "min-h-8 text-[12.5px]",
                 selected
                   ? "bg-accent font-medium text-foreground"
                   : "text-fg-secondary hover:bg-hover hover:text-foreground",
@@ -238,7 +300,11 @@ function QuestionBlock({
             >
               <Marker multi={question.multiSelect} on={selected} />
               <span className="min-w-0 flex-1">{option}</span>
+              {/* Chrome, not part of the option's name — a screen reader
+                  announcing "Japan 2" would be reading the keyboard hint as
+                  though it were the answer. */}
               <span
+                aria-hidden
                 className={cn(
                   "hidden shrink-0 font-mono text-[10px] text-faint pointer:inline",
                   selected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -256,7 +322,8 @@ function QuestionBlock({
           draft={draft}
           disabled={disabled}
           onOpen={openOwn}
-          onText={(value) => onChange((current) => ({ ...current, own: value, ownOpen: true }))}
+          onText={onOwnText}
+          onBlur={onOwnBlur}
         />
       </div>
     </div>
@@ -276,6 +343,7 @@ function OwnAnswerRow({
   disabled,
   onOpen,
   onText,
+  onBlur,
 }: {
   ref: React.RefObject<HTMLInputElement | null>
   multi: boolean
@@ -284,19 +352,25 @@ function OwnAnswerRow({
   disabled: boolean
   onOpen: () => void
   onText: (value: string) => void
+  onBlur: () => void
 }) {
   const on = draft.own.trim().length > 0
   if (!draft.ownOpen) {
     return (
       <button
         type="button"
+        // It wears the same marker and sits in the same list, so it is a real
+        // member of the group: without this a screen reader announces "2
+        // radio buttons" for a question that offers three ways to answer.
+        role={multi ? "checkbox" : "radio"}
+        aria-checked={false}
         disabled={disabled}
         onClick={onOpen}
         className={cn(
           "flex w-full items-center gap-2.5 rounded-md px-2.5 text-left text-faint transition-colors",
           "hover:bg-hover disabled:pointer-events-none",
           "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-          touch ? "min-h-11 text-[13px]" : "min-h-[31px] text-[12.5px]",
+          touch ? "min-h-11 text-[13px]" : "min-h-8 text-[12.5px]",
         )}
       >
         <Marker multi={multi} on={false} />
@@ -306,9 +380,11 @@ function OwnAnswerRow({
   }
   return (
     <div
+      role={multi ? "checkbox" : "radio"}
+      aria-checked={on}
       className={cn(
         "flex w-full items-center gap-2.5 rounded-md px-2.5",
-        touch ? "min-h-11" : "min-h-[31px]",
+        touch ? "min-h-11" : "min-h-8",
         on && "bg-accent",
       )}
     >
@@ -317,6 +393,9 @@ function OwnAnswerRow({
         ref={ref}
         value={draft.own}
         disabled={disabled}
+        onBlur={onBlur}
+        // 1-9 picks a listed option, but inside this box a digit is a digit.
+        onKeyDown={(event) => event.stopPropagation()}
         onChange={(event) => onText(event.target.value)}
         placeholder="Or type your own answer…"
         aria-label="Your own answer"
@@ -346,10 +425,11 @@ function Marker({ multi, on }: { multi: boolean; on: boolean }) {
   )
 }
 
-type SettledKind = "answered" | "superseded" | "stopped" | "expired"
+type SettledKind = "answered" | "closed" | "superseded" | "stopped" | "expired"
 
 const SETTLED_HEAD: Record<SettledKind, { title: string; note: string | null; dot: "done" | "creating" }> = {
   answered: { title: "You answered", note: null, dot: "done" },
+  closed: { title: "Answered", note: "the answers are not in this transcript", dot: "done" },
   superseded: { title: "Not answered here", note: "you replied in the message below", dot: "creating" },
   stopped: { title: "Not answered", note: "the agent was stopped", dot: "creating" },
   expired: { title: "Not answered", note: "this question expired — answer in a message", dot: "creating" },
@@ -358,10 +438,19 @@ const SETTLED_HEAD: Record<SettledKind, { title: string; note: string | null; do
 /**
  * Why a card is read-only, in the order the reader cares about: what actually
  * happened if the daemon said, and otherwise that the channel is simply gone.
+ *
+ * `reason` is optional on the wire, and a cancel with none is exactly the case
+ * where asserting "the agent was stopped" would be inventing a fact — a log
+ * written before the reason existed, or a phase we did not annotate. It falls
+ * to the neutral sentence instead. Same for an `answered` phase that carries
+ * no answers: the questions were answered, we just cannot show what with.
  */
 function settledKind(item: QuestionActivityItem): SettledKind {
-  if (item.status === "answered") return "answered"
-  if (item.status === "cancelled") return item.reason === "superseded" ? "superseded" : "stopped"
+  if (item.status === "answered") return item.answers?.length ? "answered" : "closed"
+  if (item.status === "cancelled") {
+    if (item.reason === "superseded") return "superseded"
+    return item.reason === "stopped" ? "stopped" : "expired"
+  }
   return "expired"
 }
 

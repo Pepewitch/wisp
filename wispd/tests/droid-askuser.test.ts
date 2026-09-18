@@ -131,6 +131,9 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     expect(conversationDetail(getTask(task.id)!, {}).pending_question_id).toBe("ask-1");
 
     await live.answer!("ask-1", [{ index: 1, answer: "Japan" }]);
+    // The task leaves needs-input the moment the harness takes the answer —
+    // the turn was never over, so nothing else would move it back.
+    await until(() => getTask(task.id)?.state !== "needs-input");
     await until(() => getTask(task.id)?.state === "done");
 
     // The harness got a well-formed reply on its own frame id...

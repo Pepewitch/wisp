@@ -40,11 +40,11 @@ describe("QuestionnaireCard", () => {
     expect(send).toBeDisabled()
     expect(screen.getByText("0 of 2 answered")).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole("radio", { name: /Japan/ }))
+    fireEvent.click(screen.getByRole("radio", { name: "Japan" }))
     expect(screen.getByText("1 of 2 answered")).toBeInTheDocument()
     expect(send).toBeDisabled()
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /Olives/ }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Olives" }))
     expect(send).toBeEnabled()
     fireEvent.click(send)
     expect(onSubmit).toHaveBeenCalledWith([
@@ -57,12 +57,12 @@ describe("QuestionnaireCard", () => {
     const onSubmit = vi.fn()
     render(<QuestionnaireCard item={item()} state="pending" onSubmit={onSubmit} />)
 
-    fireEvent.click(screen.getByRole("radio", { name: /Japan/ }))
-    fireEvent.click(screen.getByRole("radio", { name: /Italy/ }))
+    fireEvent.click(screen.getByRole("radio", { name: "Japan" }))
+    fireEvent.click(screen.getByRole("radio", { name: "Italy" }))
     // Clicked in the other order on purpose: the answer follows the harness's
     // option order so two people picking the same set send the same string.
-    fireEvent.click(screen.getByRole("checkbox", { name: /Basil/ }))
-    fireEvent.click(screen.getByRole("checkbox", { name: /Olives/ }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Basil" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Olives" }))
 
     fireEvent.click(screen.getByRole("button", { name: "Send answers" }))
     expect(onSubmit).toHaveBeenCalledWith([
@@ -74,9 +74,9 @@ describe("QuestionnaireCard", () => {
   it("toggling a multi option off again removes it", () => {
     const onSubmit = vi.fn()
     render(<QuestionnaireCard item={item()} state="pending" onSubmit={onSubmit} />)
-    fireEvent.click(screen.getByRole("radio", { name: /Japan/ }))
-    fireEvent.click(screen.getByRole("checkbox", { name: /Olives/ }))
-    fireEvent.click(screen.getByRole("checkbox", { name: /Olives/ }))
+    fireEvent.click(screen.getByRole("radio", { name: "Japan" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Olives" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Olives" }))
     expect(screen.getByText("1 of 2 answered")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Send answers" })).toBeDisabled()
   })
@@ -90,8 +90,8 @@ describe("QuestionnaireCard", () => {
     })
     render(<QuestionnaireCard item={single} state="pending" onSubmit={onSubmit} />)
 
-    fireEvent.click(screen.getByRole("radio", { name: /date-fns/ }))
-    fireEvent.click(screen.getByRole("button", { name: /Or type your own answer/ }))
+    fireEvent.click(screen.getByRole("radio", { name: "date-fns" }))
+    fireEvent.click(screen.getByRole("radio", { name: /Or type your own answer/ }))
     fireEvent.change(screen.getByLabelText("Your own answer"), {
       target: { value: "Intl.DateTimeFormat" },
     })
@@ -117,8 +117,8 @@ describe("QuestionnaireCard", () => {
     expect(onFocusComposer).toHaveBeenCalled()
     expect(onSubmit).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole("radio", { name: /Japan/ }))
-    fireEvent.click(screen.getByRole("checkbox", { name: /Olives/ }))
+    fireEvent.click(screen.getByRole("radio", { name: "Japan" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Olives" }))
     // The selections survived the Escape.
     expect(screen.getByText("2 of 2 answered")).toBeInTheDocument()
 
@@ -169,6 +169,76 @@ describe("QuestionnaireCard", () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it("the keyboard hint beside an option is chrome, not part of its name", () => {
+    render(<QuestionnaireCard item={item()} state="pending" />)
+    // "Japan2" would be a screen reader announcing the shortcut as the answer.
+    expect(screen.getByRole("radio", { name: "Japan" })).toBeInTheDocument()
+    expect(screen.queryByRole("radio", { name: /Japan\s*\d/ })).not.toBeInTheDocument()
+  })
+
+  it("keeps the shortcut the hint promises: 1-9 picks within a question", () => {
+    const onSubmit = vi.fn()
+    render(<QuestionnaireCard item={item()} state="pending" onSubmit={onSubmit} />)
+
+    fireEvent.keyDown(screen.getByRole("radiogroup"), { key: "2" })
+    fireEvent.keyDown(screen.getAllByRole("group")[0]!, { key: "1" })
+    expect(screen.getByText("2 of 2 answered")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Send answers" }))
+    expect(onSubmit).toHaveBeenCalledWith([
+      { index: 1, answer: "Italy" },
+      { index: 2, answer: "Olives" },
+    ])
+  })
+
+  it("names each group with its own question", () => {
+    render(<QuestionnaireCard item={item()} state="pending" />)
+    expect(screen.getByRole("radiogroup")).toHaveAccessibleName("Where to?")
+  })
+
+  it("opening the own-answer row does not discard the pick behind it", () => {
+    // Someone who clicks it to SEE what it offers must not silently lose the
+    // option they already chose; typing is what retires it.
+    render(<QuestionnaireCard item={item()} state="pending" />)
+    fireEvent.click(screen.getByRole("radio", { name: "Japan" }))
+    fireEvent.click(screen.getAllByRole("radio", { name: /Or type your own answer/ })[0]!)
+    expect(screen.getByText("1 of 2 answered")).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText("Your own answer"), { target: { value: "Peru" } })
+    expect(screen.getByRole("radio", { name: "Japan" })).toHaveAttribute("aria-checked", "false")
+  })
+
+  it("an own-answer row left empty collapses again on blur", () => {
+    render(<QuestionnaireCard item={item()} state="pending" />)
+    fireEvent.click(screen.getAllByRole("radio", { name: /Or type your own answer/ })[0]!)
+    const box = screen.getByLabelText("Your own answer")
+    fireEvent.blur(box)
+    expect(screen.queryByLabelText("Your own answer")).not.toBeInTheDocument()
+  })
+
+  it("does not pull focus away from something the reader is already using", () => {
+    // A questionnaire can become answerable a beat AFTER it appears, by which
+    // time the reader may be typing a reply into the composer.
+    const composer = document.createElement("textarea")
+    document.body.append(composer)
+    composer.focus()
+    render(<QuestionnaireCard item={item()} state="pending" />)
+    expect(document.activeElement).toBe(composer)
+    composer.remove()
+  })
+
+  it("says only what it knows about a cancel with no stated reason", () => {
+    // `reason` is optional on the wire; asserting "the agent was stopped" for
+    // a phase nobody annotated would be inventing the fact.
+    render(<QuestionnaireCard item={item({ status: "cancelled", reason: null })} state="pending" />)
+    expect(screen.queryByText("the agent was stopped")).not.toBeInTheDocument()
+    expect(screen.getByText("this question expired — answer in a message")).toBeInTheDocument()
+  })
+
+  it("does not claim answers it does not have", () => {
+    render(<QuestionnaireCard item={item({ status: "answered", answers: null })} state="pending" />)
+    expect(screen.getByText("the answers are not in this transcript")).toBeInTheDocument()
+  })
+
   it("shows the daemon's refusal on the card that failed", () => {
     render(
       <QuestionnaireCard
@@ -177,6 +247,6 @@ describe("QuestionnaireCard", () => {
         error="this question is no longer waiting for an answer"
       />,
     )
-    expect(screen.getByText("this question is no longer waiting for an answer")).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent("this question is no longer waiting for an answer")
   })
 })

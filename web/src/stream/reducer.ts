@@ -451,6 +451,19 @@ class ActivityDraft {
       reason: event.reason ?? prior?.reason ?? null,
     }
     if (item.questions.length === 0) return
+    // Droid's own parser is more permissive than ours, so an AskUser whose
+    // text we could not read was emitted as an ordinary tool row and the
+    // structured request now arrives for the SAME call id. The card is the
+    // better rendering of the two — take the row's place rather than sitting
+    // beside it, leaving a tool row that can never complete.
+    const tool = this.tools.get(event.id)
+    if (!previous && tool) {
+      tool.container[tool.index] = item
+      this.tools.delete(event.id)
+      this.questions.set(event.id, { container: tool.container, index: tool.index, item })
+      this.changed = true
+      return
+    }
     if (previous) {
       if (sameQuestion(previous.item, item)) return
       previous.container[previous.index] = item
@@ -488,11 +501,41 @@ class ActivityDraft {
   }
 }
 
+/**
+ * By VALUE, not by reference. Every backlog frame is freshly JSON-parsed, so a
+ * replay hands us equal-but-new arrays; comparing them by identity would make
+ * every reconnect rewrite the item, flip `changed`, and re-run the whole
+ * bounding pass over the tree for no change at all. The neighbouring
+ * `sameTool`/`sameSubagent` are scalar-only, which is why they never had this.
+ */
 function sameQuestion(left: QuestionActivityItem, right: QuestionActivityItem): boolean {
   return left.status === right.status &&
     left.reason === right.reason &&
-    left.questions === right.questions &&
-    left.answers === right.answers
+    samePrompts(left.questions, right.questions) &&
+    sameAnswers(left.answers, right.answers)
+}
+
+function samePrompts(left: QuestionPrompt[], right: QuestionPrompt[]): boolean {
+  if (left === right) return true
+  return left.length === right.length && left.every((prompt, index) => {
+    const other = right[index]!
+    return prompt.index === other.index &&
+      prompt.topic === other.topic &&
+      prompt.question === other.question &&
+      prompt.multiSelect === other.multiSelect &&
+      prompt.options.length === other.options.length &&
+      prompt.options.every((option, position) => option === other.options[position])
+  })
+}
+
+function sameAnswers(
+  left: { index: number; answer: string }[] | null,
+  right: { index: number; answer: string }[] | null,
+): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return left.length === right.length &&
+    left.every((entry, index) => entry.index === right[index]!.index && entry.answer === right[index]!.answer)
 }
 
 function sameTool(left: ToolActivityItem, right: ToolActivityItem): boolean {

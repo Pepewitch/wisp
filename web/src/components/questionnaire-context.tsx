@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react"
 
 import type { QuestionnaireState } from "@/components/questionnaire-card"
+import type { QuestionDraft } from "@/lib/questionnaire"
 
 /**
  * What a questionnaire card needs that its own log item cannot say.
@@ -22,6 +23,17 @@ export interface QuestionnaireContext {
   stateOf: (questionId: string) => QuestionnaireState
   /** The refusal the daemon gave for this card's last attempt, if any. */
   errorOf: (questionId: string) => string | null
+  /**
+   * Answers picked but not yet sent. They live above the card because the card
+   * unmounts on a task switch AND on every stream reconnect, and losing a
+   * half-filled questionnaire to a wifi blip is not a trade worth making.
+   */
+  draftsFor: (questionId: string) => ReadonlyMap<number, QuestionDraft>
+  onDraftChange: (
+    questionId: string,
+    index: number,
+    change: (draft: QuestionDraft) => QuestionDraft,
+  ) => void
   onSubmit: (questionId: string, answers: { index: number; answer: string }[]) => void
   onFocusComposer: () => void
 }

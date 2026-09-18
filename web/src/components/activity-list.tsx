@@ -69,6 +69,10 @@ function QuestionRow({ item }: { item: QuestionActivityItem }) {
       harness={questionnaire?.harness}
       error={questionnaire?.errorOf(item.id)}
       touch={questionnaire?.touch}
+      drafts={questionnaire?.draftsFor(item.id)}
+      onDraftChange={
+        questionnaire ? (index, change) => questionnaire.onDraftChange(item.id, index, change) : undefined
+      }
       onSubmit={
         questionnaire ? (answers) => questionnaire.onSubmit(item.id, answers) : undefined
       }

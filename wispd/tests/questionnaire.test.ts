@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, createActivityFormatter } from "../src/adapters";
-import { formatAnswerMessage, parseQuestionnaire } from "../src/adapters/questionnaire";
+import { parseQuestionnaire } from "../src/adapters/questionnaire";
 
 /**
  * The plain-text half of AskUser. Verified against Droid 0.193.0's own tool
@@ -49,8 +49,11 @@ describe("parseQuestionnaire", () => {
     expect(
       parseQuestionnaire("[question] Only one?\n[option]   Yes  \n[option] No"),
     ).toEqual([{ index: 1, topic: null, question: "Only one?", multiSelect: false, options: ["Yes", "No"] }]);
+    // The written number is ignored: Droid numbers its own questions by
+    // position and matches an answer on ITS index, so trusting "2)" here would
+    // build a card whose answers Droid then rejects as incomplete.
     expect(parseQuestionnaire("2) [question] Numbered with a paren\n[option] A\n[option] B")).toMatchObject([
-      { index: 2, options: ["A", "B"] },
+      { index: 1, options: ["A", "B"] },
     ]);
   });
 
@@ -59,20 +62,6 @@ describe("parseQuestionnaire", () => {
     expect(parseQuestionnaire("[topic] Orphan\n[option] Stray")).toEqual([]);
     expect(parseQuestionnaire("")).toEqual([]);
     expect(parseQuestionnaire("just some prose")).toEqual([]);
-  });
-});
-
-describe("formatAnswerMessage", () => {
-  test("keeps the question text, because the tool call never got a result", () => {
-    const questions = parseQuestionnaire(
-      "1. [question] Where to?\n[option] Japan\n[option] Italy\n\n2. [question] Toppings? (multi)\n[option] Olives\n[option] Basil",
-    );
-    expect(
-      formatAnswerMessage(questions, [
-        { index: 1, answer: "Japan" },
-        { index: 2, answer: "Olives, Basil" },
-      ]),
-    ).toBe("1. Where to? → Japan\n2. Toppings? → Olives, Basil");
   });
 });
 

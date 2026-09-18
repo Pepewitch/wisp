@@ -720,27 +720,6 @@ describe("Droid live turn completion", () => {
     await driver.close();
   });
 
-  test("steering releases the question first — Droid is blocked inside the tool", async () => {
-    const { driver, sink, events } = await bootDroid();
-    askUserToolUse(driver);
-    driver.handle(ASK_USER_REQUEST);
-
-    const send = driver.send("later", "none of those — use Temporal", []);
-    const cancel = JSON.parse(await lineAfter(sink, 2)) as Record<string, any>;
-    expect(cancel).toMatchObject({ type: "response", id: "droid-req-7", result: { cancelled: true, answers: [] } });
-    const steer = await requestAt(sink, 3);
-    expect(steer.method).toBe("droid.add_user_message");
-    driver.handle({ id: steer.id, result: {} });
-    await send;
-
-    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({
-      phase: "cancelled",
-      reason: "superseded",
-      id: "ask-1",
-    });
-    await driver.close();
-  });
-
   test("closing releases the question as stopped, so Droid keeps no pending request", async () => {
     const { driver, sink, events } = await bootDroid();
     askUserToolUse(driver);
@@ -784,6 +763,102 @@ describe("Droid live turn completion", () => {
     );
     expect(parsed).toMatchObject({ result: "which option?", needsInput: true, isError: false });
     await expect(driver.send("later", "a reply", [])).rejects.toThrow("Droid turn already completed");
+    await driver.close();
+  });
+
+  test("a second questionnaire does not orphan the first — both stay answerable", async () => {
+    // Droid forwards ask-user requests for every session on the one channel,
+    // so a subagent can raise one while the parent's is still open. Dropping
+    // the first would leave Droid blocked on it forever, and a task parked in
+    // needs-input is exactly what stuck detection skips.
+    const { driver, sink, events, terminals } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+    driver.handle({
+      ...ASK_USER_REQUEST,
+      id: "droid-req-8",
+      params: {
+        toolCallId: "ask-2",
+        questions: [{ index: 1, question: "And then?", options: ["Ship", "Wait"] }],
+      },
+    });
+
+    expect(events.filter((event) => event.type === "question").map((event) => event.id)).toEqual([
+      "ask-1",
+      "ask-2",
+    ]);
+    expect(terminals).toHaveLength(0);
+
+    await driver.answer("ask-2", [{ index: 1, answer: "Ship" }]);
+    expect(JSON.parse(await lineAfter(sink, 2))).toMatchObject({ id: "droid-req-8" });
+    // The first is still ours to answer, not silently gone.
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+    await driver.answer("ask-1", [{ index: 1, answer: "Japan" }, { index: 2, answer: "Olives" }]);
+    expect(JSON.parse(await lineAfter(sink, 3))).toMatchObject({ id: "droid-req-7" });
+    expect(driver.pendingQuestion()).toBeNull();
+    await driver.close();
+  });
+
+  test("an answer that fails to write leaves the question answerable", async () => {
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new DroidLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.droid!,
+      cwd: "/tmp",
+      sessionId: null,
+      model: null,
+      effort: null,
+      initialMessageId: "initial-message",
+      initialText: "hello",
+      initialImages: [],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: { sessionId: "droid-session" } });
+    const firstMessage = await requestAt(sink, 1);
+    driver.handle({ id: firstMessage.id, result: {} });
+    await driver.ready;
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+
+    // The pipe breaks exactly as the answer goes out. Clearing our own state
+    // before the write lands would strand the operator: no pending question to
+    // retry, a task already moved off needs-input, and Droid still blocked.
+    sink.write = () => {
+      throw new Error("broken pipe");
+    };
+    await expect(
+      driver.answer("ask-1", [{ index: 1, answer: "Japan" }, { index: 2, answer: "Olives" }]),
+    ).rejects.toThrow("broken pipe");
+
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({ phase: "asked" });
+    expect(driver.pendingQuestion()).toMatchObject({ id: "ask-1" });
+  });
+
+  test("steering ANSWERS the questionnaire rather than cancelling it", async () => {
+    // `cancelled: true` is Droid's own Escape-on-the-form path: it raises
+    // ToolAbortError and takes the interrupt branch, so a steer sent that way
+    // would tear down the very turn it means to steer.
+    const { driver, sink, events } = await bootDroid();
+    askUserToolUse(driver);
+    driver.handle(ASK_USER_REQUEST);
+
+    const send = driver.send("later", "none of those — use Temporal", []);
+    const released = JSON.parse(await lineAfter(sink, 2)) as Record<string, any>;
+    expect(released.result.cancelled).toBeUndefined();
+    expect(released.result.answers).toHaveLength(2);
+    expect(released.result.answers[0].answer).toContain("see the message that follows");
+    const steer = await requestAt(sink, 3);
+    expect(steer.method).toBe("droid.add_user_message");
+    driver.handle({ id: steer.id, result: {} });
+    await send;
+
+    expect(events.filter((event) => event.type === "question").at(-1)).toMatchObject({
+      phase: "cancelled",
+      reason: "superseded",
+    });
     await driver.close();
   });
 

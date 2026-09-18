@@ -4,7 +4,7 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * FOUR intents. `/log` is the palette's one command that needs another
+ * FIVE intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
