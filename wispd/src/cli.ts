@@ -45,6 +45,14 @@ function ago(iso: string): string {
  * `wisp wait` exit codes, one per settled state. 'creating'/'running' are
  * in-flight and 'stuck' is reversible (the harness may still be alive and
  * simply quiet), so none of them end the wait — only these three do.
+ *
+ * `needs-input` now covers two situations, and 2 is right for both: a turn
+ * that ENDED asking for something, and a turn SUSPENDED inside a questionnaire
+ * the harness is blocked on. The wait's promise is "block until the task is
+ * finished or wants you", and a blocked harness wants you as much as a
+ * finished one does. A `wisp send` after either resumes the task correctly —
+ * the suspended case steers, which answers the open questionnaire on the way
+ * through (see adapters/live/droid.ts).
  */
 const WAIT_EXIT: Partial<Record<TaskState, number>> = { done: 0, failed: 1, "needs-input": 2 };
 const WAIT_POLL_MS = 2000;

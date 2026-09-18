@@ -16,8 +16,15 @@ import type { QuestionActivityItem } from "@/stream/reducer"
  * Two rules from the palette (index.css) shape it:
  *
  *  - SELECTION IS A BACKGROUND CHANGE. A chosen option takes `bg-accent` and a
- *    filled marker, never hue. The card's one violet is the Send button, which
- *    is the same rule the composer's send already lives by.
+ *    filled marker, never hue. The card's one violet is its Send.
+ *
+ *    That Send and the composer's can both be violet at once, when a card is
+ *    fully answered AND something is typed below it. Considered and kept:
+ *    index.css lists "the send button" as its own place the accent may go,
+ *    beside "the one primary action", and at that moment there really are two
+ *    sendable things. The alternative — the composer dimming its own send
+ *    whenever a question is open — couples two panes for a case where the
+ *    brighter reading is also the true one.
  *  - The marker SHAPE carries the rule: a circle is choose-one, a square is
  *    choose-any. That is the radio/checkbox contract every reader already has,
  *    and it is a different family from `StateDot`'s one-shape law — that law is

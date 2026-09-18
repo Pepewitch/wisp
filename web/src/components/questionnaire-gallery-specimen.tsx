@@ -24,6 +24,16 @@ export function QuestionnaireSpecimens() {
         message sent instead settles the card as superseded rather than leaving a Send button that
         resolves nothing.
       </p>
+      <p className="mt-3 max-w-[760px] text-[11.5px] leading-relaxed text-muted-foreground">
+        Two deliberate exceptions, recorded here so they stay rules rather than drift. The pending
+        card is the one CONTAINER allowed a state hue on its border — everywhere else{" "}
+        <span className="text-state-needs-input">needs-input</span> is a 6px dot or a line of text —
+        because it is the one container the agent is blocked on, and a dot alone does not find it
+        when you scroll back through forty turns. And its Send may be violet at the same time as the
+        composer's: <span className="font-mono">index.css</span> lists the send button as its own
+        place the accent may go, and when a card is answered and a message is typed there really are
+        two sendable things.
+      </p>
     </>
   )
 }
