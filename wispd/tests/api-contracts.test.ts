@@ -247,6 +247,9 @@ describe("daemon API contracts", () => {
 
       const unchanged = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "A clearer task name" });
       expect(await json<{ updated_at: string }>(unchanged)).toMatchObject({ updated_at: renamedBody.updated_at });
+      // The startup model probe can interleave a harnesses event, but nothing
+      // outside the known set may ever appear on the bus here.
+      expect(events.every((event) => event.type === "task" || event.type === "harnesses")).toBe(true);
       expect(events.filter((event) => event.type === "task")).toEqual([
         expect.objectContaining({
           type: "task",

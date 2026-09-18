@@ -93,6 +93,35 @@ describe("daemon model probe cache", () => {
     }
   });
 
+  test("a reordered catalog is not announced, though the fresh order is kept", async () => {
+    const events: WispEvent[] = [];
+    const unsubscribe = subscribe((event) => events.push(event));
+    const reversed = "Invalid model\nAvailable built-in models:\n  kimi-k3, gpt-5.6-sol, gpt-6-astra, auto\n";
+    let generation = 0;
+    const cache = new ModelProbeCache(
+      { droid: BUILTIN_ADAPTERS.droid },
+      {
+        spawn: (cmd) => {
+          if (generation && cmd.includes(DROID_MODEL_PROBE_SENTINEL)) {
+            return { exitCode: 1, stdout: "", stderr: reversed };
+          }
+          return droidSpawn()(cmd);
+        },
+      },
+    );
+    try {
+      await cache.refresh();
+      events.length = 0;
+
+      generation = 1;
+      await cache.refresh();
+      expect(events).toEqual([]);
+      expect(cache.snapshot("droid").models?.list).toEqual(["kimi-k3", "gpt-5.6-sol", "gpt-6-astra", "auto"]);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   test("loads a successful snapshot from disk and refreshes it only after it becomes stale", async () => {
     const path = cachePath();
     const now = new Date("2026-09-18T12:00:00.000Z");

@@ -1,12 +1,5 @@
-import {
-  chmodSync,
-  existsSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmod, rename, unlink, writeFile } from "node:fs/promises";
 import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
 import type { SpawnResult } from "./doctor";
 import { emit } from "./events";
@@ -77,10 +70,20 @@ function validCachedModels(value: unknown): value is CachedModels {
     && Number.isFinite(Date.parse(value.probedAt));
 }
 
+function sameModelList(left: readonly string[] | null, right: readonly string[] | null): boolean {
+  if (left === null || right === null) return left === right;
+  if (left.length !== right.length) return false;
+  // A harness CLI may emit the same catalog in a different order between runs;
+  // that is not a change worth a client refetch.
+  const sortedLeft = [...left].sort();
+  const sortedRight = [...right].sort();
+  return sortedLeft.every((model, i) => model === sortedRight[i]);
+}
+
 function sameAnswer(left: ModelCacheEntry, right: ModelCacheEntry): boolean {
   return left.modelsError === right.modelsError
     && left.models?.defaultModel === right.models?.defaultModel
-    && JSON.stringify(left.models?.list ?? null) === JSON.stringify(right.models?.list ?? null);
+    && sameModelList(left.models?.list ?? null, right.models?.list ?? null);
 }
 
 /**
@@ -145,8 +148,8 @@ export class ModelProbeCache {
         if (def.modelDiscovery && next.models) cacheUpdated = true;
       }),
     )
-      .then(() => {
-        if (cacheUpdated) this.persist();
+      .then(async () => {
+        if (cacheUpdated) await this.persist();
         if (changed) emit({ type: "harnesses" });
       })
       .finally(() => {
@@ -185,7 +188,9 @@ export class ModelProbeCache {
     }
   }
 
-  private persist(): void {
+  // Async on purpose: a cache write must not block the event loop. load() above
+  // stays synchronous because the constructor cannot await.
+  private async persist(): Promise<void> {
     if (!this.cachePath) return;
     const entries: PersistedModelCache["entries"] = {};
     for (const [name, def] of Object.entries(this.adapters)) {
@@ -197,16 +202,16 @@ export class ModelProbeCache {
     if (Buffer.byteLength(text) > MODEL_PROBE_CACHE_MAX_BYTES) return;
     const temporary = `${this.cachePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
     try {
-      writeFileSync(temporary, text, {
+      await writeFile(temporary, text, {
         mode: 0o600,
         flag: "wx",
       });
-      chmodSync(temporary, 0o600);
-      renameSync(temporary, this.cachePath);
+      await chmod(temporary, 0o600);
+      await rename(temporary, this.cachePath);
     } catch {
       // Discovery remains usable in memory when persistence is unavailable.
     } finally {
-      if (existsSync(temporary)) unlinkSync(temporary);
+      await unlink(temporary).catch(() => {});
     }
   }
 
