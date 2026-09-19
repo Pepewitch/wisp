@@ -76,13 +76,18 @@ export function WorkflowsPane({
 
   return (
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
-      <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-        {/* No action at this end. A `+` here would sit in a tab strip, one
-            pane above a Terminal whose `+` means "new shell TAB" — same glyph,
-            same corner, different noun. Adding lives in the list instead, next
-            to the things it adds to. */}
-        {header ?? <span className="text-[12.5px] font-medium text-foreground">Workflows</span>}
-      </PaneHeader>
+      {/* The mobile shell's surface tab already names this pane. Unlike
+          Changes, Workflows has no header action, so repeating the title would
+          leave an otherwise empty band below the tab strip. */}
+      {(!touch || header) && (
+        <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
+          {/* No action at this end. A `+` here would sit in a tab strip, one
+              pane above a Terminal whose `+` means "new shell TAB" — same glyph,
+              same corner, different noun. Adding lives in the list instead, next
+              to the things it adds to. */}
+          {header ?? <span className="text-[12.5px] font-medium text-foreground">Workflows</span>}
+        </PaneHeader>
+      )}
 
       {/* the way back out of a drill-down, in the pane rather than in a
           dialog's corner — the tab strip above it never moves */}

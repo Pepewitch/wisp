@@ -128,6 +128,16 @@ it("puts adding in the list rather than in the tab strip", async () => {
   expect(await screen.findByRole("button", { name: "Choose PR review watch" })).toBeInTheDocument()
 })
 
+it("leaves the workflow title to the mobile surface tab", async () => {
+  const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [item])
+  render(<WorkflowsPane task={task} touch />, {
+    wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })),
+  })
+
+  expect(await screen.findByText("Waiting for feedback")).toBeInTheDocument()
+  expect(screen.queryByText("Workflows")).not.toBeInTheDocument()
+})
+
 it("ends its empty state in the control, not in a noun", async () => {
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [])
   render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })) })
