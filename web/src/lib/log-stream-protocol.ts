@@ -31,6 +31,39 @@ function optionalTimestamp(value: unknown): boolean {
   )
 }
 
+function questionPrompt(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.index === "number" &&
+    Number.isFinite(value.index) &&
+    (value.topic === null || typeof value.topic === "string") &&
+    typeof value.question === "string" &&
+    typeof value.multiSelect === "boolean" &&
+    Array.isArray(value.options) &&
+    value.options.every((option) => typeof option === "string")
+  )
+}
+
+function questionAnswer(value: unknown): boolean {
+  return (
+    record(value) &&
+    typeof value.index === "number" &&
+    Number.isFinite(value.index) &&
+    typeof value.answer === "string"
+  )
+}
+
+function questionEvent(value: Record<string, unknown>): boolean {
+  return (
+    (value.phase === "asked" || value.phase === "answered" || value.phase === "cancelled") &&
+    (value.reason === undefined || value.reason === "superseded" || value.reason === "stopped") &&
+    (value.questions === undefined ||
+      (Array.isArray(value.questions) && value.questions.every(questionPrompt))) &&
+    (value.answers === undefined ||
+      (Array.isArray(value.answers) && value.answers.every(questionAnswer)))
+  )
+}
+
 function activityEvent(value: unknown): value is ActivityEvent {
   if (
     !record(value) ||
@@ -71,6 +104,8 @@ function activityEvent(value: unknown): value is ActivityEvent {
           (typeof value.durationMs === "number" && Number.isFinite(value.durationMs))) &&
         (value.background === undefined || typeof value.background === "boolean")
       )
+    case "question":
+      return questionEvent(value)
     default:
       return false
   }

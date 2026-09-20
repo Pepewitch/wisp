@@ -63,6 +63,52 @@ describe("useLogStream", () => {
     expect(fake.isClosed()).toBe(true)
   })
 
+  it("keeps the stream open and renders questionnaire activity", async () => {
+    const fake = createFakeSse()
+    const transport = fakeDaemonTransport("connection-questionnaire-log", {
+      openEventStream: () => fake.source,
+    })
+    const { result } = renderHook(() => useLogStream("task-1", "activity", 0), {
+      wrapper: runtimeWrapper(transport),
+    })
+
+    act(() => {
+      fake.emit("hello", { version: "0.5.11-test" })
+      fake.emit("backlog", {
+        turn: 2,
+        prompt: "audit this",
+        activity: [{
+          kind: "question",
+          id: "ask-1",
+          parentId: null,
+          phase: "asked",
+          questions: [{
+            index: 1,
+            topic: "Audit depth",
+            question: "How deeply should I audit Wisp?",
+            multiSelect: false,
+            options: ["Standard", "Deep"],
+          }],
+        }],
+      })
+    })
+
+    await waitFor(() => {
+      const block = result.current.blocks.find((item) => item.kind === "activity")
+      expect(block).toMatchObject({
+        kind: "activity",
+        items: [{
+          kind: "question",
+          id: "ask-1",
+          status: "asked",
+          questions: [{ question: "How deeply should I audit Wisp?" }],
+        }],
+      })
+    })
+    expect(fake.isClosed()).toBe(false)
+    expect(connectionStore("connection-questionnaire-log").isLive()).toBe(true)
+  })
+
   it("ignores frames and health changes from a replaced task stream", async () => {
     const first = createFakeSse()
     const second = createFakeSse()

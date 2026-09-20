@@ -11,6 +11,20 @@ const activity = {
   input: { file_path: "src/app.ts" },
 } as const
 
+const question = {
+  kind: "question",
+  id: "question-1",
+  parentId: null,
+  phase: "asked",
+  questions: [{
+    index: 1,
+    topic: "Audit depth",
+    question: "How deeply should I audit Wisp?",
+    multiSelect: false,
+    options: ["Standard", "Deep"],
+  }],
+} as const
+
 function decoders() {
   const decoder = createLogStreamDecoder()
   return [
@@ -40,6 +54,10 @@ describe("log stream protocol decoder", () => {
       turn: 1,
       activity: [activity],
     })
+    expect(decoder.activityAppend(JSON.stringify({ turn: 1, activity: [question] }))).toEqual({
+      turn: 1,
+      activity: [question],
+    })
     expect(decoder.turnEnd('{"turn":1,"status":"done"}')).toEqual({ turn: 1, status: "done" })
   })
 
@@ -62,6 +80,22 @@ describe("log stream protocol decoder", () => {
         }),
       ),
     ).toThrow("expected { turn, activity[] }")
+  })
+
+  it("validates questionnaire prompts, answers, and settlement reasons", () => {
+    const decoder = createLogStreamDecoder()
+    const invalid = [
+      { ...question, phase: "invented" },
+      { ...question, questions: [{ ...question.questions[0], options: [7] }] },
+      { ...question, questions: [{ ...question.questions[0], topic: undefined }] },
+      { ...question, phase: "answered", questions: undefined, answers: [{ index: "first", answer: "Standard" }] },
+      { ...question, phase: "cancelled", questions: undefined, reason: "timed-out" },
+    ]
+    for (const event of invalid) {
+      expect(() =>
+        decoder.activityAppend(JSON.stringify({ turn: 1, activity: [event] })),
+      ).toThrow("expected { turn, activity[] }")
+    }
   })
 
   it("names the event and handshake version in a protocol error", () => {
