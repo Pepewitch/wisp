@@ -1,5 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog"
-import { memo, useCallback, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import { Prose } from "@/components/prose"
 import { Tab } from "@/components/primitives"
@@ -46,13 +46,15 @@ export function FileViewer({
   onReveal,
   diff,
   diffTruncated = false,
+  line,
+  endLine,
 }: {
   taskId: string | null
   /** worktree-relative or absolute; null = closed */
   path: string | null
   onClose: () => void
   /** Follow a link inside a rendered document, in this same viewer. */
-  onOpen?: (path: string) => void
+  onOpen?: (path: string, options?: WorktreeFileOpenOptions) => void
   /**
    * Reveal the file in the machine's file manager, when the client can. Absent
    * in the browser, and on a remote connection whose paths are on another
@@ -62,6 +64,10 @@ export function FileViewer({
   /** Present when Changes opened the file, enabling the full-file diff view. */
   diff?: DiffFile
   diffTruncated?: boolean
+  /** One-based source line requested by the link that opened the file. */
+  line?: number
+  /** Inclusive end of the requested source-line range. */
+  endLine?: number
 }) {
   const [mode, setMode] = useState<"file" | "diff">("file")
   const [seenPath, setSeenPath] = useState(path)
@@ -83,7 +89,9 @@ export function FileViewer({
           data-testid="file-viewer"
           className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
-          <Dialog.Title className="sr-only">{file?.path ?? path ?? "File"}</Dialog.Title>
+          <Dialog.Title className="sr-only">
+            {fileLocation(file?.path ?? path, line, endLine) ?? "File"}
+          </Dialog.Title>
           {canDiff && (
             <div role="tablist" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
               <Tab role="tab" aria-selected={effectiveMode === "file"} active={effectiveMode === "file"} onClick={() => setMode("file")}>
@@ -103,10 +111,12 @@ export function FileViewer({
               diff={diff}
               diffTruncated={diffTruncated}
               onOpen={onOpen}
+              line={line}
+              endLine={endLine}
             />
           </div>
           <ViewerFooter
-            path={file?.path ?? path}
+            path={fileLocation(file?.path ?? path, line, endLine)}
             file={file}
             mode={effectiveMode}
             diffTruncated={diffTruncated}
@@ -126,6 +136,8 @@ function ViewerContent({
   diff,
   diffTruncated,
   onOpen,
+  line,
+  endLine,
 }: {
   pending: boolean
   error: unknown
@@ -133,7 +145,9 @@ function ViewerContent({
   mode: "file" | "diff"
   diff?: DiffFile
   diffTruncated: boolean
-  onOpen?: (path: string) => void
+  onOpen?: (path: string, options?: WorktreeFileOpenOptions) => void
+  line?: number
+  endLine?: number
 }) {
   if (pending) return <p className="font-mono text-[11px] text-faint">reading…</p>
   if (error) return <p className="font-mono text-[11px] text-faint">{failureReason(error)}</p>
@@ -148,6 +162,9 @@ function ViewerContent({
   if (mode === "diff" && diff) {
     return <FullFileDiff file={diff} text={file.text} patchTruncated={diffTruncated} />
   }
+  if (line !== undefined) {
+    return <TargetedSourceFile text={file.text} line={line} endLine={endLine} />
+  }
   if (!isMarkdown(file.path) || file.text.length > DOCUMENT_PREVIEW_LIMIT) {
     return <SourceFile path={file.path} text={file.text} />
   }
@@ -156,10 +173,21 @@ function ViewerContent({
    * worktree", so nested prose resolves against this file's directory.
    */
   return (
-    <WorktreeFileContext.Provider value={(next) => onOpen?.(resolveAgainst(file.path, next))}>
+    <WorktreeFileContext.Provider
+      value={(next, options) => onOpen?.(resolveAgainst(file.path, next), options)}
+    >
       <Prose text={file.text} mode="static" />
     </WorktreeFileContext.Provider>
   )
+}
+
+function fileLocation(
+  path: string | null,
+  line: number | undefined,
+  endLine: number | undefined,
+): string | null {
+  if (path === null || line === undefined) return path
+  return `${path}#L${line}${endLine === undefined ? "" : `-L${endLine}`}`
 }
 
 function ViewerFooter({
@@ -333,6 +361,77 @@ function SourceFile({ path, text }: { path: string; text: string }) {
   )
 }
 
+/** Source view for a link to a specific line, including Markdown documents. */
+const TargetedSourceFile = memo(function TargetedSourceFile({
+  text,
+  line,
+  endLine = line,
+}: {
+  text: string
+  line: number
+  endLine?: number
+}) {
+  const target = useRef<HTMLPreElement>(null)
+  const selection = sourceLineSelection(text, line, endLine)
+
+  useEffect(() => {
+    target.current?.scrollIntoView({ block: "center", inline: "nearest" })
+  }, [line, endLine, text])
+
+  return (
+    <div className="-mx-4 -my-3 font-mono text-[11.5px] leading-[1.75] text-foreground/85">
+      {selection ? (
+        <>
+          {selection.before && <pre className="px-4 whitespace-pre">{selection.before}</pre>}
+          <pre
+            ref={target}
+            data-line={line}
+            data-line-end={endLine}
+            aria-current="location"
+            className="min-w-full bg-accent px-4 whitespace-pre"
+          >
+            {selection.selected || " "}
+          </pre>
+          {selection.after && <pre className="px-4 whitespace-pre">{selection.after}</pre>}
+        </>
+      ) : (
+        <>
+          <pre className="px-4 whitespace-pre">{text}</pre>
+          <p className="px-4 py-2 text-faint">
+            Line {line.toLocaleString()} is outside this preview.
+          </p>
+        </>
+      )}
+    </div>
+  )
+})
+
+function sourceLineSelection(
+  text: string,
+  line: number,
+  endLine: number,
+): { before: string; selected: string; after: string } | null {
+  if (text === "") return null
+  let currentLine = 1
+  let start = line === 1 ? 0 : -1
+  let end = text.length
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) !== 10) continue
+    if (currentLine === line - 1) start = index + 1
+    if (currentLine === endLine) {
+      end = index + 1
+      break
+    }
+    currentLine += 1
+  }
+  if (start < 0 || (start === text.length && text.endsWith("\n"))) return null
+  return {
+    before: text.slice(0, start),
+    selected: text.slice(start, end),
+    after: text.slice(end),
+  }
+}
+
 /**
  * Extension → a language lowlight's `common` set registers. An entry is a
  * promise the colour will come out; an extension NOT here renders plain,
@@ -414,6 +513,8 @@ export function FileViewerProvider({
         onReveal={onReveal}
         diff={opened?.options?.diff}
         diffTruncated={opened?.options?.diffTruncated}
+        line={opened?.options?.line}
+        endLine={opened?.options?.endLine}
       />
     </WorktreeFileContext.Provider>
   )

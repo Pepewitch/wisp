@@ -59,6 +59,75 @@ describe("the worktree file viewer", () => {
     expect(screen.getByTestId("file-viewer").querySelector("h1")).toBeNull()
   })
 
+  it("shows, scrolls to, and highlights a requested source line", async () => {
+    const scrollIntoView = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {})
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      text: "# The plan\n\nTarget line\nLast line\n",
+      bytes: 35,
+    })
+    withTransport(
+      <FileViewer
+        taskId="tk9zdy"
+        path=".context/PLAN.md"
+        line={3}
+        onClose={() => {}}
+      />,
+      request,
+    )
+
+    const viewer = await screen.findByTestId("file-viewer")
+    const target = await waitFor(() => {
+      const row = viewer.querySelector('[data-line="3"]')
+      expect(row).not.toBeNull()
+      return row!
+    })
+    expect(target).toHaveTextContent("Target line")
+    expect(target).toHaveClass("bg-accent")
+    expect(target).toHaveAttribute("aria-current", "location")
+    expect(viewer.querySelector("h1")).toBeNull()
+    expect(request).toHaveBeenCalledWith(
+      "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
+    )
+    expect(screen.getByTestId("file-viewer-path")).toHaveTextContent(
+      ".context/PLAN.md#L3",
+    )
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+    }))
+    scrollIntoView.mockRestore()
+  })
+
+  it("highlights an inclusive source-line range", async () => {
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "notes.txt",
+      text: "one\ntwo\nthree\nfour\n",
+    })
+    withTransport(
+      <FileViewer
+        taskId="tk9zdy"
+        path="notes.txt"
+        line={2}
+        endLine={3}
+        onClose={() => {}}
+      />,
+      request,
+    )
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer.querySelector('[data-line="2"]')).not.toBeNull())
+    const target = viewer.querySelector('[data-line="2"]')
+    expect(target).toHaveAttribute("data-line-end", "3")
+    expect(target).toHaveTextContent("two")
+    expect(target).toHaveTextContent("three")
+    expect(target).not.toHaveTextContent("one")
+    expect(target).not.toHaveTextContent("four")
+    expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("notes.txt#L2-L3")
+  })
+
   /** Source with a known extension keeps its bytes AND gets prose's colours. */
   it("highlights a code file with the same palette a transcript fence wears", async () => {
     const request = vi
@@ -233,6 +302,24 @@ describe("the file viewer's provider", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "The plan" })).toBeInTheDocument())
   })
 
+  it("opens a compiler-style file location at the requested line", async () => {
+    const request = vi.fn().mockResolvedValue(PLAN)
+    withTransport(
+      <FileViewerProvider taskId="tk9zdy">
+        <Prose text="see [the step](.context/PLAN.md:3)" />
+      </FileViewerProvider>,
+      request,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "the step" }))
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() =>
+      expect(viewer.querySelector('[data-line="3"]')).toHaveTextContent("Step **one**."),
+    )
+    expect(request).toHaveBeenCalledWith(
+      "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
+    )
+  })
+
   /**
    * A document's own relative link means "next to me". Resolving it against
    * the worktree root would open a file that is not the one it points at.
@@ -254,6 +341,29 @@ describe("the file viewer's provider", () => {
     fireEvent.click(nested)
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "The notes" })).toBeInTheDocument(),
+    )
+    expect(request).toHaveBeenLastCalledWith(
+      "/api/tasks/tk9zdy/file?path=.context%2FNOTES.md",
+    )
+  })
+
+  it("keeps a GitHub line target on a nested document link", async () => {
+    const request = vi.fn(async (path: string) =>
+      path.includes("NOTES")
+        ? { ...PLAN, path: ".context/NOTES.md", text: "first\nsecond\n" }
+        : { ...PLAN, text: "see [NOTES.md](NOTES.md#L2)\n" },
+    )
+    withTransport(
+      <FileViewerProvider taskId="tk9zdy">
+        <Prose text="[PLAN.md](.context/PLAN.md)" />
+      </FileViewerProvider>,
+      request,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "PLAN.md" }))
+    fireEvent.click(await screen.findByRole("button", { name: "NOTES.md" }))
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() =>
+      expect(viewer.querySelector('[data-line="2"]')).toHaveTextContent("second"),
     )
     expect(request).toHaveBeenLastCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FNOTES.md",

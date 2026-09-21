@@ -11,7 +11,7 @@ import { mermaidFenceCode } from "@/lib/mermaid-fence-code"
 import { RemoteImage } from "./remote-image"
 import { MermaidFence } from "./mermaid-fence"
 import { cn } from "@/lib/utils"
-import { useWorktreeFileOpener, worktreeFilePath } from "@/lib/worktree-files"
+import { useWorktreeFileOpener, worktreeFileTarget } from "@/lib/worktree-files"
 
 /** Agent prose, rendered safely while markdown is still streaming. */
 export function Prose({
@@ -173,13 +173,16 @@ function ProseLink({ href, children }: { href?: string; children?: React.ReactNo
    * path on render would cost a request per link per turn of a transcript
    * nobody has clicked yet.
    */
-  const path = worktreeFilePath(href)
-  if (path && openFile) {
+  const target = worktreeFileTarget(href)
+  if (target && openFile) {
     return (
       <button
         type="button"
-        onClick={() => openFile(path)}
-        title={path}
+        onClick={() => {
+          if (target.line === undefined) openFile(target.path)
+          else openFile(target.path, { line: target.line, endLine: target.endLine })
+        }}
+        title={href?.trim() ?? target.path}
         className={cn(LINK_CLASS, "cursor-pointer text-left focus-visible:outline-none")}
       >
         {children}
