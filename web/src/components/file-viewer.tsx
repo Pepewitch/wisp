@@ -162,22 +162,79 @@ function ViewerContent({
   if (mode === "diff" && diff) {
     return <FullFileDiff file={diff} text={file.text} patchTruncated={diffTruncated} />
   }
+  if (isMarkdown(file.path) && file.text.length <= DOCUMENT_PREVIEW_LIMIT) {
+    return (
+      <MarkdownFile
+        file={file}
+        onOpen={onOpen}
+        line={line}
+        endLine={endLine}
+      />
+    )
+  }
   if (line !== undefined) {
     return <TargetedSourceFile text={file.text} line={line} endLine={endLine} />
   }
-  if (!isMarkdown(file.path) || file.text.length > DOCUMENT_PREVIEW_LIMIT) {
-    return <SourceFile path={file.path} text={file.text} />
-  }
+  return <SourceFile path={file.path} text={file.text} />
+}
+
+function MarkdownFile({
+  file,
+  onOpen,
+  line,
+  endLine,
+}: {
+  file: Extract<WorktreeFileResponse, { kind: "text" }>
+  onOpen?: (path: string, options?: WorktreeFileOpenOptions) => void
+  line?: number
+  endLine?: number
+}) {
+  const document = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const root = document.current
+    if (!root) return
+    for (const previous of root.querySelectorAll(".source-line-target")) {
+      previous.classList.remove("source-line-target")
+      previous.removeAttribute("aria-current")
+    }
+    if (line === undefined) return
+
+    const lastLine = endLine ?? line
+    const candidates = [...root.querySelectorAll<HTMLElement>("[data-source-start]")]
+      .filter((element) => {
+        const start = Number(element.dataset.sourceStart)
+        const end = Number(element.dataset.sourceEnd)
+        return start <= lastLine && end >= line
+      })
+    const targets = candidates.filter((candidate) =>
+      !candidates.some((other) => other !== candidate && candidate.contains(other)),
+    )
+    for (const target of targets) {
+      target.classList.add("source-line-target")
+      target.setAttribute("aria-current", "location")
+    }
+    targets[0]?.scrollIntoView({ block: "center", inline: "nearest" })
+  }, [line, endLine, file.text])
+
   /**
    * A document's own relative links mean "next to me", not "at the top of the
    * worktree", so nested prose resolves against this file's directory.
    */
   return (
-    <WorktreeFileContext.Provider
-      value={(next, options) => onOpen?.(resolveAgainst(file.path, next), options)}
+    <div
+      ref={document}
+      className={cn(
+        "[&_.source-line-target]:rounded-sm",
+        "[&_.source-line-target]:bg-accent",
+      )}
     >
-      <Prose text={file.text} mode="static" />
-    </WorktreeFileContext.Provider>
+      <WorktreeFileContext.Provider
+        value={(next, options) => onOpen?.(resolveAgainst(file.path, next), options)}
+      >
+        <Prose text={file.text} mode="static" />
+      </WorktreeFileContext.Provider>
+    </div>
   )
 }
 

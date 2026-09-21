@@ -59,7 +59,7 @@ describe("the worktree file viewer", () => {
     expect(screen.getByTestId("file-viewer").querySelector("h1")).toBeNull()
   })
 
-  it("shows, scrolls to, and highlights a requested source line", async () => {
+  it("keeps markdown rendered while scrolling to and highlighting a requested line", async () => {
     const scrollIntoView = vi
       .spyOn(Element.prototype, "scrollIntoView")
       .mockImplementation(() => {})
@@ -80,14 +80,14 @@ describe("the worktree file viewer", () => {
 
     const viewer = await screen.findByTestId("file-viewer")
     const target = await waitFor(() => {
-      const row = viewer.querySelector('[data-line="3"]')
+      const row = viewer.querySelector(".source-line-target")
       expect(row).not.toBeNull()
       return row!
     })
+    expect(target.tagName).toBe("P")
     expect(target).toHaveTextContent("Target line")
-    expect(target).toHaveClass("bg-accent")
     expect(target).toHaveAttribute("aria-current", "location")
-    expect(viewer.querySelector("h1")).toBeNull()
+    expect(viewer.querySelector("h1")).toHaveTextContent("The plan")
     expect(request).toHaveBeenCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
     )
@@ -313,8 +313,9 @@ describe("the file viewer's provider", () => {
     fireEvent.click(screen.getByRole("button", { name: "the step" }))
     const viewer = await screen.findByTestId("file-viewer")
     await waitFor(() =>
-      expect(viewer.querySelector('[data-line="3"]')).toHaveTextContent("Step **one**."),
+      expect(viewer.querySelector(".source-line-target")).toHaveTextContent("Step one."),
     )
+    expect(viewer.querySelector("strong")).toHaveTextContent("one")
     expect(request).toHaveBeenCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
     )
@@ -363,7 +364,7 @@ describe("the file viewer's provider", () => {
     fireEvent.click(await screen.findByRole("button", { name: "NOTES.md" }))
     const viewer = await screen.findByTestId("file-viewer")
     await waitFor(() =>
-      expect(viewer.querySelector('[data-line="2"]')).toHaveTextContent("second"),
+      expect(viewer.querySelector(".source-line-target")).toHaveTextContent("second"),
     )
     expect(request).toHaveBeenLastCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FNOTES.md",

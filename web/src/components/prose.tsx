@@ -69,7 +69,9 @@ const STATIC_PROSE_REHYPE_PLUGINS = [
 ] as ComponentProps<typeof Streamdown>["rehypePlugins"]
 
 const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
-  p: ({ children }) => <p className="mt-2.5 first:mt-0">{children}</p>,
+  p: ({ children, node }) => (
+    <p {...sourcePosition(node)} className="mt-2.5 first:mt-0">{children}</p>
+  ),
   strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
 
@@ -81,15 +83,66 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   ol: ({ children }) => (
     <ol className="mt-2.5 ml-4 list-outside list-decimal space-y-1 marker:text-faint">{children}</ol>
   ),
-  li: ({ children }) => <li className="pl-0.5">{children}</li>,
+  li: ({ children, node }) => (
+    <li {...sourcePosition(node)} className="pl-0.5">{children}</li>
+  ),
 
-  h1: ({ children }) => <h1 className="mt-4 text-[14.5px] font-semibold tracking-[-0.01em] text-foreground">{children}</h1>,
-  h2: ({ children }) => <h2 className="mt-4 text-[13.5px] font-semibold text-foreground">{children}</h2>,
-  h3: ({ children }) => <h3 className="mt-3.5 text-[13px] font-semibold text-foreground">{children}</h3>,
-  h4: ({ children }) => <h4 className="mt-3 text-[12.5px] font-semibold text-fg-secondary">{children}</h4>,
+  h1: ({ children, node }) => (
+    <h1
+      {...sourcePosition(node)}
+      className="mt-4 text-[14.5px] font-semibold tracking-[-0.01em] text-foreground"
+    >
+      {children}
+    </h1>
+  ),
+  h2: ({ children, node }) => (
+    <h2
+      {...sourcePosition(node)}
+      className="mt-4 text-[13.5px] font-semibold text-foreground"
+    >
+      {children}
+    </h2>
+  ),
+  h3: ({ children, node }) => (
+    <h3
+      {...sourcePosition(node)}
+      className="mt-3.5 text-[13px] font-semibold text-foreground"
+    >
+      {children}
+    </h3>
+  ),
+  h4: ({ children, node }) => (
+    <h4
+      {...sourcePosition(node)}
+      className="mt-3 text-[12.5px] font-semibold text-fg-secondary"
+    >
+      {children}
+    </h4>
+  ),
+  h5: ({ children, node }) => (
+    <h5
+      {...sourcePosition(node)}
+      className="mt-3 text-[12.5px] font-semibold text-fg-secondary"
+    >
+      {children}
+    </h5>
+  ),
+  h6: ({ children, node }) => (
+    <h6
+      {...sourcePosition(node)}
+      className="mt-3 text-[12.5px] font-semibold text-fg-secondary"
+    >
+      {children}
+    </h6>
+  ),
 
-  blockquote: ({ children }) => (
-    <blockquote className="mt-2.5 border-l-2 border-border-strong pl-3 text-fg-secondary">{children}</blockquote>
+  blockquote: ({ children, node }) => (
+    <blockquote
+      {...sourcePosition(node)}
+      className="mt-2.5 border-l-2 border-border-strong pl-3 text-fg-secondary"
+    >
+      {children}
+    </blockquote>
   ),
   hr: () => <hr className="my-3.5 border-0 border-t border-border" />,
 
@@ -99,7 +152,11 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
     </div>
   ),
   thead: ({ children }) => <thead className="bg-surface">{children}</thead>,
-  tr: ({ children }) => <tr className="border-b border-border last:border-0">{children}</tr>,
+  tr: ({ children, node }) => (
+    <tr {...sourcePosition(node)} className="border-b border-border last:border-0">
+      {children}
+    </tr>
+  ),
   th: ({ children }) => (
     <th className="px-2.5 py-1.5 text-left text-[11px] font-semibold text-fg-secondary">{children}</th>
   ),
@@ -113,7 +170,9 @@ const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   // block wearing the same fill made the two indistinguishable when scanning
   // a transcript for "where did I say something". This one recedes toward the
   // reading column so the bubble stays the brightest thing in the stream.
-  pre: ({ children }) => <ProsePre>{children}</ProsePre>,
+  pre: ({ children, node }) => (
+    <ProsePre sourcePosition={sourcePosition(node)}>{children}</ProsePre>
+  ),
 }
 
 const PROSE_PRE_CLASS = cn(
@@ -134,16 +193,37 @@ const PROSE_PRE_CLASS = cn(
 )
 
 /** Prose's `pre`: a plain fence, or a mermaid one wearing its corner switch. */
-function ProsePre({ children }: { children?: React.ReactNode }) {
+function ProsePre({
+  children,
+  sourcePosition: position,
+}: {
+  children?: React.ReactNode
+  sourcePosition?: SourcePositionProps
+}) {
   const code = mermaidFenceCode(children)
   if (code === null) {
-    return <pre className={cn("mt-2.5", PROSE_PRE_CLASS)}>{children}</pre>
+    return <pre {...position} className={cn("mt-2.5", PROSE_PRE_CLASS)}>{children}</pre>
   }
   return (
     <MermaidFence code={code}>
-      <pre className={PROSE_PRE_CLASS}>{children}</pre>
+      <pre {...position} className={PROSE_PRE_CLASS}>{children}</pre>
     </MermaidFence>
   )
+}
+
+interface SourcePositionProps {
+  "data-source-start": number
+  "data-source-end": number
+}
+
+function sourcePosition(
+  node: { position?: { start: { line: number }; end: { line: number } } } | undefined,
+): SourcePositionProps | undefined {
+  if (!node?.position) return undefined
+  return {
+    "data-source-start": node.position.start.line,
+    "data-source-end": node.position.end.line,
+  }
 }
 
 /** Prose's `a`, which resolves to one of the three things an href can be. */
