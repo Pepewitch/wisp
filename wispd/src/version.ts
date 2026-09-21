@@ -1,5 +1,5 @@
 /** The Wisp release identity. Keep this equal to package.json. */
-export const VERSION = "0.5.11";
+export const VERSION = "0.5.12";
 
 /**
  * Compatibility contract for daemon clients. Product releases and API
