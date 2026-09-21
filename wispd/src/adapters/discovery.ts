@@ -168,8 +168,10 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
    * build_available_models + default_model_from_available; openai_models.rs
    * show_in_picker = visibility == "list"). Auth-mode filtering
    * (supported_in_api) is NOT replicated — the raw catalog is what the CLI
-   * advertises. In 0.153.4 this makes picker-visible `gpt-6-astra` the
-   * discovered default without a Wisp release or hardcoded model list.
+   * advertises. The catalog reordered between 0.153.4 and 0.155.1, moving the
+   * discovered default from `gpt-6-astra` to `gpt-5.6-sol` — a data change
+   * only, with no Wisp release and no hardcoded model list to edit. That is
+   * the point of discovering it.
    */
   "codex-models": async (def, spawn, signal) => {
     const res = await spawn([def.bin, "debug", "models"], signal);

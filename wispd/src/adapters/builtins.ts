@@ -22,7 +22,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["-s", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-r", "{effort}"],
-    // Rechecked against droid 0.219.0's invalid-effort rejection. This is the
+    // Rechecked against droid 0.223.0's invalid-effort rejection. This is the
     // cross-model union; the valid subset still depends on the selected model.
     // `--help` only says "defaults per model", so the level is left unset by
     // default and droid picks per model — the menu offers, it does not force.
@@ -74,7 +74,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // added only from real captures, never invented shapes.
     transientMarkers: ["floating point nan", "not-a-number"],
     // `droid resume <id>` is the interactive form of the same stored session
-    // (verified against droid 0.219.0's top-level help).
+    // (verified against droid 0.223.0's top-level help).
     attach: ["resume", "{session}"],
     modelDiscovery: "droid-models",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
@@ -101,7 +101,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     auth: { check: ["auth", "status"], fix: "run 'claude auth login'" },
     // Required for the structured activity stream: without it claude emits
     // only the outer Task call/result and Wisp cannot show what the child did.
-    // Reverified against claude-code 2.1.272: print/stream-json, verbose,
+    // Reverified against claude-code 2.1.278: print/stream-json, verbose,
     // subagent forwarding, permission bypass, resume, model and effort retain
     // the same headless contract.
     exec: [
@@ -123,7 +123,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Baked ids rechecked on claude-code 2.1.272; the zero-token `/model`
+    // Baked ids rechecked on claude-code 2.1.278; the zero-token `/model`
     // read remains pinned to 2.1.258. Fable 5.1 replaced legacy Fable 5.
     staticModels: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
@@ -185,7 +185,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     compactPrompt: "/compact",
   },
   codex: {
-    // Zero-token argv/help reverified against codex-cli 0.154.0. `codex exec`
+    // Zero-token argv/help reverified against codex-cli 0.155.1. `codex exec`
     // is one headless turn;
     // resume is a SUBCOMMAND, not a flag (`codex exec resume <id> "<prompt>"`),
     // and codex applies the parent `exec` options to it — so appending
@@ -205,7 +205,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-c", "model_reasoning_effort={effort}"],
-    // codex 0.154.0 — generated app-server schemas accept a non-empty effort
+    // codex 0.155.1 — generated app-server schemas accept a non-empty effort
     // string and the current catalog includes xhigh/max models. `ultra` was
     // added on the evidence of `codex debug models` itself: gpt-6-astra lists
     // it in supported_reasoning_levels, so the picker was hiding a level codex
@@ -301,7 +301,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the list is only ever read off the CLI). Deliberately static rather
     // than a `agent models` discovery strategy: the owner pinned this exact
     // list and default, and a probed default ("auto") would outrank it.
-    // Both ids still appear in 2026.09.10-fd3934a's catalog; newly advertised
+    // Both ids still appear in 2026.09.18-9a7762b's catalog; newly advertised
     // Grok 4.5 and Muse variants do not change this owner-curated selection.
     staticModels: ["cursor-grok-4.6-high", "composer-2.5"],
     defaultModel: "cursor-grok-4.6-high", // owner-pinned default ("Grok 4.6")
@@ -333,7 +333,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     attach: ["--resume", "{session}"], // interactive resume, same session
     // No probe/skillDiscovery/compact strategy: none of those surfaces is
     // verified on cursor. Cursor documents interactive `/usage`, but
-    // cursor-agent 2026.09.10 did not settle it in print mode, so it remains
+    // cursor-agent 2026.09.18 did not settle it in print mode, so it remains
     // TUI-only here. The palette's tiers are honestly absent, and the routes
     // answer their named refusals (that honesty IS the contract).
   },

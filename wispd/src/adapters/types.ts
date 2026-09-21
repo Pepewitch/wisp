@@ -76,6 +76,13 @@ export interface AdapterDef {
    *    omitted from requests", which is codex validating the value it was
    *    handed. `fast`, `priority` and `default` are accepted for gpt-5.6-sol;
    *    `standard` is not.
+   *  - `codex app-server generate-json-schema` documents the OFF value in
+   *    codex's own words, on `TurnStartParams.serviceTierForTurn`: "Use
+   *    \"default\" for standard speed. Omitted or null inherits the thread's
+   *    tier." So "default" is the standard lane, and omitting the tier is NOT
+   *    the same thing — every model the 0.155.1 catalog lists advertises
+   *    `defaultServiceTier: "priority"`, the Fast tier. Naming the standard
+   *    lane is what keeps an unlit toggle honest.
    *
    * NOT a way to express droid's or cursor's `-fast` model ids: those are
    * separate models the picker already offers, and rewriting a chosen model id
