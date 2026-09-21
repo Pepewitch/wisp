@@ -46,6 +46,11 @@ export function harnessesRoute(
       name,
       hasModel: def.model !== undefined,
       hasEffort: def.effort !== undefined,
+      // Whether this harness sells a faster lane for the same model. The VALUES
+      // stay in the daemon: a client asks for fast mode, never for a tier name,
+      // so the harness's vocabulary cannot leak into the UI (truthiness, not
+      // !== undefined: adapters.json null CLEARS a builtin's).
+      hasFastMode: Boolean(def.fastMode),
       // S3: paste is disabled-with-reason without one of the three mechanisms
       // (truthiness, not !== undefined: adapters.json null CLEARS a builtin's)
       hasImage: Boolean(def.image ?? def.imageInput ?? def.imageDelivery),

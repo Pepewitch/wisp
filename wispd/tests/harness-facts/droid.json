@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "0.219.0",
+      "verifiedAgainst": "0.223.0",
       "source": "droid's own rejection of an invalid reasoning effort",
       "lists": {
         "observed": [
@@ -36,7 +36,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "0.219.0",
+      "verifiedAgainst": "0.223.0",
       "source": "flag tokens parsed out of 'droid exec -o stream-json --skip-permissions-unsafe --help'",
       "lists": {
         "values": [
@@ -61,6 +61,7 @@
           "--remove-tools",
           "--rm",
           "--session-id",
+          "--settings",
           "--skip-permissions-unsafe",
           "--spec-model",
           "--spec-reasoning-effort",
@@ -86,7 +87,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "0.219.0",
+      "verifiedAgainst": "0.223.0",
       "source": "case-insensitive fixed-string search of the installed droid binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -105,7 +106,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "0.219.0",
+      "verifiedAgainst": "0.223.0",
       "source": "'droid exec --help' default plus droid's invalid-model error text",
       "lists": {
         "ids": [

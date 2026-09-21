@@ -64,6 +64,8 @@ export interface CreateTaskBody {
   /** one-off override for where the worktree forks from; omitted = the project's base */
   base?: string;
   effort?: string;
+  /** The harness's faster lane for the same model; omitted = standard speed. */
+  fast?: boolean;
   suffixPromptId?: string;
   attachments?: AttachmentPayload[];
 }
@@ -126,6 +128,7 @@ export function useSendMessage() {
       harness,
       model,
       effort,
+      fast,
       startFreshContext,
     }: {
       id: string;
@@ -136,6 +139,7 @@ export function useSendMessage() {
       harness?: string;
       model?: string;
       effort?: string | null;
+      fast?: boolean;
       startFreshContext?: boolean;
     }) =>
       // the field is OMITTED rather than sent empty: the daemon rejects
@@ -151,6 +155,7 @@ export function useSendMessage() {
           ...(harness ? { harness } : {}),
           ...(model ? { model } : {}),
           ...(effort !== undefined ? { effort } : {}),
+          ...(fast !== undefined ? { fast } : {}),
           ...(startFreshContext ? { startFreshContext: true } : {}),
         },
       }),

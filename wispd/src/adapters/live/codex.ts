@@ -1,3 +1,4 @@
+import { speedTier } from "../argv";
 import type { AdapterDef } from "../types";
 import { boundedOutput } from "./bounded-output";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
@@ -16,6 +17,8 @@ interface CodexLiveOptions {
   sessionId: string | null;
   model: string | null;
   effort: string | null;
+  /** Run in the harness's fast lane (def.fastMode); the driver resolves the tier value. */
+  fast: boolean;
   initialMessageId: string;
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
@@ -48,6 +51,12 @@ function rpcError(value: unknown): string {
 function threadOptions(options: CodexLiveOptions): Record<string, unknown> {
   const params: Record<string, unknown> = { cwd: options.cwd };
   if (options.model) params.model = options.model;
+  // `serviceTier` (thread/start, thread/resume and turn/start all take it,
+  // per codex's own generated schema) rather than `serviceTierForTurn`: a
+  // Wisp task's tier is sticky until the user toggles it, and the thread-level
+  // field is the one whose meaning is "this turn and subsequent turns".
+  const tier = speedTier(options.def, options.fast);
+  if (tier) params.serviceTier = tier;
   if (options.def.exec.includes("--dangerously-bypass-approvals-and-sandbox")) {
     params.approvalPolicy = "never";
     params.sandbox = "danger-full-access";
@@ -235,6 +244,8 @@ export class CodexLiveDriver {
     };
     if (this.options.model) turnParams.model = this.options.model;
     if (this.options.effort) turnParams.effort = this.options.effort;
+    const tier = speedTier(this.options.def, this.options.fast);
+    if (tier) turnParams.serviceTier = tier;
     const started = record(await this.call("turn/start", turnParams));
     const turn = record(started.turn);
     if (typeof turn.id !== "string" || !turn.id) throw new Error("Codex started without returning a turn id");

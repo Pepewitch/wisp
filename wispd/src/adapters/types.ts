@@ -48,6 +48,55 @@ export interface AdapterDef {
    */
   effortLevels?: string[];
   /**
+   * A faster lane for the SAME model, when the harness sells one — "fast mode"
+   * in the product, a speed tier on the wire. Distinct from `effort`: effort
+   * buys more thinking, this buys the same thinking sooner, at a higher usage
+   * rate. Omitted means the harness has no such lane and the UI offers none.
+   *
+   * Both values are named, never defaulted, because OFF has to be as explicit
+   * as ON: the harness's own config file may already pin a tier (codex reads
+   * `service_tier` out of ~/.codex/config.toml), so a Wisp task that declines
+   * fast mode must SAY "standard" rather than inherit whatever is configured
+   * there. A toggle that silently means "whatever the file says" is a toggle
+   * that lies.
+   *
+   * `argv` is the one-shot template with "{tier}" substituted. A harness whose
+   * live protocol carries the tier in its own params (codex app-server's
+   * `serviceTier`) still needs it here: the same VALUES travel both channels.
+   *
+   * Verified for codex on codex-cli 0.155.1, which is the only builtin that
+   * has this lane:
+   *  - `codex debug models` reports `additional_speed_tiers: ["fast"]` and
+   *    `service_tiers: [{id: "priority", name: "Fast", description: "1.5x
+   *    speed, increased usage"}]` per model (gpt-6-astra says 2x).
+   *  - `--strict-config -c service_tier=fast` passes config validation, while
+   *    an unknown field is rejected by name — so the key is real.
+   *  - a headless turn with an unsupported tier reports "Configured service
+   *    tier `…` is not advertised as supported for model `…` and will be
+   *    omitted from requests", which is codex validating the value it was
+   *    handed. `fast`, `priority` and `default` are accepted for gpt-5.6-sol;
+   *    `standard` is not.
+   *  - `codex app-server generate-json-schema` documents the OFF value in
+   *    codex's own words, on `TurnStartParams.serviceTierForTurn`: "Use
+   *    \"default\" for standard speed. Omitted or null inherits the thread's
+   *    tier." So "default" is the standard lane, and omitting the tier is NOT
+   *    the same thing — every model the 0.155.1 catalog lists advertises
+   *    `defaultServiceTier: "priority"`, the Fast tier. Naming the standard
+   *    lane is what keeps an unlit toggle honest.
+   *
+   * NOT a way to express droid's or cursor's `-fast` model ids: those are
+   * separate models the picker already offers, and rewriting a chosen model id
+   * under the user would break "a model is always PICKED, never typed".
+   */
+  fastMode?: {
+    /** the tier value that buys speed (codex: "fast") */
+    fast: string;
+    /** the tier value that means ordinary speed (codex: "default") */
+    standard: string;
+    /** one-shot argv, "{tier}" substituted (codex: ["-c", "service_tier={tier}"]) */
+    argv: string[];
+  } | null;
+  /**
    * A curated model list for a harness whose CLI enumerates none.
    *
    * THE ONE DOCUMENTED EXCEPTION to "never hardcode a model id". It exists for

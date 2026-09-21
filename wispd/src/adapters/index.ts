@@ -54,7 +54,7 @@ export { CONTEXT_TRACKERS, readContextPoint, type ContextPoint, type ContextTrac
 export { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
 export { attachmentPreamble, type DeliveredFile } from "./delivery";
 export { ERROR_STRATEGIES, errorDetail, isLimitError, isTransientError } from "./errors";
-export { buildArgv, buildAttachArgv } from "./argv";
+export { buildArgv, buildAttachArgv, speedTier } from "./argv";
 export { loadAdapters, validateAdapters } from "./validate";
 export {
   discoverModels,

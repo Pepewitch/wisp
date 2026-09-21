@@ -1,3 +1,4 @@
+import { FastModeToggle } from "@/components/fast-mode-toggle"
 import { Effort, Sparkle } from "@/components/icons"
 import {
   Menu,
@@ -21,6 +22,8 @@ export interface TaskAgentChoice {
   harness: string
   model: string
   effort: string | null
+  /** Fast mode, for a harness that reports the lane; always false without one. */
+  fast: boolean
 }
 
 const encode = (harness: string, model: string) => `${harness}\t${model}`
@@ -90,6 +93,13 @@ export function TaskAgentPicker({
                   harness === value.harness
                     ? value.effort
                     : destination?.defaults.reasoningEffort ?? null,
+                // crossing harnesses drops fast mode: the destination may not
+                // sell the lane, and the daemon refuses a tier it has no
+                // template for. Staying put keeps the current choice.
+                fast:
+                  harness === value.harness
+                    ? value.fast
+                    : Boolean(destination?.hasFastMode) && value.fast,
               })
             }}
           >
@@ -117,6 +127,14 @@ export function TaskAgentPicker({
           </MenuRadioGroup>
         )}
       </Menu>
+      {selected?.hasFastMode && (
+        <FastModeToggle
+          value={value.fast}
+          disabled={disabled}
+          touch={touch}
+          onChange={(fast) => onChange({ ...value, fast })}
+        />
+      )}
       {selected?.hasEffort && efforts.length > 0 && (
         <Menu
           icon={<Effort />}

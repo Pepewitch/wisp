@@ -25,6 +25,7 @@ export interface AgentSubmission {
   harness: string
   model: string
   effort: string | null
+  fast: boolean
   startFreshContext: boolean
 }
 
@@ -32,6 +33,7 @@ const sameAgent = (a: AgentSubmission | null, b: AgentSubmission | null) =>
   a?.harness === b?.harness &&
   a?.model === b?.model &&
   a?.effort === b?.effort &&
+  a?.fast === b?.fast &&
   a?.startFreshContext === b?.startFreshContext
 
 function sameAttachments(a: AttachmentPayload[] | undefined, b: AttachmentPayload[] | undefined) {

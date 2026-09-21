@@ -554,6 +554,46 @@ WHERE EXISTS (
       }
     },
   },
+  {
+    id: 13,
+    name: "task-fast-mode",
+    up: (db) => {
+      // Fast mode: the harness's faster lane for the same model, chosen per
+      // task (adapters/types.ts fastMode). Part of the requested AGENT, not a
+      // display preference, so it sits beside effort on all four rows that
+      // snapshot one — a tier change must start a new turn rather than be
+      // steered into a turn already running at the other tier.
+      //
+      // NOT NULL DEFAULT 0 rather than a nullable tri-state: every existing
+      // task was running at the harness's ordinary speed, and 0 says exactly
+      // that. There is no third "unspecified" state to preserve, and the spawn
+      // path turns 0 into an EXPLICIT standard-tier flag so an OFF toggle
+      // cannot silently inherit a tier pinned in the harness's own config.
+      const addFlag = (table: string, column: string) => {
+        const columns = (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]);
+        if (!columns.some((found) => found.name === column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
+        }
+      };
+      addFlag("tasks", "fast");
+      addFlag("task_contexts", "fast");
+      addFlag("task_messages", "fast");
+      addFlag("turns", "requested_fast");
+
+      // The workflow guard watches the agent fields, so it has to learn this
+      // one too: a workflow that was driving a standard-speed task should
+      // pause for review rather than keep going at a tier it never chose.
+      // DROP + CREATE because the trigger's own body names the columns.
+      db.exec(`
+DROP TRIGGER IF EXISTS workflows_context;
+CREATE TRIGGER IF NOT EXISTS workflows_context AFTER UPDATE OF context_n, harness, model, effort, fast ON tasks
+WHEN NEW.context_n != OLD.context_n OR NEW.harness != OLD.harness OR NEW.model IS NOT OLD.model OR NEW.effort IS NOT OLD.effort OR NEW.fast != OLD.fast BEGIN
+  UPDATE workflows SET state = 'paused', reason = 'Task agent or context changed; review and resume', revision = revision + 1 WHERE task_id = NEW.id AND state = 'active';
+  UPDATE task_messages SET status = 'cancelled' WHERE task_id = NEW.id AND workflow_id IS NOT NULL AND status = 'queued' AND claim IS NULL;
+END;
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

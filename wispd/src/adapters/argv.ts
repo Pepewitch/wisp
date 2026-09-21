@@ -10,6 +10,19 @@ function expandImageTemplate(template: string[], paths: string[]): string[] {
   return template.flatMap((part) => (part.includes("{path}") ? paths.map((p) => part.replaceAll("{path}", p)) : [part]));
 }
 
+/**
+ * The speed tier one turn runs at, for a harness that has the lane.
+ *
+ * Both answers are explicit on purpose: OFF resolves to the adapter's
+ * `standard` value rather than to "send nothing", because the harness's own
+ * config file may already pin a tier and an unspoken OFF would silently
+ * inherit it. null is only for a harness with no lane at all.
+ */
+export function speedTier(def: AdapterDef, fast: boolean): string | null {
+  if (!def.fastMode) return null;
+  return fast ? def.fastMode.fast : def.fastMode.standard;
+}
+
 export function buildArgv(
   def: AdapterDef,
   opts: {
@@ -17,6 +30,8 @@ export function buildArgv(
     session?: string | null;
     model?: string | null;
     effort?: string | null;
+    /** Run this turn in the harness's fast lane (def.fastMode); ignored without one. */
+    fast?: boolean;
     /**
      * This turn's stored attachment paths (S3). With def.image they expand
      * into argv immediately before the prompt positional; with def.imageInput
@@ -28,15 +43,18 @@ export function buildArgv(
     live?: boolean;
   },
 ): string[] {
+  const tier = speedTier(def, opts.fast === true);
   const sub = (s: string) =>
     s
       .replaceAll("{session}", opts.session ?? "")
       .replaceAll("{model}", opts.model ?? "")
-      .replaceAll("{effort}", opts.effort ?? "");
+      .replaceAll("{effort}", opts.effort ?? "")
+      .replaceAll("{tier}", tier ?? "");
   const argv = [def.bin, ...def.exec];
   if (opts.session && def.resume) argv.push(...def.resume.map(sub));
   if (opts.model && def.model) argv.push(...def.model.map(sub));
   if (opts.effort && def.effort) argv.push(...def.effort.map(sub));
+  if (tier && def.fastMode) argv.push(...def.fastMode.argv.map(sub));
   const images = opts.images ?? [];
   // Droid's live channel is JSON-RPC, not an IMAGE_INPUT_STRATEGY. The runner
   // swaps its command and owns that protocol; buildArgv remains useful for

@@ -121,7 +121,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -152,6 +152,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
       harness,
       model: typeof flags.model === "string" ? flags.model : undefined,
       effort: typeof flags.effort === "string" ? flags.effort : undefined,
+      fast: flags.fast === true ? true : undefined,
       mode: flags.local ? "local" : undefined,
       base: typeof flags.base === "string" ? flags.base : undefined,
       attachments,
@@ -196,6 +197,7 @@ async function showCommand(positional: string[]): Promise<void> {
     `harness: ${task.harness}${task.model ? ` (${task.model})` : ""}   session: ${task.session_id ?? "-"}`,
   );
   if (task.effort) console.log(`effort: ${task.effort}`);
+  if (task.fast) console.log(`fast mode: on`);
   console.log(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
   if (task.worktreeReason) console.log(task.worktreeReason);
   printBackground(task);

@@ -165,6 +165,7 @@ describe("daemon API contracts, batch 2", () => {
       "branch",
       "worktree_path",
       "archived",
+      "fast",
       "turn_count",
       "turns",
       "diffstat",
@@ -181,6 +182,8 @@ describe("daemon API contracts, batch 2", () => {
       branch: null,
       worktree_path: null,
       archived: false,
+      // booleans at the boundary, like archived — never SQLite's 0/1
+      fast: false,
       turn_count: 1,
       diffstat: null,
     });
@@ -220,6 +223,8 @@ describe("daemon API contracts, batch 2", () => {
       "pid_start_time",
       "prompt",
       "requested_effort",
+      // the speed tier this turn asked its harness for, false where there is no lane
+      "requested_fast",
       "requested_model",
       "result",
       "started_at",
