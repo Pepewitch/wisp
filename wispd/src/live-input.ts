@@ -337,6 +337,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     sessionId: options.task.session_id,
     model: options.task.model,
     effort: options.task.effort,
+    fast: options.task.fast !== 0,
     initialMessageId: options.initialMessageId,
     initialInput: codexInput(options.def, options.prompt, options.attachments),
     emit,

@@ -210,6 +210,20 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    required execution-policy flag.
 12. **`attach`** — interactive attach argv; `null` means "not known yet",
    which is a legitimate state.
+13. **`fastMode`** — a faster lane for the SAME model, as a per-task toggle
+   (`{ fast, standard, argv }`, where `argv` carries a `{tier}` slot). Declare
+   it only when the CLI advertises a speed tier for the model itself: codex
+   lists `service_tiers` per model in `codex debug models` and takes
+   `-c service_tier=…` headlessly, and its app-server takes the same value as
+   `serviceTier` on a thread. A harness whose "fast" is a separate model id
+   (droid's `-fast` ids, cursor's) declares NOTHING here — those ids are
+   already in the model picker, and a toggle that rewrote the chosen model
+   would make the model label lie. Both values are required and must differ,
+   because Wisp always sends one: OFF passes `standard` explicitly rather than
+   omitting the flag, so a tier pinned in the harness's own config file
+   (`~/.codex/config.toml`) can never decide a task's speed behind the toggle.
+   `/api/harnesses` publishes only `hasFastMode`; the tier vocabulary stays in
+   the adapter.
 
 ## 4. Honest absence is a feature
 

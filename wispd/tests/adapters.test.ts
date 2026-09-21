@@ -134,6 +134,8 @@ describe("buildArgv", () => {
       "--dangerously-bypass-approvals-and-sandbox",
       "-c",
       "model_reasoning_effort=xhigh",
+      "-c",
+      "service_tier=default",
       "go",
     ]);
   });
@@ -158,21 +160,22 @@ describe("buildArgv", () => {
     test("codex: the template inserts immediately before the prompt, -- mandatory", () => {
       expect(buildArgv(codex, { prompt: "look", images: ["/t/red.png"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "-i", "/t/red.png", "--", "look",
+        "-c", "service_tier=default", "-i", "/t/red.png", "--", "look",
       ]);
     });
 
     test("codex multi-file: one -i, all paths, then --", () => {
       expect(buildArgv(codex, { prompt: "look", images: ["/t/a.png", "/t/b.jpg"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "-i", "/t/a.png", "/t/b.jpg", "--", "look",
+        "-c", "service_tier=default", "-i", "/t/a.png", "/t/b.jpg", "--", "look",
       ]);
     });
 
     test("codex resume+model+images: the image slot stays immediately before the prompt", () => {
       expect(buildArgv(codex, { prompt: "again", session: "s-1", model: "gpt-5.6-luna", images: ["/t/a.png"] })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "s-1", "-m", "gpt-5.6-luna", "-i", "/t/a.png", "--", "again",
+        "resume", "s-1", "-m", "gpt-5.6-luna", "-c", "service_tier=default",
+        "-i", "/t/a.png", "--", "again",
       ]);
     });
 
@@ -214,12 +217,14 @@ describe("buildArgv", () => {
     });
   });
 
-  // codex's resume is a subcommand, not a flag — these argvs are exactly the
-  // ones run live against codex-cli 0.149.0 (wispd/tests/fixtures/README.md)
+  // codex's resume is a subcommand, not a flag — these argvs are the ones run
+  // live against codex-cli 0.149.0 (wispd/tests/fixtures/README.md), plus the
+  // explicit standard service tier every codex turn now carries.
   describe("codex", () => {
     test("first turn", () => {
       expect(buildArgv(codex, { prompt: "Reply with exactly the word: papaya" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-c", "service_tier=default",
         "Reply with exactly the word: papaya",
       ]);
     });
@@ -227,22 +232,43 @@ describe("buildArgv", () => {
     test("resume: the subcommand lands after exec's flags, before the model flag", () => {
       expect(buildArgv(codex, { prompt: "next", session: "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec", "next",
+        "resume", "cf851ea9-c5ab-5f68-9ae8-badc06afd3ec", "-c", "service_tier=default", "next",
       ]);
     });
 
     test("resume with the policy model", () => {
       expect(buildArgv(codex, { prompt: "next", session: "s-1", model: "gpt-5.6-luna" })).toEqual([
         "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
-        "resume", "s-1", "-m", "gpt-5.6-luna", "next",
+        "resume", "s-1", "-m", "gpt-5.6-luna", "-c", "service_tier=default", "next",
       ]);
     });
 
     test("model without a session (first turn)", () => {
       expect(buildArgv(codex, { prompt: "go", model: "gpt-5.6-luna" })).toEqual([
-        "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-m", "gpt-5.6-luna", "go",
+        "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-m", "gpt-5.6-luna", "-c", "service_tier=default", "go",
       ]);
     });
+
+    // The whole point of naming the OFF value: codex reads `service_tier` out
+    // of ~/.codex/config.toml, so a turn that declines fast mode has to say
+    // "default" rather than inherit whatever that file pins.
+    test("fast mode asks for the tier codex advertises, and OFF is explicit", () => {
+      expect(buildArgv(codex, { prompt: "go", fast: true })).toEqual([
+        "codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox",
+        "-c", "service_tier=fast", "go",
+      ]);
+      expect(buildArgv(codex, { prompt: "go", fast: false })).toContain("service_tier=default");
+    });
+  });
+
+  // A harness with no lane must not grow a flag it never declared.
+  test("a harness without fastMode is untouched by a fast request", () => {
+    expect(codex.fastMode).toBeDefined();
+    for (const def of [claude, droid]) {
+      expect(def.fastMode).toBeUndefined();
+      expect(buildArgv(def, { prompt: "go", fast: true })).toEqual(buildArgv(def, { prompt: "go" }));
+    }
   });
 });
 
@@ -1070,7 +1096,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });
@@ -1343,5 +1369,35 @@ describe("validateAdapters (a prior audit)", () => {
         rmSync(ADAPTERS_PATH);
       }
     });
+  });
+});
+
+describe("validateAdapters: fast mode", () => {
+  test("fastMode names both tiers and a template that can carry one", () => {
+    const base = { bin: "x", exec: [], parse: { format: "text" } };
+    const fastMode = (value: unknown) => validateAdapters({ foo: { ...base, fastMode: value } }).foo!.fastMode;
+    expect(thrownMessage(() => fastMode("fast"))).toBe(
+      "adapters.json: adapter 'foo'.fastMode must be an object or null, got string",
+    );
+    expect(thrownMessage(() => fastMode({ fast: "fast", argv: ["-c", "t={tier}"] }))).toBe(
+      "adapters.json: adapter 'foo'.fastMode.standard must be a non-empty string, got undefined",
+    );
+    expect(thrownMessage(() => fastMode({ fast: "on", standard: "on", argv: ["-c", "t={tier}"] }))).toBe(
+      'adapters.json: adapter \'foo\'.fastMode.fast and .standard must differ, both are "on"',
+    );
+    // a template with no slot would accept the pair and then pass neither
+    expect(thrownMessage(() => fastMode({ fast: "fast", standard: "default", argv: ["--fast"] }))).toBe(
+      'adapters.json: adapter \'foo\'.fastMode.argv must contain "{tier}" somewhere — otherwise the chosen tier is never passed',
+    );
+    expect(fastMode({ fast: "fast", standard: "default", argv: ["-c", "service_tier={tier}"] })).toEqual({
+      fast: "fast",
+      standard: "default",
+      argv: ["-c", "service_tier={tier}"],
+    });
+    // null clears a builtin's lane, the same escape every other capability has
+    expect(validateAdapters({ codex: { fastMode: null } }).codex!.fastMode).toBeNull();
+    expect(buildArgv(validateAdapters({ codex: { fastMode: null } }).codex!, { prompt: "go", fast: true })).not.toContain(
+      "-c",
+    );
   });
 });

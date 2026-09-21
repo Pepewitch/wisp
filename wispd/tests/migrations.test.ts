@@ -121,6 +121,54 @@ describe("the ledger", () => {
     db.close();
   });
 
+  test("upgrading seeds fast mode off and teaches the workflow guard to watch it", () => {
+    const db = freshDatabase("fast-mode");
+    migrate(db);
+    // the shape release 0.5.12 left behind: no tier anywhere, and a trigger
+    // whose body never mentions one
+    db.exec(`
+ALTER TABLE tasks DROP COLUMN fast;
+ALTER TABLE task_contexts DROP COLUMN fast;
+ALTER TABLE task_messages DROP COLUMN fast;
+ALTER TABLE turns DROP COLUMN requested_fast;
+DROP TRIGGER IF EXISTS workflows_context;
+CREATE TRIGGER workflows_context AFTER UPDATE OF context_n, harness, model, effort ON tasks
+WHEN NEW.context_n != OLD.context_n OR NEW.harness != OLD.harness OR NEW.model IS NOT OLD.model OR NEW.effort IS NOT OLD.effort BEGIN
+  UPDATE workflows SET state = 'paused', reason = 'Task agent or context changed; review and resume', revision = revision + 1 WHERE task_id = NEW.id AND state = 'active';
+  UPDATE task_messages SET status = 'cancelled' WHERE task_id = NEW.id AND workflow_id IS NOT NULL AND status = 'queued' AND claim IS NULL;
+END;
+DELETE FROM schema_migrations WHERE id = 13;
+`);
+    db.query(
+      "INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES ('tfixture', 'fixture', '/fixture', 'codex', 'done', 'now', 'now')",
+    ).run();
+    db.query(
+      "INSERT INTO turns (task_id, n, prompt, result, status, log_file, started_at) VALUES ('tfixture', 1, 'work', 'kept result', 'done', '/fixture/log', 'now')",
+    ).run();
+    db.query(
+      `INSERT INTO workflows (id, task_id, type, version, params_json, state, reason, revision, context_n, next_check_at, expires_at, created_at, updated_at)
+       VALUES ('wfixture', 'tfixture', 'review', '1', '{}', 'active', 'watching', 1, 1, 'later', 'later', 'now', 'now')`,
+    ).run();
+
+    expect(migrate(db).applied).toEqual([13]);
+
+    // every pre-existing row was running at the harness's ordinary speed
+    expect(db.query("SELECT fast FROM tasks WHERE id = 'tfixture'").get()).toEqual({ fast: 0 });
+    expect(db.query("SELECT requested_fast FROM turns WHERE task_id = 'tfixture'").get()).toEqual({ requested_fast: 0 });
+    expect(columns(db, "task_contexts")).toContain("fast");
+    expect(columns(db, "task_messages")).toContain("fast");
+    expect(db.query("SELECT result FROM turns").get()).toEqual({ result: "kept result" });
+
+    // and a tier change is now an agent change: the workflow stops for review
+    db.query("UPDATE tasks SET fast = 1 WHERE id = 'tfixture'").run();
+    expect(db.query("SELECT state, revision FROM workflows WHERE id = 'wfixture'").get()).toEqual({
+      state: "paused",
+      revision: 2,
+    });
+    expect(migrate(db).applied).toEqual([]);
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);

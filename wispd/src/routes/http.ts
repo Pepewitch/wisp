@@ -13,15 +13,16 @@ import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
  * calls `backgroundWork` bare and still sees every row.
  */
 export function apiTask(t: Task): ApiTask {
-  return { ...t, archived: t.archived !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...t, archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export type ApiTaskMessage = Omit<
   TaskMessage,
-  "attachments_json" | "claim" | "claim_turn_n" | "attachment_hash" | "delivery_uncertain"
+  "attachments_json" | "claim" | "claim_turn_n" | "attachment_hash" | "delivery_uncertain" | "fast"
 > & {
   attachments: AttachmentRecord[];
   delivery_uncertain: boolean;
+  fast: boolean;
 };
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
@@ -31,11 +32,13 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     claim_turn_n: _claimTurn,
     attachment_hash: _attachmentHash,
     delivery_uncertain,
+    fast,
     ...rest
   } = message;
   return {
     ...rest,
     delivery_uncertain: delivery_uncertain !== 0,
+    fast: fast !== 0,
     attachments: parseAttachmentManifest(attachments_json),
   };
 }
@@ -49,12 +52,17 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
  * adapter; undefined (a harness the daemon no longer knows) serves usage null
  * rather than guessing at a shape.
  */
-export type ApiTurn = Omit<Turn, "attachments_json" | "usage_json" | "outcome_json" | "capture_categories_json"> & {
+export type ApiTurn = Omit<
+  Turn,
+  "attachments_json" | "usage_json" | "outcome_json" | "capture_categories_json" | "requested_fast"
+> & {
   /** Adapter-declared lifecycle the client can present without parsing private harness logs. */
   operation?: "compact";
   attachments: AttachmentRecord[];
   usage: UsageSummary | null;
   capture_categories: Record<string, { records: number; bytes: number }> | null;
+  /** Fast mode as requested for this turn, a boolean like the task's. */
+  requested_fast: boolean;
 };
 
 /** Parse and normalize one stored usage blob without exposing its storage shape. */
@@ -71,7 +79,14 @@ export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageS
 }
 
 export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
-  const { attachments_json, usage_json, outcome_json: _outcome, capture_categories_json, ...rest } = t;
+  const {
+    attachments_json,
+    usage_json,
+    outcome_json: _outcome,
+    capture_categories_json,
+    requested_fast,
+    ...rest
+  } = t;
   let captureCategories: Record<string, { records: number; bytes: number }> | null = null;
   if (capture_categories_json !== null) {
     try {
@@ -91,6 +106,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
     attachments: parseAttachmentManifest(attachments_json),
     usage: apiTurnUsage(usage_json, def),
     capture_categories: captureCategories,
+    requested_fast: requested_fast !== 0,
   };
 }
 

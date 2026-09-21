@@ -212,6 +212,12 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // accepts. Found by `bun run harness:snapshot`; none/minimal stay because
     // the schema takes any non-empty string — the menu offers, it does not force.
     effortLevels: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+    // codex 0.155.1's `/fast` is not a TUI-only command: it flips the
+    // `service_tier` config key, and `-c service_tier=…` is honoured by
+    // `codex exec` (live-verified — see AdapterDef.fastMode for the evidence).
+    // "fast" over the equally-accepted "priority": it is the value codex's own
+    // catalog advertises in `additional_speed_tiers`.
+    fastMode: { fast: "fast", standard: "default", argv: ["-c", "service_tier={tier}"] },
     // spike-verified live (codex-cli 0.149.0): multi-file is one -i with all
     // paths, and the trailing "--" is MANDATORY — without it the variadic -i
     // eats the prompt positional and codex exits 1 ("No prompt provided")

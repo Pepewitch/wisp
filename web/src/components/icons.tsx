@@ -23,6 +23,7 @@ export {
   CopyRegular as Copy,
   DataBarVerticalRegular as Effort,
   DeleteRegular as Trash,
+  FlashRegular as Flash,
   PromptRegular as Prompt,
   FolderRegular as Folder,
   SparkleRegular as Sparkle,

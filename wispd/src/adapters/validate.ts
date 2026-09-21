@@ -30,6 +30,7 @@ const ADAPTER_KEYS = [
   "model",
   "effort",
   "effortLevels",
+  "fastMode",
   "staticModels",
   "defaultModel",
   "image",
@@ -125,6 +126,38 @@ function validateParse(name: string, raw: unknown, warn: (msg: string) => void):
   return parse;
 }
 
+/**
+ * The speed-tier pair, or null to clear a builtin's. Both values are required
+ * and must differ: a pair whose OFF equals its ON is a toggle with one state,
+ * and the template must be able to carry the value it is given, so {tier} is
+ * required too.
+ */
+function validateFastMode(raw: unknown, label: string): AdapterDef["fastMode"] {
+  if (raw === null) return null;
+  if (!isRecord(raw)) throw new Error(`${label} must be an object or null, got ${typeName(raw)}`);
+  for (const key of Object.keys(raw)) {
+    if (!["fast", "standard", "argv"].includes(key)) {
+      throw new Error(`${label}: unknown key '${key}' (known: fast, standard, argv)`);
+    }
+  }
+  const value = (key: "fast" | "standard"): string => {
+    const found = raw[key];
+    if (typeof found !== "string" || found === "") {
+      throw new Error(`${label}.${key} must be a non-empty string, got ${typeName(found)}`);
+    }
+    return found;
+  };
+  const fast = value("fast");
+  const standard = value("standard");
+  if (fast === standard) throw new Error(`${label}.fast and .standard must differ, both are ${JSON.stringify(fast)}`);
+  const argv = stringArray(raw.argv, `${label}.argv`);
+  if (argv.length === 0) throw new Error(`${label}.argv must not be empty`);
+  if (!argv.some((part) => part.includes("{tier}"))) {
+    throw new Error(`${label}.argv must contain "{tier}" somewhere — otherwise the chosen tier is never passed`);
+  }
+  return { fast, standard, argv };
+}
+
 function applyCoreFields(
   name: string,
   raw: Record<string, any>,
@@ -157,6 +190,7 @@ function applyCoreFields(
   if (raw.model !== undefined) merged.model = stringArray(raw.model, `${label}.model`);
   if (raw.effort !== undefined) merged.effort = stringArray(raw.effort, `${label}.effort`);
   if (raw.effortLevels !== undefined) merged.effortLevels = stringArray(raw.effortLevels, `${label}.effortLevels`);
+  if (raw.fastMode !== undefined) merged.fastMode = validateFastMode(raw.fastMode, `${label}.fastMode`);
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);
   if (raw.defaultModel !== undefined) {
     if (typeof raw.defaultModel !== "string" || raw.defaultModel.length === 0) {

@@ -42,6 +42,12 @@ import { taskIdsWithAttachedWorkflows } from "../workflows/store";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
+import {
+  agentSwitch,
+  resolveSendAgent,
+  sendTaskBodyError,
+  type SendTaskBody,
+} from "./send-agent";
 import { conversationDetail, conversationResponse, taskUsageResponse } from "./task-conversation";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 
@@ -70,6 +76,7 @@ interface CreateTaskBody {
   harness?: unknown;
   model?: unknown;
   effort?: unknown;
+  fast?: unknown;
   mode?: unknown;
   base?: unknown;
   suffixPromptId?: unknown;
@@ -96,6 +103,9 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
     return err(`effort must be a string, got ${typeName(body.effort)}`, 400);
   }
   if (body.effort === "") return err("effort must not be empty", 400);
+  if (body.fast !== undefined && typeof body.fast !== "boolean") {
+    return err(`fast must be a boolean, got ${typeName(body.fast)}`, 400);
+  }
   if (body.base !== undefined && typeof body.base !== "string") {
     return err(`base must be a string, got ${typeName(body.base)}`, 400);
   }
@@ -144,6 +154,10 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     );
     if (effort !== null && !def.effort) {
       return err(`harness '${harness}' has no effort support`, 400);
+    }
+    const fast = body.fast === true;
+    if (fast && !def.fastMode) {
+      return err(`harness '${harness}' has no fast mode`, 400);
     }
     // Two local tasks in one repo means two agents editing the SAME files
     // with no isolation between them — the exact hazard worktrees exist to
@@ -196,6 +210,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
             harness,
             model,
             effort,
+            fast,
             mode,
             slot: freeSlot(),
           });
@@ -221,75 +236,6 @@ function idleTaskError(task: Task, runningSuffix = ""): Response | null {
   if (task.state === "creating") return err("task is still being created", 409);
   const running = hasRunningTurn(task.id);
   return running ? err(`turn ${running.n} is still running${runningSuffix}`, 409) : null;
-}
-
-interface SendTaskBody {
-  message?: unknown;
-  suffixPromptId?: unknown;
-  attachments?: unknown;
-  clientMessageId?: unknown;
-  harness?: unknown;
-  model?: unknown;
-  effort?: unknown;
-  startFreshContext?: unknown;
-}
-
-function sendTaskBodyError(body: SendTaskBody): Response | null {
-  if (typeof body.message !== "string" || body.message.length === 0) return err("message is required", 400);
-  if (body.suffixPromptId !== undefined && typeof body.suffixPromptId !== "string") {
-    return err(`suffixPromptId must be a string, got ${typeName(body.suffixPromptId)}`, 400);
-  }
-  if (body.harness !== undefined && (typeof body.harness !== "string" || body.harness === "")) {
-    return err("harness must be a non-empty string", 400);
-  }
-  if (body.model !== undefined && (typeof body.model !== "string" || body.model === "")) {
-    return err("model must be a non-empty string", 400);
-  }
-  if (body.effort !== undefined && body.effort !== null && (typeof body.effort !== "string" || body.effort === "")) {
-    return err("effort must be a non-empty string or null", 400);
-  }
-  if (body.startFreshContext !== undefined && typeof body.startFreshContext !== "boolean") {
-    return err("startFreshContext must be a boolean", 400);
-  }
-  if (
-    body.clientMessageId !== undefined &&
-    (typeof body.clientMessageId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.clientMessageId))
-  ) {
-    return err("clientMessageId must be 8-80 letters, numbers, '_' or '-'", 400);
-  }
-  return null;
-}
-
-interface ResolvedSendAgent {
-  harness: string;
-  model: string | null;
-  effort: string | null;
-  harnessChanged: boolean;
-  def: AdapterDef;
-}
-
-function resolveSendAgent(
-  task: Task,
-  body: SendTaskBody,
-  cfg: WispConfig,
-  adapters: Record<string, AdapterDef>,
-): ResolvedSendAgent | Response {
-  const harness = (body.harness as string | undefined) ?? task.harness;
-  const model = body.model === undefined ? task.model : (body.model as string);
-  const harnessChanged = harness !== task.harness;
-  if (harnessChanged && body.model === undefined) return err("model is required when changing harness", 400);
-  if (harnessChanged && body.startFreshContext !== true) {
-    return err("changing harness requires startFreshContext: true", 409);
-  }
-  const def = adapters[harness];
-  if (!def) return err(`unknown harness: ${harness}`, body.harness === undefined ? 500 : 400);
-  const effort =
-    body.effort !== undefined
-      ? (body.effort as string | null)
-      : harnessChanged
-        ? resolveHarnessDefaults(cfg, harness, model ?? undefined, undefined).effort
-        : task.effort;
-  return { harness, model, effort, harnessChanged, def };
 }
 
 async function sendTaskResponse(
@@ -322,7 +268,7 @@ async function sendTaskResponse(
   }
   const resolved = resolveSendAgent(task, body, cfg, adapters);
   if (resolved instanceof Response) return resolved;
-  const { harness, model, effort, harnessChanged, def } = resolved;
+  const { harness, def } = resolved;
   const message = promptWithSuffix(body.message as string, body.suffixPromptId as string | undefined);
   if (message === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
   const operation = isCompactPrompt(def, message) ? "compact" as const : undefined;
@@ -342,10 +288,7 @@ async function sendTaskResponse(
     // submitTaskMessage: a crash can expose neither a switched task without
     // its first message nor a message attributed to an agent the task never
     // adopted.
-    const agent =
-      harness !== task.harness || model !== task.model || effort !== task.effort
-        ? { harness, model, effort, freshContext: harnessChanged }
-        : undefined;
+    const agent = agentSwitch(task, resolved);
     const result = await submitTaskMessage(
       task,
       message,
@@ -416,7 +359,11 @@ function basicTaskAction(
   if (action === "fresh-session" && method === "POST") {
     const unavailable = idleTaskError(task);
     if (unavailable) return unavailable;
-    const updated = switchTaskAgent(task.id, task.harness, task.model, task.effort, true);
+    const updated = switchTaskAgent(
+      task.id,
+      { harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
+      true,
+    );
     emit({ type: "task", taskId: task.id, state: task.state, stateDetail: task.state_detail, seq: task.seq });
     return json(apiTask(updated));
   }

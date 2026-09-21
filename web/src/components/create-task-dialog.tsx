@@ -5,6 +5,7 @@ import { Effort, Enter, Folder, Local, Sparkle, Star, StarFilled, Worktree } fro
 import { Menu, MenuAction, MenuGroup, MenuItem, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { MENU_ACTION } from "@/lib/menu-actions"
 import { BasePicker } from "@/components/base-picker"
+import { FastModeToggle } from "@/components/fast-mode-toggle"
 import { PromptField } from "@/components/create-prompt-field"
 import { AttachButton } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
@@ -114,6 +115,29 @@ const decode = (v: string): ModelChoice => {
 const sameChoice = (a: ModelChoice | null, b: ModelChoice): boolean =>
   a?.harness === b.harness && a.model === b.model
 
+/**
+ * The two agent knobs that belong to the chosen harness rather than to the
+ * prompt: reasoning effort, and fast mode.
+ *
+ * They are held together because a harness switch has to reseed both at once —
+ * effort from the destination's own default, and fast mode OFF whenever the
+ * destination has no faster lane, so the create request can never carry a tier
+ * the daemon would refuse. Fast mode also starts OFF on every new dialog: it
+ * spends more usage, so it is asked for per task rather than remembered.
+ */
+function useAgentKnobs(harnesses: HarnessInfo[], choice: ModelChoice | null) {
+  const [effort, setEffort] = useState(
+    () => harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? "",
+  )
+  const [fast, setFast] = useState(false)
+  const reseedForHarness = (name: string) => {
+    const destination = harnesses.find((candidate) => candidate.name === name)
+    setEffort(destination?.defaults.reasoningEffort ?? "")
+    if (!destination?.hasFastMode) setFast(false)
+  }
+  return { effort, setEffort, fast, setFast, reseedForHarness }
+}
+
 function Form({
   initialRepoPath,
   repos,
@@ -136,9 +160,7 @@ function Form({
     loadPreferredModel(connectionId),
   )
   const [choice, setChoice] = useState<ModelChoice | null>(() => initialChoice(harnesses, preferredChoice))
-  const [effort, setEffort] = useState(() => {
-    return harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? ""
-  })
+  const { effort, setEffort, fast, setFast, reseedForHarness } = useAgentKnobs(harnesses, choice)
   const [mode, setMode] = useState<TaskMode>("worktree")
   // "" means "whatever this project resolves to" — the base picker only ever
   // holds a deliberate one-off override, never the resolved default, so it
@@ -186,8 +208,7 @@ function Form({
   const pickChoice = (value: string) => {
     const next = decode(value)
     setChoice(next)
-    // a harness switch reseeds effort from ITS OWN config default
-    setEffort(harnesses.find((c) => c.name === next.harness)?.defaults.reasoningEffort ?? "")
+    reseedForHarness(next.harness)
   }
 
   const togglePreferredChoice = (next: ModelChoice) => {
@@ -220,6 +241,7 @@ function Form({
             mode,
             ...(mode === "worktree" && base.trim() ? { base: base.trim() } : {}),
             ...(harness?.hasEffort && effort.trim() ? { effort: effort.trim() } : {}),
+            ...(harness?.hasFastMode && fast ? { fast: true } : {}),
             ...(suffixPromptId ? { suffixPromptId } : {}),
             ...(payloads ? { attachments: payloads } : {}),
           },
@@ -351,6 +373,7 @@ function Form({
         choice={choice}
         preferredChoice={preferredChoice}
         effort={effort}
+        fast={fast}
         suffixPromptId={suffixPromptId}
         ready={ready}
         pending={createTask.isPending || uploading}
@@ -359,6 +382,7 @@ function Form({
         onTogglePreferredChoice={togglePreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
+        onFastChange={setFast}
         onRestoreComposer={restoreComposer}
         onSuffixPromptChange={setSuffixPromptId}
         onSuffixPromptModalChange={setSuffixPromptModalOpen}
@@ -374,6 +398,7 @@ function TaskControls({
   choice,
   preferredChoice,
   effort,
+  fast,
   suffixPromptId,
   ready,
   pending,
@@ -382,6 +407,7 @@ function TaskControls({
   onTogglePreferredChoice,
   onReprobe,
   onEffortChange,
+  onFastChange,
   onRestoreComposer,
   onSuffixPromptChange,
   onSuffixPromptModalChange,
@@ -392,6 +418,7 @@ function TaskControls({
   choice: ModelChoice | null
   preferredChoice: ModelChoice | null
   effort: string
+  fast: boolean
   suffixPromptId: string | null
   ready: boolean
   pending: boolean
@@ -400,6 +427,7 @@ function TaskControls({
   onTogglePreferredChoice: (choice: ModelChoice) => void
   onReprobe: () => void
   onEffortChange: (value: string) => void
+  onFastChange: (value: boolean) => void
   onRestoreComposer: () => void
   onSuffixPromptChange: (value: string | null) => void
   onSuffixPromptModalChange: (open: boolean) => void
@@ -419,6 +447,7 @@ function TaskControls({
           onTogglePreferred={onTogglePreferredChoice}
           onReprobe={onReprobe}
         />
+        {harness?.hasFastMode && <FastModeToggle value={fast} onChange={onFastChange} />}
         {harness?.hasEffort && (
           <EffortPicker
             harness={harness}

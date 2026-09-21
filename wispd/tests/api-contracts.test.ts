@@ -790,6 +790,7 @@ describe("daemon API contracts", () => {
         name: string;
         hasModel: boolean;
         hasEffort: boolean;
+        hasFastMode: boolean;
         hasImage: boolean;
         attachmentKinds: string[];
         imageNote?: string;
@@ -847,6 +848,13 @@ describe("daemon API contracts", () => {
       hasEffort: true,
       defaults: {},
     });
+    // codex is the only harness with a real speed tier for the SAME model
+    // (service_tier). droid and cursor sell speed as separate `-fast` model
+    // ids, which the model picker already offers, so they report no lane and
+    // the UI shows no toggle that would duplicate the model list.
+    expect(
+      body.harnesses.filter((harness) => harness.hasFastMode).map((harness) => harness.name),
+    ).toEqual(["codex"]);
     // cursor (slice 9): a static owner-pinned list WITH an explicit default,
     // no effort flag (cursor's effort is a bracket override on the model id);
     // images by path delivery, live-verified 2026-08-31 on 2026.08.25 — the
@@ -1016,6 +1024,20 @@ describe("daemon API contracts", () => {
       prompt: "make a task",
       harness: "claude",
       base: "   ",
+    });
+    // fast mode at the boundary: a wrong type is named, and a harness with no
+    // faster lane refuses rather than accepting a tier it would then ignore
+    await expectError(base, "/api/tasks", 400, "fast must be a boolean, got string", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "codex",
+      fast: "yes",
+    });
+    await expectError(base, "/api/tasks", 400, "harness 'claude' has no fast mode", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "claude",
+      fast: true,
     });
     // a local task adopts the branch the checkout is on; honouring a base
     // would mean moving the user's own working copy

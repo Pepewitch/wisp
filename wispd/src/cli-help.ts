@@ -4,9 +4,11 @@ export const HELP = `Wisp — coding-agent task manager
 
 usage:
   ${COMMAND} serve                                   run the daemon
-  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local] [--base <ref>] [--attach <path>]…
+  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--attach <path>]…
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults;
+                                                       --fast runs in the harness's faster lane for the same
+                                                       model, and is refused by a harness without one;
                                                        --local runs in the repo itself instead of a worktree,
                                                        and archiving it never removes anything;
                                                        --attach repeats, up to 10 files and 50 MB per turn:

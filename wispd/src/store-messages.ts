@@ -8,7 +8,7 @@
  */
 import { db } from "./store-database";
 import { emit } from "./events";
-import { getTask, randomId, switchTaskAgentBody } from "./store";
+import { getTask, randomId, switchTaskAgentBody, type TaskAgentTarget } from "./store";
 import type { Task, TaskMessage, TaskMessageDelivery } from "./types";
 
 const now = () => new Date().toISOString();
@@ -24,25 +24,21 @@ interface CreateTaskMessageInput {
   harness?: string;
   model?: string | null;
   effort?: string | null;
+  fast?: boolean;
   text: string;
   attachmentHash: string;
   attachmentsJson?: string | null;
 }
 
-export interface TaskAgentSelection {
-  harness: string;
-  model: string | null;
-  effort: string | null;
-  freshContext: boolean;
-}
+export type TaskAgentSelection = TaskAgentTarget & { freshContext: boolean };
 
 function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessage {
   const timestamp = now();
   db.run(
     `INSERT INTO task_messages
-      (id, task_id, context_n, harness, model, effort, text, status, delivery, turn_n,
+      (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,
        attachment_hash, attachments_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -50,6 +46,7 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       input.harness ?? task.harness,
       input.model === undefined ? task.model : input.model,
       input.effort === undefined ? task.effort : input.effort,
+      (input.fast === undefined ? task.fast === 1 : input.fast) ? 1 : 0,
       input.text,
       input.attachmentHash,
       input.attachmentsJson ?? null,
@@ -81,15 +78,10 @@ export function createTaskMessageWithAgent(
       agent.freshContext ||
       agent.harness !== task.harness ||
       agent.model !== task.model ||
-      agent.effort !== task.effort
+      agent.effort !== task.effort ||
+      agent.fast !== (task.fast === 1)
     ) {
-      task = switchTaskAgentBody(
-        input.taskId,
-        agent.harness,
-        agent.model,
-        agent.effort,
-        agent.freshContext,
-      );
+      task = switchTaskAgentBody(input.taskId, agent, agent.freshContext);
       switched = true;
     }
     return { task, message: insertTaskMessage(input, task) };

@@ -48,7 +48,12 @@ const bashResume: AdapterDef = {
   parse: { format: "text" },
   attach: null,
 };
-const adapters = { bashresume: bashResume, bashother: { ...bashResume } };
+/** …and one that also sells a faster lane for the same model. */
+const bashFast: AdapterDef = {
+  ...bashResume,
+  fastMode: { fast: "quick", standard: "ordinary", argv: ["--tier", "{tier}"] },
+};
+const adapters = { bashresume: bashResume, bashother: { ...bashResume }, bashfast: bashFast };
 
 function call(path: string, body?: unknown): Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
@@ -261,4 +266,81 @@ describe("agent switching on send", () => {
     expect(getTask(id)).toMatchObject({ context_n: 2, harness: "bashother" });
     finishTurn(turnId, "interrupted", null, null);
   });
+});
+
+/**
+ * Fast mode is part of the requested AGENT, not a display preference: it is
+ * stored on the task, snapshotted on the turn, and reaches the harness as the
+ * adapter's own tier vocabulary. OFF is sent explicitly, because a harness that
+ * reads its tier from a config file would otherwise decide for us.
+ */
+describe("fast mode on send", () => {
+  const fastTask = (): string => {
+    const task = createTask({
+      id: newTaskId(),
+      title: "fast probe",
+      repo_path: "/tmp/repo",
+      harness: "bashfast",
+      model: null,
+      slot: freeSlot(),
+    });
+    setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-fast-wt-")) });
+    transition(task.id, "done", "setup done");
+    return task.id;
+  };
+
+  test("the tier travels to the harness, sticks to the task, and OFF names the standard lane", async () => {
+    const id = fastTask();
+    expect(getTask(id)!.fast).toBe(0);
+
+    expect((await call(`/api/tasks/${id}/send`, { message: "go fast", fast: true })).status).toBe(200);
+    await untilSettled(id);
+    expect(getTask(id)!.fast).toBe(1);
+    expect(turnsFor(id)[0]).toMatchObject({ requested_fast: 1 });
+    expect(readFileSync(turnsFor(id)[0]!.log_file, "utf8")).toContain("--tier\nquick\n");
+
+    // sticky: a later send that says nothing about the tier keeps it
+    expect((await call(`/api/tasks/${id}/send`, { message: "still fast" })).status).toBe(200);
+    await untilSettled(id);
+    expect(getTask(id)!.fast).toBe(1);
+    expect(readFileSync(turnsFor(id)[1]!.log_file, "utf8")).toContain("--tier\nquick\n");
+
+    // …and OFF is a named tier, not the absence of a flag
+    expect((await call(`/api/tasks/${id}/send`, { message: "back to normal", fast: false })).status).toBe(200);
+    await untilSettled(id);
+    expect(getTask(id)!.fast).toBe(0);
+    expect(turnsFor(id)[2]).toMatchObject({ requested_fast: 0 });
+    expect(readFileSync(turnsFor(id)[2]!.log_file, "utf8")).toContain("--tier\nordinary\n");
+  }, 20_000);
+
+  test("a harness with no lane refuses the tier by name instead of dropping it", async () => {
+    const id = readyTask("sess-1");
+    const res = await call(`/api/tasks/${id}/send`, { message: "go fast", fast: true });
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("harness 'bashresume' has no fast mode");
+    expect(getTask(id)!.fast).toBe(0);
+    expect(turnsFor(id)).toHaveLength(0); // refused before any turn exists
+
+    const badType = await call(`/api/tasks/${id}/send`, { message: "go fast", fast: "yes" });
+    expect(badType.status).toBe(400);
+    expect(await errorOf(badType)).toBe("fast must be a boolean");
+  });
+
+  test("crossing harnesses drops the tier rather than carrying it into a lane that may not exist", async () => {
+    const id = fastTask();
+    expect((await call(`/api/tasks/${id}/send`, { message: "go fast", fast: true })).status).toBe(200);
+    await untilSettled(id);
+    expect(getTask(id)!.fast).toBe(1);
+
+    const res = await call(`/api/tasks/${id}/send`, {
+      message: "switch harness",
+      harness: "bashresume",
+      model: "other-model",
+      startFreshContext: true,
+    });
+    expect(res.status).toBe(200);
+    await untilSettled(id);
+    expect(getTask(id)).toMatchObject({ harness: "bashresume", fast: 0 });
+    expect(readFileSync(turnsFor(id)[1]!.log_file, "utf8")).not.toContain("--tier");
+  }, 20_000);
 });

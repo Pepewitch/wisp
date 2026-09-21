@@ -113,6 +113,12 @@ export interface ApiTask {
   harness: string;
   model: string | null;
   effort: string | null;
+  /**
+   * Fast mode: turns run in the harness's faster lane for the same model.
+   * Absent on a daemon that predates the field, which reads as off — the same
+   * thing it means everywhere else.
+   */
+  fast?: boolean;
   slot: number;
   state: TaskState;
   state_detail: string | null;
@@ -474,6 +480,13 @@ export interface HarnessInfo {
   name: string;
   hasModel: boolean;
   hasEffort: boolean;
+  /**
+   * This harness sells a faster lane for the SAME model, so the composer can
+   * offer fast mode. The daemon owns the tier VALUES; a client only ever asks
+   * for `fast: true`. Absent on an older daemon, which reads as no lane and
+   * hides the control rather than offering a switch /send would ignore.
+   */
+  hasFastMode?: boolean;
   /** S3: the adapter declares one of the three image mechanisms — without it a pasted IMAGE is refused by name */
   hasImage: boolean;
   /**

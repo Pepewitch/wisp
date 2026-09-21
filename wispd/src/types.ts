@@ -46,6 +46,13 @@ export interface Task {
   model: string | null;
   /** Reasoning effort requested for the task (config harnessDefaults at creation, P5b); NULL = harness default. */
   effort: string | null;
+  /**
+   * Fast mode: run turns in the harness's faster lane for the same model
+   * (adapters fastMode). SQLite's 0/1, a boolean at the API boundary like
+   * `archived`. 0 for every harness without the lane, and for every task that
+   * predates the column.
+   */
+  fast: number;
   slot: number;
   state: TaskState;
   state_detail: string | null;
@@ -83,6 +90,7 @@ export interface TaskContext {
   harness: string;
   model: string | null;
   effort: string | null;
+  fast: number;
   session_id: string | null;
   skills_json: string | null;
   context_tokens: number | null;
@@ -216,11 +224,13 @@ export interface BackgroundWork {
 }
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived"> & {
+export type ApiTask = Omit<Task, "archived" | "fast"> & {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
+  /** Fast mode, for the same reason `archived` is a boolean here. */
+  fast: boolean;
   background?: BackgroundWork;
 };
 
@@ -233,6 +243,8 @@ export interface Turn {
   harness: string;
   requested_model: string | null;
   requested_effort: string | null;
+  /** Fast mode as requested for this turn; SQLite's 0/1. */
+  requested_fast: number;
   prompt: string;
   result: string | null;
   status: TurnStatus;
@@ -311,6 +323,8 @@ export interface TaskMessage {
   harness: string;
   model: string | null;
   effort: string | null;
+  /** Fast mode as requested for this message; SQLite's 0/1. */
+  fast: number;
   text: string;
   status: TaskMessageStatus;
   delivery: TaskMessageDelivery;
