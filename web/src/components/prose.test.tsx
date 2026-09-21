@@ -166,6 +166,22 @@ describe("Prose", () => {
     expect(open).toHaveBeenCalledExactlyOnceWith("web/src/lib/terminal.ts")
   })
 
+  it("opens a source location without treating its line as part of the path", () => {
+    const open = vi.fn()
+    render(
+      <WorktreeFileContext.Provider value={open}>
+        <Prose text="see [the failure](web/src/lib/terminal.ts:42)" />
+      </WorktreeFileContext.Provider>
+    )
+    const button = screen.getByRole("button", { name: "the failure" })
+    expect(button).toHaveAttribute("title", "web/src/lib/terminal.ts:42")
+    fireEvent.click(button)
+    expect(open).toHaveBeenCalledExactlyOnceWith(
+      "web/src/lib/terminal.ts",
+      { line: 42, endLine: undefined },
+    )
+  })
+
   it("leaves a path as plain text where no worktree is behind the prose", () => {
     const { container } = render(<Prose text="see [terminal.ts](web/src/lib/terminal.ts)" />)
     expect(container.querySelector("a")).toBeNull()

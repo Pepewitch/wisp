@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { resolveAgainst, worktreeFilePath } from "./worktree-files"
+import { resolveAgainst, worktreeFilePath, worktreeFileTarget } from "./worktree-files"
 
 describe("worktreeFilePath", () => {
   it("keeps the plain paths an agent actually writes", () => {
@@ -17,6 +17,29 @@ describe("worktreeFilePath", () => {
     expect(worktreeFilePath("docs/PLAN.md?raw=1")).toBe("docs/PLAN.md")
   })
 
+  it("separates compiler-style and GitHub-style source lines from the path", () => {
+    expect(worktreeFileTarget("docs/PLAN.md:42")).toEqual({
+      path: "docs/PLAN.md",
+      line: 42,
+      endLine: undefined,
+    })
+    expect(worktreeFileTarget("/Users/x/w/PLAN.md:42:7")).toEqual({
+      path: "/Users/x/w/PLAN.md",
+      line: 42,
+      endLine: undefined,
+    })
+    expect(worktreeFileTarget("docs/PLAN.md#L42")).toEqual({
+      path: "docs/PLAN.md",
+      line: 42,
+      endLine: undefined,
+    })
+    expect(worktreeFileTarget("docs/PLAN.md?plain=1#L42-L50")).toEqual({
+      path: "docs/PLAN.md",
+      line: 42,
+      endLine: 50,
+    })
+  })
+
   /** A web address belongs to the browser; every other scheme to a program we are not. */
   it("is not a web address, an in-document anchor, or any other scheme", () => {
     for (const href of [
@@ -28,6 +51,9 @@ describe("worktreeFilePath", () => {
       "vscode://file/x",
       "javascript:alert(1)",
       "file:///etc/passwd",
+      "tel:123",
+      "foo.bar:42",
+      "example.com:443",
       "",
       "   ",
       null,
