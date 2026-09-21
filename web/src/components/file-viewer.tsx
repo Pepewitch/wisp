@@ -173,7 +173,10 @@ function ViewerContent({
     )
   }
   if (line !== undefined) {
-    return <TargetedSourceFile text={file.text} line={line} endLine={endLine} />
+    if (sourceLanguage(file.path) === null) {
+      return <TargetedSourceFile text={file.text} line={line} endLine={endLine} />
+    }
+    return <SourceFile path={file.path} text={file.text} line={line} endLine={endLine} />
   }
   return <SourceFile path={file.path} text={file.text} />
 }
@@ -392,13 +395,34 @@ function isMarkdown(path: string): boolean {
  * The fence's own card comes off (`[&_pre]` overrides): this surface is the
  * viewer's, and a card inside it would read as a document, which a source
  * file is not. What survives is exactly the colour.
+ * A requested source line adds wrappers after highlighting, so its row can be
+ * selected without replacing the coloured token spans inside it.
  *
  * An extension the map does not know — `.txt`, `.log`, `.env` — keeps the
  * plain pre it always had: guessing at a language is the thing
  * `detect: false` exists to refuse.
  */
-function SourceFile({ path, text }: { path: string; text: string }) {
+function SourceFile({
+  path,
+  text,
+  line,
+  endLine,
+}: {
+  path: string
+  text: string
+  line?: number
+  endLine?: number
+}) {
+  const source = useRef<HTMLDivElement>(null)
   const language = sourceLanguage(path)
+
+  useEffect(() => {
+    if (line === undefined) return
+    source.current
+      ?.querySelector(".source-line-target")
+      ?.scrollIntoView({ block: "center", inline: "nearest" })
+  }, [line, endLine, text])
+
   if (language === null) {
     return (
       <pre className="font-mono text-[11.5px] leading-[1.75] whitespace-pre-wrap text-foreground/85">
@@ -410,15 +434,25 @@ function SourceFile({ path, text }: { path: string; text: string }) {
   for (const run of text.matchAll(/`+/g)) longest = Math.max(longest, run[0].length)
   const fence = "`".repeat(Math.max(3, longest + 1))
   return (
-    <Prose
-      text={`${fence}${language}\n${text}\n${fence}`}
-      mode="static"
-      className="[&_pre]:mt-0 [&_pre]:overflow-visible [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
-    />
+    <div
+      ref={source}
+      className={cn(
+        "[&_.source-code-line]:inline-block",
+        "[&_.source-code-line]:min-w-full",
+        "[&_.source-line-target]:bg-accent",
+      )}
+    >
+      <Prose
+        text={`${fence}${language}\n${text}\n${fence}`}
+        mode="static"
+        sourceLine={line === undefined ? undefined : { line, endLine }}
+        className="[&_pre]:mt-0 [&_pre]:overflow-visible [&_pre]:rounded-none [&_pre]:border-0 [&_pre]:bg-transparent [&_pre]:p-0"
+      />
+    </div>
   )
 }
 
-/** Source view for a link to a specific line, including Markdown documents. */
+/** Source view for a line in a file without a known syntax. */
 const TargetedSourceFile = memo(function TargetedSourceFile({
   text,
   line,

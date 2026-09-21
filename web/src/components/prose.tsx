@@ -8,6 +8,7 @@ import {
   STATIC_PROSE_HIGHLIGHT_PLUGINS,
 } from "@/lib/prose-highlight"
 import { mermaidFenceCode } from "@/lib/mermaid-fence-code"
+import { rehypeSourceLines } from "@/lib/prose-source-lines"
 import { RemoteImage } from "./remote-image"
 import { MermaidFence } from "./mermaid-fence"
 import { cn } from "@/lib/utils"
@@ -18,11 +19,20 @@ export function Prose({
   text,
   className,
   mode = "streaming",
+  sourceLine,
 }: {
   text: string
   className?: string
   mode?: "streaming" | "static"
+  sourceLine?: { line: number; endLine?: number }
 }) {
+  const rehypePlugins = (mode === "static"
+    ? [
+        ...(STATIC_PROSE_REHYPE_PLUGINS ?? []),
+        ...(sourceLine ? [[rehypeSourceLines, sourceLine]] : []),
+      ]
+    : PROSE_REHYPE_PLUGINS) as ComponentProps<typeof Streamdown>["rehypePlugins"]
+
   return (
     <div className={cn("text-[13px] leading-[1.7] text-foreground/85", className)}>
       <Streamdown
@@ -30,7 +40,7 @@ export function Prose({
         parseIncompleteMarkdown={mode === "streaming"}
         controls={false}
         remarkPlugins={PROSE_REMARK_PLUGINS}
-        rehypePlugins={mode === "static" ? STATIC_PROSE_REHYPE_PLUGINS : PROSE_REHYPE_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={PROSE_COMPONENTS}
       >
         {text}

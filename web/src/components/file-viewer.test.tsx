@@ -128,6 +128,43 @@ describe("the worktree file viewer", () => {
     expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("notes.txt#L2-L3")
   })
 
+  it("keeps syntax colours while highlighting a requested code line", async () => {
+    const scrollIntoView = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {})
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/a.ts",
+      text: "const before = true\nexport const target = 42\nconst after = null\n",
+    })
+    withTransport(
+      <FileViewer
+        taskId="tk9zdy"
+        path="src/a.ts"
+        line={2}
+        onClose={() => {}}
+      />,
+      request,
+    )
+
+    const viewer = await screen.findByTestId("file-viewer")
+    const target = await waitFor(() => {
+      const row = viewer.querySelector('[data-source-line="2"]')
+      expect(row).not.toBeNull()
+      return row!
+    })
+    expect(target).toHaveTextContent("export const target = 42")
+    expect(target).toHaveClass("source-line-target")
+    expect(target).toHaveAttribute("aria-current", "location")
+    expect(target.querySelector(".hljs-keyword")).toHaveTextContent("export")
+    expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("src/a.ts#L2")
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+    }))
+    scrollIntoView.mockRestore()
+  })
+
   /** Source with a known extension keeps its bytes AND gets prose's colours. */
   it("highlights a code file with the same palette a transcript fence wears", async () => {
     const request = vi
