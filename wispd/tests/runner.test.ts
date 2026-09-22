@@ -491,10 +491,15 @@ describe("Claude background follow-up", () => {
       `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"waiter","status":"completed"}'`,
       `printf '%s\\n' '{"type":"result","result":"still waiting","session_id":"session-background"}'`,
       // EOF here means Wisp closed stdin at the first result and reproduced
-      // the real Claude failure. An open idle pipe times out with status >128.
-      "IFS= read -r -t 0.3 unexpected",
-      'status="$?"',
-      '[ "$status" -ne 1 ] || exit 9',
+      // the real Claude failure. Probe with a blocking reader rather than
+      // `read -t`: macOS Bash 3.2 reports both pipe timeout and EOF as status 1.
+      "exec 3<&0",
+      'IFS= read -r unexpected <&3 & reader="$!"',
+      "sleep 0.2",
+      'kill -0 "$reader" 2>/dev/null || exit 9',
+      'kill "$reader" 2>/dev/null || true',
+      'wait "$reader" 2>/dev/null || true',
+      "exec 3<&-",
       `printf '%s\\n' '{"type":"result","result":"background finished","session_id":"session-background"}'`,
     ].join("; ");
     const def: AdapterDef = {

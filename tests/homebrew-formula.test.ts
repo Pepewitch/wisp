@@ -107,10 +107,11 @@ describe("Homebrew Formula rendering", () => {
 
   test("replays historical ad-hoc manifests but rejects new unsigned output", () => {
     const current = manifest();
+    const lastAdHocVersion = "0.5.13";
     const legacy: LegacyMacReleaseManifest = {
       schemaVersion: 1,
       product: current.product,
-      version: current.version,
+      version: lastAdHocVersion,
       apiProtocolVersion: current.apiProtocolVersion,
       commit: current.commit,
       dirty: false,
@@ -119,6 +120,7 @@ describe("Homebrew Formula rendering", () => {
       signing: { kind: "ad-hoc", developerId: false, notarized: false, timestamp: false },
       artifact: {
         ...current.artifact,
+        file: `wisp-v${lastAdHocVersion}-darwin-arm64.tar.gz`,
         format: "tar.gz",
         binary: { ...current.artifact.binary, file: "wisp" },
       },
