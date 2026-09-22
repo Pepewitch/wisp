@@ -2,13 +2,68 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.14 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.15 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.15 publication
+
+**Published and promoted on 2026-09-22.**
+[Wisp 0.5.15](https://github.com/Pepewitch/wisp/releases/tag/v0.5.15) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 16:26:49 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`4553d5548dd0c5e0b0b100ee8d554b9772409e23`](https://github.com/Pepewitch/wisp/commit/4553d5548dd0c5e0b0b100ee8d554b9772409e23),
+landed through [PR #254](https://github.com/Pepewitch/wisp/pull/254). The repair
+it carries landed through [PR #253](https://github.com/Pepewitch/wisp/pull/253).
+
+0.5.15 exists because 0.5.14 could not be installed. Its archive placed
+`Wisp Daemon.app` at the archive root, and Homebrew descends into a lone
+top-level directory before a formula's `install` runs, so the rendered Formula
+searched for the bundle from inside it and stopped with `Errno::ENOENT`. Every
+0.5.14 gate had passed: `brew audit` is static and never stages an archive.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/35753348053)
+completed all seven jobs successfully on the first attempt:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, native-core, npm, Rust, supply-chain, and public-promotion dry-run checks passed; the exact-main release candidate also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; the Desktop updater signature and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `4553d55` |
+| Homebrew installability | New in this release: the built archive was proven offline to stage to exactly one top-level directory containing the bundle before publication, and the rendered Formula was then installed and tested from the published release on a clean runner before the tap advanced |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+The promotion receipt completed at 16:31:51 UTC with Homebrew tap commit
+[`aa4314281bfd0e04c0cc6239c29fb751c3c96848`](https://github.com/Pepewitch/homebrew-tap/commit/aa4314281bfd0e04c0cc6239c29fb751c3c96848),
+with the Formula, Cask, and both update channels serving 0.5.15.
+
+0.5.15 adds no database migration.
+
+**Maintainer upgrade receipt.** One Apple Silicon machine on macOS 26.6.2 was
+upgraded from 0.5.13 to 0.5.15 with `brew upgrade Pepewitch/tap/wisp` followed
+by `brew services restart wisp`. The upgrade succeeded, `wisp version` reported
+`0.5.15 (commit 4553d554…)`, the daemon served its HTTP port under its launchd
+service, and the installed bundle carried `Identifier=dev.wisp.daemon` under a
+Developer ID Application authority with the designated requirement
+`identifier "dev.wisp.daemon" and anchor apple generic and certificate
+leaf[subject.OU] = G823NH4M6N` — no `cdhash` term, unlike the ad-hoc 0.5.13
+binary it replaced.
+
+**Not performed, and not claimed.** No fresh install on a clean machine beyond
+the release runner, no Desktop Cask upgrade or updater journey across this
+version, no Linux upgrade receipt, and no paid evaluator panel. The upgrade
+receipt above covers one machine, one OS version, and the Formula only. The
+stable code identity is verified as installed, but whether it actually prevents
+a new **Privacy & Security ▸ App Management** row is not yet observable: that
+requires a later upgrade from 0.5.15 to a subsequent release.
 
 ## 0.5.14 publication
 
 **Published and promoted on 2026-09-22.**
-[Wisp 0.5.14](https://github.com/Pepewitch/wisp/releases/tag/v0.5.14) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.5.14](https://github.com/Pepewitch/wisp/releases/tag/v0.5.14) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 11:47:21 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`e72173010835de642302e1767a3dbf0e50ab3360`](https://github.com/Pepewitch/wisp/commit/e72173010835de642302e1767a3dbf0e50ab3360),
