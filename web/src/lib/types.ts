@@ -426,6 +426,13 @@ export type WispEvent =
 /** GET/PATCH /api/settings, the daemon-wide preferences safe to expose. */
 export interface WispSettings {
   autoRenameTasksFromPullRequests: boolean;
+  /**
+   * harness name -> model ids kept OUT of the model picker on this daemon. A
+   * denylist, so a model a later probe discovers shows up on its own. Absent
+   * on a daemon older than this field — read it as "nothing hidden" and hide
+   * the Settings section, never as "hide everything".
+   */
+  hiddenModels?: Record<string, string[]>;
 }
 
 /**

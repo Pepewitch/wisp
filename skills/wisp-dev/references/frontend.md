@@ -893,6 +893,44 @@ leaving someone to wonder whether a remote just changed.
   surface is where the decision belongs (the updater's *Check Desktop after
   launch* sits with the update it governs). This modal is not a junk drawer
   for everything client-local.
+- **A preference the daemon owns says so in its hint**, and hides itself when
+  the daemon is too old to hold it. `Task names` and `Models` are both
+  daemon-wide (`/api/settings`); on a 404, or on an answer missing the field,
+  the section is absent rather than a control that would silently do nothing.
+
+### 5g-i. Models — the picker is curated, the catalog is not
+
+opencode reports ~150 model ids and cursor its whole catalog, so the one
+dropdown that picks harness AND model is mostly scroll. `hiddenModels` in
+daemon settings is the curation, and three rules keep it honest:
+
+- **It is a view filter, never a capability.** `wisp create --model <hidden>`
+  still runs, `/api/harnesses` still reports every id, and a task already on a
+  hidden model keeps it. Every read takes a `keep` model that survives the
+  filter (`lib/model-visibility.ts`) — a menu whose radio value is absent from
+  its own options has no checked row, and the trigger would then name a model
+  the list denies exists.
+- **A denylist, not an allowlist.** A model a later probe discovers appears on
+  its own. An allowlist would silently swallow tomorrow's model, which is the
+  same bug cursor's old `auto`/`composer-*`/`cursor-*` probe filter had — that
+  filter is gone, because deciding what is *useful* is the user's, and a probe
+  only reports what this install can RUN.
+- **A shortened list says how much is missing.** The menu footer carries
+  `Show N hidden` — a ONE-SHOT reveal scoped to that opening, so a hidden model
+  stays reachable without undoing the curation — and `Manage models…`. A
+  harness with nothing shown drops out of the menu entirely; the count is what
+  says it is still out there.
+
+The manager (`model-visibility-dialog.tsx`) **is the dropdown, unfiltered,
+with a shown/hidden checkmark**: same grouping, same order, same left slot —
+in the picker that slot answers *is this chosen*, here *is this shown*. Per §1
+it is a checkmark and a dimmed name, never a tinted box. `Hide all` per harness
+is the fast path, because retiring opencode is one decision and not 150.
+
+The per-row eye is a POINTER affordance: `opacity-0` until hover, keyboard
+highlight (`:has([data-highlighted])`, because the button is a sibling of the
+row base-ui owns) or its own focus. On a coarse pointer it is not rendered at
+all — a finger reveals nothing by hovering, and the manager does the job there.
 
 ### 5h. The top bar's right end is one cluster
 

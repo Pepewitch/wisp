@@ -183,7 +183,7 @@ describe("cursor-models strategy", () => {
     };
   };
 
-  test("offers Auto first, then Composer and Cursor models, without flooding the picker", async () => {
+  test("offers the whole catalog in the CLI's own order, deduped", async () => {
     const d = await discoverModels(
       BUILTIN_ADAPTERS.cursor,
       cursorSpawn([
@@ -198,9 +198,17 @@ describe("cursor-models strategy", () => {
         "cursor-muse-1 - Cursor Muse 1",
       ].join("\n")),
     );
-    expect(d.models).toEqual(["auto", "composer-2.5", "cursor-grok-4.6-high", "cursor-muse-1"]);
+    // the provider ids used to be filtered out; hiding is the user's now
+    expect(d.models).toEqual([
+      "claude-opus-4-8-high",
+      "cursor-grok-4.6-high",
+      "auto",
+      "composer-2.5",
+      "gpt-5.6-sol",
+      "cursor-muse-1",
+    ]);
     expect(d.defaultModel).toBe("auto");
-    expect(d.notes.join(" ")).toContain("restricted to auto, composer-*, and cursor-*");
+    expect(d.notes.join(" ")).toContain("the full catalog");
   });
 
   test("changed or unauthenticated output returns null with an actionable note", async () => {
@@ -210,14 +218,22 @@ describe("cursor-models strategy", () => {
     expect(d.notes.join(" ")).toContain("may be unauthenticated");
   });
 
-  test("does not claim a filtered-out provider default", async () => {
+  test("a provider model marked (default) is now offered AND named as the default", async () => {
     const d = await discoverModels(
       BUILTIN_ADAPTERS.cursor,
       cursorSpawn("claude-opus-4-8-high - Claude Opus 4.8 (default)\ncomposer-2.5 - Composer 2.5\n"),
     );
-    expect(d.models).toEqual(["composer-2.5"]);
+    expect(d.models).toEqual(["claude-opus-4-8-high", "composer-2.5"]);
+    expect(d.defaultModel).toBe("claude-opus-4-8-high");
+  });
+
+  test("no '(default)' marker anywhere leaves the default honestly absent", async () => {
+    const d = await discoverModels(
+      BUILTIN_ADAPTERS.cursor,
+      cursorSpawn("composer-2.5 - Composer 2.5\ncursor-muse-1 - Cursor Muse 1\n"),
+    );
     expect(d.defaultModel).toBeNull();
-    expect(d.notes.join(" ")).toContain("named no default among the filtered models");
+    expect(d.notes.join(" ")).toContain("marked no '(default)' model");
   });
 });
 
@@ -295,7 +311,7 @@ describe("formatModelsReport — the effective-choice line", () => {
     expect(lines.join("\n")).toContain("models (4, pinned by the adapter): claude-fable-5-1");
   });
 
-  test("cursor reports its filtered discovered models and CLI default", async () => {
+  test("cursor reports its whole discovered catalog and CLI default", async () => {
     const stdout = [
       "auto - Auto (default)",
       "composer-2.5 - Composer 2.5",
@@ -308,8 +324,9 @@ describe("formatModelsReport — the effective-choice line", () => {
     });
     expect(lines).toContain("cursor: effective auto (harness default; no config override)");
     expect(lines).toContain("  harness default: auto");
-    expect(lines).toContain("  models (3): auto, composer-2.5, cursor-grok-4.6-high");
-    expect(lines.join("\n")).not.toContain("claude-opus-4-8-high");
+    expect(lines).toContain(
+      "  models (4): auto, composer-2.5, cursor-grok-4.6-high, claude-opus-4-8-high",
+    );
   });
 
   test("a harness with neither a probe nor a curated list still says 'not exposed'", async () => {

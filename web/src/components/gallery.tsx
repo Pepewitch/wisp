@@ -1,5 +1,3 @@
-import type { ReactNode } from "react"
-
 import { ActivityList } from "@/components/activity-list"
 import { ConnectionGallerySpecimen } from "@/components/connection-gallery-specimen"
 import {
@@ -20,6 +18,8 @@ import { QuestionnaireSpecimens } from "@/components/questionnaire-gallery-speci
 import { SearchSpecimens } from "@/components/search-gallery-specimen"
 import { StartHereSpecimen } from "@/components/start-here"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
+import { MetricRow, Section, Specimen, TextRow } from "@/components/gallery-chrome"
+import { ModelVisibilitySpecimen } from "@/components/model-visibility-specimen"
 import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
 import { PullRequestSpecimens } from "@/components/pull-request-specimens"
@@ -354,6 +354,8 @@ function InteractionSpecimens() {
           <QuestionnaireSpecimens />
       </Section>
 
+      <ModelVisibilitySpecimen />
+
       <Section title="The / palette — three tiers, one of them costs you">
           <div className="grid grid-cols-2 gap-10">
             <div>
@@ -593,44 +595,5 @@ function WorkflowSpecimens() {
           </p>
       </Section>
     </>
-  )
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) { return (
-    <section className="mt-9">
-      <div className="mb-4 flex items-center gap-3">
-        <Eyebrow>{title}</Eyebrow>
-        <Rule />
-      </div>
-      <div className="rounded-xl border border-border bg-surface p-5">{children}</div>
-    </section>
-  )
-}
-
-function TextRow({ cls, name, note }: { cls: string; name: string; note: string }) {
-  return (
-    <div className="flex items-baseline gap-3">
-      <span className={`w-[300px] shrink-0 text-[13px] ${cls}`}>The quick brown fox jumps over</span>
-      <span className="flex-1 text-[11px] text-muted-foreground">{note}</span>
-      <span className="font-mono text-[10.5px] text-faint">{name}</span>
-    </div>
-  )
-}
-
-function Specimen({ spec, children }: { spec: string; children: ReactNode }) {
-  return (
-    <div>
-      {children}
-      <div className="mt-1.5 font-mono text-[11px] text-faint">{spec}</div>
-    </div>
-  )
-}
-
-function MetricRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="w-[110px] shrink-0 text-[12px] text-fg-secondary">{label}</span>
-      {children}
-    </div>
   )
 }

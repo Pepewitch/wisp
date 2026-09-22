@@ -60,7 +60,7 @@
       "cost": "free",
       "verifiedAgainst": "2026.09.18-9a7762b",
       "source": "'cursor-agent models' (requires an authenticated CLI)",
-      "note": "runtime discovery filters this catalog to auto, composer-*, and cursor-*",
+      "note": "runtime discovery offers this whole catalog; pruning the picker is the user's, via settings' hiddenModels",
       "lists": {
         "ids": [
           "auto",

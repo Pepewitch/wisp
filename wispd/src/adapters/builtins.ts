@@ -295,9 +295,11 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // id ('claude-opus-4-8[effort=high]'), not a flag — a parameterized
     // model, not an effort level, so the picker offers none.
     //
-    // Authenticated model discovery reads `cursor-agent models` and keeps the
-    // Cursor-owned choices (auto, composer-*, cursor-*). The full catalog also
-    // contains every upstream provider model and would flood the picker.
+    // Authenticated model discovery reads `cursor-agent models` and offers the
+    // WHOLE catalog. It used to keep only auto/composer-*/cursor-* so the
+    // picker would not flood; the picker now prunes itself (settings'
+    // hiddenModels), so a filter here only made models cursor accepts
+    // unreachable from the UI.
     modelDiscovery: "cursor-models",
     // A strategy, not a field mapping: cursor's result event carries the
     // WHOLE turn's assistant texts concatenated, not the final message

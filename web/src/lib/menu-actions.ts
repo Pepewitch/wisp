@@ -9,4 +9,11 @@
  * Its own module because a component file that also exports constants breaks
  * fast refresh (react-refresh/only-export-components).
  */
-export const MENU_ACTION = { custom: "@@custom", reprobe: "@@reprobe" } as const;
+export const MENU_ACTION = {
+  custom: "@@custom",
+  reprobe: "@@reprobe",
+  /** One-shot reveal of the hidden models, scoped to the open menu. */
+  revealModels: "@@reveal-models",
+  /** Opens the model-visibility manager. */
+  manageModels: "@@manage-models",
+} as const;

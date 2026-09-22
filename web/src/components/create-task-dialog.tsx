@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
-import { Effort, Enter, Folder, Local, Sparkle, Star, StarFilled, Worktree } from "@/components/icons"
-import { Menu, MenuAction, MenuGroup, MenuItem, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
+import { Effort, Enter, Folder, Local, Sparkle, Worktree } from "@/components/icons"
+import { Menu, MenuAction, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
+import { ModelMenuFooter, ModelMenuGroups } from "@/components/model-menu"
+import { PreferButton } from "@/components/preferred-model-button"
+import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
+import { useHiddenModels } from "@/hooks/useHiddenModels"
+import { hiddenTotal } from "@/lib/model-visibility"
 import { MENU_ACTION } from "@/lib/menu-actions"
 import { BasePicker } from "@/components/base-picker"
 import { FastModeToggle } from "@/components/fast-mode-toggle"
@@ -19,14 +24,11 @@ import {
 import { effortOptions, rememberEffort } from "@/lib/effort"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
-  defaultModelFor,
   initialChoice,
   isUsable,
   loadPreferredModel,
-  modelOptionsFor,
   orderHarnesses,
   savePreferredModel,
-  unusableReason,
   type ModelChoice,
 } from "@/lib/model-choice"
 import type { HarnessInfo, RepoInfo, TaskMode } from "@/lib/types"
@@ -380,6 +382,7 @@ function Form({
         reprobePending={reprobe.isPending}
         onPickChoice={pickChoice}
         onTogglePreferredChoice={togglePreferredChoice}
+        onPreferredChange={setPreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
         onFastChange={setFast}
@@ -405,6 +408,7 @@ function TaskControls({
   reprobePending,
   onPickChoice,
   onTogglePreferredChoice,
+  onPreferredChange,
   onReprobe,
   onEffortChange,
   onFastChange,
@@ -425,6 +429,7 @@ function TaskControls({
   reprobePending: boolean
   onPickChoice: (value: string) => void
   onTogglePreferredChoice: (choice: ModelChoice) => void
+  onPreferredChange: (next: ModelChoice | null) => void
   onReprobe: () => void
   onEffortChange: (value: string) => void
   onFastChange: (value: boolean) => void
@@ -445,6 +450,7 @@ function TaskControls({
           reprobePending={reprobePending}
           onPick={onPickChoice}
           onTogglePreferred={onTogglePreferredChoice}
+          onPreferredChange={onPreferredChange}
           onReprobe={onReprobe}
         />
         {harness?.hasFastMode && <FastModeToggle value={fast} onChange={onFastChange} />}
@@ -480,6 +486,7 @@ function HarnessPicker({
   reprobePending,
   onPick,
   onTogglePreferred,
+  onPreferredChange,
   onReprobe,
 }: {
   harnesses: HarnessInfo[]
@@ -489,105 +496,84 @@ function HarnessPicker({
   reprobePending: boolean
   onPick: (value: string) => void
   onTogglePreferred: (choice: ModelChoice) => void
+  onPreferredChange: (next: ModelChoice | null) => void
   onReprobe: () => void
 }) {
+  const { hidden, supported, setHidden } = useHiddenModels()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [revealed, setRevealed] = useState(false)
+  const [managing, setManaging] = useState(false)
   return (
-    <Menu
-      icon={<Sparkle />}
-      className="min-w-0 max-w-full shrink"
-      label={
-        harness && choice ? (
-          <>
-            {harness.name}
-            <span className="font-mono text-muted-foreground"> · {choice.model}</span>
-          </>
-        ) : (
-          <span className="text-muted-foreground">No usable harness</span>
-        )
-      }
-      disabled={harnesses.length === 0}
-    >
-      {harnesses.length === 0 ? (
-        <MenuNote>No harnesses reported by the daemon.</MenuNote>
-      ) : (
-        <MenuRadioGroup
-          value={choice ? encode(choice) : ""}
-          onValueChange={(value) => (value === MENU_ACTION.reprobe ? onReprobe() : onPick(value))}
-        >
-          {harnesses.map((candidate) => (
-            <HarnessGroup
-              key={candidate.name}
-              harness={candidate}
-              preferredChoice={preferredChoice}
-              onTogglePreferred={onTogglePreferred}
-            />
-          ))}
-          <MenuAction value={MENU_ACTION.reprobe}>
-            {reprobePending ? "Re-probing…" : "Re-probe models"}
-          </MenuAction>
-        </MenuRadioGroup>
-      )}
-    </Menu>
-  )
-}
-
-function HarnessGroup({
-  harness,
-  preferredChoice,
-  onTogglePreferred,
-}: {
-  harness: HarnessInfo
-  preferredChoice: ModelChoice | null
-  onTogglePreferred: (choice: ModelChoice) => void
-}) {
-  return (
-    <MenuGroup label={harness.name} hint={isUsable(harness) ? undefined : unusableReason(harness)}>
-      {isUsable(harness) ? (
-        modelOptionsFor(harness).map((model) => {
-          const choice = { harness: harness.name, model }
-          const preferred = sameChoice(preferredChoice, choice)
-          const label = preferred
-            ? `Clear preferred model ${harness.name} · ${model}`
-            : `Prefer ${harness.name} · ${model} for new tasks`
-          return (
-            <div key={model} className="relative">
-              <MenuRadioItem
-                value={encode(choice)}
-                hint={model === defaultModelFor(harness) ? "default" : undefined}
-                className="pr-9"
-              >
-                {model}
-              </MenuRadioItem>
-              <button
-                type="button"
-                aria-label={label}
-                aria-pressed={preferred}
-                title={label}
-                onPointerDown={(event) => event.stopPropagation()}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") event.stopPropagation()
-                }}
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onTogglePreferred(choice)
-                }}
-                className={cn(
-                  "absolute top-1/2 right-1 z-10 flex size-6 -translate-y-1/2 items-center justify-center rounded-md",
-                  "text-faint hover:bg-hover hover:text-foreground",
-                  "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                  "[&>svg]:size-3.5",
-                  preferred && "text-foreground",
-                )}
-              >
-                {preferred ? <StarFilled /> : <Star />}
-              </button>
-            </div>
+    <>
+      <Menu
+        icon={<Sparkle />}
+        className="min-w-0 max-w-full shrink"
+        label={
+          harness && choice ? (
+            <>
+              {harness.name}
+              <span className="font-mono text-muted-foreground"> · {choice.model}</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">No usable harness</span>
           )
-        })
-      ) : (
-        <MenuItem disabled>Unavailable here</MenuItem>
-      )}
-    </MenuGroup>
+        }
+        disabled={harnesses.length === 0}
+        open={menuOpen}
+        onOpenChange={(open) => {
+          setMenuOpen(open)
+          // the reveal lasts one opening: the next one is meant to be short again
+          if (!open) setRevealed(false)
+        }}
+      >
+        {harnesses.length === 0 ? (
+          <MenuNote>No harnesses reported by the daemon.</MenuNote>
+        ) : (
+          <MenuRadioGroup
+            value={choice ? encode(choice) : ""}
+            onValueChange={(value) => {
+              if (value === MENU_ACTION.reprobe) return onReprobe()
+              if (value === MENU_ACTION.revealModels) return setRevealed((on) => !on)
+              if (value === MENU_ACTION.manageModels) {
+                setMenuOpen(false)
+                return setManaging(true)
+              }
+              onPick(value)
+            }}
+          >
+            <ModelMenuGroups
+              harnesses={harnesses}
+              hidden={hidden}
+              revealed={revealed}
+              selected={choice}
+              encode={(name, model) => encode({ harness: name, model })}
+              onHiddenChange={supported ? setHidden : undefined}
+              rowAction={(candidate, model) => (
+                <PreferButton
+                  harness={candidate}
+                  model={model}
+                  preferredChoice={preferredChoice}
+                  onTogglePreferred={onTogglePreferred}
+                />
+              )}
+            />
+            <ModelMenuFooter
+              hiddenCount={hiddenTotal(harnesses, hidden)}
+              revealed={revealed}
+              manageable={supported}
+            />
+            <MenuAction value={MENU_ACTION.reprobe} divider={!supported}>
+              {reprobePending ? "Re-probing…" : "Re-probe models"}
+            </MenuAction>
+          </MenuRadioGroup>
+        )}
+      </Menu>
+      <ModelVisibilityDialog
+        open={managing}
+        onOpenChange={setManaging}
+        onPreferredChange={onPreferredChange}
+      />
+    </>
   )
 }
 
