@@ -2,7 +2,40 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.12 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.14 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.14 publication
+
+**Published and promoted on 2026-09-22.**
+[Wisp 0.5.14](https://github.com/Pepewitch/wisp/releases/tag/v0.5.14) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 11:47:21 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`e72173010835de642302e1767a3dbf0e50ab3360`](https://github.com/Pepewitch/wisp/commit/e72173010835de642302e1767a3dbf0e50ab3360),
+landed through [PR #251](https://github.com/Pepewitch/wisp/pull/251).
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/35722598210)
+completed all seven jobs successfully on the first attempt:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, native-core, npm, Rust, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main release candidate also passed update-verifier and Linux-contract before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; the Desktop updater signature and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `e721730` |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+The promotion receipt completed at 11:49:18 UTC with Homebrew tap commit
+[`d18f3ba1a5fa38a9b29e9d895d508038ec680f1c`](https://github.com/Pepewitch/homebrew-tap/commit/d18f3ba1a5fa38a9b29e9d895d508038ec680f1c),
+with the Formula, Cask, and both update channels serving 0.5.14.
+
+0.5.14 adds no database migration. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, an updater
+journey across this version, or the paid evaluator panel — was performed, and
+this record does not claim them. The published assets and release body remain
+immutable; this ledger records the completed outcome separately.
 
 ## 0.5.12 publication
 
