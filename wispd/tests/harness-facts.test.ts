@@ -9,9 +9,9 @@
  * **Every list assertion is containment, never equality**, and each runs in the
  * direction where the failure actually hurts. Equality would also simply be
  * wrong: droid's effortLevels is a documented cross-model union, codex's
- * app-server schema accepts any non-empty effort string, and claude's and
- * cursor's model lists are deliberately curated subsets of a much larger
- * catalog. The opposite direction — the catalog grew — is a *report* from
+ * app-server schema accepts any non-empty effort string, and claude's model
+ * list is a deliberately curated subset of a much larger catalog. The
+ * opposite direction — the catalog grew — is a *report* from
  * harness:snapshot, not a failure, because curation is the owner's call.
  *
  * Marker presence is likewise reported, never asserted: a phrase missing from

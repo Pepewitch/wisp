@@ -855,7 +855,7 @@ describe("daemon API contracts", () => {
     expect(
       body.harnesses.filter((harness) => harness.hasFastMode).map((harness) => harness.name),
     ).toEqual(["codex"]);
-    // cursor (slice 9): a static owner-pinned list WITH an explicit default,
+    // cursor (slice 9): a discovered model list (so the cold response is null),
     // no effort flag (cursor's effort is a bracket override on the model id);
     // images by path delivery, live-verified 2026-08-31 on 2026.08.25 — the
     // shared strategy's generic note, same as droid's
@@ -866,7 +866,7 @@ describe("daemon API contracts", () => {
       imageNote:
         "this harness has no image flag: wisp names the file's path in the prompt and the harness reads it. png and jpeg only, and the prompt asks the model to say so if it cannot see the file.",
       defaults: {},
-      models: { list: ["cursor-grok-4.6-high", "composer-2.5"], defaultModel: "cursor-grok-4.6-high" },
+      models: null,
       probeCommands: [],
       compact: null,
     });
@@ -911,13 +911,10 @@ describe("daemon API contracts", () => {
       harnesses: Array<{ name: string; models: unknown; modelsError?: string }>;
     }>(before);
     for (const harness of unprobed.harnesses) {
-      // claude and cursor have no probe to wait for (their CLIs enumerate
-      // nothing wisp consumes — cursor's `agent models` needs auth and a
-      // captured shape), so their curated staticModels lists stand in from
-      // the very first request — that immediacy is the whole point of the
-      // fallback. Every harness that IS probeable still reports null until
-      // the probe lands.
-      if (harness.name === "claude" || harness.name === "cursor") {
+      // Claude has no probe, so its curated staticModels list stands in from
+      // the first request. Every probeable harness, including Cursor, reports
+      // null until its background probe lands.
+      if (harness.name === "claude") {
         expect(harness.models).not.toBeNull();
       } else {
         expect(harness.models).toBeNull();
@@ -933,6 +930,10 @@ describe("daemon API contracts", () => {
       modelsError: "probe failed",
     });
     expect(failed.harnesses.find((harness) => harness.name === "codex")).toMatchObject({
+      models: null,
+      modelsError: "probe failed",
+    });
+    expect(failed.harnesses.find((harness) => harness.name === "cursor")).toMatchObject({
       models: null,
       modelsError: "probe failed",
     });

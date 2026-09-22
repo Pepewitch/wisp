@@ -295,16 +295,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // id ('claude-opus-4-8[effort=high]'), not a flag — a parameterized
     // model, not an effort level, so the picker offers none.
     //
-    // Owner-pinned list (2026-08-31), ids read off `agent models` live after
-    // auth: "Cursor Grok 4.6" IS the id cursor-grok-4.6-high (there is NO
-    // bare grok-4.6 — guessing it would have failed pre-flight, which is why
-    // the list is only ever read off the CLI). Deliberately static rather
-    // than a `agent models` discovery strategy: the owner pinned this exact
-    // list and default, and a probed default ("auto") would outrank it.
-    // Both ids still appear in 2026.09.18-9a7762b's catalog; newly advertised
-    // Grok 4.5 and Muse variants do not change this owner-curated selection.
-    staticModels: ["cursor-grok-4.6-high", "composer-2.5"],
-    defaultModel: "cursor-grok-4.6-high", // owner-pinned default ("Grok 4.6")
+    // Authenticated model discovery reads `cursor-agent models` and keeps the
+    // Cursor-owned choices (auto, composer-*, cursor-*). The full catalog also
+    // contains every upstream provider model and would flood the picker.
+    modelDiscovery: "cursor-models",
     // A strategy, not a field mapping: cursor's result event carries the
     // WHOLE turn's assistant texts concatenated, not the final message
     // (byte-verified on 2026.08.31 against 2026.08.31-4057e58; fixture

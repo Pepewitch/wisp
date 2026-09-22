@@ -51,9 +51,10 @@ const failIfSpawned: SpawnFn = (cmd) => {
 };
 
 describe("builtin wiring", () => {
-  test("droid and codex name discovery strategies; claude honestly has none", async () => {
+  test("droid, codex, and cursor name discovery strategies; claude honestly has none", async () => {
     expect(BUILTIN_ADAPTERS.droid.modelDiscovery).toBe("droid-models");
     expect(BUILTIN_ADAPTERS.codex.modelDiscovery).toBe("codex-models");
+    expect(BUILTIN_ADAPTERS.cursor.modelDiscovery).toBe("cursor-models");
     expect(BUILTIN_ADAPTERS.claude.modelDiscovery).toBeUndefined();
   });
 });
@@ -174,6 +175,52 @@ describe("codex-models strategy", () => {
   });
 });
 
+describe("cursor-models strategy", () => {
+  const cursorSpawn = (stdout: string, exitCode = 0): SpawnFn => {
+    return (cmd) => {
+      expect(cmd).toEqual(["cursor-agent", "models"]);
+      return { exitCode, stdout, stderr: "" };
+    };
+  };
+
+  test("offers Auto first, then Composer and Cursor models, without flooding the picker", async () => {
+    const d = await discoverModels(
+      BUILTIN_ADAPTERS.cursor,
+      cursorSpawn([
+        "Available models",
+        "",
+        "claude-opus-4-8-high - Claude Opus 4.8",
+        "cursor-grok-4.6-high - Cursor Grok 4.6",
+        "auto - Auto (default)",
+        "composer-2.5 - Composer 2.5",
+        "gpt-5.6-sol - GPT 5.6 Sol",
+        "composer-2.5 - Composer 2.5 duplicate",
+        "cursor-muse-1 - Cursor Muse 1",
+      ].join("\n")),
+    );
+    expect(d.models).toEqual(["auto", "composer-2.5", "cursor-grok-4.6-high", "cursor-muse-1"]);
+    expect(d.defaultModel).toBe("auto");
+    expect(d.notes.join(" ")).toContain("restricted to auto, composer-*, and cursor-*");
+  });
+
+  test("changed or unauthenticated output returns null with an actionable note", async () => {
+    const d = await discoverModels(BUILTIN_ADAPTERS.cursor, cursorSpawn("Please log in first", 1));
+    expect(d.models).toBeNull();
+    expect(d.defaultModel).toBeNull();
+    expect(d.notes.join(" ")).toContain("may be unauthenticated");
+  });
+
+  test("does not claim a filtered-out provider default", async () => {
+    const d = await discoverModels(
+      BUILTIN_ADAPTERS.cursor,
+      cursorSpawn("claude-opus-4-8-high - Claude Opus 4.8 (default)\ncomposer-2.5 - Composer 2.5\n"),
+    );
+    expect(d.models).toEqual(["composer-2.5"]);
+    expect(d.defaultModel).toBeNull();
+    expect(d.notes.join(" ")).toContain("named no default among the filtered models");
+  });
+});
+
 describe("discoverModels without a strategy", () => {
   test("returns nulls without spawning anything (the claude case)", async () => {
     expect(await discoverModels(BUILTIN_ADAPTERS.claude, failIfSpawned)).toEqual({
@@ -248,20 +295,21 @@ describe("formatModelsReport — the effective-choice line", () => {
     expect(lines.join("\n")).toContain("models (4, pinned by the adapter): claude-fable-5-1");
   });
 
-  test("a curated list is reported as offered AND as a subset, not as 'not exposed'", async () => {
-    const lines = await render({ cursor: BUILTIN_ADAPTERS.cursor }, {}, failIfSpawned);
-    // Before this, `wisp models` said cursor "exposes no default" and "any id
-    // the CLI accepts works" while the adapter pinned both — which is how a
-    // task gets created on a model nobody chose (a bare `grok-4.6` that
-    // cursor-agent silently substitutes).
-    expect(lines).toContain("cursor: effective cursor-grok-4.6-high (harness default; no config override)");
-    expect(lines).toContain("  harness default: cursor-grok-4.6-high (pinned by the adapter; cursor-agent names none)");
-    const detail = lines.find((line) => line.includes("models (2, pinned by the adapter)"));
-    expect(detail).toContain("cursor-grok-4.6-high, composer-2.5");
-    // The subset half matters: cursor accepts ~40 real ids, so refusing
-    // anything outside the pinned two would be wrong.
-    expect(detail).toContain("other ids it accepts also work");
-    expect(lines.join("\n")).not.toContain("model list not exposed");
+  test("cursor reports its filtered discovered models and CLI default", async () => {
+    const stdout = [
+      "auto - Auto (default)",
+      "composer-2.5 - Composer 2.5",
+      "cursor-grok-4.6-high - Cursor Grok 4.6",
+      "claude-opus-4-8-high - Claude Opus 4.8",
+    ].join("\n");
+    const lines = await render({ cursor: BUILTIN_ADAPTERS.cursor }, {}, (cmd) => {
+      expect(cmd).toEqual(["cursor-agent", "models"]);
+      return { exitCode: 0, stdout, stderr: "" };
+    });
+    expect(lines).toContain("cursor: effective auto (harness default; no config override)");
+    expect(lines).toContain("  harness default: auto");
+    expect(lines).toContain("  models (3): auto, composer-2.5, cursor-grok-4.6-high");
+    expect(lines.join("\n")).not.toContain("claude-opus-4-8-high");
   });
 
   test("a harness with neither a probe nor a curated list still says 'not exposed'", async () => {
@@ -304,7 +352,7 @@ describe("modelsReport", () => {
 describe("modelDiscovery validation (adapters.json merge contract)", () => {
   test("an unknown strategy name is rejected at load, naming the known ones", async () => {
     expect(() => validateAdapters({ droid: { modelDiscovery: "typo-models" } }, () => {})).toThrow(
-      /adapter 'droid'\.modelDiscovery must name a builtin model-discovery strategy \(known: droid-models, codex-models, opencode-models\)/,
+      /adapter 'droid'\.modelDiscovery must name a builtin model-discovery strategy \(known: droid-models, codex-models, cursor-models, opencode-models\)/,
     );
   });
 
