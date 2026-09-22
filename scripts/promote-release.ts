@@ -7,9 +7,8 @@ import {
   developerIdSigningMetadata,
   macosArchiveRoot,
   MACOS_APP_DIRECTORY,
-  type MacReleaseManifest,
 } from "../wispd/scripts/release-macos";
-import type { LegacyMacReleaseManifest } from "./render-homebrew-formula";
+import type { AnyMacReleaseManifest } from "./render-homebrew-formula";
 import {
   assertDisposableAuditHost,
   changedTapFiles,
@@ -268,19 +267,23 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
 
   const macManifest = JSON.parse(
     readFileSync(join(directory, "release-manifest-darwin-arm64.json"), "utf8"),
-  ) as MacReleaseManifest | LegacyMacReleaseManifest;
+  ) as AnyMacReleaseManifest;
   const daemonArchive = join(directory, `wisp-v${version}-darwin-arm64.tar.gz`);
   const daemonExtracted = join(directory, "daemon-extracted");
   mkdirSync(daemonExtracted);
   run(["tar", "-xzf", daemonArchive, "-C", daemonExtracted]);
-  // Already-published schema-1 releases were ad-hoc signed. Keep promotion
-  // receipts replayable. Every current release must be a branded, stapled app
-  // bundle whose main executable retains the stable daemon identity, nested
-  // under the archive root Homebrew descends into. The root is derived here
-  // rather than read from the manifest, so a manifest cannot point the checks
-  // somewhere other than where the formula installs from.
-  if (macManifest.schemaVersion === 4) {
-    const app = join(daemonExtracted, macosArchiveRoot(version), MACOS_APP_DIRECTORY);
+  // Published releases keep their own archive layout so promotion receipts stay
+  // replayable: schema 1 was an ad-hoc bare binary, schema 3 (0.5.14 only) put
+  // the bundle at the archive root, and schema 4 nests it under the root that
+  // Homebrew descends into. The nested root is derived here rather than read
+  // from the manifest, so a manifest cannot point these checks somewhere other
+  // than where the formula installs from. Every bundle release must be a
+  // branded, stapled app whose executable keeps the stable daemon identity.
+  if (macManifest.schemaVersion === 4 || macManifest.schemaVersion === 3) {
+    const app =
+      macManifest.schemaVersion === 4
+        ? join(daemonExtracted, macosArchiveRoot(version), MACOS_APP_DIRECTORY)
+        : join(daemonExtracted, MACOS_APP_DIRECTORY);
     const daemon = join(app, "Contents/MacOS/wisp");
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
     run(["xcrun", "stapler", "validate", app]);

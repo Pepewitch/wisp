@@ -9,6 +9,7 @@ import {
 import {
   renderHomebrewFormula,
   type LegacyMacReleaseManifest,
+  type UnnestedMacReleaseManifest,
 } from "../scripts/render-homebrew-formula";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
@@ -108,17 +109,29 @@ describe("Homebrew Formula rendering", () => {
   });
 
   // 0.5.14's schema-3 archive put the bundle at the root, so Homebrew descended
-  // into it and `libexec.install "Wisp Daemon.app"` failed for every user. The
-  // renderer must refuse both that schema and any schema-4 manifest whose
-  // archive root is not the directory the formula installs from.
-  test("refuses an archive layout Homebrew cannot install from", () => {
+  // into it and `libexec.install "Wisp Daemon.app"` failed for every user. That
+  // one version stays renderable so its published promotion receipt replays;
+  // every other release must nest the bundle under the archive root.
+  test("replays 0.5.14's unnested archive and requires the nested root elsewhere", () => {
+    const unnested = (version: string): UnnestedMacReleaseManifest => {
+      const { root: _root, ...artifact } = manifest().artifact;
+      return {
+        ...manifest(),
+        schemaVersion: 3,
+        version,
+        artifact: { ...artifact, file: `wisp-v${version}-darwin-arm64.tar.gz` },
+      };
+    };
+    expect(renderHomebrewFormula(unnested("0.5.14"))).toContain(
+      `libexec.install "${MACOS_APP_DIRECTORY}"`,
+    );
+    expect(() => renderHomebrewFormula(unnested("0.5.99"))).toThrow(
+      "not an approved Apple Silicon daemon release",
+    );
     expect(() =>
       renderHomebrewFormula(
         manifest({ artifact: { ...manifest().artifact, root: MACOS_APP_DIRECTORY } }),
       ),
-    ).toThrow("not an approved Apple Silicon daemon release");
-    expect(() =>
-      renderHomebrewFormula(manifest({ schemaVersion: 3 as 4 })),
     ).toThrow("not an approved Apple Silicon daemon release");
     expect(renderHomebrewFormula(manifest())).toContain(
       `libexec.install "${MACOS_APP_DIRECTORY}"`,
