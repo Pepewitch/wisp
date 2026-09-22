@@ -82,10 +82,10 @@ await emit(join(BRAND, "wisp-mark-flat.svg"), markSvg({ size: 64 }));
 await emit(join(BRAND, "wisp-logo-dark.svg"), lockupSvg({ height: 72, fg: PALETTE.paper, bloom: 0.06, id: "ld" }));
 await emit(join(BRAND, "wisp-logo-light.svg"), lockupSvg({ height: 72, fg: PALETTE.inkText, id: "ll" }));
 
-// The Finder icon for a `wisp` binary, one per install, so the rows macOS
-// accumulates in App Management stop being interchangeable. Vector, and
-// deliberately not on the Chrome path below — see cli-icon.ts and
-// docs/MACOS-APP-MANAGEMENT.md.
+// Legacy Finder icons for old unbundled `wisp` binaries and local builds.
+// Current release daemons carry the application icon in their signed bundle.
+// Vector, and deliberately not on the Chrome path below — see cli-icon.ts and
+// docs/INSTALL-MACOS.md.
 await emit(join(BRAND, "cli-icon.pdf"), cliIconPdf("prod"));
 await emit(join(BRAND, "cli-icon-dev.pdf"), cliIconPdf("dev"));
 

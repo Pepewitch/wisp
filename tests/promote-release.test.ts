@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
 import {
+  MACOS_APP_DIRECTORY,
+  MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
   type MacReleaseManifest,
 } from "../wispd/scripts/release-macos";
@@ -50,7 +52,7 @@ function manifests(): {
       },
     },
     macos: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -68,12 +70,19 @@ function manifests(): {
         identity: "Developer ID Application: Example (ABCDEFGHIJ)",
         teamIdentifier: "ABCDEFGHIJ",
       },
+      bundle: {
+        directory: MACOS_APP_DIRECTORY,
+        identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+        executable: "Contents/MacOS/wisp",
+        icon: "Contents/Resources/icon.icns",
+        backgroundOnly: true,
+      },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
-        format: "tar.gz",
+        format: "app-tar.gz",
         sha256: "2".repeat(64),
         size: 42,
-        binary: { file: "wisp", sha256: "3".repeat(64), size: 40, mode: "0755" },
+        binary: { file: MACOS_APP_EXECUTABLE, sha256: "3".repeat(64), size: 40, mode: "0755" },
       },
     },
     desktop: {

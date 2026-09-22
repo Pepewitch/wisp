@@ -153,8 +153,9 @@ fails there — update the constant and both documents rather than the gate.
 ad-hoc signed. Local and reproducibility Desktop builds are also ad-hoc.
 Publishable macOS artifacts must use their `--signed` paths: both require a
 Developer ID Application signature, trusted timestamp, hardened runtime, and
-notarization; the daemon fixes its identifier at `dev.wisp.daemon`, while
-Desktop additionally requires a staple and separate updater signature.
+notarization and staple; the branded background daemon app fixes its identifier
+at `dev.wisp.daemon`, while Desktop additionally requires a separate updater
+signature.
 
 ## Automated publishing on tag push
 
@@ -172,9 +173,9 @@ out:
    `macos-trusted` run concurrently. Linux still reproduces its asset and
    repeats the installer/activation journey. The two independent Mac runners
    build byte-identical ad-hoc daemon/Desktop payloads without target caches.
-   The credential-isolated trusted runner builds, Developer ID signs, and
-   notarizes the public daemon, then signs, notarizes, staples, updater-signs,
-   and negatively tests the public Desktop archive. It also transfers the
+   The credential-isolated trusted runner builds, Developer ID signs,
+   notarizes, and staples the public daemon app, then signs, notarizes, staples,
+   updater-signs, and negatively tests the public Desktop archive. It also transfers the
    already-built verifier with its checksum.
 3. `publish` receives those outputs, compares the two independent Mac payloads,
    verifies all ten checksum-bound assets and the updater signature, renders
@@ -483,8 +484,9 @@ the Tauri updater key is additionally required for Desktop.
 Timestamped Apple signatures are intentionally not byte-reproducible. Neither
 signed pass is compared with its ad-hoc payload. The daemon release script
 requires its fixed code-signing identifier and stable non-`cdhash` designated
-requirement, submits the exact signed executable to Apple's notary service,
-then re-extracts the archive and repeats identity checks. The Desktop release
+requirement, submits the exact signed background app to Apple's notary service,
+staples it, then re-extracts the archive and repeats identity, icon, and trust
+checks. The Desktop release
 script verifies Developer ID identity, timestamp, hardened runtime,
 notarization, and staple; archives the app; updater-signs that exact archive;
 verifies the signature with an independent streaming verifier; re-extracts the
@@ -493,8 +495,8 @@ bind their public trust posture.
 
 The builders refuse a dirty tree or a `wispd/package.json`/`wispd/src/version.ts`
 mismatch. The Mac daemon builder also verifies arm64 architecture, the expected
-ad-hoc or Developer ID posture, archive contents, and embedded version/commit
-identity.
+ad-hoc or Developer ID posture, background-app metadata and icon, archive
+contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
 and a clean source tree after packaging. Tag CI builds and reproduces the UI on
@@ -698,10 +700,13 @@ done
   shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 daemon_extracted="$(mktemp -d)"
 tar -xzf "$anon/wisp-v$version-darwin-arm64.tar.gz" -C "$daemon_extracted"
-codesign --verify --strict --verbose=2 "$daemon_extracted/wisp"
-codesign --display --requirements - "$daemon_extracted/wisp" 2>&1 | \
+daemon_app="$daemon_extracted/Wisp Daemon.app"
+daemon="$daemon_app/Contents/MacOS/wisp"
+codesign --verify --deep --strict --verbose=2 "$daemon_app"
+codesign --display --requirements - "$daemon" 2>&1 | \
   grep -F 'identifier "dev.wisp.daemon"'
-spctl --assess --type execute --verbose=4 "$daemon_extracted/wisp"
+xcrun stapler validate "$daemon_app"
+spctl --assess --type execute --verbose=4 "$daemon_app"
 cargo run --quiet --locked \
   --manifest-path scripts/update-verifier/Cargo.toml \
   --bin verify-update-signature \

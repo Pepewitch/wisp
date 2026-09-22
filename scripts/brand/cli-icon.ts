@@ -4,8 +4,8 @@
  * macOS identifies an unbundled executable in Privacy & Security ▸ App
  * Management by its file icon, and a bare Mach-O has none, so every release
  * and every local build lands in that list as an identical unlabelled row.
- * `scripts/macos/stamp-icon.sh` attaches one of these; the accumulation itself
- * is explained in docs/MACOS-APP-MANAGEMENT.md.
+ * `scripts/macos/stamp-icon.sh` attaches one of these to a legacy or local
+ * unbundled binary; docs/INSTALL-MACOS.md explains the release bundle.
  *
  * PDF rather than PNG, and written by hand rather than rendered, for one
  * reason: the slot that decides whether this works is a ~16px Settings row,

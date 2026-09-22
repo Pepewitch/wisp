@@ -93,9 +93,9 @@ Homebrew is the bootstrap and recovery installer. Tauri owns normal in-app
 Desktop upgrades after the first self-update-capable release:
 
 - GitHub Actions imports a Developer ID Application certificate, signs with a
-  trusted timestamp and hardened runtime, and notarizes both macOS executables;
-  `Wisp.app` is also stapled, while the nonbundled daemon keeps a stable
-  `dev.wisp.daemon` code-signing identifier;
+  trusted timestamp and hardened runtime, and notarizes and staples both macOS
+  application bundles; the background daemon bundle keeps a stable
+  `dev.wisp.daemon` code-signing identifier and carries the Wisp icon;
 - the release script archives that exact app once, signs the archive with the
   dedicated Tauri updater key, independently verifies the signature, then
   re-extracts the archive and repeats Apple trust checks;

@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { compareVersions } from "../shared/release-version";
 import {
+  MACOS_APP_DIRECTORY,
+  MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
   type MacReleaseManifest,
 } from "../wispd/scripts/release-macos";
@@ -12,19 +14,35 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const LAST_AD_HOC_MACOS_RELEASE = "0.5.13";
 
 /** Read-only compatibility for replaying already-published release receipts. */
-export interface LegacyMacReleaseManifest extends Omit<MacReleaseManifest, "schemaVersion" | "signing"> {
+export interface LegacyMacReleaseManifest {
   schemaVersion: 1;
+  product: "wisp";
+  version: string;
+  apiProtocolVersion: number;
+  commit: string;
+  dirty: false;
+  target: { os: "darwin"; arch: "arm64" };
+  supportedBaseline: string;
   signing: {
     kind: "ad-hoc";
     developerId: false;
     notarized: false;
     timestamp: false;
   };
+  artifact: {
+    file: string;
+    format: "tar.gz";
+    sha256: string;
+    size: number;
+    binary: { file: "wisp"; sha256: string; size: number; mode: "0755" };
+  };
 }
 
-function approvedSignedManifest(manifest: MacReleaseManifest | LegacyMacReleaseManifest): boolean {
+function approvedSignedManifest(
+  manifest: MacReleaseManifest | LegacyMacReleaseManifest,
+): manifest is MacReleaseManifest {
   return Boolean(
-    manifest.schemaVersion === 2 &&
+    manifest.schemaVersion === 3 &&
       manifest.signing.kind === "developer-id" &&
       manifest.signing.developerId &&
       manifest.signing.notarized &&
@@ -69,8 +87,16 @@ export function renderHomebrewFormula(manifest: MacReleaseManifest | LegacyMacRe
     manifest.target.os !== "darwin" ||
     manifest.target.arch !== "arm64" ||
     (!signed && !historicalAdHoc) ||
-    manifest.artifact.format !== "tar.gz" ||
-    manifest.artifact.binary.file !== "wisp"
+    (signed &&
+      (manifest.artifact.format !== "app-tar.gz" ||
+        manifest.artifact.binary.file !== MACOS_APP_EXECUTABLE ||
+        manifest.bundle.directory !== MACOS_APP_DIRECTORY ||
+        manifest.bundle.identifier !== MACOS_CODE_SIGNING_IDENTIFIER ||
+        manifest.bundle.executable !== "Contents/MacOS/wisp" ||
+        manifest.bundle.icon !== "Contents/Resources/icon.icns" ||
+        manifest.bundle.backgroundOnly !== true)) ||
+    (historicalAdHoc &&
+      (manifest.artifact.format !== "tar.gz" || manifest.artifact.binary.file !== "wisp"))
   ) {
     throw new Error("manifest is not an approved Apple Silicon daemon release");
   }
@@ -92,15 +118,18 @@ class Wisp < Formula
   depends_on :macos
 
   def install
-    bin.install "wisp"
+${signed
+  ? `    libexec.install "${MACOS_APP_DIRECTORY}"
+    bin.install_symlink libexec/"${MACOS_APP_DIRECTORY}/Contents/MacOS/wisp"`
+  : `    bin.install "wisp"`}
   end
 
   def caveats
     <<~EOS
 ${signed
   ? `      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is Developer ID signed and
-      notarized. Its stable code identity preserves macOS privacy permissions
-      across upgrades.`
+      notarized. Its branded background app and stable code identity preserve
+      the App Management icon and privacy permission across upgrades.`
   : `      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is ad-hoc signed, not Developer ID
       signed or notarized. Gatekeeper may require explicit approval. Do not
       disable Gatekeeper globally.`}
@@ -112,7 +141,7 @@ ${signed
   end
 
   service do
-    run [opt_bin/"wisp", "serve"]
+    run [${signed ? `opt_libexec/"${MACOS_APP_DIRECTORY}/Contents/MacOS/wisp"` : `opt_bin/"wisp"`}, "serve"]
     keep_alive true
     working_dir Dir.home
     environment_variables PATH: "#{std_service_path_env}:#{Dir.home}/.local/bin:#{Dir.home}/.bun/bin"
