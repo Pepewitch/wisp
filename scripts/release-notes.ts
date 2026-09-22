@@ -150,9 +150,10 @@ permission boundary. Closing Desktop leaves daemons and agents running.
 Intel macOS and non-Apple-Silicon Desktop builds are unsupported.
 
 Desktop publication requires Developer ID signing, notarization, a stapled
-ticket, and a verified updater signature. The macOS daemon remains ad-hoc
-signed. Automated release gates verify immutable downloads and promote the
-Formula, Cask, daemon channel, and Desktop channel together. At source
+ticket, and a verified updater signature. The public macOS daemon application
+also requires Developer ID signing, notarization, and a stapled ticket.
+Automated release gates verify immutable downloads and promote the Formula,
+Cask, daemon channel, and Desktop channel together. At source
 preparation, the ${version} artifact gates are pending; the [qualification ledger](https://github.com/Pepewitch/wisp/blob/main/docs/v0.5/QUALIFICATION.md)
 records the final outcome separately from these immutable release notes.
 
