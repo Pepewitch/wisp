@@ -70,10 +70,11 @@ remaining platform gaps, and native dependency advisory scope.
 6. Review task branches before merging or pushing them.
 7. On Apple Silicon, install only through the
    documented `Pepewitch/tap/wisp` Formula or `wisp-desktop` Cask, verify the
-   GitHub owner and checksum, and do not disable Gatekeeper globally. Current
-   Desktop tag releases require Developer ID signing, notarization, stapling,
-   and updater-signature verification before immutable publication, followed
-   by anonymous public-byte verification before channel promotion.
+   GitHub owner and checksum, and do not disable Gatekeeper globally. The tag
+   release pipeline requires Developer ID signing and notarization for the
+   macOS daemon and Desktop; Desktop additionally requires stapling and
+   updater-signature verification. Anonymous public-byte verification precedes
+   channel promotion.
 
 The update API accepts only a newer release returned by the fixed
 `Pepewitch/wisp` GitHub endpoint. Linux activation verifies the published

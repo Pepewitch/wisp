@@ -4,12 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertMacReleaseSource,
+  developerIdSigningMetadata,
   deterministicTarGz,
   isAdHocCodeSignature,
+  MACOS_CODE_SIGNING_IDENTIFIER,
   MACOS_CHECKSUMS,
   MACOS_MANIFEST,
   MACOS_SUPPORTED_BASELINE,
   MACOS_TARGET,
+  notarizationAccepted,
   type MacReleaseManifest,
 } from "../scripts/release-macos";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
@@ -63,6 +66,38 @@ describe("Apple Silicon release metadata", () => {
     ).toBe(false);
   });
 
+  test("requires a stable Developer ID identity for the daemon", () => {
+    const signature = [
+      `Identifier=${MACOS_CODE_SIGNING_IDENTIFIER}`,
+      "Authority=Developer ID Application: Example Corp (ABCDE12345)",
+      "TeamIdentifier=ABCDE12345",
+      "Timestamp=22 Sep 2026 at 10:30:00",
+      "CodeDirectory v=20500 flags=0x10000(runtime) hashes=10+2 location=embedded",
+    ].join("\n");
+    const requirement =
+      `designated => identifier "${MACOS_CODE_SIGNING_IDENTIFIER}" and anchor apple generic ` +
+      "and certificate leaf[subject.OU] = ABCDE12345";
+    expect(developerIdSigningMetadata(signature, requirement, true)).toEqual({
+      kind: "developer-id",
+      developerId: true,
+      notarized: true,
+      timestamp: true,
+      hardenedRuntime: true,
+      identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+      identity: "Developer ID Application: Example Corp (ABCDE12345)",
+      teamIdentifier: "ABCDE12345",
+    });
+    expect(() => developerIdSigningMetadata(signature, 'designated => cdhash H"abc"')).toThrow(
+      "stable Developer ID designated requirement",
+    );
+  });
+
+  test("accepts only a successful notarization result", () => {
+    expect(notarizationAccepted(JSON.stringify({ id: "submission-id", status: "Accepted" }))).toBe(true);
+    expect(notarizationAccepted(JSON.stringify({ id: "submission-id", status: "Invalid" }))).toBe(false);
+    expect(notarizationAccepted("not json")).toBe(false);
+  });
+
   test("refuses dirty Mac release sources on every build host", () => {
     expect(() =>
       assertMacReleaseSource(
@@ -92,9 +127,9 @@ describe("Apple Silicon release metadata", () => {
     expect(() => assertMacReleaseSource(root, identity, true)).not.toThrow();
   });
 
-  test("manifest states the ad-hoc and non-notarized security posture", () => {
+  test("manifest records the reproducible build's ad-hoc security posture", () => {
     const manifest: MacReleaseManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -107,6 +142,10 @@ describe("Apple Silicon release metadata", () => {
         developerId: false,
         notarized: false,
         timestamp: false,
+        hardenedRuntime: false,
+        identifier: null,
+        identity: null,
+        teamIdentifier: null,
       },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
@@ -126,6 +165,10 @@ describe("Apple Silicon release metadata", () => {
       developerId: false,
       notarized: false,
       timestamp: false,
+      hardenedRuntime: false,
+      identifier: null,
+      identity: null,
+      teamIdentifier: null,
     });
   });
 });

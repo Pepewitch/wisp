@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
-import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
+import {
+  MACOS_CODE_SIGNING_IDENTIFIER,
+  type MacReleaseManifest,
+} from "../wispd/scripts/release-macos";
 import {
   assertDisposableAuditHost,
   assertPromotableFixture,
@@ -47,7 +50,7 @@ function manifests(): {
       },
     },
     macos: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -55,7 +58,16 @@ function manifests(): {
       dirty: false,
       target: { os: "darwin", arch: "arm64" },
       supportedBaseline: "macOS 26.6.2 (Apple Silicon arm64)",
-      signing: { kind: "ad-hoc", developerId: false, notarized: false, timestamp: false },
+      signing: {
+        kind: "developer-id",
+        developerId: true,
+        notarized: true,
+        timestamp: true,
+        hardenedRuntime: true,
+        identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+        identity: "Developer ID Application: Example (ABCDEFGHIJ)",
+        teamIdentifier: "ABCDEFGHIJ",
+      },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
         format: "tar.gz",

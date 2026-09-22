@@ -5,7 +5,10 @@ import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import { renderDaemonUpdateChannel } from "./render-daemon-update-channel";
 import { renderDesktopUpdateChannel } from "./render-desktop-update-channel";
 import { renderHomebrewCask } from "./render-homebrew-cask";
-import { renderHomebrewFormula } from "./render-homebrew-formula";
+import {
+  renderHomebrewFormula,
+  type LegacyMacReleaseManifest,
+} from "./render-homebrew-formula";
 
 const AUDIT_TAP = "Pepewitch/tap";
 const RELEASE_TAG = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha\.(?:0|[1-9]\d*)))?$/;
@@ -26,7 +29,7 @@ export interface ReleaseMetadata {
 
 export interface PromotionManifests {
   linux: ReleaseManifest;
-  macos: MacReleaseManifest;
+  macos: MacReleaseManifest | LegacyMacReleaseManifest;
   desktop: DesktopReleaseManifest;
 }
 

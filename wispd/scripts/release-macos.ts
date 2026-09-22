@@ -21,9 +21,21 @@ export const MACOS_TARGET = "darwin-arm64";
 export const MACOS_SUPPORTED_BASELINE = "macOS 26.6.2 (Apple Silicon arm64)";
 export const MACOS_MANIFEST = "release-manifest-darwin-arm64.json";
 export const MACOS_CHECKSUMS = "SHA256SUMS-darwin-arm64";
+export const MACOS_CODE_SIGNING_IDENTIFIER = "dev.wisp.daemon";
+
+export interface MacSigning {
+  kind: "ad-hoc" | "developer-id";
+  developerId: boolean;
+  notarized: boolean;
+  timestamp: boolean;
+  hardenedRuntime: boolean;
+  identifier: typeof MACOS_CODE_SIGNING_IDENTIFIER | null;
+  identity: string | null;
+  teamIdentifier: string | null;
+}
 
 export interface MacReleaseManifest {
-  schemaVersion: 1;
+  schemaVersion: 2;
   product: "wisp";
   version: string;
   apiProtocolVersion: number;
@@ -34,12 +46,7 @@ export interface MacReleaseManifest {
     arch: "arm64";
   };
   supportedBaseline: string;
-  signing: {
-    kind: "ad-hoc";
-    developerId: false;
-    notarized: false;
-    timestamp: false;
-  };
+  signing: MacSigning;
   artifact: {
     file: string;
     format: "tar.gz";
@@ -59,6 +66,8 @@ export interface ReleaseMacOptions {
   outDir?: string;
   identity?: SourceIdentity;
   requireTag?: boolean;
+  /** Production-only Developer ID and notarization path. */
+  signed?: boolean;
 }
 
 function output(bytes: Uint8Array): string {
@@ -79,6 +88,60 @@ export function isAdHocCodeSignature(output: string): boolean {
     const trimmed = line.trim();
     return trimmed === "Signature=adhoc" || /^CodeDirectory\b.*\bflags=\S*\([^)]*\badhoc\b[^)]*\)/.test(trimmed);
   });
+}
+
+function signatureField(output: string, name: string): string | null {
+  return output.match(new RegExp(`^${name}=(.+)$`, "m"))?.[1]?.trim() ?? null;
+}
+
+export function developerIdSigningMetadata(
+  output: string,
+  requirement: string,
+  notarized = false,
+): MacSigning {
+  const identity = signatureField(output, "Authority");
+  const teamIdentifier = signatureField(output, "TeamIdentifier");
+  if (signatureField(output, "Identifier") !== MACOS_CODE_SIGNING_IDENTIFIER) {
+    throw new Error("macOS daemon code-signing identifier is not stable");
+  }
+  if (!identity?.startsWith("Developer ID Application:")) {
+    throw new Error("macOS daemon is not Developer ID Application signed");
+  }
+  if (!teamIdentifier || teamIdentifier === "not set") {
+    throw new Error("macOS daemon has no Developer ID team identifier");
+  }
+  if (!/^Timestamp=.+$/m.test(output)) {
+    throw new Error("macOS daemon has no trusted signing timestamp");
+  }
+  if (!/^CodeDirectory .*flags=.*\(runtime\)/m.test(output)) {
+    throw new Error("macOS daemon does not enable the hardened runtime");
+  }
+  if (
+    requirement.includes("cdhash") ||
+    !requirement.includes(`identifier "${MACOS_CODE_SIGNING_IDENTIFIER}"`) ||
+    !requirement.includes("anchor apple generic")
+  ) {
+    throw new Error("macOS daemon does not have a stable Developer ID designated requirement");
+  }
+  return {
+    kind: "developer-id",
+    developerId: true,
+    notarized,
+    timestamp: true,
+    hardenedRuntime: true,
+    identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+    identity,
+    teamIdentifier,
+  };
+}
+
+export function notarizationAccepted(output: string): boolean {
+  try {
+    const value = JSON.parse(output) as { id?: unknown; status?: unknown };
+    return typeof value.id === "string" && value.id.length > 0 && value.status === "Accepted";
+  } catch {
+    return false;
+  }
 }
 
 function git(root: string, args: string[]): string {
@@ -142,7 +205,12 @@ export function deterministicTarGz(binary: Uint8Array): Buffer {
   return gzipSync(tar, { level: 9 });
 }
 
-function verifyMacBinary(binary: string, identity: SourceIdentity): void {
+function verifyMacBinary(
+  binary: string,
+  identity: SourceIdentity,
+  signed: boolean,
+  notarized = false,
+): MacSigning {
   const fileType = run(["/usr/bin/file", "-b", binary]);
   if (!/Mach-O 64-bit executable arm64/.test(fileType)) {
     throw new Error(`artifact is not a native arm64 Mach-O executable: ${fileType}`);
@@ -151,7 +219,23 @@ function verifyMacBinary(binary: string, identity: SourceIdentity): void {
   if (architectures.trim() !== "arm64") throw new Error(`artifact architectures must be exactly arm64, got ${architectures}`);
   run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", binary]);
   const signature = run(["/usr/bin/codesign", "--display", "--verbose=4", binary]);
-  if (!isAdHocCodeSignature(signature)) throw new Error(`artifact does not have an ad-hoc signature: ${signature}`);
+  let signing: MacSigning;
+  if (signed) {
+    const requirement = run(["/usr/bin/codesign", "--display", "--requirements", "-", binary]);
+    signing = developerIdSigningMetadata(signature, requirement, notarized);
+  } else {
+    if (!isAdHocCodeSignature(signature)) throw new Error(`artifact does not have an ad-hoc signature: ${signature}`);
+    signing = {
+      kind: "ad-hoc",
+      developerId: false,
+      notarized: false,
+      timestamp: false,
+      hardenedRuntime: signature.includes("(runtime)"),
+      identifier: null,
+      identity: null,
+      teamIdentifier: null,
+    };
+  }
   const reported = JSON.parse(run([binary, "version", "--json"])) as {
     version?: unknown;
     commit?: unknown;
@@ -160,6 +244,44 @@ function verifyMacBinary(binary: string, identity: SourceIdentity): void {
   if (reported.version !== VERSION || reported.commit !== identity.commit || reported.dirty !== false) {
     throw new Error(`artifact identity mismatch: ${JSON.stringify(reported)}`);
   }
+  return signing;
+}
+
+function requireSignedEnvironment(): string {
+  for (const name of ["APPLE_SIGNING_IDENTITY", "APPLE_API_ISSUER", "APPLE_API_KEY", "APPLE_API_KEY_PATH"]) {
+    if (!process.env[name]) throw new Error(`signed macOS daemon release requires ${name}`);
+  }
+  const identities = run(["/usr/bin/security", "find-identity", "-v", "-p", "codesigning"]);
+  if (!identities.includes(process.env.APPLE_SIGNING_IDENTITY!)) {
+    throw new Error("signed macOS daemon release requires APPLE_SIGNING_IDENTITY in an unlocked Keychain");
+  }
+  return process.env.APPLE_SIGNING_IDENTITY!;
+}
+
+function notarizeMacBinary(binary: string, temp: string): void {
+  const archive = join(temp, "wisp-notarization.zip");
+  run(["/usr/bin/ditto", "-c", "-k", "--keepParent", binary, archive]);
+  const cmd = [
+    "/usr/bin/xcrun",
+    "notarytool",
+    "submit",
+    archive,
+    "--key",
+    process.env.APPLE_API_KEY_PATH!,
+    "--key-id",
+    process.env.APPLE_API_KEY!,
+    "--issuer",
+    process.env.APPLE_API_ISSUER!,
+    "--wait",
+    "--output-format",
+    "json",
+  ];
+  const result = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
+  const stdout = output(result.stdout);
+  if (result.exitCode !== 0 || !notarizationAccepted(stdout)) {
+    const detail = output(result.stderr) || stdout;
+    throw new Error(`macOS daemon notarization failed${detail ? `: ${detail}` : ""}`);
+  }
 }
 
 export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest {
@@ -167,6 +289,11 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
     throw new Error(`macOS releases require an Apple Silicon build host, got ${process.platform} ${arch()}`);
   }
   const root = options.root ?? SCRIPT_ROOT;
+  const signed = options.signed ?? false;
+  if (signed && !(options.requireTag ?? false)) {
+    throw new Error("a signed macOS daemon release requires --require-tag");
+  }
+  const signingIdentity = signed ? requireSignedEnvironment() : null;
   const identity = options.identity ?? sourceIdentity(root);
   assertMacReleaseSource(root, identity, options.requireTag ?? false);
 
@@ -176,8 +303,27 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
     const binary = join(temp, "wisp");
     buildBinary({ target: "darwin-arm64", outfile: binary, root, identity });
     chmodSync(binary, 0o755);
-    run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", binary]);
-    verifyMacBinary(binary, identity);
+    if (signed) {
+      run([
+        "/usr/bin/codesign",
+        "--force",
+        "--sign",
+        signingIdentity!,
+        "--identifier",
+        MACOS_CODE_SIGNING_IDENTIFIER,
+        "--options",
+        "runtime",
+        "--timestamp",
+        binary,
+      ]);
+    } else {
+      run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", binary]);
+    }
+    let signing = verifyMacBinary(binary, identity, signed);
+    if (signed) {
+      notarizeMacBinary(binary, temp);
+      signing = { ...signing, notarized: true };
+    }
 
     mkdirSync(outDir, { recursive: true });
     const artifactName = `wisp-v${VERSION}-${MACOS_TARGET}.tar.gz`;
@@ -188,10 +334,13 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
     const extracted = join(temp, "extracted");
     mkdirSync(extracted);
     run(["/usr/bin/tar", "-xzf", artifactPath, "-C", extracted]);
-    verifyMacBinary(join(extracted, "wisp"), identity);
+    const extractedSigning = verifyMacBinary(join(extracted, "wisp"), identity, signed, signed);
+    if (JSON.stringify(extractedSigning) !== JSON.stringify(signing)) {
+      throw new Error("extracted macOS daemon signing identity differs from the staged executable");
+    }
 
     const manifest: MacReleaseManifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -199,12 +348,7 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
       dirty: false,
       target: { os: "darwin", arch: "arm64" },
       supportedBaseline: MACOS_SUPPORTED_BASELINE,
-      signing: {
-        kind: "ad-hoc",
-        developerId: false,
-        notarized: false,
-        timestamp: false,
-      },
+      signing,
       artifact: {
         file: artifactName,
         format: "tar.gz",
@@ -234,9 +378,10 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
 if (import.meta.main) {
   try {
     const requireTag = process.argv.slice(2).includes("--require-tag");
-    const unknown = process.argv.slice(2).filter((arg) => arg !== "--require-tag");
+    const signed = process.argv.slice(2).includes("--signed");
+    const unknown = process.argv.slice(2).filter((arg) => arg !== "--require-tag" && arg !== "--signed");
     if (unknown.length > 0) throw new Error(`unknown argument: ${unknown[0]}`);
-    const manifest = releaseMac({ requireTag });
+    const manifest = releaseMac({ requireTag, signed });
     console.log(
       `released ${manifest.artifact.file} (${manifest.artifact.sha256}) from ${manifest.commit} for ${MACOS_SUPPORTED_BASELINE}`,
     );

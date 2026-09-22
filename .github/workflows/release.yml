@@ -248,10 +248,10 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Secrets are isolated to the one job that needs them. It builds, signs,
-  # notarizes, staples, updater-signs, and negatively tests the public payload
-  # in parallel with the two credential-free reproducibility runners.
-  desktop-trusted:
+  # Secrets are isolated to the one job that needs them. It Developer ID signs
+  # and notarizes the daemon, then signs, notarizes, staples, updater-signs, and
+  # negatively tests Desktop in parallel with the credential-free builders.
+  macos-trusted:
     needs: release-source
     if: github.event_name == 'push'
     runs-on: macos-15
@@ -278,7 +278,7 @@ jobs:
         with:
           workspaces: desktop/src-tauri
           cache-targets: false
-      - name: require Desktop release credentials
+      - name: require trusted macOS release credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -295,7 +295,7 @@ jobs:
             TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           do
             test -n "${!name}" || {
-              echo "missing required Desktop release secret: $name" >&2
+              echo "missing required macOS release secret: $name" >&2
               exit 1
             }
           done
@@ -313,7 +313,7 @@ jobs:
           (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
           mkdir -p web/ui-dist
           cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
-      - name: build and verify the trusted Desktop release
+      - name: build and verify the trusted macOS releases
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -323,6 +323,25 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          certificate="$RUNNER_TEMP/release-certificate.p12"
+          keychain="$RUNNER_TEMP/release-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$certificate"
+          chmod 0600 "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -f "$certificate"' EXIT
+          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
+
+          bun run wispd/scripts/release-macos.ts --require-tag --signed
           target="$RUNNER_TEMP/wisp-desktop-release-signed"
           WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$target" \
             bun run scripts/release-desktop.ts --require-tag --signed
@@ -343,10 +362,10 @@ jobs:
           cp "$verifier" "$RUNNER_TEMP/release-verifier/verify-update-signature"
           (cd "$RUNNER_TEMP/release-verifier" &&
             shasum -a 256 verify-update-signature > SHA256SUMS)
-      - name: stage trusted Desktop assets
+      - name: stage trusted macOS assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-trusted-desktop-assets
+          name: release-trusted-macos-assets
           path: dist/release/${{ github.ref_name }}/*
           retention-days: 7
           if-no-files-found: error
@@ -359,7 +378,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [release-linux, macos-repro, desktop-trusted]
+    needs: [release-linux, macos-repro, macos-trusted]
     if: github.event_name == 'push'
     # This remains the single publication point. It receives only verified
     # artifacts, compares the independent Mac payloads, and has no Apple or tap
@@ -404,10 +423,13 @@ jobs:
             actual="$(for file in "$directory"/*; do basename "$file"; done | LC_ALL=C sort)"
             test "$actual" = "$expected"
           done
-          trusted="$artifacts/release-trusted-desktop-assets"
+          trusted="$artifacts/release-trusted-macos-assets"
           trusted_expected="$(printf '%s\n' \
+            SHA256SUMS-darwin-arm64 \
             SHA256SUMS-desktop-darwin-arm64 \
+            release-manifest-darwin-arm64.json \
             release-manifest-desktop-darwin-arm64.json \
+            "wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             "wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz.sig" | LC_ALL=C sort)"
           trusted_actual="$(for file in "$trusted"/*; do basename "$file"; done | LC_ALL=C sort)"
@@ -589,6 +611,22 @@ jobs:
             shasum -a 256 -c SHA256SUMS &&
             shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
             shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
+          daemon_extracted="$(mktemp -d)"
+          tar -xzf "$anon/wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            -C "$daemon_extracted"
+          daemon="$daemon_extracted/wisp"
+          codesign --verify --strict --verbose=2 "$daemon"
+          daemon_signature="$(codesign --display --verbose=4 "$daemon" 2>&1)"
+          grep -F 'Identifier=dev.wisp.daemon' <<<"$daemon_signature"
+          grep -F 'Authority=Developer ID Application:' <<<"$daemon_signature"
+          grep -E '^TeamIdentifier=.+$' <<<"$daemon_signature"
+          grep -E '^Timestamp=.+$' <<<"$daemon_signature"
+          grep -E '^CodeDirectory .*flags=.*\(runtime\)' <<<"$daemon_signature"
+          daemon_requirement="$(codesign --display --requirements - "$daemon" 2>&1)"
+          grep -F 'identifier "dev.wisp.daemon"' <<<"$daemon_requirement"
+          grep -F 'anchor apple generic' <<<"$daemon_requirement"
+          ! grep -F 'cdhash' <<<"$daemon_requirement"
+          spctl --assess --type execute --verbose=4 "$daemon"
           verifier="$RUNNER_TEMP/release-artifacts/release-update-verifier/verify-update-signature"
           "$verifier" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \

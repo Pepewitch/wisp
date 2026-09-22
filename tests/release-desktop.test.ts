@@ -147,14 +147,17 @@ describe("Wisp Desktop release metadata", () => {
     expect(workflow).toContain('WISP_UPDATE_VERIFIER=$RUNNER_TEMP/release-verifier/verify-update-signature');
   });
 
-  test("keeps credentials in the parallel trusted job and publication build-free", () => {
+  test("signs both Mac artifacts in the trusted job and keeps publication build-free", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-    const trusted = workflow.slice(workflow.indexOf("  desktop-trusted:"), workflow.indexOf("  publish:"));
+    const trusted = workflow.slice(workflow.indexOf("  macos-trusted:"), workflow.indexOf("  publish:"));
     const publish = workflow.slice(workflow.indexOf("  publish:"), workflow.indexOf("  promote:"));
 
     expect(trusted).toContain("secrets.APPLE_CERTIFICATE");
     expect(trusted).toContain("secrets.TAURI_SIGNING_PRIVATE_KEY");
-    expect(publish).toContain("needs: [release-linux, macos-repro, desktop-trusted]");
+    expect(trusted).toContain("wispd/scripts/release-macos.ts --require-tag --signed");
+    expect(trusted).toContain("scripts/release-desktop.ts --require-tag --signed");
+    expect(trusted).toContain("name: release-trusted-macos-assets");
+    expect(publish).toContain("needs: [release-linux, macos-repro, macos-trusted]");
     expect(publish).not.toContain("secrets.APPLE_");
     expect(publish).not.toContain("scripts/release-desktop.ts");
     expect(publish).not.toContain("wispd/scripts/release-macos.ts");
