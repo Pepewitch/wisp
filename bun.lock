@@ -67,7 +67,7 @@
     },
     "wispd": {
       "name": "wispd",
-      "version": "0.5.13",
+      "version": "0.5.14",
       "bin": {
         "wisp": "./src/index.ts",
       },
