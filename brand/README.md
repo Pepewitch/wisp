@@ -144,7 +144,7 @@ component from the generator rather than hand-copying its paths is what keeps th
 app's mark and `brand/` from drifting apart.
 
 The two CLI icons are vector PDFs for small Finder and System Settings rows.
-See [CLI file icons](#cli-file-icons) below and
+See [legacy CLI file icons](#legacy-cli-file-icons) below and
 [macOS permissions](../docs/INSTALL-MACOS.md#macos-permissions).
 
 `og.png` is **not** served by the daemon and is not referenced by the app. It has
@@ -173,10 +173,11 @@ a particular Chrome/Chromium binary, set `CHROME_PATH` and run
 `bun run scripts/brand/build.ts --pwa-only`. Add `--check` to verify them without
 rewriting. This also checks the shared generated SVGs and favicon.
 
-## CLI file icons
+## Legacy CLI file icons
 
-Generate the icons, then stamp an installed binary or a local development
-build on macOS:
+Current publishable macOS releases put the daemon in a signed `Wisp Daemon.app`, so
+Homebrew installs its durable icon automatically. For an old unbundled release
+or a local development build, generate the icons and stamp the binary on macOS:
 
 ```sh
 bun run brand
@@ -185,8 +186,9 @@ bash scripts/macos/stamp-icon.sh --dev dist/wisp
 ```
 
 The production icon uses a dark background; the development icon uses light
-violet. Reopen System Settings to refresh the display. An upgrade replaces the
-file and its icon, so stamp again if wanted. To remove an icon, use
+violet. Reopen System Settings to refresh the display. An upgrade of an old
+unbundled release replaces the file and its icon, so stamp again if wanted. To
+remove an icon, use
 `bash scripts/macos/stamp-icon.sh --clear /path/to/wisp`.
 
 Stamping writes a resource fork, not the Mach-O code directory. Ordinary

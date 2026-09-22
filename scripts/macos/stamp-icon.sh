@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Give an installed `wisp` binary a Finder icon, so macOS can tell one copy
-# from another in Privacy & Security ▸ App Management.
+# Give a legacy or local unbundled `wisp` binary a Finder icon, so macOS can
+# tell one copy from another in Privacy & Security ▸ App Management. Current
+# release daemons carry the icon inside their signed application bundle.
 #
 #   bash scripts/macos/stamp-icon.sh                    # stamp `which wisp`
 #   bash scripts/macos/stamp-icon.sh --dev dist/wisp    # stamp a local build
@@ -9,8 +10,8 @@
 # macOS lists an unbundled executable in App Management under its file name
 # with its file icon. Every Wisp release and every `bun run build` produces a
 # Mach-O called `wisp` with no icon, so the list fills with identical rows.
-# Stamping one binary is what makes its row legible; docs/MACOS-APP-MANAGEMENT.md
-# explains why the rows accumulate in the first place.
+# Stamping one binary is what makes its row legible; docs/INSTALL-MACOS.md
+# explains why old rows accumulated in the first place.
 #
 # A custom file icon lives in the file's resource fork, outside the Mach-O, so
 # this does not touch the code directory: the cdhash, the ad-hoc signature, the

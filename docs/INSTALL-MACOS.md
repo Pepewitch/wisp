@@ -140,11 +140,18 @@ Management access could therefore leave another `wisp` entry in **Privacy &
 Security → App Management**.
 
 Releases built by the current pipeline are Developer ID signed, timestamped,
-and notarized with the fixed code-signing identifier `dev.wisp.daemon`. The
-first such upgrade can create one final entry because it deliberately changes
-away from every old ad-hoc identity; later upgrades satisfy the same stable
-designated requirement and reuse it. Changing an icon would not fix this — the
-permission follows code identity, not artwork.
+notarized, and stapled with the fixed code-signing identifier
+`dev.wisp.daemon`. Homebrew keeps the `wisp` command, but its target now lives
+inside a background-only `Wisp Daemon.app` bundle with the Wisp icon. That bundle is
+what lets System Settings show a branded application instead of the generic
+Unix-executable tile. The signature—not the artwork—is what makes later
+versions reuse one permission identity.
+
+The first bundled, Developer ID signed upgrade can create one final Wisp row
+because it deliberately changes away from every old ad-hoc client. Later
+upgrades satisfy the same stable designated requirement and reuse the branded
+row. The pale document-style rows are old records whose Cellar binaries no
+longer exist; the dark `exec` row is an unbundled binary that still exists.
 
 Do not infer from an entry alone that an operation was safe, that permission
 is required, or which child tool triggered it. If a prompt is unexpected, deny
@@ -152,14 +159,15 @@ it and record the action and named requester. Check whether the task accesses
 a protected folder or modifies an application. Do not grant Full Disk Access
 or Accessibility as a blanket troubleshooting step.
 
-For old App Management entries, first identify the installed executable with
+For old App Management entries, first identify the installed command with
 `command -v wisp` and `ls -l "$(brew --prefix wisp)/bin/wisp"`. After installing
-a Developer ID signed release, remove the stale ad-hoc entries with the minus
-button in System Settings. Keep the one current signed entry if you use Wisp's
-Homebrew-backed updater; revoking it may cause another access request. Avoid
-resetting all applications' permissions. Optional
-[CLI icon stamping](../brand/README.md#cli-file-icons) helps label installed
-binaries, but is not a security fix.
+a bundled, Developer ID signed release, remove every old pale or `exec` Wisp
+row with the minus button in System Settings. Keep the current branded Wisp
+row if you use Wisp's Homebrew-backed updater; revoking it may cause another
+access request. macOS does not let an application silently delete its own old
+privacy records. Avoid resetting all applications' permissions. Optional
+[CLI icon stamping](../brand/README.md#legacy-cli-file-icons) remains available
+for old releases and local unbundled builds, but is not a security fix.
 
 ## Remove
 

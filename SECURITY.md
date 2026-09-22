@@ -71,8 +71,8 @@ remaining platform gaps, and native dependency advisory scope.
 7. On Apple Silicon, install only through the
    documented `Pepewitch/tap/wisp` Formula or `wisp-desktop` Cask, verify the
    GitHub owner and checksum, and do not disable Gatekeeper globally. The tag
-   release pipeline requires Developer ID signing and notarization for the
-   macOS daemon and Desktop; Desktop additionally requires stapling and
+   release pipeline requires Developer ID signing, notarization, and stapling
+   for the macOS daemon and Desktop; Desktop additionally requires
    updater-signature verification. Anonymous public-byte verification precedes
    channel promotion.
 

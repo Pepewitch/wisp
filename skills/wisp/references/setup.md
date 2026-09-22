@@ -47,11 +47,12 @@ pepewitch/tap/wisp from untrusted tap`. The app does not bundle or own a child
 daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Public
 Desktop alpha.8 is ad-hoc signed and not notarized. Starting with alpha.12,
 Desktop releases fail closed unless Developer ID signing and notarization pass.
-The current release pipeline applies the same gate to the standalone daemon
-under the stable `dev.wisp.daemon` identifier; v0.5.13 and earlier daemon
-releases were ad-hoc signed. Do not bypass Gatekeeper for a current artifact
-that fails verification. The public alpha.12-to-alpha.13 self-update passed end
-to end on one Apple Silicon Mac.
+The current release pipeline applies the same gate to the standalone daemon,
+packaged as a branded background app under the stable `dev.wisp.daemon`
+identifier; v0.5.13 and earlier daemon releases were unbundled and ad-hoc
+signed. Do not bypass Gatekeeper for a current artifact that fails
+verification. The public alpha.12-to-alpha.13 self-update passed end to end on
+one Apple Silicon Mac.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,

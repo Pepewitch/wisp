@@ -5,8 +5,10 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   developerIdSigningMetadata,
+  MACOS_APP_DIRECTORY,
   type MacReleaseManifest,
 } from "../wispd/scripts/release-macos";
+import type { LegacyMacReleaseManifest } from "./render-homebrew-formula";
 import {
   assertDisposableAuditHost,
   changedTapFiles,
@@ -265,17 +267,19 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
 
   const macManifest = JSON.parse(
     readFileSync(join(directory, "release-manifest-darwin-arm64.json"), "utf8"),
-  ) as Partial<MacReleaseManifest>;
+  ) as MacReleaseManifest | LegacyMacReleaseManifest;
   const daemonArchive = join(directory, `wisp-v${version}-darwin-arm64.tar.gz`);
   const daemonExtracted = join(directory, "daemon-extracted");
   mkdirSync(daemonExtracted);
   run(["tar", "-xzf", daemonArchive, "-C", daemonExtracted]);
-  const daemon = join(daemonExtracted, "wisp");
-  run(["codesign", "--verify", "--strict", "--verbose=2", daemon]);
   // Already-published schema-1 releases were ad-hoc signed. Keep promotion
-  // receipts replayable, but require the stable identity for every schema-2
-  // release produced after that compatibility boundary.
-  if (macManifest.schemaVersion === 2) {
+  // receipts replayable. Every current release must be a branded, stapled app
+  // bundle whose main executable retains the stable daemon identity.
+  if (macManifest.schemaVersion === 3) {
+    const app = join(daemonExtracted, MACOS_APP_DIRECTORY);
+    const daemon = join(app, "Contents/MacOS/wisp");
+    run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
+    run(["xcrun", "stapler", "validate", app]);
     const signatureResult = command(
       ["codesign", "--display", "--verbose=4", daemon],
       { quiet: true },
@@ -289,7 +293,9 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
       requirementResult.stdout || requirementResult.stderr,
       true,
     );
-    run(["spctl", "--assess", "--type", "execute", "--verbose=4", daemon]);
+    run(["spctl", "--assess", "--type", "execute", "--verbose=4", app]);
+  } else {
+    run(["codesign", "--verify", "--strict", "--verbose=2", join(daemonExtracted, "wisp")]);
   }
 }
 

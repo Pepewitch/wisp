@@ -279,7 +279,9 @@ signature-verifier tree transferred between release jobs. CI audits all three.
 
 The public macOS distribution keeps the service and interface composable:
 
-- the `wisp` Homebrew Formula installs the CLI/daemon and launchd service;
+- the `wisp` Homebrew Formula installs the CLI/daemon inside a background-only
+  branded `Wisp Daemon.app`, exposes `bin/wisp` as a symlink to its executable, and
+  installs the launchd service;
 - the `wisp-desktop` Homebrew Cask installs `Wisp.app` and depends on that
   Formula;
 - the desktop app connects to the service but does not bundle, spawn, or stop
@@ -287,8 +289,9 @@ The public macOS distribution keeps the service and interface composable:
 
 Desktop application releases are Developer ID signed, notarized, and updater
 signed before the tag workflow can publish immutable assets. The standalone
-daemon is Developer ID signed and notarized under the stable
-`dev.wisp.daemon` identifier so macOS permissions survive Homebrew upgrades. A
+daemon bundle is Developer ID signed, notarized, and stapled under the stable
+`dev.wisp.daemon` identifier so macOS permissions and its App Management icon
+survive Homebrew upgrades. A
 separate serialized, resumable promotion job re-verifies those public bytes
 before it atomically advances the Homebrew Formula, Cask, fixed Desktop channel,
 and daemon channel. A

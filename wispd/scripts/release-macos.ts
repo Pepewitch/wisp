@@ -2,15 +2,18 @@
 import { gzipSync } from "node:zlib";
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { arch, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
@@ -22,6 +25,9 @@ export const MACOS_SUPPORTED_BASELINE = "macOS 26.6.2 (Apple Silicon arm64)";
 export const MACOS_MANIFEST = "release-manifest-darwin-arm64.json";
 export const MACOS_CHECKSUMS = "SHA256SUMS-darwin-arm64";
 export const MACOS_CODE_SIGNING_IDENTIFIER = "dev.wisp.daemon";
+export const MACOS_APP_DIRECTORY = "Wisp Daemon.app";
+export const MACOS_APP_EXECUTABLE = `${MACOS_APP_DIRECTORY}/Contents/MacOS/wisp`;
+export const MACOS_APP_ICON = `${MACOS_APP_DIRECTORY}/Contents/Resources/icon.icns`;
 
 export interface MacSigning {
   kind: "ad-hoc" | "developer-id";
@@ -35,7 +41,7 @@ export interface MacSigning {
 }
 
 export interface MacReleaseManifest {
-  schemaVersion: 2;
+  schemaVersion: 3;
   product: "wisp";
   version: string;
   apiProtocolVersion: number;
@@ -47,13 +53,20 @@ export interface MacReleaseManifest {
   };
   supportedBaseline: string;
   signing: MacSigning;
+  bundle: {
+    directory: typeof MACOS_APP_DIRECTORY;
+    identifier: typeof MACOS_CODE_SIGNING_IDENTIFIER;
+    executable: "Contents/MacOS/wisp";
+    icon: "Contents/Resources/icon.icns";
+    backgroundOnly: true;
+  };
   artifact: {
     file: string;
-    format: "tar.gz";
+    format: "app-tar.gz";
     sha256: string;
     size: number;
     binary: {
-      file: "wisp";
+      file: typeof MACOS_APP_EXECUTABLE;
       sha256: string;
       size: number;
       mode: "0755";
@@ -181,48 +194,171 @@ function writeOctal(header: Buffer, offset: number, length: number, value: numbe
   writeString(header, offset, length, encoded);
 }
 
-/** One-file ustar with normalized owner, timestamp, mode, and gzip header. */
-export function deterministicTarGz(binary: Uint8Array): Buffer {
-  const body = Buffer.from(binary);
+function tarHeader(name: string, size: number, mode: number, type: "0" | "5"): Buffer {
   const header = Buffer.alloc(512);
-  writeString(header, 0, 100, "wisp");
-  writeOctal(header, 100, 8, 0o755);
+  writeString(header, 0, 100, name);
+  writeOctal(header, 100, 8, mode);
   writeOctal(header, 108, 8, 0);
   writeOctal(header, 116, 8, 0);
-  writeOctal(header, 124, 12, body.length);
+  writeOctal(header, 124, 12, size);
   writeOctal(header, 136, 12, 0);
   header.fill(0x20, 148, 156);
-  writeString(header, 156, 1, "0");
+  writeString(header, 156, 1, type);
   writeString(header, 257, 6, "ustar\0");
   writeString(header, 263, 2, "00");
-  writeOctal(header, 329, 8, 0);
-  writeOctal(header, 337, 8, 0);
   const checksum = header.reduce((sum, byte) => sum + byte, 0);
   writeString(header, 148, 8, `${checksum.toString(8).padStart(6, "0")}\0 `);
-  const padding = Buffer.alloc((512 - (body.length % 512)) % 512);
-  const tar = Buffer.concat([header, body, padding, Buffer.alloc(1024)]);
-  // Bun's node:zlib compatibility writes the reproducible gzip mtime 0.
-  return gzipSync(tar, { level: 9 });
+  return header;
 }
 
-function verifyMacBinary(
-  binary: string,
+interface AppEntry {
+  name: string;
+  path: string;
+  directory: boolean;
+  mode: number;
+}
+
+function appEntries(app: string): AppEntry[] {
+  const rootName = `${basename(app)}/`;
+  const entries: AppEntry[] = [{ name: rootName, path: app, directory: true, mode: 0o755 }];
+  const visit = (directory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const path = join(directory, name);
+      const stat = lstatSync(path);
+      const archiveName = `${rootName}${relative(app, path).split("/").join("/")}`;
+      if (stat.isSymbolicLink()) throw new Error(`macOS daemon archive refuses symbolic link: ${archiveName}`);
+      if (stat.isDirectory()) {
+        entries.push({ name: `${archiveName}/`, path, directory: true, mode: 0o755 });
+        visit(path);
+      } else if (stat.isFile()) {
+        entries.push({ name: archiveName, path, directory: false, mode: stat.mode & 0o111 ? 0o755 : 0o644 });
+      } else {
+        throw new Error(`macOS daemon archive refuses special file: ${archiveName}`);
+      }
+    }
+  };
+  visit(app);
+  return entries;
+}
+
+/** A normalized ustar archive of the daemon app, with a reproducible gzip header. */
+export function deterministicDaemonAppTarGz(app: string): Buffer {
+  const blocks: Buffer[] = [];
+  for (const entry of appEntries(app)) {
+    const body = entry.directory ? Buffer.alloc(0) : readFileSync(entry.path);
+    blocks.push(tarHeader(entry.name, body.length, entry.mode, entry.directory ? "5" : "0"), body);
+    if (body.length % 512 !== 0) blocks.push(Buffer.alloc(512 - (body.length % 512)));
+  }
+  blocks.push(Buffer.alloc(1024));
+  return gzipSync(Buffer.concat(blocks), { level: 9 });
+}
+
+export function daemonInfoPlist(version: string): string {
+  const bundleVersion = version.split("-", 1)[0];
+  if (!/^\d+\.\d+\.\d+$/.test(bundleVersion)) throw new Error(`invalid daemon bundle version: ${version}`);
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Wisp Daemon</string>
+  <key>CFBundleExecutable</key>
+  <string>wisp</string>
+  <key>CFBundleIconFile</key>
+  <string>icon.icns</string>
+  <key>CFBundleIdentifier</key>
+  <string>${MACOS_CODE_SIGNING_IDENTIFIER}</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Wisp Daemon</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>${bundleVersion}</string>
+  <key>CFBundleVersion</key>
+  <string>${bundleVersion}</string>
+  <key>LSBackgroundOnly</key>
+  <true/>
+</dict>
+</plist>
+`;
+}
+
+function buildDaemonIcon(root: string, temp: string, destination: string): void {
+  const source = resolve(root, "desktop/src-tauri/icons/icon.png");
+  const iconset = join(temp, "daemon.iconset");
+  mkdirSync(iconset);
+  for (const size of [16, 32, 128, 256, 512]) {
+    run([
+      "/usr/bin/sips",
+      "-z",
+      String(size),
+      String(size),
+      source,
+      "--out",
+      join(iconset, `icon_${size}x${size}.png`),
+    ]);
+    const retina = size * 2;
+    run([
+      "/usr/bin/sips",
+      "-z",
+      String(retina),
+      String(retina),
+      source,
+      "--out",
+      join(iconset, `icon_${size}x${size}@2x.png`),
+    ]);
+  }
+  run(["/usr/bin/iconutil", "-c", "icns", iconset, "-o", destination]);
+}
+
+function plist(app: string, key: string): string {
+  return run(["/usr/libexec/PlistBuddy", "-c", `Print :${key}`, join(app, "Contents/Info.plist")]);
+}
+
+function verifyMacApp(
+  app: string,
   identity: SourceIdentity,
   signed: boolean,
   notarized = false,
 ): MacSigning {
+  const binary = join(app, "Contents/MacOS/wisp");
   const fileType = run(["/usr/bin/file", "-b", binary]);
   if (!/Mach-O 64-bit executable arm64/.test(fileType)) {
     throw new Error(`artifact is not a native arm64 Mach-O executable: ${fileType}`);
   }
   const architectures = run(["/usr/bin/lipo", "-archs", binary]);
   if (architectures.trim() !== "arm64") throw new Error(`artifact architectures must be exactly arm64, got ${architectures}`);
-  run(["/usr/bin/codesign", "--verify", "--strict", "--verbose=2", binary]);
+  run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
+  if (plist(app, "CFBundleIdentifier") !== MACOS_CODE_SIGNING_IDENTIFIER) {
+    throw new Error("macOS daemon bundle identifier is not stable");
+  }
+  if (
+    plist(app, "CFBundleDisplayName") !== "Wisp Daemon" ||
+    plist(app, "CFBundleExecutable") !== "wisp" ||
+    plist(app, "CFBundleIconFile") !== "icon.icns"
+  ) {
+    throw new Error("macOS daemon bundle metadata is incomplete");
+  }
+  const iconPath = join(app, "Contents/Resources/icon.icns");
+  if (!existsSync(iconPath)) throw new Error("macOS daemon bundle icon is missing");
+  const icon = statSync(iconPath);
+  if (!icon.isFile() || icon.size === 0) throw new Error("macOS daemon bundle icon is missing");
+  if (plist(app, "CFBundlePackageType") !== "APPL" || plist(app, "LSBackgroundOnly") !== "true") {
+    throw new Error("macOS daemon is not a background application bundle");
+  }
   const signature = run(["/usr/bin/codesign", "--display", "--verbose=4", binary]);
   let signing: MacSigning;
   if (signed) {
     const requirement = run(["/usr/bin/codesign", "--display", "--requirements", "-", binary]);
     signing = developerIdSigningMetadata(signature, requirement, notarized);
+    if (notarized) {
+      run(["/usr/bin/xcrun", "stapler", "validate", app]);
+      run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", app]);
+    }
   } else {
     if (!isAdHocCodeSignature(signature)) throw new Error(`artifact does not have an ad-hoc signature: ${signature}`);
     signing = {
@@ -258,9 +394,9 @@ function requireSignedEnvironment(): string {
   return process.env.APPLE_SIGNING_IDENTITY!;
 }
 
-function notarizeMacBinary(binary: string, temp: string): void {
+function notarizeMacApp(app: string, temp: string): void {
   const archive = join(temp, "wisp-notarization.zip");
-  run(["/usr/bin/ditto", "-c", "-k", "--keepParent", binary, archive]);
+  run(["/usr/bin/ditto", "-c", "-k", "--keepParent", app, archive]);
   const cmd = [
     "/usr/bin/xcrun",
     "notarytool",
@@ -282,6 +418,7 @@ function notarizeMacBinary(binary: string, temp: string): void {
     const detail = output(result.stderr) || stdout;
     throw new Error(`macOS daemon notarization failed${detail ? `: ${detail}` : ""}`);
   }
+  run(["/usr/bin/xcrun", "stapler", "staple", app]);
 }
 
 export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest {
@@ -300,47 +437,50 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
   const outDir = resolve(root, options.outDir ?? `dist/release/v${VERSION}`);
   const temp = mkdtempSync(join(tmpdir(), "wisp-release-macos-"));
   try {
-    const binary = join(temp, "wisp");
+    const app = join(temp, MACOS_APP_DIRECTORY);
+    const binary = join(app, "Contents/MacOS/wisp");
+    const resources = join(app, "Contents/Resources");
+    mkdirSync(dirname(binary), { recursive: true });
+    mkdirSync(resources, { recursive: true });
     buildBinary({ target: "darwin-arm64", outfile: binary, root, identity });
     chmodSync(binary, 0o755);
+    writeFileSync(join(app, "Contents/Info.plist"), daemonInfoPlist(VERSION), { mode: 0o644 });
+    buildDaemonIcon(root, temp, join(resources, "icon.icns"));
     if (signed) {
       run([
         "/usr/bin/codesign",
         "--force",
         "--sign",
         signingIdentity!,
-        "--identifier",
-        MACOS_CODE_SIGNING_IDENTIFIER,
         "--options",
         "runtime",
         "--timestamp",
-        binary,
+        app,
       ]);
     } else {
-      run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", binary]);
+      run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", app]);
     }
-    let signing = verifyMacBinary(binary, identity, signed);
+    let signing = verifyMacApp(app, identity, signed);
     if (signed) {
-      notarizeMacBinary(binary, temp);
-      signing = { ...signing, notarized: true };
+      notarizeMacApp(app, temp);
+      signing = verifyMacApp(app, identity, true, true);
     }
 
     mkdirSync(outDir, { recursive: true });
     const artifactName = `wisp-v${VERSION}-${MACOS_TARGET}.tar.gz`;
     const artifactPath = resolve(outDir, artifactName);
-    const binaryBytes = readFileSync(binary);
-    writeFileSync(artifactPath, deterministicTarGz(binaryBytes), { mode: 0o644 });
+    writeFileSync(artifactPath, deterministicDaemonAppTarGz(app), { mode: 0o644 });
 
     const extracted = join(temp, "extracted");
     mkdirSync(extracted);
     run(["/usr/bin/tar", "-xzf", artifactPath, "-C", extracted]);
-    const extractedSigning = verifyMacBinary(join(extracted, "wisp"), identity, signed, signed);
+    const extractedSigning = verifyMacApp(join(extracted, MACOS_APP_DIRECTORY), identity, signed, signed);
     if (JSON.stringify(extractedSigning) !== JSON.stringify(signing)) {
       throw new Error("extracted macOS daemon signing identity differs from the staged executable");
     }
 
     const manifest: MacReleaseManifest = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -349,13 +489,20 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
       target: { os: "darwin", arch: "arm64" },
       supportedBaseline: MACOS_SUPPORTED_BASELINE,
       signing,
+      bundle: {
+        directory: MACOS_APP_DIRECTORY,
+        identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+        executable: "Contents/MacOS/wisp",
+        icon: "Contents/Resources/icon.icns",
+        backgroundOnly: true,
+      },
       artifact: {
         file: artifactName,
-        format: "tar.gz",
+        format: "app-tar.gz",
         sha256: sha256File(artifactPath),
         size: statSync(artifactPath).size,
         binary: {
-          file: "wisp",
+          file: MACOS_APP_EXECUTABLE,
           sha256: sha256File(binary),
           size: statSync(binary).size,
           mode: "0755",

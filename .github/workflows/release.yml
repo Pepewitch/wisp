@@ -248,9 +248,10 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # Secrets are isolated to the one job that needs them. It Developer ID signs
-  # and notarizes the daemon, then signs, notarizes, staples, updater-signs, and
-  # negatively tests Desktop in parallel with the credential-free builders.
+  # Secrets are isolated to the one job that needs them. It Developer ID signs,
+  # notarizes, and staples the daemon app, then signs, notarizes,
+  # staples, updater-signs, and negatively tests Desktop in parallel with the
+  # credential-free builders.
   macos-trusted:
     needs: release-source
     if: github.event_name == 'push'
@@ -614,8 +615,9 @@ jobs:
           daemon_extracted="$(mktemp -d)"
           tar -xzf "$anon/wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             -C "$daemon_extracted"
-          daemon="$daemon_extracted/wisp"
-          codesign --verify --strict --verbose=2 "$daemon"
+          daemon_app="$daemon_extracted/Wisp Daemon.app"
+          daemon="$daemon_app/Contents/MacOS/wisp"
+          codesign --verify --deep --strict --verbose=2 "$daemon_app"
           daemon_signature="$(codesign --display --verbose=4 "$daemon" 2>&1)"
           grep -F 'Identifier=dev.wisp.daemon' <<<"$daemon_signature"
           grep -F 'Authority=Developer ID Application:' <<<"$daemon_signature"
@@ -626,7 +628,8 @@ jobs:
           grep -F 'identifier "dev.wisp.daemon"' <<<"$daemon_requirement"
           grep -F 'anchor apple generic' <<<"$daemon_requirement"
           ! grep -F 'cdhash' <<<"$daemon_requirement"
-          spctl --assess --type execute --verbose=4 "$daemon"
+          xcrun stapler validate "$daemon_app"
+          spctl --assess --type execute --verbose=4 "$daemon_app"
           verifier="$RUNNER_TEMP/release-artifacts/release-update-verifier/verify-update-signature"
           "$verifier" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \

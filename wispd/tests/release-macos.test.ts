@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertMacReleaseSource,
+  daemonInfoPlist,
   developerIdSigningMetadata,
-  deterministicTarGz,
+  deterministicDaemonAppTarGz,
   isAdHocCodeSignature,
+  MACOS_APP_DIRECTORY,
+  MACOS_APP_EXECUTABLE,
+  MACOS_APP_ICON,
   MACOS_CODE_SIGNING_IDENTIFIER,
   MACOS_CHECKSUMS,
   MACOS_MANIFEST,
@@ -29,12 +33,31 @@ describe("Apple Silicon release metadata", () => {
     expect(MACOS_SUPPORTED_BASELINE).toBe("macOS 26.6.2 (Apple Silicon arm64)");
     expect(MACOS_MANIFEST).toBe("release-manifest-darwin-arm64.json");
     expect(MACOS_CHECKSUMS).toBe("SHA256SUMS-darwin-arm64");
+    expect(MACOS_APP_DIRECTORY).toBe("Wisp Daemon.app");
+    expect(MACOS_APP_EXECUTABLE).toBe("Wisp Daemon.app/Contents/MacOS/wisp");
+    expect(MACOS_APP_ICON).toBe("Wisp Daemon.app/Contents/Resources/icon.icns");
   });
 
-  test("creates byte-identical normalized archives", () => {
-    const bytes = new TextEncoder().encode("#!/bin/sh\necho wisp\n");
-    const first = deterministicTarGz(bytes);
-    const second = deterministicTarGz(bytes);
+  test("creates byte-identical normalized branded application archives", () => {
+    const makeApp = (order: "forward" | "reverse"): string => {
+      const root = mkdtempSync(join(tmpdir(), "wisp-mac-app-"));
+      const app = join(root, MACOS_APP_DIRECTORY);
+      const files = [
+        ["Contents/MacOS/wisp", "#!/bin/sh\necho wisp\n"],
+        ["Contents/Info.plist", daemonInfoPlist(VERSION)],
+        ["Contents/Resources/icon.icns", "synthetic icon"],
+        ["Contents/_CodeSignature/CodeResources", "synthetic signature"],
+      ] as const;
+      for (const [name, body] of order === "forward" ? files : [...files].reverse()) {
+        const path = join(app, name);
+        mkdirSync(join(path, ".."), { recursive: true });
+        writeFileSync(path, body);
+      }
+      chmodSync(join(app, "Contents/MacOS/wisp"), 0o755);
+      return app;
+    };
+    const first = deterministicDaemonAppTarGz(makeApp("forward"));
+    const second = deterministicDaemonAppTarGz(makeApp("reverse"));
     expect(first.equals(second)).toBe(true);
     expect([...first.subarray(4, 8)]).toEqual([0, 0, 0, 0]);
 
@@ -49,7 +72,16 @@ describe("Apple Silicon release metadata", () => {
       stderr: "pipe",
     });
     expect(result.exitCode).toBe(0);
-    expect(readFileSync(join(extracted, "wisp"))).toEqual(Buffer.from(bytes));
+    expect(readFileSync(join(extracted, MACOS_APP_EXECUTABLE), "utf8")).toBe("#!/bin/sh\necho wisp\n");
+    expect(readFileSync(join(extracted, MACOS_APP_ICON), "utf8")).toBe("synthetic icon");
+  });
+
+  test("marks the daemon bundle as a branded background application", () => {
+    const plist = daemonInfoPlist("1.2.3-alpha.4");
+    expect(plist).toContain("<string>dev.wisp.daemon</string>");
+    expect(plist).toContain("<key>CFBundleIconFile</key>\n  <string>icon.icns</string>");
+    expect(plist).toContain("<key>LSBackgroundOnly</key>\n  <true/>");
+    expect(plist.match(/<string>1\.2\.3<\/string>/g)).toHaveLength(2);
   });
 
   test("recognizes both codesign representations of an ad-hoc signature", () => {
@@ -129,7 +161,7 @@ describe("Apple Silicon release metadata", () => {
 
   test("manifest records the reproducible build's ad-hoc security posture", () => {
     const manifest: MacReleaseManifest = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -147,13 +179,20 @@ describe("Apple Silicon release metadata", () => {
         identity: null,
         teamIdentifier: null,
       },
+      bundle: {
+        directory: MACOS_APP_DIRECTORY,
+        identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+        executable: "Contents/MacOS/wisp",
+        icon: "Contents/Resources/icon.icns",
+        backgroundOnly: true,
+      },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
-        format: "tar.gz",
+        format: "app-tar.gz",
         sha256: "b".repeat(64),
         size: 42,
         binary: {
-          file: "wisp",
+          file: MACOS_APP_EXECUTABLE,
           sha256: "c".repeat(64),
           size: 40,
           mode: "0755",
