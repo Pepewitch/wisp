@@ -84,7 +84,9 @@ Wisp is pre-1.0 and intended for single-user use. Linux release gates cover
 Ubuntu 24.04 x86_64; the binary requires glibc 2.17+ (no musl build).
 Desktop targets Apple Silicon and macOS 12.3+, with limited OS qualification.
 Intel Macs and Windows are unsupported. Desktop releases are signed and
-notarized; the macOS CLI is currently ad-hoc signed.
+notarized. Publishable macOS CLI/daemon releases now use the same Developer ID
+trust chain and a stable `dev.wisp.daemon` code-signing identity; v0.5.13 and
+earlier CLI releases were ad-hoc signed.
 
 ## Go further
 

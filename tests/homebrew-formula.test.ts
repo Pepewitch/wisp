@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
-import { renderHomebrewFormula } from "../scripts/render-homebrew-formula";
+import {
+  MACOS_CODE_SIGNING_IDENTIFIER,
+  type MacReleaseManifest,
+} from "../wispd/scripts/release-macos";
+import {
+  renderHomebrewFormula,
+  type LegacyMacReleaseManifest,
+} from "../scripts/render-homebrew-formula";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: "wisp",
     version: VERSION,
     apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -14,10 +20,14 @@ function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManife
     target: { os: "darwin", arch: "arm64" },
     supportedBaseline: "macOS 26.6.2 (Apple Silicon arm64)",
     signing: {
-      kind: "ad-hoc",
-      developerId: false,
-      notarized: false,
-      timestamp: false,
+      kind: "developer-id",
+      developerId: true,
+      notarized: true,
+      timestamp: true,
+      hardenedRuntime: true,
+      identifier: MACOS_CODE_SIGNING_IDENTIFIER,
+      identity: "Developer ID Application: Example Corp (ABCDEFGHIJ)",
+      teamIdentifier: "ABCDEFGHIJ",
     },
     artifact: {
       file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
@@ -46,7 +56,8 @@ describe("Homebrew Formula rendering", () => {
     expect(formula).toContain("depends_on arch: :arm64");
     expect(formula).toContain('run [opt_bin/"wisp", "serve"]');
     expect(formula).toContain("brew services start wisp");
-    expect(formula).toContain("not Developer ID");
+    expect(formula).toContain("Developer ID signed");
+    expect(formula).toContain("stable code identity");
     expect(formula).toContain("#{Dir.home}/.local/bin");
     expect(formula).not.toMatch(/API_KEY|TOKEN|PASSWORD|credential/i);
   });
@@ -61,7 +72,7 @@ describe("Homebrew Formula rendering", () => {
           target: { os: "darwin", arch: "x86_64" as "arm64" },
         }),
       ),
-    ).toThrow("not the approved ad-hoc Apple Silicon daemon");
+    ).toThrow("not an approved Apple Silicon daemon release");
     expect(() => renderHomebrewFormula(manifest({ artifact: { ...manifest().artifact, sha256: "bad" } }))).toThrow(
       "invalid artifact SHA-256",
     );
@@ -70,5 +81,32 @@ describe("Homebrew Formula rendering", () => {
         manifest({ artifact: { ...manifest().artifact, file: 'wisp.tar.gz"\\n  system "bad"' } }),
       ),
     ).toThrow("unexpected Apple Silicon artifact filename");
+  });
+
+  test("replays historical ad-hoc manifests but rejects new unsigned output", () => {
+    const current = manifest();
+    const legacy: LegacyMacReleaseManifest = {
+      ...current,
+      schemaVersion: 1,
+      signing: { kind: "ad-hoc", developerId: false, notarized: false, timestamp: false },
+    };
+    const historical = renderHomebrewFormula(legacy);
+    expect(historical).toContain("ad-hoc signed, not Developer ID");
+
+    expect(() =>
+      renderHomebrewFormula({
+        ...current,
+        signing: {
+          kind: "ad-hoc",
+          developerId: false,
+          notarized: false,
+          timestamp: false,
+          hardenedRuntime: false,
+          identifier: null,
+          identity: null,
+          teamIdentifier: null,
+        },
+      }),
+    ).toThrow("not an approved Apple Silicon daemon release");
   });
 });

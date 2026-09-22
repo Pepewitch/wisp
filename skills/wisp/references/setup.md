@@ -45,10 +45,13 @@ the fully qualified names it is given from a non-official tap, not their
 dependencies; the Cask alone stops with `Refusing to load formula
 pepewitch/tap/wisp from untrusted tap`. The app does not bundle or own a child
 daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Public
-alpha.8 is ad-hoc signed and not notarized. Starting with alpha.12, releases fail
-closed unless Developer ID signing and notarization pass; do not bypass
-Gatekeeper for a current artifact that fails verification. The public
-alpha.12-to-alpha.13 self-update passed end to end on one Apple Silicon Mac.
+Desktop alpha.8 is ad-hoc signed and not notarized. Starting with alpha.12,
+Desktop releases fail closed unless Developer ID signing and notarization pass.
+The current release pipeline applies the same gate to the standalone daemon
+under the stable `dev.wisp.daemon` identifier; v0.5.13 and earlier daemon
+releases were ad-hoc signed. Do not bypass Gatekeeper for a current artifact
+that fails verification. The public alpha.12-to-alpha.13 self-update passed end
+to end on one Apple Silicon Mac.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,

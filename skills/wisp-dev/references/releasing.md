@@ -148,11 +148,13 @@ qualified Linux target, not the range the binary runs on: README.md and
 `docs/INSTALL.md` state a separate glibc floor, `MINIMUM_GLIBC` in
 `wispd/scripts/release-linux.ts` owns that number, and both CI and the release
 build re-derive it from the artifact. A Bun upgrade that raises the floor
-fails there — update the constant and both documents rather than the gate. `wispd/scripts/release-macos.ts` keeps the
-standalone daemon archive ad-hoc signed. Local and reproducibility Desktop
-builds are also ad-hoc, but a publishable Desktop archive must use the
-`--signed` path: Developer ID Application signature, trusted timestamp,
-hardened runtime, notarization, staple, and a separate updater signature.
+fails there — update the constant and both documents rather than the gate.
+`wispd/scripts/release-macos.ts` keeps the reproducibility daemon archive
+ad-hoc signed. Local and reproducibility Desktop builds are also ad-hoc.
+Publishable macOS artifacts must use their `--signed` paths: both require a
+Developer ID Application signature, trusted timestamp, hardened runtime, and
+notarization; the daemon fixes its identifier at `dev.wisp.daemon`, while
+Desktop additionally requires a staple and separate updater signature.
 
 ## Automated publishing on tag push
 
@@ -167,17 +169,18 @@ out:
    exact commit's pre-tag `linux-contract` and `update-verifier` success, scans
    full history with Gitleaks, and builds the canonical UI twice.
 2. `release-linux`, two clean `macos-repro` matrix runners, and
-   `desktop-trusted` run concurrently. Linux still reproduces its asset and
+   `macos-trusted` run concurrently. Linux still reproduces its asset and
    repeats the installer/activation journey. The two independent Mac runners
    build byte-identical ad-hoc daemon/Desktop payloads without target caches.
-   The credential-isolated trusted runner builds, Developer ID signs,
-   notarizes, staples, updater-signs, and negatively tests the public Desktop
-   archive. It also transfers the already-built verifier with its checksum.
+   The credential-isolated trusted runner builds, Developer ID signs, and
+   notarizes the public daemon, then signs, notarizes, staples, updater-signs,
+   and negatively tests the public Desktop archive. It also transfers the
+   already-built verifier with its checksum.
 3. `publish` receives those outputs, compares the two independent Mac payloads,
    verifies all ten checksum-bound assets and the updater signature, renders
    and audits both Homebrew recipes plus both update channels offline, creates
    the "Wisp <version>" GitHub release, and verifies all ten anonymous public
-   downloads and both Desktop trust chains. It has publication rights but no
+   downloads and both macOS trust chains. It has publication rights but no
    Apple or Homebrew write credential. This is the immutable boundary.
 4. `promote` starts on a fresh arm64 macOS runner after `publish`. It downloads
    and verifies the public assets again, reuses the checksummed verifier during
@@ -409,9 +412,9 @@ test "$(git describe --tags --exact-match HEAD)" = "$tag"
 Build on Apple Silicon macOS so the same checkout can cross-compile Linux and
 produce and verify the native Mac artifacts. Generate the ignored UI bundle
 once and retain its checksum; every builder in this release must consume those
-exact bytes rather than silently regenerate them. First build the Desktop app
-without release credentials; this is the reproducible payload proof, not the
-public Desktop artifact:
+exact bytes rather than silently regenerate them. First build both Mac
+artifacts without release credentials; this is the reproducible payload proof,
+not either public Mac artifact:
 
 ```sh
 bun run build:ui
@@ -437,8 +440,8 @@ release-manifest-desktop-darwin-arm64.json
 SHA256SUMS-desktop-darwin-arm64
 ```
 
-At the reproducibility stage the signature file is absent and the Desktop
-manifest truthfully records an ad-hoc build. Snapshot those nine files, rebuild
+At the reproducibility stage the signature file is absent and both Mac
+manifests truthfully record ad-hoc builds. Snapshot those nine files, rebuild
 from the same clean tag, and compare every byte:
 
 ```sh
@@ -463,31 +466,35 @@ done
 ```
 
 After that comparison passes, provide the release credentials listed above and
-build the one public Desktop archive:
+build the two public Mac archives:
 
 ```sh
+bun run wispd/scripts/release-macos.ts --require-tag --signed
 WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$(mktemp -d)" \
   bun run scripts/release-desktop.ts --require-tag --signed
 ```
 
-On a maintainer Mac, `APPLE_CERTIFICATE` and
-`APPLE_CERTIFICATE_PASSWORD` may both be omitted when
-`APPLE_SIGNING_IDENTITY` is already available in the unlocked login Keychain.
-Provide the pair together when importing a PKCS#12 certificate, as CI does;
-the release script refuses a partial pair. The notarization API key and Tauri
-updater key remain required in both modes.
+On a maintainer Mac, `APPLE_SIGNING_IDENTITY` must already be available in an
+unlocked Keychain. CI imports `APPLE_CERTIFICATE` with
+`APPLE_CERTIFICATE_PASSWORD` into a temporary Keychain before invoking either
+signed release script. The notarization API key is required for both artifacts;
+the Tauri updater key is additionally required for Desktop.
 
-Timestamped Apple signatures are intentionally not byte-reproducible. The
-signed pass must not be compared with the ad-hoc payload. Instead, the release
+Timestamped Apple signatures are intentionally not byte-reproducible. Neither
+signed pass is compared with its ad-hoc payload. The daemon release script
+requires its fixed code-signing identifier and stable non-`cdhash` designated
+requirement, submits the exact signed executable to Apple's notary service,
+then re-extracts the archive and repeats identity checks. The Desktop release
 script verifies Developer ID identity, timestamp, hardened runtime,
 notarization, and staple; archives the app; updater-signs that exact archive;
 verifies the signature with an independent streaming verifier; re-extracts the
-archive; and repeats the Apple trust checks. Its manifest and checksum set bind
-the signature file and trust posture.
+archive; and repeats the Apple trust checks. Both manifests and checksum sets
+bind their public trust posture.
 
 The builders refuse a dirty tree or a `wispd/package.json`/`wispd/src/version.ts`
-mismatch. The Mac builder also verifies arm64 architecture, ad-hoc signature,
-archive contents, and embedded version/commit identity.
+mismatch. The Mac daemon builder also verifies arm64 architecture, the expected
+ad-hoc or Developer ID posture, archive contents, and embedded version/commit
+identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
 and a clean source tree after packaging. Tag CI builds and reproduces the UI on
@@ -495,7 +502,7 @@ Linux, transfers it with a checksum, and sets `WISP_PREBUILT_UI=1` for all
 three parallel Desktop builds so the daemon and application package one
 canonical bundle. CI's two reproducibility copies run on independent clean
 macOS hosts with target caching disabled; publication compares their six
-outputs before accepting the separate trusted archive. For the sequential
+outputs before accepting the separate trusted archives. For the sequential
 manual fallback above, Apple's linker changes the required Mach-O UUID when
 Cargo's absolute target path changes, so keep one `CARGO_TARGET_DIR` and run
 `cargo clean` between the two builds.
@@ -689,6 +696,12 @@ done
   shasum -a 256 -c SHA256SUMS &&
   shasum -a 256 -c SHA256SUMS-darwin-arm64 &&
   shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
+daemon_extracted="$(mktemp -d)"
+tar -xzf "$anon/wisp-v$version-darwin-arm64.tar.gz" -C "$daemon_extracted"
+codesign --verify --strict --verbose=2 "$daemon_extracted/wisp"
+codesign --display --requirements - "$daemon_extracted/wisp" 2>&1 | \
+  grep -F 'identifier "dev.wisp.daemon"'
+spctl --assess --type execute --verbose=4 "$daemon_extracted/wisp"
 cargo run --quiet --locked \
   --manifest-path scripts/update-verifier/Cargo.toml \
   --bin verify-update-signature \

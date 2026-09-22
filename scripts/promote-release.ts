@@ -4,6 +4,10 @@ import { arch, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  developerIdSigningMetadata,
+  type MacReleaseManifest,
+} from "../wispd/scripts/release-macos";
+import {
   assertDisposableAuditHost,
   changedTapFiles,
   classifyTapState,
@@ -258,6 +262,35 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
   run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
   run(["xcrun", "stapler", "validate", app]);
   run(["spctl", "--assess", "--type", "execute", "--verbose=4", app]);
+
+  const macManifest = JSON.parse(
+    readFileSync(join(directory, "release-manifest-darwin-arm64.json"), "utf8"),
+  ) as Partial<MacReleaseManifest>;
+  const daemonArchive = join(directory, `wisp-v${version}-darwin-arm64.tar.gz`);
+  const daemonExtracted = join(directory, "daemon-extracted");
+  mkdirSync(daemonExtracted);
+  run(["tar", "-xzf", daemonArchive, "-C", daemonExtracted]);
+  const daemon = join(daemonExtracted, "wisp");
+  run(["codesign", "--verify", "--strict", "--verbose=2", daemon]);
+  // Already-published schema-1 releases were ad-hoc signed. Keep promotion
+  // receipts replayable, but require the stable identity for every schema-2
+  // release produced after that compatibility boundary.
+  if (macManifest.schemaVersion === 2) {
+    const signatureResult = command(
+      ["codesign", "--display", "--verbose=4", daemon],
+      { quiet: true },
+    );
+    const requirementResult = command(
+      ["codesign", "--display", "--requirements", "-", daemon],
+      { quiet: true },
+    );
+    developerIdSigningMetadata(
+      signatureResult.stdout || signatureResult.stderr,
+      requirementResult.stdout || requirementResult.stderr,
+      true,
+    );
+    run(["spctl", "--assess", "--type", "execute", "--verbose=4", daemon]);
+  }
 }
 
 function requireReleaseCheckout(root: string, tag: string): string {

@@ -23,10 +23,10 @@ stops with `Refusing to load formula pepewitch/tap/wisp from untrusted tap`
 because the Cask depends on that Formula. See
 [Tap Trust](https://docs.brew.sh/Tap-Trust).
 
-Homebrew checks the release checksums; current Desktop releases are Developer
-ID signed and notarized. If macOS rejects a current app, stop and verify the
-download and signature. Do not disable Gatekeeper or remove quarantine to
-bypass that failure.
+Homebrew checks the release checksums. Publishable Desktop and CLI/daemon
+releases are Developer ID signed and notarized. If macOS rejects a current
+artifact, stop and verify the download and signature. Do not disable Gatekeeper
+or remove quarantine to bypass that failure.
 
 In Desktop:
 
@@ -133,10 +133,18 @@ permission prompt is not the same as a harness's tool-approval prompt.
 Wisp's built-in harnesses run with approval bypass enabled; see the
 [trust model](../SECURITY.md#trust-model).
 
-The released CLI is currently **ad-hoc signed**, unlike Desktop. A different
-CLI build can have a different identity to macOS and leave another `wisp`
-entry in **Privacy & Security → App Management**. Changing its icon does not
-stabilize that identity or reduce its access.
+The v0.5.13 and earlier CLI was **ad-hoc signed**. Its designated requirement
+was the binary's version-specific code hash, so macOS could not recognize the
+next Homebrew release as the same program. Each version that requested App
+Management access could therefore leave another `wisp` entry in **Privacy &
+Security → App Management**.
+
+Releases built by the current pipeline are Developer ID signed, timestamped,
+and notarized with the fixed code-signing identifier `dev.wisp.daemon`. The
+first such upgrade can create one final entry because it deliberately changes
+away from every old ad-hoc identity; later upgrades satisfy the same stable
+designated requirement and reuse it. Changing an icon would not fix this — the
+permission follows code identity, not artwork.
 
 Do not infer from an entry alone that an operation was safe, that permission
 is required, or which child tool triggered it. If a prompt is unexpected, deny
@@ -145,11 +153,13 @@ a protected folder or modifies an application. Do not grant Full Disk Access
 or Accessibility as a blanket troubleshooting step.
 
 For old App Management entries, first identify the installed executable with
-`command -v wisp` and `ls -l "$(brew --prefix wisp)/bin/wisp"`. Remove only
-entries you have identified in System Settings; revoking one may cause a
-future access request. Avoid resetting all applications' permissions.
-Optional [CLI icon stamping](../brand/README.md#cli-file-icons) helps label
-installed binaries, but is not a security fix.
+`command -v wisp` and `ls -l "$(brew --prefix wisp)/bin/wisp"`. After installing
+a Developer ID signed release, remove the stale ad-hoc entries with the minus
+button in System Settings. Keep the one current signed entry if you use Wisp's
+Homebrew-backed updater; revoking it may cause another access request. Avoid
+resetting all applications' permissions. Optional
+[CLI icon stamping](../brand/README.md#cli-file-icons) helps label installed
+binaries, but is not a security fix.
 
 ## Remove
 

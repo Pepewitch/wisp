@@ -1,12 +1,53 @@
 #!/usr/bin/env bun
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
+import { compareVersions } from "../shared/release-version";
+import {
+  MACOS_CODE_SIGNING_IDENTIFIER,
+  type MacReleaseManifest,
+} from "../wispd/scripts/release-macos";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const LAST_AD_HOC_MACOS_RELEASE = "0.5.13";
 
-export function renderHomebrewFormula(manifest: MacReleaseManifest): string {
+/** Read-only compatibility for replaying already-published release receipts. */
+export interface LegacyMacReleaseManifest extends Omit<MacReleaseManifest, "schemaVersion" | "signing"> {
+  schemaVersion: 1;
+  signing: {
+    kind: "ad-hoc";
+    developerId: false;
+    notarized: false;
+    timestamp: false;
+  };
+}
+
+function approvedSignedManifest(manifest: MacReleaseManifest | LegacyMacReleaseManifest): boolean {
+  return Boolean(
+    manifest.schemaVersion === 2 &&
+      manifest.signing.kind === "developer-id" &&
+      manifest.signing.developerId &&
+      manifest.signing.notarized &&
+      manifest.signing.timestamp &&
+      manifest.signing.hardenedRuntime &&
+      manifest.signing.identifier === MACOS_CODE_SIGNING_IDENTIFIER &&
+      manifest.signing.identity?.startsWith("Developer ID Application:") &&
+      manifest.signing.teamIdentifier,
+  );
+}
+
+function approvedHistoricalManifest(manifest: MacReleaseManifest | LegacyMacReleaseManifest): boolean {
+  return (
+    manifest.schemaVersion === 1 &&
+    compareVersions(manifest.version, LAST_AD_HOC_MACOS_RELEASE) <= 0 &&
+    manifest.signing.kind === "ad-hoc" &&
+    !manifest.signing.developerId &&
+    !manifest.signing.notarized &&
+    !manifest.signing.timestamp
+  );
+}
+
+export function renderHomebrewFormula(manifest: MacReleaseManifest | LegacyMacReleaseManifest): string {
   if (!VERSION.test(manifest.version)) throw new Error(`invalid release version: ${JSON.stringify(manifest.version)}`);
   if (!Number.isSafeInteger(manifest.apiProtocolVersion) || manifest.apiProtocolVersion < 1) {
     throw new Error(`invalid API protocol version: ${JSON.stringify(manifest.apiProtocolVersion)}`);
@@ -20,20 +61,18 @@ export function renderHomebrewFormula(manifest: MacReleaseManifest): string {
       `unexpected Apple Silicon artifact filename: expected ${expectedArtifact}, got ${JSON.stringify(manifest.artifact.file)}`,
     );
   }
+  const signed = approvedSignedManifest(manifest);
+  const historicalAdHoc = approvedHistoricalManifest(manifest);
   if (
-    manifest.schemaVersion !== 1 ||
     manifest.product !== "wisp" ||
     manifest.dirty !== false ||
     manifest.target.os !== "darwin" ||
     manifest.target.arch !== "arm64" ||
-    manifest.signing.kind !== "ad-hoc" ||
-    manifest.signing.developerId ||
-    manifest.signing.notarized ||
-    manifest.signing.timestamp ||
+    (!signed && !historicalAdHoc) ||
     manifest.artifact.format !== "tar.gz" ||
     manifest.artifact.binary.file !== "wisp"
   ) {
-    throw new Error("manifest is not the approved ad-hoc Apple Silicon daemon");
+    throw new Error("manifest is not an approved Apple Silicon daemon release");
   }
   const url =
     `https://github.com/Pepewitch/wisp/releases/download/v${manifest.version}/` +
@@ -58,9 +97,13 @@ class Wisp < Formula
 
   def caveats
     <<~EOS
-      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is ad-hoc signed, not Developer ID
+${signed
+  ? `      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is Developer ID signed and
+      notarized. Its stable code identity preserves macOS privacy permissions
+      across upgrades.`
+  : `      This ${manifest.version.includes("-") ? "experimental Apple Silicon alpha" : "Apple Silicon daemon"} is ad-hoc signed, not Developer ID
       signed or notarized. Gatekeeper may require explicit approval. Do not
-      disable Gatekeeper globally.
+      disable Gatekeeper globally.`}
 
       Initialize and start Wisp:
         wisp init
@@ -114,7 +157,9 @@ function parseArgs(args: string[]): Args {
 if (import.meta.main) {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const manifest = JSON.parse(readFileSync(resolve(args.manifest), "utf8")) as MacReleaseManifest;
+    const manifest = JSON.parse(readFileSync(resolve(args.manifest), "utf8")) as
+      | MacReleaseManifest
+      | LegacyMacReleaseManifest;
     const output = resolve(args.output);
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, renderHomebrewFormula(manifest), { mode: 0o644 });
