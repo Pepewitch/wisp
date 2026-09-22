@@ -29,6 +29,18 @@ export const MACOS_APP_DIRECTORY = "Wisp Daemon.app";
 export const MACOS_APP_EXECUTABLE = `${MACOS_APP_DIRECTORY}/Contents/MacOS/wisp`;
 export const MACOS_APP_ICON = `${MACOS_APP_DIRECTORY}/Contents/Resources/icon.icns`;
 
+/**
+ * Homebrew stages an archive and, when the result is a lone top-level
+ * directory, descends into it before `install` runs. An archive whose only
+ * entry is the app bundle therefore leaves the formula standing *inside* the
+ * bundle, where its own name no longer resolves: 0.5.14 shipped that layout and
+ * could not be installed at all. Nesting the bundle under a versioned directory
+ * gives that descent something to land on and restores the conventional shape.
+ */
+export function macosArchiveRoot(version: string): string {
+  return `wisp-v${version}-${MACOS_TARGET}`;
+}
+
 export interface MacSigning {
   kind: "ad-hoc" | "developer-id";
   developerId: boolean;
@@ -41,7 +53,7 @@ export interface MacSigning {
 }
 
 export interface MacReleaseManifest {
-  schemaVersion: 3;
+  schemaVersion: 4;
   product: "wisp";
   version: string;
   apiProtocolVersion: number;
@@ -62,6 +74,8 @@ export interface MacReleaseManifest {
   };
   artifact: {
     file: string;
+    /** The archive's single top-level directory, which Homebrew descends into. */
+    root: string;
     format: "app-tar.gz";
     sha256: string;
     size: number;
@@ -218,14 +232,18 @@ interface AppEntry {
   mode: number;
 }
 
-function appEntries(app: string): AppEntry[] {
-  const rootName = `${basename(app)}/`;
-  const entries: AppEntry[] = [{ name: rootName, path: app, directory: true, mode: 0o755 }];
+function appEntries(app: string, root: string): AppEntry[] {
+  const rootName = `${root}/`;
+  const bundleName = `${rootName}${basename(app)}/`;
+  const entries: AppEntry[] = [
+    { name: rootName, path: dirname(app), directory: true, mode: 0o755 },
+    { name: bundleName, path: app, directory: true, mode: 0o755 },
+  ];
   const visit = (directory: string): void => {
     for (const name of readdirSync(directory).sort()) {
       const path = join(directory, name);
       const stat = lstatSync(path);
-      const archiveName = `${rootName}${relative(app, path).split("/").join("/")}`;
+      const archiveName = `${bundleName}${relative(app, path).split("/").join("/")}`;
       if (stat.isSymbolicLink()) throw new Error(`macOS daemon archive refuses symbolic link: ${archiveName}`);
       if (stat.isDirectory()) {
         entries.push({ name: `${archiveName}/`, path, directory: true, mode: 0o755 });
@@ -241,10 +259,13 @@ function appEntries(app: string): AppEntry[] {
   return entries;
 }
 
-/** A normalized ustar archive of the daemon app, with a reproducible gzip header. */
-export function deterministicDaemonAppTarGz(app: string): Buffer {
+/**
+ * A normalized ustar archive of the daemon app nested under `root`, with a
+ * reproducible gzip header.
+ */
+export function deterministicDaemonAppTarGz(app: string, root: string): Buffer {
   const blocks: Buffer[] = [];
-  for (const entry of appEntries(app)) {
+  for (const entry of appEntries(app, root)) {
     const body = entry.directory ? Buffer.alloc(0) : readFileSync(entry.path);
     blocks.push(tarHeader(entry.name, body.length, entry.mode, entry.directory ? "5" : "0"), body);
     if (body.length % 512 !== 0) blocks.push(Buffer.alloc(512 - (body.length % 512)));
@@ -469,18 +490,33 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
     mkdirSync(outDir, { recursive: true });
     const artifactName = `wisp-v${VERSION}-${MACOS_TARGET}.tar.gz`;
     const artifactPath = resolve(outDir, artifactName);
-    writeFileSync(artifactPath, deterministicDaemonAppTarGz(app), { mode: 0o644 });
+    const archiveRoot = macosArchiveRoot(VERSION);
+    writeFileSync(artifactPath, deterministicDaemonAppTarGz(app, archiveRoot), { mode: 0o644 });
 
     const extracted = join(temp, "extracted");
     mkdirSync(extracted);
     run(["/usr/bin/tar", "-xzf", artifactPath, "-C", extracted]);
-    const extractedSigning = verifyMacApp(join(extracted, MACOS_APP_DIRECTORY), identity, signed, signed);
+    // Homebrew descends into a lone top-level directory before `install` runs.
+    // The rendered formula installs `Wisp Daemon.app` by name from there, so the
+    // archive must expose exactly that one directory and nothing else.
+    const staged = readdirSync(extracted);
+    if (staged.length !== 1 || staged[0] !== archiveRoot) {
+      throw new Error(
+        `macOS daemon archive must contain only ${archiveRoot}, got ${JSON.stringify(staged)}`,
+      );
+    }
+    const extractedSigning = verifyMacApp(
+      join(extracted, archiveRoot, MACOS_APP_DIRECTORY),
+      identity,
+      signed,
+      signed,
+    );
     if (JSON.stringify(extractedSigning) !== JSON.stringify(signing)) {
       throw new Error("extracted macOS daemon signing identity differs from the staged executable");
     }
 
     const manifest: MacReleaseManifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -498,6 +534,7 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
       },
       artifact: {
         file: artifactName,
+        root: archiveRoot,
         format: "app-tar.gz",
         sha256: sha256File(artifactPath),
         size: statSync(artifactPath).size,

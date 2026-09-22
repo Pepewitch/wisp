@@ -1,13 +1,12 @@
 import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "./release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
-import type { MacReleaseManifest } from "../wispd/scripts/release-macos";
 import { renderDaemonUpdateChannel } from "./render-daemon-update-channel";
 import { renderDesktopUpdateChannel } from "./render-desktop-update-channel";
 import { renderHomebrewCask } from "./render-homebrew-cask";
 import {
   renderHomebrewFormula,
-  type LegacyMacReleaseManifest,
+  type AnyMacReleaseManifest,
 } from "./render-homebrew-formula";
 
 const AUDIT_TAP = "Pepewitch/tap";
@@ -29,7 +28,7 @@ export interface ReleaseMetadata {
 
 export interface PromotionManifests {
   linux: ReleaseManifest;
-  macos: MacReleaseManifest | LegacyMacReleaseManifest;
+  macos: AnyMacReleaseManifest;
   desktop: DesktopReleaseManifest;
 }
 

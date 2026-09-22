@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { compareVersions } from "../shared/release-version";
 import {
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
@@ -12,6 +13,7 @@ import {
 const SHA256 = /^[0-9a-f]{64}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const LAST_AD_HOC_MACOS_RELEASE = "0.5.13";
+const LAST_UNNESTED_MACOS_RELEASE = "0.5.14";
 
 /** Read-only compatibility for replaying already-published release receipts. */
 export interface LegacyMacReleaseManifest {
@@ -38,11 +40,31 @@ export interface LegacyMacReleaseManifest {
   };
 }
 
+/** Read-only compatibility for 0.5.14, the one release whose archive nested nothing. */
+export interface UnnestedMacReleaseManifest
+  extends Omit<MacReleaseManifest, "schemaVersion" | "artifact"> {
+  schemaVersion: 3;
+  artifact: Omit<MacReleaseManifest["artifact"], "root">;
+}
+
+export type AnyMacReleaseManifest =
+  | MacReleaseManifest
+  | UnnestedMacReleaseManifest
+  | LegacyMacReleaseManifest;
+
+/**
+ * Schema 3 put the app bundle at the archive root, where Homebrew's descent
+ * left the formula standing inside it. Only 0.5.14 shipped that layout, and it
+ * stays renderable purely so its published promotion receipt replays byte for
+ * byte; the builder cannot produce it again, and the nested root is required of
+ * every schema-4 release.
+ */
 function approvedSignedManifest(
-  manifest: MacReleaseManifest | LegacyMacReleaseManifest,
-): manifest is MacReleaseManifest {
+  manifest: AnyMacReleaseManifest,
+): manifest is MacReleaseManifest | UnnestedMacReleaseManifest {
   return Boolean(
-    manifest.schemaVersion === 3 &&
+    (manifest.schemaVersion === 4 ||
+      (manifest.schemaVersion === 3 && manifest.version === LAST_UNNESTED_MACOS_RELEASE)) &&
       manifest.signing.kind === "developer-id" &&
       manifest.signing.developerId &&
       manifest.signing.notarized &&
@@ -54,7 +76,7 @@ function approvedSignedManifest(
   );
 }
 
-function approvedHistoricalManifest(manifest: MacReleaseManifest | LegacyMacReleaseManifest): boolean {
+function approvedHistoricalManifest(manifest: AnyMacReleaseManifest): boolean {
   return (
     manifest.schemaVersion === 1 &&
     compareVersions(manifest.version, LAST_AD_HOC_MACOS_RELEASE) <= 0 &&
@@ -65,7 +87,7 @@ function approvedHistoricalManifest(manifest: MacReleaseManifest | LegacyMacRele
   );
 }
 
-export function renderHomebrewFormula(manifest: MacReleaseManifest | LegacyMacReleaseManifest): string {
+export function renderHomebrewFormula(manifest: AnyMacReleaseManifest): string {
   if (!VERSION.test(manifest.version)) throw new Error(`invalid release version: ${JSON.stringify(manifest.version)}`);
   if (!Number.isSafeInteger(manifest.apiProtocolVersion) || manifest.apiProtocolVersion < 1) {
     throw new Error(`invalid API protocol version: ${JSON.stringify(manifest.apiProtocolVersion)}`);
@@ -89,6 +111,8 @@ export function renderHomebrewFormula(manifest: MacReleaseManifest | LegacyMacRe
     (!signed && !historicalAdHoc) ||
     (signed &&
       (manifest.artifact.format !== "app-tar.gz" ||
+        (manifest.schemaVersion === 4 &&
+          manifest.artifact.root !== macosArchiveRoot(manifest.version)) ||
         manifest.artifact.binary.file !== MACOS_APP_EXECUTABLE ||
         manifest.bundle.directory !== MACOS_APP_DIRECTORY ||
         manifest.bundle.identifier !== MACOS_CODE_SIGNING_IDENTIFIER ||
@@ -186,9 +210,7 @@ function parseArgs(args: string[]): Args {
 if (import.meta.main) {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const manifest = JSON.parse(readFileSync(resolve(args.manifest), "utf8")) as
-      | MacReleaseManifest
-      | LegacyMacReleaseManifest;
+    const manifest = JSON.parse(readFileSync(resolve(args.manifest), "utf8")) as AnyMacReleaseManifest;
     const output = resolve(args.output);
     mkdirSync(dirname(output), { recursive: true });
     writeFileSync(output, renderHomebrewFormula(manifest), { mode: 0o644 });

@@ -700,7 +700,12 @@ done
   shasum -a 256 -c SHA256SUMS-desktop-darwin-arm64)
 daemon_extracted="$(mktemp -d)"
 tar -xzf "$anon/wisp-v$version-darwin-arm64.tar.gz" -C "$daemon_extracted"
-daemon_app="$daemon_extracted/Wisp Daemon.app"
+# The archive nests the bundle under one versioned directory. Homebrew descends
+# into a lone top-level directory before `install` runs, so a bundle sitting at
+# the archive root leaves the Formula standing inside it; 0.5.14 shipped that
+# layout and could not be installed.
+test "$(ls -A "$daemon_extracted")" = "wisp-v$version-darwin-arm64"
+daemon_app="$daemon_extracted/wisp-v$version-darwin-arm64/Wisp Daemon.app"
 daemon="$daemon_app/Contents/MacOS/wisp"
 codesign --verify --deep --strict --verbose=2 "$daemon_app"
 codesign --display --requirements - "$daemon" 2>&1 | \

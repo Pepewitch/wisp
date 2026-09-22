@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +16,7 @@ import {
   developerIdSigningMetadata,
   deterministicDaemonAppTarGz,
   isAdHocCodeSignature,
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_APP_ICON,
@@ -36,6 +45,8 @@ describe("Apple Silicon release metadata", () => {
     expect(MACOS_APP_DIRECTORY).toBe("Wisp Daemon.app");
     expect(MACOS_APP_EXECUTABLE).toBe("Wisp Daemon.app/Contents/MacOS/wisp");
     expect(MACOS_APP_ICON).toBe("Wisp Daemon.app/Contents/Resources/icon.icns");
+    expect(macosArchiveRoot("0.5.15")).toBe("wisp-v0.5.15-darwin-arm64");
+    expect(macosArchiveRoot("1.0.0-alpha.2")).toBe("wisp-v1.0.0-alpha.2-darwin-arm64");
   });
 
   test("creates byte-identical normalized branded application archives", () => {
@@ -56,8 +67,9 @@ describe("Apple Silicon release metadata", () => {
       chmodSync(join(app, "Contents/MacOS/wisp"), 0o755);
       return app;
     };
-    const first = deterministicDaemonAppTarGz(makeApp("forward"));
-    const second = deterministicDaemonAppTarGz(makeApp("reverse"));
+    const archiveRoot = macosArchiveRoot(VERSION);
+    const first = deterministicDaemonAppTarGz(makeApp("forward"), archiveRoot);
+    const second = deterministicDaemonAppTarGz(makeApp("reverse"), archiveRoot);
     expect(first.equals(second)).toBe(true);
     expect([...first.subarray(4, 8)]).toEqual([0, 0, 0, 0]);
 
@@ -72,8 +84,45 @@ describe("Apple Silicon release metadata", () => {
       stderr: "pipe",
     });
     expect(result.exitCode).toBe(0);
-    expect(readFileSync(join(extracted, MACOS_APP_EXECUTABLE), "utf8")).toBe("#!/bin/sh\necho wisp\n");
-    expect(readFileSync(join(extracted, MACOS_APP_ICON), "utf8")).toBe("synthetic icon");
+    expect(readFileSync(join(extracted, archiveRoot, MACOS_APP_EXECUTABLE), "utf8")).toBe(
+      "#!/bin/sh\necho wisp\n",
+    );
+    expect(readFileSync(join(extracted, archiveRoot, MACOS_APP_ICON), "utf8")).toBe("synthetic icon");
+  });
+
+  // Homebrew stages an archive and then, when exactly one top-level entry
+  // exists and it is a directory, runs `install` from *inside* it. 0.5.14
+  // shipped the bundle as that lone entry, so `libexec.install "Wisp
+  // Daemon.app"` ran within the bundle and failed with ENOENT for every user.
+  // This replicates that rule against the real archive bytes.
+  test("survives Homebrew's descent into a lone top-level directory", () => {
+    const source = mkdtempSync(join(tmpdir(), "wisp-mac-brew-"));
+    const app = join(source, MACOS_APP_DIRECTORY);
+    mkdirSync(join(app, "Contents/MacOS"), { recursive: true });
+    writeFileSync(join(app, "Contents/MacOS/wisp"), "#!/bin/sh\necho wisp\n");
+
+    const archiveRoot = macosArchiveRoot(VERSION);
+    const staging = mkdtempSync(join(tmpdir(), "wisp-mac-staging-"));
+    const archive = join(staging, "wisp.tar.gz");
+    const extracted = join(staging, "out");
+    mkdirSync(extracted);
+    writeFileSync(archive, deterministicDaemonAppTarGz(app, archiveRoot));
+    const result = Bun.spawnSync({
+      cmd: ["/usr/bin/tar", "-xzf", archive, "-C", extracted],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+
+    // AbstractFileDownloadStrategy#chdir: one entry, and it is a directory.
+    const entries = readdirSync(extracted);
+    expect(entries).toEqual([archiveRoot]);
+    expect(statSync(join(extracted, archiveRoot)).isDirectory()).toBe(true);
+    const cwd = join(extracted, archiveRoot);
+
+    // The formula then installs the bundle by name from that directory.
+    expect(readdirSync(cwd)).toContain(MACOS_APP_DIRECTORY);
+    expect(statSync(join(cwd, MACOS_APP_DIRECTORY, "Contents/MacOS/wisp")).isFile()).toBe(true);
   });
 
   test("marks the daemon bundle as a branded background application", () => {
@@ -161,7 +210,7 @@ describe("Apple Silicon release metadata", () => {
 
   test("manifest records the reproducible build's ad-hoc security posture", () => {
     const manifest: MacReleaseManifest = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -188,6 +237,7 @@ describe("Apple Silicon release metadata", () => {
       },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
+        root: macosArchiveRoot(VERSION),
         format: "app-tar.gz",
         sha256: "b".repeat(64),
         size: 42,

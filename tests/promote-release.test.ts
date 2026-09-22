@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import type { DesktopReleaseManifest } from "../scripts/release-desktop";
 import type { ReleaseManifest } from "../wispd/scripts/release-linux";
 import {
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
@@ -52,7 +53,7 @@ function manifests(): {
       },
     },
     macos: {
-      schemaVersion: 3,
+      schemaVersion: 4,
       product: "wisp",
       version: VERSION,
       apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -79,6 +80,7 @@ function manifests(): {
       },
       artifact: {
         file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
+        root: macosArchiveRoot(VERSION),
         format: "app-tar.gz",
         sha256: "2".repeat(64),
         size: 42,

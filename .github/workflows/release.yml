@@ -540,6 +540,21 @@ jobs:
           brew audit --strict Pepewitch/tap/wisp
           brew audit --strict --cask Pepewitch/tap/wisp-desktop
           git -C "$tap" diff --check
+          # `brew audit` is static: it never stages an archive, so it cannot
+          # see a layout the formula's own install block fails on. Homebrew
+          # descends into a lone top-level directory before `install` runs, so
+          # an archive whose only entry is the bundle leaves the formula
+          # standing inside it. 0.5.14 shipped exactly that and could not be
+          # installed by anyone. Prove the real bytes before publication.
+          staged="$(mktemp -d)"
+          tar -xzf \
+            "dist/release/$GITHUB_REF_NAME/wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
+            -C "$staged"
+          archive_root="wisp-${GITHUB_REF_NAME}-darwin-arm64"
+          test "$(ls -A "$staged")" = "$archive_root"
+          test -d "$staged/$archive_root/Wisp Daemon.app"
+          test -x "$staged/$archive_root/Wisp Daemon.app/Contents/MacOS/wisp"
+          grep -F 'libexec.install "Wisp Daemon.app"' "$tap/Formula/wisp.rb"
 
       # releasing.md step 6: one release, the exact ten assets, and the
       # release notes as the body. Never clobber or mutate after publishing.
@@ -615,7 +630,9 @@ jobs:
           daemon_extracted="$(mktemp -d)"
           tar -xzf "$anon/wisp-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
             -C "$daemon_extracted"
-          daemon_app="$daemon_extracted/Wisp Daemon.app"
+          daemon_root="$daemon_extracted/wisp-${GITHUB_REF_NAME}-darwin-arm64"
+          test "$(ls -A "$daemon_extracted")" = "wisp-${GITHUB_REF_NAME}-darwin-arm64"
+          daemon_app="$daemon_root/Wisp Daemon.app"
           daemon="$daemon_app/Contents/MacOS/wisp"
           codesign --verify --deep --strict --verbose=2 "$daemon_app"
           daemon_signature="$(codesign --display --verbose=4 "$daemon" 2>&1)"
@@ -651,6 +668,35 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$extracted/Wisp.app"
           xcrun stapler validate "$extracted/Wisp.app"
           spctl --assess --type execute --verbose=4 "$extracted/Wisp.app"
+
+      # The last gate the tap never had: actually install the rendered Formula
+      # from the public release, the way a user does. Everything above this
+      # point passed for 0.5.14, which no user could install. This runs after
+      # immutable publication because the Formula's url must resolve; a failure
+      # here leaves the release published and unpromoted, which is recoverable,
+      # and keeps a broken Formula out of the tap.
+      - name: install the published Formula the way a user does
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_ANALYTICS: 1
+        run: |
+          audit_tap="$(brew --repository Pepewitch/tap)"
+          test -f "$audit_tap/Formula/wisp.rb"
+          # Homebrew 7 gates third-party taps behind explicit trust. Let a
+          # failure here fall through: if trust really was required, the
+          # install below says so, and that is the error worth reading.
+          if brew help trust >/dev/null 2>&1; then
+            brew trust --formula Pepewitch/tap/wisp || true
+          fi
+          brew install --formula Pepewitch/tap/wisp
+          brew test Pepewitch/tap/wisp
+          prefix="$(brew --prefix wisp)"
+          app="$prefix/libexec/Wisp Daemon.app"
+          test -x "$app/Contents/MacOS/wisp"
+          test -L "$prefix/bin/wisp"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          "$prefix/bin/wisp" version | grep -F "${GITHUB_REF_NAME#v}"
+          brew uninstall --formula Pepewitch/tap/wisp
 
   promote:
     needs: publish

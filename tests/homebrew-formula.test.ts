@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
@@ -8,12 +9,13 @@ import {
 import {
   renderHomebrewFormula,
   type LegacyMacReleaseManifest,
+  type UnnestedMacReleaseManifest,
 } from "../scripts/render-homebrew-formula";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManifest {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     product: "wisp",
     version: VERSION,
     apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -40,6 +42,7 @@ function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManife
     },
     artifact: {
       file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
+      root: macosArchiveRoot(VERSION),
       format: "app-tar.gz",
       sha256: "b".repeat(64),
       size: 42,
@@ -103,6 +106,36 @@ describe("Homebrew Formula rendering", () => {
         }),
       ),
     ).toThrow("not an approved Apple Silicon daemon release");
+  });
+
+  // 0.5.14's schema-3 archive put the bundle at the root, so Homebrew descended
+  // into it and `libexec.install "Wisp Daemon.app"` failed for every user. That
+  // one version stays renderable so its published promotion receipt replays;
+  // every other release must nest the bundle under the archive root.
+  test("replays 0.5.14's unnested archive and requires the nested root elsewhere", () => {
+    const unnested = (version: string): UnnestedMacReleaseManifest => {
+      const { root: _root, ...artifact } = manifest().artifact;
+      return {
+        ...manifest(),
+        schemaVersion: 3,
+        version,
+        artifact: { ...artifact, file: `wisp-v${version}-darwin-arm64.tar.gz` },
+      };
+    };
+    expect(renderHomebrewFormula(unnested("0.5.14"))).toContain(
+      `libexec.install "${MACOS_APP_DIRECTORY}"`,
+    );
+    expect(() => renderHomebrewFormula(unnested("0.5.99"))).toThrow(
+      "not an approved Apple Silicon daemon release",
+    );
+    expect(() =>
+      renderHomebrewFormula(
+        manifest({ artifact: { ...manifest().artifact, root: MACOS_APP_DIRECTORY } }),
+      ),
+    ).toThrow("not an approved Apple Silicon daemon release");
+    expect(renderHomebrewFormula(manifest())).toContain(
+      `libexec.install "${MACOS_APP_DIRECTORY}"`,
+    );
   });
 
   test("replays historical ad-hoc manifests but rejects new unsigned output", () => {
