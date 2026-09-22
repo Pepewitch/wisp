@@ -213,6 +213,51 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   },
 
   /**
+   * Cursor (verified against 2026.09.18-9a7762b): `cursor-agent models`
+   * prints one `<id> - <display name>` record per model after authentication.
+   * Its full catalog is much larger than the useful Cursor-owned choices, so
+   * the picker deliberately keeps only Auto, Composer, and Cursor model ids.
+   *
+   * Cursor marks its default in the display name as `(default)`. Only expose
+   * that default when it survives the filter, so the picker never names a
+   * default it cannot offer.
+   */
+  "cursor-models": async (def, spawn, signal) => {
+    const res = await spawn([def.bin, "models"], signal);
+    const entries = res.stdout
+      .split("\n")
+      .map((line) => /^([a-z0-9][a-z0-9.-]*)\s+-\s+(.+)$/i.exec(line.trim()))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => ({ id: match[1]!, display: match[2]! }));
+    if (entries.length === 0) {
+      return {
+        defaultModel: null,
+        models: null,
+        notes: [
+          `'${def.bin} models' printed no '<id> - <display name>' records (exit ${res.exitCode}) — the CLI may be unauthenticated, or its output shape may have changed`,
+        ],
+      };
+    }
+
+    const ids = [...new Set(entries.map((entry) => entry.id))];
+    const models = [
+      ...ids.filter((id) => id === "auto"),
+      ...ids.filter((id) => id.startsWith("composer-")),
+      ...ids.filter((id) => id.startsWith("cursor-")),
+    ];
+    const offered = new Set(models);
+    const defaultModel =
+      entries.find((entry) => offered.has(entry.id) && /\(default\)/i.test(entry.display))?.id ?? null;
+    const notes = [
+      `list from '${def.bin} models', restricted to auto, composer-*, and cursor-* to keep the picker focused`,
+    ];
+    if (!defaultModel) {
+      notes.push(`'${def.bin} models' named no default among the filtered models`);
+    }
+    return { defaultModel, models, notes };
+  },
+
+  /**
    * opencode (verified against 1.18.29): `opencode models` prints one
    * `provider/model` id per line and nothing else — no header, no ANSI, no
    * decoration (all 53 lines matched on the probed install). The catalog is
@@ -308,7 +353,7 @@ export async function discoverModels(
  *
  * A real enumeration from the installed CLI always wins: it is what this
  * install can actually run. An adapter's curated `staticModels` fills in only
- * for a CLI that enumerates none (claude, cursor), and is marked `curated` so
+ * for a CLI that enumerates none (currently claude), and is marked `curated` so
  * a caller can say so out loud rather than presenting a pinned subset as the
  * whole truth.
  */
