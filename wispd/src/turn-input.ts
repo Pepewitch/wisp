@@ -1,5 +1,6 @@
 import { attachmentPreamble, IMAGE_INPUT_STRATEGIES, type AdapterDef, type ImageInputStrategy } from "./adapters"
 import { attachmentKind, type StoredAttachment } from "./attachments"
+import { wispCommand } from "./command"
 import type { Task } from "./types"
 
 export function taskEnv(task: Task): Record<string, string> {
@@ -37,6 +38,7 @@ export function taskPreamble(task: Task): string {
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
     `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
     `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
+    `For follow-up after waiting on time or an external condition, use \`${wispCommand()} workflow types\` to choose durable automation instead of relying on a harness background process.`,
     ``,
     `Task:`,
   ].join("\n")

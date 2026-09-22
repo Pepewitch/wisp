@@ -5,6 +5,13 @@ conditions without an agent turn, then wakes the task between turns when there
 is something to do. Heartbeat is the deliberate exception: every eligible tick
 asks the agent to reason about your objective and can spend tokens.
 
+Use a workflow, not a harness-managed background shell, when follow-up must
+survive beyond one agent turn. A background shell can keep the current turn
+open and report back when it finishes, but it still belongs to that harness
+process and is not a durable scheduler. A harness or daemon restart can end it.
+PR watches, heartbeats and scheduled steers persist their intent in Wisp and
+resume checking after daemon recovery.
+
 **Workflows** is a tab in the right column, beside **Changes**, in the browser
 and in Desktop. It lists what is attached to the selected task: one row each,
 carrying the workflow's state and the reason it is waiting. The list ends in

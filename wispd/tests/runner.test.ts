@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, type AdapterDef } from "../src/adapters";
-import { envForCwd } from "../src/turn-input";
+import { envForCwd, taskPreamble } from "../src/turn-input";
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
@@ -479,6 +479,95 @@ describe("image turns (S3, spike ts7efd)", () => {
     // bash -c script a b c → $0=a: the expanded template runs -i <path> -- <prompt>
     expect(out).toContain(`-i\n${stored[0]!.path}\n--\n`);
     expect(out).toContain("see it?");
+  });
+});
+
+describe("Claude background follow-up", () => {
+  test("keeps stdin open until background work reports its follow-up result", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"waiter","task_type":"local_bash"}]}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"waiter","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"result","result":"still waiting","session_id":"session-background"}'`,
+      // EOF here means Wisp closed stdin at the first result and reproduced
+      // the real Claude failure. An open idle pipe times out with status >128.
+      "IFS= read -r -t 0.3 unexpected",
+      'status="$?"',
+      '[ "$status" -ne 1 ] || exit 9',
+      `printf '%s\\n' '{"type":"result","result":"background finished","session_id":"session-background"}'`,
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "wait and report", def, cfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done");
+
+    expect(turnsFor(task.id)[0]).toMatchObject({
+      status: "done",
+      exit_code: 0,
+      result: "background finished",
+    });
+  });
+
+  test("closes on a result that already consumed the background completion", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"waiter"}]}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"waiter","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"user","message":{"content":[{"type":"tool_result","content":"READY"}]}}'`,
+      `printf '%s\\n' '{"type":"result","result":"READY","session_id":"session-background"}'`,
+      "IFS= read -r -t 0.3 unexpected",
+      'status="$?"',
+      '[ "$status" -eq 1 ] || exit 9',
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "wait and report", def, cfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done");
+
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "READY" });
+  });
+
+  test("closes on the first result after a previously active task completes", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"waiter"}]}'`,
+      `printf '%s\\n' '{"type":"result","result":"waiting","session_id":"session-background"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"waiter","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"result","result":"READY","session_id":"session-background"}'`,
+      "IFS= read -r -t 0.3 unexpected",
+      'status="$?"',
+      '[ "$status" -eq 1 ] || exit 9',
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "wait and report", def, cfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done");
+
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "READY" });
+  });
+
+  test("the task preamble points delayed follow-up at durable workflows", () => {
+    expect(taskPreamble(makeTask())).toContain("wisp workflow types");
+    expect(taskPreamble(makeTask())).toContain("instead of relying on a harness background process");
   });
 });
 
