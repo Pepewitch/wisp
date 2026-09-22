@@ -281,7 +281,9 @@ The public macOS distribution keeps the service and interface composable:
 
 - the `wisp` Homebrew Formula installs the CLI/daemon inside a background-only
   branded `Wisp Daemon.app`, exposes `bin/wisp` as a symlink to its executable, and
-  installs the launchd service;
+  installs the launchd service. The release archive nests that bundle under one
+  versioned directory, because Homebrew descends into a lone top-level directory
+  before a formula's `install` runs;
 - the `wisp-desktop` Homebrew Cask installs `Wisp.app` and depends on that
   Formula;
 - the desktop app connects to the service but does not bundle, spawn, or stop

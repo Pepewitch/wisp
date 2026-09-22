@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { compareVersions } from "../shared/release-version";
 import {
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
@@ -38,11 +39,17 @@ export interface LegacyMacReleaseManifest {
   };
 }
 
+/**
+ * Schema 3 (0.5.14 only) put the app bundle at the archive root, so Homebrew
+ * descended into the bundle and the rendered formula could not find it. That
+ * layout is unbuildable and unrenderable on purpose: it must never come back
+ * through a replayed promotion.
+ */
 function approvedSignedManifest(
   manifest: MacReleaseManifest | LegacyMacReleaseManifest,
 ): manifest is MacReleaseManifest {
   return Boolean(
-    manifest.schemaVersion === 3 &&
+    manifest.schemaVersion === 4 &&
       manifest.signing.kind === "developer-id" &&
       manifest.signing.developerId &&
       manifest.signing.notarized &&
@@ -89,6 +96,7 @@ export function renderHomebrewFormula(manifest: MacReleaseManifest | LegacyMacRe
     (!signed && !historicalAdHoc) ||
     (signed &&
       (manifest.artifact.format !== "app-tar.gz" ||
+        manifest.artifact.root !== macosArchiveRoot(manifest.version) ||
         manifest.artifact.binary.file !== MACOS_APP_EXECUTABLE ||
         manifest.bundle.directory !== MACOS_APP_DIRECTORY ||
         manifest.bundle.identifier !== MACOS_CODE_SIGNING_IDENTIFIER ||

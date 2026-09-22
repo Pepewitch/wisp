@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   developerIdSigningMetadata,
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   type MacReleaseManifest,
 } from "../wispd/scripts/release-macos";
@@ -274,9 +275,12 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
   run(["tar", "-xzf", daemonArchive, "-C", daemonExtracted]);
   // Already-published schema-1 releases were ad-hoc signed. Keep promotion
   // receipts replayable. Every current release must be a branded, stapled app
-  // bundle whose main executable retains the stable daemon identity.
-  if (macManifest.schemaVersion === 3) {
-    const app = join(daemonExtracted, MACOS_APP_DIRECTORY);
+  // bundle whose main executable retains the stable daemon identity, nested
+  // under the archive root Homebrew descends into. The root is derived here
+  // rather than read from the manifest, so a manifest cannot point the checks
+  // somewhere other than where the formula installs from.
+  if (macManifest.schemaVersion === 4) {
+    const app = join(daemonExtracted, macosArchiveRoot(version), MACOS_APP_DIRECTORY);
     const daemon = join(app, "Contents/MacOS/wisp");
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
     run(["xcrun", "stapler", "validate", app]);

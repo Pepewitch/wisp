@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  macosArchiveRoot,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_CODE_SIGNING_IDENTIFIER,
@@ -13,7 +14,7 @@ import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManifest {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     product: "wisp",
     version: VERSION,
     apiProtocolVersion: API_PROTOCOL_VERSION,
@@ -40,6 +41,7 @@ function manifest(overrides: Partial<MacReleaseManifest> = {}): MacReleaseManife
     },
     artifact: {
       file: `wisp-v${VERSION}-darwin-arm64.tar.gz`,
+      root: macosArchiveRoot(VERSION),
       format: "app-tar.gz",
       sha256: "b".repeat(64),
       size: 42,
@@ -103,6 +105,24 @@ describe("Homebrew Formula rendering", () => {
         }),
       ),
     ).toThrow("not an approved Apple Silicon daemon release");
+  });
+
+  // 0.5.14's schema-3 archive put the bundle at the root, so Homebrew descended
+  // into it and `libexec.install "Wisp Daemon.app"` failed for every user. The
+  // renderer must refuse both that schema and any schema-4 manifest whose
+  // archive root is not the directory the formula installs from.
+  test("refuses an archive layout Homebrew cannot install from", () => {
+    expect(() =>
+      renderHomebrewFormula(
+        manifest({ artifact: { ...manifest().artifact, root: MACOS_APP_DIRECTORY } }),
+      ),
+    ).toThrow("not an approved Apple Silicon daemon release");
+    expect(() =>
+      renderHomebrewFormula(manifest({ schemaVersion: 3 as 4 })),
+    ).toThrow("not an approved Apple Silicon daemon release");
+    expect(renderHomebrewFormula(manifest())).toContain(
+      `libexec.install "${MACOS_APP_DIRECTORY}"`,
+    );
   });
 
   test("replays historical ad-hoc manifests but rejects new unsigned output", () => {
