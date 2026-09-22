@@ -299,6 +299,7 @@ describe("daemon API contracts", () => {
       const initial = await api(base, "/api/settings");
       expect(await json(initial)).toEqual({
         autoRenameTasksFromPullRequests: true,
+        hiddenModels: {},
       });
 
       const updated = await api(base, "/api/settings", "PATCH", {
@@ -307,6 +308,7 @@ describe("daemon API contracts", () => {
       expect(updated.status).toBe(200);
       expect(await json(updated)).toEqual({
         autoRenameTasksFromPullRequests: false,
+        hiddenModels: {},
       });
       expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
         autoRenameTasksFromPullRequests: false,
@@ -314,6 +316,7 @@ describe("daemon API contracts", () => {
       });
       expect(await json(await api(base, "/api/settings"))).toEqual({
         autoRenameTasksFromPullRequests: false,
+        hiddenModels: {},
       });
       expect(events).toContainEqual({ type: "settings" });
 
@@ -326,6 +329,7 @@ describe("daemon API contracts", () => {
       expect(noop.status).toBe(200);
       expect(await json(noop)).toEqual({
         autoRenameTasksFromPullRequests: false,
+        hiddenModels: {},
       });
       expect(events).toEqual([]);
 
@@ -333,7 +337,7 @@ describe("daemon API contracts", () => {
         base,
         "/api/settings",
         400,
-        "autoRenameTasksFromPullRequests is required",
+        "autoRenameTasksFromPullRequests or hiddenModels is required",
         "PATCH",
         {},
       );
@@ -344,6 +348,60 @@ describe("daemon API contracts", () => {
         "autoRenameTasksFromPullRequests must be a boolean, got string",
         "PATCH",
         { autoRenameTasksFromPullRequests: "no" },
+      );
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  test("hidden models patch independently, normalize, and no-op when unchanged", async () => {
+    const base = await startServer();
+    const events: WispEvent[] = [];
+    const unsubscribe = subscribe((event) => events.push(event));
+
+    try {
+      // an older client PATCHes only the boolean it knows: the curation stands
+      await api(base, "/api/settings", "PATCH", {
+        hiddenModels: { opencode: ["z/model", "a/model", "a/model", "  ", " b/model "] },
+      });
+      const kept = await api(base, "/api/settings", "PATCH", {
+        autoRenameTasksFromPullRequests: false,
+      });
+      expect(await json(kept)).toEqual({
+        autoRenameTasksFromPullRequests: false,
+        // trimmed, deduped and sorted, so an idempotent PATCH can be detected
+        hiddenModels: { opencode: ["a/model", "b/model", "z/model"] },
+      });
+
+      // the same set in another key order and another array order is a no-op
+      events.length = 0;
+      const noop = await api(base, "/api/settings", "PATCH", {
+        hiddenModels: { opencode: ["b/model", "z/model", "a/model"] },
+      });
+      expect(noop.status).toBe(200);
+      expect(events).toEqual([]);
+
+      // a harness hiding nothing drops out rather than persisting an empty list
+      const cleared = await api(base, "/api/settings", "PATCH", {
+        hiddenModels: { opencode: [], cursor: ["auto"] },
+      });
+      expect(await json(cleared)).toMatchObject({ hiddenModels: { cursor: ["auto"] } });
+
+      await expectError(
+        base,
+        "/api/settings",
+        400,
+        "hiddenModels must be an object mapping harness names to arrays of model ids, got array",
+        "PATCH",
+        { hiddenModels: [] },
+      );
+      await expectError(
+        base,
+        "/api/settings",
+        400,
+        "hiddenModels['cursor'] must be an array of strings, got string",
+        "PATCH",
+        { hiddenModels: { cursor: "auto" } },
       );
     } finally {
       unsubscribe();

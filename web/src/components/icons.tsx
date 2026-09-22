@@ -41,6 +41,8 @@ export {
   FlowchartRegular as Flowchart,
   DismissRegular as Dismiss,
   EditRegular as Pencil,
+  EyeRegular as Eye,
+  EyeOffRegular as EyeOff,
   FolderAddRegular as FolderAdd,
   LineHorizontal3Regular as Hamburger,
   SearchRegular as Search,

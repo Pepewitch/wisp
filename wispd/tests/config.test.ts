@@ -152,6 +152,27 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ envAllowlist: { repo: [".env", 5] } }))).toBe(
       "config.json: envAllowlist['repo'][1] must be a string, got number",
     );
+    expect(thrownMessage(() => validateConfig({ hiddenModels: [] }))).toBe(
+      "config.json: hiddenModels must be an object mapping harness names to arrays of model ids, got array",
+    );
+    expect(thrownMessage(() => validateConfig({ hiddenModels: { cursor: "auto" } }))).toBe(
+      "config.json: hiddenModels['cursor'] must be an array of strings, got string",
+    );
+  });
+
+  test("hiddenModels normalizes so an idempotent write can be detected", () => {
+    expect(
+      validateConfig({ hiddenModels: { cursor: ["z", "a", "a", " b ", "", "   "] } }),
+    ).toEqual({ hiddenModels: { cursor: ["a", "b", "z"] } });
+    // a harness that ends up hiding nothing is dropped, not stored empty
+    expect(validateConfig({ hiddenModels: { cursor: [], droid: ["auto"] } })).toEqual({
+      hiddenModels: { droid: ["auto"] },
+    });
+    // an unknown harness name is KEPT: a probe that failed this boot, or a
+    // harness installed on another machine, must not cost a curation
+    expect(validateConfig({ hiddenModels: { nosuch: ["x"] } })).toEqual({
+      hiddenModels: { nosuch: ["x"] },
+    });
   });
 
   test("host accepts only the exact loopback bind", () => {
@@ -198,7 +219,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });

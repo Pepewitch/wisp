@@ -114,6 +114,14 @@ export interface WispConfig {
    * absent is enabled, matching the persisted default.
    */
   autoRenameTasksFromPullRequests?: boolean;
+  /**
+   * harness name -> model ids this daemon's clients keep OUT of the model
+   * picker. A denylist, never an allowlist: a model a later probe discovers
+   * must show up on its own rather than be swallowed by a list written before
+   * it existed. Purely a view filter — every id here is still launchable by
+   * `--model`, and a task already running on one keeps it.
+   */
+  hiddenModels?: Record<string, string[]>;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
   /** repo path or repo basename -> untracked files to copy into new worktrees (e.g. [".env"]) */
@@ -215,6 +223,7 @@ const DEFAULTS: WispConfig = {
   turnLogMaxBytes: 1024 * 1024 * 1024,
   turnLogRetentionDays: 90,
   autoRenameTasksFromPullRequests: true,
+  hiddenModels: {},
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
@@ -239,6 +248,7 @@ const CONFIG_KEYS = [
   "turnLogMaxBytes",
   "turnLogRetentionDays",
   "autoRenameTasksFromPullRequests",
+  "hiddenModels",
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
@@ -413,6 +423,9 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
       throw new Error(`config.json: ${key} must be a positive integer, got ${JSON.stringify(value)}`);
     }
   }
+  if (raw.hiddenModels !== undefined) {
+    out.hiddenModels = validateHiddenModels(raw.hiddenModels, "config.json: hiddenModels");
+  }
   num("setupTimeoutMinutes");
   if (raw.envAllowlist !== undefined) {
     if (!isRecord(raw.envAllowlist)) {
@@ -429,6 +442,31 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   if (raw.harnessDefaults !== undefined) {
     const defaults = validateHarnessDefaults(raw.harnessDefaults, warn);
     if (defaults) out.harnessDefaults = defaults;
+  }
+  return out;
+}
+
+/**
+ * Normalize as well as check: ids are trimmed, blanks dropped, duplicates
+ * collapsed and each harness's list sorted, and a harness that ends up hiding
+ * nothing is dropped entirely. That makes two equal sets compare equal, which
+ * is what lets the settings route no-op an idempotent PATCH instead of
+ * rewriting config.json and waking every client.
+ *
+ * A harness NAME is never checked against the installed adapters: a probe that
+ * failed this boot, or a harness installed on another machine, must not cost
+ * the user their curation.
+ */
+export function validateHiddenModels(raw: unknown, label: string): Record<string, string[]> {
+  if (!isRecord(raw)) {
+    throw new Error(`${label} must be an object mapping harness names to arrays of model ids, got ${typeName(raw)}`);
+  }
+  const out: Record<string, string[]> = {};
+  for (const [harness, models] of Object.entries(raw)) {
+    const ids = stringArray(models, `${label}['${harness}']`)
+      .map((id) => id.trim())
+      .filter((id) => id !== "");
+    if (ids.length > 0) out[harness] = [...new Set(ids)].sort();
   }
   return out;
 }
@@ -605,15 +643,17 @@ function persistConfig(value: Record<string, unknown>): void {
 // patchConfig's Record<string, unknown> without a cast
 export type WispSettings = {
   autoRenameTasksFromPullRequests: boolean;
+  hiddenModels: Record<string, string[]>;
 };
 
 /** The public daemon-wide preferences, with legacy configs inheriting defaults. */
 export function wispSettings(
-  cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests">,
+  cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests" | "hiddenModels">,
 ): WispSettings {
   return {
     autoRenameTasksFromPullRequests:
       cfg.autoRenameTasksFromPullRequests !== false,
+    hiddenModels: cfg.hiddenModels ?? {},
   };
 }
 
@@ -647,6 +687,7 @@ export function persistWispSettings(
   patchConfig(settings);
   cfg.autoRenameTasksFromPullRequests =
     settings.autoRenameTasksFromPullRequests;
+  cfg.hiddenModels = settings.hiddenModels;
 }
 
 function mintToken(): string {

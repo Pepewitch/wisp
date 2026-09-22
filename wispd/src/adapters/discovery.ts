@@ -215,12 +215,15 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   /**
    * Cursor (verified against 2026.09.18-9a7762b): `cursor-agent models`
    * prints one `<id> - <display name>` record per model after authentication.
-   * Its full catalog is much larger than the useful Cursor-owned choices, so
-   * the picker deliberately keeps only Auto, Composer, and Cursor model ids.
    *
-   * Cursor marks its default in the display name as `(default)`. Only expose
-   * that default when it survives the filter, so the picker never names a
-   * default it cannot offer.
+   * The WHOLE catalog is offered, in the CLI's own order. This used to keep
+   * only `auto`, `composer-*` and `cursor-*` because the rest flooded a picker
+   * that had no way to be pruned — a filter that also made a model the CLI
+   * accepts unreachable from the UI. Hiding is now the user's (settings own
+   * `hiddenModels`), so a probe has no business deciding what is useful; it
+   * reports what this install can run and the picker is curated per taste.
+   *
+   * Cursor marks its default in the display name as `(default)`.
    */
   "cursor-models": async (def, spawn, signal) => {
     const res = await spawn([def.bin, "models"], signal);
@@ -239,20 +242,11 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
       };
     }
 
-    const ids = [...new Set(entries.map((entry) => entry.id))];
-    const models = [
-      ...ids.filter((id) => id === "auto"),
-      ...ids.filter((id) => id.startsWith("composer-")),
-      ...ids.filter((id) => id.startsWith("cursor-")),
-    ];
-    const offered = new Set(models);
-    const defaultModel =
-      entries.find((entry) => offered.has(entry.id) && /\(default\)/i.test(entry.display))?.id ?? null;
-    const notes = [
-      `list from '${def.bin} models', restricted to auto, composer-*, and cursor-* to keep the picker focused`,
-    ];
+    const models = [...new Set(entries.map((entry) => entry.id))];
+    const defaultModel = entries.find((entry) => /\(default\)/i.test(entry.display))?.id ?? null;
+    const notes = [`list from '${def.bin} models' (the full catalog, in the CLI's own order)`];
     if (!defaultModel) {
-      notes.push(`'${def.bin} models' named no default among the filtered models`);
+      notes.push(`'${def.bin} models' marked no '(default)' model`);
     }
     return { defaultModel, models, notes };
   },

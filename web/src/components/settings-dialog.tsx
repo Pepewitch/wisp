@@ -1,11 +1,15 @@
+import { useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
 import { Moon, Sun } from "@/components/icons"
 import { Menu, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
+import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
 import { Button, Eyebrow, POPOVER_SURFACE, SwitchTrack } from "@/components/primitives"
 import { useUpdateWispSettings } from "@/hooks/mutations"
-import { useWispSettings } from "@/hooks/queries"
+import { useHarnesses, useWispSettings } from "@/hooks/queries"
+import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { ApiError } from "@/lib/api"
+import { modelTotals } from "@/lib/model-visibility"
 import { THEME_PREFERENCES, themeStore, useTheme, useThemePreference } from "@/lib/theme"
 import type { ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -97,6 +101,16 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
       </Section>
       {specimen ? (
         <Section
+          label="Models"
+          hint="Which models each harness offers in the picker. Wisp-wide behavior for every client connected to this daemon."
+        >
+          <ModelsRow shown={14} total={187} onManage={() => {}} />
+        </Section>
+      ) : (
+        <ModelsSection />
+      )}
+      {specimen ? (
+        <Section
           label="Task names"
           hint="Wisp-wide behavior for every client connected to this daemon."
         >
@@ -107,6 +121,49 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
       )}
       {!specimen && <PwaInstall />}
     </>
+  )
+}
+
+/**
+ * The door to the model manager, and the one number that says whether it is
+ * worth opening. Hidden on a daemon that cannot store a curation, for the
+ * same reason Task names is — see below.
+ */
+function ModelsSection() {
+  const [managing, setManaging] = useState(false)
+  const { hidden, supported } = useHiddenModels()
+  const harnesses = useHarnesses(true)
+  if (!supported) return null
+  const totals = modelTotals(harnesses.data ?? [], hidden)
+
+  return (
+    <Section
+      label="Models"
+      hint="Which models each harness offers in the picker. Wisp-wide behavior for every client connected to this daemon."
+    >
+      <ModelsRow shown={totals.shown} total={totals.total} onManage={() => setManaging(true)} />
+      <ModelVisibilityDialog open={managing} onOpenChange={setManaging} />
+    </Section>
+  )
+}
+
+function ModelsRow({
+  shown,
+  total,
+  onManage,
+}: {
+  shown: number
+  total: number
+  onManage: () => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[12.5px] text-fg-secondary">Shown in the picker</span>
+      <span className="ml-auto font-mono text-[11.5px] text-faint">
+        {shown} of {total}
+      </span>
+      <Button onClick={onManage}>Manage…</Button>
+    </div>
   )
 }
 

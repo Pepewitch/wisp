@@ -136,19 +136,26 @@ export function MenuGroup({
  * onClick never fires. Actions therefore ride as sentinel VALUES, which the
  * caller recognises in onValueChange. A sentinel never equals real state, so
  * it never renders a checkmark.
+ *
+ * The rule above the actions is what separates them from the CHOICES, so a
+ * run of them draws exactly one: `divider={false}` on every action after the
+ * first. Three rules through a three-row footer would read as three groups.
  */
 export function MenuAction({
   value,
   children,
   disabled = false,
+  divider = true,
 }: {
   value: string
   children: ReactNode
   disabled?: boolean
+  /** False for an action that follows another — the group already has its rule. */
+  divider?: boolean
 }) {
   return (
     <>
-      <div className="my-1 h-px bg-border" />
+      {divider && <div className="my-1 h-px bg-border" />}
       <Base.RadioItem value={value} disabled={disabled} className={cn(ROW, "text-muted-foreground")}>
         <span className="size-3 shrink-0" aria-hidden />
         <span className="min-w-0 flex-1 truncate">{children}</span>

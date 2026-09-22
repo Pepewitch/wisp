@@ -135,13 +135,21 @@ harmless preferences.
   `turnTranscriptBytes` (5 MB; `logMaxBytes` is its legacy alias),
   `setupTimeoutMinutes` (10), `terminalShell` (an optional absolute executable
   path for embedded login terminals), `envAllowlist`,
-  `harnessDefaults`.
+  `harnessDefaults`, `hiddenModels`.
 - `instance-id` — the create-exclusive authority mirrored by
   `config.json.instanceId`; it prevents simultaneous legacy migrations from
   minting different identities. Do not edit either value independently.
 - `harnessDefaults` example — the default model/effort for new tasks;
   `--model`/`--effort` always win over it:
   `"harnessDefaults": { "claude": { "model": "claude-sonnet-5", "reasoningEffort": "medium" } }`
+- `hiddenModels` example — model ids the UI keeps OUT of its picker, per
+  harness: `"hiddenModels": { "cursor": ["auto", "gpt-5.6-sol"] }`. A view
+  filter and nothing more — every id here is still launchable by `--model`,
+  `wisp models` still reports it, and a task already running on one keeps its
+  model. Edited from Wisp's own Settings (**Models → Manage…**) or the model
+  picker's footer, and it is a denylist, so a model a later probe discovers
+  shows up on its own. A harness with every model hidden drops out of the
+  picker until one is shown again.
 - `adapters.json` — declare extra harnesses or override builtin fields (a
   harness is a headless one-shot command plus resume/model/effort templates).
 - `suffix-prompts.json` — reusable prompt suffixes, created/edited in the
@@ -166,6 +174,12 @@ still work. Builtin harnesses: `droid`, `claude`, `codex`, `cursor`,
 Pass the id `wisp models` prints, not a shortened form of it. A harness CLI
 may accept an unknown `--model` and silently run something else: cursor's
 Grok 4.6 is `cursor-grok-4.6-high`, and a bare `grok-4.6` is not an id.
+
+`wisp models` reports what the install can RUN; what the UI OFFERS is a
+curated subset of it (`hiddenModels` above). cursor's discovery used to filter
+its catalog down to `auto`/`composer-*`/`cursor-*` so the picker would not
+flood — it no longer does, so every model cursor accepts is now offered and
+prunable by taste.
 
 `--effort <level>` sets reasoning effort; unset means the harness picks per
 model. Levels per harness:

@@ -37,7 +37,17 @@ const harness: HarnessInfo = {
  * clicks must still mean one task.
  */
 describe("create task dialog submission", () => {
+  /**
+   * The composer also READS — the model picker asks /api/settings for the
+   * daemon's hidden-model curation. Only creates are the subject here, so
+   * those reads are answered separately rather than counted as sends.
+   */
   async function mountWithRequest(request: ReturnType<typeof vi.fn>) {
+    const send = request as unknown as (path: string, init?: unknown) => Promise<unknown>
+    const route = ((path: string, init?: unknown) =>
+      path === "/api/settings"
+        ? Promise.resolve({ autoRenameTasksFromPullRequests: true, hiddenModels: {} })
+        : send(path, init)) as unknown as DaemonTransport["request"]
     render(
       <CreateTaskDialog
         open
@@ -50,7 +60,7 @@ describe("create task dialog submission", () => {
       />,
       {
         wrapper: runtimeWrapper(
-          fakeDaemonTransport("test-connection", { request: request as unknown as DaemonTransport["request"] }),
+          fakeDaemonTransport("test-connection", { request: route }),
         ),
       },
     )

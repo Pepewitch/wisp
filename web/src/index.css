@@ -53,6 +53,25 @@
   /* The sidebar already owns its top and bottom safe areas. */
   padding-left: env(safe-area-inset-left);
 }
+/* The model picker's per-row hide button. It is not a resting control: the
+   star beside it says "this is preferred" all the time, but an eye that is
+   always on would put two glyphs on every one of 150 rows. So it appears on
+   hover, on keyboard highlight (base-ui sets data-highlighted on the row
+   base-ui owns — a SIBLING of the button, hence :has), and whenever it holds
+   focus itself. The row reserves its width either way, so nothing shifts.
+
+   Coarse pointers never render it at all (model-menu.tsx): a finger reveals
+   nothing by hovering, and the manager does this job on touch. */
+.model-row-action {
+  opacity: 0;
+  transition: opacity 90ms ease-out;
+}
+.model-row:hover .model-row-action,
+.model-row:focus-within .model-row-action,
+.model-row:has([data-highlighted]) .model-row-action {
+  opacity: 1;
+}
+
 @media (pointer: coarse) {
   /* iOS zooms focused fields smaller than 16px and moves the composer away. */
   input:not([type="checkbox"]):not([type="radio"]), textarea {

@@ -399,7 +399,9 @@ export function useUpdateWispSettings() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (settings: WispSettings) =>
+    // a real PATCH: each key is independent, so a client sending only the one
+    // field it owns never blanks a setting it has not heard of
+    mutationFn: (settings: Partial<WispSettings>) =>
       transport.request<WispSettings>("/api/settings", {
         method: "PATCH",
         body: settings,

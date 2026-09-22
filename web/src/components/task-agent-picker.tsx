@@ -1,20 +1,15 @@
+import { useState } from "react"
+
 import { FastModeToggle } from "@/components/fast-mode-toggle"
 import { Effort, Sparkle } from "@/components/icons"
-import {
-  Menu,
-  MenuGroup,
-  MenuNote,
-  MenuRadioGroup,
-  MenuRadioItem,
-} from "@/components/menu"
+import { Menu, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
+import { ModelMenuFooter, ModelMenuGroups } from "@/components/model-menu"
+import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
+import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { effortOptions } from "@/lib/effort"
-import {
-  defaultModelFor,
-  isUsable,
-  modelOptionsFor,
-  orderHarnesses,
-  unusableReason,
-} from "@/lib/model-choice"
+import { MENU_ACTION } from "@/lib/menu-actions"
+import { orderHarnesses } from "@/lib/model-choice"
+import { hiddenTotal } from "@/lib/model-visibility"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { HarnessInfo } from "@/lib/types"
 
@@ -47,6 +42,11 @@ export function TaskAgentPicker({
   const ordered = orderHarnesses(harnesses)
   const selected = ordered.find((candidate) => candidate.name === value.harness)
   const efforts = selected ? effortOptions(connectionId, selected) : []
+  const { hidden, supported, setHidden } = useHiddenModels()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [revealed, setRevealed] = useState(false)
+  const [managing, setManaging] = useState(false)
+  const choice = { harness: value.harness, model: value.model }
 
   return (
     <>
@@ -75,6 +75,13 @@ export function TaskAgentPicker({
         // the one control in the bar allowed to yield width: it truncates
         // inside its own box, the way the create dialog's harness chip does
         className="min-w-0 max-w-full shrink"
+        open={menuOpen}
+        onOpenChange={(open) => {
+          setMenuOpen(open)
+          // the reveal is scoped to ONE opening: a curated list is what the
+          // next open is for, and a sticky reveal would quietly undo it
+          if (!open) setRevealed(false)
+        }}
       >
         {ordered.length === 0 ? (
           <MenuNote>No harnesses reported by the daemon.</MenuNote>
@@ -82,6 +89,11 @@ export function TaskAgentPicker({
           <MenuRadioGroup
             value={encode(value.harness, value.model)}
             onValueChange={(encoded) => {
+              if (encoded === MENU_ACTION.revealModels) return setRevealed((on) => !on)
+              if (encoded === MENU_ACTION.manageModels) {
+                setMenuOpen(false)
+                return setManaging(true)
+              }
               const split = encoded.indexOf("\t")
               const harness = encoded.slice(0, split)
               const model = encoded.slice(split + 1)
@@ -103,27 +115,19 @@ export function TaskAgentPicker({
               })
             }}
           >
-            {ordered.map((harness) => (
-              <MenuGroup
-                key={harness.name}
-                label={harness.name}
-                hint={isUsable(harness) ? undefined : unusableReason(harness)}
-              >
-                {isUsable(harness) ? (
-                  modelOptionsFor(harness).map((model) => (
-                    <MenuRadioItem
-                      key={model}
-                      value={encode(harness.name, model)}
-                      hint={model === defaultModelFor(harness) ? "default" : undefined}
-                    >
-                      {model}
-                    </MenuRadioItem>
-                  ))
-                ) : (
-                  <MenuNote>Unavailable here</MenuNote>
-                )}
-              </MenuGroup>
-            ))}
+            <ModelMenuGroups
+              harnesses={ordered}
+              hidden={hidden}
+              revealed={revealed}
+              selected={choice}
+              encode={encode}
+              onHiddenChange={supported ? setHidden : undefined}
+            />
+            <ModelMenuFooter
+              hiddenCount={hiddenTotal(ordered, hidden)}
+              revealed={revealed}
+              manageable={supported}
+            />
           </MenuRadioGroup>
         )}
       </Menu>
@@ -173,6 +177,7 @@ export function TaskAgentPicker({
           </MenuRadioGroup>
         </Menu>
       )}
+      <ModelVisibilityDialog open={managing} onOpenChange={setManaging} />
     </>
   )
 }
