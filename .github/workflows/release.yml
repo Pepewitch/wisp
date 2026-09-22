@@ -682,9 +682,11 @@ jobs:
         run: |
           audit_tap="$(brew --repository Pepewitch/tap)"
           test -f "$audit_tap/Formula/wisp.rb"
-          # Homebrew 7 gates third-party taps behind explicit trust.
+          # Homebrew 7 gates third-party taps behind explicit trust. Let a
+          # failure here fall through: if trust really was required, the
+          # install below says so, and that is the error worth reading.
           if brew help trust >/dev/null 2>&1; then
-            brew trust --formula Pepewitch/tap/wisp
+            brew trust --formula Pepewitch/tap/wisp || true
           fi
           brew install --formula Pepewitch/tap/wisp
           brew test --formula Pepewitch/tap/wisp
