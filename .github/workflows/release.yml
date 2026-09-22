@@ -689,7 +689,7 @@ jobs:
             brew trust --formula Pepewitch/tap/wisp || true
           fi
           brew install --formula Pepewitch/tap/wisp
-          brew test --formula Pepewitch/tap/wisp
+          brew test Pepewitch/tap/wisp
           prefix="$(brew --prefix wisp)"
           app="$prefix/libexec/Wisp Daemon.app"
           test -x "$app/Contents/MacOS/wisp"
