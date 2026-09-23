@@ -59,7 +59,8 @@ function checksGate(input: GateInput): GateResult | null {
   if (fixes.length > 0) return { kind: "needs-you", reason: `${names(fixes)} failed` }
   const holds = counting.filter((check) => classifyCheck(check) === "hold")
   if (holds.length > 0) {
-    const approval = holds.filter((check) => check.conclusion?.toUpperCase() === "ACTION_REQUIRED")
+    const approval = holds.filter((check) => check.conclusion?.toUpperCase() === "ACTION_REQUIRED" ||
+      (!check.conclusion && check.status.toUpperCase() === "WAITING"))
     return approval.length > 0
       ? { kind: "needs-you", reason: `${names(approval)} needs approval` }
       : { kind: "needs-you", reason: `${names(holds)} did not finish — rerun it` }

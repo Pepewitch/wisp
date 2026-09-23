@@ -4,7 +4,7 @@ export const HELP = `Wisp — coding-agent task manager
 
 usage:
   ${COMMAND} serve                                   run the daemon
-  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--attach <path>]…
+  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--attach <path>]…
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults;
                                                        --fast runs in the harness's faster lane for the same
@@ -12,6 +12,7 @@ usage:
                                                        --local runs in the repo itself instead of a worktree,
                                                        and archiving it never removes anything;
                                                        --auto-merge merges the task's PR once it is ready;
+                                                       --auto-fix sends a red check or conflict back to the agent;
                                                        --attach repeats, up to 10 files and 50 MB per turn:
                                                        images 5 MB, pdf and text 20 MB, video 50 MB
                                                        (--image is the old name and still works))
@@ -27,7 +28,8 @@ usage:
   ${COMMAND} send <task> "message" [--attach <path>]… send safely; active tasks steer or queue without stopping
   ${COMMAND} interrupt <task>                        stop the running turn (session survives)
   ${COMMAND} workflow <command>                      task automations: types, add, list, show, set, pause, resume, complete
-  ${COMMAND} pr <task> [merge on|off | resume]       auto-merge for the task's PR: status, switch it, or resume it
+  ${COMMAND} pr <task> [merge on|off | fix on|off | resume | send-now | skip]
+                                                    auto-merge and auto-fix for the task's PR
   ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)
   ${COMMAND} push <task>                             push the task branch to origin
   ${COMMAND} update                                  check for and install the latest Wisp daemon

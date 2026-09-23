@@ -20,7 +20,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/t1-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
-    ...over,
+    baseHead: null, baseChecks: [], ...over,
   };
 }
 function gate(over: Partial<GateInput> & { pr?: PrSnapshot } = {}) {
@@ -212,7 +212,7 @@ describe("reading GitHub", () => {
     const snapshot = parseSnapshot(raw());
     expect(snapshot).toMatchObject({ number: 7, head: HEAD, defaultBranch: "main", mergeMethod: "SQUASH", unresolvedThreads: 1, actionsSuitesPending: 0, viewer: "owner" });
     expect(snapshot.checks).toEqual([
-      { name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "u" },
+      { name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "u", deployment: false },
       { name: "ci/legacy", status: "PENDING", conclusion: null, required: false, url: "v" },
     ]);
     expect(snapshot.reviews[0]).toMatchObject({ author: "owner", commit: HEAD, bot: false });

@@ -1,5 +1,5 @@
 /**
- * Auto-merge (and, later, auto-fix) for a task's pull request: the API shape
+ * Auto-merge and auto-fix for a task's pull request: the API shape
  * every client reads. The daemon owns the decision; clients only show it and
  * flip the toggles.
  */
@@ -21,6 +21,9 @@ export type AutopilotState =
   /** not armed */
   | "off"
 
+/** Which switch a reason speaks for: the merge gate, or auto-fix's own look at CI. */
+export type AutopilotBy = "auto-merge" | "auto-fix"
+
 export interface AutopilotStatus {
   autoMerge: boolean
   autoFix: boolean
@@ -35,8 +38,13 @@ export interface AutopilotStatus {
    * which must never stand in for them.
    */
   about: "pr" | "task"
+  by: AutopilotBy
   /** the bound PR merged, and it was Wisp that merged it */
   mergedByWisp: boolean
+  /** an auto-fix round waiting out its short delay: Send now or Skip act on it */
+  pendingFix: { summary: string; sendsAt: string } | null
+  /** auto-fix rounds sent to the agent for the bound PR */
+  fixRounds: number
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }

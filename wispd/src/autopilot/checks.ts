@@ -12,6 +12,12 @@ export interface PrCheck {
   conclusion: string | null
   required: boolean
   url: string
+  /** a check run's id — for GitHub Actions it is also the job id (logs, rerun) */
+  checkRunId?: number
+  /** the Actions workflow run it belongs to, when it is one */
+  run?: { id: number; event: string }
+  /** a deployment job: never rerun behind anyone's back */
+  deployment?: boolean
 }
 
 const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])
@@ -29,10 +35,12 @@ export function classifyCheck(check: PrCheck): CheckClass {
     return "hold"
   }
   // A commit status carries its outcome in `status`; a check run that has not
-  // concluded is pending whatever its status word is.
+  // concluded is pending — unless it is WAITING on an environment's reviewers,
+  // which never ends on its own.
   const status = check.status.toUpperCase()
   if (PASS.has(status)) return "pass"
   if (FIX.has(status)) return "fix"
+  if (status === "WAITING") return "hold"
   return "pending"
 }
 

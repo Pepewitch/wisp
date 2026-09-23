@@ -40,11 +40,14 @@ const MERGE_STATE = {
   unknown: "Merge status unknown",
 } as const
 
-/** What auto-merge has to say about this PR, or null when it has nothing. */
+/** What auto-merge / auto-fix has to say about this PR, or null when it has nothing. */
 function autoMergeWords(status: AutopilotStatus | null | undefined, number: number): string | null {
-  if (!status?.autoMerge) return null
+  if (!status?.autoMerge && !status?.autoFix) return null
   const which = status.pr !== null && status.pr !== number ? ` #${status.pr}` : ""
-  return status.state === "paused" ? `Auto-merge${which} paused: ${status.reason}` : `Auto-merge${which}: ${status.reason}`
+  const name = status.by === "auto-fix" ? "Auto-fix" : "Auto-merge"
+  // "Auto-fix will send: …" and "Auto-fix gave up…" already say who is speaking
+  if (status.reason.startsWith(name) && !which) return status.reason
+  return `${name}${which}${status.state === "paused" ? " paused" : ""}: ${status.reason}`
 }
 
 /**
@@ -57,7 +60,7 @@ function autoMergeWords(status: AutopilotStatus | null | undefined, number: numb
  * the hover instead.
  */
 function replacesFacts(status: AutopilotStatus | null | undefined, pullRequest: PullRequestInfo): boolean {
-  return Boolean(status?.autoMerge) && status!.pr === pullRequest.number &&
+  return Boolean(status?.autoMerge || status?.autoFix) && status!.pr === pullRequest.number &&
     (status!.about === "pr" || status!.state === "paused") && !pullRequest.queuedToMerge
 }
 

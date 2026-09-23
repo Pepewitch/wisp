@@ -157,7 +157,7 @@ describe("PR status in task headers", () => {
 describe("the auto-merge reason on the PR line", () => {
   const status = (over: Partial<AutopilotStatus> = {}): AutopilotStatus => ({
     autoMerge: true, autoFix: false, pr: 42, state: "waiting", reason: "Waiting for checks (2 running)",
-    about: "pr", mergedByWisp: false, updatedAt: null, ...over,
+    about: "pr", by: "auto-merge", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null, ...over,
   })
 
   it("stands in for CI and review while armed, and the hover still carries both", () => {
@@ -205,6 +205,24 @@ describe("the auto-merge reason on the PR line", () => {
     other.unmount()
     render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, state: "off", reason: "Auto-merge off" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("CI failed · Changes requested")
+  })
+
+  it("names the switch whose reason it is, without saying it twice", () => {
+    const fixing = { autoFix: true, by: "auto-fix" } as const
+    const { unmount } = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ ...fixing, reason: "Auto-fix will send: test failing" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix will send: test failing")
+    unmount()
+    // both on: auto-fix's rerun is auto-fix's to explain, the gate's wait is auto-merge's
+    const rerun = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ ...fixing, reason: "Rerunning test" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix: Rerunning test")
+    rerun.unmount()
+    const review = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoFix: true, reason: "Waiting for a review" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-merge: Waiting for a review")
+    review.unmount()
+    // a pause that already names its switch is not prefixed with it again
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ ...fixing, state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix gave up after 3 rounds — resume to try again")
+    expect(screen.getByRole("link")).not.toHaveTextContent("Auto-fix paused")
   })
 
   it("uses the compact link's second line for the reason on mobile", () => {

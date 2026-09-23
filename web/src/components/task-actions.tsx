@@ -107,23 +107,31 @@ export function TaskActions({ task }: { task: ApiTask }) {
 }
 
 /**
- * Auto-merge's own group: the switch, naming the PR it is bound to, the one
- * reason it is waiting, and the single action a pause or a Stop hold asks for.
- * Every control is a menu row, so touch and keyboard reach all of them.
+ * Auto-merge and auto-fix: the two switches, the PR they are bound to, the one
+ * reason they are waiting, and the single action a pending round, a pause, or
+ * a Stop hold asks for. Every control is a menu row, so touch and keyboard
+ * reach all of them.
  */
 function AutoMergeItems({ task }: { task: ApiTask }) {
   const features = useHarnessFeatures()
   const autopilot = useAutopilot()
   if (!features.data?.taskAutopilot || task.archived) return null
   const status = task.autopilot
-  const armed = status?.autoMerge === true
+  const merge = status?.autoMerge === true
+  const fix = status?.autoFix === true
+  const armed = merge || fix
   const local = task.mode === "local"
-  const set = (autoMerge?: boolean) => autopilot.mutate({ id: task.id, autoMerge })
+  const busy = local || autopilot.isPending
+  const act = (action: "resume" | "send-now" | "skip") => autopilot.mutate({ id: task.id, act: action })
+  const set = (change: { autoMerge?: boolean; autoFix?: boolean }) => autopilot.mutate({ id: task.id, set: change })
   return (
     <>
       <MenuSeparator />
-      <MenuCheckboxItem checked={armed} disabled={local || autopilot.isPending} onCheckedChange={(checked) => set(checked)}>
-        {armed && status?.pr ? `Auto-merge #${status.pr}` : "Auto-merge"}
+      <MenuCheckboxItem checked={merge} disabled={busy} onCheckedChange={(checked) => set({ autoMerge: checked })}>
+        {merge && status?.pr ? `Auto-merge #${status.pr}` : "Auto-merge"}
+      </MenuCheckboxItem>
+      <MenuCheckboxItem checked={fix} disabled={busy} onCheckedChange={(checked) => set({ autoFix: checked })}>
+        {fix && !merge && status?.pr ? `Auto-fix #${status.pr}` : "Auto-fix"}
       </MenuCheckboxItem>
       {local && <MenuNote>Needs a worktree task: this one runs in the project checkout.</MenuNote>}
       {/* the reason while it is on; and when Wisp itself switched it off, why */}
@@ -132,9 +140,25 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
           <MenuNote>{status.state === "paused" ? `Paused — ${status.reason}` : status.reason}</MenuNote>
         </div>
       )}
-      {armed && status?.state === "paused" && <MenuItem keepOpen disabled={autopilot.isPending} onClick={() => set()}>Resume</MenuItem>}
-      {armed && status?.state === "held" && <MenuItem keepOpen disabled={autopilot.isPending} onClick={() => set()}>Continue now</MenuItem>}
+      {armed && status && <AutopilotActions status={status} pending={autopilot.isPending} act={act} />}
       {autopilot.error && <div className="max-w-[280px]"><MenuNote>{failureReason(autopilot.error)}</MenuNote></div>}
+    </>
+  )
+}
+
+/** The one action the current state asks for: a pending round, a pause, or a Stop hold. */
+function AutopilotActions({ status, pending, act }: {
+  status: NonNullable<ApiTask["autopilot"]>
+  pending: boolean
+  act: (action: "resume" | "send-now" | "skip") => void
+}) {
+  if (status.state === "paused") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Resume</MenuItem>
+  if (status.state === "held") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Continue now</MenuItem>
+  if (!status.autoFix || !status.pendingFix) return null
+  return (
+    <>
+      <MenuItem keepOpen disabled={pending} onClick={() => act("send-now")}>Send now</MenuItem>
+      <MenuItem keepOpen disabled={pending} onClick={() => act("skip")}>Skip</MenuItem>
     </>
   )
 }

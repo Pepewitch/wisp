@@ -122,9 +122,8 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
     if (!isRecord(body.autopilot)) return err(`autopilot must be an object, got ${typeName(body.autopilot)}`, 400);
     const invalid = autopilotUpdateError(body.autopilot);
     if (invalid) return err(`autopilot: ${invalid}`, 400);
-    if (body.autopilot.autoFix === true) return err("autopilot: Auto-fix is not available yet", 400);
-    if (body.autopilot.autoMerge === true && body.mode === "local") {
-      return err("auto-merge needs a worktree task — a local task runs on the checkout's own branch", 400);
+    if ((body.autopilot.autoMerge === true || body.autopilot.autoFix === true) && body.mode === "local") {
+      return err("auto-merge and auto-fix need a worktree task — a local task runs on the checkout's own branch", 400);
     }
   }
   return null;
@@ -136,9 +135,9 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
  * request here would strand it in `creating`. The response says what took.
  */
 function armRequestedAutopilot(taskId: string, requested: unknown): void {
-  if (!isRecord(requested) || requested.autoMerge !== true) return;
+  if (!isRecord(requested) || (requested.autoMerge !== true && requested.autoFix !== true)) return;
   try {
-    setAutopilot(taskId, { autoMerge: true });
+    setAutopilot(taskId, { autoMerge: requested.autoMerge === true, autoFix: requested.autoFix === true });
   } catch (error) {
     console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
   }

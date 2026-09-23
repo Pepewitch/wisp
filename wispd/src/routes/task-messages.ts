@@ -15,6 +15,7 @@ import {
   updateQueuedTaskMessage,
 } from "../store";
 import { changeWorkflowState } from "../workflows/store";
+import { skipCancelledRound } from "../autopilot/store";
 import { apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
@@ -155,7 +156,11 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
   if (method === "DELETE") {
     const cancelled = cancelQueuedTaskMessage(message.id, task.id);
     if (!cancelled) return err("only queued messages can be cancelled", 409);
-    if (message.workflow_id) changeWorkflowState(message.workflow_id, "paused", "Generated instruction cancelled by user");
+    // Cancelling a queued auto-fix round means "don't send this one" (Skip);
+    // any other workflow's generated instruction pauses its workflow.
+    if (message.workflow_id && !skipCancelledRound(message.workflow_id, message.id)) {
+      changeWorkflowState(message.workflow_id, "paused", "Generated instruction cancelled by user");
+    }
     removeMessageAttachments(task.id, message.id);
     return json(apiTaskMessage(cancelled));
   }

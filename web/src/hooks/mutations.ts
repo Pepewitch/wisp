@@ -121,10 +121,10 @@ export function useAutopilot() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, autoMerge }: { id: string; autoMerge?: boolean }) =>
-      autoMerge === undefined
-        ? transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/resume`, { method: "POST", body: {} })
-        : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot`, { method: "PUT", body: { autoMerge } }),
+    mutationFn: ({ id, set, act }: { id: string; set?: { autoMerge?: boolean; autoFix?: boolean }; act?: "resume" | "send-now" | "skip" }) =>
+      set
+        ? transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot`, { method: "PUT", body: set })
+        : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/${act ?? "resume"}`, { method: "POST", body: {} }),
     onSuccess: (status, { id }) => {
       client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) =>
         current?.map((task) => (task.id === id ? { ...task, autopilot: status } : task)),

@@ -45,6 +45,9 @@ export interface PrSnapshot {
   reviews: PrReview[]
   unresolvedThreads: number
   mergeMethod: MergeMethod
+  /** the base branch's head, and its checks: a red that is red there too is not this PR's to fix */
+  baseHead: string | null
+  baseChecks: PrCheck[]
 }
 
 export interface OpenPullRequest {
@@ -62,6 +65,12 @@ export interface AutopilotGitHub {
   /** Context names the base branch requires, from classic protection and rulesets. */
   requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]>
   merge(input: { repository: string; number: number; method: MergeMethod; head: string }, cwd: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }>
+  /** Rerun a workflow run's failed and cancelled jobs (and their dependents); costs no agent tokens. */
+  rerunRun(repository: string, runId: number, cwd: string, signal: AbortSignal): Promise<boolean>
+  /** The END of an Actions job's log (the start is setup noise), bounded. */
+  jobLogTail(repository: string, jobId: number, cwd: string, signal: AbortSignal): Promise<string>
+  /** A non-Actions check run's own report: title, summary, text, annotations. */
+  checkRunReport(repository: string, checkRunId: number, cwd: string, signal: AbortSignal): Promise<string>
 }
 
 const GH_ENV = { GH_PROMPT_DISABLED: "1", GH_PAGER: "cat", NO_COLOR: "1" }
@@ -108,16 +117,80 @@ query($owner: String!, $name: String!, $number: Int!) {
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
         statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
-          ... on CheckRun { name status conclusion detailsUrl isRequired(pullRequestNumber: $number) }
+          ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number)
+            deployment { id } checkSuite { workflowRun { databaseId event } } }
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
         } } }
       } } }
+      baseRef { target { ... on Commit { oid statusCheckRollup { contexts(first: 100) { nodes {
+        __typename
+        ... on CheckRun { name status conclusion }
+        ... on StatusContext { context state }
+      } } } } } }
     }
   }
 }`
 
 function nodes(value: unknown): Record<string, unknown>[] {
   return isRecord(value) && Array.isArray(value.nodes) ? value.nodes.filter(isRecord) : []
+}
+
+function parseCheck(node: Record<string, unknown>): PrCheck {
+  if (node.__typename === "StatusContext") {
+    return { name: str(node.context), status: str(node.state), conclusion: null, required: node.isRequired === true, url: str(node.targetUrl) }
+  }
+  const run = isRecord(node.checkSuite) && isRecord(node.checkSuite.workflowRun) ? node.checkSuite.workflowRun : null
+  return {
+    name: str(node.name), status: str(node.status), conclusion: typeof node.conclusion === "string" ? node.conclusion : null,
+    required: node.isRequired === true, url: str(node.detailsUrl),
+    ...(typeof node.databaseId === "number" ? { checkRunId: node.databaseId } : {}),
+    ...(run && typeof run.databaseId === "number" ? { run: { id: run.databaseId, event: str(run.event) } } : {}),
+    deployment: isRecord(node.deployment),
+  }
+}
+
+function parseReview(node: Record<string, unknown>): PrReview {
+  const author = isRecord(node.author) ? node.author : null
+  return {
+    author: author ? str(author.login) || null : null,
+    association: str(node.authorAssociation),
+    bot: author?.__typename === "Bot",
+    state: str(node.state),
+    body: str(node.body),
+    commit: isRecord(node.commit) ? str(node.commit.oid) || null : null,
+    submittedAt: str(node.submittedAt),
+  }
+}
+
+/** The PR's own scalar fields, read defensively. */
+function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, data: Record<string, unknown>) {
+  const state = str(pr.state)
+  return {
+    number: Number(pr.number),
+    url: str(pr.url),
+    state: state === "MERGED" || state === "CLOSED" ? state : "OPEN" as PrSnapshot["state"],
+    isDraft: pr.isDraft === true,
+    isCrossRepository: pr.isCrossRepository === true,
+    headRefName: str(pr.headRefName),
+    baseRefName: str(pr.baseRefName),
+    defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "",
+    mergeState: str(pr.mergeStateStatus) || "UNKNOWN",
+    reviewDecision: typeof pr.reviewDecision === "string" ? pr.reviewDecision : null,
+    queued: isRecord(pr.mergeQueueEntry),
+    providerAutoMerge: isRecord(pr.autoMergeRequest),
+    mergedBy: isRecord(pr.mergedBy) ? str(pr.mergedBy.login) || null : null,
+    viewer: isRecord(data.viewer) ? str(data.viewer.login) : "",
+    unresolvedThreads: nodes(pr.reviewThreads).filter((thread) => thread.isResolved !== true).length,
+    mergeMethod: mergeMethod(repo),
+    reviews: nodes(pr.reviews).map(parseReview),
+  }
+}
+
+/** The base branch head's own checks: a red that is red there too is not the PR's doing. */
+function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[] } {
+  const commit = isRecord(pr.baseRef) && isRecord(pr.baseRef.target) ? pr.baseRef.target : null
+  const rollup = commit && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
+  return { baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck) }
 }
 
 export function parseSnapshot(raw: unknown): PrSnapshot {
@@ -130,58 +203,54 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   const checkedCommit = isRecord(commit) ? str(commit.oid) : ""
   // One document, one head: a push between the PR row and its checks would
   // otherwise pair the new head with the old head's results.
-  if (!/^[0-9a-f]{40}$/i.test(head) || checkedCommit !== head) {
+  if (!/^[0-9a-f]{40}$/i.test(head) || checkedCommit !== head || !isRecord(commit)) {
     throw new Error("PR changed during the check; waiting for a consistent answer")
   }
-  const rollup = isRecord(commit) && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
+  const rollup = isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
   // A check past the first page could be the red one: refuse to decide.
   const more = (value: unknown) => isRecord(value) && isRecord(value.pageInfo) && value.pageInfo.hasNextPage === true
-  if (more(rollup?.contexts) || (isRecord(commit) && more(commit.checkSuites))) {
-    throw new Error("Too many checks on this PR to verify them all")
-  }
-  const checks: PrCheck[] = nodes(rollup?.contexts).map((node) => node.__typename === "StatusContext"
-    ? { name: str(node.context), status: str(node.state), conclusion: null, required: node.isRequired === true, url: str(node.targetUrl) }
-    : { name: str(node.name), status: str(node.status), conclusion: typeof node.conclusion === "string" ? node.conclusion : null, required: node.isRequired === true, url: str(node.detailsUrl) })
-  const suites = isRecord(commit) ? nodes(commit.checkSuites) : []
-  const actions = suites.filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED")
-  const actionsSuitesPending = actions.length
-  const actionsSuitesWaiting = actions.filter((suite) => str(suite.status) === "WAITING").length
-  const reviews: PrReview[] = nodes(pr.reviews).map((node) => {
-    const author = isRecord(node.author) ? node.author : null
-    return {
-      author: author ? str(author.login) || null : null,
-      association: str(node.authorAssociation),
-      bot: author?.__typename === "Bot",
-      state: str(node.state),
-      body: str(node.body),
-      commit: isRecord(node.commit) ? str(node.commit.oid) || null : null,
-      submittedAt: str(node.submittedAt),
-    }
-  })
-  const state = str(pr.state)
+  if (more(rollup?.contexts) || more(commit.checkSuites)) throw new Error("Too many checks on this PR to verify them all")
+  const actions = nodes(commit.checkSuites).filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED")
   return {
-    number: Number(pr.number),
-    url: str(pr.url),
-    state: state === "MERGED" || state === "CLOSED" ? state : "OPEN",
-    isDraft: pr.isDraft === true,
-    isCrossRepository: pr.isCrossRepository === true,
+    ...prFields(pr, repo, data),
     head,
-    headRefName: str(pr.headRefName),
-    baseRefName: str(pr.baseRefName),
-    defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "",
-    mergeState: str(pr.mergeStateStatus) || "UNKNOWN",
-    reviewDecision: typeof pr.reviewDecision === "string" ? pr.reviewDecision : null,
-    queued: isRecord(pr.mergeQueueEntry),
-    providerAutoMerge: isRecord(pr.autoMergeRequest),
-    mergedBy: isRecord(pr.mergedBy) ? str(pr.mergedBy.login) || null : null,
-    viewer: isRecord(data.viewer) ? str(data.viewer.login) : "",
-    checks,
-    actionsSuitesPending,
-    actionsSuitesWaiting,
-    reviews,
-    unresolvedThreads: nodes(pr.reviewThreads).filter((thread) => thread.isResolved !== true).length,
-    mergeMethod: mergeMethod(repo),
+    checks: nodes(rollup?.contexts).map(parseCheck),
+    actionsSuitesPending: actions.length,
+    actionsSuitesWaiting: actions.filter((suite) => str(suite.status) === "WAITING").length,
+    ...baseFields(pr),
   }
+}
+
+/** Terminal escapes (CSI and OSC sequences) and every other control character but tab and newline. */
+export function controlFree(line: string): string {
+  return line
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+}
+
+/**
+ * The part of a job log that explains the failure: the lines leading up to
+ * the last `##[error]`, or else up to where post-job cleanup starts — the very
+ * end of a log is checkout teardown, not the failure. Timestamps and terminal
+ * escapes are dropped; nobody reads those.
+ */
+export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string {
+  const all = raw.split("\n").map((line) => controlFree(line).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
+  let end = all.length
+  for (let index = all.length - 1; index >= 0; index--) {
+    if (all[index]!.includes("##[error]")) { end = Math.min(all.length, index + 4); break }
+  }
+  if (end === all.length) {
+    const cleanup = all.findIndex((line) => /^(?:Post job cleanup|##\[group\]Post )/.test(line))
+    if (cleanup > 0) end = cleanup
+  }
+  let text = all.slice(Math.max(0, end - maxLines), end).join("\n")
+  if (Buffer.byteLength(text) > maxBytes) text = Buffer.from(text).subarray(-maxBytes).toString("utf8")
+  return text.trim()
 }
 
 /**
@@ -254,6 +323,38 @@ export const ghAutopilot: AutopilotGitHub = {
       ghJson(["api", `${path}/rules/branches/${encoded}`], cwd, signal).catch(() => []),
     ])
     return parseRequiredChecks(branch, rules)
+  },
+  async rerunRun(repository, runId, cwd, signal) {
+    // Per RUN, not per job: rerunning one job of a run whose aggregator needs
+    // it re-evaluates the aggregator against the old results, and a second
+    // job's rerun is refused while the first is going.
+    const result = await gh(["api", "-X", "POST", `repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`], cwd, signal)
+    return result.exitCode === 0 && !result.timedOut && !result.cancelled
+  },
+  async jobLogTail(repository, jobId, cwd, signal) {
+    // A job log can be many megabytes and the bounded runner keeps its START;
+    // pipe it through `tail` so only the end — where the failure is — arrives.
+    // `--allow-escape-sequences` is needed because CI logs carry terminal
+    // escapes (tidyLog strips them); an older gh without the flag gets a retry
+    // without it.
+    const read = (flag: string[]) => runBounded({
+      cmd: ["bash", "-c", 'set -o pipefail; gh api "$@" | tail -n 2000 | tail -c 600000', "wisp-log", ...flag, `repos/${repository}/actions/jobs/${jobId}/logs`],
+      cwd, signal, timeoutMs: 60_000, maxBytes: 800_000, maxErrorBytes: 2000, env: GH_ENV,
+    })
+    let result = await read(["--allow-escape-sequences"])
+    if (result.exitCode !== 0 && /unknown flag/i.test(result.err)) result = await read([])
+    if (result.exitCode !== 0 || result.timedOut || result.cancelled) throw new Error("GitHub unavailable: could not read the job log")
+    return tidyLog(result.out)
+  },
+  async checkRunReport(repository, checkRunId, cwd, signal) {
+    const [run, annotations] = await Promise.all([
+      ghJson(["api", `repos/${repository}/check-runs/${checkRunId}`], cwd, signal),
+      ghJson(["api", `repos/${repository}/check-runs/${checkRunId}/annotations?per_page=50`], cwd, signal).catch(() => []),
+    ])
+    const output = isRecord(run) && isRecord(run.output) ? run.output : {}
+    const notes = Array.isArray(annotations) ? annotations.filter(isRecord).map((note) =>
+      `${str(note.path)}:${String(note.start_line ?? "")} ${str(note.annotation_level)}: ${str(note.message)}`) : []
+    return controlFree([str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n")).slice(0, 64_000)
   },
   async merge({ repository, number, method, head }, cwd, signal) {
     const result = await gh(
