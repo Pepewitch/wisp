@@ -356,8 +356,8 @@ describe("loadConfig", () => {
       expect(cfg.port).toBe(9999);
       expect(cfg.token).toBe("abc");
       expect(cfg.stuckMinutes).toBe(10); // default
-      expect(cfg.turnTranscriptBytes).toBe(5_000_000);
-      expect(cfg.logMaxBytes).toBe(5_000_000); // synchronized legacy alias
+      expect(cfg.turnTranscriptBytes).toBe(25_000_000);
+      expect(cfg.logMaxBytes).toBe(25_000_000); // synchronized legacy alias
       expect(cfg.diagnosticEnabled).toBe(true);
       expect(cfg.diagnosticMaxBytes).toBe(512 * 1024 * 1024);
       expect(cfg.diagnosticRetentionDays).toBe(7);
@@ -376,6 +376,29 @@ describe("loadConfig", () => {
       const cfg = loadConfig();
       expect(cfg.turnTranscriptBytes).toBe(321);
       expect(cfg.logMaxBytes).toBe(321);
+    } finally {
+      rmSync(CONFIG_PATH);
+    }
+  });
+
+  test("the old 5 MB default that first runs persisted follows the current default", () => {
+    for (const stored of [{ logMaxBytes: 5_000_000 }, { turnTranscriptBytes: 5_000_000 }]) {
+      writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", ...stored }));
+      try {
+        const cfg = loadConfig();
+        expect(cfg.turnTranscriptBytes).toBe(25_000_000);
+        expect(cfg.logMaxBytes).toBe(25_000_000);
+        // Loading persisted a minted instanceId; the old default stays unpinned.
+        const persisted = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+        expect(persisted).toMatchObject(stored);
+        expect(loadConfig().turnTranscriptBytes).toBe(25_000_000);
+      } finally {
+        rmSync(CONFIG_PATH);
+      }
+    }
+    writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", turnTranscriptBytes: 5_000_001 }));
+    try {
+      expect(loadConfig().turnTranscriptBytes).toBe(5_000_001);
     } finally {
       rmSync(CONFIG_PATH);
     }
