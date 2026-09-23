@@ -212,7 +212,7 @@ describe("the loop", () => {
     setAutopilot(task.id, { autoMerge: true });
     pauseTaskWorkflows(task.id);
     expect(autopilotStatus(task.id).state).toBe("held");
-    expect(resumeAutopilot(task.id)).toMatchObject({ state: "waiting" });
+    expect(resumeAutopilot(task.id)).toMatchObject({ state: "waiting", about: "task" });
     expect(checkpointOf(autopilotRow(task.id)!).stopHold).toBeUndefined();
   });
 
@@ -224,7 +224,7 @@ describe("the loop", () => {
     setAutopilot(task.id, { autoMerge: true });
     db.run("UPDATE tasks SET context_n = context_n + 1 WHERE id = ?", [task.id]);
     expect(autopilotRow(task.id)!.state).toBe("paused");
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Following the task's agent change" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Following the task's agent change", about: "task" });
     await rt.tick();
     expect(autopilotRow(task.id)!.state).toBe("active");
   });

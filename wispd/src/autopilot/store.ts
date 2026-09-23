@@ -84,7 +84,8 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const reason = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE ? "Following the task's agent change" : row.reason
   // A pause is always about the PR (a merge that keeps failing, GitHub's own
   // auto-merge found on); a hold or a wait on the task never is.
-  const about = state === "paused" ? "pr" : state === "held" ? "task" : checkpoint.about ?? "task"
+  const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
+  const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
   return { autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, mergedByWisp: false, updatedAt: row.updated_at }
 }
 
@@ -146,6 +147,8 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
   checkpoint.state = "waiting"
+  // until the next look, the reason is about the resume, not the PR
+  checkpoint.about = "task"
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
     [JSON.stringify(checkpoint), now.toISOString(), now.toISOString(), row.id])
   if (row.state === "paused") changeWorkflowState(row.id, "active", "Resumed", now)
