@@ -36,6 +36,7 @@ import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
+import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
 import { settingsRoute } from "./settings";
 import { pullRequestTitleSync } from "../task-update";
 import {
@@ -176,6 +177,7 @@ export function route(
 ): Response | Promise<Response> {
   const m = req.method;
   if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
+  if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
   const models = modelCache ?? modelCacheFor(adapters);
   const probes = probeCache ?? probeCacheFor(adapters);
   const skills = skillCache ?? skillCacheFor(adapters);

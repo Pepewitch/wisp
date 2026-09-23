@@ -2,6 +2,7 @@ import type { Workflow, WorkflowDecision, WorkflowDefinition, WorkflowHistory, W
 import { db } from "../store-database";
 import { emit } from "../events";
 import { createTaskMessage, getTask, getTaskMessage, randomId } from "../store";
+import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "../autopilot/type";
 
 export interface WorkflowRow {
   id: string; task_id: string; type: string; version: string; params_json: string;
@@ -26,9 +27,13 @@ export function getWorkflow(id: string): WorkflowRow | null {
 export function listWorkflows(taskId: string): Workflow[] {
   return (db.query("SELECT * FROM workflows WHERE task_id = ? ORDER BY created_at DESC, id").all(taskId) as WorkflowRow[]).map(workflow);
 }
-/** Task ids with standing workflow state; completed history is no longer attached. */
+/**
+ * Task ids with standing workflow state; completed history is no longer
+ * attached. Autopilot is not counted: it lives for a whole PR, and the ring it
+ * would draw replaces the needs-input and failed fills a person must see.
+ */
 export function taskIdsWithAttachedWorkflows(): Set<string> {
-  const rows = db.query("SELECT DISTINCT task_id FROM workflows WHERE state != 'completed'").all() as { task_id: string }[];
+  const rows = db.query("SELECT DISTINCT task_id FROM workflows WHERE state != 'completed' AND type != ?").all(AUTOPILOT_TYPE) as { task_id: string }[];
   return new Set(rows.map(row => row.task_id));
 }
 export function workflowHistory(id: string): WorkflowHistory[] {
@@ -82,7 +87,7 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
     const task = getTask(row.task_id);
     const item = workflow(row);
     if (state === "active" && (!task || task.archived || Date.parse(row.expires_at) <= now.getTime() ||
-      (row.type !== "schedule-steer" && row.wake_count >= Number(item.params.maxWakeups)))) throw new Error("Cannot resume an archived task or exhausted workflow; update its limits or arm a new instance");
+      (row.type !== "schedule-steer" && row.type !== AUTOPILOT_TYPE && row.wake_count >= Number(item.params.maxWakeups)))) throw new Error("Cannot resume an archived task or exhausted workflow; update its limits or arm a new instance");
     const at = now.toISOString();
     const next = state === "active" && row.type === "schedule-steer"
       ? new Date(Math.max(now.getTime(), Date.parse(String(item.params.scheduledAt)))).toISOString()
@@ -124,10 +129,32 @@ export function retireWorkflowTypes(retired: Record<string, string>, now = new D
   for (const row of rows) changeWorkflowState(row.id, "completed", `${retired[row.type]} was removed from Wisp`, now);
 }
 export function pauseTaskWorkflows(taskId: string): void {
-  for (const item of listWorkflows(taskId)) if (item.state === "active") changeWorkflowState(item.id, "paused", "Task stopped by user");
+  const task = getTask(taskId);
+  for (const item of listWorkflows(taskId)) {
+    // An autopilot row the agent-switch trigger just paused is about to be
+    // reactivated, so it takes the hold too.
+    const followed = item.type === AUTOPILOT_TYPE && item.state === "paused" && item.reason === CONTEXT_CHANGE_PAUSE;
+    if (item.state !== "active" && !followed) continue;
+    if (item.type === AUTOPILOT_TYPE) {
+      // Stop HOLDS autopilot rather than pausing it: a person stepped in, so
+      // nothing acts until their next turn has finished, and then it carries
+      // on by itself. Stopping only a background process leaves the task
+      // `done`, which is exactly when an unheld auto-merge would fire.
+      const row = getWorkflow(item.id)!;
+      const checkpoint = { ...JSON.parse(row.checkpoint_json) as Record<string, unknown>, stopHold: { turnCount: task?.turn_count ?? 0 }, state: "held" };
+      const at = new Date().toISOString();
+      db.run("UPDATE workflows SET checkpoint_json = ?, reason = CASE WHEN state = 'active' THEN ? ELSE reason END, revision = revision + 1, updated_at = ? WHERE id = ?",
+        [JSON.stringify(checkpoint), "Held — you pressed Stop; continues after your next turn", at, item.id]);
+      recordWorkflow(item.id, "held", "Held after Stop", at);
+      announceWorkflow(taskId);
+      continue;
+    }
+    changeWorkflowState(item.id, "paused", "Task stopped by user");
+  }
 }
 export function dueWorkflows(now: Date): WorkflowRow[] {
-  return db.query("SELECT * FROM workflows WHERE state = 'active' AND (next_check_at <= ? OR expires_at <= ?) ORDER BY next_check_at LIMIT 100").all(now.toISOString(), now.toISOString()) as WorkflowRow[];
+  // autopilot has its own loop (autopilot/runtime.ts)
+  return db.query("SELECT * FROM workflows WHERE state = 'active' AND type != ? AND (next_check_at <= ? OR expires_at <= ?) ORDER BY next_check_at LIMIT 100").all(AUTOPILOT_TYPE, now.toISOString(), now.toISOString()) as WorkflowRow[];
 }
 export function saveEvaluation(row: WorkflowRow, result: WorkflowDecision, now: Date, failures = 0, notify = true): boolean {
   const current = getWorkflow(row.id);

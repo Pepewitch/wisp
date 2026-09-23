@@ -36,9 +36,11 @@ import {
 } from "../store";
 import { promptWithSuffix } from "../suffix-prompts";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
-import { typeName } from "../validate";
+import { isRecord, typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { taskIdsWithAttachedWorkflows } from "../workflows/store";
+import { autopilotStatus, autopilotStatuses, setAutopilot } from "../autopilot/store";
+import { autopilotUpdateError } from "./autopilot";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
@@ -58,11 +60,13 @@ export function listTasksRoute(url: URL): Response {
   // "failed" when the work landed but the harness CLI exited badly (Theme B)
   const outcomes = latestTurnOutcomes();
   const attachedWorkflows = taskIdsWithAttachedWorkflows();
+  const autopilot = autopilotStatuses();
   return json(
     listTasks(url.searchParams.get("archived") === "1" || url.searchParams.get("cleanup") === "1")
       .filter(t => !t.archived || url.searchParams.get("archived") === "1" || cleanupProgress(t.id) !== null).map((t) => ({
       ...apiTask(t),
       has_workflow: attachedWorkflows.has(t.id),
+      autopilot: autopilot.get(t.id) ?? null,
       latest_turn_model: outcomes.get(t.id)?.model ?? null,
       latest_turn_exit_code: outcomes.get(t.id)?.exitCode ?? null,
       latest_turn_has_result: outcomes.get(t.id)?.hasResult ?? false,
@@ -81,6 +85,7 @@ interface CreateTaskBody {
   base?: unknown;
   suffixPromptId?: unknown;
   attachments?: unknown;
+  autopilot?: unknown;
 }
 
 function createTaskBodyError(body: CreateTaskBody): Response | null {
@@ -113,7 +118,30 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   // be silently discarded as "no override" by resolveBase — a base the user
   // asked for and did not get, which is the failure mode being removed.
   if (typeof body.base === "string" && body.base.trim() === "") return err("base must not be empty", 400);
+  if (body.autopilot !== undefined) {
+    if (!isRecord(body.autopilot)) return err(`autopilot must be an object, got ${typeName(body.autopilot)}`, 400);
+    const invalid = autopilotUpdateError(body.autopilot);
+    if (invalid) return err(`autopilot: ${invalid}`, 400);
+    if (body.autopilot.autoFix === true) return err("autopilot: Auto-fix is not available yet", 400);
+    if (body.autopilot.autoMerge === true && body.mode === "local") {
+      return err("auto-merge needs a worktree task — a local task runs on the checkout's own branch", 400);
+    }
+  }
   return null;
+}
+
+/**
+ * Armed before the first turn starts, so that turn already carries the
+ * auto-merge note. Never fatal: the task row already exists, and failing the
+ * request here would strand it in `creating`. The response says what took.
+ */
+function armRequestedAutopilot(taskId: string, requested: unknown): void {
+  if (!isRecord(requested) || requested.autoMerge !== true) return;
+  try {
+    setAutopilot(taskId, { autoMerge: true });
+  } catch (error) {
+    console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /** POST /api/tasks */
@@ -219,12 +247,13 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
         }
       }
       if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
+      armRequestedAutopilot(task.id, body.autopilot);
       const release = reserveTaskCapacity(task.id, cfg);
       handedOff = true;
       void trackHomeWork(
         launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
       );
-      return json(apiTask(task), 201);
+      return json({ ...apiTask(task), autopilot: autopilotStatus(task.id) }, 201);
     } finally {
       if (!handedOff) releaseDecodedAttachments(attachments);
     }
