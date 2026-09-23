@@ -9,13 +9,21 @@ import {
 import { JsonLineBuffer } from "../adapters/live/json-lines";
 import { transcriptBudgetBytes, type WispConfig } from "../config";
 import { setTurnCaptureCheckpoint } from "../store";
-import { boundJsonRecord, SequencedRecordBudget, truncateUtf8 } from "./bounds";
+import { boundJsonRecord, SequencedRecordBudget, TailWindow, truncateUtf8 } from "./bounds";
 import { closeTurnBroker, openTurnBroker, type TurnBroker } from "./broker";
 import { createTurnDiagnosticWriter, type TurnDiagnosticWriter } from "./diagnostic";
 import { transcriptCompactor } from "./transcript-compact";
 
 const CRITICAL_LANE_MAX_BYTES = 16 * 1024;
 const MAX_PRIMARY_RECORDS = 100_000;
+/**
+ * The share of the ordinary budget held back for a turn's most recent
+ * activity, capped because the window lives in daemon memory until the turn
+ * ends.
+ */
+const TAIL_SHARE = 0.4;
+const TAIL_MAX_BYTES = 8 * 1024 * 1024;
+const TAIL_MAX_RECORDS = 25_000;
 const MAX_FACT_STRING_BYTES = 64 * 1024;
 const CHECKPOINT_RECORD_INTERVAL = 64;
 const CHECKPOINT_TIME_INTERVAL_MS = 1_000;
@@ -57,6 +65,7 @@ export class TurnRecorder {
   private readonly reducer: IncrementalOutcomeReducer;
   private readonly compact: ReturnType<typeof transcriptCompactor>;
   private readonly budget: SequencedRecordBudget;
+  private readonly tail: TailWindow;
   private readonly broker: TurnBroker;
   private diagnostic: TurnDiagnosticWriter | null;
   private readonly transcriptBudget: number;
@@ -90,7 +99,9 @@ export class TurnRecorder {
     this.outOffset = initialOut;
     this.capturedBytes = initialOut + initialErr;
     const ordinaryBytes = Math.max(0, this.transcriptBudget - this.criticalLaneBytes - this.capturedBytes);
-    this.budget = new SequencedRecordBudget(ordinaryBytes, MAX_PRIMARY_RECORDS);
+    const tailBytes = Math.min(TAIL_MAX_BYTES, Math.floor(ordinaryBytes * TAIL_SHARE));
+    this.budget = new SequencedRecordBudget(ordinaryBytes - tailBytes, MAX_PRIMARY_RECORDS);
+    this.tail = new TailWindow(tailBytes, TAIL_MAX_RECORDS);
     this.broker = openTurnBroker(turnId);
     this.diagnostic = createTurnDiagnosticWriter(turnId, cfg);
     this.broker.setPrimaryOffset(this.outOffset);
@@ -191,6 +202,7 @@ export class TurnRecorder {
   finish(): RecorderOutcome {
     if (!this.finished) {
       this.finished = true;
+      if (this.state === "degraded") this.appendTail();
       if (this.state === "degraded") this.writeCritical(this.captureSummary());
       this.persistCheckpoint(true);
       try {
@@ -246,13 +258,47 @@ export class TurnRecorder {
       }
     } else if (this.state === "complete") {
       this.state = "degraded";
-      this.detail = `primary transcript reached its ${this.transcriptBudget} byte budget; later activity is not retained`;
+      this.detail = `primary transcript reached its ${this.transcriptBudget} byte budget; `
+        + "only the turn's most recent activity is kept from here, and it is appended when the turn ends";
       this.writeCritical(`· ${this.detail}; the turn continues`);
       stateChanged = true;
+    }
+    if (!admission.retained && this.state === "degraded") {
+      this.tail.push({ source, line: stored, bytes: admission.bytes, category });
     }
     if (!admission.retained) this.touchLiveness();
     if (source === "stdout") this.broker.publish({ sequence: admission.sequence, source, line: stored });
     this.persistCheckpoint(stateChanged);
+  }
+
+  /**
+   * Write the tail window after the head, marking the gap between them. When
+   * nothing was evicted the transcript is whole again, only reordered around
+   * the note, and the capture is complete.
+   */
+  private appendTail(): void {
+    const records = this.tail.drain();
+    if (records.length === 0) return;
+    const evicted = this.tail.evictedRecords;
+    this.writeCritical(evicted > 0
+      ? `· ${evicted} records (${this.tail.evictedBytes} bytes) from the middle of this turn were not retained; its most recent activity follows`
+      : "· the activity since the budget was reached follows in full");
+    for (const record of records) {
+      const fd = record.source === "stdout" ? this.outFd : this.errFd;
+      if (!this.writePrimary(fd, `${record.line}\n`, record.source)) {
+        this.state = "disabled";
+        this.detail ??= "primary transcript write failed; the turn continued";
+        return;
+      }
+      this.budget.reclaim(record.bytes, record.category);
+    }
+    if (evicted === 0) {
+      this.state = "complete";
+      this.detail = null;
+    } else {
+      this.detail = `primary transcript reached its ${this.transcriptBudget} byte budget; `
+        + `${evicted} records from the middle of the turn were not retained`;
+    }
   }
 
   private touchLiveness(): void {

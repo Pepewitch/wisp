@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   boundJsonRecord,
   SequencedRecordBudget,
+  TailWindow,
   truncateUtf8,
 } from "../src/recording/bounds";
 
@@ -58,6 +59,37 @@ describe("bounded recorder primitives", () => {
         command: { records: 1, bytes: 3 },
         message: { records: 1, bytes: 5 },
       },
+    });
+  });
+
+  test("the tail window keeps the newest records inside its byte and record ceilings", () => {
+    const record = (line: string) => ({ source: "stdout" as const, line, bytes: line.length + 1, category: "event" });
+    const tail = new TailWindow(10, 3);
+    for (const line of ["aaa", "bbb", "ccc", "ddd"]) tail.push(record(line));
+    // 4 bytes each: two fit in 10 bytes, so the oldest two were evicted.
+    expect(tail.size).toBe(2);
+    expect(tail.evictedRecords).toBe(2);
+    expect(tail.evictedBytes).toBe(8);
+    tail.push(record("x".repeat(20)));
+    expect(tail.size).toBe(2); // a record larger than the window is evicted on arrival
+    expect(tail.drain().map((kept) => kept.line)).toEqual(["ccc", "ddd"]);
+    expect(tail.size).toBe(0);
+
+    const counted = new TailWindow(1_000, 3);
+    for (let i = 0; i < 5_000; i++) counted.push(record(String(i)));
+    expect(counted.drain().map((kept) => kept.line)).toEqual(["4997", "4998", "4999"]);
+    expect(counted.evictedRecords).toBe(4_997);
+  });
+
+  test("a reclaimed record leaves the omitted totals", () => {
+    const budget = new SequencedRecordBudget(0, 10);
+    budget.offer("{}", "message");
+    budget.offer("{}", "command");
+    budget.reclaim(3, "message");
+    expect(budget.snapshot()).toMatchObject({
+      omittedRecords: 1,
+      omittedBytes: 3,
+      omittedByCategory: { command: { records: 1, bytes: 3 } },
     });
   });
 });
