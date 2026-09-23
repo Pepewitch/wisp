@@ -133,12 +133,12 @@ describe("the overflow menu", () => {
 describe("auto-merge in the overflow menu", () => {
   const armed = (over: Partial<NonNullable<ApiTask["autopilot"]>> = {}): ApiTask => ({
     ...TASK,
-    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", mergedByWisp: false, updatedAt: null, ...over },
+    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null, ...over },
   })
   function daemon(extra: (path: string) => { status: number; body: unknown } | null = () => null) {
     return stubApi((path) => {
       if (path.endsWith("/api/harnesses")) return { status: 200, body: { harnesses: [], features: { taskAutopilot: true } } }
-      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, updatedAt: null } }
+      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null } }
     })
   }
   async function open() {
@@ -192,7 +192,7 @@ describe("auto-merge in the overflow menu", () => {
 
   it("says why when Wisp itself switched it off", async () => {
     daemon()
-    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", mergedByWisp: false, updatedAt: null } }} />)
+    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null } }} />)
     await open()
     expect(screen.getByText("Auto-merge off — #7 was closed")).toBeInTheDocument()
   })
@@ -204,6 +204,22 @@ describe("auto-merge in the overflow menu", () => {
     await screen.findAllByRole("menuitem")
     await waitFor(() => expect(calls.some((c) => c.path.endsWith("/api/harnesses"))).toBe(true))
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
+  })
+
+  it("has its own auto-fix switch, and Send now / Skip for a round waiting out its delay", async () => {
+    const calls = daemon()
+    mount(<TaskActions task={armed({ autoMerge: false, autoFix: true, reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing", sendsAt: new Date(Date.now() + 60_000).toISOString() } })} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    const fix = await screen.findByRole("menuitemcheckbox", { name: /Auto-fix/ })
+    expect(fix).toHaveAttribute("aria-checked", "true")
+    expect(fix).toHaveTextContent("Auto-fix #7")
+    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send now" }))
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/send-now`, method: "POST", body: {} }))
+    fireEvent.click(screen.getByRole("menuitem", { name: "Skip" }))
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/skip`, method: "POST", body: {} }))
+    fireEvent.click(fix)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoFix: false } }))
   })
 
   it("is disabled, and says why, for a task that runs in the project checkout", async () => {

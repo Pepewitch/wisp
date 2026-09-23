@@ -765,9 +765,12 @@ REPLACES the CI and review words — `PR #271 · Open · Auto-merge: Waiting for
 checks (2 running)` — because the reason already accounts for both, and the
 line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
-switch itself is a checkbox row in the task's `…` menu (`MenuCheckboxItem`),
-naming the PR it is bound to, with the reason as a `MenuNote` and Resume or
-Continue now beneath it: menu rows, so touch and keyboard reach every control.
+switches — Auto-merge and Auto-fix — are checkbox rows in the task's `…` menu
+(`MenuCheckboxItem`), naming the PR they are bound to, with the reason as a
+`MenuNote` and the one action the state asks for beneath it (Send now / Skip for
+a waiting auto-fix round, Resume, or Continue now): menu rows, so touch and
+keyboard reach every control. Only a reason about the PR's own state
+(`about: "pr"`) may stand in for CI and review; one about the task never does.
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
 from the UI polling below.
 

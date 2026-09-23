@@ -7,8 +7,12 @@ import { loadConfig } from "../src/config";
 import type { AutopilotGitHub, OpenPullRequest, PrSnapshot } from "../src/autopilot/github";
 import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
-import { AutopilotRuntime, choosePull } from "../src/autopilot/runtime";
-import { autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, resumeAutopilot, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
+import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
+import {
+  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
+} from "../src/autopilot/store";
+import { taskMessageRoute } from "../src/routes/task-messages";
 import { formatAutopilot, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
@@ -40,7 +44,8 @@ function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/fixture", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }],
-    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH", ...over,
+    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    baseHead: null, baseChecks: [], ...over,
   };
 }
 
@@ -59,6 +64,7 @@ function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot } = {}
     mergeResult: { ok: true, detail: "" } as { ok: boolean; detail: string },
     onMerge: null as null | (() => Promise<void> | void),
     onSnapshot: null as null | (() => void),
+    reruns: [] as number[],
   };
   const github: AutopilotGitHub = {
     async snapshot() { state.onSnapshot?.(); return structuredClone(state.pr); },
@@ -70,6 +76,9 @@ function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot } = {}
       if (state.mergeResult.ok) state.pr = { ...state.pr, state: "MERGED", mergedBy: "owner" };
       return state.mergeResult;
     },
+    async rerunJob(_repository, jobId) { state.reruns.push(jobId); return true; },
+    async jobLogTail(_repository, jobId) { return `log of job ${jobId}\n(fail) retry never stops\n##[error]Process completed with exit code 1.`; },
+    async checkRunReport() { return "a report"; },
   };
   return { state, github };
 }
@@ -107,11 +116,15 @@ describe("arming", () => {
     expect(autopilotRow(task.id)).toBeNull();
   });
 
-  test("auto-fix is not offered yet, and a local task cannot auto-merge", () => {
+  test("auto-fix arms on its own, the row stands down only when both are off, and a local task gets neither", () => {
     const task = doneTask();
-    expect(() => setAutopilot(task.id, { autoFix: true })).toThrow("not available yet");
+    expect(setAutopilot(task.id, { autoFix: true })).toMatchObject({ autoMerge: false, autoFix: true, state: "waiting" });
+    expect(setAutopilot(task.id, { autoMerge: true })).toMatchObject({ autoMerge: true, autoFix: true });
+    expect(setAutopilot(task.id, { autoFix: false })).toMatchObject({ autoMerge: true, autoFix: false });
+    expect(setAutopilot(task.id, { autoMerge: false })).toMatchObject({ state: "off" });
     const local = doneTask({ mode: "local" });
     expect(() => setAutopilot(local.id, { autoMerge: true })).toThrow("own branch");
+    expect(() => setAutopilot(local.id, { autoFix: true })).toThrow("own branch");
   });
 
   test("autopilot is not a workflow to the rest of the daemon", async () => {
@@ -636,18 +649,16 @@ describe("API and CLI", () => {
       method: "POST", body: JSON.stringify({ repoPath: "/tmp/nowhere", prompt: "p", harness: "fake", ...body }),
     }), loadConfig(), {});
     expect((await create({ autopilot: "yes" })).status).toBe(400);
-    expect((await create({ autopilot: { autoFix: true } })).status).toBe(400);
     expect((await create({ autopilot: { autoMerge: "on" } })).status).toBe(400);
     const local = await create({ mode: "local", autopilot: { autoMerge: true } });
     expect(local.status).toBe(400);
-    expect(await local.text()).toContain("auto-merge needs a worktree task");
+    expect(await local.text()).toContain("need a worktree task");
   });
 
   test("the route validates, toggles, and resumes", async () => {
     const task = doneTask();
     expect((await call(task.id, "PUT", { autoMerge: "yes" })).status).toBe(400);
     expect((await call(task.id, "PUT", { whatever: true })).status).toBe(400);
-    expect((await call(task.id, "PUT", { autoFix: true })).status).toBe(400);
     expect((await call(task.id, "POST", {}, "/resume")).status).toBe(409);
     expect(await (await call(task.id, "PUT", { autoMerge: true })).json()).toMatchObject({ autoMerge: true });
     expect(await (await call(task.id, "GET")).json()).toMatchObject({ autoMerge: true, state: "waiting" });
@@ -667,3 +678,145 @@ describe("API and CLI", () => {
     await expect(prCommand(["tabcde", "merge", "maybe"], {}, api)).rejects.toThrow("usage");
   });
 });
+
+describe("auto-fix", () => {
+  const RED = { name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "https://ci/test", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false };
+  const redPr = (over: Partial<PrSnapshot> = {}) => snapshot({ checks: [RED], ...over });
+  const longAgo = new Date(START).toISOString();
+
+  function fixTask() {
+    const { dir, file, adapters } = capture();
+    const task = doneTask({ harness: "capture" });
+    setTaskFields(task.id, { worktree_path: dir, turn_count: 1 });
+    return { task, file, adapters };
+  }
+
+  test("a red required check waits out a short delay, then reaches the agent with its log — once", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing" }, about: "pr" });
+    expect(existsSync(file)).toBe(false);
+    clock.now += SEND_DELAY_MS + 1000;
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the fix round");
+    const prompt = readFileSync(file, "utf8");
+    expect(prompt.split("\n")[0]).toBe(`[Wisp auto-fix · PR #7 · round 1 of 3 · head ${HEAD.slice(0, 7)}]`);
+    const evidence = readFileSync(prompt.match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
+    expect(evidence).toContain("- test (required) — FAILURE — https://ci/test");
+    expect(evidence).toContain("(fail) retry never stops");
+    expect(autopilotStatus(task.id).fixRounds).toBe(1);
+    expect(state.merges).toHaveLength(0);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+    // the agent did not push: the same evidence is never sent twice
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "Still test failing after round 1, with no new push" });
+  });
+
+  test("Send now skips the delay", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(sendPendingFix(task.id).pendingFix).not.toBeNull();
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the fix round");
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("Skip never sends that evidence; a new head is new evidence, and a round again", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    skipPendingFix(task.id);
+    clock.now += SEND_DELAY_MS + 1000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "test failed (auto-fix skipped)" });
+    expect(existsSync(file)).toBe(false);
+    state.pr = redPr({ head: "a".repeat(40) });
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "a round for the new head");
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("after three rounds it gives up and pauses; Resume starts the budget again", async () => {
+    const { task, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { rounds: 3, idleSince: longAgo });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
+    expect(resumeAutopilot(task.id).fixRounds).toBe(0);
+  });
+
+  test("without required checks, a red gets one token-free rerun before it costs a turn", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [{ ...RED, required: false }] }) });
+    state.required = [];
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo });
+    await pass(rt, task.id, clock);
+    expect(state.reruns).toEqual([11]);
+    expect(autopilotStatus(task.id).reason).toBe("Rerunning test");
+    // the rerun came back red too: now it is worth a turn
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the fix round");
+    expect(state.reruns).toEqual([11]);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("with both on, a red is fixed and never merged; once green, it merges", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo });
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the fix round");
+    expect(readFileSync(file, "utf8")).toContain("Do not wait for CI and do not merge");
+    expect(state.merges).toHaveLength(0);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+    state.pr = snapshot();
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("a round that never started is withdrawn, and its checkpoint comes back", () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoFix: true });
+    const row = autopilotRow(task.id)!;
+    expect(reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent test failing (round 1 of 3)", checkpoint: { ...checkpointOf(row), rounds: 1 } }, new Date())).not.toBeNull();
+    expect(checkpointOf(autopilotRow(task.id)!).rounds).toBe(1);
+    expect(withdrawQueuedRound(autopilotRow(task.id)!)).toBe(true);
+    expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
+  });
+
+  test("cancelling a queued round from the message list means Skip, not a pause", async () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoFix: true });
+    const row = autopilotRow(task.id)!;
+    const id = reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row) }, new Date())!;
+    const path = `/api/tasks/${task.id}/messages/${id}`;
+    const response = await taskMessageRoute(new Request(`http://localhost${path}`, { method: "DELETE" }), path, "DELETE");
+    expect(response?.status).toBe(200);
+    expect(autopilotRow(task.id)!.state).toBe("active");
+    expect(checkpointOf(autopilotRow(task.id)!).skipped).toContain("ci:x:test");
+  });
+});
+

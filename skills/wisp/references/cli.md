@@ -39,25 +39,29 @@ push/merge instructions through flags or `--params` JSON. See
 and the trusted executable plugin contract. Push/merge flags guide the agent; they are not a
 process sandbox.
 
-## Auto-merge
+## Auto-merge and auto-fix
 
 ```
-wisp pr <task>                 # auto-merge status and the reason it is waiting
-wisp pr <task> merge on|off    # switch it
+wisp pr <task>                 # status and the reason it is waiting
+wisp pr <task> merge on|off    # auto-merge
+wisp pr <task> fix on|off      # auto-fix
+wisp pr <task> send-now        # send a waiting auto-fix round at once
+wisp pr <task> skip            # never send that round
 wisp pr <task> resume          # after a pause, or to release a Stop hold early
 ```
 
 With auto-merge on, Wisp merges the task's open PR once its checks pass, a
 reviewer who blocked has passed the current head, the task is idle, and the
 worktree holds nothing the PR lacks. Every turn tells the agent to push and open
-the PR and to leave the merge to Wisp. See
-[Auto-merge](../../../docs/PR-AUTOPILOT.md).
+the PR and to leave the merge to Wisp. With auto-fix on, a red counting check or
+a conflict goes back to the idle agent as a round with the failing logs, at most
+three per PR. See [Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
 
 ## Tasks
 
 ```
 wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local]
-         [--base <ref>] [--auto-merge] [--image <path>]…
+         [--base <ref>] [--auto-merge] [--auto-fix] [--image <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.

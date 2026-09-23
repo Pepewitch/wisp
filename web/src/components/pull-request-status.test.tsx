@@ -157,7 +157,7 @@ describe("PR status in task headers", () => {
 describe("the auto-merge reason on the PR line", () => {
   const status = (over: Partial<AutopilotStatus> = {}): AutopilotStatus => ({
     autoMerge: true, autoFix: false, pr: 42, state: "waiting", reason: "Waiting for checks (2 running)",
-    about: "pr", mergedByWisp: false, updatedAt: null, ...over,
+    about: "pr", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null, ...over,
   })
 
   it("stands in for CI and review while armed, and the hover still carries both", () => {
@@ -205,6 +205,14 @@ describe("the auto-merge reason on the PR line", () => {
     other.unmount()
     render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, state: "off", reason: "Auto-merge off" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("CI failed · Changes requested")
+  })
+
+  it("speaks as auto-fix when only auto-fix is on, without saying it twice", () => {
+    const { unmount } = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, autoFix: true, reason: "Auto-fix will send: test failing" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix will send: test failing")
+    unmount()
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, autoFix: true, reason: "Rerunning test" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix: Rerunning test")
   })
 
   it("uses the compact link's second line for the reason on mobile", () => {

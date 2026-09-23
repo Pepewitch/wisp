@@ -37,6 +37,10 @@ export interface AutopilotStatus {
   about: "pr" | "task"
   /** the bound PR merged, and it was Wisp that merged it */
   mergedByWisp: boolean
+  /** an auto-fix round waiting out its short delay: Send now or Skip act on it */
+  pendingFix: { summary: string; sendsAt: string } | null
+  /** auto-fix rounds sent to the agent for the bound PR */
+  fixRounds: number
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }

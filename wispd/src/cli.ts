@@ -122,7 +122,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -156,7 +156,9 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
       fast: flags.fast === true ? true : undefined,
       mode: flags.local ? "local" : undefined,
       base: typeof flags.base === "string" ? flags.base : undefined,
-      autopilot: flags["auto-merge"] === true ? { autoMerge: true } : undefined,
+      autopilot: flags["auto-merge"] === true || flags["auto-fix"] === true
+        ? { autoMerge: flags["auto-merge"] === true, autoFix: flags["auto-fix"] === true }
+        : undefined,
       attachments,
     })) as ApiTask;
   } catch (error) {
@@ -165,10 +167,11 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
   }
   const where = task.mode === "local" ? ", local" : "";
   // What the daemon armed, not what was asked: an older daemon ignores the field.
-  const armed = (task as ApiTask & { autopilot?: { autoMerge?: boolean } }).autopilot?.autoMerge === true;
-  const merge = armed ? ", auto-merge" : "";
+  const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean } }).autopilot;
+  const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix"].filter(Boolean).join("");
   console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
-  if (flags["auto-merge"] === true && !armed) console.error("warning: this daemon did not arm auto-merge (it may be older than this CLI)");
+  const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
+  if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) console.error("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
 }
 
 async function resultCommand(positional: string[]): Promise<void> {

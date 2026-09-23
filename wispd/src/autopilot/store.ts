@@ -6,8 +6,8 @@
  */
 import type { AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
-import { getTask, randomId } from "../store"
-import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, type WorkflowRow } from "../workflows/store"
+import { createTaskMessage, getTask, randomId } from "../store"
+import { announceWorkflow, cancelWorkflowMessages, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 
 export interface AutopilotCheckpoint {
@@ -28,6 +28,18 @@ export interface AutopilotCheckpoint {
   merged?: { base: string; byWisp: boolean; noted: boolean }
   /** what the saved reason describes (see AutopilotStatus.about) */
   about?: "pr" | "task"
+  /** auto-fix rounds sent for the bound PR */
+  rounds?: number
+  /** `${head}:${check}` for every job Wisp reran, so none is rerun twice */
+  rerun?: string[]
+  /** evidence keys the owner chose not to send */
+  skipped?: string[]
+  /** when Wisp first saw the task idle since its last turn: rounds wait a moment after it */
+  idleSince?: string
+  /** a round ready to go once its delay passes */
+  pending?: { key: string; summary: string; sendsAt: string }
+  /** the owner said Send now */
+  sendNow?: boolean
 }
 
 export interface AutopilotParams {
@@ -62,7 +74,10 @@ function latestRow(taskId: string): WorkflowRow | null {
     .get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
-const OFF: AutopilotStatus = { autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", mergedByWisp: false, updatedAt: null }
+const OFF: AutopilotStatus = {
+  autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", mergedByWisp: false,
+  pendingFix: null, fixRounds: 0, updatedAt: null,
+}
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   if (!row) return OFF
@@ -86,7 +101,11 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   // auto-merge found on); a hold or a wait on the task never is.
   const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
   const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
-  return { autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, mergedByWisp: false, updatedAt: row.updated_at }
+  const pendingFix = row.state === "active" && checkpoint.pending ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt } : null
+  return {
+    autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, mergedByWisp: false,
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, updatedAt: row.updated_at,
+  }
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -107,32 +126,34 @@ export class AutopilotError extends Error {
 
 /** Arm, update, or disarm. Idempotent: setting what is already set changes nothing. */
 export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new Date()): AutopilotStatus {
-  if (update.autoFix === true) throw new AutopilotError("Auto-fix is not available yet")
   const result = db.transaction(() => {
     const task = getTask(taskId)
     if (!task) throw new AutopilotError("Task not found", 404)
     const row = autopilotRow(taskId)
     const current = row ? paramsOf(row) : { autoMerge: false, autoFix: false }
-    const next: AutopilotParams = { autoMerge: update.autoMerge ?? current.autoMerge, autoFix: false }
+    const next: AutopilotParams = { autoMerge: update.autoMerge ?? current.autoMerge, autoFix: update.autoFix ?? current.autoFix }
     const at = now.toISOString()
-    if (!next.autoMerge) {
+    if (!next.autoMerge && !next.autoFix) {
       if (row) changeWorkflowState(row.id, "completed", "Auto-merge off", now)
       return
     }
-    if (task.archived) throw new AutopilotError("An archived task cannot auto-merge", 409)
-    if (task.mode === "local") throw new AutopilotError("Auto-merge needs a task with its own branch; this one runs in the project checkout", 409)
+    if (task.archived) throw new AutopilotError("An archived task cannot be switched on", 409)
+    if (task.mode === "local") throw new AutopilotError("Auto-merge and auto-fix need a task with its own branch; this one runs in the project checkout", 409)
+    const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on"].filter(Boolean).join(", ")
     if (row) {
-      if (current.autoMerge === next.autoMerge) return
+      if (current.autoMerge === next.autoMerge && current.autoFix === next.autoFix) return
+      // switching auto-fix off withdraws a round that has not started yet
+      if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
       db.run("UPDATE workflows SET params_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
         [JSON.stringify(next), at, at, row.id])
-      recordWorkflow(row.id, "configured", "Auto-merge on", at)
+      recordWorkflow(row.id, "configured", label, at)
       return
     }
     const id = randomId("w", 12)
     db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, checkpoint_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, '1', ?, '{}', 'active', 'Waiting for a PR', ?, ?, ?, ?, ?)`,
     [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), task.context_n, at, FAR_FUTURE, at, at])
-    recordWorkflow(id, "armed", "Auto-merge on", at)
+    recordWorkflow(id, "armed", label, at)
   })
   result()
   announceWorkflow(taskId)
@@ -146,6 +167,9 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   const checkpoint = checkpointOf(row)
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
+  // Resume after a pause is a fresh start for auto-fix's round budget too;
+  // Continue after a Stop hold is not.
+  if (row.state === "paused") delete checkpoint.rounds
   checkpoint.state = "waiting"
   // until the next look, the reason is about the resume, not the PR
   checkpoint.about = "task"
@@ -272,4 +296,87 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
       db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, merged: { ...merged, noted: true } }), latest.id])
     },
   }
+}
+
+/** The auto-fix round message reserved but not started yet, if any. */
+export function queuedRound(rowId: string): string | null {
+  const row = db.query("SELECT id FROM task_messages WHERE workflow_id = ? AND status = 'queued' AND claim IS NULL LIMIT 1").get(rowId) as { id: string } | null
+  return row?.id ?? null
+}
+
+/**
+ * Withdraw a round that never started. The cancel trigger restores the
+ * checkpoint it was reserved against; the revision bump makes any check still
+ * in flight discard its now-stale view.
+ */
+export function withdrawQueuedRound(row: WorkflowRow): boolean {
+  if (!queuedRound(row.id)) return false
+  cancelWorkflowMessages(row.id)
+  db.run("UPDATE workflows SET revision = revision + 1 WHERE id = ?", [row.id])
+  return true
+}
+
+/**
+ * Reserve one auto-fix round: the message the agent will receive, its
+ * evidence key (so the same evidence is never sent twice), and the checkpoint
+ * it advances — one transaction, like a workflow wake.
+ */
+export function reserveRound(row: WorkflowRow, round: { key: string; prompt: string; reason: string; checkpoint: AutopilotCheckpoint }, now: Date): string | null {
+  const messageId = db.transaction(() => {
+    const current = getWorkflow(row.id), task = getTask(row.task_id)
+    if (!current || current.state !== "active" || current.revision !== row.revision || !task || task.archived || seenWake(row.id, round.key)) return null
+    const id = randomId("m", 12)
+    createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "" }, false)
+    db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
+    db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)
+      ON CONFLICT(workflow_id, event_key) DO UPDATE SET message_id = excluded.message_id, prior_checkpoint_json = excluded.prior_checkpoint_json`,
+    [row.id, round.key, id, current.checkpoint_json])
+    const at = now.toISOString()
+    db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, wake_count = wake_count + 1, revision = revision + 1,
+      last_checked_at = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr" }), round.reason, at, at, row.id])
+    recordWorkflow(row.id, "wake", round.reason, at, id)
+    return id
+  })()
+  if (messageId) announceWorkflow(row.task_id)
+  return messageId
+}
+
+/** Send now: skip the short delay before a pending round. */
+export function sendPendingFix(taskId: string, now = new Date()): AutopilotStatus {
+  return touchPending(taskId, now, (checkpoint) => { checkpoint.sendNow = true })
+}
+
+/** Skip: never send this evidence. A later head brings new evidence, and a round again. */
+export function skipPendingFix(taskId: string, now = new Date()): AutopilotStatus {
+  return touchPending(taskId, now, (checkpoint) => {
+    checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), checkpoint.pending!.key]
+    delete checkpoint.pending
+  })
+}
+
+function touchPending(taskId: string, now: Date, change: (checkpoint: AutopilotCheckpoint) => void): AutopilotStatus {
+  const row = autopilotRow(taskId)
+  if (!row || row.state !== "active") throw new AutopilotError("Auto-fix is not on for this task", 409)
+  const checkpoint = checkpointOf(row)
+  if (!checkpoint.pending) throw new AutopilotError("No auto-fix round is waiting to be sent", 409)
+  change(checkpoint)
+  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
+    [JSON.stringify(checkpoint), now.toISOString(), now.toISOString(), row.id])
+  announceWorkflow(taskId)
+  return autopilotStatus(taskId)
+}
+
+/** A person cancelled a queued round from the message list: that means Skip, not a pause. */
+export function skipCancelledRound(workflowId: string, messageId: string): boolean {
+  const row = getWorkflow(workflowId)
+  if (!row || row.type !== AUTOPILOT_TYPE) return false
+  const wake = db.query("SELECT event_key FROM workflow_wakes WHERE workflow_id = ? AND message_id = ?").get(workflowId, messageId) as { event_key: string } | null
+  const current = getWorkflow(workflowId)!
+  const checkpoint = checkpointOf(current)
+  if (wake) checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), wake.event_key]
+  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), workflowId])
+  recordWorkflow(workflowId, "skipped", "A queued auto-fix round was cancelled", new Date().toISOString())
+  announceWorkflow(row.task_id)
+  return true
 }

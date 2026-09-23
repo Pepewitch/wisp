@@ -1,13 +1,21 @@
-# Auto-merge
+# Auto-merge and auto-fix
 
-Switch on **Auto-merge** for a task, and Wisp merges the task's pull request
-once it is ready. There is nothing to configure. Arm it when you create the
-task, or at any point after:
+Two switches on a task, with nothing to configure:
+
+- **Auto-merge**: Wisp merges the task's pull request once it is ready.
+- **Auto-fix**: when the PR's CI fails or it conflicts with its base, Wisp
+  sends the failure back to the task's agent to fix.
+
+Turn either on when you create the task, from the task's `…` menu, or with
+`wisp pr` at any point after:
 
 ```sh
-wisp new . "Fix the flaky retry test, open a PR" --harness claude --auto-merge
+wisp new . "Fix the flaky retry test, open a PR" --harness claude --auto-merge --auto-fix
 wisp pr <task>               # status and the reason it is waiting
 wisp pr <task> merge on      # or: merge off
+wisp pr <task> fix on        # or: fix off
+wisp pr <task> send-now      # send a waiting auto-fix round at once
+wisp pr <task> skip          # never send that round
 wisp pr <task> resume        # after a pause, or to release a Stop hold early
 ```
 
@@ -89,6 +97,41 @@ after it hears how the merge ended.
   head, and GitHub's own auto-merge found switched on for the PR. A paused
   task still notices when its PR is merged or closed.
 
+## Auto-fix
+
+When a check that counts is red on the PR's current head — or the PR conflicts
+with its base — and the task is idle, Wisp sends the agent one **round**: a
+short message pointing at a `PR-FEEDBACK.md` file beside the task's data (never
+in the worktree). The file lists the failing checks and ends with the logs
+that explain them: the end of each failing GitHub Actions job's log, cut where
+it errors, or a non-Actions check's own report. It holds every failing job on
+the head, so when the required check is an aggregator (a `test` job that needs
+six shards) the agent still reads the shard that failed.
+
+- **Only counting checks decide.** With required checks on the base, only they
+  do; with none, every check does. A red that is also red on the base branch
+  is not the PR's to fix.
+- **All results at once.** A round waits until every counting check on the
+  head has finished, so the agent gets the whole picture in one turn.
+- **Token-free retries first.** A cancelled job is rerun once before anyone
+  spends a turn on it; without required checks, so is a failed one (a flake
+  gets one free retry). Wisp only reruns ordinary `pull_request` jobs, never a
+  deployment. A job held for an environment's approval needs you.
+- **A short delay.** A round waits two minutes after the task goes idle, so you
+  can read what it did and steer it yourself first. **Send now** skips the
+  wait; **Skip** means that evidence is never sent (a later push brings new
+  evidence, and a round again). Cancelling a queued round from the message list
+  is the same as Skip.
+- **Never twice, and never forever.** The same evidence is sent once: if the
+  agent's turn ends without a push and the check is still red, Wisp says so
+  and waits for you instead of repeating itself. After three rounds on one PR
+  it pauses; **Resume** gives it three more.
+- **Never mid-turn**, and a user message queued first still goes first.
+
+With both switches on, auto-fix acts first: nothing merges while a check is
+red, and once the agent's fix is green, auto-merge takes over. Auto-fix for
+review feedback is planned.
+
 ## How often it checks
 
 Wisp checks an armed task's PR about once a minute while something is
@@ -98,5 +141,3 @@ busy. A task that settles is checked at once. It reads GitHub through the
 daemon host's authenticated `gh`, and a failed read backs off without an
 agent turn.
 
-Auto-fix, which steers an idle task to fix a red check or answer review
-feedback, is planned and not available yet.

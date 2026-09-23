@@ -12,6 +12,12 @@ export interface PrCheck {
   conclusion: string | null
   required: boolean
   url: string
+  /** a check run's id — for GitHub Actions it is also the job id (logs, rerun) */
+  checkRunId?: number
+  /** the Actions workflow run it belongs to, when it is one */
+  run?: { id: number; event: string }
+  /** a deployment job: never rerun behind anyone's back */
+  deployment?: boolean
 }
 
 const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])
