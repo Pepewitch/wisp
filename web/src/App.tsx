@@ -154,7 +154,8 @@ function useDesktopConnectionHealth(
 function useDaemonEventsBridge(
   runtime: ReturnType<typeof useDaemonRuntime>,
   selectedRef: RefObject<string | null>,
-  onReconnect: () => void
+  onReconnect: () => void,
+  reconnectRequests: number
 ) {
   const connection = connectionStore(runtime.connectionId)
   useEffect(
@@ -167,8 +168,13 @@ function useDaemonEventsBridge(
         onConnectionChange: (live) => connection.set("events", live),
         onReconnect,
       }),
-    [runtime, selectedRef, connection, onReconnect]
+    [runtime, selectedRef, connection, onReconnect, reconnectRequests]
   )
+}
+
+function useReconnectRequests(connectionId: string): number {
+  const intents = uiIntentsFor(connectionId)
+  return useSyncExternalStore(intents.subscribe, intents.reconnectRequests)
 }
 
 /** Archived history is a per-connection preference, so it is stored per connection. */
@@ -223,6 +229,7 @@ function MainView({
     repoPath: string | null
   } | null>(null)
   const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
+  const reconnectRequests = useReconnectRequests(runtime.connectionId)
   // held as a PATH, not a row: the repos query refetches after a save, and a
   // captured row would leave the modal showing what was just replaced
   const [configuringPath, setConfiguringPath] = useState<string | null>(null)
@@ -242,7 +249,7 @@ function MainView({
 
   // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
   // daemon-cached release status are the only polling exceptions.
-  useDaemonEventsBridge(runtime, selectedRef, bumpLogGeneration)
+  useDaemonEventsBridge(runtime, selectedRef, bumpLogGeneration, reconnectRequests)
 
   // a fresh [] every render would re-run every memo below it
   const tasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data])
@@ -272,7 +279,7 @@ function MainView({
   // Status owns Git health for both sidebar and header. It may arrive after
   // conversation paint, but a slow or failed Git sweep never blocks Chat.
   const status = task ? statusQuery.data?.[task.id] : undefined
-  const stream = useLogStream(selectedId, "activity", logGeneration)
+  const stream = useLogStream(selectedId, "activity", logGeneration + reconnectRequests)
   // the harness's own skill registry for Tier 3 (A4) — absent while the
   // daemon can't answer (a running turn), never faked
   const skillsQuery = useTaskSkills(selectedId, archived)

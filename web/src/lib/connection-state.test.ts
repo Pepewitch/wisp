@@ -55,4 +55,18 @@ describe("connection-scoped external stores", () => {
     expect(listener).toHaveBeenCalledTimes(2)
     stop()
   })
+
+  it("scopes manual stream reopen requests to their connection", () => {
+    const first = uiIntentsFor("connection-reopen-one")
+    const second = uiIntentsFor("connection-reopen-two")
+    const listener = vi.fn()
+    const stop = first.subscribe(listener)
+
+    first.reopenStreams()
+
+    expect(first.reconnectRequests()).toBe(1)
+    expect(second.reconnectRequests()).toBe(0)
+    expect(listener).toHaveBeenCalledOnce()
+    stop()
+  })
 })

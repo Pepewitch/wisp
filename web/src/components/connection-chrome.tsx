@@ -139,7 +139,7 @@ export function ConnectionTab({
   const unavailable = issue !== null
   // Only the selected connection mounts both UI streams. Background connections
   // use their own daemon monitor instead of a stale/default stream snapshot.
-  const live = connection.ready && reachability === "online" && (!active || streamsLive)
+  const live = connection.ready && reachability === "online" && streamsLive
   return (
     <span
       data-testid="connection-tab-chip"

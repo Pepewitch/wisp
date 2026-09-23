@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { DesktopConnectionChrome } from "./connection-chrome"
@@ -777,6 +777,15 @@ describe("the active tab's manage menu", () => {
 
 describe("connection tab status", () => {
   it("shows only a green dot for a reachable connection with healthy streams", async () => {
+    class EventSourceStub {
+      static instances: EventSourceStub[] = []
+      onopen: (() => void) | null = null
+      onerror: (() => void) | null = null
+      onmessage: (() => void) | null = null
+      constructor() { EventSourceStub.instances.push(this) }
+      close(): void {}
+    }
+    vi.stubGlobal("EventSource", EventSourceStub)
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(
@@ -793,6 +802,9 @@ describe("connection tab status", () => {
     fireEvent.click(screen.getByRole("button", { name: "Local online" }))
     fireEvent.click(screen.getByRole("button", { name: "Remote online" }))
     expect(local).toHaveAttribute("title", "Live")
+    expect(remote).not.toHaveAttribute("title", "Live")
+    act(() => EventSourceStub.instances[0]!.onopen?.())
+    expect(local).toHaveAttribute("title", "Live")
     expect(remote).toHaveAttribute("title", "Live")
     expect(local.querySelector("[data-live]")).toHaveClass("bg-state-done")
     expect(remote.querySelector("[data-live]")).toHaveClass("bg-state-done")
@@ -803,9 +815,13 @@ describe("connection tab status", () => {
     expect(local.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
     // The inactive remote does not inherit the selected connection's stream loss.
     expect(remote).toHaveAttribute("title", "Live")
+    act(() => EventSourceStub.instances[0]!.onerror?.())
+    await waitFor(() => expect(remote).not.toHaveAttribute("title", "Live"))
+    expect(remote.querySelector("[data-live]")).toHaveAttribute("data-live", "false")
+    act(() => EventSourceStub.instances[0]!.onopen?.())
+    expect(remote).toHaveAttribute("title", "Live")
     fireEvent.click(screen.getByRole("button", { name: "Remote offline" }))
     expect(remote).toHaveAttribute("title", "Daemon unavailable")
-    expect(remote.querySelector("[data-live]")).toHaveAttribute("data-live", "false")
   })
 
   it("reconnects the clicked connection without selecting its tab", async () => {
