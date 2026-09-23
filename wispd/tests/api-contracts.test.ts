@@ -899,7 +899,7 @@ describe("daemon API contracts", () => {
     // WITHOUT the endpoint having waited on one (this test asserts exactly
     // that: the response is served straight from the cold cache)
     expect(body.harnesses.find((harness) => harness.name === "claude")?.models).toMatchObject({
-      list: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+      list: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     });
     expect(body.harnesses.find((harness) => harness.name === "codex")).toMatchObject({
       hasModel: true,

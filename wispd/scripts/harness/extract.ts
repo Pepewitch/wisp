@@ -225,7 +225,7 @@ async function cursorModels(ctx: ExtractCtx): Promise<Record<string, Surface>> {
       cost: "free",
       verifiedAgainst: null,
       source: "'cursor-agent models' (requires an authenticated CLI)",
-      note: "runtime discovery filters this catalog to auto, composer-*, and cursor-*",
+      note: "runtime discovery offers this whole catalog; pruning the picker is the user's, via settings' hiddenModels",
       lists: { ids: [...new Set(ids)].sort() },
       scalars: { default: null },
     },
