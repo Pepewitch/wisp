@@ -8,6 +8,7 @@ import type { AutopilotBy, AutopilotState, AutopilotStatus, AutopilotUpdate } fr
 import { db } from "../store-database"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
+import { keyParts, markerOf, withDelivered } from "./feedback"
 import { taskIsIdle } from "./idle"
 import { announceWorkflow, cancelWorkflowMessages, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
@@ -47,6 +48,10 @@ export interface AutopilotCheckpoint {
   logMisses?: { key: string; count: number }
   /** which switch the saved reason speaks for */
   by?: AutopilotBy
+  /** when auto-fix was switched on: turns before it were never asked to mark their GitHub posts */
+  fixArmedAt?: string
+  /** review items sent to the agent: item id → the fingerprint sent */
+  delivered?: Record<string, string>
 }
 
 export interface AutopilotParams {
@@ -157,7 +162,10 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
       const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
       // switching auto-fix on again is a fresh start for its round budget
-      if (!current.autoFix && next.autoFix) delete checkpoint.rounds
+      if (!current.autoFix && next.autoFix) {
+        delete checkpoint.rounds
+        checkpoint.fixArmedAt = at
+      }
       // A pause auto-fix made is not auto-merge's to keep once auto-fix is off.
       const lift = row.state === "paused" && current.autoFix && !next.autoFix && checkpoint.by === "auto-fix"
       if (lift) Object.assign(checkpoint, { state: "waiting", about: "task", by: "auto-merge" })
@@ -169,8 +177,8 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
     }
     const id = randomId("w", 12)
     db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, checkpoint_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, '1', ?, '{}', 'active', 'Waiting for a PR', ?, ?, ?, ?, ?)`,
-    [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), task.context_n, at, FAR_FUTURE, at, at])
+      VALUES (?, ?, ?, '1', ?, ?, 'active', 'Waiting for a PR', ?, ?, ?, ?, ?)`,
+    [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), JSON.stringify(next.autoFix ? { fixArmedAt: at } : {}), task.context_n, at, FAR_FUTURE, at, at])
     recordWorkflow(id, "armed", label, at)
   })
   result()
@@ -296,13 +304,22 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     // do now is push to that branch.
     return { notes: [`Wisp has just merged PR #${checkpointOf(row).pr} and is confirming it. Do not push to its branch; start any further change on a new branch from the base branch.`], delivered() {} }
   }
-  if (row && paramsOf(row).autoMerge) {
+  if (row && (paramsOf(row).autoMerge || paramsOf(row).autoFix)) {
+    const { autoMerge, autoFix } = paramsOf(row)
     const pr = checkpointOf(row).pr
     const which = pr ? `PR #${pr}` : "this task's pull request"
-    return { notes: [[
-      `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
-      `Wisp merges ${which} once its checks pass and its reviews allow it, so you do not need to wait for CI or merge it yourself. Other pull requests are unaffected.`,
-    ].join(" ")], delivered() {} }
+    const notes: string[] = []
+    if (autoMerge) {
+      notes.push([
+        `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
+        `Wisp merges ${which} once its checks pass and its reviews allow it, so you do not need to wait for CI or merge it yourself. Other pull requests are unaffected.`,
+      ].join(" "))
+    }
+    if (autoFix) {
+      // the marker is how Wisp tells the agent's own GitHub posts from a reviewer's
+      notes.push(`Auto-fix is on for this task: Wisp sends you red CI and review feedback on ${which}. End every comment, review or reply you post on GitHub with: — ${getTask(taskId)?.harness ?? "agent"} via Wisp ${markerOf(taskId)}`)
+    }
+    return { notes, delivered() {} }
   }
   const latest = latestRow(taskId)
   if (!latest || latest.state !== "completed") return NO_NOTES
@@ -375,6 +392,18 @@ export function reserveRound(row: WorkflowRow, round: {
   return messageId
 }
 
+/** A round's evidence, skipped: its CI part is never sent, and its review items count as seen. */
+function handled(checkpoint: AutopilotCheckpoint, key: string): void {
+  const parts = keyParts(key)
+  if (parts.ci) checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), parts.ci]
+  checkpoint.delivered = withDelivered(checkpoint.delivered, parts.delivered)
+}
+
+/** Turns of a task that started before `before`: when it was never asked to mark its GitHub posts. */
+export function unmarkedTurns(taskId: string, before: string): { started_at: string; ended_at: string | null }[] {
+  return db.query("SELECT started_at, ended_at FROM turns WHERE task_id = ? AND started_at < ?").all(taskId, before) as { started_at: string; ended_at: string | null }[]
+}
+
 /** Send now: skip the short delay before a pending round. */
 export function sendPendingFix(taskId: string, now = new Date()): AutopilotStatus {
   return touchPending(taskId, now, (checkpoint) => { checkpoint.sendNow = checkpoint.pending!.key })
@@ -383,7 +412,7 @@ export function sendPendingFix(taskId: string, now = new Date()): AutopilotStatu
 /** Skip: never send this evidence. A later head brings new evidence, and a round again. */
 export function skipPendingFix(taskId: string, now = new Date()): AutopilotStatus {
   return touchPending(taskId, now, (checkpoint) => {
-    checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), checkpoint.pending!.key]
+    handled(checkpoint, checkpoint.pending!.key)
     delete checkpoint.pending
     delete checkpoint.sendNow
   })
@@ -408,7 +437,7 @@ export function skipCancelledRound(workflowId: string, messageId: string): boole
   const wake = db.query("SELECT event_key FROM workflow_wakes WHERE workflow_id = ? AND message_id = ?").get(workflowId, messageId) as { event_key: string } | null
   const current = getWorkflow(workflowId)!
   const checkpoint = checkpointOf(current)
-  if (wake) checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), wake.event_key]
+  if (wake) handled(checkpoint, wake.event_key)
   // the cancel restored the countdown this round came from: it is answered
   delete checkpoint.pending
   delete checkpoint.sendNow

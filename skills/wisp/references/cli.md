@@ -53,9 +53,11 @@ wisp pr <task> resume          # after a pause, or to release a Stop hold early
 With auto-merge on, Wisp merges the task's open PR once its checks pass, a
 reviewer who blocked has passed the current head, the task is idle, and the
 worktree holds nothing the PR lacks. Every turn tells the agent to push and open
-the PR and to leave the merge to Wisp. With auto-fix on, a red counting check or
-a conflict goes back to the idle agent as a round with the failing logs, at most
-three per PR. See [Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
+the PR and to leave the merge to Wisp. With auto-fix on, a red counting check, a
+conflict, or review feedback it has not seen (from you, a bot, or anyone who can
+push) goes back to the idle agent as a round, at most three per PR; the agent
+signs its GitHub posts so Wisp never feeds them back. See
+[Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
 
 ## Tasks
 

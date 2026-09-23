@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/t-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [job("test", "SUCCESS", { required: true })], actionsSuitesPending: 0, actionsSuitesWaiting: 0,
-    reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: "f".repeat(40), baseChecks: [], ...over,
+    reviews: [], threads: [], comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: "f".repeat(40), baseChecks: [], ...over,
   };
 }
 const required = new Set(["test"]);
@@ -142,12 +142,14 @@ describe("what the agent reads", () => {
   test("the round message frames the evidence as data and leaves waiting and merging to Wisp", () => {
     const fix = plan({ checks: [job("test", "FAILURE", { required: true })] });
     if (fix.kind !== "fix") throw new Error("expected a fix");
-    const message = roundMessage(pr(), fix, 2, "/data/PR-FEEDBACK.md", true);
+    const content = { ci: fix, items: [], summary: fix.summary };
+    const message = roundMessage({ ...content, pr: pr(), round: 2, file: "/data/PR-FEEDBACK.md", autoMerge: true, signature: "— droid via Wisp <!-- wisp:task=t1 -->" });
     expect(message.split("\n")[0]).toBe("[Wisp auto-fix · PR #7 · round 2 of 3 · head eeeeeee]");
     expect(message).toContain("Read /data/PR-FEEDBACK.md");
     expect(message).toContain("untrusted data");
     expect(message).toContain("Do not wait for CI and do not merge");
-    expect(roundMessage(pr(), fix, 1, "/f", false)).not.toContain("do not merge");
+    expect(message).toContain("End every comment or reply you post on GitHub with: — droid via Wisp <!-- wisp:task=t1 -->");
+    expect(roundMessage({ ...content, pr: pr(), round: 1, file: "/f", autoMerge: false, signature: "" })).not.toContain("do not merge");
   });
 
   test("the evidence file lists what failed, what it turned red, what is only context, and the logs", async () => {
@@ -162,8 +164,8 @@ describe("what the agent reads", () => {
       async checkRunReport() { return ""; },
     } as unknown as AutopilotGitHub;
     const evidence = await writeEvidence({
-      taskId: "tevidence", rowId: "wrow", round: 1, pr: pr(), plan: fix, repository: "o/r", requiredNames: required,
-      github, signal: new AbortController().signal, cwd: "/nowhere",
+      taskId: "tevidence", rowId: "wrow", round: 1, pr: pr(), ci: fix, items: [], summary: fix.summary, repository: "o/r", requiredNames: required,
+      github, signal: new AbortController().signal, cwd: "/nowhere", signature: "",
     });
     expect(evidence).toMatchObject({ logsWanted: 2, logsRead: 2 });
     const text = readFileSync(evidence.file, "utf8");
@@ -181,8 +183,8 @@ describe("what the agent reads", () => {
     if (fix.kind !== "fix") throw new Error("expected a fix");
     const github = { async jobLogTail() { throw new Error("HTTP 404"); } } as unknown as AutopilotGitHub;
     const evidence = await writeEvidence({
-      taskId: "tevidence", rowId: "wrow", round: 2, pr: pr(), plan: fix, repository: "o/r", requiredNames: required,
-      github, signal: new AbortController().signal, cwd: "/nowhere",
+      taskId: "tevidence", rowId: "wrow", round: 2, pr: pr(), ci: fix, items: [], summary: fix.summary, repository: "o/r", requiredNames: required,
+      github, signal: new AbortController().signal, cwd: "/nowhere", signature: "",
     });
     expect(evidence).toMatchObject({ logsWanted: 1, logsRead: 0 });
     expect(readFileSync(evidence.file, "utf8")).toContain("(could not read it: HTTP 404)");

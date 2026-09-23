@@ -18,6 +18,8 @@ export interface PrCheck {
   run?: { id: number; event: string }
   /** a deployment job: never rerun behind anyone's back */
   deployment?: boolean
+  /** the GitHub App that reported it: pairs a bot's sticky comment with its verdict */
+  app?: string
 }
 
 const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])

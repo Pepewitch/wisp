@@ -11,6 +11,8 @@ import type { PrCheck } from "./checks"
 export type MergeMethod = "SQUASH" | "MERGE" | "REBASE"
 
 export interface PrReview {
+  /** node id */
+  id: string
   author: string | null
   association: string
   bot: boolean
@@ -19,6 +21,34 @@ export interface PrReview {
   /** the head this review was written against */
   commit: string | null
   submittedAt: string
+  editedAt: string | null
+  url: string
+}
+
+/** A conversation comment, or one comment in a review thread. */
+export interface PrComment {
+  /** node id */
+  id: string
+  author: string | null
+  association: string
+  bot: boolean
+  body: string
+  createdAt: string
+  editedAt: string | null
+  url: string
+}
+
+export interface PrThread {
+  /** node id: what `resolveReviewThread` and a reply take */
+  id: string
+  resolved: boolean
+  outdated: boolean
+  path: string
+  line: number | null
+  /** who started the thread: the owner or a bot may have it resolved for them */
+  starter: PrComment | null
+  /** the newest comments, oldest first */
+  comments: PrComment[]
 }
 
 export interface PrSnapshot {
@@ -43,6 +73,9 @@ export interface PrSnapshot {
   /** of those, the ones held for a person (an environment's required reviewers) */
   actionsSuitesWaiting: number
   reviews: PrReview[]
+  threads: PrThread[]
+  /** the newest conversation comments, oldest first */
+  comments: PrComment[]
   unresolvedThreads: number
   mergeMethod: MergeMethod
   /** the base branch's head, and its checks: a red that is red there too is not this PR's to fix */
@@ -71,6 +104,8 @@ export interface AutopilotGitHub {
   jobLogTail(repository: string, jobId: number, cwd: string, signal: AbortSignal): Promise<string>
   /** A non-Actions check run's own report: title, summary, text, annotations. */
   checkRunReport(repository: string, checkRunId: number, cwd: string, signal: AbortSignal): Promise<string>
+  /** Whether a login may push to the repository (write, maintain or admin): whose review may instruct the agent. */
+  canPush(repository: string, login: string, cwd: string, signal: AbortSignal): Promise<boolean>
 }
 
 const GH_ENV = { GH_PROMPT_DISABLED: "1", GH_PAGER: "cat", NO_COLOR: "1" }
@@ -111,14 +146,19 @@ query($owner: String!, $name: String!, $number: Int!) {
       mergeStateStatus reviewDecision
       mergeQueueEntry { id }
       autoMergeRequest { enabledAt }
-      reviewThreads(first: 100) { nodes { isResolved } }
-      reviews(last: 50) { nodes { state body submittedAt authorAssociation author { login __typename } commit { oid } } }
+      reviewThreads(first: 100) { pageInfo { hasNextPage } nodes {
+        id isResolved isOutdated path line originalLine
+        starter: comments(first: 1) { nodes { ...comment } }
+        recent: comments(last: 30) { nodes { ...comment } }
+      } }
+      reviews(last: 50) { nodes { id state body submittedAt lastEditedAt url authorAssociation author { login __typename } commit { oid } } }
+      comments(last: 100) { nodes { ...comment } }
       commits(last: 1) { nodes { commit { oid
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
         statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
           ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number)
-            deployment { id } checkSuite { workflowRun { databaseId event } } }
+            deployment { id } checkSuite { app { slug } workflowRun { databaseId event } } }
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
         } } }
       } } }
@@ -129,6 +169,11 @@ query($owner: String!, $name: String!, $number: Int!) {
       } } } } } }
     }
   }
+}
+fragment comment on Comment {
+  id body createdAt lastEditedAt authorAssociation author { login __typename }
+  ... on IssueComment { url }
+  ... on PullRequestReviewComment { url }
 }`
 
 function nodes(value: unknown): Record<string, unknown>[] {
@@ -139,26 +184,54 @@ function parseCheck(node: Record<string, unknown>): PrCheck {
   if (node.__typename === "StatusContext") {
     return { name: str(node.context), status: str(node.state), conclusion: null, required: node.isRequired === true, url: str(node.targetUrl) }
   }
-  const run = isRecord(node.checkSuite) && isRecord(node.checkSuite.workflowRun) ? node.checkSuite.workflowRun : null
+  const suite = isRecord(node.checkSuite) ? node.checkSuite : null
+  const run = suite && isRecord(suite.workflowRun) ? suite.workflowRun : null
+  const app = suite && isRecord(suite.app) ? str(suite.app.slug) : ""
   return {
     name: str(node.name), status: str(node.status), conclusion: typeof node.conclusion === "string" ? node.conclusion : null,
     required: node.isRequired === true, url: str(node.detailsUrl),
     ...(typeof node.databaseId === "number" ? { checkRunId: node.databaseId } : {}),
     ...(run && typeof run.databaseId === "number" ? { run: { id: run.databaseId, event: str(run.event) } } : {}),
+    ...(app ? { app } : {}),
     deployment: isRecord(node.deployment),
   }
 }
 
-function parseReview(node: Record<string, unknown>): PrReview {
+/** Who wrote something: the login GraphQL gives a bot is its app's slug, without `[bot]`. */
+function authorOf(node: Record<string, unknown>) {
   const author = isRecord(node.author) ? node.author : null
   return {
-    author: author ? str(author.login) || null : null,
+    author: author ? str(author.login).replace(/\[bot\]$/, "") || null : null,
     association: str(node.authorAssociation),
     bot: author?.__typename === "Bot",
+  }
+}
+
+const editedAt = (node: Record<string, unknown>): string | null => (typeof node.lastEditedAt === "string" ? node.lastEditedAt : null)
+
+function parseReview(node: Record<string, unknown>): PrReview {
+  return {
+    id: str(node.id),
+    ...authorOf(node),
     state: str(node.state),
     body: str(node.body),
     commit: isRecord(node.commit) ? str(node.commit.oid) || null : null,
     submittedAt: str(node.submittedAt),
+    editedAt: editedAt(node),
+    url: str(node.url),
+  }
+}
+
+function parseComment(node: Record<string, unknown>): PrComment {
+  return { id: str(node.id), ...authorOf(node), body: str(node.body), createdAt: str(node.createdAt), editedAt: editedAt(node), url: str(node.url) }
+}
+
+function parseThread(node: Record<string, unknown>): PrThread {
+  const line = typeof node.line === "number" ? node.line : typeof node.originalLine === "number" ? node.originalLine : null
+  return {
+    id: str(node.id), resolved: node.isResolved === true, outdated: node.isOutdated === true, path: str(node.path), line,
+    starter: nodes(node.starter).map(parseComment)[0] ?? null,
+    comments: nodes(node.recent).map(parseComment),
   }
 }
 
@@ -183,6 +256,8 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
     unresolvedThreads: nodes(pr.reviewThreads).filter((thread) => thread.isResolved !== true).length,
     mergeMethod: mergeMethod(repo),
     reviews: nodes(pr.reviews).map(parseReview),
+    threads: nodes(pr.reviewThreads).map(parseThread),
+    comments: nodes(pr.comments).map(parseComment),
   }
 }
 
@@ -210,6 +285,8 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   // A check past the first page could be the red one: refuse to decide.
   const more = (value: unknown) => isRecord(value) && isRecord(value.pageInfo) && value.pageInfo.hasNextPage === true
   if (more(rollup?.contexts) || more(commit.checkSuites)) throw new Error("Too many checks on this PR to verify them all")
+  // An unread thread could be the one blocking: refuse to decide, like a check.
+  if (more(pr.reviewThreads)) throw new Error("Too many review threads on this PR to read them all")
   const actions = nodes(commit.checkSuites).filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED")
   return {
     ...prFields(pr, repo, data),
@@ -355,6 +432,12 @@ export const ghAutopilot: AutopilotGitHub = {
     const notes = Array.isArray(annotations) ? annotations.filter(isRecord).map((note) =>
       `${str(note.path)}:${String(note.start_line ?? "")} ${str(note.annotation_level)}: ${str(note.message)}`) : []
     return controlFree([str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n")).slice(0, 64_000)
+  },
+  async canPush(repository, login, cwd, signal) {
+    const result = await ghJson(["api", `repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`], cwd, signal)
+    if (!isRecord(result)) return false
+    // role_name tells maintain from write; permission is the classic level
+    return ["admin", "maintain", "write"].includes(str(result.role_name)) || ["admin", "write"].includes(str(result.permission))
   },
   async merge({ repository, number, method, head }, cwd, signal) {
     const result = await gh(

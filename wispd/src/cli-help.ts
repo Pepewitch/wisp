@@ -12,7 +12,7 @@ usage:
                                                        --local runs in the repo itself instead of a worktree,
                                                        and archiving it never removes anything;
                                                        --auto-merge merges the task's PR once it is ready;
-                                                       --auto-fix sends a red check or conflict back to the agent;
+                                                       --auto-fix sends red CI, a conflict, or review feedback back to the agent;
                                                        --attach repeats, up to 10 files and 50 MB per turn:
                                                        images 5 MB, pdf and text 20 MB, video 50 MB
                                                        (--image is the old name and still works))
