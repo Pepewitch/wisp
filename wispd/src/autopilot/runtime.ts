@@ -89,6 +89,16 @@ export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string,
     own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own.find(named) ?? own[0] ?? null
 }
 
+/** Why the first open PR was not adopted, so "Waiting for a PR" never hides one that exists. */
+export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string): string | null {
+  const pull = pulls[0]
+  if (!pull) return null
+  if (pull.isCrossRepository) return `#${pull.number} is from a fork`
+  if (pull.author !== viewer) return `#${pull.number} was opened by @${pull.author ?? "someone else"}, not @${viewer}`
+  if (Date.parse(pull.createdAt) < Date.parse(task.created_at)) return `#${pull.number} is older than this task`
+  return null
+}
+
 /** The last few heads seen, and always the current one. */
 function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
   const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
@@ -207,12 +217,9 @@ export class AutopilotRuntime {
 
     if (!checkpoint.pr) {
       if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
-      const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
-      const { defaultBranch, viewer, pulls } = await this.github.openPullRequests(repository, branches, cwd, signal)
-      const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))))
-      if (!pick) { save("waiting", "Waiting for a PR", WAITING_ON_YOU_MS); return }
-      checkpoint.pr = pick.number
-      recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, now.toISOString())
+      const bound = await this.bind(row, task, repository, configured, signal)
+      if (typeof bound === "string") { save("waiting", bound, WAITING_ON_YOU_MS); return }
+      checkpoint.pr = bound
     }
 
     const pr = await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
@@ -237,6 +244,19 @@ export class AutopilotRuntime {
     if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS); return }
     if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS); return }
     await this.merge(row, checkpoint, pr, repository)
+  }
+
+  /** The PR number to bind to, or the reason there is none yet. */
+  private async bind(row: WorkflowRow, task: Task, repository: string, configured: string | undefined, signal: AbortSignal): Promise<number | string> {
+    const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
+    const { defaultBranch, viewer, pulls } = await this.github.openPullRequests(repository, branches, task.repo_path, signal)
+    const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))))
+    if (!pick) {
+      const skipped = skippedPull(pulls, task, viewer)
+      return skipped ? `Waiting for this task's own PR (${skipped})` : "Waiting for a PR"
+    }
+    recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, this.now().toISOString())
+    return pick.number
   }
 
   /** The bound PR is no longer open: record how it ended and stand down. */

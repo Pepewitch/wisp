@@ -46,6 +46,10 @@ function checksGate(input: GateInput): GateResult | null {
   const fresh = !(input.nowMs - input.headFirstSeenMs >= FRESH_HEAD_MS)
   if (fresh || pr.actionsSuitesPending > 0) {
     const running = pr.checks.filter((check) => classifyCheck(check) === "pending").length
+    // A run held for an environment's reviewers never starts on its own.
+    if (!fresh && running === 0 && pr.actionsSuitesWaiting > 0) {
+      return { kind: "needs-you", reason: "A workflow run is waiting for approval" }
+    }
     return running > 0
       ? { kind: "wait", reason: `Waiting for checks (${running} running)` }
       : { kind: "wait", reason: "Waiting for checks to start" }

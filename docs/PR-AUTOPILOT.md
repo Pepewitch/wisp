@@ -54,8 +54,11 @@ not hold is the reason shown in `wisp pr` and next to the PR in the app.
   `Verdict: CHANGES REQUESTED` line anywhere in the review, must pass the
   *current* head before it merges; an approval of an older head does not count.
   There is no timer. Only a plain `Verdict: APPROVE` approves: any request for
-  changes in the line blocks, even after an approving word, and a verdict line
-  Wisp cannot read counts as blocking. Only the repository owner,
+  changes in the line blocks, even after an approving word, an approval with a
+  condition ("…, but fix X first") does not count, and a verdict line Wisp
+  cannot read counts as blocking. A verdict quoted from an earlier round
+  (`> Verdict: …`) is ignored, and when a review has several, the least
+  approving one wins. Only the repository owner,
   collaborators, organization members, and installed apps count as reviewers.
 - **GitHub agrees.** Conflicts, an out-of-date branch, and unresolved
   conversations all wait, and the reason names which.

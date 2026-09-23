@@ -40,6 +40,8 @@ export interface PrSnapshot {
   checks: PrCheck[]
   /** GitHub Actions check suites on the head that have not completed */
   actionsSuitesPending: number
+  /** of those, the ones held for a person (an environment's required reviewers) */
+  actionsSuitesWaiting: number
   reviews: PrReview[]
   unresolvedThreads: number
   mergeMethod: MergeMethod
@@ -141,7 +143,9 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
     ? { name: str(node.context), status: str(node.state), conclusion: null, required: node.isRequired === true, url: str(node.targetUrl) }
     : { name: str(node.name), status: str(node.status), conclusion: typeof node.conclusion === "string" ? node.conclusion : null, required: node.isRequired === true, url: str(node.detailsUrl) })
   const suites = isRecord(commit) ? nodes(commit.checkSuites) : []
-  const actionsSuitesPending = suites.filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED").length
+  const actions = suites.filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED")
+  const actionsSuitesPending = actions.length
+  const actionsSuitesWaiting = actions.filter((suite) => str(suite.status) === "WAITING").length
   const reviews: PrReview[] = nodes(pr.reviews).map((node) => {
     const author = isRecord(node.author) ? node.author : null
     return {
@@ -173,6 +177,7 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
     viewer: isRecord(data.viewer) ? str(data.viewer.login) : "",
     checks,
     actionsSuitesPending,
+    actionsSuitesWaiting,
     reviews,
     unresolvedThreads: nodes(pr.reviewThreads).filter((thread) => thread.isResolved !== true).length,
     mergeMethod: mergeMethod(repo),

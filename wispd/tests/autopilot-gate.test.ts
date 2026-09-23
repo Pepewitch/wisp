@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
     head: HEAD, headRefName: "wisp/t1-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
-    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     ...over,
   };
 }
@@ -48,6 +48,13 @@ describe("verdict lines", () => {
     expect(parseVerdict("Verdict: BLOCKING — two issues")).toBe("blocking");
     // a verdict is read wherever it sits, not only on the first line
     expect(parseVerdict("# Review of #267\n\n**Verdict:** CHANGES REQUESTED")).toBe("blocking");
+    // an approval that walks itself back is not an approval
+    expect(parseVerdict("Verdict: APPROVE, but one blocker must be fixed first")).toBe("unparseable");
+    expect(parseVerdict("Verdict: APPROVE — but fix the blocking race before merging")).toBe("unparseable");
+    expect(parseVerdict("Verdict: Approve (not safe to merge until #3 is fixed)")).toBe("unparseable");
+    // a quoted earlier round is not this review's verdict, and the least approving verdict wins
+    expect(parseVerdict("> Verdict: APPROVE (previous round)\n\nVerdict: CHANGES REQUESTED")).toBe("blocking");
+    expect(parseVerdict("Verdict: APPROVE\n\n## Verdict\nrequest changes")).toBe("blocking");
     expect(parseVerdict("## Verdict")).toBe("unparseable");
     expect(parseVerdict("Nice work, one nit below.")).toBeNull();
     expect(parseVerdict("   \n")).toBeNull();
@@ -90,6 +97,9 @@ describe("the merge gate", () => {
     expect(gate({ ...fresh, pr: pr({ checks: [] }) })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
     expect(gate({ pr: pr({ actionsSuitesPending: 2, checks: [] }) })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
     expect(gate({ pr: pr({ actionsSuitesPending: 1, checks: [check("test", null)] }) })).toEqual({ kind: "wait", reason: "Waiting for checks (1 running)" });
+    // a run held for an environment's reviewers never starts on its own
+    expect(gate({ pr: pr({ actionsSuitesPending: 1, actionsSuitesWaiting: 1, checks: [] }) }))
+      .toEqual({ kind: "needs-you", reason: "A workflow run is waiting for approval" });
     // a head nobody timed is as fresh as it gets
     expect(gate({ headFirstSeenMs: Number.NaN })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
   });

@@ -40,7 +40,7 @@ function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/fixture", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }],
-    actionsSuitesPending: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH", ...over,
+    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH", ...over,
   };
 }
 
@@ -403,6 +403,39 @@ describe("binding and the edges of a merge", () => {
     }
   });
 
+  test("a PR that exists but is not the task's own is named, not hidden behind \"waiting for a PR\"", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const { github } = fakeGitHub({ pulls: [pull({ number: 11, author: "ci-bot" })] });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, reason: "Waiting for this task's own PR (#11 was opened by @ci-bot, not @owner)" });
+  });
+
+  test("a turn after Stop that FAILS does not release the hold", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    pauseTaskWorkflows(task.id);
+    setTaskFields(task.id, { turn_count: task.turn_count + 1 });
+    transition(task.id, "failed", "exited 1");
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).state).toBe("held");
+    expect(state.merges).toHaveLength(0);
+  });
+
+  test("while a merge is being confirmed, a turn is told not to push", () => {
+    const task = doneTask();
+    const clock = { now: START };
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString() } });
+    expect(autopilotTurnNotes(task.id).notes[0]).toContain("Do not push to its branch");
+  });
+
   test("Stop holds it even when there was no turn left to stop", async () => {
     const task = doneTask();
     setAutopilot(task.id, { autoMerge: true });
@@ -502,6 +535,19 @@ describe("the published-work check", () => {
     expect(await publishedWork(task(dir), "wisp/fixture", "d".repeat(40), signal)).toEqual({ ok: false, reason: "Can't verify the worktree" });
   });
 
+  test("a PR head only the remote has is fetched, then checked", async () => {
+    const origin = repo();
+    const clone = mkdtempSync(join(tmpdir(), "wisp-autopilot-clone-"));
+    const cloned = Bun.spawnSync(["git", "clone", "-q", origin.dir, clone]);
+    expect(cloned.exitCode, cloned.stderr.toString()).toBe(0);
+    // "Update branch", or a suggestion committed on GitHub: the remote moved on
+    writeFileSync(join(origin.dir, "a.txt"), "remote only\n");
+    origin.git("commit", "-q", "-am", "remote only");
+    const remoteHead = origin.git("rev-parse", "HEAD");
+    expect(Bun.spawnSync(["git", "cat-file", "-e", remoteHead], { cwd: clone }).exitCode).not.toBe(0);
+    expect(await publishedWork(task(clone), "wisp/fixture", remoteHead, signal)).toEqual({ ok: true });
+  });
+
   test("a worktree that moved on to unrelated work has not unpublished the PR", async () => {
     const { dir, git, head } = repo();
     git("checkout", "-q", "--orphan", "wisp/second");
@@ -519,7 +565,7 @@ describe("the published-work check", () => {
     git("branch", "-m", "wisp/renamed");
     writeFileSync(join(dir, "a.txt"), "two\n");
     git("commit", "-q", "-am", "two");
-    expect(await publishedWork(task(dir), "wisp/fixture", head, signal)).toEqual({ ok: false, reason: "Worktree has commits the PR does not" });
+    expect(await publishedWork(task(dir), "wisp/fixture", head, signal)).toEqual({ ok: false, reason: "Branch wisp/renamed has unpushed commits built on the PR" });
     // detached, with an extra commit and nothing else pointing at it
     const second = repo();
     second.git("checkout", "-q", "--detach");
@@ -532,7 +578,7 @@ describe("the published-work check", () => {
     writeFileSync(join(third.dir, "a.txt"), "two\n");
     third.git("commit", "-q", "-am", "two");
     third.git("checkout", "-q", "wisp/fixture");
-    expect(await publishedWork(task(third.dir), "wisp/fixture", third.head, signal)).toEqual({ ok: false, reason: "Worktree has commits the PR does not" });
+    expect(await publishedWork(task(third.dir), "wisp/fixture", third.head, signal)).toEqual({ ok: false, reason: "Branch wisp/extra has unpushed commits built on the PR" });
   });
 
   test("a stacked child that was pushed for its own PR does not hold its parent back", async () => {

@@ -42,55 +42,70 @@ async function yesNo(args: string[], cwd: string, signal: AbortSignal): Promise<
   throw new Unverifiable()
 }
 
-async function inspect(task: Task, branch: string, head: string, signal: AbortSignal): Promise<PublishedWork> {
-  const unpublished: PublishedWork = { ok: false, reason: "Worktree has commits the PR does not" }
-  const cwd = task.worktree_path ?? task.repo_path
-  if (!existsSync(cwd)) throw new Unverifiable()
-  if (!(await yesNo(["cat-file", "-e", `${head}^{commit}`], cwd, signal))) {
+/** Branch-level: the PR's own branch, and anything built on the PR that only this machine has. */
+async function branchesHoldNothingMore(cwd: string, branch: string, head: string, signal: AbortSignal): Promise<PublishedWork | null> {
+  // `rev-parse --verify --quiet` exits 1 for a missing object, where
+  // `cat-file -e` exits 128 and would be indistinguishable from an error.
+  const present = () => yesNo(["rev-parse", "--verify", "--quiet", `${head}^{commit}`], cwd, signal)
+  if (!(await present())) {
     // Usual when the remote moved ahead (a suggestion committed on GitHub,
     // "Update branch"): fetch it, read-only for the worktree.
     await git(["fetch", "--quiet", "origin", branch], cwd, signal, 60_000)
-    if (!(await yesNo(["cat-file", "-e", `${head}^{commit}`], cwd, signal))) throw new Unverifiable()
+    if (!(await present())) throw new Unverifiable()
   }
-
   const local = await git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], cwd, signal)
   if (local.exitCode === 0) {
-    if (local.out !== head && !(await yesNo(["merge-base", "--is-ancestor", local.out, head], cwd, signal))) return unpublished
+    if (local.out !== head && !(await yesNo(["merge-base", "--is-ancestor", local.out, head], cwd, signal))) return UNPUBLISHED
   } else if (local.exitCode !== 1) {
     throw new Unverifiable()
   }
-
-  const onlyHere = async (sha: string): Promise<boolean> => {
-    const remotes = await git(["for-each-ref", "--format=%(refname)", "--count=1", "--contains", sha, "refs/remotes/"], cwd, signal)
-    if (remotes.exitCode !== 0) throw new Unverifiable()
-    return remotes.out === ""
-  }
-  const containing = await git(["for-each-ref", "--format=%(objectname)", "--contains", head, "refs/heads/"], cwd, signal)
+  // Every branch in the repository, so the reason names the one that holds
+  // the work: it may belong to another task stacked on this one.
+  const containing = await git(["for-each-ref", "--format=%(objectname) %(refname:short)", "--contains", head, "refs/heads/"], cwd, signal)
   if (containing.exitCode !== 0) throw new Unverifiable()
-  for (const sha of new Set(containing.out.split("\n").filter((tip) => tip !== "" && tip !== head))) {
-    if (await onlyHere(sha)) return unpublished
+  for (const line of containing.out.split("\n")) {
+    const [sha, name] = line.split(" ")
+    if (!sha || sha === head) continue
+    if (await onlyHere(sha, cwd, signal)) return { ok: false, reason: `Branch ${name} has unpushed commits built on the PR` }
   }
+  return null
+}
 
-  if (!task.worktree_path) return { ok: true }
-  const current = await git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], task.worktree_path, signal)
+async function onlyHere(sha: string, cwd: string, signal: AbortSignal): Promise<boolean> {
+  const remotes = await git(["for-each-ref", "--format=%(refname)", "--count=1", "--contains", sha, "refs/remotes/"], cwd, signal)
+  if (remotes.exitCode !== 0) throw new Unverifiable()
+  return remotes.out === ""
+}
+
+const UNPUBLISHED: PublishedWork = { ok: false, reason: "Worktree has commits the PR does not" }
+
+/** Worktree-level: HEAD, an operation in progress, and tracked edits — when HEAD is the PR's line of work. */
+async function worktreeIsClean(worktree: string, branch: string, head: string, signal: AbortSignal): Promise<PublishedWork> {
+  const current = await git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], worktree, signal)
   if (current.exitCode !== 0) throw new Unverifiable()
-  const onPrLine = current.out === head || (await yesNo(["merge-base", "--is-ancestor", head, current.out], task.worktree_path, signal))
-  if (onPrLine && current.out !== head && (await onlyHere(current.out))) return unpublished
-  const named = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], task.worktree_path, signal)
-  const onBranch = named.exitCode === 0 ? named.out : null
+  const onPrLine = current.out === head || (await yesNo(["merge-base", "--is-ancestor", head, current.out], worktree, signal))
+  if (onPrLine && current.out !== head && (await onlyHere(current.out, worktree, signal))) return UNPUBLISHED
+  const named = await git(["symbolic-ref", "--quiet", "--short", "HEAD"], worktree, signal)
   if (named.exitCode !== 0 && named.exitCode !== 1) throw new Unverifiable()
+  const onBranch = named.exitCode === 0 ? named.out : null
   // Unrelated work on another branch is not this PR's business.
   if (!onPrLine && onBranch !== branch && onBranch !== null) return { ok: true }
-
-  const gitDir = await git(["rev-parse", "--git-dir"], task.worktree_path, signal)
+  const gitDir = await git(["rev-parse", "--git-dir"], worktree, signal)
   if (gitDir.exitCode !== 0) throw new Unverifiable()
-  const dir = isAbsolute(gitDir.out) ? gitDir.out : join(task.worktree_path, gitDir.out)
+  const dir = isAbsolute(gitDir.out) ? gitDir.out : join(worktree, gitDir.out)
   if (["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"].some((name) => existsSync(join(dir, name)))) {
     return { ok: false, reason: "Worktree has a rebase or merge in progress" }
   }
-  const status = await git(["status", "--porcelain", "--untracked-files=no"], task.worktree_path, signal)
+  const status = await git(["status", "--porcelain", "--untracked-files=no"], worktree, signal)
   if (status.exitCode !== 0) throw new Unverifiable()
   return status.out === "" ? { ok: true } : { ok: false, reason: "Worktree has uncommitted changes" }
+}
+
+async function inspect(task: Task, branch: string, head: string, signal: AbortSignal): Promise<PublishedWork> {
+  const cwd = task.worktree_path ?? task.repo_path
+  if (!existsSync(cwd)) throw new Unverifiable()
+  return (await branchesHoldNothingMore(cwd, branch, head, signal)) ??
+    (task.worktree_path ? await worktreeIsClean(task.worktree_path, branch, head, signal) : { ok: true })
 }
 
 export async function publishedWork(task: Task, branch: string, head: string, signal: AbortSignal): Promise<PublishedWork> {

@@ -234,6 +234,11 @@ const NO_NOTES: TurnNotes = { notes: [], delivered() {} }
 
 export function autopilotTurnNotes(taskId: string): TurnNotes {
   const row = autopilotRow(taskId)
+  if (row && paramsOf(row).autoMerge && checkpointOf(row).mergeAttempt) {
+    // gh said it merged and Wisp is confirming: the one thing a turn must not
+    // do now is push to that branch.
+    return { notes: [`Wisp has just merged PR #${checkpointOf(row).pr} and is confirming it. Do not push to its branch; start any further change on a new branch from the base branch.`], delivered() {} }
+  }
   if (row && paramsOf(row).autoMerge) {
     const pr = checkpointOf(row).pr
     const which = pr ? `PR #${pr}` : "this task's pull request"
