@@ -299,7 +299,7 @@ result — not a raw stream pane stacked on a chat pane. Five rules:
    only its current turn. A settled turn's structured activity is fetched when
    someone chooses **Show activity**, its SSE closes at `turn-end`, and the
    body is dropped on **Hide activity** or task switch. Logs cap at
-   `turnTranscriptBytes` (5 MB default) **per turn**, and the live reducer also
+   `turnTranscriptBytes` (25 MB default) **per turn**, and the live reducer also
    keeps a bounded visible tail with an explicit omission marker. Eagerly
    retaining every settled body does not slow the tab down, it kills it.
 3. **The live turn appends into the same list.** `overflow-anchor: auto` plus a
@@ -1019,7 +1019,7 @@ own prose from inside a turn. The empty state says so; a summary line with
 results does not repeat it.
 
 That fifth one is an INDEX, not a log scan: prose lives only in the per-turn
-JSONL, which caps at 5 MB a turn and is the evidence ledger, so the daemon
+JSONL, which caps at 25 MB a turn and is the evidence ledger, so the daemon
 projects it into `turn_texts` when the turn ends (`wispd/src/turn-texts.ts`).
 Two consequences the UI owns:
 
