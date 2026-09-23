@@ -31,6 +31,7 @@ import {
   MenuRadioItem,
 } from "@/components/menu"
 import { Button, StateDot, Tab } from "@/components/primitives"
+import { connectionStore } from "@/lib/conn"
 import {
   MAX_DESKTOP_CONNECTIONS,
   type DesktopConnectionMetadata,
@@ -99,8 +100,8 @@ function connectionIssue(
 }
 
 /**
- * One connection tab, and — when it is the selected one — the menu that
- * manages it, inside the same chip.
+ * One connection tab, its independent reconnect button, and — when selected —
+ * its management menu, inside the same chip.
  *
  * The menu used to sit past the `+` button, two controls away from the tab it
  * acted on, so "…" beside a row of connections read as "more connections"
@@ -109,9 +110,8 @@ function connectionIssue(
  * tab button goes transparent inside it, which keeps one accent shape on
  * screen rather than a chip with a second button bolted to its side.
  *
- * `actions` is a slot rather than a prop bundle because a `role="tab"` button
- * cannot contain another button — the menu is a SIBLING of the tab inside the
- * chip, and the tablist's arrow keys still find `[role=tab]` alone.
+ * Buttons cannot nest: reconnect and manage are SIBLINGS of the tab, and the
+ * tablist's arrow keys still find `[role=tab]` alone.
  */
 export function ConnectionTab({
   connection,
@@ -119,6 +119,8 @@ export function ConnectionTab({
   attention,
   reachability = "unknown",
   onSelect,
+  onReconnect,
+  reconnectDisabled = false,
   actions,
 }: {
   connection: DesktopConnectionMetadata
@@ -126,39 +128,18 @@ export function ConnectionTab({
   attention?: Exclude<TaskState, "done"> | null
   reachability?: ConnectionReachability
   onSelect: () => void
+  onReconnect: () => void
+  reconnectDisabled?: boolean
   /** The active tab's own menu; nothing at all on the others. */
   actions?: ReactNode
 }) {
+  const store = connectionStore(connection.id)
+  const streamsLive = useSyncExternalStore(store.subscribe, store.isLive)
   const issue = connectionIssue(connection, reachability)
   const unavailable = issue !== null
-  const tab = (
-    <Tab
-      role="tab"
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      active={active}
-      onClick={onSelect}
-      title={`${connection.name} · ${connection.kind === "local" ? "This Mac" : "Remote"}${issue ? ` · ${issue}` : ""}`}
-      className={cn("max-w-40", actions && "bg-transparent pr-1")}
-    >
-      <span className="[&>svg]:size-3.5 [&>svg]:text-muted-foreground">
-        <ConnectionGlyph kind={connection.kind} />
-      </span>
-      <span className="truncate">{connection.name}</span>
-      {attention && <StateDot state={attention} className="ml-0.5" />}
-      {attention && <span className="sr-only">{STATE_LABEL[attention]}</span>}
-      {unavailable && (
-        <span
-          title={issue ?? undefined}
-          className="ml-0.5 text-destructive [&>svg]:size-3"
-        >
-          <Offline aria-hidden />
-          <span className="sr-only">{issue}</span>
-        </span>
-      )}
-    </Tab>
-  )
-  if (!actions) return tab
+  // Only the selected connection mounts both UI streams. Background connections
+  // use their own daemon monitor instead of a stale/default stream snapshot.
+  const live = connection.ready && reachability === "online" && (!active || streamsLive)
   return (
     <span
       data-testid="connection-tab-chip"
@@ -167,7 +148,47 @@ export function ConnectionTab({
         active && "bg-accent"
       )}
     >
-      {tab}
+      <Tab
+        role="tab"
+        aria-selected={active}
+        tabIndex={active ? 0 : -1}
+        active={active}
+        onClick={onSelect}
+        title={`${connection.name} · ${connection.kind === "local" ? "This Mac" : "Remote"}${issue ? ` · ${issue}` : ""}`}
+        className={cn("min-w-0 max-w-40 pr-1", active && "bg-transparent")}
+      >
+        <span className="[&>svg]:size-3.5 [&>svg]:text-muted-foreground">
+          <ConnectionGlyph kind={connection.kind} />
+        </span>
+        <span className="truncate">{connection.name}</span>
+        {attention && <span className="sr-only">{STATE_LABEL[attention]}</span>}
+        {unavailable && <span className="sr-only">{issue}</span>}
+      </Tab>
+      <button
+        type="button"
+        aria-label={`Reconnect ${connection.name}`}
+        title={live ? "Live" : issue ?? "Reconnecting…"}
+        disabled={reconnectDisabled}
+        onClick={onReconnect}
+        className="flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
+      >
+        <span
+          data-live={live}
+          className={cn(
+            "size-1.5 rounded-full",
+            live ? "bg-state-done" : "animate-pulse bg-state-needs-input"
+          )}
+        />
+      </button>
+      {attention && <StateDot state={attention} className="ml-0.5" />}
+      {unavailable && (
+        <span
+          title={issue ?? undefined}
+          className="ml-0.5 text-destructive [&>svg]:size-3"
+        >
+          <Offline aria-hidden />
+        </span>
+      )}
       {actions}
     </span>
   )
@@ -216,7 +237,9 @@ export function ConnectionChromeSpecimen() {
             attention={
               index === 1 ? "needs-input" : index === 2 ? "running" : null
             }
+            reachability={index === 2 ? "offline" : "online"}
             onSelect={() => undefined}
+            onReconnect={() => undefined}
             actions={
               index === 0 ? (
                 <Button
@@ -336,6 +359,12 @@ function DesktopConnections() {
                 attention={attention}
                 reachability={desktop.reachability.get(entry.metadata.id)}
                 onSelect={() => void desktop.select(entry.metadata.id)}
+                onReconnect={() => {
+                  void desktop
+                    .reconnect({ connectionId: entry.metadata.id })
+                    .catch((error: unknown) => setActionError(errorMessage(error)))
+                }}
+                reconnectDisabled={desktop.pendingAction !== null}
                 actions={
                   active ? (
                     <ActiveConnectionActions

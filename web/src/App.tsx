@@ -12,7 +12,6 @@ import {
 } from "react"
 
 import { AuthDialog } from "@/components/auth-dialog"
-import { ConnIndicator } from "@/components/conn-indicator"
 import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
@@ -515,9 +514,6 @@ function AppShell({
         )}
         {desktop && <DesktopConnectionChrome />}
         <span className="flex-1" />
-        <span className="ml-1">
-          <ConnIndicator />
-        </span>
         {/* Everything you can do TO the app is ONE cluster at the right end,
             4px apart against the header's 10px, so the three of them read as a
             group rather than as three unrelated controls that happen to be

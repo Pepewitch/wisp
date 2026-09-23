@@ -14,6 +14,7 @@ import {
 } from "@/lib/desktop-connections"
 import { validateConnectionName } from "@/lib/connection-validation"
 import { clearConnectionDrafts, writeDraft } from "@/lib/drafts"
+import { connectionStore } from "@/lib/conn"
 
 const LOCAL = {
   id: "local",
@@ -164,6 +165,23 @@ function PartialReconnectHarness() {
   )
 }
 
+function ReachabilityControls() {
+  const desktop = useDesktopConnections()!
+  return (
+    <>
+      <button type="button" onClick={() => desktop.reportReachability(LOCAL.id, "online")}>
+        Local online
+      </button>
+      <button type="button" onClick={() => desktop.reportReachability(REMOTE.id, "online")}>
+        Remote online
+      </button>
+      <button type="button" onClick={() => desktop.reportReachability(REMOTE.id, "offline")}>
+        Remote offline
+      </button>
+    </>
+  )
+}
+
 async function changedRemoteUrlNeedsToken() {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
   const remote = {
@@ -212,6 +230,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
   clearConnectionDrafts("local")
   clearConnectionDrafts("remote-one")
+  for (const id of [LOCAL.id, REMOTE.id]) {
+    connectionStore(id).set("events", true)
+    connectionStore(id).set("log", true)
+  }
 })
 
 describe("desktop connection chrome", () => {
@@ -712,10 +734,9 @@ describe("the active tab's manage menu", () => {
 
     // "…" two controls past the tab row read as "more connections" while it
     // opened the ACTIVE connection's settings; it lives in the chip now
-    const chips = screen.getAllByTestId("connection-tab-chip")
-    expect(chips).toHaveLength(1)
-    expect(chips[0]).toContainElement(screen.getByRole("tab", { name: "Local" }))
-    expect(chips[0]).toContainElement(
+    const chip = screen.getByRole("tab", { name: "Local" }).parentElement!
+    expect(chip).toHaveAttribute("data-testid", "connection-tab-chip")
+    expect(chip).toContainElement(
       screen.getByRole("button", { name: "Manage Local" })
     )
     // and nothing manages a connection you are not looking at
@@ -728,7 +749,8 @@ describe("the active tab's manage menu", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
 
-    const chip = screen.getByTestId("connection-tab-chip")
+    const chip = screen.getByRole("tab", { name: "Remote one" }).parentElement!
+    expect(chip).toHaveAttribute("data-testid", "connection-tab-chip")
     expect(chip).toContainElement(screen.getByRole("tab", { name: "Remote one" }))
     expect(chip).toContainElement(
       screen.getByRole("button", { name: "Manage Remote one" })
@@ -747,6 +769,82 @@ describe("the active tab's manage menu", () => {
     expect(
       screen.getByRole("tab", { name: "Local" }).querySelector("button")
     ).toBeNull()
+    expect(
+      screen.getByRole("tab", { name: "Local" }).parentElement
+    ).toContainElement(screen.getByRole("button", { name: "Reconnect Local" }))
+  })
+})
+
+describe("connection tab status", () => {
+  it("shows only a green dot for a reachable connection with healthy streams", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider initial={bootstrap([LOCAL, REMOTE])} bridge={bridge()}>
+          <DesktopConnectionChrome />
+          <ReachabilityControls />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+    const local = screen.getByRole("button", { name: "Reconnect Local" })
+    const remote = screen.getByRole("button", { name: "Reconnect Remote one" })
+    expect(local.querySelector("[data-live]")).toHaveAttribute("data-live", "false")
+    fireEvent.click(screen.getByRole("button", { name: "Local online" }))
+    fireEvent.click(screen.getByRole("button", { name: "Remote online" }))
+    expect(local).toHaveAttribute("title", "Live")
+    expect(remote).toHaveAttribute("title", "Live")
+    expect(local.querySelector("[data-live]")).toHaveClass("bg-state-done")
+    expect(remote.querySelector("[data-live]")).toHaveClass("bg-state-done")
+    expect(screen.queryByText("Live")).toBeNull()
+
+    connectionStore(LOCAL.id).set("log", false)
+    await waitFor(() => expect(local).toHaveAttribute("title", "Reconnecting…"))
+    expect(local.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
+    // The inactive remote does not inherit the selected connection's stream loss.
+    expect(remote).toHaveAttribute("title", "Live")
+    fireEvent.click(screen.getByRole("button", { name: "Remote offline" }))
+    expect(remote).toHaveAttribute("title", "Daemon unavailable")
+    expect(remote.querySelector("[data-live]")).toHaveAttribute("data-live", "false")
+  })
+
+  it("reconnects the clicked connection without selecting its tab", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const reconnectConnection = vi.fn(async (input: { connectionId: string }) =>
+      input.connectionId === LOCAL.id ? LOCAL : REMOTE
+    )
+    const selectConnection = vi.fn(async () => undefined)
+    renderChrome(
+      bootstrap([LOCAL, REMOTE]),
+      bridge({ reconnectConnection, selectConnection })
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Remote one" }))
+    await waitFor(() =>
+      expect(reconnectConnection).toHaveBeenCalledWith({ connectionId: REMOTE.id })
+    )
+    expect(selectConnection).not.toHaveBeenCalled()
+    expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true")
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Local" }))
+    await waitFor(() =>
+      expect(reconnectConnection).toHaveBeenCalledWith({ connectionId: LOCAL.id })
+    )
+  })
+
+  it("reports reconnect failures and blocks repeated clicks while reconnecting", async () => {
+    let fail!: (error: Error) => void
+    const reconnectConnection = vi.fn(
+      () => new Promise<DesktopConnectionMetadata>((_, reject) => { fail = reject })
+    )
+    renderChrome(bootstrap(), bridge({ reconnectConnection }))
+    const dot = screen.getByRole("button", { name: "Reconnect Local" })
+    fireEvent.click(dot)
+    expect(dot).toBeDisabled()
+    fireEvent.click(dot)
+    expect(reconnectConnection).toHaveBeenCalledOnce()
+    fail(new Error("synthetic daemon unavailable"))
+    expect(await screen.findByRole("alert")).toHaveTextContent("synthetic daemon unavailable")
   })
 })
 

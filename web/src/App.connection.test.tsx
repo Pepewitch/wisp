@@ -216,7 +216,6 @@ vi.mock("@/lib/update", () => ({
 
 vi.mock("@/components/auth-dialog", () => ({ AuthDialog: () => null }))
 vi.mock("@/components/changes-pane", () => ({ ChangesPane: () => null }))
-vi.mock("@/components/conn-indicator", () => ({ ConnIndicator: () => null }))
 vi.mock("@/components/conversation", () => ({ Conversation: () => null }))
 vi.mock("@/components/create-task-dialog", () => ({ CreateTaskDialog: () => null }))
 vi.mock("@/components/gallery", () => ({ Gallery: () => null }))
