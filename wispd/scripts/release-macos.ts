@@ -25,6 +25,34 @@ export const MACOS_SUPPORTED_BASELINE = "macOS 26.6.2 (Apple Silicon arm64)";
 export const MACOS_MANIFEST = "release-manifest-darwin-arm64.json";
 export const MACOS_CHECKSUMS = "SHA256SUMS-darwin-arm64";
 export const MACOS_CODE_SIGNING_IDENTIFIER = "dev.wisp.daemon";
+
+/**
+ * The daemon embeds Bun, and `wispd/src/pty.ts` reaches libc through `bun:ffi`
+ * to run the terminal. `bun:ffi`'s dlopen writes executable trampolines at
+ * runtime, which the hardened runtime forbids by default: 0.5.15 shipped a
+ * hardened, Developer ID signed daemon with NO entitlements, so every attempt
+ * to open a terminal trapped in `pthread_jit_write_protect_np` (SIGTRAP) and
+ * took the whole daemon down with it. `allow-unsigned-executable-memory` is the
+ * one that makes FFI work; `allow-jit` covers JavaScriptCore's own MAP_JIT
+ * path. Ad-hoc builds must NOT carry these — the kernel SIGKILLs an ad-hoc
+ * binary that claims a restricted entitlement — and they are not hardened, so
+ * they do not need them.
+ */
+export const MACOS_ENTITLEMENTS = [
+  "com.apple.security.cs.allow-jit",
+  "com.apple.security.cs.allow-unsigned-executable-memory",
+] as const;
+
+export function daemonEntitlementsPlist(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+${MACOS_ENTITLEMENTS.map((key) => `  <key>${key}</key>\n  <true/>`).join("\n")}
+</dict>
+</plist>
+`;
+}
 export const MACOS_APP_DIRECTORY = "Wisp Daemon.app";
 export const MACOS_APP_EXECUTABLE = `${MACOS_APP_DIRECTORY}/Contents/MacOS/wisp`;
 export const MACOS_APP_ICON = `${MACOS_APP_DIRECTORY}/Contents/Resources/icon.icns`;
@@ -375,6 +403,15 @@ function verifyMacApp(
   let signing: MacSigning;
   if (signed) {
     const requirement = run(["/usr/bin/codesign", "--display", "--requirements", "-", binary]);
+    // The hardened runtime blocks bun:ffi unless the signature grants it. A
+    // daemon that cannot dlopen cannot open a terminal, and it crashes rather
+    // than degrading, so this is a publication gate and not a warning.
+    const entitlements = run(["/usr/bin/codesign", "--display", "--entitlements", ":-", app]);
+    for (const key of MACOS_ENTITLEMENTS) {
+      if (!entitlements.includes(key)) {
+        throw new Error(`macOS daemon signature is missing the ${key} entitlement`);
+      }
+    }
     signing = developerIdSigningMetadata(signature, requirement, notarized);
     if (notarized) {
       run(["/usr/bin/xcrun", "stapler", "validate", app]);
@@ -468,6 +505,8 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
     writeFileSync(join(app, "Contents/Info.plist"), daemonInfoPlist(VERSION), { mode: 0o644 });
     buildDaemonIcon(root, temp, join(resources, "icon.icns"));
     if (signed) {
+      const entitlements = join(temp, "wispd.entitlements");
+      writeFileSync(entitlements, daemonEntitlementsPlist(), { mode: 0o644 });
       run([
         "/usr/bin/codesign",
         "--force",
@@ -475,6 +514,8 @@ export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest 
         signingIdentity!,
         "--options",
         "runtime",
+        "--entitlements",
+        entitlements,
         "--timestamp",
         app,
       ]);

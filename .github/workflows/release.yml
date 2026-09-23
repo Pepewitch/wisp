@@ -647,6 +647,14 @@ jobs:
           ! grep -F 'cdhash' <<<"$daemon_requirement"
           xcrun stapler validate "$daemon_app"
           spctl --assess --type execute --verbose=4 "$daemon_app"
+          # The daemon reaches libc through bun:ffi to run the terminal, and
+          # the hardened runtime blocks the executable memory that needs unless
+          # the signature grants it. 0.5.15 shipped without these and SIGTRAPped
+          # on every terminal open. Check the public bytes, not just the build.
+          daemon_entitlements="$(codesign --display --entitlements :- "$daemon_app" 2>/dev/null)"
+          grep -F 'com.apple.security.cs.allow-jit' <<<"$daemon_entitlements"
+          grep -F 'com.apple.security.cs.allow-unsigned-executable-memory' \
+            <<<"$daemon_entitlements"
           verifier="$RUNNER_TEMP/release-artifacts/release-update-verifier/verify-update-signature"
           "$verifier" \
             "$anon/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" \
