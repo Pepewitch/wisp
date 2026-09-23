@@ -112,10 +112,13 @@ describe("auto-merge and auto-fix news", () => {
     tracker.observe("c1", [armed("t1", "waiting")])
     expect(tracker.observe("c1", [armed("t1", "needs-you")])).toHaveLength(1)
     // a long turn, or a GitHub blip, then the same verdict again
-    expect(tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for the task to finish" })])).toEqual([])
+    expect(tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for the task to finish", about: "task" })])).toEqual([])
     expect(tracker.observe("c1", [armed("t1", "needs-you")])).toEqual([])
+    // real progress on the PR, then the same blocker again: that is news
+    tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for checks (3 running)", about: "pr" })])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toHaveLength(1)
     // a different reason is different news
-    tracker.observe("c1", [armed("t1", "waiting")])
+    tracker.observe("c1", [armed("t1", "waiting", { about: "task" })])
     expect(tracker.observe("c1", [armed("t1", "needs-you", { reason: "Changes requested by @x" })])).toHaveLength(1)
   })
 

@@ -70,6 +70,10 @@ export function autopilotTransitions(
   for (const task of tasks) {
     const status = task.autopilot
     const state = status?.state
+    // real progress on the PR (checks running, a fresh push) ends the news it
+    // was: the same blocker coming back after it is news again. A detour about
+    // the task (a busy turn, a GitHub blip, Stop) is not progress.
+    if (status && state && !AUTOPILOT_NEWS.has(state) && status.about === "pr") announced.delete(task.id)
     const before = previous.get(task.id)
     if (!state || before === undefined || before === state || task.archived || !AUTOPILOT_NEWS.has(state)) continue
     if (state === "merged" && !status!.mergedByWisp) continue

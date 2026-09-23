@@ -223,6 +223,12 @@ describe("what the agent reads", () => {
     expect(kept).toContain("(fail) retry never stops");
     expect(kept).toContain("No files were found");
     expect(kept.startsWith("##[group]Run bun test")).toBe(true);
+    // long lines past the byte budget keep both ends too
+    const wide = ["##[group]Run bun test", "(fail) THE REAL FAILURE", ...Array.from({ length: 150 }, () => "x".repeat(600)), "##[error]dump failed"].join("\n");
+    const narrow = tidyLog(wide, 400, 20_000);
+    expect(narrow).toContain("(fail) THE REAL FAILURE");
+    expect(narrow).toContain("bytes omitted");
+    expect(narrow.endsWith("##[error]dump failed")).toBe(true);
     // a failing step longer than the budget keeps both of its ends
     const long = ["##[group]Run make", ...Array.from({ length: 900 }, (_, n) => `line ${n}`), "##[error]boom"].join("\n");
     const cut = tidyLog(long, 100);

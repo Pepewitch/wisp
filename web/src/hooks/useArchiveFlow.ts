@@ -14,7 +14,9 @@ import type { ApiTask } from "@/lib/types";
  * sentence is the confirm dialog's entire value. A generic "are you sure?"
  * would throw away the one thing the user needs in order to decide, so
  * `reason` is the daemon's own words and `ArchiveConfirmDialog`
- * (components/archive-flow.tsx) renders them verbatim.
+ * (components/archive-flow.tsx) renders them verbatim. The one sentence asked
+ * here first is autopilot's, from the task's own status (the daemon asks the
+ * same last, for other clients): its confirm consents to that and nothing else.
  *
  * It lives in hooks/ rather than beside that dialog because a `.tsx` file may
  * only export components (the react-refresh rule this repo lints as an error),

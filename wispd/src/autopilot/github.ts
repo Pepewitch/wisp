@@ -347,7 +347,13 @@ export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string 
     kept = [...kept.slice(0, half), `(… ${kept.length - 2 * half} lines omitted …)`, ...kept.slice(-half)]
   }
   let text = kept.join("\n")
-  if (Buffer.byteLength(text) > maxBytes) text = Buffer.from(text).subarray(-maxBytes).toString("utf8")
+  const bytes = Buffer.from(text)
+  if (bytes.length > maxBytes) {
+    // long lines (JSON, diffs) can outgrow the byte budget under the line
+    // budget: keep both ends here too, so the first failure stays
+    const half = Math.floor(maxBytes / 2)
+    text = `${bytes.subarray(0, half).toString("utf8")}\n(… ${bytes.length - 2 * half} bytes omitted …)\n${bytes.subarray(-half).toString("utf8")}`
+  }
   return `${start > 0 ? "(earlier steps omitted)\n" : ""}${text.trim()}`
 }
 

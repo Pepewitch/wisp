@@ -13,6 +13,9 @@ import { cn } from "@/lib/utils"
  * Portalled and unmounted while `reason` is null, so a row that is not
  * refusing anything contributes nothing to the document.
  */
+const stops = (task: ApiTask): string =>
+  task.autopilot?.autoMerge && task.autopilot.autoFix ? "merging and fixing" : task.autopilot?.autoFix ? "fixing" : "merging"
+
 export function ArchiveConfirmDialog({
   task,
   reason,
@@ -50,7 +53,7 @@ export function ArchiveConfirmDialog({
           <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">{reason}</p>
           <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
             {stopsAutopilot
-              ? "Wisp stops merging and fixing it; the PR stays open on GitHub. Anything unsaved in the worktree is still checked before it is removed."
+              ? `Wisp stops ${stops(task)} it; the PR stays open on GitHub. Anything unsaved in the worktree is still checked before it is removed.`
               : task.mode === "local"
                 ? "This task runs in the project directory, so archiving only files it — nothing is removed."
                 : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
