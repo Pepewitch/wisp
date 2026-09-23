@@ -267,6 +267,11 @@ export class SequencedRecordBudget {
     return { sequence, bytes, retained };
   }
 
+  /** Take a sequence for a record that is deliberately not a transcript candidate. */
+  skip(): RecordAdmission {
+    return { sequence: ++this.sequence, bytes: 0, retained: false };
+  }
+
   snapshot(): RecordBudgetSnapshot {
     return {
       lastSequence: this.sequence,

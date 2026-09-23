@@ -1,4 +1,4 @@
-import { fstatSync, writeSync } from "node:fs";
+import { fstatSync, futimesSync, writeSync } from "node:fs";
 import {
   createIncrementalOutcomeReducer,
   type AdapterDef,
@@ -12,12 +12,19 @@ import { setTurnCaptureCheckpoint } from "../store";
 import { boundJsonRecord, SequencedRecordBudget, truncateUtf8 } from "./bounds";
 import { closeTurnBroker, openTurnBroker, type TurnBroker } from "./broker";
 import { createTurnDiagnosticWriter, type TurnDiagnosticWriter } from "./diagnostic";
+import { transcriptCompactor } from "./transcript-compact";
 
 const CRITICAL_LANE_MAX_BYTES = 16 * 1024;
 const MAX_PRIMARY_RECORDS = 100_000;
 const MAX_FACT_STRING_BYTES = 64 * 1024;
 const CHECKPOINT_RECORD_INTERVAL = 64;
 const CHECKPOINT_TIME_INTERVAL_MS = 1_000;
+/**
+ * Stuck detection reads the primary transcript's mtime. Activity the
+ * transcript does not keep still proves the harness is alive, so it bumps the
+ * mtime at most this often.
+ */
+const LIVENESS_TOUCH_INTERVAL_MS = 15_000;
 
 export type RecorderSource = "stdout" | "stderr";
 
@@ -48,6 +55,7 @@ function terminalEvent(event: Record<string, unknown> | null): boolean {
  */
 export class TurnRecorder {
   private readonly reducer: IncrementalOutcomeReducer;
+  private readonly compact: ReturnType<typeof transcriptCompactor>;
   private readonly budget: SequencedRecordBudget;
   private readonly broker: TurnBroker;
   private diagnostic: TurnDiagnosticWriter | null;
@@ -61,6 +69,7 @@ export class TurnRecorder {
   private dirtyRecords = 0;
   private lastCheckpointAt = Date.now();
   private checkpointFailure: string | null = null;
+  private lastLivenessTouch = 0;
   private finished = false;
 
   constructor(
@@ -73,6 +82,7 @@ export class TurnRecorder {
     const reducer = createIncrementalOutcomeReducer(def, undefined, { maxFactStringBytes: MAX_FACT_STRING_BYTES });
     if (!reducer) throw new Error("adapter has no incremental outcome reducer");
     this.reducer = reducer;
+    this.compact = transcriptCompactor(def);
     this.transcriptBudget = transcriptBudgetBytes(cfg);
     this.criticalLaneBytes = Math.min(CRITICAL_LANE_MAX_BYTES, Math.floor(this.transcriptBudget / 10));
     const initialOut = fstatSync(outFd).size;
@@ -93,6 +103,14 @@ export class TurnRecorder {
       ? projected.value as Record<string, unknown>
       : null;
     this.recordProjectedLine("stdout", projected.json, parsed, categoryOf(parsed, "stdout"));
+  }
+
+  /** The primary transcript's copy of a parsed event: the same line, a smaller one, or none. */
+  private storedLine(line: string, event: Record<string, unknown> | null): string | null {
+    if (!event || !this.compact) return line;
+    const compacted = this.compact(event);
+    if (compacted === event) return line;
+    return compacted === null ? null : JSON.stringify(compacted);
   }
 
   recordStdoutLine(line: string): void {
@@ -195,21 +213,33 @@ export class TurnRecorder {
     this.reducer.pushStdoutLine(line);
     this.dirtyRecords++;
     this.persistCheckpoint(terminalEvent(event));
-    this.project(source, line, category);
+    this.project(source, line, category, this.storedLine(line, event));
   }
 
-  private project(source: RecorderSource, line: string, category: string): void {
-    const admission = this.budget.offer(line, category, this.state === "complete");
+  /**
+   * `stored` is what the primary transcript and the live broker receive;
+   * the diagnostic archive always keeps `line`. A null `stored` is activity
+   * no primary reader uses: it takes a sequence but no transcript budget.
+   */
+  private project(source: RecorderSource, line: string, category: string, stored: string | null = line): void {
+    const admission = stored === null
+      ? this.budget.skip()
+      : this.budget.offer(stored, category, this.state === "complete");
     try {
       this.diagnostic?.record(admission.sequence, source, line);
     } catch (error) {
       console.error(`[wisp] turn ${this.turnId}: diagnostic recording failed: ${String(error)}`);
       this.diagnostic = null;
     }
+    if (stored === null) {
+      this.touchLiveness();
+      this.persistCheckpoint(false);
+      return;
+    }
     let stateChanged = false;
     if (admission.retained) {
       const fd = source === "stdout" ? this.outFd : this.errFd;
-      if (!this.writePrimary(fd, `${line}\n`, source)) {
+      if (!this.writePrimary(fd, `${stored}\n`, source)) {
         this.state = "disabled";
         this.detail ??= "primary transcript write failed; the turn continued";
         stateChanged = true;
@@ -220,8 +250,21 @@ export class TurnRecorder {
       this.writeCritical(`· ${this.detail}; the turn continues`);
       stateChanged = true;
     }
-    if (source === "stdout") this.broker.publish({ sequence: admission.sequence, source, line });
+    if (!admission.retained) this.touchLiveness();
+    if (source === "stdout") this.broker.publish({ sequence: admission.sequence, source, line: stored });
     this.persistCheckpoint(stateChanged);
+  }
+
+  private touchLiveness(): void {
+    const now = Date.now();
+    if (now - this.lastLivenessTouch < LIVENESS_TOUCH_INTERVAL_MS) return;
+    this.lastLivenessTouch = now;
+    try {
+      const at = new Date(now);
+      futimesSync(this.outFd, at, at);
+    } catch {
+      // Best effort: a failed touch only risks a false "stuck" later.
+    }
   }
 
   private writePrimary(fd: number, text: string, source: RecorderSource): boolean {

@@ -1,8 +1,8 @@
-import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, type AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, createActivityFormatter, createIncrementalOutcomeReducer, type AdapterDef } from "../src/adapters";
 import { envForCwd } from "../src/turn-input";
 import { writeMessageAttachments, writeTurnAttachments } from "../src/attachments";
 import type { WispConfig } from "../src/config";
@@ -479,6 +479,88 @@ describe("image turns (S3, spike ts7efd)", () => {
     // bash -c script a b c → $0=a: the expanded template runs -i <path> -- <prompt>
     expect(out).toContain(`-i\n${stored[0]!.path}\n--\n`);
     expect(out).toContain("see it?");
+  });
+});
+
+describe("what the primary transcript keeps", () => {
+  test("a claude turn's transcript drops empty-thinking signatures and token estimates, the diagnostic keeps both", async () => {
+    const signature = "S".repeat(9_000);
+    const events = [
+      { type: "system", subtype: "thinking_tokens", estimated_tokens: 50, estimated_tokens_delta: 50 },
+      { type: "assistant", message: { content: [{ type: "thinking", thinking: "", signature }] } },
+      { type: "assistant", message: { content: [{ type: "thinking", thinking: "visible reasoning", signature: "kept-signature" }] } },
+      { type: "assistant", message: { content: [{ type: "text", text: "all done" }] } },
+      { type: "result", result: "all done", session_id: "session-compact" },
+    ];
+    const script = ["IFS= read -r first", ...events.map((event) => `printf '%s\\n' '${JSON.stringify(event)}'`)].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      events: "claude-stream-json",
+      activity: "claude-stream-json",
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    await until(() => turnsFor(task.id)[0]?.status === "done");
+
+    const [turn] = turnsFor(task.id);
+    expect(turn).toMatchObject({ result: "all done", capture_state: "complete" });
+    const log = readFileSync(turn!.log_file, "utf8");
+    expect(log).not.toContain(signature);
+    expect(log).not.toContain("thinking_tokens");
+    expect(log).toContain("kept-signature");
+    // The row that says "the agent is thinking" survives without its signature.
+    const activity = log.split("\n").filter(Boolean).flatMap(createActivityFormatter(def));
+    expect(activity.filter((item) => item.kind === "thinking").map((item) => item.text)).toEqual([null, "visible reasoning"]);
+
+    const lease = acquireDiagnosticExport(cfg, turn!.id);
+    try {
+      const diagnostic = lease.paths.map((path) => readFileSync(path, "utf8")).join("");
+      expect(diagnostic).toContain(signature);
+      expect(diagnostic).toContain("thinking_tokens");
+    } finally {
+      lease.release();
+    }
+  });
+
+  test("activity the transcript does not keep still counts as output for stuck detection", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-liveness-"));
+    const gate = join(dir, "gate");
+    const done = join(dir, "done");
+    const tokens = JSON.stringify({ type: "system", subtype: "thinking_tokens", estimated_tokens: 1 });
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"started"}]}}'`,
+      `while [ ! -f ${gate} ]; do sleep 0.02; done`,
+      `printf '%s\\n' '${tokens}'`,
+      `while [ ! -f ${done} ]; do sleep 0.02; done`,
+      `printf '%s\\n' '{"type":"result","result":"finished","session_id":"session-live"}'`,
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      events: "claude-stream-json",
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    const log = () => turnsFor(task.id)[0]!.log_file;
+    await until(() => existsSync(log()) && readFileSync(log(), "utf8").includes("started"));
+    const size = statSync(log()).size;
+    const anHourAgo = new Date(Date.now() - 3_600_000);
+    utimesSync(log(), anHourAgo, anHourAgo);
+
+    writeFileSync(gate, "");
+    await until(() => statSync(log()).mtimeMs > Date.now() - 60_000);
+    // Nothing was written: the token estimate only refreshed the mtime.
+    expect(statSync(log()).size).toBe(size);
+    writeFileSync(done, "");
+    await until(() => turnsFor(task.id)[0]?.status === "done");
   });
 });
 

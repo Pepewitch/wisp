@@ -54,6 +54,11 @@ steering; other adapters queue follow-ups for the next turn.
 
 Turn transcripts are size-capped. Recorder-capable drivers keep draining
 activity and checkpoint the result independently of retained history.
+The capped transcript leaves out what no reader of it uses (for Claude, the
+encrypted signature on an empty thinking block and the running
+`thinking_tokens` estimate); the diagnostic archive keeps every line as it
+arrived. Activity that is not kept still refreshes the transcript's mtime,
+which is what stuck detection reads.
 On restart, the daemon checks saved process identity using PID and start time,
 or finalizes a dead turn from its persisted record. Pending messages remain
 in a per-task FIFO; uncertain native delivery can be replayed at least once.
