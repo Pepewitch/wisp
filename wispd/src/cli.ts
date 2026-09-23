@@ -7,6 +7,7 @@ import {
   uploadAttachment,
 } from "./cli-api";
 import { workflowCommand } from "./cli-workflow";
+import { PR_USAGE, prCommand } from "./cli-pr";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
 import { retentionCommand } from "./cli-retention";
@@ -121,7 +122,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -155,6 +156,7 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
       fast: flags.fast === true ? true : undefined,
       mode: flags.local ? "local" : undefined,
       base: typeof flags.base === "string" ? flags.base : undefined,
+      autopilot: flags["auto-merge"] === true ? { autoMerge: true } : undefined,
       attachments,
     })) as ApiTask;
   } catch (error) {
@@ -162,7 +164,8 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     exitApi(error);
   }
   const where = task.mode === "local" ? ", local" : "";
-  console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}) — ${task.title}`);
+  const merge = flags["auto-merge"] === true ? ", auto-merge" : "";
+  console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
 }
 
 async function resultCommand(positional: string[]): Promise<void> {
@@ -460,6 +463,14 @@ export async function cli(args: string[]): Promise<void> {
   switch (cmd) {
     case "workflow":
       await workflowCommand(positional, flags, api);
+      break;
+    case "pr":
+      try {
+        await prCommand(positional, flags, api);
+      } catch (error) {
+        if (error instanceof Error && error.message === PR_USAGE) { console.error(PR_USAGE); process.exit(1); }
+        exitApi(error);
+      }
       break;
     case "version":
     case "--version":

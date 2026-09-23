@@ -39,11 +39,25 @@ push/merge instructions through flags or `--params` JSON. See
 and the trusted executable plugin contract. Push/merge flags guide the agent; they are not a
 process sandbox.
 
+## Auto-merge
+
+```
+wisp pr <task>                 # auto-merge status and the reason it is waiting
+wisp pr <task> merge on|off    # switch it
+wisp pr <task> resume          # after a pause, or to release a Stop hold early
+```
+
+With auto-merge on, Wisp merges the task's open PR once its checks pass, a
+reviewer who blocked has passed the current head, the task is idle, and the
+worktree holds nothing the PR lacks. Every turn tells the agent to push and open
+the PR and to leave the merge to Wisp. See
+[Auto-merge](../../../docs/PR-AUTOPILOT.md).
+
 ## Tasks
 
 ```
 wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local]
-         [--base <ref>] [--image <path>]…
+         [--base <ref>] [--auto-merge] [--image <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.
@@ -53,8 +67,9 @@ instead of a worktree. `--base` forks this task's worktree from `<ref>`
 instead of the project's base branch — any commit-ish (`origin/release-2.1`,
 a local branch to stack on, a tag, a SHA), taken literally, and the create
 fails if it does not resolve. It is rejected for `--local`, which adopts the
-branch the checkout is already on. `--image` repeats (see images.md). Prints
-`created <id> (<harness>[, <model>][, local]) — <title>`; the model is shown
+branch the checkout is already on. `--auto-merge` merges the task's PR once it
+is ready (below). `--image` repeats (see images.md). Prints
+`created <id> (<harness>[, <model>][, local][, auto-merge]) — <title>`; the model is shown
 when Wisp received an explicit or configured choice, and omitted when the
 harness will choose its own default.
 

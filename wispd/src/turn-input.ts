@@ -33,12 +33,13 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   return { ...env, PWD: cwd }
 }
 
-export function taskPreamble(task: Task): string {
+export function taskPreamble(task: Task, notes: string[] = []): string {
   return [
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
     `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
     `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
     `For follow-up after waiting on time or an external condition, use \`${wispCommand()} workflow types\` to choose durable automation instead of relying on a harness background process.`,
+    ...notes,
     ``,
     `Task:`,
   ].join("\n")

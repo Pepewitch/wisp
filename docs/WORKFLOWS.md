@@ -70,7 +70,8 @@ rather than dropping it.
 Earlier releases also shipped `pr-ci` and `pr-review`. They were removed, and
 Wisp completes any instance still armed from before. `--pr`, `--on-red`,
 `--on-green`, `--quiet-for`, `--reviewers`, `--exclude-authors` and
-`--include-bots` are no longer workflow flags. A
+`--include-bots` are no longer workflow flags. To merge a task's PR once it is
+ready, use [auto-merge](PR-AUTOPILOT.md) instead; a
 [local plugin](#contribute-a-local-plugin) can still watch a PR.
 
 ## Control and parameters

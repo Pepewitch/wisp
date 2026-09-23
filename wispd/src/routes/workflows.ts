@@ -1,4 +1,5 @@
 import { getTask } from "../store";
+import { AUTOPILOT_TYPE } from "../autopilot/type";
 import { isRecord } from "../validate";
 import { validateWorkflowParams } from "../workflows/definitions";
 import { installedWorkflows, workflowById } from "../workflows/plugins";
@@ -8,7 +9,8 @@ import { err, json, jsonObjectBody } from "./http";
 async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   const task = getTask(taskId);
   if (!task) return err("Task not found", 404);
-  if (req.method === "GET") return json(listWorkflows(task.id));
+  // autopilot rows share the table but are driven by their own toggle and API
+  if (req.method === "GET") return json(listWorkflows(task.id).filter(item => item.type !== AUTOPILOT_TYPE));
   if (req.method !== "POST") return err("Method not allowed", 405);
   const body = await jsonObjectBody(req);
   if (body instanceof Response) return body;
@@ -27,6 +29,7 @@ export async function workflowRoute(req: Request, path: string): Promise<Respons
     const row = getWorkflow(match[1]!);
     if (!row) return err("Workflow not found", 404);
     if (req.method === "GET" && !match[2]) return json({ workflow: workflow(row), history: workflowHistory(row.id) });
+    if (row.type === AUTOPILOT_TYPE) return err("Auto-merge is controlled from the task (PUT /api/tasks/:id/autopilot)", 409);
     const body = await jsonObjectBody(req);
     if (body instanceof Response) return body;
     if (req.method === "POST" && match[2]) {

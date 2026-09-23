@@ -59,6 +59,8 @@ import {
   type TaskAgentSelection,
 } from "./store";
 import { TurnRecorder } from "./recording/turn-recorder";
+import { isTaskMerging } from "./autopilot/merging";
+import { autopilotTurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import {
@@ -161,7 +163,13 @@ export function startTurn(
   // immediately before the user's message — inside the first turn's task
   // preamble, not in front of it.
   const body = deliveredMessage(def, attachments, message);
-  const prompt = n === 1 ? `${taskPreamble(task)}\n${body}` : body;
+  // Wisp's own standing instructions travel with the harness input, like the
+  // task preamble, and are not written into the user's message. Auto-merge
+  // needs one: arming it IS asking for a push, which the preamble forbids.
+  const notes = autopilotTurnNotes(task.id);
+  const prompt = n === 1
+    ? `${taskPreamble(task, notes)}\n${body}`
+    : notes.length > 0 ? `${notes.join("\n")}\n\n${body}` : body;
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the
@@ -387,7 +395,9 @@ export function startNextQueuedMessage(
   workflowMessageId = "",
 ): TaskMessage | null {
   if (homeIsDraining()) return null;
-  if (isTaskStopping(taskId) || processStopPending(taskId)) return null;
+  // A merge in flight holds new turns back: one could push onto the branch
+  // being merged. The guard's release starts whatever queued meanwhile.
+  if (isTaskStopping(taskId) || processStopPending(taskId) || isTaskMerging(taskId)) return null;
   const task = getTask(taskId);
   if (!task || task.archived || !task.worktree_path || hasRunningTurn(taskId)) {
     return null;
