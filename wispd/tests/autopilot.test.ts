@@ -445,6 +445,20 @@ describe("binding and the edges of a merge", () => {
     expect(state.merges).toHaveLength(0);
   });
 
+  test("GitHub's own auto-merge turning on during the merge pauses without telling turns not to push", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    state.mergeResult = { ok: false, detail: "auto-merge enabled" };
+    state.onMerge = () => { state.pr = snapshot({ providerAutoMerge: true }); };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: expect.stringContaining("GitHub auto-merge was turned on") });
+    expect(autopilotTurnNotes(task.id).notes[0]).not.toContain("Do not push");
+  });
+
   test("Stop holds it even when there was no turn left to stop", async () => {
     const task = doneTask();
     setAutopilot(task.id, { autoMerge: true });

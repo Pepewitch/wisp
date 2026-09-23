@@ -337,7 +337,9 @@ export class AutopilotRuntime {
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
     if (after?.queued) { saveAutopilotCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS }, this.now()); return }
     if (after?.providerAutoMerge) {
-      pauseAutopilot(current, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, this.now())
+      // no longer confirming anything: turns during the pause may push
+      writeAutopilotCheckpoint(current, { ...attempt, state: "waiting" }, this.now())
+      pauseAutopilot(getWorkflow(row.id) ?? current, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, this.now())
       return
     }
     if (result.ok) {
