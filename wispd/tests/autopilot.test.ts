@@ -428,12 +428,21 @@ describe("binding and the edges of a merge", () => {
     expect(state.merges).toHaveLength(0);
   });
 
-  test("while a merge is being confirmed, a turn is told not to push", () => {
+  test("while a merge is being confirmed, a turn is told not to push — and only then", async () => {
     const task = doneTask();
-    const clock = { now: START };
+    const clock = { now: START + 10 * 60_000 };
     setAutopilot(task.id, { autoMerge: true });
-    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString() } });
+    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString() }, state: "merging" });
     expect(autopilotTurnNotes(task.id).notes[0]).toContain("Do not push to its branch");
+    // the merge queue ejected it and a check failed: the agent must be free to push the fix
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [{ name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "" }] }) });
+    const rt = runtime(github, clock);
+    await pass(rt, task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "test failed" });
+    expect(checkpointOf(autopilotRow(task.id)!).mergeAttempt).toBeUndefined();
+    expect(autopilotTurnNotes(task.id).notes[0]).toContain("push the branch");
+    expect(state.merges).toHaveLength(0);
   });
 
   test("Stop holds it even when there was no turn left to stop", async () => {

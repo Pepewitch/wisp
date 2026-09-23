@@ -52,8 +52,12 @@ describe("verdict lines", () => {
     expect(parseVerdict("Verdict: APPROVE, but one blocker must be fixed first")).toBe("unparseable");
     expect(parseVerdict("Verdict: APPROVE — but fix the blocking race before merging")).toBe("unparseable");
     expect(parseVerdict("Verdict: Approve (not safe to merge until #3 is fixed)")).toBe("unparseable");
-    // a quoted earlier round is not this review's verdict, and the least approving verdict wins
+    // a quote never approves (it may be an earlier round), but a quoted block still blocks
     expect(parseVerdict("> Verdict: APPROVE (previous round)\n\nVerdict: CHANGES REQUESTED")).toBe("blocking");
+    expect(parseVerdict("> Verdict: APPROVE")).toBeNull();
+    expect(parseVerdict("> **Verdict:** CHANGES REQUESTED")).toBe("blocking");
+    expect(parseVerdict("> [!WARNING]\n> Verdict: REQUEST CHANGES")).toBe("blocking");
+    expect(parseVerdict("Verdict: APPROVE — no blockers")).toBe("approve");
     expect(parseVerdict("Verdict: APPROVE\n\n## Verdict\nrequest changes")).toBe("blocking");
     expect(parseVerdict("## Verdict")).toBe("unparseable");
     expect(parseVerdict("Nice work, one nit below.")).toBeNull();

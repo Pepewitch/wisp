@@ -99,6 +99,17 @@ export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string
   return null
 }
 
+/** What one look at an open, unqueued PR teaches the checkpoint. */
+function observe(checkpoint: AutopilotCheckpoint, pr: PrSnapshot, now: Date): void {
+  // A merge attempt no longer being confirmed did not land (or a merge queue
+  // ejected it): forget it, so a later merge by someone else is not Wisp's.
+  if (checkpoint.mergeAttempt && checkpoint.state !== "merging") delete checkpoint.mergeAttempt
+  checkpoint.heads = trimHeads({ ...checkpoint.heads, [pr.head]: checkpoint.heads?.[pr.head] ?? now.toISOString() }, pr.head)
+  // A draft marked ready queues new CI; its draft-time results prove nothing.
+  if (pr.isDraft) delete checkpoint.readySince
+  else checkpoint.readySince ??= now.toISOString()
+}
+
 /** The last few heads seen, and always the current one. */
 function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
   const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
@@ -227,10 +238,7 @@ export class AutopilotRuntime {
     if (pr.isCrossRepository) { save("needs-you", "Fork pull requests are not supported", BUSY_MS); return }
     if (pr.providerAutoMerge) { pauseAutopilot(row, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, now); return }
     if (pr.queued) { save("queued", "Queued to merge", MOVING_MS); return }
-    checkpoint.heads = trimHeads({ ...checkpoint.heads, [pr.head]: checkpoint.heads?.[pr.head] ?? now.toISOString() }, pr.head)
-    // A draft marked ready queues new CI; its draft-time results prove nothing.
-    if (pr.isDraft) delete checkpoint.readySince
-    else checkpoint.readySince ??= now.toISOString()
+    observe(checkpoint, pr, now)
     if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
 
     const required = await this.requiredChecks(repository, pr.baseRefName, cwd, signal)
@@ -238,7 +246,8 @@ export class AutopilotRuntime {
     const gate = mergeGate({
       pr, requiredNames: new Set(required),
       allowedBases: new Set([pr.defaultBranch, configured].filter((b): b is string => Boolean(b))),
-      headFirstSeenMs: Math.max(Date.parse(checkpoint.heads[pr.head]!), Date.parse(checkpoint.readySince!)),
+      // observe() recorded both; a missing one parses as NaN, which the gate reads as fresh
+      headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
       nowMs: now.getTime(), published,
     })
     if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS); return }

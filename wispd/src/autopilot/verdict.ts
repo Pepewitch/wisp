@@ -14,15 +14,16 @@
  *   "APPROVE after the blocking issue is fixed", "APPROVE, but fix the race
  *   first", and "Approve (not safe to merge until #3)" do not;
  * - a verdict line that is neither is unreadable, which counts as blocking;
- * - quoted lines (`> Verdict: …`, an earlier round) are not this review's
- *   verdict, and when a body has several verdicts the least approving wins.
+ * - a quoted line (`> Verdict: …`) may be an earlier round, so a quote never
+ *   APPROVES — but a quoted block (a `> [!WARNING]` callout) still blocks;
+ *   when a body has several verdicts the least approving wins.
  */
 export type Verdict = "approve" | "blocking" | "unparseable"
 
 const REQUESTS_CHANGES = /request(?:ed|s)?[\s_-]*changes?|changes?[\s_-]*request(?:ed|s)?|\breject|\bdo not merge\b/
 const LEAD_END = /\s[—–-]\s|[—–;,.(]/
 /** Words that make an "approve" conditional. "no blocking findings" is the owner's own phrasing and stays an approval. */
-const WALKED_BACK = /\bbut\b|\bhowever\b|\buntil\b|\bunless\b|\bonce\b|\bafter\b|\bmust\b|\bnot safe\b|\bblocker|(?<!\bno )\bblocking\b|\bbefore merg/
+const WALKED_BACK = /\bbut\b|\bhowever\b|\buntil\b|\bunless\b|\bonce\b|\bafter\b|\bmust\b|\bnot safe\b|(?<!\bno )\bblockers?\b|(?<!\bno )\bblocking\b|\bbefore merg/
 
 function normalise(line: string): string {
   return line.replace(/[*_#>`]/g, "").replace(/\s+/g, " ").trim().toLowerCase()
@@ -39,17 +40,23 @@ export function classifyVerdict(text: string): Verdict {
 
 /** null when the body carries no verdict at all: ordinary feedback, no signal. */
 export function parseVerdict(body: string): Verdict | null {
-  const lines = body.split(/\r?\n/).map((line) => line.trim()).filter((line) => !line.startsWith(">"))
+  const raw = body.split(/\r?\n/).map((line) => line.trim())
+  const lines = raw.map((line) => line.replace(/^(?:>\s*)+/, ""))
+  const quoted = raw.map((line) => line.startsWith(">"))
   const found: Verdict[] = []
+  const add = (verdict: Verdict, isQuote: boolean) => {
+    if (!isQuote || verdict === "blocking") found.push(verdict)
+  }
   for (let index = 0; index < lines.length; index++) {
     const line = normalise(lines[index]!)
     const inline = line.match(/^verdict\s*[:—–-]\s*(.+)$/)
-    if (inline) { found.push(classifyVerdict(inline[1]!)); continue }
+    if (inline) { add(classifyVerdict(inline[1]!), quoted[index]!); continue }
     // `## Verdict`, `**Verdict**`, or `Verdict:` on its own: the verdict is the
     // next non-empty line, and it needs no prefix of its own.
     if (/^verdict\s*:?$/.test(line)) {
-      const next = lines.slice(index + 1).find((candidate) => candidate !== "")
-      found.push(next === undefined ? "unparseable" : classifyVerdict(next))
+      const offset = lines.slice(index + 1).findIndex((candidate) => candidate !== "")
+      if (offset < 0) add("unparseable", quoted[index]!)
+      else add(classifyVerdict(lines[index + 1 + offset]!), quoted[index]! || quoted[index + 1 + offset]!)
     }
   }
   if (found.length === 0) return null
