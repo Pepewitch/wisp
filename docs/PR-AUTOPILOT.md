@@ -146,8 +146,64 @@ too, are listed as context, without their logs.
 - **Never mid-turn**, and a user message queued first still goes first.
 
 With both switches on, auto-fix acts first: nothing merges while a check is
-red, and once the agent's fix is green, auto-merge takes over. Auto-fix for
-review feedback is planned.
+red, and once the agent's fix is green, auto-merge takes over.
+
+### Review feedback
+
+Auto-fix also sends the agent review feedback it has not seen yet. That covers:
+
+- review threads;
+- reviews with a body: a blocking or unreadable `Verdict:` line, a change
+  request, or plain comments;
+- conversation comments.
+
+CI failures and review feedback go out together as one round, and share the
+three-round budget. Review feedback is not held back while CI is still
+running.
+
+- **Whose words count.**
+  - The PR owner's account counts, since reviewer agents post as you.
+  - So does any bot except `github-actions`.
+  - So does anyone who can push to the repository (write, maintain or admin,
+    looked up and cached for an hour). A `MEMBER` association alone does not
+    count: it can mean read access.
+  - Everyone else's feedback still blocks the merge where GitHub says so, but
+    it never instructs the agent. Neither does a bot that is only answering
+    them in a thread.
+- **Not noise.**
+  - An approval is a merge signal, not something to fix.
+  - A "LGTM", a "thanks" or a 👍, as a comment, a review or a thread reply,
+    asks for nothing.
+  - A bot's review body is its overview; its threads are the feedback.
+  - Draft review comments you have not submitted, and comments a maintainer
+    hid, never count.
+  - A bot's conversation comment is usually a status board it edits on every
+    push, so it counts only when the same app's check on the head is red
+    (then once per head) or when it says "blocking".
+- **Never its own words.** While auto-fix is on, every turn is asked to end
+  each GitHub comment, review or reply with `— <agent> via Wisp <!--
+  wisp:task=<id> -->`, and Wisp never sends signed posts back (a quote of one
+  is someone answering it, and counts). A comment from your account written
+  during one of the task's turns that was never asked to sign counts as the
+  agent's too: turns from before auto-fix was on, and slash-command turns,
+  which cannot carry the note.
+- **Once.** Each thread, review and comment is sent once. A new reply or an
+  edit makes it new again. A thread that was resolved after Wisp sent it
+  comes back when a trusted reply arrives on it ("still wrong"). **Skip**, or
+  cancelling the queued round, marks the batch as seen.
+- **A burst goes as one.** A round waits two minutes after the newest
+  feedback as well as after the task's turn, so a reviewer's many comments
+  arrive together.
+- **Resolving threads.** The agent may resolve a thread started by you or by a
+  bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
+  anyone else's thread and never resolves it. It never resolves a thread it
+  disagreed with; it says so in its final message instead. What it cannot
+  resolve stays for you: while a thread Wisp sent (or you skipped) is still
+  open, the status says so and nothing merges, whether or not the repository
+  requires conversations to be resolved.
+- **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
+  comments in each, and the newest 100 conversation comments; the evidence
+  says when there were more.
 
 ## How often it checks
 

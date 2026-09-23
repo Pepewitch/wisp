@@ -22,14 +22,15 @@ import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { mergeGate, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
-import { ghAutopilot, type AutopilotGitHub, type OpenPullRequest, type PrSnapshot } from "./github"
+import { ghAutopilot, type AutopilotGitHub, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
-import { MAX_ROUNDS, roundMessage, writeEvidence } from "./evidence"
+import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
+import { feedbackItems, feedbackKey, feedbackSummary, isMarked, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
 import { planFix, type FixPlan } from "./fix"
 import {
   checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot,
-  reserveRound, saveAutopilotCheck, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheckpoint,
+  reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 
@@ -104,6 +105,11 @@ export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string
   return null
 }
 
+interface FixContext {
+  row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; required: ReadonlySet<string>
+  repository: string; autoMerge: boolean; signal: AbortSignal
+}
+
 /** What one look at an open, unqueued PR teaches the checkpoint. */
 function observe(checkpoint: AutopilotCheckpoint, pr: PrSnapshot, now: Date): void {
   // A merge attempt no longer being confirmed did not land (or a merge queue
@@ -127,6 +133,16 @@ function forgetIdle(checkpoint: AutopilotCheckpoint): void {
   forgetPending(checkpoint)
 }
 
+/**
+ * Review threads Wisp sent that are still open. On a PR with more than 100
+ * threads, one pushed out of the newest 100 cannot be read, so it counts as open.
+ */
+function openSentThreads(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
+  const sent = Object.keys(checkpoint.delivered ?? {}).filter((id) => id.startsWith("thread:"))
+  const read = new Map(pr.threads.map((thread) => [`thread:${thread.id}`, thread]))
+  return sent.filter((id) => (read.has(id) ? !read.get(id)!.resolved : pr.threadsTruncated)).length
+}
+
 /** The last few heads seen, and always the current one. */
 function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
   const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
@@ -143,6 +159,7 @@ export class AutopilotRuntime {
   private readonly now: () => Date
   private readonly github: AutopilotGitHub
   private readonly required = new Map<string, { names: string[]; at: number }>()
+  private readonly pushers = new Map<string, { ok: boolean; until: number }>()
 
   constructor(private cfg: WispConfig, private adapters: Record<string, AdapterDef>, private options: AutopilotRuntimeOptions = {}) {
     this.now = options.now ?? (() => new Date())
@@ -291,6 +308,14 @@ export class AutopilotRuntime {
       ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal })
       : "Nothing to fix"
     if (nothingToFix === null) return
+    // Review threads Wisp sent that are still open: the agent answered what it
+    // could; the rest (a colleague's to resolve, or one it disagreed with) is
+    // for a person, whether or not the repository requires resolution.
+    const open = ctx.autoFix ? openSentThreads(pr, checkpoint) : 0
+    if (open > 0) {
+      saveAutopilotCheck(row, { state: "needs-you", reason: `${open} review thread${open === 1 ? "" : "s"} still open`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-fix" }, this.now())
+      return
+    }
     if (!ctx.autoMerge) { save("waiting", nothingToFix, WAITING_ON_YOU_MS, "pr"); return }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
@@ -310,25 +335,20 @@ export class AutopilotRuntime {
    * a round, a wait, a needs-you), or the reason there is nothing to fix — in
    * which case auto-merge, if it is on, takes over.
    */
-  private async autoFix(ctx: {
-    row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; required: ReadonlySet<string>
-    repository: string; autoMerge: boolean; signal: AbortSignal
-  }): Promise<string | null> {
+  private async autoFix(ctx: FixContext): Promise<string | null> {
     const { row, task, checkpoint, pr } = ctx
     const now = this.now()
-    const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
-    const plan = planFix({ pr, requiredNames: ctx.required, rerun: new Set(rerun) })
-    // Only a countdown for this very evidence keeps a pending round, or a Send now.
-    if (plan.kind !== "fix" || checkpoint.pending?.key !== plan.key) forgetPending(checkpoint)
-    if (checkpoint.logMisses && (plan.kind !== "fix" || checkpoint.logMisses.key !== plan.key)) delete checkpoint.logMisses
     const say = (state: AutopilotState, reason: string, delayMs: number): null => {
       saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" }, this.now())
       return null
     }
-    if (plan.kind === "none") return plan.reason
-    if (plan.kind === "wait") return say("waiting", plan.reason, MOVING_MS)
-    if (plan.kind === "needs-you") return say("needs-you", plan.reason, WAITING_ON_YOU_MS)
+    const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
+    const items = await this.feedbackFor(ctx)
+    // A bot's verdict check beside the sticky comment being sent is the review flow's.
+    const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
+    const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
     if (plan.kind === "rerun") {
+      forgetPending(checkpoint)
       // Token-free, once per run and head: a flake gets a second chance
       // before anyone spends an agent turn on it.
       const accepted = await Promise.all(plan.runs.map((run) => this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch(() => false)))
@@ -338,32 +358,83 @@ export class AutopilotRuntime {
       recordWorkflow(row.id, "rerun", reason, now.toISOString())
       return say("waiting", reason, MOVING_MS)
     }
+    // CI's part, unless that evidence already went out (alone, or in a round
+    // with review feedback: the round's key is then a combined one) or was skipped.
+    const sent = (key: string) => seenWake(row.id, key) || (checkpoint.sentCi ?? []).includes(key)
+    const ci = plan.kind === "fix" && !sent(plan.key) && !checkpoint.skipped?.includes(plan.key) ? plan : null
+    const key = [ci?.key, items.length > 0 ? feedbackKey(items) : null].filter(Boolean).join("|")
+    // Only a countdown for this very evidence keeps a pending round, or a Send now.
+    if (checkpoint.pending?.key !== key) forgetPending(checkpoint)
+    if (checkpoint.logMisses && checkpoint.logMisses.key !== key) delete checkpoint.logMisses
+    if (!key) return this.nothingToSend(plan, checkpoint, say)
+    const summary = [ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     const rounds = checkpoint.rounds ?? 0
-    // The same evidence already reached a turn and the head did not move:
-    // another round would only repeat itself.
-    if (seenWake(row.id, plan.key)) return say("needs-you", `Still ${plan.summary} after round ${Math.max(rounds, 1)}, with no new push`, WAITING_ON_YOU_MS)
-    if (checkpoint.skipped?.includes(plan.key)) return say("needs-you", `${plan.reason} (auto-fix skipped)`, WAITING_ON_YOU_MS)
     if (rounds >= MAX_ROUNDS) {
       writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-fix" }, now)
       pauseAutopilot(getWorkflow(row.id) ?? row, `Auto-fix gave up after ${MAX_ROUNDS} rounds — resume to try again`, now)
       return null
     }
-    // A short delay after the task goes idle: time to read what it did and
+    // A short delay after the task goes idle, and after the newest review
+    // words (a reviewer's burst goes as one): time to read what it did and
     // steer by hand first. Send now or Skip act on it.
-    const sendsAt = Date.parse(checkpoint.idleSince ?? now.toISOString()) + SEND_DELAY_MS
-    if (checkpoint.sendNow !== plan.key && now.getTime() < sendsAt) {
-      checkpoint.pending = { key: plan.key, summary: plan.summary, sendsAt: new Date(sendsAt).toISOString() }
-      return say("waiting", `Auto-fix will send: ${plan.summary}`, Math.max(5_000, sendsAt - now.getTime()))
+    const settled = Math.max(Date.parse(checkpoint.idleSince ?? now.toISOString()), ...items.map((item) => Date.parse(item.at)).filter(Number.isFinite))
+    const sendsAt = settled + SEND_DELAY_MS
+    if (checkpoint.sendNow !== key && now.getTime() < sendsAt) {
+      checkpoint.pending = { key, summary, sendsAt: new Date(sendsAt).toISOString() }
+      return say("waiting", `Auto-fix will send: ${summary}`, Math.max(5_000, sendsAt - now.getTime()))
     }
-    return this.sendRound({ ...ctx, plan, round: rounds + 1 })
+    return this.sendRound({ ...ctx, content: { ci, items, summary }, key, round: rounds + 1 })
+  }
+
+  /** No round to send: what CI alone says. */
+  private nothingToSend(plan: FixPlan, checkpoint: AutopilotCheckpoint, say: (state: AutopilotState, reason: string, delayMs: number) => null): string | null {
+    if (plan.kind === "none") return plan.reason
+    if (plan.kind === "wait") return say("waiting", plan.reason, MOVING_MS)
+    if (plan.kind === "needs-you") return say("needs-you", plan.reason, WAITING_ON_YOU_MS)
+    if (plan.kind !== "fix") return null
+    // The same evidence already reached a turn and the head did not move:
+    // another round would only repeat itself.
+    if (checkpoint.skipped?.includes(plan.key)) return say("needs-you", `${plan.reason} (auto-fix skipped)`, WAITING_ON_YOU_MS)
+    return say("needs-you", `Still ${plan.summary} after round ${Math.max(checkpoint.rounds ?? 0, 1)}, with no new push`, WAITING_ON_YOU_MS)
+  }
+
+  /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
+  private async feedbackFor(ctx: FixContext): Promise<FeedbackItem[]> {
+    const { pr, task, row, checkpoint } = ctx
+    const people = new Set<string>()
+    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
+      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
+    }
+    const pushers = new Set<string>()
+    await Promise.all([...people].map(async (login) => {
+      if (await this.canPush(ctx.repository, login, task.repo_path, ctx.signal)) pushers.add(login)
+    }))
+    const trusts = ({ author, bot }: { author: string | null; bot: boolean }) =>
+      author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
+    // Turns that began before auto-fix was armed were never asked to mark
+    // their posts: the owner's-account comments inside them are the agent's.
+    const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at, checkpoint.unmarkedTurns ?? [])
+    const self = (comment: PrComment) => isMarked(comment.body) || (comment.author === pr.viewer && windows.some((turn) => {
+      const at = Date.parse(comment.createdAt)
+      return at >= Date.parse(turn.started_at) && at <= (turn.ended_at ? Date.parse(turn.ended_at) : Infinity)
+    }))
+    return feedbackItems({ pr, trusts, self, delivered: checkpoint.delivered ?? {} })
+  }
+
+  /** Whether a login may instruct the agent: cached an hour, and a failed read counts as no for five minutes. */
+  private async canPush(repository: string, login: string, cwd: string, signal: AbortSignal): Promise<boolean> {
+    const key = `${repository}#${login}`
+    const hit = this.pushers.get(key)
+    const now = this.now().getTime()
+    if (hit && now < hit.until) return hit.ok
+    const ok = await this.github.canPush(repository, login, cwd, signal).then((value) => ({ value, known: true }), () => ({ value: false, known: false }))
+    this.pushers.set(key, { ok: ok.value, until: now + (ok.known ? 60 * 60_000 : 5 * 60_000) })
+    return ok.value
   }
 
   /** Gather one round's evidence and queue it for the agent, unless something moved meanwhile. */
-  private async sendRound(ctx: {
-    row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; required: ReadonlySet<string>
-    repository: string; autoMerge: boolean; signal: AbortSignal; plan: Extract<FixPlan, { kind: "fix" }>; round: number
-  }): Promise<null> {
-    const { row, task, checkpoint, pr, plan, round } = ctx
+  private async sendRound(ctx: FixContext & { content: RoundContent; key: string; round: number }): Promise<null> {
+    const { row, task, checkpoint, pr, content, key, round } = ctx
     const say = (state: AutopilotState, reason: string, delayMs: number): null => {
       saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" }, this.now())
       return null
@@ -371,31 +442,37 @@ export class AutopilotRuntime {
     // A full slot table would refuse the turn: wait for a slot rather than
     // read logs for a round that cannot start.
     if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
+    const signature = `— ${task.harness} via Wisp ${markerOf(task.id)}`
     const evidence = await writeEvidence({
-      taskId: task.id, rowId: row.id, round, pr, plan, repository: ctx.repository, requiredNames: ctx.required,
-      github: this.github, signal: ctx.signal, cwd: task.repo_path,
+      ...content, taskId: task.id, rowId: row.id, round, pr, repository: ctx.repository, requiredNames: ctx.required,
+      github: this.github, signal: ctx.signal, cwd: task.repo_path, signature,
     })
     // Cut short (the look's deadline, shutdown): the evidence is partial. A
     // failed look backs off; shutdown is quiet (evaluate decides which).
     if (ctx.signal.aborted) throw new Error("reading the logs took too long")
     if (evidence.logsWanted > 0 && evidence.logsRead === 0) {
-      const misses = (checkpoint.logMisses?.key === plan.key ? checkpoint.logMisses.count : 0) + 1
+      const misses = (checkpoint.logMisses?.key === key ? checkpoint.logMisses.count : 0) + 1
       // GitHub usually serves a finished job's log within a minute; a round
       // with nothing to read is not worth a turn — until waiting stops paying.
       if (misses < LOG_MISS_LIMIT) {
-        checkpoint.logMisses = { key: plan.key, count: misses }
-        return say("waiting", `Waiting for GitHub to serve the logs of ${plan.summary.replace(/ failing$/, "")}`, MOVING_MS)
+        checkpoint.logMisses = { key, count: misses }
+        return say("waiting", `Waiting for GitHub to serve the logs of ${content.ci!.summary.replace(/ failing$/, "")}`, MOVING_MS)
       }
     }
-    const next: AutopilotCheckpoint = { ...checkpoint, rounds: round }
+    // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
+    const next: AutopilotCheckpoint = {
+      ...checkpoint, rounds: round,
+      delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
+      sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
+    }
     forgetIdle(next)
     delete next.logMisses
     // From here to the turn's start nothing awaits, so the slot seen free is
     // the slot the turn takes: another look or task cannot take it between.
     if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
     const id = reserveRound(row, {
-      key: plan.key, prompt: roundMessage(pr, plan, round, evidence.file, ctx.autoMerge),
-      reason: `Sent ${plan.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next, turnCount: task.turn_count,
+      key, prompt: roundMessage({ ...content, pr, round, file: evidence.file, autoMerge: ctx.autoMerge, signature }),
+      reason: `Sent ${content.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next, turnCount: task.turn_count,
     }, this.now())
     // A user message queued first still goes first; this round then waits,
     // and the next look withdraws it and plans again.

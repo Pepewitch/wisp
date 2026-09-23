@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
     head: HEAD, headRefName: "wisp/t1-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
-    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     baseHead: null, baseChecks: [], ...over,
   };
 }
@@ -229,6 +229,24 @@ describe("reading GitHub", () => {
     const commit = (base.data.repository.pullRequest as { commits: { nodes: { commit: Record<string, unknown> }[] } }).commits.nodes[0]!.commit;
     (commit.statusCheckRollup as { contexts: Record<string, unknown> }).contexts.pageInfo = { hasNextPage: true };
     expect(() => parseSnapshot(base)).toThrow("Too many checks");
+  });
+
+  test("more review threads than one page holds are flagged, not fatal: merging and closing still read", () => {
+    const threads = { pageInfo: { hasPreviousPage: true }, nodes: [{
+      id: "PRRT_1", isResolved: false, isOutdated: false, path: "a.ts", line: 3,
+      starter: { nodes: [{ author: { login: "owner", __typename: "User" }, body: "x" }] },
+      recent: { nodes: [
+        { id: "RC_1", body: "draft", createdAt: "t", authorAssociation: "OWNER", author: { login: "owner", __typename: "User" }, url: "u", isMinimized: false, state: "PENDING" },
+        { id: "RC_2", body: "hidden", createdAt: "t", authorAssociation: "OWNER", author: { login: "owner", __typename: "User" }, url: "u", isMinimized: true, state: "SUBMITTED" },
+        { id: "RC_3", body: "real", createdAt: "t", authorAssociation: "OWNER", author: { login: "dependabot", __typename: "Bot" }, url: "u", isMinimized: false, state: "SUBMITTED" },
+      ] },
+    }] };
+    const snapshot = parseSnapshot(raw({ reviewThreads: threads, state: "MERGED" }));
+    expect(snapshot).toMatchObject({ state: "MERGED", threadsTruncated: true, unresolvedThreads: 1 });
+    expect(snapshot.threads[0]!.comments.map((c) => [c.id, c.hidden, c.author, c.bot])).toEqual([
+      ["RC_1", true, "owner", false], ["RC_2", true, "owner", false], ["RC_3", false, "dependabot", true],
+    ]);
+    expect(snapshot.threads[0]!.starter).toEqual({ author: "owner", bot: false, body: "x" });
   });
 
   test("merge method prefers squash, then the only allowed method, then the viewer's default", () => {

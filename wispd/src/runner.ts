@@ -60,7 +60,7 @@ import {
 } from "./store";
 import { TurnRecorder } from "./recording/turn-recorder";
 import { isTaskMerging } from "./autopilot/merging";
-import { autopilotTurnNotes } from "./autopilot/store";
+import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import {
@@ -168,8 +168,7 @@ export function startTurn(
   // needs one: arming it IS asking for a push, which the preamble forbids.
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
-  const command = n > 1 && message.trimStart().startsWith("/");
-  const autopilot = command ? null : autopilotTurnNotes(task.id);
+  const autopilot = standingNotes(task.id, n, n > 1 && message.trimStart().startsWith("/"));
   const notes = autopilot?.notes ?? [];
   const prompt = n === 1
     ? `${taskPreamble(task, notes)}\n${body}`
@@ -659,6 +658,17 @@ async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void>
  */
 function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SIGKILL"): void {
   signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
+}
+
+/**
+ * Autopilot's standing notes for turn `n`; none in front of a slash command.
+ * Auto-fix tells the agent's GitHub posts by their signature, so a turn never
+ * asked to sign is remembered.
+ */
+function standingNotes(taskId: string, n: number, command: boolean): TurnNotes | null {
+  const notes = command ? null : autopilotTurnNotes(taskId);
+  noteTurnSigning(taskId, n, notes?.marked === true);
+  return notes;
 }
 
 /** Explicit interruption; normal message delivery never calls this operation. */
