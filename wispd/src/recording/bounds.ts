@@ -267,6 +267,17 @@ export class SequencedRecordBudget {
     return { sequence, bytes, retained };
   }
 
+  /** A record counted as omitted reached the transcript after all (the tail window). */
+  reclaim(bytes: number, category: string): void {
+    this.omittedRecords--;
+    this.omittedBytes -= bytes;
+    const bucket = this.omittedByCategory[category];
+    if (!bucket) return;
+    bucket.records--;
+    bucket.bytes -= bytes;
+    if (bucket.records <= 0) delete this.omittedByCategory[category];
+  }
+
   /** Take a sequence for a record that is deliberately not a transcript candidate. */
   skip(): RecordAdmission {
     return { sequence: ++this.sequence, bytes: 0, retained: false };
@@ -283,5 +294,67 @@ export class SequencedRecordBudget {
       lastOmittedSequence: this.lastOmittedSequence,
       omittedByCategory: structuredClone(this.omittedByCategory),
     };
+  }
+}
+
+export interface TailRecord {
+  source: "stdout" | "stderr";
+  line: string;
+  /** Persisted bytes, newline included. */
+  bytes: number;
+  category: string;
+}
+
+/**
+ * The most recent records that missed the head budget, oldest evicted first.
+ * The recorder appends what is left when the turn ends, so an overflowing
+ * turn keeps its beginning and its end and loses only the middle.
+ */
+export class TailWindow {
+  private records: TailRecord[] = [];
+  private start = 0;
+  private heldBytes = 0;
+  evictedRecords = 0;
+  evictedBytes = 0;
+
+  constructor(
+    readonly maxBytes: number,
+    readonly maxRecords: number,
+  ) {}
+
+  get size(): number {
+    return this.records.length - this.start;
+  }
+
+  push(record: TailRecord): void {
+    if (record.bytes > this.maxBytes || this.maxRecords <= 0) {
+      this.evict(record);
+      return;
+    }
+    this.records.push(record);
+    this.heldBytes += record.bytes;
+    while (this.heldBytes > this.maxBytes || this.size > this.maxRecords) {
+      const oldest = this.records[this.start++]!;
+      this.heldBytes -= oldest.bytes;
+      this.evict(oldest);
+    }
+    // Compact the backing array once most of it is evicted slots.
+    if (this.start > 1024 && this.start * 2 > this.records.length) {
+      this.records = this.records.slice(this.start);
+      this.start = 0;
+    }
+  }
+
+  drain(): TailRecord[] {
+    const out = this.records.slice(this.start);
+    this.records = [];
+    this.start = 0;
+    this.heldBytes = 0;
+    return out;
+  }
+
+  private evict(record: TailRecord): void {
+    this.evictedRecords++;
+    this.evictedBytes += record.bytes;
   }
 }
