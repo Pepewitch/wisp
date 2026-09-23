@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
     head: HEAD, headRefName: "wisp/t1-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
-    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     baseHead: null, baseChecks: [], ...over,
   };
 }

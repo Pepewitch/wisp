@@ -133,6 +133,16 @@ function forgetIdle(checkpoint: AutopilotCheckpoint): void {
   forgetPending(checkpoint)
 }
 
+/**
+ * Review threads Wisp sent that are still open. On a PR with more than 100
+ * threads, one pushed out of the newest 100 cannot be read, so it counts as open.
+ */
+function openSentThreads(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
+  const sent = Object.keys(checkpoint.delivered ?? {}).filter((id) => id.startsWith("thread:"))
+  const read = new Map(pr.threads.map((thread) => [`thread:${thread.id}`, thread]))
+  return sent.filter((id) => (read.has(id) ? !read.get(id)!.resolved : pr.threadsTruncated)).length
+}
+
 /** The last few heads seen, and always the current one. */
 function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
   const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
@@ -301,7 +311,7 @@ export class AutopilotRuntime {
     // Review threads Wisp sent that are still open: the agent answered what it
     // could; the rest (a colleague's to resolve, or one it disagreed with) is
     // for a person, whether or not the repository requires resolution.
-    const open = ctx.autoFix ? pr.threads.filter((thread) => !thread.resolved && checkpoint.delivered?.[`thread:${thread.id}`]).length : 0
+    const open = ctx.autoFix ? openSentThreads(pr, checkpoint) : 0
     if (open > 0) {
       saveAutopilotCheck(row, { state: "needs-you", reason: `${open} review thread${open === 1 ? "" : "s"} still open`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-fix" }, this.now())
       return

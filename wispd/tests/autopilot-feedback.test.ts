@@ -24,7 +24,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
     head: HEAD, headRefName: "wisp/t-x", baseRefName: "main", defaultBranch: "main", mergeState: "BLOCKED",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: OWNER,
-    checks: [], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], comments: [],
+    checks: [], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [],
     unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: null, baseChecks: [], ...over,
   };
 }
@@ -86,6 +86,9 @@ describe("whose words reach the agent", () => {
     const holding = comment({ id: "RC_3", author: "chat-reviewer", bot: true, body: "Looking into it…", createdAt: "2026-09-24T10:00:30Z" });
     const plus = comment({ id: "RC_4", author: "someone", body: "+1", createdAt: "2026-09-24T10:00:40Z" });
     expect(items({ threads: [thread({}, [drive, holding, plus, relay])] })).toEqual([]);
+    // the agent's own reply in between does not make the stranger's request the owner's
+    const agent = comment({ id: "RC_6", body: `Addressed in abc1234 — droid via Wisp ${markerOf("t1")}`, createdAt: "2026-09-24T10:00:50Z" });
+    expect(items({ threads: [thread({}, [comment({ id: "RC_0" }), drive, agent, relay])] }).map((item) => item.kind === "thread" && item.fresh.map((c) => c.id))).toEqual([["RC_0"]]);
     // a bot answering the owner is the owner's request
     const asked = comment({ id: "RC_5", body: "@bot is this thread-safe?" });
     expect(items({ threads: [thread({}, [asked, relay])] })).toHaveLength(1);

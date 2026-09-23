@@ -44,7 +44,7 @@ function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/fixture", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }],
-    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     baseHead: null, baseChecks: [], ...over,
   };
 }
@@ -1085,6 +1085,22 @@ describe("auto-fix for review feedback", () => {
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "Still wrong for 0.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 review thread");
+  });
+
+  test("on a PR with more than 100 threads, a sent thread that fell out of the newest 100 still holds the merge", async () => {
+    const { task, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ threads: [], threadsTruncated: true }) });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, delivered: { "thread:PRRT_OLD": SOON } });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 review thread still open" });
+    expect(state.merges).toHaveLength(0);
+    // on a PR Wisp can read in full, a sent thread that is gone was resolved or deleted
+    state.pr = { ...state.pr, threadsTruncated: false };
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
   });
 
   test("CI and review feedback share one round and one budget", async () => {

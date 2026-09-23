@@ -110,8 +110,10 @@ function threadWords(thread: PrThread, input: FeedbackInput): PrComment[] {
   return thread.comments.filter((comment, index) => {
     if (!words(comment, input)) return false
     if (!comment.bot) return true
-    // the person the bot is answering: the nearest earlier comment by someone, past other bot posts
-    const asker = thread.comments.slice(0, index).reverse().find((before) => !before.bot && !before.hidden && !acknowledgement(before.body))
+    // the person the bot is answering: the nearest earlier comment by someone, past other bot
+    // posts, hidden comments, thank-yous, and the agent's own replies
+    const asker = thread.comments.slice(0, index).reverse().find((before) =>
+      !before.bot && !before.hidden && !input.self(before) && !acknowledgement(before.body))
     return !asker || input.trusts(asker)
   })
 }
