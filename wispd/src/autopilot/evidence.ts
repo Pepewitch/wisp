@@ -128,7 +128,7 @@ function reviewSection(pr: PrSnapshot, items: FeedbackItem[], signature: string)
     "- Reply: `gh api graphql -f query='mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { comment { url } } }' -f id=<thread id> -f body='<reply>'`",
     "- Resolve: `gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' -f id=<thread id>`",
   ]
-  if (pr.threadsTruncated) lines.push("", `This PR has more than 100 review threads; Wisp read the first 100. See ${pr.url} for the rest.`)
+  if (pr.threadsTruncated) lines.push("", `This PR has more than 100 review threads; Wisp read the newest 100. See ${pr.url} for the rest.`)
   for (const item of items) {
     if (item.kind === "thread") {
       const { thread } = item

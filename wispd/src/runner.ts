@@ -60,7 +60,7 @@ import {
 } from "./store";
 import { TurnRecorder } from "./recording/turn-recorder";
 import { isTaskMerging } from "./autopilot/merging";
-import { autopilotTurnNotes, noteUnmarkedTurn, type TurnNotes } from "./autopilot/store";
+import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import {
@@ -667,7 +667,7 @@ function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SI
  */
 function standingNotes(taskId: string, n: number, command: boolean): TurnNotes | null {
   const notes = command ? null : autopilotTurnNotes(taskId);
-  if (!notes?.marked) noteUnmarkedTurn(taskId, n);
+  noteTurnSigning(taskId, n, notes?.marked === true);
   return notes;
 }
 

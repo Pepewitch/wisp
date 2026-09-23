@@ -9,7 +9,7 @@ import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
 import {
-  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteUnmarkedTurn, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
@@ -337,7 +337,8 @@ async function until(check: () => boolean, what: string) {
 function capture() {
   const dir = mkdtempSync(join(tmpdir(), "wisp-autopilot-turn-"));
   const file = join(dir, "prompt.txt");
-  const adapters = validateAdapters({ capture: { bin: "bash", exec: ["-c", `printf '%s' "$0" > '${file}'; printf 'done\\n'`], parse: { format: "text" } } });
+  // written aside and moved into place, so a test that sees the file sees all of it
+  const adapters = validateAdapters({ capture: { bin: "bash", exec: ["-c", `printf '%s' "$0" > '${file}.part' && mv '${file}.part' '${file}'; printf 'done\\n'`], parse: { format: "text" } } });
   return { dir, file, adapters };
 }
 function queue(taskId: string, text: string) {
@@ -1131,12 +1132,28 @@ describe("auto-fix for review feedback", () => {
     expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
   });
 
+  test("the runner records which turns were asked to sign, and a reused turn number takes the later answer", async () => {
+    const { task, adapters } = reviewTask();
+    setAutopilot(task.id, { autoFix: true });
+    queue(task.id, "/review");
+    expect(startNextQueuedMessage(task.id, adapters, loadConfig())).not.toBeNull();
+    await until(() => getTask(task.id)?.state === "done", "the slash turn");
+    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([2]);
+    queue(task.id, "a plain turn");
+    startNextQueuedMessage(task.id, adapters, loadConfig());
+    await until(() => getTask(task.id)?.state === "done", "the plain turn");
+    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([2]);
+    // turn 2's start failed and a signing turn took its number
+    noteTurnSigning(task.id, 2, true);
+    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([]);
+  });
+
   test("a slash-command turn is never asked to sign, so the owner's-account posts inside it are the agent's", async () => {
     const { task, file, adapters } = reviewTask();
     const clock = { now: START + 10 * 60_000 };
     setAutopilot(task.id, { autoFix: true });
     // turn 2 ran `/code-review --comment` after arming: no notes, so no signature
-    noteUnmarkedTurn(task.id, 2);
+    noteTurnSigning(task.id, 2, false);
     db.run("INSERT INTO turns(task_id, n, prompt, status, log_file, started_at, ended_at) VALUES (?, 2, '/code-review', 'done', '/dev/null', ?, ?)",
       [task.id, "2026-09-23T12:01:00Z", "2026-09-23T12:03:00Z"]);
     const posted = said({ id: "RC_7", body: "nit: rename `x`", createdAt: "2026-09-23T12:02:00Z" });

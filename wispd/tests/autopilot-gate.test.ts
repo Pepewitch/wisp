@@ -232,7 +232,7 @@ describe("reading GitHub", () => {
   });
 
   test("more review threads than one page holds are flagged, not fatal: merging and closing still read", () => {
-    const threads = { pageInfo: { hasNextPage: true }, nodes: [{
+    const threads = { pageInfo: { hasPreviousPage: true }, nodes: [{
       id: "PRRT_1", isResolved: false, isOutdated: false, path: "a.ts", line: 3,
       starter: { nodes: [{ author: { login: "owner", __typename: "User" }, body: "x" }] },
       recent: { nodes: [

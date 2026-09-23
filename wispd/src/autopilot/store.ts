@@ -422,11 +422,14 @@ export function unmarkedTurns(taskId: string, before: string, listed: number[]):
  * posts (a slash command carries no notes): its posts from the owner's
  * account are the agent's, so remember which turn it was.
  */
-export function noteUnmarkedTurn(taskId: string, turn: number): void {
+export function noteTurnSigning(taskId: string, turn: number, signs: boolean): void {
   const row = autopilotRow(taskId)
   if (!row || !paramsOf(row).autoFix) return
   const checkpoint = checkpointOf(row)
-  checkpoint.unmarkedTurns = [...(checkpoint.unmarkedTurns ?? []).filter((n) => n !== turn).slice(-50), turn]
+  const listed = checkpoint.unmarkedTurns ?? []
+  // a turn number whose start failed is used again by the next turn: its answer wins
+  if (listed.includes(turn) === !signs) return
+  checkpoint.unmarkedTurns = signs ? listed.filter((n) => n !== turn) : [...listed.slice(-50), turn]
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), row.id])
 }
 

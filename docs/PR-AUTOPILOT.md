@@ -198,10 +198,10 @@ running.
   bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
   anyone else's thread and never resolves it. It never resolves a thread it
   disagreed with; it says so in its final message instead. What it cannot
-  resolve stays for you: while a thread Wisp sent is still open, the status
-  says so and nothing merges, whether or not the repository requires
-  conversations to be resolved.
-- **Big PRs.** Wisp reads the first 100 review threads, the newest 30
+  resolve stays for you: while a thread Wisp sent (or you skipped) is still
+  open, the status says so and nothing merges, whether or not the repository
+  requires conversations to be resolved.
+- **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
   comments in each, and the newest 100 conversation comments; the evidence
   says when there were more.
 

@@ -302,7 +302,10 @@ export class AutopilotRuntime {
     // could; the rest (a colleague's to resolve, or one it disagreed with) is
     // for a person, whether or not the repository requires resolution.
     const open = ctx.autoFix ? pr.threads.filter((thread) => !thread.resolved && checkpoint.delivered?.[`thread:${thread.id}`]).length : 0
-    if (open > 0) { save("needs-you", `${open} review thread${open === 1 ? "" : "s"} still open`, WAITING_ON_YOU_MS, "pr"); return }
+    if (open > 0) {
+      saveAutopilotCheck(row, { state: "needs-you", reason: `${open} review thread${open === 1 ? "" : "s"} still open`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-fix" }, this.now())
+      return
+    }
     if (!ctx.autoMerge) { save("waiting", nothingToFix, WAITING_ON_YOU_MS, "pr"); return }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({

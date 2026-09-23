@@ -76,7 +76,7 @@ export interface PrSnapshot {
   actionsSuitesWaiting: number
   reviews: PrReview[]
   threads: PrThread[]
-  /** more than the first 100 review threads exist: auto-fix read only those */
+  /** more than 100 review threads exist: auto-fix read the newest 100 */
   threadsTruncated: boolean
   /** the newest conversation comments, oldest first */
   comments: PrComment[]
@@ -150,7 +150,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       mergeStateStatus reviewDecision
       mergeQueueEntry { id }
       autoMergeRequest { enabledAt }
-      reviewThreads(first: 100) { pageInfo { hasNextPage } nodes {
+      reviewThreads(last: 100) { pageInfo { hasPreviousPage } nodes {
         id isResolved isOutdated path line originalLine
         starter: comments(first: 1) { nodes { author { login __typename } body } }
         recent: comments(last: 30) { nodes { ...comment } }
@@ -264,7 +264,7 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
     mergeMethod: mergeMethod(repo),
     reviews: nodes(pr.reviews).map(parseReview),
     threads: nodes(pr.reviewThreads).map(parseThread),
-    threadsTruncated: isRecord(pr.reviewThreads) && isRecord(pr.reviewThreads.pageInfo) && pr.reviewThreads.pageInfo.hasNextPage === true,
+    threadsTruncated: isRecord(pr.reviewThreads) && isRecord(pr.reviewThreads.pageInfo) && pr.reviewThreads.pageInfo.hasPreviousPage === true,
     comments: nodes(pr.comments).map(parseComment),
   }
 }

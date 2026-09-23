@@ -20,9 +20,20 @@ import { parseVerdict } from "./verdict"
 
 /** Every post the agent makes on GitHub while auto-fix is on ends with this, so Wisp can tell its words from a reviewer's. */
 export const markerOf = (taskId: string): string => `<!-- wisp:task=${taskId} -->`
-/** Signed by a Wisp agent: the marker on a line of its own words. A quote of one (`> …`) is someone answering it. */
-export const isMarked = (body: string): boolean =>
-  body.split(/\r?\n/).some((line) => !line.trimStart().startsWith(">") && /<!-- wisp:task=[a-z0-9]+ -->/.test(line))
+/**
+ * Signed by a Wisp agent: the marker on a line of its own words. A quote of
+ * one (`> …`) is someone answering it, and one inside a code block is someone
+ * showing it.
+ */
+export function isMarked(body: string): boolean {
+  let fenced = false
+  for (const line of body.split(/\r?\n/)) {
+    const text = line.trimStart()
+    if (/^(?:```|~~~)/.test(text)) { fenced = !fenced; continue }
+    if (!fenced && !text.startsWith(">") && /<!-- wisp:task=[a-z0-9]+ -->/.test(text)) return true
+  }
+  return false
+}
 
 interface Author { author: string | null; bot: boolean }
 
@@ -61,13 +72,33 @@ const time = (words: { createdAt?: string; submittedAt?: string; editedAt: strin
 const latest = <T extends { createdAt: string; editedAt: string | null }>(list: T[]): T =>
   list.reduce((a, b) => (time(b) > time(a) ? b : a))
 
-/** "LGTM, thanks!", "👍": words that ask for nothing, in any combination. */
-const ACKNOWLEDGEMENT = /^(?:(?:lgtm|looks (?:good|great)(?: to me)?|thanks?(?: you)?|thank you|thx|ty|nice(?: work| one)?|great(?: work)?|ship it|approved?|resolved|done|:\+1:|\+1|👍|🚀|🎉|✅|🙏|❤️|💯)[\s!.,:;]*)+$/iu
-const acknowledgement = (body: string): boolean => ACKNOWLEDGEMENT.test(body.replace(/\uFE0F/g, "").trim())
+const ACK_PHRASES = [["looks", "good", "to", "me"], ["looks", "great", "to", "me"], ["looks", "good"], ["looks", "great"], ["thank", "you"], ["nice", "work"], ["nice", "one"], ["great", "work"], ["ship", "it"]]
+const ACK_WORDS = new Set(["lgtm", "thanks", "thank", "thx", "ty", "nice", "great", "approve", "approved", "resolved", "done", "+1", "👍", "🚀", "🎉", "✅", "🙏", "❤", "💯"])
+const ACK_EMOJI = /(👍|🚀|🎉|✅|🙏|❤|💯)/gu
+
+/**
+ * "LGTM, thanks!", "👍": words that ask for nothing, in any combination.
+ * Linear by construction — a token walk, never a backtracking pattern — and
+ * bounded: it may see any commenter's text.
+ */
+export function acknowledgement(body: string): boolean {
+  if (body.length > 120) return false
+  const text = body.toLowerCase().replace(/\uFE0F/g, "").replace(/\u{1F3FB}|\u{1F3FC}|\u{1F3FD}|\u{1F3FE}|\u{1F3FF}/gu, "").replace(ACK_EMOJI, " $1 ").replace(/[\s!.,:;]+/g, " ").trim()
+  if (text === "") return false
+  const tokens = text.split(" ")
+  for (let index = 0; index < tokens.length;) {
+    const phrase = ACK_PHRASES.find((words) => words.every((word, offset) => tokens[index + offset] === word))
+    if (phrase) { index += phrase.length; continue }
+    if (!ACK_WORDS.has(tokens[index]!)) return false
+    index++
+  }
+  return true
+}
 
 /** Words that may instruct the agent: trusted, not its own, not a draft or hidden, and asking for something. */
 function words(comment: PrComment, input: FeedbackInput): boolean {
-  return comment.body.trim() !== "" && !comment.hidden && !acknowledgement(comment.body) && input.trusts(comment) && !input.self(comment)
+  // trust first: nothing a stranger wrote is parsed further
+  return comment.body.trim() !== "" && !comment.hidden && input.trusts(comment) && !input.self(comment) && !acknowledgement(comment.body)
 }
 
 /**
@@ -78,8 +109,10 @@ function words(comment: PrComment, input: FeedbackInput): boolean {
 function threadWords(thread: PrThread, input: FeedbackInput): PrComment[] {
   return thread.comments.filter((comment, index) => {
     if (!words(comment, input)) return false
-    const before = thread.comments[index - 1]
-    return !(comment.bot && before && !before.bot && !input.trusts(before))
+    if (!comment.bot) return true
+    // the person the bot is answering: the nearest earlier comment by someone, past other bot posts
+    const asker = thread.comments.slice(0, index).reverse().find((before) => !before.bot && !before.hidden && !acknowledgement(before.body))
+    return !asker || input.trusts(asker)
   })
 }
 
