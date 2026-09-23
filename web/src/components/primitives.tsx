@@ -244,13 +244,18 @@ export function PaneHeader({
   )
 }
 
-/** A metadata line: dot-separated, muted, one line and never two. */
+/**
+ * A metadata line: dot-separated, muted, one line and never two. An item that
+ * is `shrink-0` keeps its wrapper from shrinking too, so when the line runs out
+ * of room the truncating items give way instead of the fixed ones sliding over
+ * their separators.
+ */
 export function Meta({ items, className }: { items: ReactNode[]; className?: string }) {
   const shown = items.filter((i) => i !== null && i !== undefined && i !== false && i !== "")
   return (
     <div className={cn("flex min-w-0 items-center gap-2 text-[11.5px] text-muted-foreground", className)}>
       {shown.map((item, i) => (
-        <span key={i} className="flex min-w-0 items-center gap-2">
+        <span key={i} className="flex min-w-0 items-center gap-2 has-[>.shrink-0]:shrink-0">
           {i > 0 && <span className="text-faint">·</span>}
           {item}
         </span>
