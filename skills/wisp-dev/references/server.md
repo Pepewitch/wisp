@@ -248,16 +248,16 @@ bun run check
 ```
 
 When a route or public type consumed by Desktop changes, include its focused
-client/contract tests and run
-`bun run --cwd wispd test -- tests/desktop-transport.test.ts` if the
-change affects the two-daemon transport semantics. Run `bun run desktop:check`
+client/contract tests. Run `bun run desktop:check`
 only when native code or a rule enforced by the native proxy is affected:
 capability or identity negotiation, authentication and headers, redirects,
 HTTP/SSE/WebSocket/media proxying, connection metadata, credentials, or Local
 setup. A generic JSON shape does not gain coverage from Cargo.
 
-Also run `bun run smoke` for lifecycle, worktree, process, recovery, webhook,
-or broad API changes. Run `bun run build` when the compiled binary or embedded
+Also run `bun run smoke` for lifecycle, worktree, process, or restart-recovery
+changes: it is the one run that drives the real CLI, daemon, and a subprocess
+harness end to end. Webhooks, attachments, and the other API surfaces are the
+daemon suite's job. Run `bun run build` when the compiled binary or embedded
 UI boundary matters.
 
 Frontend changes have additional cross-client build and bundle gates in the

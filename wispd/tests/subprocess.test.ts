@@ -91,10 +91,12 @@ describe("runBounded", () => {
     const result = await runBounded({
       cmd: ["bash", "-c", "yes 'noise' >&2"],
       maxErrorBytes: 8 * 1024,
-      timeoutMs: 15_000,
+      // `yes` never exits, so the deadline is what ends it. A second of
+      // unbounded noise is megabytes, which is all the cap needs to prove.
+      timeoutMs: 1_000,
     });
     expect(result.err.length).toBeLessThanOrEqual(8 * 1024);
-  }, 30_000);
+  });
 
   /**
    * A chatty stderr is noise, not failure. Killing an otherwise-succeeding

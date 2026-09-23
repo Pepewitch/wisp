@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -166,6 +166,19 @@ describe("turn recorder migrations", () => {
 describe("ids and slots", () => {
   test("task ids are short slugs", () => {
     expect(newTaskId()).toMatch(/^t[a-z0-9]{5}$/);
+  });
+
+  test("a new task id is never one that is already taken", () => {
+    const taken = makeTask().id;
+    const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+    // The first five draws spell the taken id; everything after is random.
+    const replay = [...taken.slice(1)].map((c) => (alphabet.indexOf(c) + 0.5) / alphabet.length);
+    const random = spyOn(Math, "random").mockImplementation(() => replay.shift() ?? 0.99);
+    try {
+      expect(newTaskId()).not.toBe(taken);
+    } finally {
+      random.mockRestore();
+    }
   });
 
   test("duplicate task id throws a UNIQUE violation (the daemon retries with a fresh id, L4)", () => {
