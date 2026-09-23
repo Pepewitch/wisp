@@ -65,12 +65,12 @@ describe("the mobile header", () => {
 
   it("shows the session's context size on that line", () => {
     mount({ task: { ...TASKS[0]!, context_tokens: 412_300 } })
-    expect(screen.getByText("412.3k context")).toBeInTheDocument()
+    expect(screen.getByText("412.3k ctx")).toBeInTheDocument()
   })
 
   it("leaves the context size out when the harness has not reported one", () => {
     mount({ task: { ...TASKS[0]!, context_tokens: undefined } })
-    expect(screen.queryByText(/context$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/ctx$/)).not.toBeInTheDocument()
   })
 
   it("puts Workflows beside the other task surfaces in equal-width thumb targets", () => {

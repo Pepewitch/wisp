@@ -180,7 +180,7 @@ export function MobileShell({
                     // the model too.
                     typeof task.context_tokens === "number" && (
                       <span key="context" className="shrink-0 tabular-nums" title="conversation the model is carrying, as of its last call">
-                        {formatTokens(task.context_tokens)} context
+                        {formatTokens(task.context_tokens)} ctx
                       </span>
                     ),
                   ]}
