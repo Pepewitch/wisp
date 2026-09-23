@@ -40,6 +40,34 @@ export interface PromotionArgs {
   receipt?: string;
 }
 
+export function releaseMetadataFromApi(release: unknown, assets: unknown): ReleaseMetadata {
+  if (
+    typeof release !== "object"
+    || release === null
+    || !("tag_name" in release)
+    || typeof release.tag_name !== "string"
+    || !("draft" in release)
+    || typeof release.draft !== "boolean"
+    || !("prerelease" in release)
+    || typeof release.prerelease !== "boolean"
+    || !Array.isArray(assets)
+    || !assets.every((asset) =>
+      typeof asset === "object"
+      && asset !== null
+      && "name" in asset
+      && typeof asset.name === "string"
+    )
+  ) {
+    throw new Error("GitHub release API response changed shape");
+  }
+  return {
+    tagName: release.tag_name,
+    isDraft: release.draft,
+    isPrerelease: release.prerelease,
+    assets: assets.map((asset) => ({ name: (asset as { name: string }).name })),
+  };
+}
+
 export function releaseVersion(tag: string): string {
   const match = tag.match(RELEASE_TAG);
   if (!match) throw new Error(`release tag must match v<semver> or v<semver>-alpha.<number>, got ${JSON.stringify(tag)}`);

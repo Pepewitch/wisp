@@ -18,6 +18,7 @@ import {
   type PromotionArgs,
   type PromotionManifests,
   releaseNotesPath,
+  releaseMetadataFromApi,
   releaseVersion,
   renderTapFiles,
   type ReleaseMetadata,
@@ -109,21 +110,26 @@ function run(cmd: string[], options: CommandOptions = {}): string {
 }
 
 function publicRelease(tag: string): ReleaseMetadata {
-  return JSON.parse(
-    run(
-      [
-        "gh",
-        "release",
-        "view",
-        tag,
-        "--repo",
-        REPOSITORY,
-        "--json",
-        "tagName,isDraft,isPrerelease,assets",
-      ],
-      { quiet: true },
-    ),
-  ) as ReleaseMetadata;
+  const release: unknown = JSON.parse(
+    run(["gh", "api", `repos/${REPOSITORY}/releases/tags/${tag}`], { quiet: true }),
+  );
+  if (
+    typeof release !== "object"
+    || release === null
+    || !("id" in release)
+    || typeof release.id !== "number"
+    || !Number.isInteger(release.id)
+  ) {
+    throw new Error("GitHub release API response has no integer id");
+  }
+  // GitHub can briefly (and, for v0.5.18, persistently) return `assets: []`
+  // inside the release-by-tag response even while all direct downloads work.
+  // Its dedicated assets endpoint is authoritative and returns the ten
+  // uploaded records, so inventory validation must read that endpoint.
+  const assets: unknown = JSON.parse(
+    run(["gh", "api", `repos/${REPOSITORY}/releases/${release.id}/assets?per_page=100`], { quiet: true }),
+  );
+  return releaseMetadataFromApi(release, assets);
 }
 
 function downloadPublicAssets(tag: string, version: string, directory: string): void {
