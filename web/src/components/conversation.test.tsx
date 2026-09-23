@@ -203,7 +203,7 @@ describe("Conversation top fade", () => {
     expect(viewport.firstElementChild).toHaveClass("pt-6")
     expect(viewport.querySelector("[data-turn='1']")).not.toHaveClass("pt-2")
     expect(screen.getByText("Activity history incomplete")).toBeInTheDocument()
-    expect(screen.getByText(/12 records \(2 KB\) from the middle of this turn were not retained/)).toBeInTheDocument()
+    expect(screen.getByText(/12 records \(2 KB\) were not retained/)).toBeInTheDocument()
     expect(screen.getByText(/wisp log tspace 1 --diagnostic/)).toBeInTheDocument()
   })
 

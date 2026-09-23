@@ -37,7 +37,7 @@ export function TurnCaptureNotice({ taskId, turn }: { taskId: string; turn: Turn
         {turn.capture_state === "degraded"
           ? turn.status === "running"
             ? `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) are past the transcript budget; the most recent are appended when the turn ends. `
-            : `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) from the middle of this turn were not retained. `
+            : `${(turn.omitted_records ?? 0).toLocaleString()} records (${formatBytes(turn.omitted_bytes ?? 0)}) were not retained. `
           : "Transcript storage stopped during this turn. "}
         The final outcome was recorded independently.
         <DiagnosticAvailability taskId={taskId} turn={turn} />

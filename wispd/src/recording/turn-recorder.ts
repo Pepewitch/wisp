@@ -234,6 +234,8 @@ export class TurnRecorder {
    * no primary reader uses: it takes a sequence but no transcript budget.
    */
   private project(source: RecorderSource, line: string, category: string, stored: string | null = line): void {
+    // The outcome was taken and the capture sealed; a straggler must not reopen it.
+    if (this.finished) return;
     const admission = stored === null
       ? this.budget.skip()
       : this.budget.offer(stored, category, this.state === "complete");
@@ -278,8 +280,13 @@ export class TurnRecorder {
    */
   private appendTail(): void {
     const records = this.tail.drain();
-    if (records.length === 0) return;
     const evicted = this.tail.evictedRecords;
+    if (records.length === 0) {
+      // Nothing past the head fit the window (a tiny budget, or oversized records).
+      this.detail = `primary transcript reached its ${this.transcriptBudget} byte budget; `
+        + `${evicted} records after it were not retained`;
+      return;
+    }
     this.writeCritical(evicted > 0
       ? `· ${evicted} records (${this.tail.evictedBytes} bytes) from the middle of this turn were not retained; its most recent activity follows`
       : "· the activity since the budget was reached follows in full");
