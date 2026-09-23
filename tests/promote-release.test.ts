@@ -18,6 +18,7 @@ import {
   expectedReleaseAssets,
   parsePromotionArgs,
   promotionFixtureTag,
+  releaseMetadataFromApi,
   releaseNotesPath,
   releaseVersion,
   renderTapFiles,
@@ -153,6 +154,25 @@ describe("release promotion", () => {
     expect(() => validateReleaseMetadata({ ...metadata, isDraft: true }, tag)).toThrow("non-draft release");
     expect(() => validateReleaseMetadata({ ...metadata, assets: metadata.assets.slice(1) }, tag)).toThrow(
       "asset inventory mismatch",
+    );
+  });
+
+  test("reads inventory from the dedicated assets response", () => {
+    const names = expectedReleaseAssets(VERSION);
+    const metadata = releaseMetadataFromApi(
+      {
+        id: 123,
+        tag_name: tag,
+        draft: false,
+        prerelease: VERSION.includes("-"),
+        // GitHub returned this stale embedded value for v0.5.18.
+        assets: [],
+      },
+      names.map((name) => ({ name })),
+    );
+    expect(metadata.assets.map((asset) => asset.name).sort()).toEqual(names);
+    expect(() => releaseMetadataFromApi({ tag_name: tag }, [])).toThrow(
+      "GitHub release API response changed shape",
     );
   });
 
