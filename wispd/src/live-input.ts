@@ -193,6 +193,91 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
   return write(envelopeFor(strategy, options.def, options.prompt, options.attachments));
 }
 
+/**
+ * Tracks whether Claude still owes the turn another model call.
+ *
+ * Claude can emit a successful result while a background task it started — a
+ * `run_in_background` Bash command, or a Monitor, which registers as a
+ * backgrounded local_bash task — is still active. That result is a safe
+ * boundary, not the last one: each notification the task delivers wakes its own
+ * model call, with its own result and no new user input. Closing stdin on the
+ * first result makes the CLI tear the task down before any of that happens.
+ *
+ * Captured from claude-code against a real Monitor:
+ *
+ *   background_tasks_changed [mon] / task_started is_backgrounded=true
+ *   result "tick 1"              <- one result per event, task still active
+ *   system/init                  <- the CLI starting the next input cycle
+ *   result "tick 2"
+ *   background_tasks_changed []  + task_notification status=completed
+ *   system/init                  <- the follow-up cycle the completion woke
+ *   result "done"                <- only now is the turn really over
+ *
+ * `system/init` is the discriminator. A result arriving after the completion
+ * but before any new init belongs to the call that was already running when the
+ * completion landed, so closing on it drops the follow-up. A foreground tool
+ * result after the completion means that in-flight call consumed it instead and
+ * no separate cycle will start. The result count bounds the wait, so an
+ * unfamiliar stream cannot hold a turn open forever.
+ */
+function createBackgroundFollowUp(): {
+  observe(event: Record<string, unknown>): void;
+  closesTurn(): boolean;
+} {
+  const active = new Set<string>();
+  let pending = false;
+  let followUpStarted = false;
+  let consumed = false;
+  let resultsSince = 0;
+  const note = (): void => {
+    pending = true;
+    followUpStarted = false;
+    consumed = false;
+    resultsSince = 0;
+  };
+  const isSystem = (event: Record<string, unknown>, subtype: string): boolean =>
+    event.type === "system" && event.subtype === subtype;
+  return {
+    observe(event: Record<string, unknown>): void {
+      if (isSystem(event, "background_tasks_changed") && Array.isArray(event.tasks)) {
+        const next = new Set<string>();
+        for (const task of event.tasks) {
+          const id = (task as Record<string, unknown> | null)?.task_id;
+          if (typeof id === "string") next.add(id);
+        }
+        let finished = false;
+        for (const id of active) if (!next.has(id)) finished = true;
+        active.clear();
+        for (const id of next) active.add(id);
+        if (finished) note();
+      } else if (isSystem(event, "task_started") && event.is_backgrounded === true && typeof event.task_id === "string") {
+        active.add(event.task_id);
+      } else if (
+        isSystem(event, "task_notification") &&
+        typeof event.task_id === "string" &&
+        ["completed", "failed", "stopped"].includes(String(event.status))
+      ) {
+        // Only a task Claude actually backgrounded owes a follow-up cycle. A
+        // foreground subagent reports the same event and must not hold the
+        // turn open waiting for a call that will never start.
+        if (active.delete(event.task_id)) note();
+      } else if (isSystem(event, "init") && pending) {
+        followUpStarted = true;
+      } else if (event.type === "user" && pending) {
+        consumed = true;
+      }
+    },
+    closesTurn(): boolean {
+      if (active.size > 0) return false;
+      if (!pending) return true;
+      resultsSince += 1;
+      if (!followUpStarted && !consumed && resultsSince < 2) return false;
+      pending = false;
+      return true;
+    },
+  };
+}
+
 async function pumpClaude(
   child: ReturnType<typeof Bun.spawn>,
   taskId: string,
@@ -204,68 +289,13 @@ async function pumpClaude(
   const reader = (stdout as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
-  // Claude can emit a successful result while one of its background Bash
-  // tasks is still active. That result is a safe boundary, not necessarily
-  // the last boundary: when the task finishes Claude receives its notification
-  // and may run another model call without new user input. Closing stdin on
-  // the first result makes the CLI tear that task down before the notification
-  // can wake the session.
-  //
-  // Keep stdin open while Claude says background work exists, and through the
-  // one completion/result ordering race its stream permits. The next result
-  // after that follow-up closes it normally, so ordinary one-result turns
-  // retain their one-shot lifetime.
-  const backgroundTasks = new Set<string>();
-  const completedBackgroundTasks = new Set<string>();
-  let completionConsumed = false;
-  let awaitingBackgroundFollowUp = false;
+  const followUp = createBackgroundFollowUp();
   const consume = (line: string): void => {
     recorder.recordStdoutLine(line);
     try {
       const event = JSON.parse(line) as Record<string, unknown>;
-      if (event.type === "system" && event.subtype === "background_tasks_changed" && Array.isArray(event.tasks)) {
-        const next = new Set<string>();
-        for (const task of event.tasks) {
-          if (task && typeof task === "object" && typeof (task as Record<string, unknown>).task_id === "string") {
-            next.add((task as Record<string, unknown>).task_id as string);
-          }
-        }
-        for (const id of backgroundTasks) if (!next.has(id)) completedBackgroundTasks.add(id);
-        backgroundTasks.clear();
-        for (const id of next) backgroundTasks.add(id);
-      } else if (
-        event.type === "system" &&
-        event.subtype === "task_started" &&
-        event.is_backgrounded === true &&
-        typeof event.task_id === "string"
-      ) {
-        backgroundTasks.add(event.task_id);
-      } else if (
-        event.type === "system" &&
-        event.subtype === "task_notification" &&
-        typeof event.task_id === "string" &&
-        ["completed", "failed", "stopped"].includes(String(event.status))
-      ) {
-        backgroundTasks.delete(event.task_id);
-        completedBackgroundTasks.add(event.task_id);
-      } else if (event.type === "user" && completedBackgroundTasks.size > 0) {
-        // A foreground TaskOutput/Read result after the completion means the
-        // current model call already consumed it. Without such a user event,
-        // Claude queues a new call behind the stale result now in flight.
-        completionConsumed = true;
-      }
-      if (event.type === "result") {
-        if (
-          backgroundTasks.size === 0 &&
-          (completedBackgroundTasks.size === 0 || completionConsumed || awaitingBackgroundFollowUp)
-        ) {
-          void closeLiveInput(taskId, turnId);
-        } else if (backgroundTasks.size > 0 || completedBackgroundTasks.size > 0) {
-          awaitingBackgroundFollowUp = true;
-        }
-        completedBackgroundTasks.clear();
-        completionConsumed = false;
-      }
+      followUp.observe(event);
+      if (event.type === "result" && followUp.closesTurn()) void closeLiveInput(taskId, turnId);
     } catch {
       // Plain notes and partial/unknown future events are still logged.
     }
