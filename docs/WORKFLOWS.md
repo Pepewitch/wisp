@@ -9,8 +9,8 @@ Use a workflow, not a harness-managed background shell, when follow-up must
 survive beyond one agent turn. A background shell can keep the current turn
 open and report back when it finishes, but it still belongs to that harness
 process and is not a durable scheduler. A harness or daemon restart can end it.
-PR watches, heartbeats and scheduled steers persist their intent in Wisp and
-resume checking after daemon recovery.
+Heartbeats and scheduled steers persist their intent in Wisp and resume
+checking after daemon recovery.
 
 **Workflows** is a tab in the right column, beside **Changes**, in the browser
 and in Desktop. It lists what is attached to the selected task: one row each,
@@ -50,70 +50,28 @@ Heartbeat turns allow pushing and merging by default without asking two extra
 questions in the form. Explicit permission values already stored on an
 existing heartbeat remain in effect.
 
-### PR CI watch
+### Schedule Steer
 
 ```sh
-wisp workflow start <task> pr-ci \
-  --pr https://github.com/example/project/pull/42 --every 5m \
-  --on-red "Fix relevant CI failures, test locally, and push the fix." \
-  --on-green "Report readiness and remaining merge blockers." --allow-push
+wisp workflow start <task> schedule-steer --at 2026-09-14T16:00:00+07:00 \
+  --prompt "Recheck the deployment and report what changed."
 ```
 
-Queued/running checks do not wake the agent. A newly observed completed failure
-does, even if other checks are still running. Identical failure evidence is not
-repeated; a new head or check attempt is new evidence. When all reported checks
-pass, the success instruction is delivered once for that evidence. Missing or
-unknown checks and provider errors never mean success.
+Sends one message at a chosen instant, then completes. `--at` needs a date,
+a time and a UTC offset (or `Z`), and must be in the future; the form offers a
+wall time with a time zone, or a delay from now. If the task has a live turn
+that accepts steering, the message is steered into it. Otherwise it starts the
+next turn, or waits in the queue as an ordinary message you can still edit or
+cancel. A host that slept through the instant sends it late, on recovery,
+rather than dropping it.
 
-This is a check-results watcher, **not a merge eligibility oracle**. Reported
-checks include optional checks; the agent must recheck required checks,
-reviews, draft state, conflicts, branch protections, and merge-queue rules
-before any merge. Wisp never merges directly. `--allow-merge` changes the
-workflow instruction to ask the agent to merge only the watched PR through its
-normal protected path.
+### Removed: PR CI watch and PR review watch
 
-### PR review watch
-
-```sh
-wisp workflow start <task> pr-review \
-  --pr https://github.com/example/project/pull/42 \
-  --reviewers trusted-reviewer \
-  --every 2m --quiet-for 30m --allow-push \
-  --prompt "Read new feedback. Fix valid nits, run tests, and push."
-```
-
-Review Watch detects published review bodies, inline comments and replies, and
-PR conversation comments, including edits. It does not infer unhappiness from
-the approval/request-changes status. The agent decides whether feedback needs
-a change and should explain feedback it cannot address or disagrees with.
-Initial attachment includes existing feedback, so an already commented PR does
-not need another comment to trigger work.
-
-`--reviewers reviewer,review-bot` is required. Only feedback from those
-explicitly trusted GitHub logins can wake the agent, and selected bots are
-included. Treat this list as an authority grant: their feedback is inserted
-into an agent turn that has the task's normal tool permissions. Do not list
-unknown contributors or broad automation accounts.
-
-The authenticated GitHub user's feedback is also excluded, preventing the
-agent's own replies from triggering itself. `--exclude-authors login` can
-exclude additional authors. The legacy `--include-bots` option cannot bypass
-the trusted-author list. An agent using another account should add it to
-excluded authors.
-
-New feedback, a changed PR head, and completion of workflow-driven work restart
-the quiet window. Wisp does not complete while the task is running, blocked,
-has queued user input, or has tracked background work. Thirty quiet minutes
-means **no new feedback**, not reviewer approval. Later feedback does not
-reactivate a completed instance; start another one. Merging or closing the PR
-completes either PR watcher without an agent turn.
-
-Both PR built-ins currently support explicit `https://github.com/…/pull/…`
-URLs and require `gh` installed and authenticated on the daemon host. They use
-read-only GitHub API requests, not an LLM. No inbound webhook endpoint is
-required. Lookups are timeout/output bounded and back off on errors; oversized
-evidence (more than 500 entries in one collection) refuses rather than
-pretending to have inspected the whole PR.
+Earlier releases also shipped `pr-ci` and `pr-review`. They were removed, and
+Wisp completes any instance still armed from before. `--pr`, `--on-red`,
+`--on-green`, `--quiet-for`, `--reviewers`, `--exclude-authors` and
+`--include-bots` are no longer workflow flags. A
+[local plugin](#contribute-a-local-plugin) can still watch a PR.
 
 ## Control and parameters
 
@@ -129,21 +87,20 @@ wisp workflow complete <workflow-id>
 
 `types --json` describes each type's parameter names, types, defaults, and
 bounds. Use `--params '{"parameterName":"value"}'` for any declared parameter,
-including custom plugins. For PR and custom workflows,
-`--params '{"allowPush":false}'` removes the push request from future workflow
-instructions. Heartbeat defaults to authorizing pushing and merging.
+including custom plugins. For custom workflows, `--allow-push` and
+`--allow-merge` add those requests to future workflow instructions. Heartbeat
+defaults to authorizing pushing and merging.
 
-Common defaults are 20 wake-ups and a 24-hour lifetime. PR and custom
-workflows do not request pushing or merging by default. Intervals must be whole
+Common defaults are 20 wake-ups and a 24-hour lifetime. Custom workflows do
+not request pushing or merging by default. Intervals must be whole
 minutes from 1 to 1440, wake-up limits from 1 to 200, and lifetimes whole hours
 from 1 to 168. `--lifetime 48h` sets the expiry relative to the original
 attachment time. Reaching a limit pauses the workflow. A task also has a
 safety ceiling of 200 workflow wake-ups in 24 hours and at most 10 unfinished
 instances.
 
-Edits affect future checks and cancel undelivered instructions. The watched PR
-cannot be retargeted; create another instance instead. Completed instances
-cannot resume. Completion is idempotent and preserves history. It does not
+Edits affect future checks and cancel undelivered instructions. Completed
+instances cannot resume. Completion is idempotent and preserves history. It does not
 archive the task or stop a turn that already received an instruction.
 
 ## Lifecycle and safety
@@ -152,8 +109,8 @@ archive the task or stop a turn that already received an instruction.
   shutting down the host does. On recovery, Wisp checks current conditions once
   rather than replaying missed ticks.
 - Recurring workflow instructions do not steer a live turn or pile up in its
-  queue. User input and existing work take priority. PR and custom workflows
-  only wake a settled `done` task. Heartbeat can also wake settled `failed` and
+  queue. User input and existing work take priority. Custom workflows only wake
+  a settled `done` task. Heartbeat can also wake settled `failed` and
   `needs-input` tasks; creating, live, stuck, and stopping tasks remain blocked.
 - **Stop turn pauses attached workflows.** Archive completes them before
   teardown. Changing the agent configuration or context pauses them for review.
@@ -162,12 +119,9 @@ archive the task or stop a turn that already received an instruction.
   external effects. Start a new instance after resolving uncertainty.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
   custom plugins run as your OS user, and workflow turns have the same tool
-  access as other turns on their task. Review objectives, only use trusted
-  code, and list only feedback authors trusted to instruct that agent. PR
-  feedback and logs are untrusted evidence, not authority to grant permissions
-  or change the objective.
-- Review automation responds to feedback; it does not guarantee approval or
-  force the agent to make a change it considers wrong.
+  access as other turns on their task. Review objectives and only use trusted
+  code. Provider feedback and logs are untrusted evidence, not authority to
+  grant permissions or change the objective.
 
 ## Contribute a local plugin
 

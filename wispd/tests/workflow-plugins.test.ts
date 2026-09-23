@@ -16,7 +16,7 @@ test("local manifests expose parameter schemas, protect built-ins, and pin effec
   const path = join(dir, "workflows.json"), plugin = manifest();
   writeFileSync(path, JSON.stringify([plugin]));
   const types = installedWorkflows(path);
-  expect(types).toHaveLength(5);
+  expect(types).toHaveLength(3);
   const custom = types.find(type => type.definition.id === plugin.id)!;
   expect(custom.definition.parameters.some(p => p.key === "maxWakeups")).toBe(true);
   const version = custom.definition.version;

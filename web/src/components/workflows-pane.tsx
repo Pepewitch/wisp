@@ -29,13 +29,11 @@ import { WorkflowForm } from "./workflow-form"
  */
 export function WorkflowsPane({
   task,
-  prUrl,
   header,
   hidden = false,
   touch = false,
 }: {
   task: ApiTask | null
-  prUrl?: string
   /** the right column's tab strip; the pane still owns the action at the right edge */
   header?: ReactNode
   hidden?: boolean
@@ -111,7 +109,6 @@ export function WorkflowsPane({
           view={view}
           setView={setView}
           task={task}
-          prUrl={prUrl}
           items={items.data}
           loading={items.isPending}
           types={types}
@@ -139,7 +136,6 @@ function Body({
   view,
   setView,
   task,
-  prUrl,
   items,
   loading,
   types,
@@ -152,7 +148,6 @@ function Body({
   view: View
   setView: (view: View) => void
   task: ApiTask | null
-  prUrl?: string
   items?: Workflow[]
   loading: boolean
   types: Types
@@ -174,7 +169,6 @@ function Body({
         key={`${definition.id}:${view.existing?.id ?? "new"}`}
         definition={definition}
         existing={view.existing}
-        prUrl={prUrl}
         pending={pending}
         onSubmit={onSave}
         onCancel={onCancel}

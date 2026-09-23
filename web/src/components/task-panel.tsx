@@ -28,14 +28,12 @@ export function TaskPanel({
   task,
   taskId,
   archived,
-  prUrl,
   onRefresh,
   touch = false,
 }: {
   task: ApiTask | null
   taskId: string | null
   archived: boolean
-  prUrl?: string
   onRefresh?: () => void
   touch?: boolean
 }) {
@@ -90,7 +88,6 @@ export function TaskPanel({
           // must not leave a half-filled form pointing at the wrong place
           key={`${connectionId}:${taskId ?? ""}`}
           task={task}
-          prUrl={prUrl}
           header={view === "workflows" ? strip : undefined}
           hidden={view !== "workflows"}
           touch={touch}

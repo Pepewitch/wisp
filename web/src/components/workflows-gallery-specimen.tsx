@@ -31,28 +31,6 @@ const TYPES: WorkflowDefinition[] = [
     description: "Revisit an objective on a timer. Each eligible check wakes the agent and can spend tokens.",
     parameters: [],
   },
-  {
-    id: "pr-ci",
-    version: "1",
-    name: "PR CI watch",
-    description: "Wait for CI without agent tokens. Wake only for new failures or passing checks.",
-    parameters: [
-      { key: "prUrl", label: "Pull request URL", type: "string", default: "", required: true, description: "A specific github.com pull request. This workflow never follows a different PR." },
-      { key: "onRed", label: "When checks fail", type: "string", multiline: true, description: "", default: "Investigate the failing checks. Fix relevant issues and run appropriate tests. Push the fixes only if authorized." },
-      { key: "onGreen", label: "When checks pass", type: "string", multiline: true, description: "", default: "Report that CI passed and identify remaining merge blockers." },
-      { key: "everyMinutes", label: "Check every (minutes)", type: "number", default: 5, min: 1, max: 1440, description: "Polling is token-free. An actionable check can wake the agent." },
-      { key: "maxWakeups", label: "Maximum wake-ups", type: "number", default: 20, min: 1, max: 200, description: "" },
-      { key: "allowPush", label: "Ask agent to push changes", type: "boolean", default: false, description: "" },
-      { key: "allowMerge", label: "Ask agent to merge the watched PR", type: "boolean", default: false, description: "" },
-    ],
-  },
-  {
-    id: "pr-review",
-    version: "1",
-    name: "PR review watch",
-    description: "React to new reviews, comments, and nits. Stop after a quiet period, not a guessed approval.",
-    parameters: [],
-  },
 ]
 
 const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString()
@@ -69,29 +47,29 @@ const base = {
 const ITEMS: Workflow[] = [
   {
     ...base,
-    id: "wf-ci",
-    type: "pr-ci",
-    params: { maxWakeups: 20, everyMinutes: 5 },
+    id: "wf-beat",
+    type: "heartbeat",
+    params: { maxWakeups: 20, everyMinutes: 30 },
     state: "active",
-    reason: "3 checks still running on 46db093",
+    reason: "Waiting for task (running); no instruction queued",
     wakeCount: 2,
     lastCheckedAt: at(4),
-    nextCheckAt: at(-1),
+    nextCheckAt: at(-26),
   },
   {
     ...base,
-    id: "wf-review",
-    type: "pr-review",
-    params: { maxWakeups: 20, quietMinutes: 30 },
+    id: "wf-steer",
+    type: "schedule-steer",
+    params: { scheduledAt: at(-90) },
     state: "paused",
     reason: "Paused when you stopped the turn",
-    wakeCount: 5,
-    lastCheckedAt: at(38),
-    nextCheckAt: at(-30),
+    wakeCount: 0,
+    lastCheckedAt: null,
+    nextCheckAt: at(-90),
   },
   {
     ...base,
-    id: "wf-beat",
+    id: "wf-done",
     type: "heartbeat",
     params: { maxWakeups: 20 },
     state: "completed",
@@ -104,9 +82,9 @@ const ITEMS: Workflow[] = [
 const HISTORY: WorkflowDetail = {
   workflow: ITEMS[0]!,
   history: [
-    { id: 3, at: at(4), kind: "checked", detail: "3 of 9 checks still running — no new evidence", messageId: null },
-    { id: 2, at: at(64), kind: "woke", detail: "typecheck failed on 4bd1d58; delivered the failure instruction", messageId: "m2" },
-    { id: 1, at: at(240), kind: "started", detail: "Started on pull request #179", messageId: null },
+    { id: 3, at: at(4), kind: "wait", detail: "Waiting for task (running); no instruction queued", messageId: null },
+    { id: 2, at: at(34), kind: "wake", detail: "Heartbeat due", messageId: "m2" },
+    { id: 1, at: at(240), kind: "armed", detail: "Heartbeat", messageId: null },
   ],
 }
 

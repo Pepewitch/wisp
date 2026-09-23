@@ -12,13 +12,13 @@ export function workflowDuration(value: unknown): number {
   return Number(match[1]) * (match[2] === "d" ? 1440 : match[2] === "h" ? 60 : 1);
 }
 export function workflowFlags(flags: Flags): WorkflowParams {
-  const allowed = new Set(["json", "params", "pr", "prompt", "file", "at", "every", "on-red", "on-green", "quiet-for", "lifetime", "max-wakeups", "reviewers", "exclude-authors", "allow-push", "allow-merge", "include-bots"]);
+  const allowed = new Set(["json", "params", "prompt", "file", "at", "every", "lifetime", "max-wakeups", "allow-push", "allow-merge"]);
   for (const flag of Object.keys(flags)) if (!allowed.has(flag)) throw new Error(`Unknown workflow flag: --${flag}`);
   if (flags.params !== undefined && typeof flags.params !== "string") throw new Error("--params needs a JSON object");
   const raw: unknown = typeof flags.params === "string" ? JSON.parse(flags.params) : {};
   if (!isRecord(raw)) throw new Error("--params must be a JSON object");
   const params = { ...raw } as WorkflowParams;
-  const strings: Record<string, string> = { pr: "prUrl", prompt: "prompt", at: "scheduledAt", "on-red": "onRed", "on-green": "onGreen", reviewers: "reviewers", "exclude-authors": "excludeAuthors" };
+  const strings: Record<string, string> = { prompt: "prompt", at: "scheduledAt" };
   for (const [flag, key] of Object.entries(strings)) {
     if (flags[flag] !== undefined) {
       if (typeof flags[flag] !== "string") throw new Error(`--${flag} needs a value`);
@@ -26,13 +26,12 @@ export function workflowFlags(flags: Flags): WorkflowParams {
     }
   }
   if (flags.every !== undefined) params.everyMinutes = workflowDuration(flags.every);
-  if (flags["quiet-for"] !== undefined) params.quietMinutes = workflowDuration(flags["quiet-for"]);
   if (flags.lifetime !== undefined) params.lifetimeHours = workflowDuration(flags.lifetime) / 60;
   if (flags["max-wakeups"] !== undefined) {
     if (typeof flags["max-wakeups"] !== "string" || !/^[1-9][0-9]*$/.test(flags["max-wakeups"])) throw new Error("--max-wakeups needs a positive integer");
     params.maxWakeups = Number(flags["max-wakeups"]);
   }
-  for (const [flag, key] of [["allow-push", "allowPush"], ["allow-merge", "allowMerge"], ["include-bots", "includeBots"]] as const) {
+  for (const [flag, key] of [["allow-push", "allowPush"], ["allow-merge", "allowMerge"]] as const) {
     if (flags[flag] !== undefined) params[key] = true;
   }
   if (flags.file !== undefined) {
@@ -87,9 +86,7 @@ export async function workflowCommand(args: string[], flags: Flags, api: Api): P
     result = await api(`/api/workflows/${id(target)}/${command}`, "POST", {});
   } else {
     console.log(`${wispCommand()} workflow types | start <task> <type> | list <task> | show <id> | set <id> | pause <id> | resume <id> | complete <id>
-Parameters: --every 5m --prompt "..." --file instructions.md --at <ISO-8601> --pr <url>
-            --on-red "..." --on-green "..." --quiet-for 30m --reviewers trusted-login,bot
-            (--reviewers is required for pr-review)
+Parameters: --every 5m --prompt "..." --file instructions.md --at <ISO-8601>
             --lifetime 24h --max-wakeups 20 --allow-push --allow-merge
             --params '{"customParameter":"value"}' --json`);
     return;
