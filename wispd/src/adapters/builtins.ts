@@ -22,7 +22,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["-s", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-r", "{effort}"],
-    // Rechecked against droid 0.223.0's invalid-effort rejection. This is the
+    // Rechecked against droid 0.225.1's invalid-effort rejection. This is the
     // cross-model union; the valid subset still depends on the selected model.
     // `--help` only says "defaults per model", so the level is left unset by
     // default and droid picks per model — the menu offers, it does not force.
@@ -74,7 +74,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // added only from real captures, never invented shapes.
     transientMarkers: ["floating point nan", "not-a-number"],
     // `droid resume <id>` is the interactive form of the same stored session
-    // (verified against droid 0.223.0's top-level help).
+    // (verified against droid 0.225.1's top-level help).
     attach: ["resume", "{session}"],
     modelDiscovery: "droid-models",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
@@ -101,7 +101,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     auth: { check: ["auth", "status"], fix: "run 'claude auth login'" },
     // Required for the structured activity stream: without it claude emits
     // only the outer Task call/result and Wisp cannot show what the child did.
-    // Reverified against claude-code 2.1.278: print/stream-json, verbose,
+    // Reverified against claude-code 2.1.280: print/stream-json, verbose,
     // subagent forwarding, permission bypass, resume, model and effort retain
     // the same headless contract.
     exec: [
@@ -123,9 +123,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Baked ids rechecked on claude-code 2.1.278; the zero-token `/model`
-    // read remains pinned to 2.1.258. Fable 5.1 replaced legacy Fable 5.
-    staticModels: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    // Baked ids rechecked on claude-code 2.1.280; the zero-token `/model`
+    // read accepted Opus 5.5 on that version. Fable 5.1 replaced legacy Fable
+    // 5, and Opus 5.5 replaced Opus 5 in the curated current lineup.
+    staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
     // attaching turn the prompt positional is omitted and prompt + base64
     // blocks ride one NDJSON stdin line
@@ -185,7 +186,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     compactPrompt: "/compact",
   },
   codex: {
-    // Zero-token argv/help reverified against codex-cli 0.155.1. `codex exec`
+    // Zero-token argv/help reverified against codex-cli 0.156.1. `codex exec`
     // is one headless turn;
     // resume is a SUBCOMMAND, not a flag (`codex exec resume <id> "<prompt>"`),
     // and codex applies the parent `exec` options to it — so appending
@@ -205,7 +206,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-c", "model_reasoning_effort={effort}"],
-    // codex 0.155.1 — generated app-server schemas accept a non-empty effort
+    // codex 0.156.1 — generated app-server schemas accept a non-empty effort
     // string and the current catalog includes xhigh/max models. `ultra` was
     // added on the evidence of `codex debug models` itself: gpt-6-astra lists
     // it in supported_reasoning_levels, so the picker was hiding a level codex
