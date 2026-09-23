@@ -83,6 +83,14 @@ describe("what auto-fix does about CI", () => {
     expect(result.leaves.map((check) => check.name)).toEqual(["build", "unit (5)"]);
   });
 
+  test("where every check counts, fail-fast's cancelled jobs still stay out of the round", () => {
+    const checks = [...[1, 2, 3, 4, 5, 6, 7].map((n) => job(`unit (${n})`, "CANCELLED")), job("unit (8)", "FAILURE")];
+    const result = plan({ checks }, [9], new Set());
+    expect(result).toMatchObject({ kind: "fix", reason: "unit (8) failed", key: `ci:${HEAD}:unit (8)` });
+    if (result.kind !== "fix") throw new Error("expected a fix");
+    expect(result.context).toEqual([]);
+  });
+
   test("the same evidence has the same key; a new head is new evidence", () => {
     const a = plan({ checks: [job("test", "FAILURE", { required: true })] });
     const b = plan({ checks: [job("test", "FAILURE", { required: true })] });
@@ -161,7 +169,7 @@ describe("what the agent reads", () => {
     const text = readFileSync(evidence.file, "utf8");
     expect(text).toContain("## What failed\n\n- test (required) — FAILURE — https://ci/test\n- daemon (3/6) — FAILURE — https://ci/daemon (3/6)");
     expect(text).toContain("test decides this round; the other jobs listed failed in the same workflow run");
-    expect(text).toContain("## Also red, but not what this round is about");
+    expect(text).toContain("## Also red, but not this round's");
     expect(text).toContain("- native-core — FAILURE");
     // logs for the round's own jobs, never the context's
     expect(read.sort()).toEqual([job("test", "FAILURE").checkRunId!, job("daemon (3/6)", "FAILURE").checkRunId!].sort());

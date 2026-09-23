@@ -68,10 +68,15 @@ function leavesOf(pr: PrSnapshot, check: PrCheck): PrCheck[] {
   return [check, ...(real.length > 0 ? real : run)]
 }
 
-/** Counting checks first, then real failures, then jobs that did not finish: the order logs are read in. */
+/** Real failures before jobs that did not finish, counting checks first within each: the order logs are read in. */
 function ordered(leaves: PrCheck[], counting: ReadonlySet<PrCheck>): PrCheck[] {
-  const rank = (check: PrCheck) => (counting.has(check) ? 0 : failed(check) ? 1 : 2)
+  const rank = (check: PrCheck) => (failed(check) ? 0 : 2) + (counting.has(check) ? 0 : 1)
   return [...leaves].sort((a, b) => rank(a) - rank(b))
+}
+
+/** A job that did not finish in a run with a real failure: fail-fast cancelled it, so it explains nothing. */
+function failFast(pr: PrSnapshot, check: PrCheck): boolean {
+  return !failed(check) && Boolean(check.run) && sameRun(pr, check).some(failed)
 }
 
 function unique(checks: PrCheck[]): PrCheck[] {
@@ -157,13 +162,16 @@ export function planFix(input: FixInput): FixPlan {
   if (failing.length === 0) {
     return { kind: "none", reason: `${names(deciding)} ${deciding.length === 1 ? "is" : "are"} red on ${pr.baseRefName} too` }
   }
-  const leaves = ordered(unique(failing.flatMap((check) => leavesOf(pr, check))), new Set(counting))
+  // Where every check counts (or a matrix's entries are each required), a
+  // cancelled job is a deciding check of its own: fail-fast's are still noise.
+  const deciders = failing.some((check) => !failFast(pr, check)) ? failing.filter((check) => !failFast(pr, check)) : failing
+  const leaves = ordered(unique(deciders.flatMap((check) => leavesOf(pr, check))).filter((leaf) => !failFast(pr, leaf)), new Set(counting))
   if (leaves.every((leaf) => classifyCheck(leaf) === "hold")) {
     return { kind: "needs-you", reason: `${names(leaves)} did not finish — rerun it` }
   }
-  const context = pr.checks.filter((check) => red(check) && !leaves.includes(check))
+  const context = pr.checks.filter((check) => red(check) && !leaves.includes(check) && !failFast(pr, check))
   return {
-    kind: "fix", reason: `${names(leaves)} failed`, conflict: false, failing, leaves, context,
+    kind: "fix", reason: `${names(leaves)} failed`, conflict: false, failing: deciders, leaves, context,
     key: `ci:${pr.head}:${leaves.map((leaf) => leaf.name).sort().join(",")}`, summary: `${names(leaves)} failing`,
   }
 }

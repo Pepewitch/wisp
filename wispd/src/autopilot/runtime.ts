@@ -269,7 +269,7 @@ export class AutopilotRuntime {
     const cwd = task.repo_path
     if (pr.state !== "OPEN") { this.settle(row, checkpoint, pr); return }
     if (pr.isCrossRepository) { save("needs-you", "Fork pull requests are not supported", BUSY_MS, "pr"); return }
-    if (pr.providerAutoMerge) { pauseAutopilot(row, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, now); return }
+    if (pr.providerAutoMerge) { this.providerPause(row, checkpoint, pr); return }
     if (pr.queued) { save("queued", "Queued to merge", MOVING_MS, "pr"); return }
     observe(checkpoint, pr, now)
     if (!ctx.idle) {
@@ -413,6 +413,12 @@ export class AutopilotRuntime {
     }
   }
 
+  /** GitHub's own auto-merge is on: that pause is auto-merge's, whichever switch spoke last. */
+  private providerPause(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot): void {
+    writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-merge" }, this.now())
+    pauseAutopilot(getWorkflow(row.id) ?? row, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, this.now())
+  }
+
   /** The PR number to bind to, or the reason there is none yet. */
   private async bind(row: WorkflowRow, task: Task, repository: string, configured: string | undefined, signal: AbortSignal): Promise<number | string> {
     const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
@@ -496,8 +502,7 @@ export class AutopilotRuntime {
     if (after?.queued) { saveAutopilotCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }, this.now()); return }
     if (after?.providerAutoMerge) {
       // no longer confirming anything: turns during the pause may push
-      writeAutopilotCheckpoint(current, { ...attempt, state: "waiting" }, this.now())
-      pauseAutopilot(getWorkflow(row.id) ?? current, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, this.now())
+      this.providerPause(current, { ...attempt, state: "waiting" }, pr)
       return
     }
     if (result.ok) {

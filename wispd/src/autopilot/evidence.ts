@@ -84,7 +84,7 @@ export async function writeEvidence(input: {
       lines.push("", `${plan.failing.map((check) => check.name).join(", ")} decide${plan.failing.length === 1 ? "s" : ""} this round; the other jobs listed failed in the same workflow run, and are often what it reports.`)
     }
     if (plan.context.length > 0) {
-      lines.push("", "## Also red, but not what this round is about", "", "Context only: these do not count toward merging, and may not be this PR's doing.", "")
+      lines.push("", "## Also red, but not this round's", "", "Context only: each of these either does not count toward merging or is red on the base branch too.", "")
       for (const check of plan.context) lines.push(line(check))
     }
     wanted.forEach((check, index) => {

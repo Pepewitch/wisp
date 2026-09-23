@@ -109,8 +109,8 @@ and the jobs that failed beside it in the same workflow run, so when the
 required check is an aggregator (a `test` job that needs six shards) the agent
 also reads the shard that failed, not only the aggregator's "a required part
 did not succeed". When a run has a real failure, the jobs fail-fast cancelled
-are left out. Other red checks that do not count are listed as context,
-without their logs.
+are left out. Other red checks, ones that do not count or are red on the base
+too, are listed as context, without their logs.
 
 - **Only counting checks decide.** With required checks on the base, only they
   do; with none, every check does. A red whose failed jobs are all red on the

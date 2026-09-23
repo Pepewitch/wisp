@@ -992,6 +992,22 @@ describe("auto-fix", () => {
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
   });
 
+  test("GitHub's own auto-merge pauses as auto-merge's, even when auto-fix spoke last", async () => {
+    const { task, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr({ checks: [{ ...RED, status: "IN_PROGRESS", conclusion: null }] }) });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Waiting for checks (1 running)", by: "auto-fix" });
+    state.pr = { ...state.pr, providerAutoMerge: true };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", by: "auto-merge" });
+    // so switching auto-fix off does not lift it
+    expect(setAutopilot(task.id, { autoFix: false })).toMatchObject({ state: "paused" });
+  });
+
   test("switching auto-fix off lifts the pause auto-fix made, and on again gives it a fresh budget", async () => {
     const { task, adapters } = fixTask();
     const clock = { now: START + 10 * 60_000 };
