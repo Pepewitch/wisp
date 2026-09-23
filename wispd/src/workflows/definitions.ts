@@ -18,9 +18,8 @@ export const COMMON_PARAMETERS: WorkflowParameter[] = [
   number("maxWakeups", "Maximum agent wake-ups", 20, 1, 200, "Pause when this budget is reached."),
   number("lifetimeHours", "Expires after (hours)", 24, 1, 168, "A safety limit, including time spent paused."),
   boolean("allowPush", "Ask agent to push changes", "Tell workflow turns to push after validating changes. This is guidance, not a process sandbox."),
-  boolean("allowMerge", "Ask agent to merge the watched PR", "Only after rechecking current checks, reviews, and branch rules. This is guidance, not a process sandbox."),
+  boolean("allowMerge", "Ask agent to merge the task's PR", "Only after rechecking current checks, reviews, and branch rules. This is guidance, not a process sandbox."),
 ];
-const pr = { ...text("prUrl", "Pull request URL", "", "A specific github.com pull request. This workflow never follows a different PR."), required: true };
 
 export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   {
@@ -39,43 +38,10 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       ...COMMON_PARAMETERS.map(p => workflowPermissionIsImplicit("heartbeat", p.key) ? { ...p, default: true } : p),
     ],
   },
-  {
-    id: "pr-ci", version: "1", name: "PR CI watch",
-    description: "Wait for CI without agent tokens. Wake only for new failures or passing checks.",
-    parameters: [
-      pr,
-      text("onRed", "When checks fail", "Investigate the failing checks. Fix relevant issues and run appropriate tests. Push the fixes only if authorized.", "", true),
-      text("onGreen", "When checks pass", "Report that CI passed and identify remaining merge blockers. If merging is authorized, recheck current eligibility and merge through the normal protected path.", "", true),
-      ...COMMON_PARAMETERS,
-    ],
-  },
-  {
-    id: "pr-review", version: "1", name: "PR review watch",
-    description: "React to new reviews, comments, and nits. Stop after a quiet period, not a guessed approval.",
-    parameters: [
-      pr,
-      text("prompt", "When new feedback arrives", "Read the new feedback in context. Fix valid issues and nits, run relevant tests, and push if authorized. Explain feedback you cannot address or disagree with. Do not change correct code merely to satisfy a mistaken comment.", "", true),
-      number("quietMinutes", "Stop after quiet (minutes)", 30, 5, 1440, "Resets after new feedback, a changed PR head, or a completed workflow turn. Never completes while task work is pending."),
-      { ...text("reviewers", "Trusted feedback authors", "", "Required comma-separated GitHub logins. Only feedback from these trusted authors can instruct the agent; listed review bots are included."), required: true },
-      text("excludeAuthors", "Ignore these authors", "", "Comma-separated logins. The authenticated GitHub user is always excluded."),
-      boolean("includeBots", "Include bot feedback", "Deprecated compatibility option. Only bots named as trusted feedback authors are included."),
-      ...COMMON_PARAMETERS.map(p => p.key === "everyMinutes" ? { ...p, default: 2 } : p),
-    ],
-  },
 ];
 
-export function parsePrUrl(value: unknown): { owner: string; repo: string; number: number; url: string } {
-  if (typeof value !== "string") throw new Error("prUrl must be a GitHub pull request URL");
-  const url = new URL(value);
-  const match = url.pathname.match(/^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)\/?$/);
-  if (url.protocol !== "https:" || url.hostname !== "github.com" || url.port || url.username || url.password || !match ||
-      !Number.isSafeInteger(Number(match[3]))) throw new Error("Use https://github.com/owner/repo/pull/number");
-  return { owner: match[1]!, repo: match[2]!, number: Number(match[3]), url: `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}` };
-}
-
-const GITHUB_LOGIN = /^(?!-)(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$/;
-export const workflowLogins = (value: unknown): Set<string> =>
-  new Set(String(value ?? "").split(",").map(part => part.trim().toLowerCase()).filter(Boolean));
+/** Withdrawn built-ins, by id, with the name their completed rows still show. */
+export const RETIRED_WORKFLOWS: Record<string, string> = { "pr-ci": "PR CI watch", "pr-review": "PR review watch" };
 
 export function validateWorkflowParams(def: WorkflowDefinition, input: unknown): WorkflowParams {
   if (!isRecord(input)) throw new Error("params must be an object");
@@ -96,14 +62,6 @@ export function validateWorkflowParams(def: WorkflowDefinition, input: unknown):
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) ||
       !Number.isFinite(Date.parse(value))) throw new Error("Scheduled time must include a valid date, time, and UTC offset");
     output.scheduledAt = new Date(value).toISOString();
-  }
-  if (def.id === "pr-ci" || def.id === "pr-review") output.prUrl = parsePrUrl(output.prUrl).url;
-  if (def.id === "pr-review") {
-    const reviewers = workflowLogins(output.reviewers);
-    if (!reviewers.size) throw new Error("Trusted feedback authors must include at least one GitHub login");
-    if ([...reviewers].some(login => login.length > 100 || !GITHUB_LOGIN.test(login))) {
-      throw new Error("Trusted feedback authors must be comma-separated GitHub logins");
-    }
   }
   return output;
 }

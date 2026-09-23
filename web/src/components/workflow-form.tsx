@@ -24,7 +24,7 @@ const FIELD =
   "mt-1 block w-full rounded-md border border-input bg-surface px-2 py-1.5 text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 
 /** Limits and permissions: real, but not the question you are here to answer. */
-const SAFETY = new Set(["maxWakeups", "lifetimeHours", "allowPush", "allowMerge", "excludeAuthors", "includeBots"])
+const SAFETY = new Set(["maxWakeups", "lifetimeHours", "allowPush", "allowMerge"])
 const pad = (value: number) => String(value).padStart(2, "0")
 const offsetLabel = (minutes: number) => {
   const sign = minutes < 0 ? "-" : "+"
@@ -212,7 +212,7 @@ function ParameterField({
           // cn(), not a template literal: `w-24` and FIELD's `w-full` are the
           // same utility, and only tailwind-merge reliably drops the loser
           className={cn(FIELD, p.type === "number" && "w-24")}
-          type={p.type === "number" ? "number" : p.key === "prUrl" ? "url" : "text"}
+          type={p.type === "number" ? "number" : "text"}
           value={String(value)}
           min={p.min}
           max={p.max}
@@ -229,14 +229,12 @@ function ParameterField({
 export function WorkflowForm({
   definition,
   existing,
-  prUrl,
   pending,
   onSubmit,
   onCancel,
 }: {
   definition: WorkflowDefinition
   existing?: Workflow
-  prUrl?: string
   pending: boolean
   onSubmit: (params: WorkflowParams) => void
   onCancel: () => void
@@ -245,7 +243,7 @@ export function WorkflowForm({
   const [params, setParams] = useState<WorkflowParams>(() => ({
     ...Object.fromEntries(definition.parameters.map((p) => [
       p.key,
-      p.key === "prUrl" && prUrl ? prUrl : p.key === "scheduledAt" && !existing ? initialSchedule() : p.default,
+      p.key === "scheduledAt" && !existing ? initialSchedule() : p.default,
     ])),
     ...existing?.params,
   }))
@@ -254,7 +252,7 @@ export function WorkflowForm({
       key={p.key}
       parameter={p}
       value={params[p.key] ?? p.default}
-      disabled={pending || (!!existing && p.key === "prUrl")}
+      disabled={pending}
       setValue={(value) => setParams((previous) => ({ ...previous, [p.key]: value }))}
     />
   )

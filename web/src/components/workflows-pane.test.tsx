@@ -12,15 +12,15 @@ import { TASKS } from "@/lib/fixtures"
 import type { DaemonTransport } from "@/lib/transport"
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows"
 
+// A local plugin: the one kind of workflow that shows every generic control,
+// push authorization included, which heartbeat keeps implicit.
 const definition: WorkflowDefinition = {
-  id: "pr-review", version: "1", name: "PR review watch",
-  description: "Watch comments and nits without polling with an agent.",
+  id: "deployment-watch", version: "1", name: "Deployment watch", custom: true,
+  description: "Wait for a deployment to become actionable.",
   parameters: [
-    { key: "prUrl", label: "Pull request URL", type: "string", default: "", required: true, description: "" },
-    { key: "prompt", label: "When new feedback arrives", type: "string", default: "Fix valid nits.", multiline: true, description: "" },
+    { key: "deployment", label: "Deployment", type: "string", default: "", required: true, description: "" },
+    { key: "prompt", label: "When it fails", type: "string", default: "Fix the failure.", multiline: true, description: "" },
     { key: "everyMinutes", label: "Check every (minutes)", type: "number", default: 2, min: 1, max: 1440, description: "" },
-    { key: "quietMinutes", label: "Stop after quiet (minutes)", type: "number", default: 30, min: 5, max: 1440, description: "" },
-    { key: "reviewers", label: "Trusted feedback authors", type: "string", default: "", required: true, description: "Only feedback from these authors can instruct the agent." },
     { key: "allowPush", label: "Ask agent to push changes", type: "boolean", default: false, description: "" },
   ],
 }
@@ -46,8 +46,8 @@ const heartbeatDefinition: WorkflowDefinition = {
 }
 const task = { ...TASKS[0]!, state: "done" as const }
 const item: Workflow = {
-  id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])), reviewers: "reviewer" },
-  state: "active", reason: "Waiting for feedback", revision: 1, contextN: 1, wakeCount: 2, checkCount: 5,
+  id: "wfixture", taskId: task.id, type: definition.id, version: "1", params: { maxWakeups: 20, ...Object.fromEntries(definition.parameters.map(p => [p.key, p.default])), deployment: "staging" },
+  state: "active", reason: "Deployment still building", revision: 1, contextN: 1, wakeCount: 2, checkCount: 5,
   lastCheckedAt: new Date().toISOString(), nextCheckAt: new Date().toISOString(),
   expiresAt: "2026-12-01T00:00:00Z", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
 }
@@ -56,7 +56,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it.each(["browser", "desktop"] as const)("arms a parameterized review watch through the %s transport", async runtime => {
+it.each(["browser", "desktop"] as const)("arms a parameterized workflow through the %s transport", async runtime => {
   const fetcher = vi.fn<typeof fetch>(async (url, init) => {
     const path = String(url)
     const data = path.endsWith("/api/harnesses") ? { harnesses: [], features: { taskWorkflows: true } }
@@ -66,13 +66,12 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
   })
   vi.stubGlobal("fetch", fetcher)
   const transport = runtime === "browser" ? sameOriginWebTransport : createDesktopTransport("http://127.0.0.1:45678/fixture", "remote-fixture", 1)
-  render(<WorkflowsPane task={task} prUrl="https://github.com/example/project/pull/42" />, { wrapper: runtimeWrapper(transport) })
+  render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(transport) })
   fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
-  fireEvent.click(await screen.findByRole("button", { name: "Choose PR review watch" }))
-  expect(screen.getByRole("textbox", { name: "Pull request URL" })).toHaveValue("https://github.com/example/project/pull/42")
-  expect(screen.getByRole("spinbutton", { name: "Stop after quiet (minutes)" })).toHaveValue(30)
-  fireEvent.change(screen.getByRole("textbox", { name: "When new feedback arrives" }), { target: { value: "Fix nits and run tests." } })
-  fireEvent.change(screen.getByRole("textbox", { name: /Trusted feedback authors/ }), { target: { value: "reviewer" } })
+  fireEvent.click(await screen.findByRole("button", { name: "Choose Deployment watch" }))
+  expect(screen.getByRole("spinbutton", { name: "Check every (minutes)" })).toHaveValue(2)
+  fireEvent.change(screen.getByRole("textbox", { name: "Deployment" }), { target: { value: "staging" } })
+  fireEvent.change(screen.getByRole("textbox", { name: "When it fails" }), { target: { value: "Fix it and run tests." } })
   fireEvent.click(screen.getByRole("button", { name: "Start" }))
   await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true))
   const call = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!
@@ -80,22 +79,22 @@ it.each(["browser", "desktop"] as const)("arms a parameterized review watch thro
     ? `/api/tasks/${task.id}/workflows`
     : `http://127.0.0.1:45678/fixture/connections/remote-fixture/1/api/tasks/${task.id}/workflows`)
   expect(JSON.parse(String(call[1]?.body))).toEqual({
-    type: "pr-review", params: { prUrl: "https://github.com/example/project/pull/42", prompt: "Fix nits and run tests.", everyMinutes: 2, quietMinutes: 30, reviewers: "reviewer", allowPush: false },
+    type: "deployment-watch", params: { deployment: "staging", prompt: "Fix it and run tests.", everyMinutes: 2, allowPush: false },
   })
 })
 
-it("opens a row for its numbers and history without treating quiet completion as approval", async () => {
+it("opens a row for its numbers and history", async () => {
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition]
-    : path === "/api/workflows/wfixture" ? { workflow: item, history: [{ id: 1, at: item.createdAt, kind: "completed", detail: "No new feedback for 30 minutes. This does not mean approval.", messageId: null }] }
+    : path === "/api/workflows/wfixture" ? { workflow: item, history: [{ id: 1, at: item.createdAt, kind: "wake", detail: "Deployment failed on attempt 2", messageId: null }] }
     : [item])
   render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })) })
   // the row's own two lines answer "what is armed, and what is it waiting for"
   // before anything is clicked — that is the whole point of the pane
-  expect(await screen.findByText("Waiting for feedback")).toBeInTheDocument()
+  expect(await screen.findByText("Deployment still building")).toBeInTheDocument()
   expect(screen.queryByText(/wake-ups/)).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole("button", { name: /PR review watch/ }))
+  fireEvent.click(screen.getByRole("button", { name: /Deployment watch/ }))
   expect(await screen.findByText(/2\/20 wake-ups/)).toBeInTheDocument()
-  expect(await screen.findByText(/This does not mean approval/)).toBeInTheDocument()
+  expect(await screen.findByText(/Deployment failed on attempt 2/)).toBeInTheDocument()
   fireEvent.click(screen.getByRole("button", { name: "Pause" }))
   await waitFor(() => expect(request).toHaveBeenCalledWith("/api/workflows/wfixture/pause", { method: "POST", body: {} }))
 })
@@ -108,7 +107,7 @@ it("completes a workflow with the CLI's own verb, and files it under Completed",
   // completing is not deleting: the row leaves the live list for a collapsed
   // group, so the history that explains it survives
   expect(await screen.findByText("Completed · 1")).toBeInTheDocument()
-  fireEvent.click(await screen.findByRole("button", { name: /PR review watch/ }))
+  fireEvent.click(await screen.findByRole("button", { name: /Deployment watch/ }))
   // and a completed workflow is read-only — nothing acts on it
   expect(screen.queryByRole("button", { name: "Complete" })).not.toBeInTheDocument()
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument()
@@ -125,7 +124,7 @@ it("puts adding in the list rather than in the tab strip", async () => {
   const add = await screen.findByRole("button", { name: "New workflow…" })
   expect(within(screen.getByRole("tablist")).queryByRole("button")).toBeNull()
   fireEvent.click(add)
-  expect(await screen.findByRole("button", { name: "Choose PR review watch" })).toBeInTheDocument()
+  expect(await screen.findByRole("button", { name: "Choose Deployment watch" })).toBeInTheDocument()
 })
 
 it("leaves the workflow title to the mobile surface tab", async () => {
@@ -134,7 +133,7 @@ it("leaves the workflow title to the mobile surface tab", async () => {
     wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })),
   })
 
-  expect(await screen.findByText("Waiting for feedback")).toBeInTheDocument()
+  expect(await screen.findByText("Deployment still building")).toBeInTheDocument()
   expect(screen.queryByText("Workflows")).not.toBeInTheDocument()
 })
 
@@ -142,7 +141,7 @@ it("ends its empty state in the control, not in a noun", async () => {
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [])
   render(<WorkflowsPane task={task} />, { wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })) })
   fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
-  expect(await screen.findByRole("button", { name: "Choose PR review watch" })).toBeInTheDocument()
+  expect(await screen.findByRole("button", { name: "Choose Deployment watch" })).toBeInTheDocument()
 })
 
 const EMPTY_DIFF = { diff: "", untracked: [], base: null, worktreeReason: null }
@@ -160,7 +159,7 @@ it("tabs Workflows beside Changes in the right column", async () => {
   // from the Changes tab without switching
   await waitFor(() => expect(within(tabs).getByRole("tab", { name: /Workflows/ })).toHaveTextContent("1"))
   fireEvent.click(within(tabs).getByRole("tab", { name: /Workflows/ }))
-  expect(await screen.findByText("Waiting for feedback")).toBeInTheDocument()
+  expect(await screen.findByText("Deployment still building")).toBeInTheDocument()
   expect(screen.getByRole("tab", { name: /Changes/ })).toBeInTheDocument()
 })
 
@@ -195,16 +194,15 @@ it("drops a half-filled form when the daemon changes under the same task ID", as
   const rendered = render(view(a))
   fireEvent.click(await screen.findByRole("tab", { name: /Workflows/ }))
   fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
-  fireEvent.click(await screen.findByRole("button", { name: "Choose PR review watch" }))
+  fireEvent.click(await screen.findByRole("button", { name: "Choose Deployment watch" }))
   expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument()
   rendered.rerender(view(b))
   await waitFor(() => expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument())
 })
 
-it("keeps an edited PR pinned and permits explicit push authorization", () => {
+it("permits explicit push authorization when editing", () => {
   const submit = vi.fn()
-  render(<WorkflowForm definition={definition} existing={{ ...item, params: { ...item.params, prUrl: "https://github.com/example/project/pull/42" } }} pending={false} onSubmit={submit} onCancel={() => {}} />)
-  expect(screen.getByRole("textbox", { name: "Pull request URL" })).toBeDisabled()
+  render(<WorkflowForm definition={definition} existing={item} pending={false} onSubmit={submit} onCancel={() => {}} />)
   fireEvent.click(screen.getByText("Limits and permissions"))
   const checkbox = within(screen.getByText("Ask agent to push changes").closest("label")!).getByRole("checkbox")
   fireEvent.click(checkbox)

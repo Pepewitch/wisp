@@ -101,9 +101,6 @@ export function updateWorkflow(id: string, params: WorkflowParams, revision: num
     const row = getWorkflow(id);
     if (!row || row.state === "completed") throw new Error("Only unfinished workflows can be edited");
     if (row.revision !== revision) throw new Error("Workflow changed; refresh before saving");
-    const previous = workflow(row).params;
-    // Retargeting is a new automation, not an edit to already observed evidence.
-    if (previous.prUrl !== params.prUrl) throw new Error("Arm a new workflow to watch a different PR");
     cancelWorkflowMessages(id);
     const scheduled = row.type === "schedule-steer" ? Date.parse(String(params.scheduledAt)) : null;
     if (scheduled !== null && scheduled <= now.getTime()) throw new Error("Scheduled time must be in the future");
@@ -118,6 +115,13 @@ export function updateWorkflow(id: string, params: WorkflowParams, revision: num
   })();
   announceWorkflow(result.taskId);
   return result;
+}
+/** Built-ins Wisp shipped and then withdrew still have rows; none may sit paused forever. */
+export function retireWorkflowTypes(retired: Record<string, string>, now = new Date()): void {
+  const types = Object.keys(retired);
+  const rows = db.query(`SELECT id, type FROM workflows WHERE state != 'completed' AND type IN (${types.map(() => "?").join(", ")})`)
+    .all(...types) as { id: string; type: string }[];
+  for (const row of rows) changeWorkflowState(row.id, "completed", `${retired[row.type]} was removed from Wisp`, now);
 }
 export function pauseTaskWorkflows(taskId: string): void {
   for (const item of listWorkflows(taskId)) if (item.state === "active") changeWorkflowState(item.id, "paused", "Task stopped by user");

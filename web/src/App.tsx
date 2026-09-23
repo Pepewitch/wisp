@@ -375,7 +375,6 @@ function MainView({
     task,
     taskId: selectedId,
     archived,
-    pullRequest: pullRequests.selected,
     onRefresh: refreshDiff,
   })
   // Replaces the whole centre column — including the "Select a task" band,

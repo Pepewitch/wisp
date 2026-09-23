@@ -6,7 +6,7 @@ import { TaskPanel } from "@/components/task-panel"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { revealFileHandler } from "@/lib/external-links"
-import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import type { ApiTask } from "@/lib/types"
 
 export function buildTaskSurfaces({
   mobile,
@@ -15,7 +15,6 @@ export function buildTaskSurfaces({
   task,
   taskId,
   archived,
-  pullRequest,
   onRefresh,
 }: {
   mobile: boolean
@@ -24,7 +23,6 @@ export function buildTaskSurfaces({
   task: ApiTask | null
   taskId: string | null
   archived: boolean
-  pullRequest?: PullRequestStatus
   onRefresh: () => void
 }): { changes: ReactNode; workflows?: ReactNode; terminal: ReactNode } {
   // The diff pane's double-click opens a file the way a path in prose does,
@@ -42,7 +40,6 @@ export function buildTaskSurfaces({
           task={task}
           taskId={taskId}
           archived={archived}
-          prUrl={prUrlOf(pullRequest)}
           onRefresh={onRefresh}
         />
       )}
@@ -52,7 +49,6 @@ export function buildTaskSurfaces({
     <WorkflowsPane
       key={`${connectionId}:${taskId ?? ""}`}
       task={task}
-      prUrl={prUrlOf(pullRequest)}
       touch
     />
   ) : undefined
@@ -67,9 +63,4 @@ export function buildTaskSurfaces({
     />
   )
   return { changes, workflows, terminal }
-}
-
-/** The watched PR a workflow form should prefill with, when there is one. */
-function prUrlOf(status: PullRequestStatus | undefined): string | undefined {
-  return status?.kind === "found" ? status.pullRequest.url : undefined
 }
