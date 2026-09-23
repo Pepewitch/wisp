@@ -35,10 +35,12 @@ export function classifyCheck(check: PrCheck): CheckClass {
     return "hold"
   }
   // A commit status carries its outcome in `status`; a check run that has not
-  // concluded is pending whatever its status word is.
+  // concluded is pending — unless it is WAITING on an environment's reviewers,
+  // which never ends on its own.
   const status = check.status.toUpperCase()
   if (PASS.has(status)) return "pass"
   if (FIX.has(status)) return "fix"
+  if (status === "WAITING") return "hold"
   return "pending"
 }
 

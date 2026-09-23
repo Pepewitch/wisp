@@ -140,8 +140,15 @@ export function pauseTaskWorkflows(taskId: string): void {
       // nothing acts until their next turn has finished, and then it carries
       // on by itself. Stopping only a background process leaves the task
       // `done`, which is exactly when an unheld auto-merge would fire.
+      // A queued auto-fix round goes first: its cancel trigger restores the
+      // checkpoint the round was reserved against, which would wipe a hold
+      // written before it. The hold is then written onto the restored one.
+      const queued = db.query("SELECT id FROM task_messages WHERE workflow_id = ? AND status = 'queued' AND claim IS NULL").all(item.id) as { id: string }[];
+      cancelWorkflowMessages(item.id);
+      for (const message of queued) emit({ type: "message", taskId, messageId: message.id });
       const row = getWorkflow(item.id)!;
-      const checkpoint = { ...JSON.parse(row.checkpoint_json) as Record<string, unknown>, stopHold: { turnCount: task?.turn_count ?? 0 }, state: "held" };
+      const { pending: _pending, sendNow: _sendNow, ...kept } = JSON.parse(row.checkpoint_json) as Record<string, unknown>;
+      const checkpoint = { ...kept, stopHold: { turnCount: task?.turn_count ?? 0 }, state: "held" };
       const at = new Date().toISOString();
       db.run("UPDATE workflows SET checkpoint_json = ?, reason = CASE WHEN state = 'active' THEN ? ELSE reason END, revision = revision + 1, updated_at = ? WHERE id = ?",
         [JSON.stringify(checkpoint), "Held — you pressed Stop; continues after your next turn", at, item.id]);

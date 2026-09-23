@@ -65,8 +65,8 @@ export interface AutopilotGitHub {
   /** Context names the base branch requires, from classic protection and rulesets. */
   requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]>
   merge(input: { repository: string; number: number; method: MergeMethod; head: string }, cwd: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }>
-  /** Rerun one Actions job; costs no agent tokens. */
-  rerunJob(repository: string, jobId: number, cwd: string, signal: AbortSignal): Promise<boolean>
+  /** Rerun a workflow run's failed and cancelled jobs (and their dependents); costs no agent tokens. */
+  rerunRun(repository: string, runId: number, cwd: string, signal: AbortSignal): Promise<boolean>
   /** The END of an Actions job's log (the start is setup noise), bounded. */
   jobLogTail(repository: string, jobId: number, cwd: string, signal: AbortSignal): Promise<string>
   /** A non-Actions check run's own report: title, summary, text, annotations. */
@@ -221,6 +221,17 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   }
 }
 
+/** Terminal escapes (CSI and OSC sequences) and every other control character but tab. */
+export function controlFree(line: string): string {
+  return line
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+}
+
 /**
  * The part of a job log that explains the failure: the lines leading up to
  * the last `##[error]`, or else up to where post-job cleanup starts — the very
@@ -228,8 +239,7 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
  * escapes are dropped; nobody reads those.
  */
 export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string {
-  // eslint-disable-next-line no-control-regex
-  const all = raw.split("\n").map((line) => line.replace(/\u001b\[[0-9;]*[A-Za-z]/g, "").replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
+  const all = raw.split("\n").map((line) => controlFree(line).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
   let end = all.length
   for (let index = all.length - 1; index >= 0; index--) {
     if (all[index]!.includes("##[error]")) { end = Math.min(all.length, index + 4); break }
@@ -314,17 +324,25 @@ export const ghAutopilot: AutopilotGitHub = {
     ])
     return parseRequiredChecks(branch, rules)
   },
-  async rerunJob(repository, jobId, cwd, signal) {
-    const result = await gh(["api", "-X", "POST", `repos/${repository}/actions/jobs/${jobId}/rerun`], cwd, signal)
+  async rerunRun(repository, runId, cwd, signal) {
+    // Per RUN, not per job: rerunning one job of a run whose aggregator needs
+    // it re-evaluates the aggregator against the old results, and a second
+    // job's rerun is refused while the first is going.
+    const result = await gh(["api", "-X", "POST", `repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`], cwd, signal)
     return result.exitCode === 0 && !result.timedOut && !result.cancelled
   },
   async jobLogTail(repository, jobId, cwd, signal) {
     // A job log can be many megabytes and the bounded runner keeps its START;
     // pipe it through `tail` so only the end — where the failure is — arrives.
-    const result = await runBounded({
-      cmd: ["bash", "-c", 'set -o pipefail; gh api --allow-escape-sequences "$1" | tail -n 2000 | tail -c 600000', "wisp-log", `repos/${repository}/actions/jobs/${jobId}/logs`],
+    // `--allow-escape-sequences` is needed because CI logs carry terminal
+    // escapes (tidyLog strips them); an older gh without the flag gets a retry
+    // without it.
+    const read = (flag: string[]) => runBounded({
+      cmd: ["bash", "-c", 'set -o pipefail; gh api "$@" | tail -n 2000 | tail -c 600000', "wisp-log", ...flag, `repos/${repository}/actions/jobs/${jobId}/logs`],
       cwd, signal, timeoutMs: 60_000, maxBytes: 800_000, maxErrorBytes: 2000, env: GH_ENV,
     })
+    let result = await read(["--allow-escape-sequences"])
+    if (result.exitCode !== 0 && /unknown flag/i.test(result.err)) result = await read([])
     if (result.exitCode !== 0 || result.timedOut || result.cancelled) throw new Error("GitHub unavailable: could not read the job log")
     return tidyLog(result.out)
   },

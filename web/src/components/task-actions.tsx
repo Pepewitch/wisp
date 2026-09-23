@@ -152,16 +152,14 @@ function AutopilotActions({ status, pending, act }: {
   pending: boolean
   act: (action: "resume" | "send-now" | "skip") => void
 }) {
-  if (status.autoFix && status.pendingFix) {
-    return (
-      <>
-        <MenuItem keepOpen disabled={pending} onClick={() => act("send-now")}>Send now</MenuItem>
-        <MenuItem keepOpen disabled={pending} onClick={() => act("skip")}>Skip</MenuItem>
-      </>
-    )
-  }
   if (status.state === "paused") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Resume</MenuItem>
   if (status.state === "held") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Continue now</MenuItem>
-  return null
+  if (!status.autoFix || !status.pendingFix) return null
+  return (
+    <>
+      <MenuItem keepOpen disabled={pending} onClick={() => act("send-now")}>Send now</MenuItem>
+      <MenuItem keepOpen disabled={pending} onClick={() => act("skip")}>Skip</MenuItem>
+    </>
+  )
 }
 

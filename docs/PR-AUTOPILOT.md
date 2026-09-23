@@ -102,26 +102,37 @@ after it hears how the merge ended.
 When a check that counts is red on the PR's current head — or the PR conflicts
 with its base — and the task is idle, Wisp sends the agent one **round**: a
 short message pointing at a `PR-FEEDBACK.md` file beside the task's data (never
-in the worktree). The file lists the failing checks and ends with the logs
-that explain them: the end of each failing GitHub Actions job's log, cut where
-it errors, or a non-Actions check's own report. It holds every failing job on
-the head, so when the required check is an aggregator (a `test` job that needs
-six shards) the agent still reads the shard that failed.
+in the worktree). The file lists what failed and ends with the logs that
+explain it: the end of each failing GitHub Actions job's log, cut where it
+errors, or a non-Actions check's own report. A round is about the jobs that
+actually failed, so when the required check is an aggregator (a `test` job
+that needs six shards) the agent reads the shard that failed, not the
+aggregator's "a required part did not succeed". Other red checks that do not
+count are listed as context, without their logs.
 
 - **Only counting checks decide.** With required checks on the base, only they
   do; with none, every check does. A red that is also red on the base branch
   is not the PR's to fix.
 - **All results at once.** A round waits until every counting check on the
-  head has finished, so the agent gets the whole picture in one turn.
-- **Token-free retries first.** A cancelled job is rerun once before anyone
-  spends a turn on it; without required checks, so is a failed one (a flake
-  gets one free retry). Wisp only reruns ordinary `pull_request` jobs, never a
-  deployment. A job held for an environment's approval needs you.
-- **A short delay.** A round waits two minutes after the task goes idle, so you
-  can read what it did and steer it yourself first. **Send now** skips the
-  wait; **Skip** means that evidence is never sent (a later push brings new
+  head has finished, and every job in a failing run, so the agent gets the
+  whole picture in one turn. When the same job is also red on the base, Wisp
+  waits for the base's own run to finish before it compares.
+- **Token-free retries first.** A workflow run with a cancelled job has its
+  failed jobs rerun once per head before anyone spends a turn on it; without
+  required checks, so does a run with a failed one (a flake gets one free
+  retry). Wisp only reruns ordinary `pull_request` runs, never a run with a
+  deployment job in it. A job held for approval, or waiting on an
+  environment's reviewers, needs you.
+- **Worth a turn.** If GitHub cannot serve any of a round's logs yet, Wisp
+  looks again a few times before sending the round with the links only. With
+  every task slot taken, a round waits for a free one.
+- **A short delay.** A round waits two minutes after the task's latest turn
+  ends, so you can read what it did and steer it yourself first; a turn of
+  yours restarts the delay. **Send now** skips the wait for that round;
+  **Skip** means that evidence is never sent (a later push brings new
   evidence, and a round again). Cancelling a queued round from the message list
-  is the same as Skip.
+  is the same as Skip. **Stop** withdraws a round that has not started, and
+  holds auto-fix like auto-merge.
 - **Never twice, and never forever.** The same evidence is sent once: if the
   agent's turn ends without a push and the check is still red, Wisp says so
   and waits for you instead of repeating itself. After three rounds on one PR

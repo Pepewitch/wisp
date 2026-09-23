@@ -65,6 +65,7 @@ function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot } = {}
     onMerge: null as null | (() => Promise<void> | void),
     onSnapshot: null as null | (() => void),
     reruns: [] as number[],
+    logs: null as null | ((jobId: number) => string),
   };
   const github: AutopilotGitHub = {
     async snapshot() { state.onSnapshot?.(); return structuredClone(state.pr); },
@@ -76,15 +77,17 @@ function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot } = {}
       if (state.mergeResult.ok) state.pr = { ...state.pr, state: "MERGED", mergedBy: "owner" };
       return state.mergeResult;
     },
-    async rerunJob(_repository, jobId) { state.reruns.push(jobId); return true; },
-    async jobLogTail(_repository, jobId) { return `log of job ${jobId}\n(fail) retry never stops\n##[error]Process completed with exit code 1.`; },
+    async rerunRun(_repository, runId) { state.reruns.push(runId); return true; },
+    async jobLogTail(_repository, jobId) {
+      return state.logs ? state.logs(jobId) : `log of job ${jobId}\n(fail) retry never stops\n##[error]Process completed with exit code 1.`;
+    },
     async checkRunReport() { return "a report"; },
   };
   return { state, github };
 }
 
-function runtime(github: AutopilotGitHub, clock: { now: number }, adapters = {}) {
-  return new AutopilotRuntime(loadConfig(), adapters, {
+function runtime(github: AutopilotGitHub, clock: { now: number }, adapters = {}, cfg = loadConfig()) {
+  return new AutopilotRuntime(cfg, adapters, {
     now: () => new Date(clock.now), github,
     repository: async () => "o/r", branches: async (task) => [task.branch!],
     published: async () => ({ ok: true }),
@@ -756,7 +759,7 @@ describe("auto-fix", () => {
     const { github } = fakeGitHub({ pr: redPr() });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { rounds: 3, idleSince: longAgo });
+    seed(task.id, clock, { rounds: 3, idleSince: longAgo, idleTurn: 1 });
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
     expect(resumeAutopilot(task.id).fixRounds).toBe(0);
@@ -769,14 +772,14 @@ describe("auto-fix", () => {
     state.required = [];
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: longAgo });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
     await pass(rt, task.id, clock);
-    expect(state.reruns).toEqual([11]);
-    expect(autopilotStatus(task.id).reason).toBe("Rerunning test");
+    expect(state.reruns).toEqual([5]);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Rerunning test", by: "auto-fix" });
     // the rerun came back red too: now it is worth a turn
     await pass(rt, task.id, clock);
     await until(() => existsSync(file), "the fix round");
-    expect(state.reruns).toEqual([11]);
+    expect(state.reruns).toEqual([5]);
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
   });
 
@@ -786,7 +789,7 @@ describe("auto-fix", () => {
     const { state, github } = fakeGitHub({ pr: redPr() });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { idleSince: longAgo });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
     await pass(rt, task.id, clock);
     await until(() => existsSync(file), "the fix round");
     expect(readFileSync(file, "utf8")).toContain("Do not wait for CI and do not merge");
@@ -805,6 +808,95 @@ describe("auto-fix", () => {
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBe(1);
     expect(withdrawQueuedRound(autopilotRow(task.id)!)).toBe(true);
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
+  });
+
+  test("a round reserved after the task got busy is refused; Stop withdraws a queued one and keeps its hold", () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoFix: true });
+    const round = (row = autopilotRow(task.id)!) =>
+      reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: { ...checkpointOf(row), rounds: 1 } }, new Date());
+    queue(task.id, "the owner's own message");
+    expect(round()).toBeNull();
+    db.run("DELETE FROM task_messages WHERE task_id = ?", [task.id]);
+    const id = round()!;
+    pauseTaskWorkflows(task.id);
+    const message = db.query("SELECT status FROM task_messages WHERE id = ?").get(id) as { status: string };
+    expect(message.status).toBe("cancelled");
+    // the cancel restored the checkpoint from before the round; the hold was written onto it
+    const checkpoint = checkpointOf(autopilotRow(task.id)!);
+    expect(checkpoint.stopHold).toBeDefined();
+    expect(checkpoint.rounds).toBeUndefined();
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "held", pendingFix: null });
+  });
+
+  test("the delay runs from the task's latest turn: one the owner finished meanwhile restarts it", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    const first = autopilotStatus(task.id).pendingFix!.sendsAt;
+    // the owner steered and the turn finished between two looks
+    setTaskFields(task.id, { turn_count: 2 });
+    clock.now += SEND_DELAY_MS + 1000;
+    await pass(rt, task.id, clock);
+    const status = autopilotStatus(task.id);
+    expect(status.reason).toBe("Auto-fix will send: test failing");
+    expect(Date.parse(status.pendingFix!.sendsAt)).toBeGreaterThan(Date.parse(first));
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("with every task slot taken, a round waits instead of being spent", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters, { ...loadConfig(), maxConcurrentTasks: 0 });
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Waiting for a free task slot", fixRounds: 0 });
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("a round with no readable log waits for GitHub a few looks, then goes with links only", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr() });
+    state.logs = () => { throw new Error("HTTP 404: log not found"); };
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe("Waiting for GitHub to serve the logs of test");
+    await pass(rt, task.id, clock);
+    expect(existsSync(file)).toBe(false);
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the fix round");
+    const evidence = readFileSync(readFileSync(file, "utf8").match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
+    expect(evidence).toContain("(could not read it: HTTP 404: log not found)");
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("a pending round, and a Send now, belong to one piece of evidence", async () => {
+    const { task, file, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: redPr() });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    sendPendingFix(task.id);
+    // a new head before the next look: new evidence, which gets its own delay
+    state.pr = redPr({ head: "a".repeat(40) });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).pendingFix).not.toBeNull();
+    expect(existsSync(file)).toBe(false);
+    // and once CI is green there is nothing pending at all
+    state.pr = snapshot({ head: "a".repeat(40) });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pendingFix: null, reason: "Nothing to fix", by: "auto-fix" });
   });
 
   test("cancelling a queued round from the message list means Skip, not a pause", async () => {

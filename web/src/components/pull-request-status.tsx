@@ -44,10 +44,10 @@ const MERGE_STATE = {
 function autoMergeWords(status: AutopilotStatus | null | undefined, number: number): string | null {
   if (!status?.autoMerge && !status?.autoFix) return null
   const which = status.pr !== null && status.pr !== number ? ` #${status.pr}` : ""
-  const name = status.autoMerge ? "Auto-merge" : "Auto-fix"
+  const name = status.by === "auto-fix" ? "Auto-fix" : "Auto-merge"
   if (status.state === "paused") return `${name}${which} paused: ${status.reason}`
   // "Auto-fix will send: …" already says who is speaking
-  return status.reason.startsWith("Auto-fix") && !which ? status.reason : `${name}${which}: ${status.reason}`
+  return status.reason.startsWith(name) && !which ? status.reason : `${name}${which}: ${status.reason}`
 }
 
 /**

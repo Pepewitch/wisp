@@ -4,9 +4,11 @@
  * on); everything that evolves — the bound PR, heads seen, a Stop hold, a merge
  * attempt — lives in the checkpoint, so a toggle is never an edit to evidence.
  */
-import type { AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
+import type { AutopilotBy, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
+import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
+import { taskIsIdle } from "./idle"
 import { announceWorkflow, cancelWorkflowMessages, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 
@@ -30,16 +32,21 @@ export interface AutopilotCheckpoint {
   about?: "pr" | "task"
   /** auto-fix rounds sent for the bound PR */
   rounds?: number
-  /** `${head}:${check}` for every job Wisp reran, so none is rerun twice */
-  rerun?: string[]
+  /** the workflow runs Wisp reran on this head, so none is rerun twice */
+  rerun?: { head: string; runs: number[] }
   /** evidence keys the owner chose not to send */
   skipped?: string[]
-  /** when Wisp first saw the task idle since its last turn: rounds wait a moment after it */
+  /** when Wisp first saw the task idle after turn `idleTurn`: rounds wait a moment after it */
   idleSince?: string
+  idleTurn?: number
   /** a round ready to go once its delay passes */
   pending?: { key: string; summary: string; sendsAt: string }
-  /** the owner said Send now */
-  sendNow?: boolean
+  /** the owner said Send now — to this evidence key, and no other */
+  sendNow?: string
+  /** looks in a row that could read none of a round's logs: past a few, it is sent with links only */
+  logMisses?: { key: string; count: number }
+  /** which switch the saved reason speaks for */
+  by?: AutopilotBy
 }
 
 export interface AutopilotParams {
@@ -75,7 +82,7 @@ function latestRow(taskId: string): WorkflowRow | null {
 }
 
 const OFF: AutopilotStatus = {
-  autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", mergedByWisp: false,
+  autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
   pendingFix: null, fixRounds: 0, updatedAt: null,
 }
 
@@ -101,9 +108,13 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   // auto-merge found on); a hold or a wait on the task never is.
   const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
   const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
-  const pendingFix = row.state === "active" && checkpoint.pending ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt } : null
+  const pendingFix = row.state === "active" && state !== "held" && checkpoint.pending
+    ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt }
+    : null
+  // a switch that is off speaks for nothing
+  const by: AutopilotBy = checkpoint.by === "auto-fix" && params.autoFix ? "auto-fix" : params.autoMerge ? "auto-merge" : "auto-fix"
   return {
-    autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, mergedByWisp: false,
+    autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, by, mergedByWisp: false,
     pendingFix, fixRounds: checkpoint.rounds ?? 0, updatedAt: row.updated_at,
   }
 }
@@ -189,6 +200,8 @@ export interface AutopilotCheck {
   reason: string
   /** defaults to "task": only the gate and the merge speak about the PR itself */
   about?: "pr" | "task"
+  /** defaults to "auto-merge": auto-fix's own looks say so */
+  by?: AutopilotBy
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
@@ -200,7 +213,7 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   if (!current || current.state !== "active" || current.revision !== row.revision) return false
   const at = now.toISOString()
   const previous = checkpointOf(current)
-  const checkpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task" }
+  const checkpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
     last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
   [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + check.delayMs).toISOString(), check.reason, at, row.id])
@@ -310,9 +323,11 @@ export function queuedRound(rowId: string): string | null {
  * in flight discard its now-stale view.
  */
 export function withdrawQueuedRound(row: WorkflowRow): boolean {
-  if (!queuedRound(row.id)) return false
+  const messageId = queuedRound(row.id)
+  if (!messageId) return false
   cancelWorkflowMessages(row.id)
   db.run("UPDATE workflows SET revision = revision + 1 WHERE id = ?", [row.id])
+  emit({ type: "message", taskId: row.task_id, messageId })
   return true
 }
 
@@ -324,7 +339,10 @@ export function withdrawQueuedRound(row: WorkflowRow): boolean {
 export function reserveRound(row: WorkflowRow, round: { key: string; prompt: string; reason: string; checkpoint: AutopilotCheckpoint }, now: Date): string | null {
   const messageId = db.transaction(() => {
     const current = getWorkflow(row.id), task = getTask(row.task_id)
-    if (!current || current.state !== "active" || current.revision !== row.revision || !task || task.archived || seenWake(row.id, round.key)) return null
+    if (!current || current.state !== "active" || current.revision !== row.revision || !task || seenWake(row.id, round.key)) return null
+    // Evidence was gathered with awaits in between: a turn, a queued message,
+    // or a Stop since then wins, and the next look plans again.
+    if (!taskIsIdle(task)) return null
     const id = randomId("m", 12)
     createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "" }, false)
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
@@ -334,17 +352,20 @@ export function reserveRound(row: WorkflowRow, round: { key: string; prompt: str
     const at = now.toISOString()
     db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, wake_count = wake_count + 1, revision = revision + 1,
       last_checked_at = ?, updated_at = ? WHERE id = ?`,
-    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr" }), round.reason, at, at, row.id])
+    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr", by: "auto-fix" }), round.reason, at, at, row.id])
     recordWorkflow(row.id, "wake", round.reason, at, id)
     return id
   })()
-  if (messageId) announceWorkflow(row.task_id)
+  if (messageId) {
+    emit({ type: "message", taskId: row.task_id, messageId })
+    announceWorkflow(row.task_id)
+  }
   return messageId
 }
 
 /** Send now: skip the short delay before a pending round. */
 export function sendPendingFix(taskId: string, now = new Date()): AutopilotStatus {
-  return touchPending(taskId, now, (checkpoint) => { checkpoint.sendNow = true })
+  return touchPending(taskId, now, (checkpoint) => { checkpoint.sendNow = checkpoint.pending!.key })
 }
 
 /** Skip: never send this evidence. A later head brings new evidence, and a round again. */
@@ -352,6 +373,7 @@ export function skipPendingFix(taskId: string, now = new Date()): AutopilotStatu
   return touchPending(taskId, now, (checkpoint) => {
     checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), checkpoint.pending!.key]
     delete checkpoint.pending
+    delete checkpoint.sendNow
   })
 }
 
