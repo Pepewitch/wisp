@@ -4,7 +4,7 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * FIVE intents. `/log` is the palette's one command that needs another
+ * SIX intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
@@ -14,7 +14,8 @@
  * owns the scroller that has to answer. A local-setup request is the same
  * shape again: the first-run panel and the sidebar's error row both mean "open
  * the Local Wisp dialog", and neither owns it — the desktop connection chrome
- * does, and it is mounted in two different shells.
+ * does, and it is mounted in two different shells. A successful native
+ * reconnect also asks the mounted view to reopen both of its streams.
  */
 import { LOCAL_CONNECTION_ID } from "./transport";
 
@@ -48,6 +49,8 @@ export interface UiIntents {
   openFind(query?: string | null, turn?: number | null): void;
   localSetupRequests(): number;
   openLocalSetup(): void;
+  reconnectRequests(): number;
+  reopenStreams(): void;
 }
 
 function createUiIntents(): UiIntents {
@@ -57,6 +60,7 @@ function createUiIntents(): UiIntents {
   let taskFocusRequest: TaskFocusRequest | null = null;
   let findRequest: FindRequest | null = null;
   let localSetupRequests = 0;
+  let reconnectRequests = 0;
   const notify = () => {
     for (const fn of listeners) fn();
   };
@@ -105,6 +109,13 @@ function createUiIntents(): UiIntents {
     },
     openLocalSetup(): void {
       localSetupRequests += 1;
+      notify();
+    },
+    reconnectRequests(): number {
+      return reconnectRequests;
+    },
+    reopenStreams(): void {
+      reconnectRequests += 1;
       notify();
     },
   };

@@ -136,7 +136,9 @@ harmless preferences.
   Wisp-home identity), `port` (8710), `host` (127.0.0.1), `token`,
   `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
   at-least-once, dedup on task_id+seq), `repos`, `stuckMinutes` (10),
-  `turnTranscriptBytes` (5 MB; `logMaxBytes` is its legacy alias),
+  `turnTranscriptBytes` (25 MB; `logMaxBytes` is its legacy alias; a stored
+  `5000000`, the old default every earlier first run wrote, follows the
+  current default — pin a budget with any other value),
   `setupTimeoutMinutes` (10), `terminalShell` (an optional absolute executable
   path for embedded login terminals), `envAllowlist`,
   `harnessDefaults`, `hiddenModels`.

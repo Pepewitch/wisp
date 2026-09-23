@@ -7,7 +7,9 @@ import type {
   ConnectionState,
 } from "@/lib/desktop-connections"
 import { clearForgottenConnection } from "@/lib/desktop-reset"
+import { connectionStore } from "@/lib/conn"
 import { queryClient } from "@/lib/query"
+import { uiIntentsFor } from "@/lib/ui-intents"
 
 /** Reconcile both immutable remote replacement and stable-ID Local retargets. */
 export async function reconnectDesktopConnection({
@@ -46,6 +48,16 @@ export async function reconnectDesktopConnection({
       await clearForgottenConnection(input.connectionId, forgetAttention)
     }
     void queryClient.invalidateQueries({ queryKey: [reconnected.id] })
+    // A native refresh can keep the same route. Reopen a selected view's SSE
+    // streams explicitly, without remounting its task/composer state.
+    if (
+      activeBefore === input.connectionId &&
+      reconnected.id === input.connectionId &&
+      target?.routeRevision === reconnected.routeRevision
+    ) {
+      connectionStore(reconnected.id).set("events", false)
+      uiIntentsFor(reconnected.id).reopenStreams()
+    }
   } catch (error) {
     // Native remote replacement can commit before deferred Keychain cleanup
     // reports failure. Always reconcile so no revoked ID remains routable.

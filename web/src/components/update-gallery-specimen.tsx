@@ -1,7 +1,6 @@
 import { Gear, ZoomIn } from "@/components/icons"
 import { UpdateCenter } from "@/components/update-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
-import { ConnStatus } from "@/components/conn-indicator"
 import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
 import type { UpdateStatus } from "@/lib/types"
@@ -74,8 +73,8 @@ export function UpdateGallerySpecimen() {
 }
 
 /**
- * The top bar's right end, which is ONE cluster: what the app is doing, then
- * everything you can do TO it, 4px apart against the header's 10px (§5h).
+ * The top bar's right end, which is ONE cluster for everything you can do TO
+ * the app, 4px apart against the header's 10px (§5h).
  *
  * The update trigger is the real component in its three readings, because the
  * dot is the whole point of an icon-only trigger. Zoom and the gear are
@@ -106,7 +105,6 @@ export function HeaderClusterSpecimen() {
             <Eyebrow>{reading.label}</Eyebrow>
             <div className="mt-2 flex h-9 items-center gap-2.5 rounded-lg border border-border bg-surface px-3">
               <span className="flex-1 text-[11.5px] text-faint">the header, from its middle out</span>
-              <ConnStatus live />
               <div className="flex shrink-0 items-center gap-1">
                 <UpdateCenter
                   desktop={reading.desktop}

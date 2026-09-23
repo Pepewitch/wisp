@@ -14,9 +14,10 @@ export function ConnectionGallerySpecimen() {
         <ConnectionChromeSpecimen />
         <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
           Local is always first and uses a computer; remotes use a cloud.
-          Selection stays neutral. An inactive daemon earns only its
-          highest-priority task-state dot, so attention is visible without
-          mounting another conversation or terminal tree.
+          Selection stays neutral. The connection dot reports reachability
+          (and both streams on the selected tab) and reconnects when clicked.
+          An inactive daemon also earns its highest-priority task-state dot,
+          so attention is visible without mounting another conversation tree.
         </p>
       </div>
     </section>

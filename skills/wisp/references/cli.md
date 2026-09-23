@@ -100,8 +100,9 @@ and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
 per-harness (`--raw` for the retained harness stream, `-f` to follow live).
 Recorder-capable live turns continue beyond the retained transcript budget:
-`-f` still receives their current activity, while a settled log clearly marks
-any history that was not retained.
+`-f` still receives their current activity. Past the budget, a turn keeps its
+beginning and its most recent activity, which is appended when the turn ends,
+and a settled log marks the gap in the middle that was not retained.
 
 Archived transcripts expire by default after 90 days or when archived logs
 exceed 1 GiB, oldest whole turns first. Only completely indexed prose permits

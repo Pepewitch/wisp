@@ -214,8 +214,8 @@ const DEFAULTS: WispConfig = {
   repos: [],
   stuckMinutes: 10,
   maxConcurrentTasks: 100,
-  turnTranscriptBytes: 5_000_000,
-  logMaxBytes: 5_000_000,
+  turnTranscriptBytes: 25_000_000,
+  logMaxBytes: 25_000_000,
   diagnosticEnabled: true,
   diagnosticMaxBytes: 512 * 1024 * 1024,
   diagnosticRetentionDays: 7,
@@ -694,6 +694,15 @@ function mintToken(): string {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
+/**
+ * The transcript budget before 25 MB. A first run persists every default, so
+ * nearly every existing config.json holds exactly this number without anyone
+ * having chosen it; loading reads it as "the default" rather than as a pin.
+ * The file is not rewritten (any CLI process loads config), and any other
+ * value still pins the budget.
+ */
+const PREVIOUS_TRANSCRIPT_DEFAULT = 5_000_000;
+
 export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   let stored: Partial<WispConfig> = {};
   let storedRaw: Record<string, unknown> = {};
@@ -711,7 +720,10 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   // The new name is canonical. Keep the old in-memory field synchronized for
   // callers compiled against the transitional WispConfig shape; runtime code
   // moves to transcriptBudgetBytes() as recorder support lands.
-  const transcriptBytes = stored.turnTranscriptBytes ?? stored.logMaxBytes ?? DEFAULTS.logMaxBytes;
+  const storedTranscriptBytes = stored.turnTranscriptBytes ?? stored.logMaxBytes;
+  const transcriptBytes = storedTranscriptBytes === undefined || storedTranscriptBytes === PREVIOUS_TRANSCRIPT_DEFAULT
+    ? DEFAULTS.logMaxBytes
+    : storedTranscriptBytes;
   cfg.turnTranscriptBytes = transcriptBytes;
   cfg.logMaxBytes = transcriptBytes;
   let mustPersist = false;
@@ -734,6 +746,11 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     // rewritten merely to rename a setting, so downgrades remain safe.
     const { logMaxBytes: _legacyAlias, ...canonical } = cfg;
     const persisted: Record<string, unknown> = { ...storedRaw, ...canonical };
+    // Persisting for another reason must not turn an old default into a pin.
+    if (storedTranscriptBytes === PREVIOUS_TRANSCRIPT_DEFAULT) {
+      if (storedRaw.turnTranscriptBytes !== undefined) persisted.turnTranscriptBytes = PREVIOUS_TRANSCRIPT_DEFAULT;
+      if (storedRaw.logMaxBytes !== undefined) persisted.logMaxBytes = PREVIOUS_TRANSCRIPT_DEFAULT;
+    }
     if (storedRaw.logMaxBytes !== undefined && storedRaw.turnTranscriptBytes === undefined) {
       delete persisted.turnTranscriptBytes;
     } else {
