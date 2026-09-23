@@ -6,7 +6,8 @@ import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { Archive, Pencil, ArrowUp, BranchRequest } from "@/components/icons"
 import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
-import { pullRequestSidebarTone } from "@/lib/pull-request-tone"
+import { autoMergeWords, autopilotBlocks } from "@/lib/autopilot-words"
+import { PULL_REQUEST_ICON_TONE, pullRequestSidebarTone } from "@/lib/pull-request-tone"
 import { STATE_TEXT, stateWord, since } from "@/lib/state"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn, oneLine } from "@/lib/utils"
@@ -106,6 +107,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
           </span>
           <SidebarPullRequestStatus
             entry={task.archived ? undefined : pullRequest}
+            autopilot={task.autopilot}
             yields={archivable}
           />
           <GitMarks status={status} yields={archivable} />
@@ -144,6 +146,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             pending={archive.pending}
             onCancel={archive.dismiss}
             onForce={() => archive.request(true)}
+            stopsAutopilot={archive.stopsAutopilot}
           />
         </>
       )}
@@ -233,7 +236,7 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
           )}
         </span>
       </span>
-      <SidebarPullRequestStatus entry={task.archived ? undefined : pullRequest} />
+      <SidebarPullRequestStatus entry={task.archived ? undefined : pullRequest} autopilot={task.autopilot} />
       <GitMarks status={status} />
     </button>
   )
@@ -241,13 +244,19 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
 
 function SidebarPullRequestStatus({
   entry,
+  autopilot,
   yields = false,
 }: {
   entry?: PullRequestOverviewEntry
+  /** auto-merge / auto-fix stuck on this PR turns the icon red, and its reason joins the label */
+  autopilot?: ApiTask["autopilot"]
   yields?: boolean
 }) {
   if (entry?.status.kind !== "found") return null
   const pullRequest = entry.status.pullRequest
+  const stuck = pullRequest.lifecycle === "open" && autopilotBlocks(autopilot, pullRequest.number)
+  const tone = stuck ? PULL_REQUEST_ICON_TONE.blocked : pullRequestSidebarTone(pullRequest)
+  const automation = pullRequest.lifecycle === "open" ? autoMergeWords(autopilot, pullRequest.number) : null
   const lifecycle = pullRequest.lifecycle === "merged"
     ? "Merged"
     : pullRequest.lifecycle === "closed"
@@ -256,13 +265,13 @@ function SidebarPullRequestStatus({
         ? "Draft"
         : pullRequest.queuedToMerge
           ? "Queued to merge"
-          : pullRequestSidebarTone(pullRequest) === "text-destructive"
+          : tone === PULL_REQUEST_ICON_TONE.blocked
             ? "Blocked"
             : "Open"
   const freshness = entry.stale
     ? ` · Status stale, last checked ${since(entry.checkedAt)}`
     : ""
-  const label = `PR #${pullRequest.number} · ${lifecycle}${freshness}`
+  const label = `PR #${pullRequest.number} · ${lifecycle}${automation ? ` · ${automation}` : ""}${freshness}`
   return (
     <span
       role="img"
@@ -277,7 +286,7 @@ function SidebarPullRequestStatus({
     >
       <BranchRequest
         aria-hidden
-        className={cn("size-3", pullRequestSidebarTone(pullRequest))}
+        className={cn("size-3", tone)}
       />
     </span>
   )

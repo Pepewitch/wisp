@@ -316,24 +316,45 @@ export function controlFree(line: string): string {
 }
 
 /**
- * The part of a job log that explains the failure: the lines leading up to
- * the last `##[error]`, or else up to where post-job cleanup starts — the very
- * end of a log is checkout teardown, not the failure. Timestamps and terminal
- * escapes are dropped; nobody reads those.
+ * The part of a job log that explains the failure: the step that failed, up
+ * to its last `##[error]` (or else up to where post-job cleanup starts) — the
+ * start of a log is runner setup and checkout, and its end is teardown, not
+ * the failure. Timestamps and terminal escapes are dropped; nobody reads those.
  */
 export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string {
   const all = raw.split("\n").map((line) => controlFree(line).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
+  const teardown = (line: string) => /^(?:Post job cleanup|Cleaning up orphan processes|##\[group\]Post )/.test(line)
+  const error = all.findLastIndex((line) => line.includes("##[error]"))
   let end = all.length
-  for (let index = all.length - 1; index >= 0; index--) {
-    if (all[index]!.includes("##[error]")) { end = Math.min(all.length, index + 4); break }
-  }
-  if (end === all.length) {
-    const cleanup = all.findIndex((line) => /^(?:Post job cleanup|##\[group\]Post )/.test(line))
+  if (error >= 0) {
+    // the error, and the few lines that finish its sentence
+    end = error + 1
+    while (end < all.length && end < error + 4 && !teardown(all[end]!) && !all[end]!.startsWith("##[group]")) end++
+  } else {
+    const cleanup = all.findIndex(teardown)
     if (cleanup > 0) end = cleanup
   }
-  let text = all.slice(Math.max(0, end - maxLines), end).join("\n")
-  if (Buffer.byteLength(text) > maxBytes) text = Buffer.from(text).subarray(-maxBytes).toString("utf8")
-  return text.trim()
+  // From the step that failed FIRST: runner setup and checkout before it are
+  // noise, and a later always-run step (an upload, a log dump) that also
+  // errors must not push the real failure out.
+  const first = all.findIndex((line) => line.includes("##[error]"))
+  const step = all.slice(0, first >= 0 ? first : end).findLastIndex((line) => line.startsWith("##[group]Run "))
+  const start = Math.max(step, 0)
+  let kept = all.slice(start, end)
+  if (kept.length > maxLines) {
+    // both ends: where the failure starts and where the job gave up
+    const half = Math.floor(maxLines / 2)
+    kept = [...kept.slice(0, half), `(… ${kept.length - 2 * half} lines omitted …)`, ...kept.slice(-half)]
+  }
+  let text = kept.join("\n")
+  const bytes = Buffer.from(text)
+  if (bytes.length > maxBytes) {
+    // long lines (JSON, diffs) can outgrow the byte budget under the line
+    // budget: keep both ends here too, so the first failure stays
+    const half = Math.floor(maxBytes / 2)
+    text = `${bytes.subarray(0, half).toString("utf8")}\n(… ${bytes.length - 2 * half} bytes omitted …)\n${bytes.subarray(-half).toString("utf8")}`
+  }
+  return `${start > 0 ? "(earlier steps omitted)\n" : ""}${text.trim()}`
 }
 
 /**

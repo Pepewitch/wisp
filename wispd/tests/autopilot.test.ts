@@ -9,7 +9,7 @@ import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
 import {
-  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
@@ -248,6 +248,19 @@ describe("the loop", () => {
     expect(autopilotRow(task.id)!.state).toBe("active");
   });
 
+  test("archiving asks first only while it is watching a PR", () => {
+    const task = doneTask();
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
+    // armed with no PR yet: nothing to stop
+    setAutopilot(task.id, { autoMerge: true });
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7 }, new Date());
+    expect(autopilotArchiveWarning(task.id)).toBe("Auto-merge is on for PR #7 — archiving switches it off. Archive anyway to stop it, or force-archive.");
+    // once it has nothing left to do, archive does not ask
+    setAutopilot(task.id, { autoMerge: false });
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
+  });
+
   test("archive stands it down through the existing trigger", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoMerge: true });
@@ -318,9 +331,12 @@ describe("the loop", () => {
     setAutopilot(task.id, { autoMerge: true });
     seed(task.id, clock);
     let during = false;
-    state.onMerge = () => { during = isTaskMerging(task.id); };
+    let said = "";
+    state.onMerge = () => { during = isTaskMerging(task.id); said = autopilotStatus(task.id).reason; };
     await pass(rt, task.id, clock);
     expect(during).toBe(true);
+    // while gh runs, the status says what is happening, not the last wait
+    expect(said).toBe("Merging #7 (squash)");
     expect(isTaskMerging(task.id)).toBe(false);
   });
 });

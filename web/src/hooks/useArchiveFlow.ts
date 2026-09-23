@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { useArchiveTask } from "@/hooks/mutations";
 import { failureReason } from "@/lib/api";
+import { autopilotArchiveWords } from "@/lib/autopilot-words";
 import type { ApiTask } from "@/lib/types";
 
 /**
@@ -13,7 +14,9 @@ import type { ApiTask } from "@/lib/types";
  * sentence is the confirm dialog's entire value. A generic "are you sure?"
  * would throw away the one thing the user needs in order to decide, so
  * `reason` is the daemon's own words and `ArchiveConfirmDialog`
- * (components/archive-flow.tsx) renders them verbatim.
+ * (components/archive-flow.tsx) renders them verbatim. The one sentence asked
+ * here first is autopilot's, from the task's own status (the daemon asks the
+ * same last, for other clients): its confirm consents to that and nothing else.
  *
  * It lives in hooks/ rather than beside that dialog because a `.tsx` file may
  * only export components (the react-refresh rule this repo lints as an error),
@@ -24,6 +27,12 @@ export interface ArchiveFlow {
   request: (force: boolean) => void;
   /** the daemon's refusal, or null when there is nothing to decide */
   reason: string | null;
+  /**
+   * The reason is that auto-merge / auto-fix is still watching a PR. Its
+   * confirm switches them off and waives nothing else: unsaved work or a
+   * running turn still gets its own refusal after it.
+   */
+  stopsAutopilot: boolean;
   pending: boolean;
   dismiss: () => void;
 }
@@ -31,22 +40,36 @@ export interface ArchiveFlow {
 export function useArchiveFlow(task: ApiTask | null): ArchiveFlow {
   const archiveTask = useArchiveTask();
   const [reason, setReason] = useState<string | null>(null);
+  const [stopsAutopilot, setStopsAutopilot] = useState(false);
 
+  const send = (force: boolean, stopAutopilot: boolean) => {
+    if (!task) return;
+    archiveTask.mutate(
+      { id: task.id, force, stopAutopilot },
+      {
+        onSuccess: () => { setReason(null); setStopsAutopilot(false); },
+        // a 409 is the expected refusal; anything else is a real error, and
+        // both are the same decision from here — the daemon said no and said why
+        onError: (e) => { setReason(failureReason(e)); setStopsAutopilot(false); },
+      },
+    );
+  };
   return {
     request: (force: boolean) => {
       if (!task) return;
-      archiveTask.mutate(
-        { id: task.id, force },
-        {
-          onSuccess: () => setReason(null),
-          // a 409 is the expected refusal; anything else is a real error, and
-          // both are the same decision from here — the daemon said no and said why
-          onError: (e) => setReason(failureReason(e)),
-        },
-      );
+      // the confirm of the autopilot sentence is that consent alone
+      if (force && stopsAutopilot) return send(false, true);
+      const autopilot = force ? null : autopilotArchiveWords(task.autopilot);
+      if (autopilot) {
+        setReason(autopilot);
+        setStopsAutopilot(true);
+        return;
+      }
+      send(force, false);
     },
     reason,
+    stopsAutopilot,
     pending: archiveTask.isPending,
-    dismiss: () => setReason(null),
+    dismiss: () => { setReason(null); setStopsAutopilot(false); },
   };
 }

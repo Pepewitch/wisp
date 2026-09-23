@@ -256,7 +256,8 @@ export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Respo
       let archivedTaskCount = 0;
       if (body.archiveTasks) {
         const activeTasks = listTasks().filter((task) => resolve(task.repo_path) === resolved);
-        const result = await archiveTaskRows(activeTasks, false, cfg);
+        // "Archive all its tasks" was the owner's consent to switching autopilot off too
+        const result = await archiveTaskRows(activeTasks, false, cfg, { stopAutopilot: true });
         if ("error" in result) {
           return err(`could not archive task '${result.task.title}': ${result.error}`, result.status);
         }

@@ -18,6 +18,7 @@ import { join } from "node:path";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
 import { resumeArchiveCleanups } from "../src/routes/archive";
+import { autopilotRow, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import {
   ARCHIVE_STAGES,
   archiveCleanup,
@@ -146,6 +147,42 @@ describe("a successful archive owns its teardown and then lets go of it", () => 
     expect(existsSync(fixture.attachmentDir)).toBe(true);
     // the branch is user work and is never part of teardown
     expect(sh(["git", "branch", "--list", fixture.branch], fixture.repo)).toContain(fixture.branch);
+  }, 20_000);
+});
+
+describe("archive asks before it stops auto-merge or auto-fix", () => {
+  const arm = (id: string) => {
+    setAutopilot(id, { autoMerge: true, autoFix: true });
+    writeAutopilotCheckpoint(autopilotRow(id)!, { pr: 7 }, new Date());
+  };
+
+  test("unsaved work is told first; the autopilot sentence is its own consent and waives nothing else", async () => {
+    const fixture = await finishedTask();
+    arm(fixture.id);
+    writeFileSync(join(fixture.worktree, "wip.txt"), "unsaved\n");
+    const dirty = await call(`/api/tasks/${fixture.id}/archive`, { method: "POST", body: JSON.stringify({ stopAutopilot: true }) });
+    expect(dirty.status).toBe(409);
+    expect(((await dirty.json()) as { error: string }).error).not.toContain("Auto-merge");
+    sh(["rm", "wip.txt"], fixture.worktree);
+    const asked = await call(`/api/tasks/${fixture.id}/archive`, { method: "POST", body: "{}" });
+    expect(asked.status).toBe(409);
+    expect(await asked.json()).toEqual({ error: "Auto-merge and auto-fix are on for PR #7 — archiving switches them off. Archive anyway to stop them, or force-archive." });
+    expect(getTask(fixture.id)!.archived).toBe(0);
+    const stopped = await call(`/api/tasks/${fixture.id}/archive`, { method: "POST", body: JSON.stringify({ stopAutopilot: true }) });
+    expect(stopped.status).toBe(200);
+    expect(getTask(fixture.id)!.archived).toBe(1);
+    expect(autopilotRow(fixture.id)).toBeNull();
+    await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
+  }, 20_000);
+
+  test("removing a project with its tasks is consent enough", async () => {
+    const fixture = await finishedTask();
+    arm(fixture.id);
+    const repos = [{ path: fixture.repo, setupScript: "", archiveScript: "", copyFiles: [] }] as unknown as WispConfig["repos"];
+    const removed = await call("/api/projects", { method: "DELETE", body: JSON.stringify({ path: fixture.repo, archiveTasks: true }) }, repos);
+    expect(removed.status).toBe(200);
+    expect(getTask(fixture.id)!.archived).toBe(1);
+    await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
   }, 20_000);
 });
 

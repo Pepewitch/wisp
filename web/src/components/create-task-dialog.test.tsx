@@ -39,15 +39,18 @@ const harness: HarnessInfo = {
 describe("create task dialog submission", () => {
   /**
    * The composer also READS — the model picker asks /api/settings for the
-   * daemon's hidden-model curation. Only creates are the subject here, so
-   * those reads are answered separately rather than counted as sends.
+   * daemon's hidden-model curation, and the autopilot picker asks
+   * /api/harnesses whether the daemon has it. Only creates are the subject
+   * here, so those reads are answered separately rather than counted as sends.
    */
   async function mountWithRequest(request: ReturnType<typeof vi.fn>) {
     const send = request as unknown as (path: string, init?: unknown) => Promise<unknown>
     const route = ((path: string, init?: unknown) =>
       path === "/api/settings"
         ? Promise.resolve({ autoRenameTasksFromPullRequests: true, hiddenModels: {} })
-        : send(path, init)) as unknown as DaemonTransport["request"]
+        : path === "/api/harnesses"
+          ? Promise.resolve({ harnesses: [harness], features: {} })
+          : send(path, init)) as unknown as DaemonTransport["request"]
     render(
       <CreateTaskDialog
         open
@@ -234,5 +237,61 @@ describe("create task dialog base", () => {
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "This repo" }))
     await screen.findByRole("button", { name: "This repo" })
     expect(screen.queryByRole("button", { name: /^Base$/ })).toBeNull()
+  })
+})
+
+describe("auto-merge and auto-fix at creation", () => {
+  function mount(features: Record<string, boolean>) {
+    const sent: { path: string; body: unknown }[] = []
+    const request = ((path: string, init?: { body?: unknown }) => {
+      if (path === "/api/settings") return Promise.resolve({ autoRenameTasksFromPullRequests: true, hiddenModels: {} })
+      if (path === "/api/harnesses") return Promise.resolve({ harnesses: [harness], features })
+      sent.push({ path, body: init?.body })
+      return Promise.resolve({ id: "tk9zdy" })
+    }) as unknown as DaemonTransport["request"]
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={[harness]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request })) },
+    )
+    fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), { target: { value: "ship the fix" } })
+    return sent
+  }
+
+  it("arms the task's PR from the start, and says which switches are on", async () => {
+    const sent = mount({ taskAutopilot: true })
+    fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Auto-merge" }))
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Auto-fix" }))
+    expect(await screen.findByRole("button", { name: "Auto-merge + fix" })).toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]!.body).toMatchObject({ mode: "worktree", autopilot: { autoMerge: true, autoFix: true } })
+  })
+
+  it("sends nothing to arm when both are off, and is not offered for a local task or an older daemon", async () => {
+    const sent = mount({ taskAutopilot: true })
+    fireEvent.click(await screen.findByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]!.body).not.toHaveProperty("autopilot")
+    fireEvent.click(screen.getByRole("button", { name: "Worktree" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "This repo" }))
+    await screen.findByRole("button", { name: "This repo" })
+    expect(screen.queryByRole("button", { name: "Manual PR" })).toBeNull()
+  })
+
+  it("is absent on a daemon that predates it", async () => {
+    mount({})
+    await screen.findByRole("button", { name: "Worktree" })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByRole("button", { name: "Manual PR" })).toBeNull()
   })
 })

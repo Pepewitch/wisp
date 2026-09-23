@@ -70,6 +70,8 @@ export interface CreateTaskBody {
   fast?: boolean;
   suffixPromptId?: string;
   attachments?: AttachmentPayload[];
+  /** arm auto-merge / auto-fix for the task's PR from the start (worktree tasks only) */
+  autopilot?: { autoMerge: boolean; autoFix: boolean };
 }
 
 /** POST /api/tasks — the composer's submit. Resolves to the created row. */
@@ -310,8 +312,8 @@ export function useArchiveTask() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, force }: { id: string; force: boolean }) =>
-      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force } }),
+    mutationFn: ({ id, force, stopAutopilot = false }: { id: string; force: boolean; stopAutopilot?: boolean }) =>
+      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force, ...(stopAutopilot ? { stopAutopilot } : {}) } }),
     onSuccess: (_data, { id }) => settleTask(client, qk, id),
   });
 }

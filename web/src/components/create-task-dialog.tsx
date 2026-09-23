@@ -16,6 +16,7 @@ import { AttachButton } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
+import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
 import { failureReason } from "@/lib/api"
 import {
   discardAttachmentPayloads,
@@ -158,9 +159,7 @@ function Form({
   const { connectionId, transport } = useDaemonRuntime()
   const [repoPath, setRepoPath] = useState(initialRepoPath ?? repos[0]?.path ?? "")
   const [prompt, setPrompt] = useState("")
-  const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() =>
-    loadPreferredModel(connectionId),
-  )
+  const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel(connectionId))
   const [choice, setChoice] = useState<ModelChoice | null>(() => initialChoice(harnesses, preferredChoice))
   const { effort, setEffort, fast, setFast, reseedForHarness } = useAgentKnobs(harnesses, choice)
   const [mode, setMode] = useState<TaskMode>("worktree")
@@ -168,6 +167,7 @@ function Form({
   // holds a deliberate one-off override, never the resolved default, so it
   // cannot go stale against a project setting changed in another tab.
   const [base, setBase] = useState("")
+  const autopilot = useAutopilotChoice(mode)
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(null)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
 
@@ -246,6 +246,7 @@ function Form({
             ...(harness?.hasFastMode && fast ? { fast: true } : {}),
             ...(suffixPromptId ? { suffixPromptId } : {}),
             ...(payloads ? { attachments: payloads } : {}),
+            ...autopilot.body,
           },
           {
             onSuccess: (task) => {
@@ -349,9 +350,8 @@ function Form({
         </Menu>
         <span className="flex-1" />
         <ModePicker mode={mode} onChange={setMode} />
-        {mode === "worktree" && (
-          <BasePicker base={base} onChange={setBase} onRestoreComposer={restoreComposer} />
-        )}
+        {mode === "worktree" && <BasePicker base={base} onChange={setBase} onRestoreComposer={restoreComposer} />}
+        {autopilot.picker}
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}

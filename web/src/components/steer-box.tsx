@@ -343,6 +343,7 @@ export function SteerBox({
             pending={archive.pending}
             onCancel={archive.dismiss}
             onForce={() => archive.request(true)}
+            stopsAutopilot={archive.stopsAutopilot}
           />
           {agent.choice && (
             <FreshContextDialog

@@ -548,9 +548,10 @@ export class AutopilotRuntime {
     // a Stop, or a turn that started during the check all win.
     const task = getTask(row.task_id)
     if (!task || !taskIsIdle(task)) return
-    const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging" }
-    if (!writeAutopilotCheckpoint(row, attempt, now)) return
-    recordWorkflow(row.id, "merging", `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`, now.toISOString())
+    const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging", about: "pr", by: "auto-merge" }
+    const merging = `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`
+    if (!writeAutopilotCheckpoint(row, attempt, now, merging)) return
+    recordWorkflow(row.id, "merging", merging, now.toISOString())
     // The merge has its own deadline, not the check's: a slow read before it
     // must never be what kills `gh pr merge` halfway.
     const controller = new AbortController()

@@ -91,3 +91,42 @@ describe("task transition tracker", () => {
     expect(tracker.observe("two", [task("t1", "done")])).toEqual([])
   })
 })
+
+describe("auto-merge and auto-fix news", () => {
+  const armed = (id: string, state: string, over: Record<string, unknown> = {}): ApiTask => ({
+    ...task(id, "done"),
+    autopilot: { autoMerge: true, autoFix: true, pr: 7, state, reason: "1 review thread still open", about: "pr", by: "auto-fix", mergedByWisp: false, pendingFix: null, fixRounds: 1, updatedAt: null, ...over },
+  }) as unknown as ApiTask
+
+  it("announces a merge by Wisp, and a switch that needs a person; a first sighting only seeds", () => {
+    const tracker = createTaskTransitionTracker()
+    expect(tracker.observe("c1", [armed("t1", "waiting"), armed("t2", "waiting"), armed("t3", "needs-you")])).toEqual([])
+    const news = tracker.observe("c1", [
+      armed("t1", "merged", { mergedByWisp: true }), armed("t2", "needs-you"), armed("t3", "needs-you"),
+    ])
+    expect(news.map((transition) => [transition.task.id, transition.autopilot])).toEqual([["t1", "merged"], ["t2", "needs-you"]])
+  })
+
+  it("does not repeat the same news after a round trip through waiting", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("c1", [armed("t1", "waiting")])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toHaveLength(1)
+    // a long turn, or a GitHub blip, then the same verdict again
+    expect(tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for the task to finish", about: "task" })])).toEqual([])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toEqual([])
+    // real progress on the PR, then the same blocker again: that is news
+    tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for checks (3 running)", about: "pr" })])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toHaveLength(1)
+    // a different reason is different news
+    tracker.observe("c1", [armed("t1", "waiting", { about: "task" })])
+    expect(tracker.observe("c1", [armed("t1", "needs-you", { reason: "Changes requested by @x" })])).toHaveLength(1)
+  })
+
+  it("stays quiet for a merge someone else made, a pause it was already in, and an archived task", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("c1", [armed("t1", "waiting"), armed("t2", "paused"), armed("t3", "waiting")])
+    expect(tracker.observe("c1", [
+      armed("t1", "merged", { mergedByWisp: false }), armed("t2", "paused"), { ...armed("t3", "needs-you"), archived: true } as ApiTask,
+    ])).toEqual([])
+  })
+})

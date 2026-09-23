@@ -205,5 +205,39 @@ describe("what the agent reads", () => {
     expect(tidy).not.toContain("\u001b");
     // with no error line, it stops where post-job cleanup begins
     expect(tidyLog("a\nb\nPost job cleanup.\nc")).toBe("a\nb");
+    // and it starts at the step that failed: runner setup and checkout are noise
+    const steps = [
+      "##[group]Runner Image Provisioner", "Hosted Compute Agent", "##[endgroup]",
+      "##[group]Run actions/checkout@v4", "Syncing repository", "##[endgroup]",
+      "##[group]Run ./run-tests.sh a", "./run-tests.sh a", "##[endgroup]",
+      "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",
+      "Post job cleanup.", "[command]/usr/bin/git version",
+    ].join("\n");
+    // an always-run step that errors after the real failure keeps the real failure
+    const after = [
+      "##[group]Run bun test", "bun test", "##[endgroup]", "(fail) retry never stops", "##[error]Process completed with exit code 1.",
+      "##[group]Run actions/upload-artifact@v4", "with: if-no-files-found: error", "##[endgroup]", "##[error]No files were found with the provided path: logs/",
+      "Post job cleanup.",
+    ].join("\n");
+    const kept = tidyLog(after);
+    expect(kept).toContain("(fail) retry never stops");
+    expect(kept).toContain("No files were found");
+    expect(kept.startsWith("##[group]Run bun test")).toBe(true);
+    // long lines past the byte budget keep both ends too
+    const wide = ["##[group]Run bun test", "(fail) THE REAL FAILURE", ...Array.from({ length: 150 }, () => "x".repeat(600)), "##[error]dump failed"].join("\n");
+    const narrow = tidyLog(wide, 400, 20_000);
+    expect(narrow).toContain("(fail) THE REAL FAILURE");
+    expect(narrow).toContain("bytes omitted");
+    expect(narrow.endsWith("##[error]dump failed")).toBe(true);
+    // a failing step longer than the budget keeps both of its ends
+    const long = ["##[group]Run make", ...Array.from({ length: 900 }, (_, n) => `line ${n}`), "##[error]boom"].join("\n");
+    const cut = tidyLog(long, 100);
+    expect(cut.startsWith("##[group]Run make")).toBe(true);
+    expect(cut).toContain("lines omitted");
+    expect(cut.endsWith("##[error]boom")).toBe(true);
+    expect(tidyLog(steps)).toBe([
+      "(earlier steps omitted)", "##[group]Run ./run-tests.sh a", "./run-tests.sh a", "##[endgroup]",
+      "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",
+    ].join("\n"));
   });
 });

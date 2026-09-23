@@ -48,6 +48,16 @@ describe("notification policy", () => {
     ).toBe(true)
   })
 
+  it("words auto-merge and auto-fix news by what happened to the PR", () => {
+    const autopilot = { autoMerge: true, autoFix: true, pr: 7, state: "needs-you", reason: "1 review thread still open", mergedByWisp: false }
+    const news = (kind: NonNullable<TaskTransition["autopilot"]>, over: Record<string, unknown> = {}) =>
+      describeTaskTransition({ ...transition({ autopilot: { ...autopilot, ...over } } as Partial<ApiTask>), autopilot: kind }, "Local")
+    expect(news("merged", { state: "merged", mergedByWisp: true })).toEqual({ title: "Fix the flaky test", body: "PR #7 merged by Wisp · Local" })
+    expect(news("needs-you").body).toBe("PR #7 needs you — 1 review thread still open · Local")
+    expect(news("paused", { state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" }).body)
+      .toBe("PR #7: paused — Auto-fix gave up after 3 rounds — resume to try again · Local")
+  })
+
   it("words the banner as the task title and the honest state word", () => {
     expect(describeTaskTransition(transition(), "Local")).toEqual({
       title: "Fix the flaky test",

@@ -190,6 +190,21 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
   return autopilotStatus(taskId)
 }
 
+/**
+ * Archiving switches auto-merge and auto-fix off. While they still have a PR
+ * to act on, archive asks first: the owner may only have meant to tidy up.
+ */
+export function autopilotArchiveWarning(taskId: string): string | null {
+  const row = autopilotRow(taskId)
+  // bound to a PR it has not seen merged or closed: with none, there is nothing to stop
+  const pr = row ? checkpointOf(row).pr : undefined
+  if (!row || !pr) return null
+  const { autoMerge, autoFix } = paramsOf(row)
+  const both = autoMerge && autoFix
+  const on = both ? "Auto-merge and auto-fix are" : autoMerge ? "Auto-merge is" : "Auto-fix is"
+  return `${on} on for PR #${pr} — archiving switches ${both ? "them" : "it"} off. Archive anyway to stop ${both ? "them" : "it"}, or force-archive.`
+}
+
 /** Resume a paused row, or release a Stop hold early ("Continue now"). */
 export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStatus {
   const row = autopilotRow(taskId)
@@ -245,9 +260,10 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
 }
 
 /** Write the checkpoint and bump the revision in one step, so an in-flight check discards its answer. */
-export function writeAutopilotCheckpoint(row: WorkflowRow, checkpoint: AutopilotCheckpoint, now: Date): boolean {
-  const result = db.run(`UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, updated_at = ?
-    WHERE id = ? AND revision = ? AND state = 'active'`, [JSON.stringify(checkpoint), now.toISOString(), row.id, row.revision])
+export function writeAutopilotCheckpoint(row: WorkflowRow, checkpoint: AutopilotCheckpoint, now: Date, reason?: string): boolean {
+  const result = db.run(`UPDATE workflows SET checkpoint_json = ?, reason = COALESCE(?, reason), revision = revision + 1, updated_at = ?
+    WHERE id = ? AND revision = ? AND state = 'active'`, [JSON.stringify(checkpoint), reason ?? null, now.toISOString(), row.id, row.revision])
+  if (result.changes === 1 && reason !== undefined) announceWorkflow(row.task_id)
   return result.changes === 1
 }
 
