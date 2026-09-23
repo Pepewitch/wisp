@@ -46,8 +46,12 @@ export interface Evidence {
   logsRead: number
 }
 
-/** Untrusted text, fenced so it can never close its block or pose as a heading. */
-const fenced = (text: string): string[] => ["```text", text.replaceAll("```", "``\u200b`"), "```"]
+/** Untrusted text, fenced so it can never close its block or pose as a heading: the fence outruns any backtick run in it. */
+function fenced(text: string): string[] {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = "`".repeat(Math.max(3, longest + 1))
+  return [`${fence}text`, text, fence]
+}
 
 export interface RoundContent {
   /** CI's part: failing checks or a conflict */
@@ -124,6 +128,7 @@ function reviewSection(pr: PrSnapshot, items: FeedbackItem[], signature: string)
     "- Reply: `gh api graphql -f query='mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { comment { url } } }' -f id=<thread id> -f body='<reply>'`",
     "- Resolve: `gh api graphql -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }' -f id=<thread id>`",
   ]
+  if (pr.threadsTruncated) lines.push("", `This PR has more than 100 review threads; Wisp read the first 100. See ${pr.url} for the rest.`)
   for (const item of items) {
     if (item.kind === "thread") {
       const { thread } = item

@@ -52,6 +52,10 @@ export interface AutopilotCheckpoint {
   fixArmedAt?: string
   /** review items sent to the agent: item id → the fingerprint sent */
   delivered?: Record<string, string>
+  /** CI evidence keys sent in a round, alone or with review feedback */
+  sentCi?: string[]
+  /** turn numbers that started without the note asking the agent to sign its GitHub posts (a slash command) */
+  unmarkedTurns?: number[]
 }
 
 export interface AutopilotParams {
@@ -291,18 +295,27 @@ export function checkAutopilotSoon(taskId: string, now = new Date()): boolean {
  */
 export interface TurnNotes {
   notes: string[]
+  /** the notes ask the agent to sign its GitHub posts */
+  marked: boolean
   /** Call once the turn really started: a one-time note is spent only then. */
   delivered(): void
 }
 
-const NO_NOTES: TurnNotes = { notes: [], delivered() {} }
+const NO_NOTES: TurnNotes = { notes: [], marked: false, delivered() {} }
+
+/** The marker is how Wisp tells the agent's own GitHub posts from a reviewer's. */
+function signNote(taskId: string, which: string): string {
+  return `Auto-fix is on for this task: Wisp sends you red CI and review feedback on ${which}. End every comment, review or reply you post on GitHub with: — ${getTask(taskId)?.harness ?? "agent"} via Wisp ${markerOf(taskId)}`
+}
 
 export function autopilotTurnNotes(taskId: string): TurnNotes {
   const row = autopilotRow(taskId)
   if (row && paramsOf(row).autoMerge && checkpointOf(row).state === "merging") {
     // gh said it merged and Wisp is confirming: the one thing a turn must not
     // do now is push to that branch.
-    return { notes: [`Wisp has just merged PR #${checkpointOf(row).pr} and is confirming it. Do not push to its branch; start any further change on a new branch from the base branch.`], delivered() {} }
+    const notes = [`Wisp has just merged PR #${checkpointOf(row).pr} and is confirming it. Do not push to its branch; start any further change on a new branch from the base branch.`]
+    if (paramsOf(row).autoFix) notes.push(signNote(taskId, `PR #${checkpointOf(row).pr}`))
+    return { notes, marked: paramsOf(row).autoFix, delivered() {} }
   }
   if (row && (paramsOf(row).autoMerge || paramsOf(row).autoFix)) {
     const { autoMerge, autoFix } = paramsOf(row)
@@ -315,11 +328,8 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
         `Wisp merges ${which} once its checks pass and its reviews allow it, so you do not need to wait for CI or merge it yourself. Other pull requests are unaffected.`,
       ].join(" "))
     }
-    if (autoFix) {
-      // the marker is how Wisp tells the agent's own GitHub posts from a reviewer's
-      notes.push(`Auto-fix is on for this task: Wisp sends you red CI and review feedback on ${which}. End every comment, review or reply you post on GitHub with: — ${getTask(taskId)?.harness ?? "agent"} via Wisp ${markerOf(taskId)}`)
-    }
-    return { notes, delivered() {} }
+    if (autoFix) notes.push(signNote(taskId, which))
+    return { notes, marked: autoFix, delivered() {} }
   }
   const latest = latestRow(taskId)
   if (!latest || latest.state !== "completed") return NO_NOTES
@@ -329,6 +339,7 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
   const who = merged.byWisp ? "was merged by Wisp" : "was merged"
   return {
     notes: [`PR #${checkpoint.pr} ${who}. Its branch is finished: start any further change on a new branch from origin/${merged.base}.`],
+    marked: false,
     delivered() {
       db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, merged: { ...merged, noted: true } }), latest.id])
     },
@@ -399,9 +410,24 @@ function handled(checkpoint: AutopilotCheckpoint, key: string): void {
   checkpoint.delivered = withDelivered(checkpoint.delivered, parts.delivered)
 }
 
-/** Turns of a task that started before `before`: when it was never asked to mark its GitHub posts. */
-export function unmarkedTurns(taskId: string, before: string): { started_at: string; ended_at: string | null }[] {
-  return db.query("SELECT started_at, ended_at FROM turns WHERE task_id = ? AND started_at < ?").all(taskId, before) as { started_at: string; ended_at: string | null }[]
+/** Turns of a task that were never asked to sign their GitHub posts: before auto-fix was armed, or listed. */
+export function unmarkedTurns(taskId: string, before: string, listed: number[]): { started_at: string; ended_at: string | null }[] {
+  const numbers = listed.filter(Number.isInteger)
+  return db.query(`SELECT started_at, ended_at FROM turns WHERE task_id = ? AND (started_at < ?${numbers.length > 0 ? ` OR n IN (${numbers.join(", ")})` : ""})`)
+    .all(taskId, before) as { started_at: string; ended_at: string | null }[]
+}
+
+/**
+ * A turn started without the note that asks the agent to sign its GitHub
+ * posts (a slash command carries no notes): its posts from the owner's
+ * account are the agent's, so remember which turn it was.
+ */
+export function noteUnmarkedTurn(taskId: string, turn: number): void {
+  const row = autopilotRow(taskId)
+  if (!row || !paramsOf(row).autoFix) return
+  const checkpoint = checkpointOf(row)
+  checkpoint.unmarkedTurns = [...(checkpoint.unmarkedTurns ?? []).filter((n) => n !== turn).slice(-50), turn]
+  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), row.id])
 }
 
 /** Send now: skip the short delay before a pending round. */

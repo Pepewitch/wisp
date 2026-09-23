@@ -9,7 +9,7 @@ import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
 import {
-  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteUnmarkedTurn, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
@@ -1031,10 +1031,11 @@ describe("auto-fix for review feedback", () => {
   const SOON = "2026-09-23T12:09:30Z";
   const said = (over: Partial<PrComment> = {}): PrComment => ({
     id: "RC_1", author: "owner", association: "OWNER", bot: false, body: "Rename this to `retryLimit`.",
-    createdAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#discussion_r1", ...over,
+    createdAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#discussion_r1", hidden: false, ...over,
   });
   const thread = (over: Partial<PrThread> = {}, comments = [said()]): PrThread => ({
-    id: "PRRT_1", resolved: false, outdated: false, path: "src/retry.ts", line: 40, starter: comments[0]!, comments, ...over,
+    id: "PRRT_1", resolved: false, outdated: false, path: "src/retry.ts", line: 40,
+    starter: { author: comments[0]!.author, bot: comments[0]!.bot, body: comments[0]!.body }, comments, ...over,
   });
   const blocking: PrReview = {
     id: "PRR_1", author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "Verdict: not safe to merge\n\n1. The retry never stops.",
@@ -1075,9 +1076,9 @@ describe("auto-fix for review feedback", () => {
     expect(evidence).toContain("resolveReviewThread");
     expect(autopilotStatus(task.id).fixRounds).toBe(1);
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
-    // the agent replied but the thread is still open: nothing new to send
+    // nothing new to send, but the thread Wisp sent is still open: that is for a person now
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, reason: "Nothing to fix" });
+    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "needs-you", reason: "1 review thread still open" });
     // a new reply on the thread is new feedback, and gets its own settle time
     clock.now += 5 * 60_000;
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "Still wrong for 0.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
@@ -1100,6 +1101,56 @@ describe("auto-fix for review feedback", () => {
     expect(evidence).toContain("## What failed");
     expect(evidence).toContain("## Review feedback");
     expect(autopilotStatus(task.id).fixRounds).toBe(1);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+    // no push, nothing new: the CI part is not sent again under its own key
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "needs-you", reason: "Still test failing after round 1, with no new push" });
+  });
+
+  test("a combined round cancelled from the message list skips its CI part and marks its feedback seen", async () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoFix: true });
+    const row = autopilotRow(task.id)!;
+    const key = `ci:${HEAD}:test|fb:thread:PRRT_1@${SOON}`;
+    const id = reserveRound(row, { key, prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0 }, new Date())!;
+    const path = `/api/tasks/${task.id}/messages/${id}`;
+    expect((await taskMessageRoute(new Request(`http://localhost${path}`, { method: "DELETE" }), path, "DELETE"))?.status).toBe(200);
+    const checkpoint = checkpointOf(autopilotRow(task.id)!);
+    expect(checkpoint.skipped).toContain(`ci:${HEAD}:test`);
+    expect(checkpoint.delivered).toEqual({ "thread:PRRT_1": SOON });
+  });
+
+  test("review feedback counts against the same three rounds", async () => {
+    const { task, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub({ pr: snapshot({ reviews: [{ ...blocking, submittedAt: "2026-09-23T12:00:00Z" }] }) });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, rounds: 3 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
+  });
+
+  test("a slash-command turn is never asked to sign, so the owner's-account posts inside it are the agent's", async () => {
+    const { task, file, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    setAutopilot(task.id, { autoFix: true });
+    // turn 2 ran `/code-review --comment` after arming: no notes, so no signature
+    noteUnmarkedTurn(task.id, 2);
+    db.run("INSERT INTO turns(task_id, n, prompt, status, log_file, started_at, ended_at) VALUES (?, 2, '/code-review', 'done', '/dev/null', ?, ?)",
+      [task.id, "2026-09-23T12:01:00Z", "2026-09-23T12:03:00Z"]);
+    const posted = said({ id: "RC_7", body: "nit: rename `x`", createdAt: "2026-09-23T12:02:00Z" });
+    const owners = said({ id: "RC_8", body: "Also handle ```` fences ````", createdAt: "2026-09-23T12:04:00Z" });
+    const { github } = fakeGitHub({ pr: snapshot({ threads: [thread({ id: "PRRT_7" }, [posted]), thread({ id: "PRRT_8" }, [owners])] }) });
+    const rt = runtime(github, clock, adapters);
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, ...{ unmarkedTurns: checkpointOf(autopilotRow(task.id)!).unmarkedTurns } });
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the round");
+    const evidence = evidenceOf(file);
+    expect(evidence).toContain("Also handle");
+    expect(evidence).not.toContain("nit: rename");
+    // the fence outruns the body's own backticks
+    expect(evidence).toContain("`````text\nAlso handle ```` fences ````\n`````");
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
   });
 
@@ -1169,7 +1220,8 @@ describe("auto-fix for review feedback", () => {
     skipPendingFix(task.id);
     clock.now += 5 * 60_000;
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", pendingFix: null });
+    // skipped means seen, not answered: the open thread is for a person
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "1 review thread still open", pendingFix: null });
     expect(existsSync(file)).toBe(false);
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "And the zero case.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
     await pass(rt, task.id, clock);

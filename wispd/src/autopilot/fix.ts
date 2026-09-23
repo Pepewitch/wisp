@@ -172,6 +172,7 @@ export function planFix(input: FixInput): FixPlan {
   const context = pr.checks.filter((check) => red(check) && !leaves.includes(check) && !failFast(pr, check))
   return {
     kind: "fix", reason: `${names(leaves)} failed`, conflict: false, failing: deciders, leaves, context,
-    key: `ci:${pr.head}:${leaves.map((leaf) => leaf.name).sort().join(",")}`, summary: `${names(leaves)} failing`,
+    // names are encoded: a check name may hold the separators a round's key uses
+    key: `ci:${pr.head}:${leaves.map((leaf) => encodeURIComponent(leaf.name)).sort().join(",")}`, summary: `${names(leaves)} failing`,
   }
 }

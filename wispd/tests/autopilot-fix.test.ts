@@ -49,7 +49,7 @@ describe("what auto-fix does about CI", () => {
       job("test", "FAILURE", { required: true }), job("daemon (3/6)", "FAILURE"), job("web (1/2)", "SUCCESS"),
       job("native-core", "FAILURE", { run: { id: 10, event: "pull_request" } }),
     ] });
-    expect(result).toMatchObject({ kind: "fix", reason: "test, daemon (3/6) failed", summary: "test, daemon (3/6) failing", conflict: false, key: `ci:${HEAD}:daemon (3/6),test` });
+    expect(result).toMatchObject({ kind: "fix", reason: "test, daemon (3/6) failed", summary: "test, daemon (3/6) failing", conflict: false, key: `ci:${HEAD}:${encodeURIComponent("daemon (3/6)")},test` });
     if (result.kind !== "fix") throw new Error("expected a fix");
     expect(result.failing.map((check) => check.name)).toEqual(["test"]);
     expect(result.leaves.map((check) => check.name)).toEqual(["test", "daemon (3/6)"]);
@@ -86,7 +86,7 @@ describe("what auto-fix does about CI", () => {
   test("where every check counts, fail-fast's cancelled jobs still stay out of the round", () => {
     const checks = [...[1, 2, 3, 4, 5, 6, 7].map((n) => job(`unit (${n})`, "CANCELLED")), job("unit (8)", "FAILURE")];
     const result = plan({ checks }, [9], new Set());
-    expect(result).toMatchObject({ kind: "fix", reason: "unit (8) failed", key: `ci:${HEAD}:unit (8)` });
+    expect(result).toMatchObject({ kind: "fix", reason: "unit (8) failed", key: `ci:${HEAD}:${encodeURIComponent("unit (8)")}` });
     if (result.kind !== "fix") throw new Error("expected a fix");
     expect(result.context).toEqual([]);
   });

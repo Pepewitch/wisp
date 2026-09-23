@@ -36,6 +36,8 @@ export interface PrComment {
   createdAt: string
   editedAt: string | null
   url: string
+  /** a draft in a review not submitted yet, or hidden by a maintainer: never feedback */
+  hidden: boolean
 }
 
 export interface PrThread {
@@ -46,7 +48,7 @@ export interface PrThread {
   path: string
   line: number | null
   /** who started the thread: the owner or a bot may have it resolved for them */
-  starter: PrComment | null
+  starter: { author: string | null; bot: boolean; body: string } | null
   /** the newest comments, oldest first */
   comments: PrComment[]
 }
@@ -74,6 +76,8 @@ export interface PrSnapshot {
   actionsSuitesWaiting: number
   reviews: PrReview[]
   threads: PrThread[]
+  /** more than the first 100 review threads exist: auto-fix read only those */
+  threadsTruncated: boolean
   /** the newest conversation comments, oldest first */
   comments: PrComment[]
   unresolvedThreads: number
@@ -148,7 +152,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       autoMergeRequest { enabledAt }
       reviewThreads(first: 100) { pageInfo { hasNextPage } nodes {
         id isResolved isOutdated path line originalLine
-        starter: comments(first: 1) { nodes { ...comment } }
+        starter: comments(first: 1) { nodes { author { login __typename } body } }
         recent: comments(last: 30) { nodes { ...comment } }
       } }
       reviews(last: 50) { nodes { id state body submittedAt lastEditedAt url authorAssociation author { login __typename } commit { oid } } }
@@ -172,8 +176,8 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 fragment comment on Comment {
   id body createdAt lastEditedAt authorAssociation author { login __typename }
-  ... on IssueComment { url }
-  ... on PullRequestReviewComment { url }
+  ... on IssueComment { url isMinimized }
+  ... on PullRequestReviewComment { url isMinimized state }
 }`
 
 function nodes(value: unknown): Record<string, unknown>[] {
@@ -223,14 +227,17 @@ function parseReview(node: Record<string, unknown>): PrReview {
 }
 
 function parseComment(node: Record<string, unknown>): PrComment {
-  return { id: str(node.id), ...authorOf(node), body: str(node.body), createdAt: str(node.createdAt), editedAt: editedAt(node), url: str(node.url) }
+  return {
+    id: str(node.id), ...authorOf(node), body: str(node.body), createdAt: str(node.createdAt), editedAt: editedAt(node), url: str(node.url),
+    hidden: node.isMinimized === true || node.state === "PENDING",
+  }
 }
 
 function parseThread(node: Record<string, unknown>): PrThread {
   const line = typeof node.line === "number" ? node.line : typeof node.originalLine === "number" ? node.originalLine : null
   return {
     id: str(node.id), resolved: node.isResolved === true, outdated: node.isOutdated === true, path: str(node.path), line,
-    starter: nodes(node.starter).map(parseComment)[0] ?? null,
+    starter: nodes(node.starter).map((first) => ({ author: authorOf(first).author, bot: authorOf(first).bot, body: str(first.body) }))[0] ?? null,
     comments: nodes(node.recent).map(parseComment),
   }
 }
@@ -257,6 +264,7 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
     mergeMethod: mergeMethod(repo),
     reviews: nodes(pr.reviews).map(parseReview),
     threads: nodes(pr.reviewThreads).map(parseThread),
+    threadsTruncated: isRecord(pr.reviewThreads) && isRecord(pr.reviewThreads.pageInfo) && pr.reviewThreads.pageInfo.hasNextPage === true,
     comments: nodes(pr.comments).map(parseComment),
   }
 }
@@ -285,8 +293,6 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   // A check past the first page could be the red one: refuse to decide.
   const more = (value: unknown) => isRecord(value) && isRecord(value.pageInfo) && value.pageInfo.hasNextPage === true
   if (more(rollup?.contexts) || more(commit.checkSuites)) throw new Error("Too many checks on this PR to verify them all")
-  // An unread thread could be the one blocking: refuse to decide, like a check.
-  if (more(pr.reviewThreads)) throw new Error("Too many review threads on this PR to read them all")
   const actions = nodes(commit.checkSuites).filter((suite) => isRecord(suite.workflowRun) && str(suite.status) !== "COMPLETED")
   return {
     ...prFields(pr, repo, data),

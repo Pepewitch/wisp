@@ -298,6 +298,11 @@ export class AutopilotRuntime {
       ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal })
       : "Nothing to fix"
     if (nothingToFix === null) return
+    // Review threads Wisp sent that are still open: the agent answered what it
+    // could; the rest (a colleague's to resolve, or one it disagreed with) is
+    // for a person, whether or not the repository requires resolution.
+    const open = ctx.autoFix ? pr.threads.filter((thread) => !thread.resolved && checkpoint.delivered?.[`thread:${thread.id}`]).length : 0
+    if (open > 0) { save("needs-you", `${open} review thread${open === 1 ? "" : "s"} still open`, WAITING_ON_YOU_MS, "pr"); return }
     if (!ctx.autoMerge) { save("waiting", nothingToFix, WAITING_ON_YOU_MS, "pr"); return }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
@@ -325,8 +330,9 @@ export class AutopilotRuntime {
       return null
     }
     const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
-    // A bot's verdict check beside its sticky comment is the review flow's to send.
-    const paired = pairedChecks(pr)
+    const items = await this.feedbackFor(ctx)
+    // A bot's verdict check beside the sticky comment being sent is the review flow's.
+    const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
     const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
     if (plan.kind === "rerun") {
       forgetPending(checkpoint)
@@ -339,9 +345,10 @@ export class AutopilotRuntime {
       recordWorkflow(row.id, "rerun", reason, now.toISOString())
       return say("waiting", reason, MOVING_MS)
     }
-    const items = await this.feedbackFor(ctx)
-    // CI's part, unless that evidence already reached a turn or was skipped.
-    const ci = plan.kind === "fix" && !seenWake(row.id, plan.key) && !checkpoint.skipped?.includes(plan.key) ? plan : null
+    // CI's part, unless that evidence already went out (alone, or in a round
+    // with review feedback: the round's key is then a combined one) or was skipped.
+    const sent = (key: string) => seenWake(row.id, key) || (checkpoint.sentCi ?? []).includes(key)
+    const ci = plan.kind === "fix" && !sent(plan.key) && !checkpoint.skipped?.includes(plan.key) ? plan : null
     const key = [ci?.key, items.length > 0 ? feedbackKey(items) : null].filter(Boolean).join("|")
     // Only a countdown for this very evidence keeps a pending round, or a Send now.
     if (checkpoint.pending?.key !== key) forgetPending(checkpoint)
@@ -393,7 +400,7 @@ export class AutopilotRuntime {
       author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
     // Turns that began before auto-fix was armed were never asked to mark
     // their posts: the owner's-account comments inside them are the agent's.
-    const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at)
+    const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at, checkpoint.unmarkedTurns ?? [])
     const self = (comment: PrComment) => isMarked(comment.body) || (comment.author === pr.viewer && windows.some((turn) => {
       const at = Date.parse(comment.createdAt)
       return at >= Date.parse(turn.started_at) && at <= (turn.ended_at ? Date.parse(turn.ended_at) : Infinity)
@@ -439,9 +446,11 @@ export class AutopilotRuntime {
         return say("waiting", `Waiting for GitHub to serve the logs of ${content.ci!.summary.replace(/ failing$/, "")}`, MOVING_MS)
       }
     }
+    // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
       ...checkpoint, rounds: round,
       delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
+      sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
     }
     forgetIdle(next)
     delete next.logMisses

@@ -231,6 +231,24 @@ describe("reading GitHub", () => {
     expect(() => parseSnapshot(base)).toThrow("Too many checks");
   });
 
+  test("more review threads than one page holds are flagged, not fatal: merging and closing still read", () => {
+    const threads = { pageInfo: { hasNextPage: true }, nodes: [{
+      id: "PRRT_1", isResolved: false, isOutdated: false, path: "a.ts", line: 3,
+      starter: { nodes: [{ author: { login: "owner", __typename: "User" }, body: "x" }] },
+      recent: { nodes: [
+        { id: "RC_1", body: "draft", createdAt: "t", authorAssociation: "OWNER", author: { login: "owner", __typename: "User" }, url: "u", isMinimized: false, state: "PENDING" },
+        { id: "RC_2", body: "hidden", createdAt: "t", authorAssociation: "OWNER", author: { login: "owner", __typename: "User" }, url: "u", isMinimized: true, state: "SUBMITTED" },
+        { id: "RC_3", body: "real", createdAt: "t", authorAssociation: "OWNER", author: { login: "dependabot", __typename: "Bot" }, url: "u", isMinimized: false, state: "SUBMITTED" },
+      ] },
+    }] };
+    const snapshot = parseSnapshot(raw({ reviewThreads: threads, state: "MERGED" }));
+    expect(snapshot).toMatchObject({ state: "MERGED", threadsTruncated: true, unresolvedThreads: 1 });
+    expect(snapshot.threads[0]!.comments.map((c) => [c.id, c.hidden, c.author, c.bot])).toEqual([
+      ["RC_1", true, "owner", false], ["RC_2", true, "owner", false], ["RC_3", false, "dependabot", true],
+    ]);
+    expect(snapshot.threads[0]!.starter).toEqual({ author: "owner", bot: false, body: "x" });
+  });
+
   test("merge method prefers squash, then the only allowed method, then the viewer's default", () => {
     expect(mergeMethod({ squashMergeAllowed: true, mergeCommitAllowed: true })).toBe("SQUASH");
     expect(mergeMethod({ squashMergeAllowed: false, rebaseMergeAllowed: true })).toBe("REBASE");

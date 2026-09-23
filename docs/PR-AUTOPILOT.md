@@ -168,18 +168,25 @@ running.
     looked up and cached for an hour). A `MEMBER` association alone does not
     count: it can mean read access.
   - Everyone else's feedback still blocks the merge where GitHub says so, but
-    it never instructs the agent.
+    it never instructs the agent. Neither does a bot that is only answering
+    them in a thread.
 - **Not noise.**
   - An approval is a merge signal, not something to fix.
-  - So is a "LGTM" or a "thanks".
+  - A "LGTM", a "thanks" or a 👍, as a comment, a review or a thread reply,
+    asks for nothing.
+  - A bot's review body is its overview; its threads are the feedback.
+  - Draft review comments you have not submitted, and comments a maintainer
+    hid, never count.
   - A bot's conversation comment is usually a status board it edits on every
     push, so it counts only when the same app's check on the head is red
     (then once per head) or when it says "blocking".
 - **Never its own words.** While auto-fix is on, every turn is asked to end
   each GitHub comment, review or reply with `— <agent> via Wisp <!--
-  wisp:task=<id> -->`, and Wisp never sends marked posts back. A comment from
-  your account written during one of the task's turns from before auto-fix
-  was on counts as the agent's too.
+  wisp:task=<id> -->`, and Wisp never sends signed posts back (a quote of one
+  is someone answering it, and counts). A comment from your account written
+  during one of the task's turns that was never asked to sign counts as the
+  agent's too: turns from before auto-fix was on, and slash-command turns,
+  which cannot carry the note.
 - **Once.** Each thread, review and comment is sent once. A new reply or an
   edit makes it new again. A thread that was resolved after Wisp sent it
   comes back when a trusted reply arrives on it ("still wrong"). **Skip**, or
@@ -191,7 +198,12 @@ running.
   bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
   anyone else's thread and never resolves it. It never resolves a thread it
   disagreed with; it says so in its final message instead. What it cannot
-  resolve stays for you, and with auto-merge on the merge waits for it.
+  resolve stays for you: while a thread Wisp sent is still open, the status
+  says so and nothing merges, whether or not the repository requires
+  conversations to be resolved.
+- **Big PRs.** Wisp reads the first 100 review threads, the newest 30
+  comments in each, and the newest 100 conversation comments; the evidence
+  says when there were more.
 
 ## How often it checks
 
