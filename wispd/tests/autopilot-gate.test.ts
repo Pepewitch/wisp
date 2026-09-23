@@ -41,6 +41,13 @@ describe("verdict lines", () => {
     expect(parseVerdict("## Verdict\n\n**CHANGES REQUESTED** — two findings")).toBe("blocking");
     expect(parseVerdict("## Verdict\nApproved")).toBe("approve");
     expect(parseVerdict("Verdict: looks mostly fine")).toBe("unparseable");
+    // an approving word does not outweigh a request for changes, or a condition
+    expect(parseVerdict("Verdict: Approve with changes requested")).toBe("blocking");
+    expect(parseVerdict("Verdict: APPROVE after the blocking issue below is fixed")).toBe("unparseable");
+    expect(parseVerdict("Verdict: Approved? No — request changes")).toBe("blocking");
+    expect(parseVerdict("Verdict: BLOCKING — two issues")).toBe("blocking");
+    // a verdict is read wherever it sits, not only on the first line
+    expect(parseVerdict("# Review of #267\n\n**Verdict:** CHANGES REQUESTED")).toBe("blocking");
     expect(parseVerdict("## Verdict")).toBe("unparseable");
     expect(parseVerdict("Nice work, one nit below.")).toBeNull();
     expect(parseVerdict("   \n")).toBeNull();
@@ -74,14 +81,17 @@ describe("the merge gate", () => {
 
   test("a draft or a PR onto another base never merges", () => {
     expect(gate({ pr: pr({ isDraft: true }) })).toMatchObject({ kind: "needs-you", reason: expect.stringContaining("Draft") });
-    expect(gate({ pr: pr({ baseRefName: "wisp/parent" }) })).toMatchObject({ kind: "needs-you", reason: expect.stringContaining("merge the parent first") });
+    expect(gate({ pr: pr({ baseRefName: "wisp/parent" }) })).toEqual({ kind: "needs-you", reason: "Targets wisp/parent; auto-merge only merges into main" });
     expect(gate({ pr: pr({ baseRefName: "develop" }), allowedBases: new Set(["main", "develop"]) })).toEqual({ kind: "merge" });
   });
 
   test("a fresh head is not believed green until its checks had time to appear", () => {
     const fresh = { headFirstSeenMs: NOW - 1000 };
     expect(gate({ ...fresh, pr: pr({ checks: [] }) })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
-    expect(gate({ pr: pr({ actionsSuitesPending: 2, checks: [] }) })).toEqual({ kind: "wait", reason: "Waiting for checks (2 running)" });
+    expect(gate({ pr: pr({ actionsSuitesPending: 2, checks: [] }) })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
+    expect(gate({ pr: pr({ actionsSuitesPending: 1, checks: [check("test", null)] }) })).toEqual({ kind: "wait", reason: "Waiting for checks (1 running)" });
+    // a head nobody timed is as fresh as it gets
+    expect(gate({ headFirstSeenMs: Number.NaN })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
   });
 
   test("red, held, and pending checks each say what they are", () => {
@@ -98,6 +108,8 @@ describe("the merge gate", () => {
     expect(gate({ pr: pr({ mergeState: "UNSTABLE", checks }), requiredNames: new Set(["test"]) })).toEqual({ kind: "merge" });
     // no required checks: the absence of rules is read strictly
     expect(gate({ pr: pr({ mergeState: "UNSTABLE", checks }) })).toEqual({ kind: "needs-you", reason: "native-core failed" });
+    // and UNSTABLE there is GitHub seeing a red check Wisp did not: never mergeable
+    expect(gate({ pr: pr({ mergeState: "UNSTABLE" }) })).toEqual({ kind: "needs-you", reason: "GitHub reports a failing check" });
     // a required check that has not reported yet is waited for, not assumed
     expect(gate({ pr: pr({ checks: [check("native-core", "SUCCESS")] }), requiredNames: new Set(["test"]) }))
       .toEqual({ kind: "wait", reason: "Waiting for test to report" });
@@ -105,7 +117,7 @@ describe("the merge gate", () => {
 
   test("BLOCKED is explained from what GitHub reports, never guessed as an approval wait", () => {
     expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2 }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }) })).toEqual({ kind: "wait", reason: "Waiting for an approving review" });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }) })).toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
     expect(gate({ pr: pr({ mergeState: "BLOCKED" }) })).toEqual({ kind: "needs-you", reason: "Blocked by a branch rule" });
     expect(gate({ pr: pr({ mergeState: "DIRTY" }) })).toEqual({ kind: "needs-you", reason: "Conflicts with main" });
     expect(gate({ pr: pr({ mergeState: "UNKNOWN" }) })).toMatchObject({ kind: "wait" });
@@ -113,13 +125,18 @@ describe("the merge gate", () => {
 
   test("a reviewer who blocked must pass the current head; an approval on an older head is not enough", () => {
     const blocked = review({ body: "Verdict: CHANGES REQUESTED — retry never stops", commit: OLD, submittedAt: "2026-09-23T10:00:00Z" });
-    expect(gate({ pr: pr({ reviews: [blocked] }) })).toEqual({ kind: "wait", reason: "Waiting for the reviewer to pass aaaaaaa" });
+    expect(gate({ pr: pr({ reviews: [blocked] }) })).toEqual({ kind: "wait", reason: "Waiting for the reviewer to pass aaaaaaa", slow: true });
     const passedOld = review({ body: "Verdict: APPROVE", commit: OLD, submittedAt: "2026-09-23T10:30:00Z" });
     expect(gate({ pr: pr({ reviews: [blocked, passedOld] }) })).toMatchObject({ kind: "wait" });
     const passedHead = review({ body: "Verdict: APPROVE", commit: HEAD, submittedAt: "2026-09-23T11:00:00Z" });
     expect(gate({ pr: pr({ reviews: [blocked, passedHead] }) })).toEqual({ kind: "merge" });
     // an approval from somebody else does not answer this reviewer's block
     expect(gate({ pr: pr({ reviews: [blocked, { ...passedHead, author: "someone" }] }) })).toMatchObject({ kind: "wait" });
+  });
+
+  test("a formal change request is never overridden by an approving line in its own body", () => {
+    const formal = review({ author: "colleague", association: "MEMBER", state: "CHANGES_REQUESTED", body: "Verdict: APPROVE" });
+    expect(gate({ pr: pr({ reviews: [formal] }) })).toEqual({ kind: "needs-you", reason: "Changes requested by @colleague" });
   });
 
   test("approvals and plain feedback never block; unreadable verdicts and empty change requests need a person", () => {
@@ -189,6 +206,15 @@ describe("reading GitHub", () => {
 
   test("a head that moved between the PR row and its checks is refused, not paired", () => {
     expect(() => parseSnapshot(raw({ headRefOid: OLD }))).toThrow("PR changed during the check");
+    // and a head with no commit row at all is not a head with no checks
+    expect(() => parseSnapshot(raw({ commits: { nodes: [] } }))).toThrow("PR changed during the check");
+  });
+
+  test("more checks than one page holds is refused rather than half-read", () => {
+    const base = raw();
+    const commit = (base.data.repository.pullRequest as { commits: { nodes: { commit: Record<string, unknown> }[] } }).commits.nodes[0]!.commit;
+    (commit.statusCheckRollup as { contexts: Record<string, unknown> }).contexts.pageInfo = { hasNextPage: true };
+    expect(() => parseSnapshot(base)).toThrow("Too many checks");
   });
 
   test("merge method prefers squash, then the only allowed method, then the viewer's default", () => {

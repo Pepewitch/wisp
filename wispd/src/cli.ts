@@ -164,8 +164,11 @@ async function createCommand(positional: string[], flags: Flags): Promise<void> 
     exitApi(error);
   }
   const where = task.mode === "local" ? ", local" : "";
-  const merge = flags["auto-merge"] === true ? ", auto-merge" : "";
+  // What the daemon armed, not what was asked: an older daemon ignores the field.
+  const armed = (task as ApiTask & { autopilot?: { autoMerge?: boolean } }).autopilot?.autoMerge === true;
+  const merge = armed ? ", auto-merge" : "";
   console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
+  if (flags["auto-merge"] === true && !armed) console.error("warning: this daemon did not arm auto-merge (it may be older than this CLI)");
 }
 
 async function resultCommand(positional: string[]): Promise<void> {

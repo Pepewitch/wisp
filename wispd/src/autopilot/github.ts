@@ -51,11 +51,12 @@ export interface OpenPullRequest {
   baseRefName: string
   createdAt: string
   isCrossRepository: boolean
+  author: string | null
 }
 
 export interface AutopilotGitHub {
   snapshot(repository: string, number: number, cwd: string, signal: AbortSignal): Promise<PrSnapshot>
-  openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; pulls: OpenPullRequest[] }>
+  openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; viewer: string; pulls: OpenPullRequest[] }>
   /** Context names the base branch requires, from classic protection and rulesets. */
   requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]>
   merge(input: { repository: string; number: number; method: MergeMethod; head: string }, cwd: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }>
@@ -102,8 +103,8 @@ query($owner: String!, $name: String!, $number: Int!) {
       reviewThreads(first: 100) { nodes { isResolved } }
       reviews(last: 50) { nodes { state body submittedAt authorAssociation author { login __typename } commit { oid } } }
       commits(last: 1) { nodes { commit { oid
-        checkSuites(first: 50) { nodes { status workflowRun { databaseId } } }
-        statusCheckRollup { contexts(first: 100) { nodes {
+        checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
+        statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
           ... on CheckRun { name status conclusion detailsUrl isRequired(pullRequestNumber: $number) }
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
@@ -127,10 +128,15 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   const checkedCommit = isRecord(commit) ? str(commit.oid) : ""
   // One document, one head: a push between the PR row and its checks would
   // otherwise pair the new head with the old head's results.
-  if (!/^[0-9a-f]{40}$/i.test(head) || (checkedCommit !== "" && checkedCommit !== head)) {
+  if (!/^[0-9a-f]{40}$/i.test(head) || checkedCommit !== head) {
     throw new Error("PR changed during the check; waiting for a consistent answer")
   }
   const rollup = isRecord(commit) && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
+  // A check past the first page could be the red one: refuse to decide.
+  const more = (value: unknown) => isRecord(value) && isRecord(value.pageInfo) && value.pageInfo.hasNextPage === true
+  if (more(rollup?.contexts) || (isRecord(commit) && more(commit.checkSuites))) {
+    throw new Error("Too many checks on this PR to verify them all")
+  }
   const checks: PrCheck[] = nodes(rollup?.contexts).map((node) => node.__typename === "StatusContext"
     ? { name: str(node.context), status: str(node.state), conclusion: null, required: node.isRequired === true, url: str(node.targetUrl) }
     : { name: str(node.name), status: str(node.status), conclusion: typeof node.conclusion === "string" ? node.conclusion : null, required: node.isRequired === true, url: str(node.detailsUrl) })
@@ -216,9 +222,9 @@ export const ghAutopilot: AutopilotGitHub = {
     const [owner, name] = split(repository)
     const selections = branches.map((branch, index) => `
       b${index}: pullRequests(first: 5, headRefName: ${JSON.stringify(branch)}, states: [OPEN], orderBy: { field: CREATED_AT, direction: ASC }) {
-        nodes { number headRefName baseRefName createdAt isCrossRepository }
+        nodes { number headRefName baseRefName createdAt isCrossRepository author { login } }
       }`).join("\n")
-    const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
+    const query = `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
     const raw = await ghJson(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${query}`], cwd, signal)
     const repo = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.repository) ? raw.data.repository : null
     if (!repo) throw new Error("GitHub returned no repository")
@@ -228,10 +234,12 @@ export const ghAutopilot: AutopilotGitHub = {
         pulls.push({
           number: Number(node.number), headRefName: str(node.headRefName), baseRefName: str(node.baseRefName),
           createdAt: str(node.createdAt), isCrossRepository: node.isCrossRepository === true,
+          author: isRecord(node.author) ? str(node.author.login) || null : null,
         })
       }
     }
-    return { defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "", pulls }
+    const viewer = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.viewer) ? str(raw.data.viewer.login) : ""
+    return { defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "", viewer, pulls }
   },
   async requiredChecks(repository, base, cwd, signal) {
     const path = `repos/${repository}`

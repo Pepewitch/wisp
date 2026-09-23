@@ -17,13 +17,23 @@ critical changes you want to read first.
 
 ## What the agent is told
 
-While auto-merge is on, every turn Wisp starts carries one standing note:
+While auto-merge is on, every turn Wisp starts carries one standing note (except
+a turn whose message is a slash command, which a harness only recognises at the
+very start of its prompt; the note rides the next ordinary turn instead):
 push the branch and open a pull request when the work is ready, and leave the
 merge to Wisp. The note overrides the default "do not push unless asked",
 because turning auto-merge on *is* asking. It is scoped to this task's PR, so an
 agent that manages other PRs can still merge them. After a merge, the
 agent's next turn is told once that the branch is finished and further work
 belongs on a new branch from the base.
+
+## Which PR
+
+Auto-merge binds to one pull request: the task's own, meaning one **you** opened
+(the account `gh` is signed in as) **after the task was created**, from this
+repository. A worktree can check out anyone's branch, and Wisp never adopts
+someone else's PR. It prefers the task's own branch, then the oldest PR onto the
+base. `wisp pr <task>` and the task menu name the PR it is bound to.
 
 ## When Wisp merges
 
@@ -35,25 +45,34 @@ not hold is the reason shown in `wisp pr` and next to the PR in the app.
   has merged.
 - **Checks.** If the base branch has required checks, only they count, and a red
   check that is not required does not stop the merge. If it has none, every
-  check counts. A new head gets two minutes, and every GitHub Actions run on
-  it must finish, before a green (or empty) result is believed.
+  check counts, and GitHub reporting the PR as unstable is never read as
+  mergeable. A new head — or a draft just marked ready — gets two minutes, and
+  every GitHub Actions run on it must finish, before a green (or empty) result
+  is believed. More checks than one page of results holds is refused rather
+  than half-read.
 - **Reviews.** A reviewer who blocked, with a change request or a
-  `Verdict: CHANGES REQUESTED` line, must pass the *current* head before it
-  merges; an approval of an older head does not count. There is no timer. A
-  verdict line Wisp cannot read counts as blocking. Only the repository owner,
+  `Verdict: CHANGES REQUESTED` line anywhere in the review, must pass the
+  *current* head before it merges; an approval of an older head does not count.
+  There is no timer. Only a plain `Verdict: APPROVE` approves: any request for
+  changes in the line blocks, even after an approving word, and a verdict line
+  Wisp cannot read counts as blocking. Only the repository owner,
   collaborators, organization members, and installed apps count as reviewers.
 - **GitHub agrees.** Conflicts, an out-of-date branch, and unresolved
   conversations all wait, and the reason names which.
 - **The task is idle:** settled `done`, with nothing queued, stopping, or still
   running in the background. Wisp never merges mid-turn.
-- **Nothing is left behind.** The worktree has no commits the PR lacks and no
-  uncommitted changes to tracked files. Untracked files are ignored.
+- **Nothing is left behind.** No local branch, and not the worktree's HEAD, holds
+  commits built on the PR that exist on no remote; there are no uncommitted
+  changes to tracked files and no rebase or merge in progress. A stacked child
+  you pushed for its own PR does not count, and untracked files are ignored.
+  Anything Wisp cannot verify counts as not ready.
 
 Wisp merges with squash when the repository allows it, and otherwise with the
 only method it allows. It runs `gh pr merge --match-head-commit <sha>`, so a
 push in the last moment makes the merge refuse instead of merging something
 unchecked. It never uses `--admin` and never deletes the branch (the task's
-worktree is on it). New turns wait while the merge runs.
+worktree is on it). New turns wait while the merge runs, and the first one
+after it hears how the merge ended.
 
 ## Stop, agent changes, archive
 
@@ -64,7 +83,8 @@ worktree is on it). New turns wait while the merge runs.
 - **Archiving** the task switches it off.
 - **Closing the PR** switches it off. Wisp never moves on to another PR.
 - **Pauses**, which need `resume`: a merge that failed three times on the same
-  head, and GitHub's own auto-merge found switched on for the PR.
+  head, and GitHub's own auto-merge found switched on for the PR. A paused
+  task still notices when its PR is merged or closed.
 
 ## How often it checks
 

@@ -16,6 +16,8 @@ export interface AutopilotCheckpoint {
   stopHold?: { turnCount: number }
   /** head sha → when Wisp first saw it (the fresh-head floor) */
   heads?: Record<string, string>
+  /** when the PR was first seen out of draft: marking it ready restarts the floor */
+  readySince?: string
   /** written BEFORE `gh pr merge` runs, so a crash after it still reads as Wisp's merge */
   mergeAttempt?: { head: string; at: string }
   mergeFailures?: { head: string; count: number }
@@ -193,11 +195,20 @@ export function pauseAutopilot(row: WorkflowRow, reason: string, now: Date): voi
   changeWorkflowState(row.id, "paused", reason, now)
 }
 
-/** Rows the autopilot loop should look at now: due active ones, and ones the agent-switch trigger paused. */
+/**
+ * Rows the autopilot loop should look at now: due ones of any unfinished state
+ * (a paused row still gets a slow look for a PR someone merged or closed), and
+ * at once any the agent-switch trigger paused, which autopilot follows.
+ */
 export function dueAutopilots(now: Date): WorkflowRow[] {
-  return db.query(`SELECT * FROM workflows WHERE type = ? AND (
-      (state = 'active' AND next_check_at <= ?) OR (state = 'paused' AND reason = ?)
+  return db.query(`SELECT * FROM workflows WHERE type = ? AND state != 'completed' AND (
+      next_check_at <= ? OR (state = 'paused' AND reason = ?)
     ) ORDER BY next_check_at LIMIT 50`).all(AUTOPILOT_TYPE, now.toISOString(), CONTEXT_CHANGE_PAUSE) as WorkflowRow[]
+}
+
+/** Push a row's next look out without touching anything else about it. */
+export function deferAutopilot(row: WorkflowRow, at: Date): void {
+  db.run("UPDATE workflows SET next_check_at = ? WHERE id = ? AND revision = ?", [at.toISOString(), row.id, row.revision])
 }
 
 /** Bring a due row forward, so the loop looks at it on its next pass. */
@@ -213,22 +224,34 @@ export function checkAutopilotSoon(taskId: string, now = new Date()): boolean {
  * one). Once after a merge, a note that the branch is finished — the agent's
  * next change must not pile onto a merged branch.
  */
-export function autopilotTurnNotes(taskId: string): string[] {
+export interface TurnNotes {
+  notes: string[]
+  /** Call once the turn really started: a one-time note is spent only then. */
+  delivered(): void
+}
+
+const NO_NOTES: TurnNotes = { notes: [], delivered() {} }
+
+export function autopilotTurnNotes(taskId: string): TurnNotes {
   const row = autopilotRow(taskId)
   if (row && paramsOf(row).autoMerge) {
     const pr = checkpointOf(row).pr
     const which = pr ? `PR #${pr}` : "this task's pull request"
-    return [[
+    return { notes: [[
       `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
       `Wisp merges ${which} once its checks pass and its reviews allow it, so you do not need to wait for CI or merge it yourself. Other pull requests are unaffected.`,
-    ].join(" ")]
+    ].join(" ")], delivered() {} }
   }
   const latest = latestRow(taskId)
-  if (!latest || latest.state !== "completed") return []
+  if (!latest || latest.state !== "completed") return NO_NOTES
   const checkpoint = checkpointOf(latest)
-  if (checkpoint.outcome !== "merged" || !checkpoint.merged || checkpoint.merged.noted) return []
-  checkpoint.merged.noted = true
-  db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify(checkpoint), latest.id])
-  const who = checkpoint.merged.byWisp ? "was merged by Wisp" : "was merged"
-  return [`PR #${checkpoint.pr} ${who}. Its branch is finished: start any further change on a new branch from origin/${checkpoint.merged.base}.`]
+  const merged = checkpoint.merged
+  if (checkpoint.outcome !== "merged" || !merged || merged.noted) return NO_NOTES
+  const who = merged.byWisp ? "was merged by Wisp" : "was merged"
+  return {
+    notes: [`PR #${checkpoint.pr} ${who}. Its branch is finished: start any further change on a new branch from origin/${merged.base}.`],
+    delivered() {
+      db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, merged: { ...merged, noted: true } }), latest.id])
+    },
+  }
 }

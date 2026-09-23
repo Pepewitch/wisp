@@ -39,7 +39,7 @@ import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { isRecord, typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { taskIdsWithAttachedWorkflows } from "../workflows/store";
-import { autopilotStatuses, setAutopilot } from "../autopilot/store";
+import { autopilotStatus, autopilotStatuses, setAutopilot } from "../autopilot/store";
 import { autopilotUpdateError } from "./autopilot";
 import { archiveTaskRows } from "./archive";
 import { launchTask } from "./task-launch";
@@ -130,9 +130,18 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   return null;
 }
 
-/** Armed before the first turn starts, so that turn already carries the auto-merge note. */
+/**
+ * Armed before the first turn starts, so that turn already carries the
+ * auto-merge note. Never fatal: the task row already exists, and failing the
+ * request here would strand it in `creating`. The response says what took.
+ */
 function armRequestedAutopilot(taskId: string, requested: unknown): void {
-  if (isRecord(requested) && requested.autoMerge === true) setAutopilot(taskId, { autoMerge: true });
+  if (!isRecord(requested) || requested.autoMerge !== true) return;
+  try {
+    setAutopilot(taskId, { autoMerge: true });
+  } catch (error) {
+    console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 /** POST /api/tasks */
@@ -244,7 +253,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       void trackHomeWork(
         launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
       );
-      return json(apiTask(task), 201);
+      return json({ ...apiTask(task), autopilot: autopilotStatus(task.id) }, 201);
     } finally {
       if (!handedOff) releaseDecodedAttachments(attachments);
     }

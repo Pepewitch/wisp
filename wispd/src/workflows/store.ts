@@ -2,7 +2,7 @@ import type { Workflow, WorkflowDecision, WorkflowDefinition, WorkflowHistory, W
 import { db } from "../store-database";
 import { emit } from "../events";
 import { createTaskMessage, getTask, getTaskMessage, randomId } from "../store";
-import { AUTOPILOT_TYPE } from "../autopilot/type";
+import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "../autopilot/type";
 
 export interface WorkflowRow {
   id: string; task_id: string; type: string; version: string; params_json: string;
@@ -131,7 +131,10 @@ export function retireWorkflowTypes(retired: Record<string, string>, now = new D
 export function pauseTaskWorkflows(taskId: string): void {
   const task = getTask(taskId);
   for (const item of listWorkflows(taskId)) {
-    if (item.state !== "active") continue;
+    // An autopilot row the agent-switch trigger just paused is about to be
+    // reactivated, so it takes the hold too.
+    const followed = item.type === AUTOPILOT_TYPE && item.state === "paused" && item.reason === CONTEXT_CHANGE_PAUSE;
+    if (item.state !== "active" && !followed) continue;
     if (item.type === AUTOPILOT_TYPE) {
       // Stop HOLDS autopilot rather than pausing it: a person stepped in, so
       // nothing acts until their next turn has finished, and then it carries
@@ -140,7 +143,7 @@ export function pauseTaskWorkflows(taskId: string): void {
       const row = getWorkflow(item.id)!;
       const checkpoint = { ...JSON.parse(row.checkpoint_json) as Record<string, unknown>, stopHold: { turnCount: task?.turn_count ?? 0 }, state: "held" };
       const at = new Date().toISOString();
-      db.run("UPDATE workflows SET checkpoint_json = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+      db.run("UPDATE workflows SET checkpoint_json = ?, reason = CASE WHEN state = 'active' THEN ? ELSE reason END, revision = revision + 1, updated_at = ? WHERE id = ?",
         [JSON.stringify(checkpoint), "Held — you pressed Stop; continues after your next turn", at, item.id]);
       recordWorkflow(item.id, "held", "Held after Stop", at);
       announceWorkflow(taskId);

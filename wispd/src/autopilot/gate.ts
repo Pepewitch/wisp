@@ -16,8 +16,8 @@ export const FRESH_HEAD_MS = 2 * 60_000
 
 export type GateResult =
   | { kind: "merge" }
-  /** something that moves on its own; check again soon */
-  | { kind: "wait"; reason: string }
+  /** something that moves on its own; check again soon — or, `slow`, a person who has to act first */
+  | { kind: "wait"; reason: string; slow?: boolean }
   /** blocked until a person (or a later push) changes something */
   | { kind: "needs-you"; reason: string }
 
@@ -42,10 +42,13 @@ function names(checks: PrCheck[]): string {
 
 function checksGate(input: GateInput): GateResult | null {
   const { pr, requiredNames } = input
-  if (input.nowMs - input.headFirstSeenMs < FRESH_HEAD_MS || pr.actionsSuitesPending > 0) {
+  // A head Wisp has not timed (NaN) is as fresh as it gets.
+  const fresh = !(input.nowMs - input.headFirstSeenMs >= FRESH_HEAD_MS)
+  if (fresh || pr.actionsSuitesPending > 0) {
     const running = pr.checks.filter((check) => classifyCheck(check) === "pending").length
-    if (pr.actionsSuitesPending > 0 || running > 0) return { kind: "wait", reason: `Waiting for checks (${Math.max(running, pr.actionsSuitesPending)} running)` }
-    return { kind: "wait", reason: "Waiting for checks to start" }
+    return running > 0
+      ? { kind: "wait", reason: `Waiting for checks (${running} running)` }
+      : { kind: "wait", reason: "Waiting for checks to start" }
   }
   const counting = countingChecks(pr.checks, requiredNames)
   const fixes = counting.filter((check) => classifyCheck(check) === "fix")
@@ -73,12 +76,13 @@ function trusted(review: PrReview): boolean {
 type Signal = "approve" | "block" | "unparseable" | "state-block"
 
 function signalOf(review: PrReview): Signal | null {
+  // A formal change request is never overridden by what its body says.
+  if (review.state === "CHANGES_REQUESTED") return "state-block"
   const verdict = parseVerdict(review.body)
   if (verdict === "approve") return "approve"
   if (verdict === "blocking") return "block"
   if (verdict === "unparseable") return "unparseable"
   if (review.state === "APPROVED") return "approve"
-  if (review.state === "CHANGES_REQUESTED") return "state-block"
   return null
 }
 
@@ -113,17 +117,21 @@ function reviewGate(pr: PrSnapshot): GateResult | null {
     }
     // A verdict line is how the owner's own reviewer agents speak, from the
     // owner's account, so the reason names the commit rather than a login.
-    return { kind: "wait", reason: `Waiting for the reviewer to pass ${short(pr.head)}` }
+    return { kind: "wait", reason: `Waiting for the reviewer to pass ${short(pr.head)}`, slow: true }
   }
   return null
 }
 
-function mergeStateGate(pr: PrSnapshot): GateResult | null {
+function mergeStateGate(pr: PrSnapshot, requiredNames: ReadonlySet<string>): GateResult | null {
   switch (pr.mergeState) {
     case "CLEAN":
     case "HAS_HOOKS":
-    case "UNSTABLE":
       return null
+    case "UNSTABLE":
+      // With required checks, UNSTABLE means only optional ones are red, which
+      // the checks gate already weighed. Without any, it is GitHub saying
+      // something is red that Wisp did not see: never read that as mergeable.
+      return requiredNames.size > 0 ? null : { kind: "needs-you", reason: "GitHub reports a failing check" }
     case "DIRTY":
       return { kind: "needs-you", reason: `Conflicts with ${pr.baseRefName}` }
     case "BEHIND":
@@ -132,7 +140,7 @@ function mergeStateGate(pr: PrSnapshot): GateResult | null {
       if (pr.unresolvedThreads > 0) {
         return { kind: "needs-you", reason: `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}` }
       }
-      if (pr.reviewDecision === "REVIEW_REQUIRED") return { kind: "wait", reason: "Waiting for an approving review" }
+      if (pr.reviewDecision === "REVIEW_REQUIRED") return { kind: "wait", reason: "Waiting for an approving review", slow: true }
       if (pr.reviewDecision === "CHANGES_REQUESTED") return { kind: "needs-you", reason: "Changes requested" }
       return { kind: "needs-you", reason: "Blocked by a branch rule" }
     default:
@@ -144,8 +152,8 @@ export function mergeGate(input: GateInput): GateResult {
   const { pr } = input
   if (pr.isDraft) return { kind: "needs-you", reason: "Draft — mark it ready for review" }
   if (!input.allowedBases.has(pr.baseRefName)) {
-    return { kind: "needs-you", reason: `Targets ${pr.baseRefName}, not ${pr.defaultBranch} — merge the parent first` }
+    return { kind: "needs-you", reason: `Targets ${pr.baseRefName}; auto-merge only merges into ${pr.defaultBranch}` }
   }
-  return checksGate(input) ?? reviewGate(pr) ?? mergeStateGate(pr) ??
+  return checksGate(input) ?? reviewGate(pr) ?? mergeStateGate(pr, input.requiredNames) ??
     (input.published.ok ? { kind: "merge" } : { kind: "needs-you", reason: input.published.reason })
 }

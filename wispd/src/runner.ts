@@ -166,7 +166,11 @@ export function startTurn(
   // Wisp's own standing instructions travel with the harness input, like the
   // task preamble, and are not written into the user's message. Auto-merge
   // needs one: arming it IS asking for a push, which the preamble forbids.
-  const notes = autopilotTurnNotes(task.id);
+  // Never in front of a later turn's slash command — a harness only treats the
+  // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
+  const command = n > 1 && message.trimStart().startsWith("/");
+  const autopilot = command ? null : autopilotTurnNotes(task.id);
+  const notes = autopilot?.notes ?? [];
   const prompt = n === 1
     ? `${taskPreamble(task, notes)}\n${body}`
     : notes.length > 0 ? `${notes.join("\n")}\n\n${body}` : body;
@@ -247,6 +251,7 @@ export function startTurn(
     transition(task.id, "failed", `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
     return;
   }
+  autopilot?.delivered();
   // pid + start time = identity (H1): a restarted daemon must be able to tell
   // this process from a stranger that got the same pid. null (child already
   // exited before ps could see it) degrades to bare-liveness re-adoption.

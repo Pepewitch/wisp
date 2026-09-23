@@ -25,9 +25,10 @@ import { ghAutopilot, type AutopilotGitHub, type OpenPullRequest, type PrSnapsho
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import {
-  checkAutopilotSoon, checkpointOf, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot,
+  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot,
   saveAutopilotCheck, writeAutopilotCheckpoint, type AutopilotCheckpoint,
 } from "./store"
+import { CONTEXT_CHANGE_PAUSE } from "./type"
 
 /** Something that moves on its own: checks running, a fresh head, a merge queue. */
 export const MOVING_MS = 60_000
@@ -70,18 +71,33 @@ async function originRepository(task: Task, signal: AbortSignal): Promise<string
   return origin && origin.exitCode === 0 ? githubRepository(origin.stdout) : null
 }
 
-function choosePull(pulls: OpenPullRequest[], allowedBases: ReadonlySet<string>): OpenPullRequest | null {
-  const own = pulls.filter((pull) => !pull.isCrossRepository).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
-  // The oldest PR onto the base first, so a stacked child never jumps its parent.
-  return own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own[0] ?? null
+/**
+ * Only a PR this task could have opened: authored by the account Wisp merges
+ * as, opened after the task was created, from this repository. A worktree can
+ * check out anyone's branch (`gh pr checkout`), and adopting that PR would
+ * merge someone else's work under the owner's name. Among those, the task's
+ * own branch names first, then the oldest onto the base, so a stacked child
+ * never jumps its parent.
+ */
+export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>): OpenPullRequest | null {
+  const created = Date.parse(task.created_at)
+  const own = pulls
+    .filter((pull) => !pull.isCrossRepository && viewer !== "" && pull.author === viewer && Date.parse(pull.createdAt) >= created)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
+  const named = (pull: OpenPullRequest) => pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`)
+  return own.find((pull) => named(pull) && allowedBases.has(pull.baseRefName)) ??
+    own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own.find(named) ?? own[0] ?? null
 }
 
-function trimHeads(heads: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(heads).sort((a, b) => a[1].localeCompare(b[1])).slice(-5))
+/** The last few heads seen, and always the current one. */
+function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
+  const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
+  return Object.fromEntries([...kept, [current, heads[current]!]])
 }
 
 export class AutopilotRuntime {
   private pending: Promise<void> | null = null
+  private again = false
   private stopped = false
   private readonly controller = new AbortController()
   private timer: ReturnType<typeof setInterval> | null = null
@@ -116,8 +132,15 @@ export class AutopilotRuntime {
 
   tick(): Promise<void> {
     if (this.stopped || homeIsDraining()) return Promise.resolve()
-    if (this.pending) return this.pending
-    this.pending = this.runDue().finally(() => { this.pending = null })
+    // A kick during a pass must not be absorbed by it: that pass chose its
+    // rows before the kick brought this one forward. Run once more after it.
+    if (this.pending) { this.again = true; return this.pending }
+    this.pending = (async () => {
+      do {
+        this.again = false
+        await this.runDue()
+      } while (this.again && !this.stopped && !homeIsDraining())
+    })().finally(() => { this.pending = null })
     return this.pending
   }
 
@@ -156,8 +179,12 @@ export class AutopilotRuntime {
   private async decide(row: WorkflowRow, signal: AbortSignal): Promise<void> {
     const now = this.now()
     if (row.state === "paused") {
-      // the agent-switch trigger paused it; autopilot follows the task instead
-      changeWorkflowState(row.id, "active", "Followed the task's agent change", now)
+      if (row.reason === CONTEXT_CHANGE_PAUSE) {
+        // the agent-switch trigger paused it; autopilot follows the task instead
+        changeWorkflowState(row.id, "active", "Followed the task's agent change", now)
+        return
+      }
+      await this.pausedLifecycle(row, signal)
       return
     }
     const task = getTask(row.task_id)
@@ -181,8 +208,8 @@ export class AutopilotRuntime {
     if (!checkpoint.pr) {
       if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
       const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
-      const { defaultBranch, pulls } = await this.github.openPullRequests(repository, branches, cwd, signal)
-      const pick = choosePull(pulls, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))))
+      const { defaultBranch, viewer, pulls } = await this.github.openPullRequests(repository, branches, cwd, signal)
+      const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))))
       if (!pick) { save("waiting", "Waiting for a PR", WAITING_ON_YOU_MS); return }
       checkpoint.pr = pick.number
       recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, now.toISOString())
@@ -193,7 +220,10 @@ export class AutopilotRuntime {
     if (pr.isCrossRepository) { save("needs-you", "Fork pull requests are not supported", BUSY_MS); return }
     if (pr.providerAutoMerge) { pauseAutopilot(row, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, now); return }
     if (pr.queued) { save("queued", "Queued to merge", MOVING_MS); return }
-    checkpoint.heads = trimHeads({ ...checkpoint.heads, [pr.head]: checkpoint.heads?.[pr.head] ?? now.toISOString() })
+    checkpoint.heads = trimHeads({ ...checkpoint.heads, [pr.head]: checkpoint.heads?.[pr.head] ?? now.toISOString() }, pr.head)
+    // A draft marked ready queues new CI; its draft-time results prove nothing.
+    if (pr.isDraft) delete checkpoint.readySince
+    else checkpoint.readySince ??= now.toISOString()
     if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
 
     const required = await this.requiredChecks(repository, pr.baseRefName, cwd, signal)
@@ -201,11 +231,12 @@ export class AutopilotRuntime {
     const gate = mergeGate({
       pr, requiredNames: new Set(required),
       allowedBases: new Set([pr.defaultBranch, configured].filter((b): b is string => Boolean(b))),
-      headFirstSeenMs: Date.parse(checkpoint.heads[pr.head]!), nowMs: now.getTime(), published,
+      headFirstSeenMs: Math.max(Date.parse(checkpoint.heads[pr.head]!), Date.parse(checkpoint.readySince!)),
+      nowMs: now.getTime(), published,
     })
-    if (gate.kind === "wait") { save("waiting", gate.reason, MOVING_MS); return }
+    if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS); return }
     if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS); return }
-    await this.merge(row, checkpoint, pr, repository, signal)
+    await this.merge(row, checkpoint, pr, repository)
   }
 
   /** The bound PR is no longer open: record how it ended and stand down. */
@@ -231,7 +262,17 @@ export class AutopilotRuntime {
     return names ?? []
   }
 
-  private async merge(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, repository: string, signal: AbortSignal): Promise<void> {
+  /** A paused row still notices a PR that someone merged or closed, so it never sits paused on a finished PR. */
+  private async pausedLifecycle(row: WorkflowRow, signal: AbortSignal): Promise<void> {
+    const checkpoint = checkpointOf(row)
+    const task = getTask(row.task_id)
+    const repository = task && checkpoint.pr ? await (this.options.repository ?? originRepository)(task, signal) : null
+    const pr = repository && task ? await this.github.snapshot(repository, checkpoint.pr!, task.repo_path, signal).catch(() => null) : null
+    if (pr && pr.state !== "OPEN") { this.settle(row, checkpoint, pr); return }
+    deferAutopilot(row, new Date(this.now().getTime() + BUSY_MS))
+  }
+
+  private async merge(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, repository: string): Promise<void> {
     const now = this.now()
     // Pre-flight, with no await between it and the merging guard: a toggle,
     // a Stop, or a turn that started during the check all win.
@@ -240,10 +281,28 @@ export class AutopilotRuntime {
     const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging" }
     if (!writeAutopilotCheckpoint(row, attempt, now)) return
     recordWorkflow(row.id, "merging", `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`, now.toISOString())
-    const result = await whileMerging(task.id,
-      () => this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, signal),
-      () => { startNextQueuedMessage(task.id, this.adapters, this.cfg) })
-    const after = await this.github.snapshot(repository, pr.number, task.repo_path, signal).catch(() => null)
+    // The merge has its own deadline, not the check's: a slow read before it
+    // must never be what kills `gh pr merge` halfway.
+    const controller = new AbortController()
+    const abort = (): void => controller.abort()
+    this.controller.signal.addEventListener("abort", abort, { once: true })
+    const deadline = setTimeout(abort, 120_000)
+    try {
+      // Settle INSIDE the guard: a message that queued during the merge starts
+      // only after the row says how it ended, so its turn is told the branch
+      // is finished instead of being asked to push to a merged PR.
+      await whileMerging(task.id, async () => {
+        const result = await this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, controller.signal)
+        const after = await this.github.snapshot(repository, pr.number, task.repo_path, controller.signal).catch(() => null)
+        this.afterMerge(row, attempt, pr, result, after)
+      }, () => { startNextQueuedMessage(task.id, this.adapters, this.cfg) })
+    } finally {
+      clearTimeout(deadline)
+      this.controller.signal.removeEventListener("abort", abort)
+    }
+  }
+
+  private afterMerge(row: WorkflowRow, attempt: AutopilotCheckpoint, pr: PrSnapshot, result: { ok: boolean; detail: string }, after: PrSnapshot | null): void {
     const current = getWorkflow(row.id)
     if (!current || current.state !== "active") return
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
@@ -252,8 +311,15 @@ export class AutopilotRuntime {
       pauseAutopilot(current, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, this.now())
       return
     }
+    if (result.ok) {
+      // gh said it merged but the read disagrees or failed (read-after-write
+      // lag, a timeout): not a failure. Keep the attempt, so the next look
+      // records it as Wisp's merge, and look again soon.
+      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: attempt, delayMs: 15_000 }, this.now())
+      return
+    }
     const failures = attempt.mergeFailures?.head === pr.head ? attempt.mergeFailures.count + 1 : 1
-    const failed: AutopilotCheckpoint = { ...attempt, mergeFailures: { head: pr.head, count: failures } }
+    const failed: AutopilotCheckpoint = { ...attempt, mergeFailures: { head: pr.head, count: failures }, state: "waiting" }
     delete failed.mergeAttempt
     const detail = result.detail || "gh pr merge did not merge"
     if (failures >= MERGE_FAILURE_LIMIT) {
