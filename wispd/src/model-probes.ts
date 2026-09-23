@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { chmod, rename, unlink, writeFile } from "node:fs/promises";
-import { discoverModels, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
+import { createHash } from "node:crypto";
+import { discoverModels, MODEL_DISCOVERY, type AdapterDef, type ModelProbeSpawnFn } from "./adapters";
 import type { SpawnResult } from "./doctor";
 import { emit } from "./events";
 import { trackHomeWork } from "./home-lifetime";
@@ -57,7 +58,14 @@ interface PersistedModelCache {
 }
 
 function adapterSignature(def: AdapterDef): string {
-  return JSON.stringify([def.bin, def.exec, def.model ?? null, def.modelDiscovery ?? null]);
+  const discovery = def.modelDiscovery ? MODEL_DISCOVERY[def.modelDiscovery] : undefined;
+  // Adapter fields are not the whole contract: changing a strategy's parser
+  // can change its answer without changing the strategy name. Hash its source
+  // so an upgrade cannot restore a semantically stale 24-hour catalog.
+  const discoverySignature = discovery
+    ? createHash("sha256").update(Function.prototype.toString.call(discovery)).digest("hex")
+    : null;
+  return JSON.stringify([def.bin, def.exec, def.model ?? null, def.modelDiscovery ?? null, discoverySignature]);
 }
 
 function validCachedModels(value: unknown): value is CachedModels {

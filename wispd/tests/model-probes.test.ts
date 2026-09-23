@@ -185,6 +185,33 @@ describe("daemon model probe cache", () => {
     expect(cache.snapshot("droid").models).toBeNull();
   });
 
+  test("ignores a catalog captured by an older discovery implementation", () => {
+    const path = cachePath();
+    writeFileSync(path, JSON.stringify({
+      version: 1,
+      entries: {
+        cursor: {
+          // The old signature covered only adapter fields. It stayed identical
+          // when cursor-models stopped filtering to auto/composer-*/cursor-*.
+          adapterSignature: JSON.stringify([
+            BUILTIN_ADAPTERS.cursor.bin,
+            BUILTIN_ADAPTERS.cursor.exec,
+            BUILTIN_ADAPTERS.cursor.model,
+            "cursor-models",
+          ]),
+          models: {
+            list: ["auto", "composer-2.5", "cursor-grok-4.6-high"],
+            defaultModel: "auto",
+            probedAt: "2026-09-23T00:00:00.000Z",
+          },
+        },
+      },
+    }));
+
+    const cache = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, { cachePath: path });
+    expect(cache.snapshot("cursor").models).toBeNull();
+  });
+
   test("probe failure leaves models null and records an honest error", async () => {
     const cache = new ModelProbeCache(
       { codex: BUILTIN_ADAPTERS.codex },
