@@ -3,12 +3,12 @@
  * the snapshot and the required-check names; this only decides.
  *
  * It thinks in WORKFLOW RUNS, because that is how GitHub groups jobs. A red
- * counting check decides that there is something to fix; the jobs that
- * actually failed are its siblings in the same run — on a repository whose
- * required check is an aggregator (`test` needing six shards) the aggregator's
- * own log only says "a required part did not succeed", and the shard is what
- * the agent must read. Those failing siblings (the LEAVES) drive the logs, the
- * evidence key, and the comparison with the base branch.
+ * counting check decides that there is something to fix; what the agent must
+ * read is that check AND the jobs that failed beside it in the same run — on a
+ * repository whose required check is an aggregator (`test` needing six
+ * shards) the aggregator's own log only says "a required part did not
+ * succeed", and the shard is what explains it. Together they are the LEAVES:
+ * they drive the logs, the evidence key, and the comparison with the base.
  */
 import { classifyCheck, countingChecks, missingRequired, type PrCheck } from "./checks"
 import type { PrSnapshot } from "./github"
@@ -56,10 +56,22 @@ function sameRun(pr: PrSnapshot, check: PrCheck): PrCheck[] {
   return check.run ? pr.checks.filter((other) => other.run?.id === check.run!.id) : [check]
 }
 
-/** The jobs that failed behind a red counting check: its red siblings, or itself. */
+const failed = (check: PrCheck): boolean => classifyCheck(check) === "fix"
+
+/**
+ * A red counting check and the jobs that failed beside it. When the run has a
+ * real failure, its cancelled jobs are fail-fast's doing, not evidence.
+ */
 function leavesOf(pr: PrSnapshot, check: PrCheck): PrCheck[] {
-  const siblings = sameRun(pr, check).filter((other) => other !== check && red(other))
-  return siblings.length > 0 ? siblings : [check]
+  const run = sameRun(pr, check).filter((other) => other !== check && red(other))
+  const real = run.filter(failed)
+  return [check, ...(real.length > 0 ? real : run)]
+}
+
+/** Counting checks first, then real failures, then jobs that did not finish: the order logs are read in. */
+function ordered(leaves: PrCheck[], counting: ReadonlySet<PrCheck>): PrCheck[] {
+  const rank = (check: PrCheck) => (counting.has(check) ? 0 : failed(check) ? 1 : 2)
+  return [...leaves].sort((a, b) => rank(a) - rank(b))
 }
 
 function unique(checks: PrCheck[]): PrCheck[] {
@@ -69,16 +81,18 @@ function unique(checks: PrCheck[]): PrCheck[] {
 /**
  * A run Wisp may rerun without anyone's say: an ordinary PR run, not rerun on
  * this head yet, with no deployment job in it (a rerun reruns dependents too).
- * A cancelled or stale job always earns one; a plain failure only when there
+ * A run whose jobs were cancelled with no real failure among them (a lost
+ * runner, a superseded run) earns one; one with a real failure only when there
  * are no required checks, where every check counts and a flake would
- * otherwise cost a turn.
+ * otherwise cost a turn. A failure that fail-fast cancelled the rest for is
+ * trusted, not retried.
  */
 function rerunnable(pr: PrSnapshot, check: PrCheck, input: FixInput): boolean {
   if (!check.run || check.run.event !== "pull_request" || input.rerun.has(check.run.id)) return false
   const jobs = sameRun(pr, check)
   if (jobs.some((job) => job.deployment)) return false
-  if (jobs.some((job) => ["CANCELLED", "STALE"].includes(upper(job.conclusion)))) return true
-  return input.requiredNames.size === 0 && jobs.some((job) => ["FAILURE", "TIMED_OUT"].includes(upper(job.conclusion)))
+  if (jobs.some(failed)) return input.requiredNames.size === 0
+  return jobs.some((job) => ["CANCELLED", "STALE"].includes(upper(job.conclusion)))
 }
 
 type BaseVerdict = "red" | "not-red" | "pending"
@@ -89,6 +103,17 @@ function onBase(pr: PrSnapshot, leaf: PrCheck): BaseVerdict {
   if (!base) return "not-red"
   const state = classifyCheck(base)
   return state === "pending" ? "pending" : state === "fix" ? "red" : "not-red"
+}
+
+/**
+ * A red counting check is the base's, not the PR's, only when every leaf is
+ * red on the base too. One leaf that is not settles it without waiting; the
+ * base's still-running jobs are waited for only when they could decide.
+ */
+function baseVerdict(pr: PrSnapshot, leaves: PrCheck[]): BaseVerdict {
+  const verdicts = leaves.map((leaf) => onBase(pr, leaf))
+  if (verdicts.includes("not-red")) return "not-red"
+  return verdicts.includes("pending") ? "pending" : "red"
 }
 
 export function planFix(input: FixInput): FixPlan {
@@ -106,9 +131,10 @@ export function planFix(input: FixInput): FixPlan {
   if (missing.length > 0) return { kind: "wait", reason: `Waiting for ${missing.slice(0, 2).join(", ")} to report` }
   const running = counting.filter((check) => classifyCheck(check) === "pending")
   // All of a head's results in one round, never a piece now and a piece later.
-  if (running.length > 0 || pr.actionsSuitesPending > pr.actionsSuitesWaiting) {
-    return { kind: "wait", reason: running.length > 0 ? `Waiting for checks (${running.length} running)` : "Waiting for checks to start" }
-  }
+  // Without required checks every check counts, so a suite that has not
+  // reported yet is one; with them, missingRequired already said so.
+  if (running.length > 0) return { kind: "wait", reason: `Waiting for checks (${running.length} running)` }
+  if (input.requiredNames.size === 0 && pr.actionsSuitesPending > pr.actionsSuitesWaiting) return { kind: "wait", reason: "Waiting for checks to start" }
   const deciding = counting.filter(red)
   if (deciding.length === 0) return { kind: "none", reason: "Nothing to fix" }
   // The runs behind a red must be finished, and their jobs read, before anything is decided.
@@ -124,21 +150,18 @@ export function planFix(input: FixInput): FixPlan {
   }
   const failing: PrCheck[] = []
   for (const check of deciding) {
-    const leaves = leavesOf(pr, check)
-    const base = leaves.map((leaf) => onBase(pr, leaf))
-    // Compare only against a base whose own run has finished.
-    if (base.includes("pending")) return { kind: "wait", reason: `Waiting for ${pr.baseRefName}'s checks, to compare` }
-    if (!base.every((verdict) => verdict === "red")) failing.push(check)
+    const verdict = baseVerdict(pr, leavesOf(pr, check))
+    if (verdict === "pending") return { kind: "wait", reason: `Waiting for ${pr.baseRefName}'s checks, to compare` }
+    if (verdict === "not-red") failing.push(check)
   }
   if (failing.length === 0) {
-    const leaves = unique(deciding.flatMap((check) => leavesOf(pr, check)))
-    return { kind: "none", reason: `${names(leaves)} ${leaves.length === 1 ? "is" : "are"} red on ${pr.baseRefName} too` }
+    return { kind: "none", reason: `${names(deciding)} ${deciding.length === 1 ? "is" : "are"} red on ${pr.baseRefName} too` }
   }
-  const leaves = unique(failing.flatMap((check) => leavesOf(pr, check)))
+  const leaves = ordered(unique(failing.flatMap((check) => leavesOf(pr, check))), new Set(counting))
   if (leaves.every((leaf) => classifyCheck(leaf) === "hold")) {
     return { kind: "needs-you", reason: `${names(leaves)} did not finish — rerun it` }
   }
-  const context = pr.checks.filter((check) => red(check) && !leaves.includes(check) && !failing.includes(check))
+  const context = pr.checks.filter((check) => red(check) && !leaves.includes(check))
   return {
     kind: "fix", reason: `${names(leaves)} failed`, conflict: false, failing, leaves, context,
     key: `ci:${pr.head}:${leaves.map((leaf) => leaf.name).sort().join(",")}`, summary: `${names(leaves)} failing`,

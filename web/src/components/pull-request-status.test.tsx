@@ -216,8 +216,13 @@ describe("the auto-merge reason on the PR line", () => {
     const rerun = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ ...fixing, reason: "Rerunning test" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix: Rerunning test")
     rerun.unmount()
-    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoFix: true, reason: "Waiting for a review" })} />)
+    const review = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoFix: true, reason: "Waiting for a review" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-merge: Waiting for a review")
+    review.unmount()
+    // a pause that already names its switch is not prefixed with it again
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ ...fixing, state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Open · Auto-fix gave up after 3 rounds — resume to try again")
+    expect(screen.getByRole("link")).not.toHaveTextContent("Auto-fix paused")
   })
 
   it("uses the compact link's second line for the reason on mobile", () => {

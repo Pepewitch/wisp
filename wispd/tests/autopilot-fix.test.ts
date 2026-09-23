@@ -30,10 +30,14 @@ describe("what auto-fix does about CI", () => {
   test("green, or still running, is nothing to fix — and it waits for ALL of a head's results", () => {
     expect(plan()).toEqual({ kind: "none", reason: "Nothing to fix" });
     expect(plan({ checks: [job("test", null, { required: true })] })).toEqual({ kind: "wait", reason: "Waiting for checks (1 running)" });
-    expect(plan({ actionsSuitesPending: 2 })).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
     expect(plan({ checks: [] })).toEqual({ kind: "wait", reason: "Waiting for test to report" });
-    // a run held for an environment's reviewers is not something to wait out
-    expect(plan({ actionsSuitesPending: 1, actionsSuitesWaiting: 1 })).toEqual({ kind: "none", reason: "Nothing to fix" });
+    // with every check counting, a suite that has not reported yet is one of them…
+    expect(plan({ actionsSuitesPending: 2, checks: [job("test", "FAILURE")] }, [], new Set())).toEqual({ kind: "wait", reason: "Waiting for checks to start" });
+    // …but a run held for an environment's reviewers is not something to wait out
+    expect(plan({ actionsSuitesPending: 1, actionsSuitesWaiting: 1 }, [], new Set())).toMatchObject({ kind: "none" });
+    // with required checks, a slow run that does not count never holds a red one back
+    expect(plan({ actionsSuitesPending: 1, checks: [job("test", "FAILURE", { required: true }), job("native-core", null, { run: { id: 10, event: "pull_request" } })] }))
+      .toMatchObject({ kind: "fix", reason: "test failed" });
     // nor is a red whose run still has jobs going: its siblings are the evidence
     expect(plan({ checks: [job("test", "FAILURE", { required: true }), job("web (1/2)", null)] }))
       .toEqual({ kind: "wait", reason: "Waiting for the failing run to finish" });
@@ -45,14 +49,38 @@ describe("what auto-fix does about CI", () => {
       job("test", "FAILURE", { required: true }), job("daemon (3/6)", "FAILURE"), job("web (1/2)", "SUCCESS"),
       job("native-core", "FAILURE", { run: { id: 10, event: "pull_request" } }),
     ] });
-    expect(result).toMatchObject({ kind: "fix", reason: "daemon (3/6) failed", summary: "daemon (3/6) failing", conflict: false, key: `ci:${HEAD}:daemon (3/6)` });
+    expect(result).toMatchObject({ kind: "fix", reason: "test, daemon (3/6) failed", summary: "test, daemon (3/6) failing", conflict: false, key: `ci:${HEAD}:daemon (3/6),test` });
     if (result.kind !== "fix") throw new Error("expected a fix");
     expect(result.failing.map((check) => check.name)).toEqual(["test"]);
-    expect(result.leaves.map((check) => check.name)).toEqual(["daemon (3/6)"]);
+    expect(result.leaves.map((check) => check.name)).toEqual(["test", "daemon (3/6)"]);
     // another red that does not count is context, never the task
     expect(result.context.map((check) => check.name)).toEqual(["native-core"]);
     // and alone it never decides on a repository with required checks
     expect(plan({ checks: [job("test", "SUCCESS", { required: true }), job("native-core", "FAILURE")] })).toEqual({ kind: "none", reason: "Nothing to fix" });
+  });
+
+  test("a required job that is not an aggregator is its own evidence, and an optional red beside it cannot hide it", () => {
+    const names = new Set(["build"]);
+    const checks = [job("build", "FAILURE", { required: true }), job("lint", "FAILURE")];
+    expect(plan({ checks }, [], names)).toMatchObject({ kind: "fix", reason: "build, lint failed", key: `ci:${HEAD}:build,lint` });
+    // lint is red on main, build is not: still this PR's to fix
+    expect(plan({ checks, baseChecks: [job("lint", "FAILURE")] }, [], names)).toMatchObject({ kind: "fix", reason: "build, lint failed" });
+    // both red on main: main's, and named by the check that decides
+    expect(plan({ checks, baseChecks: [job("lint", "FAILURE"), job("build", "FAILURE")] }, [], names))
+      .toEqual({ kind: "none", reason: "build is red on main too" });
+    // one leaf settles it: a base job still running elsewhere is not waited for
+    expect(plan({ checks, baseChecks: [job("lint", null), job("build", "SUCCESS")] }, [], names)).toMatchObject({ kind: "fix" });
+  });
+
+  test("fail-fast's cancelled jobs are neither rerun nor evidence when a real failure caused them", () => {
+    const checks = [
+      job("unit (1)", "CANCELLED"), job("unit (2)", "CANCELLED"), job("build", "FAILURE", { required: true }),
+      job("unit (3)", "CANCELLED"), job("unit (4)", "CANCELLED"), job("unit (5)", "FAILURE"),
+    ];
+    const result = plan({ checks }, [], new Set(["build"]));
+    expect(result).toMatchObject({ kind: "fix", reason: "build, unit (5) failed" });
+    if (result.kind !== "fix") throw new Error("expected a fix");
+    expect(result.leaves.map((check) => check.name)).toEqual(["build", "unit (5)"]);
   });
 
   test("the same evidence has the same key; a new head is new evidence", () => {
@@ -129,14 +157,14 @@ describe("what the agent reads", () => {
       taskId: "tevidence", rowId: "wrow", round: 1, pr: pr(), plan: fix, repository: "o/r", requiredNames: required,
       github, signal: new AbortController().signal, cwd: "/nowhere",
     });
-    expect(evidence).toMatchObject({ logsWanted: 1, logsRead: 1 });
+    expect(evidence).toMatchObject({ logsWanted: 2, logsRead: 2 });
     const text = readFileSync(evidence.file, "utf8");
-    expect(text).toContain("## What failed\n\n- daemon (3/6) — FAILURE — https://ci/daemon (3/6)");
-    expect(text).toContain("These failures turned test (required) red.");
+    expect(text).toContain("## What failed\n\n- test (required) — FAILURE — https://ci/test\n- daemon (3/6) — FAILURE — https://ci/daemon (3/6)");
+    expect(text).toContain("test decides this round; the other jobs listed failed in the same workflow run");
     expect(text).toContain("## Also red, but not what this round is about");
     expect(text).toContain("- native-core — FAILURE");
-    // logs for the jobs that failed only, never the aggregator's or the context's
-    expect(read).toEqual([job("daemon (3/6)", "FAILURE").checkRunId!]);
+    // logs for the round's own jobs, never the context's
+    expect(read.sort()).toEqual([job("test", "FAILURE").checkRunId!, job("daemon (3/6)", "FAILURE").checkRunId!].sort());
     expect(text).toContain("(fail) shard three");
   });
 

@@ -52,6 +52,8 @@ export interface AutopilotRuntimeOptions {
   published?: (task: Task, branch: string, head: string, signal: AbortSignal) => Promise<PublishedWork>
   repository?: (task: Task, signal: AbortSignal) => Promise<string | null>
   branches?: (task: Task, signal: AbortSignal) => Promise<string[]>
+  /** one look's deadline */
+  lookTimeoutMs?: number
 }
 
 export { taskIsIdle } from "./idle"
@@ -192,7 +194,7 @@ export class AutopilotRuntime {
     const controller = new AbortController()
     const abort = (): void => controller.abort()
     this.controller.signal.addEventListener("abort", abort, { once: true })
-    const timeout = setTimeout(abort, 90_000)
+    const timeout = setTimeout(abort, this.options.lookTimeoutMs ?? 90_000)
     try {
       await this.decide(row, controller.signal)
     } catch (error) {
@@ -329,10 +331,12 @@ export class AutopilotRuntime {
     if (plan.kind === "rerun") {
       // Token-free, once per run and head: a flake gets a second chance
       // before anyone spends an agent turn on it.
-      for (const run of plan.runs) await this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch(() => false)
+      const accepted = await Promise.all(plan.runs.map((run) => this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch(() => false)))
+      // Tried is tried: a refused rerun is not asked for again, and the next look moves on.
       checkpoint.rerun = { head: pr.head, runs: [...rerun, ...plan.runs] }
-      recordWorkflow(row.id, "rerun", plan.reason, now.toISOString())
-      return say("waiting", plan.reason, MOVING_MS)
+      const reason = accepted.some(Boolean) ? plan.reason : plan.reason.replace(/^Rerunning/, "Could not rerun")
+      recordWorkflow(row.id, "rerun", reason, now.toISOString())
+      return say("waiting", reason, MOVING_MS)
     }
     const rounds = checkpoint.rounds ?? 0
     // The same evidence already reached a turn and the head did not move:
@@ -364,18 +368,16 @@ export class AutopilotRuntime {
       saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" }, this.now())
       return null
     }
-    // A full slot table would refuse the turn after the round is already
-    // spent: wait for a slot instead.
-    try { assertTaskCapacity(this.cfg, task.id) } catch (error) {
-      if (error instanceof TaskCapacityError) return say("waiting", "Waiting for a free task slot", MOVING_MS)
-      throw error
-    }
+    // A full slot table would refuse the turn: wait for a slot rather than
+    // read logs for a round that cannot start.
+    if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
     const evidence = await writeEvidence({
       taskId: task.id, rowId: row.id, round, pr, plan, repository: ctx.repository, requiredNames: ctx.required,
       github: this.github, signal: ctx.signal, cwd: task.repo_path,
     })
-    // Cut short (a timeout, shutdown): the evidence is partial, so this look is void.
-    if (ctx.signal.aborted) return null
+    // Cut short (the look's deadline, shutdown): the evidence is partial. A
+    // failed look backs off; shutdown is quiet (evaluate decides which).
+    if (ctx.signal.aborted) throw new Error("reading the logs took too long")
     if (evidence.logsWanted > 0 && evidence.logsRead === 0) {
       const misses = (checkpoint.logMisses?.key === plan.key ? checkpoint.logMisses.count : 0) + 1
       // GitHub usually serves a finished job's log within a minute; a round
@@ -388,14 +390,27 @@ export class AutopilotRuntime {
     const next: AutopilotCheckpoint = { ...checkpoint, rounds: round }
     forgetIdle(next)
     delete next.logMisses
+    // From here to the turn's start nothing awaits, so the slot seen free is
+    // the slot the turn takes: another look or task cannot take it between.
+    if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
     const id = reserveRound(row, {
       key: plan.key, prompt: roundMessage(pr, plan, round, evidence.file, ctx.autoMerge),
-      reason: `Sent ${plan.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next,
+      reason: `Sent ${plan.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next, turnCount: task.turn_count,
     }, this.now())
     // A user message queued first still goes first; this round then waits,
     // and the next look withdraws it and plans again.
     if (id) startNextQueuedMessage(task.id, this.adapters, this.cfg, id)
     return null
+  }
+
+  private hasSlot(task: Task): boolean {
+    try {
+      assertTaskCapacity(this.cfg, task.id)
+      return true
+    } catch (error) {
+      if (error instanceof TaskCapacityError) return false
+      throw error
+    }
   }
 
   /** The PR number to bind to, or the reason there is none yet. */

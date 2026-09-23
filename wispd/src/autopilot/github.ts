@@ -221,7 +221,7 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   }
 }
 
-/** Terminal escapes (CSI and OSC sequences) and every other control character but tab. */
+/** Terminal escapes (CSI and OSC sequences) and every other control character but tab and newline. */
 export function controlFree(line: string): string {
   return line
     // eslint-disable-next-line no-control-regex
@@ -354,7 +354,7 @@ export const ghAutopilot: AutopilotGitHub = {
     const output = isRecord(run) && isRecord(run.output) ? run.output : {}
     const notes = Array.isArray(annotations) ? annotations.filter(isRecord).map((note) =>
       `${str(note.path)}:${String(note.start_line ?? "")} ${str(note.annotation_level)}: ${str(note.message)}`) : []
-    return [str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n").slice(0, 64_000)
+    return controlFree([str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n")).slice(0, 64_000)
   },
   async merge({ repository, number, method, head }, cwd, signal) {
     const result = await gh(

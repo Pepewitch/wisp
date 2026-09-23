@@ -108,7 +108,7 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   // auto-merge found on); a hold or a wait on the task never is.
   const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
   const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
-  const pendingFix = row.state === "active" && state !== "held" && checkpoint.pending
+  const pendingFix = row.state === "active" && params.autoFix && state !== "held" && checkpoint.pending
     ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt }
     : null
   // a switch that is off speaks for nothing
@@ -155,9 +155,16 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       if (current.autoMerge === next.autoMerge && current.autoFix === next.autoFix) return
       // switching auto-fix off withdraws a round that has not started yet
       if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
-      db.run("UPDATE workflows SET params_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
-        [JSON.stringify(next), at, at, row.id])
+      const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
+      // switching auto-fix on again is a fresh start for its round budget
+      if (!current.autoFix && next.autoFix) delete checkpoint.rounds
+      // A pause auto-fix made is not auto-merge's to keep once auto-fix is off.
+      const lift = row.state === "paused" && current.autoFix && !next.autoFix && checkpoint.by === "auto-fix"
+      if (lift) Object.assign(checkpoint, { state: "waiting", about: "task", by: "auto-merge" })
+      db.run("UPDATE workflows SET params_json = ?, checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
+        [JSON.stringify(next), JSON.stringify(checkpoint), at, at, row.id])
       recordWorkflow(row.id, "configured", label, at)
+      if (lift) changeWorkflowState(row.id, "active", "Auto-fix off", now)
       return
     }
     const id = randomId("w", 12)
@@ -336,13 +343,18 @@ export function withdrawQueuedRound(row: WorkflowRow): boolean {
  * evidence key (so the same evidence is never sent twice), and the checkpoint
  * it advances — one transaction, like a workflow wake.
  */
-export function reserveRound(row: WorkflowRow, round: { key: string; prompt: string; reason: string; checkpoint: AutopilotCheckpoint }, now: Date): string | null {
+export function reserveRound(row: WorkflowRow, round: {
+  key: string; prompt: string; reason: string; checkpoint: AutopilotCheckpoint
+  /** the task's turn count when the look began: a turn since then makes its evidence stale */
+  turnCount: number
+}, now: Date): string | null {
   const messageId = db.transaction(() => {
     const current = getWorkflow(row.id), task = getTask(row.task_id)
     if (!current || current.state !== "active" || current.revision !== row.revision || !task || seenWake(row.id, round.key)) return null
-    // Evidence was gathered with awaits in between: a turn, a queued message,
-    // or a Stop since then wins, and the next look plans again.
-    if (!taskIsIdle(task)) return null
+    // Evidence was gathered with awaits in between: a turn (even one that has
+    // already finished), a queued message, or a Stop since then wins, and the
+    // next look plans again.
+    if (!taskIsIdle(task) || task.turn_count !== round.turnCount) return null
     const id = randomId("m", 12)
     createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "" }, false)
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
@@ -397,6 +409,9 @@ export function skipCancelledRound(workflowId: string, messageId: string): boole
   const current = getWorkflow(workflowId)!
   const checkpoint = checkpointOf(current)
   if (wake) checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), wake.event_key]
+  // the cancel restored the countdown this round came from: it is answered
+  delete checkpoint.pending
+  delete checkpoint.sendNow
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), workflowId])
   recordWorkflow(workflowId, "skipped", "A queued auto-fix round was cancelled", new Date().toISOString())
   announceWorkflow(row.task_id)

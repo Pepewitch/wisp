@@ -104,28 +104,34 @@ with its base — and the task is idle, Wisp sends the agent one **round**: a
 short message pointing at a `PR-FEEDBACK.md` file beside the task's data (never
 in the worktree). The file lists what failed and ends with the logs that
 explain it: the end of each failing GitHub Actions job's log, cut where it
-errors, or a non-Actions check's own report. A round is about the jobs that
-actually failed, so when the required check is an aggregator (a `test` job
-that needs six shards) the agent reads the shard that failed, not the
-aggregator's "a required part did not succeed". Other red checks that do not
-count are listed as context, without their logs.
+errors, or a non-Actions check's own report. A round is about the red check
+and the jobs that failed beside it in the same workflow run, so when the
+required check is an aggregator (a `test` job that needs six shards) the agent
+also reads the shard that failed, not only the aggregator's "a required part
+did not succeed". When a run has a real failure, the jobs fail-fast cancelled
+are left out. Other red checks that do not count are listed as context,
+without their logs.
 
 - **Only counting checks decide.** With required checks on the base, only they
-  do; with none, every check does. A red that is also red on the base branch
-  is not the PR's to fix.
+  do; with none, every check does. A red whose failed jobs are all red on the
+  base branch too is not the PR's to fix.
 - **All results at once.** A round waits until every counting check on the
   head has finished, and every job in a failing run, so the agent gets the
-  whole picture in one turn. When the same job is also red on the base, Wisp
-  waits for the base's own run to finish before it compares.
-- **Token-free retries first.** A workflow run with a cancelled job has its
-  failed jobs rerun once per head before anyone spends a turn on it; without
-  required checks, so does a run with a failed one (a flake gets one free
-  retry). Wisp only reruns ordinary `pull_request` runs, never a run with a
+  whole picture in one turn. It does not wait for checks that do not count.
+  When the comparison with the base depends on a base job that is still
+  running, Wisp waits for it.
+- **Token-free retries first.** A workflow run whose jobs were cancelled with
+  no real failure among them (a lost runner, a superseded run) has them rerun
+  once per head before anyone spends a turn on it. Without required checks, a
+  run with a real failure gets that one free retry too, in case it was a
+  flake. Wisp only reruns ordinary `pull_request` runs, never a run with a
   deployment job in it. A job held for approval, or waiting on an
   environment's reviewers, needs you.
 - **Worth a turn.** If GitHub cannot serve any of a round's logs yet, Wisp
   looks again a few times before sending the round with the links only. With
-  every task slot taken, a round waits for a free one.
+  every task slot taken, a round waits for a free one. A turn that starts
+  while a round is being prepared wins, and the round is planned again after
+  it.
 - **A short delay.** A round waits two minutes after the task's latest turn
   ends, so you can read what it did and steer it yourself first; a turn of
   yours restarts the delay. **Send now** skips the wait for that round;

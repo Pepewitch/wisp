@@ -12,7 +12,9 @@ import type { FixPlan } from "./fix"
 import type { AutopilotGitHub, PrSnapshot } from "./github"
 
 export const MAX_ROUNDS = 3
-const MAX_LOGS = 4
+const MAX_LOGS = 6
+/** All of a round's logs are read at once, inside this, well within the look's own deadline. */
+export const LOG_BUDGET_MS = 45_000
 
 type Fix = Extract<FixPlan, { kind: "fix" }>
 
@@ -58,8 +60,9 @@ export async function writeEvidence(input: {
   const { pr, plan } = input
   const dir = join(TASKS_DIR, input.taskId, "autopilot", input.rowId, `round-${input.round}`)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  let logsWanted = 0
-  let logsRead = 0
+  const wanted = plan.conflict ? [] : plan.leaves.slice(0, MAX_LOGS)
+  const signal = AbortSignal.any([input.signal, AbortSignal.timeout(LOG_BUDGET_MS)])
+  const reports = await Promise.all(wanted.map((check) => report(check, input.repository, input.github, input.cwd, signal)))
   const lines = [
     `# PR #${pr.number} — ${plan.summary} on ${pr.head.slice(0, 7)} (round ${input.round} of ${MAX_ROUNDS})`,
     "",
@@ -77,25 +80,21 @@ export async function writeEvidence(input: {
   } else {
     lines.push("", "## What failed", "")
     for (const check of plan.leaves) lines.push(line(check))
-    const deciding = plan.failing.filter((check) => !plan.leaves.includes(check))
-    if (deciding.length > 0) {
-      lines.push("", `These failures turned ${deciding.map((check) => `${check.name}${check.required ? " (required)" : ""}`).join(", ")} red.`)
+    if (plan.leaves.length > plan.failing.length) {
+      lines.push("", `${plan.failing.map((check) => check.name).join(", ")} decide${plan.failing.length === 1 ? "s" : ""} this round; the other jobs listed failed in the same workflow run, and are often what it reports.`)
     }
     if (plan.context.length > 0) {
       lines.push("", "## Also red, but not what this round is about", "", "Context only: these do not count toward merging, and may not be this PR's doing.", "")
       for (const check of plan.context) lines.push(line(check))
     }
-    for (const check of plan.leaves.slice(0, MAX_LOGS)) {
-      logsWanted++
-      const body = await report(check, input.repository, input.github, input.cwd, input.signal)
-      if (body.read) logsRead++
-      lines.push("", `## ${check.name}`, "", "```text", body.text.replaceAll("```", "``​`"), "```")
-    }
+    wanted.forEach((check, index) => {
+      lines.push("", `## ${check.name}`, "", "```text", reports[index]!.text.replaceAll("```", "``\u200b`"), "```")
+    })
     if (plan.leaves.length > MAX_LOGS) lines.push("", `${plan.leaves.length - MAX_LOGS} more failing jobs are listed above without their logs.`)
   }
   const file = join(dir, "PR-FEEDBACK.md")
   writeFileSync(file, `${lines.join("\n")}\n`, { mode: 0o600 })
-  return { file, logsWanted, logsRead }
+  return { file, logsWanted: wanted.length, logsRead: reports.filter((body) => body.read).length }
 }
 
 /** The message the agent receives for one round; the evidence is in `file`. */
