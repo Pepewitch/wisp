@@ -146,6 +146,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             pending={archive.pending}
             onCancel={archive.dismiss}
             onForce={() => archive.request(true)}
+            stopsAutopilot={archive.stopsAutopilot}
           />
         </>
       )}

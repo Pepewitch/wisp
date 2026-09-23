@@ -124,6 +124,30 @@ describe("the overflow menu", () => {
     expect(calls.filter((c) => c.path.endsWith("/archive"))[1]!.body).toEqual({ force: true })
   })
 
+  it("asks before archive stops auto-merge, and that confirm waives nothing else", async () => {
+    const autopilot = {
+      autoMerge: true, autoFix: false, pr: 7, state: "waiting" as const, reason: "Waiting for checks (2 running)",
+      about: "pr" as const, by: "auto-merge" as const, mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null,
+    }
+    const reason = "task has unpushed commits — push first, or archive with force"
+    let refuse = true
+    const calls = stubApi((path) => (path.endsWith("/archive") && refuse ? { status: 409, body: { error: reason } } : { status: 200, body: { ok: true } }))
+    mount(<TaskActions task={{ ...TASK, autopilot }} />)
+    await pick("Archive")
+    // asked on the spot, before anything reaches the daemon
+    expect(await screen.findByText("Auto-merge is on for PR #7 — archiving switches it off.")).toBeInTheDocument()
+    expect(calls.filter((c) => c.path.endsWith("/archive"))).toHaveLength(0)
+    fireEvent.click(screen.getByRole("button", { name: "Archive anyway" }))
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/archive"))).toHaveLength(1))
+    expect(calls.filter((c) => c.path.endsWith("/archive"))[0]!.body).toEqual({ force: false, stopAutopilot: true })
+    // the daemon still has its say about unsaved work, and forcing that is a second, separate choice
+    expect(await screen.findByText(reason)).toBeInTheDocument()
+    refuse = false
+    fireEvent.click(screen.getByRole("button", { name: "Archive anyway" }))
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/archive"))).toHaveLength(2))
+    expect(calls.filter((c) => c.path.endsWith("/archive"))[1]!.body).toEqual({ force: true })
+  })
+
   it("renders no dialog while nothing has been refused", () => {
     mount(<TaskActions task={TASK} />)
     expect(screen.queryByRole("dialog")).toBeNull()

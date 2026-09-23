@@ -312,8 +312,8 @@ export function useArchiveTask() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, force }: { id: string; force: boolean }) =>
-      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force } }),
+    mutationFn: ({ id, force, stopAutopilot = false }: { id: string; force: boolean; stopAutopilot?: boolean }) =>
+      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force, ...(stopAutopilot ? { stopAutopilot } : {}) } }),
     onSuccess: (_data, { id }) => settleTask(client, qk, id),
   });
 }

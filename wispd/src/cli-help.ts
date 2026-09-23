@@ -34,7 +34,8 @@ usage:
   ${COMMAND} push <task>                             push the task branch to origin
   ${COMMAND} update                                  check for and install the latest Wisp daemon
   ${COMMAND} cleanup <task> [--log|--retry|--confirm-complete|--rerun]  inspect or resolve cleanup
-  ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work)
+  ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work, or while
+                                               auto-merge / auto-fix watches its PR)
   ${COMMAND} export <task>                           print portable JSON (redirect to a private file)
   ${COMMAND} purge <task> --confirm <task>          permanently delete archived Wisp data; keep Git branches
   ${COMMAND} purge --archived-before <30d|YYYY-MM-DD> [--confirm-count <n>]

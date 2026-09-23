@@ -101,6 +101,7 @@ export function TaskActions({ task }: { task: ApiTask }) {
         pending={archive.pending}
         onCancel={archive.dismiss}
         onForce={() => archive.request(true)}
+        stopsAutopilot={archive.stopsAutopilot}
       />
     </>
   )

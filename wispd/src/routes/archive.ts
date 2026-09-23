@@ -32,7 +32,16 @@ export interface ArchivedTaskResult {
   note: string | null;
 }
 
-async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedArchive | ArchiveRefusal> {
+/**
+ * `stopAutopilot` is the one consent that switching auto-merge / auto-fix off
+ * needs; unlike `force` it waives nothing else, so a confirm of that sentence
+ * can never also discard unsaved work or kill a turn.
+ */
+export interface ArchiveOptions {
+  stopAutopilot?: boolean
+}
+
+async function prepareArchive(snapshot: Task, force: boolean, options: ArchiveOptions): Promise<PreparedArchive | ArchiveRefusal> {
   const task = getTask(snapshot.id) ?? snapshot;
   if (task.archived) return { task, running: null, removable: false, preflight: null };
   await refreshProcessGroups(task.id);
@@ -52,8 +61,6 @@ async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedA
       task,
     };
   }
-  const autopilot = force ? null : autopilotArchiveWarning(task.id);
-  if (autopilot) return { error: autopilot, status: 409, task };
   // A local task's worktree is the user's checkout, so archiving it is only a
   // bookkeeping flip. Worktree tasks run the normal dirty/unpushed preflight.
   const removable = taskMode(task) === "worktree" && task.worktree_path !== null && task.branch !== null;
@@ -62,6 +69,9 @@ async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedA
     preflight = await archivePreflight(task.worktree_path!, task.branch!, task.base_commit, force);
     if (preflight.refusal !== null) return { error: preflight.refusal, status: 409, task };
   }
+  // Last, so any unsaved work or running turn is what the owner hears about first.
+  const autopilot = force || options.stopAutopilot ? null : autopilotArchiveWarning(task.id);
+  if (autopilot) return { error: autopilot, status: 409, task };
   return { task, running, removable, preflight };
 }
 
@@ -74,6 +84,7 @@ export async function archiveTaskRows(
   tasks: Task[],
   force: boolean,
   cfg: WispConfig,
+  options: ArchiveOptions = {},
 ): Promise<ArchiveRefusal | { archived: ArchivedTaskResult[] }> {
   // Teardown runs after project removal mutates cfg.repos, but it still needs
   // the archive hook that was configured when this operation started.
@@ -81,7 +92,7 @@ export async function archiveTaskRows(
   const prepared: PreparedArchive[] = [];
   for (let index = 0; index < tasks.length; index += PREFLIGHT_CONCURRENCY) {
     const batch = await Promise.all(
-      tasks.slice(index, index + PREFLIGHT_CONCURRENCY).map((task) => prepareArchive(task, force)),
+      tasks.slice(index, index + PREFLIGHT_CONCURRENCY).map((task) => prepareArchive(task, force, options)),
     );
     const refusal = batch.find((candidate): candidate is ArchiveRefusal => "error" in candidate);
     if (refusal) return refusal;

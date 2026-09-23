@@ -19,6 +19,7 @@ export function ArchiveConfirmDialog({
   pending,
   onCancel,
   onForce,
+  stopsAutopilot = false,
 }: {
   task: ApiTask
   /** the daemon's sentence; null closes the dialog */
@@ -26,6 +27,8 @@ export function ArchiveConfirmDialog({
   pending: boolean
   onCancel: () => void
   onForce: () => void
+  /** the reason is autopilot's: confirming only switches it off */
+  stopsAutopilot?: boolean
 }) {
   return (
     <Dialog.Root open={reason !== null} onOpenChange={(open) => !open && onCancel()}>
@@ -46,9 +49,11 @@ export function ArchiveConfirmDialog({
               and what the remedies are, which is the whole decision */}
           <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">{reason}</p>
           <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
-            {task.mode === "local"
-              ? "This task runs in the project directory, so archiving only files it — nothing is removed."
-              : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
+            {stopsAutopilot
+              ? "Wisp stops merging and fixing it; the PR stays open on GitHub. Anything unsaved in the worktree is still checked before it is removed."
+              : task.mode === "local"
+                ? "This task runs in the project directory, so archiving only files it — nothing is removed."
+                : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button type="button" size="lg" onClick={onCancel}>

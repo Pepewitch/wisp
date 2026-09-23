@@ -334,10 +334,19 @@ export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string 
     const cleanup = all.findIndex(teardown)
     if (cleanup > 0) end = cleanup
   }
-  // From the step that failed: runner setup and checkout before it are noise.
-  const step = all.slice(0, end).findLastIndex((line) => line.startsWith("##[group]Run "))
-  const start = Math.max(step, end - maxLines, 0)
-  let text = all.slice(start, end).join("\n")
+  // From the step that failed FIRST: runner setup and checkout before it are
+  // noise, and a later always-run step (an upload, a log dump) that also
+  // errors must not push the real failure out.
+  const first = all.findIndex((line) => line.includes("##[error]"))
+  const step = all.slice(0, first >= 0 ? first : end).findLastIndex((line) => line.startsWith("##[group]Run "))
+  const start = Math.max(step, 0)
+  let kept = all.slice(start, end)
+  if (kept.length > maxLines) {
+    // both ends: where the failure starts and where the job gave up
+    const half = Math.floor(maxLines / 2)
+    kept = [...kept.slice(0, half), `(… ${kept.length - 2 * half} lines omitted …)`, ...kept.slice(-half)]
+  }
+  let text = kept.join("\n")
   if (Buffer.byteLength(text) > maxBytes) text = Buffer.from(text).subarray(-maxBytes).toString("utf8")
   return `${start > 0 ? "(earlier steps omitted)\n" : ""}${text.trim()}`
 }

@@ -196,12 +196,13 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
  */
 export function autopilotArchiveWarning(taskId: string): string | null {
   const row = autopilotRow(taskId)
-  if (!row) return null
+  // bound to a PR it has not seen merged or closed: with none, there is nothing to stop
+  const pr = row ? checkpointOf(row).pr : undefined
+  if (!row || !pr) return null
   const { autoMerge, autoFix } = paramsOf(row)
-  const pr = checkpointOf(row).pr
   const both = autoMerge && autoFix
   const on = both ? "Auto-merge and auto-fix are" : autoMerge ? "Auto-merge is" : "Auto-fix is"
-  return `${on} on for ${pr ? `PR #${pr}` : "this task's PR"} — archiving switches ${both ? "them" : "it"} off. Archive anyway to stop ${both ? "them" : "it"}.`
+  return `${on} on for PR #${pr} — archiving switches ${both ? "them" : "it"} off. Archive anyway to stop ${both ? "them" : "it"}, or force-archive.`
 }
 
 /** Resume a paused row, or release a Stop hold early ("Continue now"). */

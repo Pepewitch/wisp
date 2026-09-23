@@ -253,8 +253,12 @@ describe("the sidebar pull-request status", () => {
     expect(icon.querySelector("svg")).toHaveClass("text-destructive")
     expect(icon).toHaveAttribute("aria-label", `PR #${PR.number} · Blocked · Auto-fix: 1 review thread still open`)
     unmount()
-    // merely waiting is not blocked, and a different PR is not this one's
-    mount(<TaskRow task={{ ...TASK, autopilot: { ...autopilot, state: "waiting", reason: "Waiting for checks (2 running)", by: "auto-merge" } }} pullRequest={found()} selected={false} onSelect={() => {}} />)
+    // merely waiting is not blocked
+    const waiting = mount(<TaskRow task={{ ...TASK, autopilot: { ...autopilot, state: "waiting", reason: "Waiting for checks (2 running)", by: "auto-merge" } }} pullRequest={found()} selected={false} onSelect={() => {}} />)
+    expect(screen.getByTestId("sidebar-pull-request-icon").querySelector("svg")).not.toHaveClass("text-destructive")
+    waiting.unmount()
+    // and needing you on a different PR says nothing about this one
+    mount(<TaskRow task={{ ...TASK, autopilot: { ...autopilot, pr: PR.number + 1 } }} pullRequest={found()} selected={false} onSelect={() => {}} />)
     expect(screen.getByTestId("sidebar-pull-request-icon").querySelector("svg")).not.toHaveClass("text-destructive")
   })
 

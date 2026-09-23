@@ -175,9 +175,10 @@ wisp attach <task>
 
 `push` pushes the task branch to origin. `archive` removes the worktree while
 keeping the branch, conversation and attachment bytes; it refuses (exit
-nonzero, named reason) while a turn is running, the tree is dirty, or the
+nonzero, named reason) while a turn is running, the tree is dirty, the
 branch holds commits nothing else holds — a merged or pushed branch archives
-clean. `-f` overrides: kills the turn, commits leftovers onto the branch as
+clean — or auto-merge / auto-fix is still watching its PR (archiving switches
+them off). `-f` overrides: kills the turn, commits leftovers onto the branch as
 `wisp: uncommitted work at archive`. Teardown runs in the background after the
 response; watch for a `note` line naming anything left behind, and for
 failures in `state_detail`. `cleanup` shows the current step and remedy. `--retry`

@@ -107,6 +107,18 @@ describe("auto-merge and auto-fix news", () => {
     expect(news.map((transition) => [transition.task.id, transition.autopilot])).toEqual([["t1", "merged"], ["t2", "needs-you"]])
   })
 
+  it("does not repeat the same news after a round trip through waiting", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("c1", [armed("t1", "waiting")])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toHaveLength(1)
+    // a long turn, or a GitHub blip, then the same verdict again
+    expect(tracker.observe("c1", [armed("t1", "waiting", { reason: "Waiting for the task to finish" })])).toEqual([])
+    expect(tracker.observe("c1", [armed("t1", "needs-you")])).toEqual([])
+    // a different reason is different news
+    tracker.observe("c1", [armed("t1", "waiting")])
+    expect(tracker.observe("c1", [armed("t1", "needs-you", { reason: "Changes requested by @x" })])).toHaveLength(1)
+  })
+
   it("stays quiet for a merge someone else made, a pause it was already in, and an archived task", () => {
     const tracker = createTaskTransitionTracker()
     tracker.observe("c1", [armed("t1", "waiting"), armed("t2", "paused"), armed("t3", "waiting")])

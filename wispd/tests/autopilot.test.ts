@@ -15,7 +15,6 @@ import {
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { formatAutopilot, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
-import { archiveTaskRows } from "../src/routes/archive";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
@@ -249,18 +248,16 @@ describe("the loop", () => {
     expect(autopilotRow(task.id)!.state).toBe("active");
   });
 
-  test("archiving asks first while it still has a PR to act on", async () => {
+  test("archiving asks first only while it is watching a PR", () => {
     const task = doneTask();
     expect(autopilotArchiveWarning(task.id)).toBeNull();
+    // armed with no PR yet: nothing to stop
     setAutopilot(task.id, { autoMerge: true });
-    expect(autopilotArchiveWarning(task.id)).toBe("Auto-merge is on for this task's PR — archiving switches it off. Archive anyway to stop it.");
-    setAutopilot(task.id, { autoFix: true });
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7 }, new Date());
-    const refusal = await archiveTaskRows([getTask(task.id)!], false, loadConfig());
-    expect(refusal).toMatchObject({ status: 409, error: "Auto-merge and auto-fix are on for PR #7 — archiving switches them off. Archive anyway to stop them." });
-    expect(getTask(task.id)!.archived).toBe(0);
-    // once it has nothing left to do (merged, or switched off), archive does not ask
-    setAutopilot(task.id, { autoMerge: false, autoFix: false });
+    expect(autopilotArchiveWarning(task.id)).toBe("Auto-merge is on for PR #7 — archiving switches it off. Archive anyway to stop it, or force-archive.");
+    // once it has nothing left to do, archive does not ask
+    setAutopilot(task.id, { autoMerge: false });
     expect(autopilotArchiveWarning(task.id)).toBeNull();
   });
 

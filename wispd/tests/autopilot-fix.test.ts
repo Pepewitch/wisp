@@ -213,6 +213,22 @@ describe("what the agent reads", () => {
       "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",
       "Post job cleanup.", "[command]/usr/bin/git version",
     ].join("\n");
+    // an always-run step that errors after the real failure keeps the real failure
+    const after = [
+      "##[group]Run bun test", "bun test", "##[endgroup]", "(fail) retry never stops", "##[error]Process completed with exit code 1.",
+      "##[group]Run actions/upload-artifact@v4", "with: if-no-files-found: error", "##[endgroup]", "##[error]No files were found with the provided path: logs/",
+      "Post job cleanup.",
+    ].join("\n");
+    const kept = tidyLog(after);
+    expect(kept).toContain("(fail) retry never stops");
+    expect(kept).toContain("No files were found");
+    expect(kept.startsWith("##[group]Run bun test")).toBe(true);
+    // a failing step longer than the budget keeps both of its ends
+    const long = ["##[group]Run make", ...Array.from({ length: 900 }, (_, n) => `line ${n}`), "##[error]boom"].join("\n");
+    const cut = tidyLog(long, 100);
+    expect(cut.startsWith("##[group]Run make")).toBe(true);
+    expect(cut).toContain("lines omitted");
+    expect(cut.endsWith("##[error]boom")).toBe(true);
     expect(tidyLog(steps)).toBe([
       "(earlier steps omitted)", "##[group]Run ./run-tests.sh a", "./run-tests.sh a", "##[endgroup]",
       "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",

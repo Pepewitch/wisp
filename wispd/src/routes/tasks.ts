@@ -640,8 +640,10 @@ export function taskRoute(
       if (parsed instanceof Response) return parsed;
       const force = parsed.force ?? false;
       if (typeof force !== "boolean") return err(`force must be a boolean, got ${typeName(force)}`, 400);
+      const stopAutopilot = parsed.stopAutopilot ?? false;
+      if (typeof stopAutopilot !== "boolean") return err(`stopAutopilot must be a boolean, got ${typeName(stopAutopilot)}`, 400);
       const archiveTask = getTask(task.id) ?? task;
-      const result = await archiveTaskRows([archiveTask], force, cfg);
+      const result = await archiveTaskRows([archiveTask], force, cfg, { stopAutopilot });
       if ("error" in result) return err(result.error, result.status);
       const archived = result.archived[0]!;
       return json({ ok: true, branch: archived.branch, note: archived.note });
