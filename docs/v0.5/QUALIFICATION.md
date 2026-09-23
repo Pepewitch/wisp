@@ -2,7 +2,57 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.16 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.18 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.18 publication
+
+**Published and promoted on 2026-09-23.**
+[Wisp 0.5.18](https://github.com/Pepewitch/wisp/releases/tag/v0.5.18) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 08:27:52 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`0e00922905db2f507c82deb1414709a4ee9d7aa6`](https://github.com/Pepewitch/wisp/commit/0e00922905db2f507c82deb1414709a4ee9d7aa6),
+landed through [PR #262](https://github.com/Pepewitch/wisp/pull/262), carrying
+the harness refresh from [PR #260](https://github.com/Pepewitch/wisp/pull/260)
+and Cursor cache repair from
+[PR #261](https://github.com/Pepewitch/wisp/pull/261).
+
+The immutable publication jobs in the
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/35836463054)
+completed successfully:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main release candidate also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `0e00922` |
+| Homebrew installability | The archive was proven offline to stage to one top-level directory containing the bundle, and the rendered Formula was installed and tested from the published release on a clean runner before the tap advanced |
+
+The workflow's initial promotion job failed after publication because GitHub's
+release-by-tag API returned a stale embedded `assets: []` response even though
+its dedicated assets endpoint and all ten anonymous downloads exposed the
+complete release. No tag, release body, or asset was changed. The recovery in
+[PR #263](https://github.com/Pepewitch/wisp/pull/263) made promotion read the
+dedicated asset inventory while preserving the same exact-ten-assets contract.
+The [recovery workflow](https://github.com/Pepewitch/wisp/actions/runs/35839393713)
+then downloaded and verified the immutable public bytes, passed fresh-runner
+Homebrew audits, and completed four-file promotion and fixed-URL convergence
+for both channels.
+
+Promotion completed at 08:57:49 UTC with Homebrew tap commit
+[`b307eb1d55a08a4bbff8b5a19d9519a48105b95a`](https://github.com/Pepewitch/homebrew-tap/commit/b307eb1d55a08a4bbff8b5a19d9519a48105b95a).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.5.18.
+
+0.5.18 adds no database migration. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, a Desktop
+updater journey across this version, live coding turns for every newly listed
+model, the token-spending harness probes, or the paid evaluator panel — was
+performed, and this record does not claim them. The published assets and
+release body remain immutable; this ledger records the completed outcome
+separately.
 
 ## 0.5.16 publication
 
