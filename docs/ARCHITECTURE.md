@@ -293,7 +293,9 @@ Desktop application releases are Developer ID signed, notarized, and updater
 signed before the tag workflow can publish immutable assets. The standalone
 daemon bundle is Developer ID signed, notarized, and stapled under the stable
 `dev.wisp.daemon` identifier so macOS permissions and its App Management icon
-survive Homebrew upgrades. A
+survive Homebrew upgrades. Its signature also carries the JIT and
+unsigned-executable-memory entitlements the hardened runtime requires before
+`bun:ffi` can open a pty for the embedded terminal. A
 separate serialized, resumable promotion job re-verifies those public bytes
 before it atomically advances the Homebrew Formula, Cask, fixed Desktop channel,
 and daemon channel. A

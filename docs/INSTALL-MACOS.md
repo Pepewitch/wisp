@@ -147,6 +147,13 @@ what lets System Settings show a branded application instead of the generic
 Unix-executable tile. The signature—not the artwork—is what makes later
 versions reuse one permission identity.
 
+That hardened runtime also has to grant the daemon the executable memory
+`bun:ffi` needs to reach libc, which is how the embedded terminal opens a pty.
+Wisp 0.5.15 shipped hardened without those entitlements, so opening a terminal
+crashed the daemon; 0.5.16 and later sign with `allow-jit` and
+`allow-unsigned-executable-memory`, and the release gates refuse to publish a
+daemon that lacks them.
+
 The first bundled, Developer ID signed upgrade can create one final Wisp row
 because it deliberately changes away from every old ad-hoc client. Later
 upgrades satisfy the same stable designated requirement and reuse the branded

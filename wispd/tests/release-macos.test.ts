@@ -15,8 +15,10 @@ import {
   daemonInfoPlist,
   developerIdSigningMetadata,
   deterministicDaemonAppTarGz,
+  daemonEntitlementsPlist,
   isAdHocCodeSignature,
   macosArchiveRoot,
+  MACOS_ENTITLEMENTS,
   MACOS_APP_DIRECTORY,
   MACOS_APP_EXECUTABLE,
   MACOS_APP_ICON,
@@ -123,6 +125,24 @@ describe("Apple Silicon release metadata", () => {
     // The formula then installs the bundle by name from that directory.
     expect(readdirSync(cwd)).toContain(MACOS_APP_DIRECTORY);
     expect(statSync(join(cwd, MACOS_APP_DIRECTORY, "Contents/MacOS/wisp")).isFile()).toBe(true);
+  });
+
+  // 0.5.15 shipped a hardened, Developer ID signed daemon with no entitlements.
+  // bun:ffi's dlopen writes executable trampolines, which the hardened runtime
+  // forbids, so every terminal open trapped in pthread_jit_write_protect_np and
+  // killed the daemon. The signature has to grant that explicitly.
+  test("grants the hardened runtime the memory rights bun:ffi needs", () => {
+    expect([...MACOS_ENTITLEMENTS]).toEqual([
+      "com.apple.security.cs.allow-jit",
+      "com.apple.security.cs.allow-unsigned-executable-memory",
+    ]);
+    const plist = daemonEntitlementsPlist();
+    for (const key of MACOS_ENTITLEMENTS) {
+      expect(plist).toContain(`<key>${key}</key>`);
+    }
+    expect(plist.match(/<true\/>/g)).toHaveLength(MACOS_ENTITLEMENTS.length);
+    expect(plist.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
+    expect(plist.endsWith("</plist>\n")).toBe(true);
   });
 
   test("marks the daemon bundle as a branded background application", () => {
