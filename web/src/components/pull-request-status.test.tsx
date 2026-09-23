@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
 import { TASKS } from "@/lib/fixtures"
+import type { AutopilotStatus } from "../../../shared/autopilot"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -154,8 +155,9 @@ describe("PR status in task headers", () => {
 })
 
 describe("the auto-merge reason on the PR line", () => {
-  const status = (over: Record<string, unknown> = {}) => ({
-    autoMerge: true, autoFix: false, pr: 42, state: "waiting" as const, reason: "Waiting for checks (2 running)", updatedAt: null, ...over,
+  const status = (over: Partial<AutopilotStatus> = {}): AutopilotStatus => ({
+    autoMerge: true, autoFix: false, pr: 42, state: "waiting", reason: "Waiting for checks (2 running)",
+    about: "pr", mergedByWisp: false, updatedAt: null, ...over,
   })
 
   it("stands in for CI and review while armed, and the hover still carries both", () => {
@@ -166,16 +168,41 @@ describe("the auto-merge reason on the PR line", () => {
     expect(link.getAttribute("title")).toContain("CI failed · Changes requested")
   })
 
-  it("names the PR it is bound to when that is not the one on show, and says when it is paused", () => {
-    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ pr: 7, state: "paused", reason: "Merge failed: conflict" })} />)
-    expect(screen.getByRole("link")).toHaveTextContent("Auto-merge #7 paused: Merge failed: conflict")
+  it("says when it is paused on this PR", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ state: "paused", reason: "Merge failed: conflict" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("Auto-merge paused: Merge failed: conflict")
+  })
+
+  it("never hides this PR's CI and review behind a reason about the task, another PR, or no PR at all", () => {
+    const cases = [
+      status({ about: "task", reason: "Waiting for the task to finish" }),
+      status({ pr: 7, reason: "test failed" }),
+      status({ pr: null, about: "task", reason: "Waiting for a PR" }),
+    ]
+    for (const autoMerge of cases) {
+      const { unmount } = render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={autoMerge} />)
+      const link = screen.getByRole("link")
+      expect(link).toHaveTextContent("CI failed · Changes requested")
+      // the reason is still there, in the hover
+      expect(link.getAttribute("title")).toContain(autoMerge.reason)
+      unmount()
+    }
+  })
+
+  it("does not repeat a merge queue the lifecycle already names", () => {
+    render(<PullRequestStatusLink pullRequest={{ ...FOUND.pullRequest, queuedToMerge: true }} autoMerge={status({ state: "queued", reason: "Queued to merge" })} />)
+    expect(screen.getByRole("link")).not.toHaveTextContent("Auto-merge")
   })
 
   it("says the merge was Wisp's, and stays out of the way when auto-merge is off", () => {
     const merged = { ...FOUND.pullRequest, lifecycle: "merged" as const }
-    const { unmount } = render(<PullRequestStatusLink pullRequest={merged} autoMerge={status({ autoMerge: false, state: "merged", reason: "Merged by Wisp" })} />)
+    const { unmount } = render(<PullRequestStatusLink pullRequest={merged} autoMerge={status({ autoMerge: false, state: "merged", reason: "Merged by Wisp", mergedByWisp: true })} />)
     expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Merged by Wisp")
     unmount()
+    // someone else merged it: the provider's word stands
+    const other = render(<PullRequestStatusLink pullRequest={merged} autoMerge={status({ autoMerge: false, state: "merged", reason: "#42 was merged" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Merged · ")
+    other.unmount()
     render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, state: "off", reason: "Auto-merge off" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("CI failed · Changes requested")
   })

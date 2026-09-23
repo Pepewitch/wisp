@@ -126,10 +126,15 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
         {armed && status?.pr ? `Auto-merge #${status.pr}` : "Auto-merge"}
       </MenuCheckboxItem>
       {local && <MenuNote>Needs a worktree task: this one runs in the project checkout.</MenuNote>}
-      {armed && status && <MenuNote>{status.state === "paused" ? `Paused — ${status.reason}` : status.reason}</MenuNote>}
-      {armed && status?.state === "paused" && <MenuItem disabled={autopilot.isPending} onClick={() => set()}>Resume</MenuItem>}
-      {armed && status?.state === "held" && <MenuItem disabled={autopilot.isPending} onClick={() => set()}>Continue now</MenuItem>}
-      {autopilot.error && <MenuNote>{failureReason(autopilot.error)}</MenuNote>}
+      {/* the reason while it is on; and when Wisp itself switched it off, why */}
+      {status && (armed || (status.reason !== "" && status.reason !== "Auto-merge off")) && (
+        <div className="max-w-[280px]">
+          <MenuNote>{status.state === "paused" ? `Paused — ${status.reason}` : status.reason}</MenuNote>
+        </div>
+      )}
+      {armed && status?.state === "paused" && <MenuItem keepOpen disabled={autopilot.isPending} onClick={() => set()}>Resume</MenuItem>}
+      {armed && status?.state === "held" && <MenuItem keepOpen disabled={autopilot.isPending} onClick={() => set()}>Continue now</MenuItem>}
+      {autopilot.error && <div className="max-w-[280px]"><MenuNote>{failureReason(autopilot.error)}</MenuNote></div>}
     </>
   )
 }

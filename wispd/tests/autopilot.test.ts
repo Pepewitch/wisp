@@ -138,12 +138,13 @@ describe("the loop", () => {
     const rt = runtime(github, clock);
     setAutopilot(task.id, { autoMerge: true });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ pr: 7, state: "waiting", reason: "Waiting for checks to start" });
+    // a gate reason is about the PR, so a client may show it in place of CI and review
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: 7, state: "waiting", reason: "Waiting for checks to start", about: "pr" });
     expect(state.merges).toHaveLength(0);
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges).toEqual([{ number: 7, method: "SQUASH", head: HEAD }]);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "Merged by Wisp", pr: 7, autoMerge: false });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "Merged by Wisp", pr: 7, autoMerge: false, mergedByWisp: true });
     // the agent hears once that its branch is finished, and never again
     const merged = autopilotTurnNotes(task.id);
     expect(merged.notes).toEqual(["PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main."]);
@@ -180,7 +181,8 @@ describe("the loop", () => {
     transition(task.id, "running");
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(0);
-    expect(autopilotStatus(task.id).reason).toBe("Waiting for the task to finish");
+    // a reason about the task must never stand in for the PR's own facts
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Waiting for the task to finish", about: "task" });
     transition(task.id, "needs-input");
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id).reason).toBe("Waiting for your answer");
@@ -365,7 +367,7 @@ describe("binding and the edges of a merge", () => {
     db.run("UPDATE workflows SET state = 'paused', reason = 'Merge failed: x' WHERE task_id = ? AND type = 'pr-autopilot'", [task.id]);
     state.pr = snapshot({ state: "MERGED" });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "#7 was merged" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "#7 was merged", mergedByWisp: false });
   });
 
   test("marking a draft ready restarts the wait for its checks", async () => {

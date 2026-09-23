@@ -29,6 +29,7 @@ import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
+import { headerTask } from "@/lib/header-task"
 import { buildTaskSurfaces } from "@/components/task-surfaces"
 import {
   useHarnesses,
@@ -265,8 +266,9 @@ function MainView({
   }
 
   const task = tasks.find((t) => t.id === selectedId) ?? null
-  // the detail row wins once loaded — it carries the turns
-  const header = detailQuery.data ?? task
+  // the detail row wins once loaded — it carries the turns; list-only state
+  // (auto-merge) rides along from the task row
+  const header = headerTask(detailQuery.data, task)
   const archived = task?.archived ?? false
   // Status owns Git health for both sidebar and header. It may arrive after
   // conversation paint, but a slow or failed Git sweep never blocks Chat.

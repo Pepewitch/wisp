@@ -176,14 +176,17 @@ export function MenuItem({
   onClick,
   disabled,
   hint,
+  keepOpen = false,
 }: {
   children: ReactNode
   onClick?: () => void
   disabled?: boolean
   hint?: ReactNode
+  /** stay open, so the row's own outcome (a refusal, a new state) can be read in place */
+  keepOpen?: boolean
 }) {
   return (
-    <Base.Item className={ROW} onClick={onClick} disabled={disabled}>
+    <Base.Item className={ROW} onClick={onClick} disabled={disabled} closeOnClick={!keepOpen}>
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {hint && <span className="shrink-0 text-[10.5px] text-faint">{hint}</span>}
     </Base.Item>

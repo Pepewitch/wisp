@@ -213,8 +213,8 @@ export class AutopilotRuntime {
     if (!paramsOf(row).autoMerge) { changeWorkflowState(row.id, "completed", "Auto-merge off", now); return }
     const checkpoint: AutopilotCheckpoint = checkpointOf(row)
     const idle = taskIsIdle(task)
-    const save = (state: AutopilotState, reason: string, delayMs: number) =>
-      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs }, this.now())
+    const save = (state: AutopilotState, reason: string, delayMs: number, about: "pr" | "task" = "task") =>
+      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about }, this.now())
 
     if (checkpoint.stopHold) {
       if (idle && task.turn_count > checkpoint.stopHold.turnCount) delete checkpoint.stopHold
@@ -235,9 +235,9 @@ export class AutopilotRuntime {
 
     const pr = await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
     if (pr.state !== "OPEN") { this.settle(row, checkpoint, pr); return }
-    if (pr.isCrossRepository) { save("needs-you", "Fork pull requests are not supported", BUSY_MS); return }
+    if (pr.isCrossRepository) { save("needs-you", "Fork pull requests are not supported", BUSY_MS, "pr"); return }
     if (pr.providerAutoMerge) { pauseAutopilot(row, `GitHub auto-merge was turned on for #${pr.number} — resume to let Wisp decide`, now); return }
-    if (pr.queued) { save("queued", "Queued to merge", MOVING_MS); return }
+    if (pr.queued) { save("queued", "Queued to merge", MOVING_MS, "pr"); return }
     observe(checkpoint, pr, now)
     if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
 
@@ -250,8 +250,8 @@ export class AutopilotRuntime {
       headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
       nowMs: now.getTime(), published,
     })
-    if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS); return }
-    if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS); return }
+    if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr"); return }
+    if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS, "pr"); return }
     await this.merge(row, checkpoint, pr, repository)
   }
 
@@ -335,7 +335,7 @@ export class AutopilotRuntime {
     const current = getWorkflow(row.id)
     if (!current || current.state !== "active") return
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
-    if (after?.queued) { saveAutopilotCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS }, this.now()); return }
+    if (after?.queued) { saveAutopilotCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }, this.now()); return }
     if (after?.providerAutoMerge) {
       // no longer confirming anything: turns during the pause may push
       writeAutopilotCheckpoint(current, { ...attempt, state: "waiting" }, this.now())
@@ -346,7 +346,7 @@ export class AutopilotRuntime {
       // gh said it merged but the read disagrees or failed (read-after-write
       // lag, a timeout): not a failure. Keep the attempt, so the next look
       // records it as Wisp's merge, and look again soon.
-      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: attempt, delayMs: 15_000 }, this.now())
+      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: attempt, delayMs: 15_000, about: "pr" }, this.now())
       return
     }
     const failures = attempt.mergeFailures?.head === pr.head ? attempt.mergeFailures.count + 1 : 1
@@ -358,6 +358,6 @@ export class AutopilotRuntime {
       pauseAutopilot(getWorkflow(row.id) ?? current, `Merge failed: ${detail}`.slice(0, 300), this.now())
       return
     }
-    saveAutopilotCheck(current, { state: "waiting", reason: `Merge failed, retrying: ${detail}`.slice(0, 300), checkpoint: failed, delayMs: 2 * MOVING_MS }, this.now())
+    saveAutopilotCheck(current, { state: "waiting", reason: `Merge failed, retrying: ${detail}`.slice(0, 300), checkpoint: failed, delayMs: 2 * MOVING_MS, about: "pr" }, this.now())
   }
 }

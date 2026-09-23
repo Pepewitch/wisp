@@ -28,6 +28,15 @@ export interface AutopilotStatus {
   pr: number | null
   state: AutopilotState
   reason: string
+  /**
+   * What `reason` describes: the bound PR's own state (its checks, reviews,
+   * merge state), which a client may show IN PLACE of those facts; or the
+   * task and Wisp itself (busy, held by Stop, no PR yet, GitHub unreachable),
+   * which must never stand in for them.
+   */
+  about: "pr" | "task"
+  /** the bound PR merged, and it was Wisp that merged it */
+  mergedByWisp: boolean
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }
