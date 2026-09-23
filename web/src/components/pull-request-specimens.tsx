@@ -29,6 +29,23 @@ export function PullRequestSpecimens() {
           Queue membership replaces the open state and uses GitHub&apos;s merge-queue orange.
         </span>
       </div>
+      <div className="mt-4 flex items-center gap-3">
+        <PullRequestStatusLink
+          pullRequest={PR_SPECIMEN}
+          autoMerge={{ autoMerge: true, autoFix: false, pr: PR_SPECIMEN.number, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", mergedByWisp: false, updatedAt: null }}
+        />
+        <span className="text-[11.5px] text-muted-foreground">
+          With auto-merge on, its reason stands in for CI and review — it already accounts for both, and a
+          reason tacked onto a truncating line is the first thing cut. The hover keeps every fact.
+        </span>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        <PullRequestStatusLink
+          pullRequest={{ ...PR_SPECIMEN, lifecycle: "merged" }}
+          autoMerge={{ autoMerge: false, autoFix: false, pr: PR_SPECIMEN.number, state: "merged", reason: "Merged by Wisp", about: "pr", mergedByWisp: true, updatedAt: null }}
+        />
+        <span className="text-[11.5px] text-muted-foreground">A PR auto-merge landed says so.</span>
+      </div>
     </>
   )
 }

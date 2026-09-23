@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import type { AutopilotStatus } from "../../../shared/autopilot";
+
 import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
@@ -105,6 +107,27 @@ export function useRenameTask() {
       );
       client.setQueryData<ConversationDetail>(qk.task(saved.id), (current) =>
         current ? { ...current, title: saved.title, updated_at: saved.updated_at } : current,
+      );
+    },
+  });
+}
+
+/**
+ * PUT /api/tasks/:id/autopilot, or POST …/resume. The answer is the task's
+ * whole autopilot status, so it patches the list in place; the daemon's
+ * `workflow` event refreshes every other tab.
+ */
+export function useAutopilot() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: ({ id, autoMerge }: { id: string; autoMerge?: boolean }) =>
+      autoMerge === undefined
+        ? transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/resume`, { method: "POST", body: {} })
+        : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot`, { method: "PUT", body: { autoMerge } }),
+    onSuccess: (status, { id }) => {
+      client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) =>
+        current?.map((task) => (task.id === id ? { ...task, autopilot: status } : task)),
       );
     },
   });

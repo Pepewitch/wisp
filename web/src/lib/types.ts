@@ -3,6 +3,7 @@
  * The state list pairs with TASK_STATES in src/types.ts — keep in sync by hand,
  * same contract as the classic web/index.html.
  */
+import type { AutopilotStatus } from "../../../shared/autopilot";
 export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck", "failed"] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 
@@ -140,6 +141,8 @@ export interface ApiTask {
   updated_at: string;
   /** List endpoint only; true while at least one active or paused workflow is attached. */
   has_workflow?: boolean;
+  /** auto-merge for the task's PR; null or absent when it was never armed (or the daemon predates it) */
+  autopilot?: AutopilotStatus | null;
   /** the model the task's latest turn actually ran on (P5b) — list endpoint only */
   latest_turn_model?: string | null;
   /** the latest turn's exit code (Theme B) — the fact behind the "Exited N" word */
@@ -551,6 +554,8 @@ export interface HarnessesResponse {
     /** GET /api/search answers cross-task text search (the sidebar's ⌘⇧F). */
     taskSearch?: boolean;
     taskWorkflows?: boolean;
+    /** GET/PUT /api/tasks/:id/autopilot: auto-merge for a task's PR. */
+    taskAutopilot?: boolean;
   };
 }
 

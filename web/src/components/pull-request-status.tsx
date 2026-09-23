@@ -1,3 +1,4 @@
+import type { AutopilotStatus } from "../../../shared/autopilot"
 import { BranchRequest } from "@/components/icons"
 import {
   PULL_REQUEST_ICON_TONE,
@@ -39,6 +40,27 @@ const MERGE_STATE = {
   unknown: "Merge status unknown",
 } as const
 
+/** What auto-merge has to say about this PR, or null when it has nothing. */
+function autoMergeWords(status: AutopilotStatus | null | undefined, number: number): string | null {
+  if (!status?.autoMerge) return null
+  const which = status.pr !== null && status.pr !== number ? ` #${status.pr}` : ""
+  return status.state === "paused" ? `Auto-merge${which} paused: ${status.reason}` : `Auto-merge${which}: ${status.reason}`
+}
+
+/**
+ * Whether that reason may REPLACE the CI and review words. Only when it is
+ * about this very PR's own state — its checks, reviews, merge state, or a
+ * pause — because then it already accounts for both, and the line truncates,
+ * so a reason tacked on at the end would be the first thing cut. A reason
+ * about the task ("waiting for the task to finish", a Stop hold) or about
+ * another PR must never hide what GitHub says about this one; it lives in
+ * the hover instead.
+ */
+function replacesFacts(status: AutopilotStatus | null | undefined, pullRequest: PullRequestInfo): boolean {
+  return Boolean(status?.autoMerge) && status!.pr === pullRequest.number &&
+    (status!.about === "pr" || status!.state === "paused") && !pullRequest.queuedToMerge
+}
+
 /**
  * One neutral, unboxed link for an associated PR. The provider owns every
  * status; Wisp only normalizes and relays it. `compact` keeps the same facts in
@@ -48,21 +70,31 @@ export function PullRequestStatusLink({
   pullRequest,
   others = 0,
   compact = false,
+  autoMerge,
 }: {
   pullRequest: PullRequestInfo
   /** How many MORE this task has — it is showing its newest. */
   others?: number
   compact?: boolean
+  /** the task's auto-merge status, whose reason stands in for CI and review while armed */
+  autoMerge?: AutopilotStatus | null
 }) {
-  const lifecycle = pullRequest.lifecycle === "open" && pullRequest.queuedToMerge
-    ? "Queued to merge"
-    : LIFECYCLE[pullRequest.lifecycle]
+  const mergedByWisp = pullRequest.lifecycle === "merged" && autoMerge?.mergedByWisp === true && autoMerge.pr === pullRequest.number
+  const lifecycle = mergedByWisp
+    ? "Merged by Wisp"
+    : pullRequest.lifecycle === "open" && pullRequest.queuedToMerge
+      ? "Queued to merge"
+      : LIFECYCLE[pullRequest.lifecycle]
   const checks = CHECKS[pullRequest.checks]
   const review = REVIEW[pullRequest.review]
   // A task with several branches shows its NEWEST pull request, so the count
   // is the one thing the row would otherwise be hiding.
   const more = others > 0 ? `newest of ${others + 1} on this task` : null
-  const label = `PR #${pullRequest.number} · ${lifecycle} · ${checks} · ${review}`
+  const automation = pullRequest.lifecycle === "open" ? autoMergeWords(autoMerge, pullRequest.number) : null
+  // the hover title keeps every fact; the visible line trades CI and review
+  // for the reason only when the reason is about this PR's own state
+  const label = `PR #${pullRequest.number} · ${lifecycle} · ${checks} · ${review}${automation ? ` · ${automation}` : ""}`
+  const detail = automation && replacesFacts(autoMerge, pullRequest) ? automation : `${checks} · ${review}`
   const mergeState = MERGE_STATE[pullRequest.mergeState]
   const iconTone = pullRequestIconTone(pullRequest)
   // No href when the daemon reported something that is not a web address: the
@@ -96,13 +128,13 @@ export function PullRequestStatusLink({
             PR #{pullRequest.number} · {lifecycle}
           </span>
           <span className="block truncate text-[10.5px]">
-            {checks} · {review}
+            {detail}
           </span>
         </span>
       ) : (
         <span className="truncate">
           <span className="font-mono text-fg-secondary">PR #{pullRequest.number}</span>
-          <span> · {lifecycle} · {checks} · {review}</span>
+          <span> · {lifecycle} · {detail}</span>
         </span>
       )}
       {/* one short fact, and only when there IS one: this row is the newest of

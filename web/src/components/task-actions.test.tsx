@@ -121,11 +121,107 @@ describe("the overflow menu", () => {
     refuse = false
     fireEvent.click(screen.getByRole("button", { name: "Archive anyway" }))
     await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/archive"))).toHaveLength(2))
-    expect(calls[1]!.body).toEqual({ force: true })
+    expect(calls.filter((c) => c.path.endsWith("/archive"))[1]!.body).toEqual({ force: true })
   })
 
   it("renders no dialog while nothing has been refused", () => {
     mount(<TaskActions task={TASK} />)
     expect(screen.queryByRole("dialog")).toBeNull()
+  })
+})
+
+describe("auto-merge in the overflow menu", () => {
+  const armed = (over: Partial<NonNullable<ApiTask["autopilot"]>> = {}): ApiTask => ({
+    ...TASK,
+    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", mergedByWisp: false, updatedAt: null, ...over },
+  })
+  function daemon(extra: (path: string) => { status: number; body: unknown } | null = () => null) {
+    return stubApi((path) => {
+      if (path.endsWith("/api/harnesses")) return { status: 200, body: { harnesses: [], features: { taskAutopilot: true } } }
+      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, updatedAt: null } }
+    })
+  }
+  async function open() {
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    return await screen.findByRole("menuitemcheckbox", { name: /Auto-merge/ })
+  }
+
+  it("is a switch that arms auto-merge without closing the menu", async () => {
+    const calls = daemon()
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    fireEvent.click(toggle)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoMerge: true } }))
+    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toBeInTheDocument()
+  })
+
+  it("names the bound PR and says what it is waiting for", async () => {
+    daemon()
+    mount(<TaskActions task={armed()} />)
+    const toggle = await open()
+    expect(toggle).toHaveTextContent("Auto-merge #7")
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    expect(screen.getByText("Waiting for checks (2 running)")).toBeInTheDocument()
+  })
+
+  it("offers Resume for a pause and Continue now for a Stop hold, both through the resume route", async () => {
+    const calls = daemon()
+    const { unmount } = mount(<TaskActions task={armed({ state: "paused", reason: "Merge failed: Base branch was modified" })} />)
+    await open()
+    expect(screen.getByText("Paused — Merge failed: Base branch was modified")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }))
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/resume`, method: "POST", body: {} }))
+    unmount()
+    mount(<TaskActions task={armed({ state: "held", reason: "Held — you pressed Stop; continues after your next turn", about: "task" })} />)
+    await open()
+    fireEvent.click(screen.getByRole("menuitem", { name: "Continue now" }))
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/autopilot/resume"))).toHaveLength(2))
+    // it stays open, so what happened can be read in place
+    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toBeInTheDocument()
+  })
+
+  it("keeps the switch where it was and says why when the daemon refuses", async () => {
+    daemon((path) => path.endsWith("/autopilot") ? { status: 409, body: { error: "An archived task cannot auto-merge" } } : null)
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    fireEvent.click(toggle)
+    expect(await screen.findByText("An archived task cannot auto-merge")).toBeInTheDocument()
+    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
+  })
+
+  it("says why when Wisp itself switched it off", async () => {
+    daemon()
+    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", mergedByWisp: false, updatedAt: null } }} />)
+    await open()
+    expect(screen.getByText("Auto-merge off — #7 was closed")).toBeInTheDocument()
+  })
+
+  it("is not offered on an archived task", async () => {
+    const calls = daemon()
+    mount(<TaskActions task={{ ...TASK, archived: true }} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/api/harnesses"))).toBe(true))
+    expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
+  })
+
+  it("is disabled, and says why, for a task that runs in the project checkout", async () => {
+    daemon()
+    mount(<TaskActions task={{ ...TASK, mode: "local" }} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-disabled", "true")
+    expect(screen.getByText(/Needs a worktree task/)).toBeInTheDocument()
+  })
+
+  it("is absent on a daemon that predates it", async () => {
+    const calls = stubApi(() => ({ status: 200, body: { harnesses: [], features: {} } }))
+    mount(<TaskActions task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    // wait for the daemon's answer, or this would pass before it arrived
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/api/harnesses"))).toBe(true))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
   })
 })

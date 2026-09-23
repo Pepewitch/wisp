@@ -760,6 +760,17 @@ CODEOWNERS, or required-approval rules in Wisp. `/push` remains a Tier-1 palette
 command. `none`, `unsupported`, and `unavailable` all render nothing: an absent
 PR is not an error, and a missing provider CLI or credential is not task news.
 
+**Auto-merge on the PR line.** While a task's auto-merge is on, its reason
+REPLACES the CI and review words — `PR #271 · Open · Auto-merge: Waiting for
+checks (2 running)` — because the reason already accounts for both, and the
+line truncates: a reason appended at the end would be the first thing cut. The
+hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
+switch itself is a checkbox row in the task's `…` menu (`MenuCheckboxItem`),
+naming the PR it is bound to, with the reason as a `MenuNote` and Resume or
+Continue now beneath it: menu rows, so touch and keyboard reach every control.
+The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
+from the UI polling below.
+
 The count rides the header link and the hover card, not the sidebar icon: the
 icon compresses to three glance states on purpose, and the card is where the
 branch of record and a later pull request sit one row apart and can disagree.

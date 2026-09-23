@@ -26,6 +26,8 @@ export interface AutopilotCheckpoint {
   outcome?: "merged" | "closed"
   /** set with outcome "merged": the base it went into, and whether Wisp merged it */
   merged?: { base: string; byWisp: boolean; noted: boolean }
+  /** what the saved reason describes (see AutopilotStatus.about) */
+  about?: "pr" | "task"
 }
 
 export interface AutopilotParams {
@@ -60,7 +62,7 @@ function latestRow(taskId: string): WorkflowRow | null {
     .get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
-const OFF: AutopilotStatus = { autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", updatedAt: null }
+const OFF: AutopilotStatus = { autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", mergedByWisp: false, updatedAt: null }
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   if (!row) return OFF
@@ -68,7 +70,10 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const params = paramsOf(row)
   const pr = checkpoint.pr ?? null
   if (row.state === "completed") {
-    return { ...OFF, pr, state: checkpoint.outcome === "merged" ? "merged" : "off", reason: row.reason, updatedAt: row.updated_at }
+    return {
+      ...OFF, pr, state: checkpoint.outcome === "merged" ? "merged" : "off", reason: row.reason,
+      about: checkpoint.outcome ? "pr" : "task", mergedByWisp: checkpoint.merged?.byWisp === true, updatedAt: row.updated_at,
+    }
   }
   // The agent-switch trigger pauses every active workflow; autopilot follows
   // the task instead, and its next check reactivates it. Until then it is
@@ -77,7 +82,11 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
     ? row.reason === CONTEXT_CHANGE_PAUSE ? "waiting" : "paused"
     : checkpoint.state ?? "waiting"
   const reason = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE ? "Following the task's agent change" : row.reason
-  return { autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, updatedAt: row.updated_at }
+  // A pause is always about the PR (a merge that keeps failing, GitHub's own
+  // auto-merge found on); a hold or a wait on the task never is.
+  const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
+  const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
+  return { autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, mergedByWisp: false, updatedAt: row.updated_at }
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -138,6 +147,8 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
   checkpoint.state = "waiting"
+  // until the next look, the reason is about the resume, not the PR
+  checkpoint.about = "task"
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
     [JSON.stringify(checkpoint), now.toISOString(), now.toISOString(), row.id])
   if (row.state === "paused") changeWorkflowState(row.id, "active", "Resumed", now)
@@ -152,6 +163,8 @@ const reasonClass = (state: string, reason: string): string => `${state}:${reaso
 export interface AutopilotCheck {
   state: AutopilotState
   reason: string
+  /** defaults to "task": only the gate and the merge speak about the PR itself */
+  about?: "pr" | "task"
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
@@ -163,7 +176,7 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   if (!current || current.state !== "active" || current.revision !== row.revision) return false
   const at = now.toISOString()
   const previous = checkpointOf(current)
-  const checkpoint = { ...check.checkpoint, state: check.state }
+  const checkpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task" }
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
     last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
   [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + check.delayMs).toISOString(), check.reason, at, row.id])
