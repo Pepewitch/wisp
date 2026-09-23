@@ -5432,7 +5432,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-desktop"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "axum",
  "block2",
