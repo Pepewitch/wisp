@@ -2,13 +2,83 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.15 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.16 is the current release; earlier 0.5 records are retained below.
+
+## 0.5.16 publication
+
+**Published and promoted on 2026-09-23.**
+[Wisp 0.5.16](https://github.com/Pepewitch/wisp/releases/tag/v0.5.16) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 04:50:17 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`7e677321d323254c37116793640b37a51c9b0fa7`](https://github.com/Pepewitch/wisp/commit/7e677321d323254c37116793640b37a51c9b0fa7),
+landed through [PR #257](https://github.com/Pepewitch/wisp/pull/257), carrying
+[PR #256](https://github.com/Pepewitch/wisp/pull/256) and
+[PR #258](https://github.com/Pepewitch/wisp/pull/258).
+
+0.5.16 exists because 0.5.15 crashed. 0.5.15 was the first release whose
+hardened, Developer ID signed daemon a user could install, and it carried no
+entitlements at all. The daemon reaches libc through `bun:ffi` to open a pty, so
+every terminal open trapped in `pthread_jit_write_protect_np` and killed the
+whole daemon; launchd restarted it and the next attempt did the same. Desktop
+reported `could not open a shell (1006)` and then `could not reach the daemon`.
+Measured under a real Developer ID signature against bun 1.3.14: no entitlements
+SIGTRAPs, `allow-jit` alone is SIGKILLed, and
+`allow-unsigned-executable-memory` is the one that works.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/35819341904)
+completed all seven jobs successfully on the first attempt:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, native-core, npm, Rust, supply-chain, and public-promotion dry-run checks passed; the exact-main release candidate also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; the Desktop updater signature and altered-archive rejection passed |
+| macOS daemon entitlements | New in this release: the build refuses a signed daemon whose signature lacks `allow-jit` or `allow-unsigned-executable-memory`, and both were re-checked on the downloaded public bytes |
+| Public assets | All ten anonymous downloads matched all three checksum sets and clean tagged commit `7e67732` |
+| Homebrew installability | The archive was proven offline to stage to one top-level directory containing the bundle, and the rendered Formula was installed and tested from the published release on a clean runner before the tap advanced |
+| Distribution | Fresh-runner Homebrew audits, four-file promotion, and fixed-URL convergence for both channels passed |
+
+The promotion receipt completed at 04:52:13 UTC with Homebrew tap commit
+[`ccce77a1f6faafa55d39e0c217470bbb4adfbc1c`](https://github.com/Pepewitch/homebrew-tap/commit/ccce77a1f6faafa55d39e0c217470bbb4adfbc1c),
+with the Formula, Cask, and both update channels serving 0.5.16.
+
+0.5.16 adds no database migration.
+
+**Maintainer upgrade receipt.** One Apple Silicon machine on macOS 26.7 was
+upgraded from 0.5.15 to 0.5.16 with `brew upgrade Pepewitch/tap/wisp` followed
+by `brew services restart wisp`. `wisp version` reported
+`0.5.16 (commit 7e677321…)`, the daemon served under its launchd service, the
+installed bundle validated its staple and carried both entitlements under the
+designated requirement `identifier "dev.wisp.daemon" and anchor apple generic
+and certificate leaf[subject.OU] = G823NH4M6N`, and three consecutive terminal
+opens returned `{"type":"hello","pty":true,…}` and closed 1000 with the daemon
+pid unchanged — the failure 0.5.15 shipped.
+
+The Monitor change was verified end to end before release against a daemon
+built from that branch, with an isolated `WISP_HOME` and a real `claude`
+harness: a task arming a background Monitor recorded `ARMED`, `EVENT tick 1`,
+`EVENT tick 2`, `EVENT tick 3` and `MONITOR_DONE` as five results in one turn
+and finished `done`.
+
+**Not performed, and not claimed.** No gate runs the shipped daemon's terminal
+end to end; 0.5.15 passed every check while crashing on first use, because each
+gate runs the binary only long enough for `wisp version`. The entitlement checks
+close that specific hole, not the class. No clean-machine fresh install beyond
+the release runner, no Desktop Cask upgrade or updater journey across this
+version, no Linux upgrade receipt, and no paid evaluator panel. The upgrade
+receipt above covers one machine, one OS version, and the Formula only. Whether
+the stable code identity prevents a new **App Management** row is still not
+observable: 0.5.15's row was created by a signature this release replaces, so
+the question carries forward to the next upgrade.
 
 ## 0.5.15 publication
 
 **Published and promoted on 2026-09-22.**
-[Wisp 0.5.15](https://github.com/Pepewitch/wisp/releases/tag/v0.5.15) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.5.15](https://github.com/Pepewitch/wisp/releases/tag/v0.5.15) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 16:26:49 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`4553d5548dd0c5e0b0b100ee8d554b9772409e23`](https://github.com/Pepewitch/wisp/commit/4553d5548dd0c5e0b0b100ee8d554b9772409e23),
