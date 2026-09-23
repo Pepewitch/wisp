@@ -229,6 +229,42 @@ export function MenuRadioItem({
   )
 }
 
+/**
+ * An on/off switch inside a menu. Same selection language as a radio row — a
+ * checkmark plus the row's hover, never the accent — and it keeps the menu
+ * open, so a toggle can be read back before the menu is dismissed.
+ */
+export function MenuCheckboxItem({
+  checked,
+  onCheckedChange,
+  children,
+  disabled,
+}: {
+  checked: boolean
+  onCheckedChange: (checked: boolean) => void
+  children: ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <Base.CheckboxItem
+      checked={checked}
+      onCheckedChange={(next) => onCheckedChange(next)}
+      disabled={disabled}
+      className={cn(ROW, "data-[checked]:text-foreground")}
+    >
+      <Base.CheckboxItemIndicator className="flex size-3 shrink-0 items-center justify-center" keepMounted>
+        <Check className="size-3 opacity-0 data-[checked]:opacity-100 [[data-checked]_&]:opacity-100" />
+      </Base.CheckboxItemIndicator>
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+    </Base.CheckboxItem>
+  )
+}
+
+/** The rule between groups of unrelated verbs. */
+export function MenuSeparator() {
+  return <div role="separator" className="my-1 h-px bg-border" />
+}
+
 /** A quiet note inside a menu — a failed probe, a disabled capability. */
 export function MenuNote({ children }: { children: ReactNode }) {
   return <div className="px-2 py-1.5 text-[11px] leading-normal text-faint">{children}</div>

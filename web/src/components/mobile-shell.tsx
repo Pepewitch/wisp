@@ -197,6 +197,7 @@ export function MobileShell({
             <PullRequestStatusLink
               pullRequest={pullRequest.pullRequest}
               others={pullRequest.others}
+              autoMerge={task?.autopilot}
               compact
             />
           </div>

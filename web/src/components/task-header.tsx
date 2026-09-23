@@ -46,7 +46,7 @@ export function TaskHeader({
         <h1 className="min-w-0 flex-1 truncate text-[14.5px] font-semibold tracking-[-0.01em]">{task.title}</h1>
         <div className="flex shrink-0 items-center gap-1.5">
           {pullRequest?.kind === "found" && (
-            <PullRequestStatusLink pullRequest={pullRequest.pullRequest} others={pullRequest.others} />
+            <PullRequestStatusLink pullRequest={pullRequest.pullRequest} others={pullRequest.others} autoMerge={task.autopilot} />
           )}
           <TaskActions task={task} />
         </div>

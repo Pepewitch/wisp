@@ -152,3 +152,36 @@ describe("PR status in task headers", () => {
     expect(screen.queryByRole("button", { name: /push/i })).toBeNull()
   })
 })
+
+describe("the auto-merge reason on the PR line", () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    autoMerge: true, autoFix: false, pr: 42, state: "waiting" as const, reason: "Waiting for checks (2 running)", updatedAt: null, ...over,
+  })
+
+  it("stands in for CI and review while armed, and the hover still carries both", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status()} />)
+    const link = screen.getByRole("link", { name: /Auto-merge: Waiting for checks \(2 running\)/ })
+    expect(link).toHaveTextContent("PR #42 · Open · Auto-merge: Waiting for checks (2 running)")
+    expect(link).not.toHaveTextContent("CI failed")
+    expect(link.getAttribute("title")).toContain("CI failed · Changes requested")
+  })
+
+  it("names the PR it is bound to when that is not the one on show, and says when it is paused", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ pr: 7, state: "paused", reason: "Merge failed: conflict" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("Auto-merge #7 paused: Merge failed: conflict")
+  })
+
+  it("says the merge was Wisp's, and stays out of the way when auto-merge is off", () => {
+    const merged = { ...FOUND.pullRequest, lifecycle: "merged" as const }
+    const { unmount } = render(<PullRequestStatusLink pullRequest={merged} autoMerge={status({ autoMerge: false, state: "merged", reason: "Merged by Wisp" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Merged by Wisp")
+    unmount()
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, state: "off", reason: "Auto-merge off" })} />)
+    expect(screen.getByRole("link")).toHaveTextContent("CI failed · Changes requested")
+  })
+
+  it("uses the compact link's second line for the reason on mobile", () => {
+    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status()} compact />)
+    expect(screen.getByText("Auto-merge: Waiting for checks (2 running)")).toBeInTheDocument()
+  })
+})
