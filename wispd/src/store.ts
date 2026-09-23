@@ -20,7 +20,14 @@ const now = () => new Date().toISOString();
 const NOTIFY_STATES: TaskState[] = ["done", "needs-input", "stuck", "failed"];
 
 export function newTaskId(): string {
-  return randomId("t", 5);
+  // 5-char ids are birthday-bound (L4). The create route also retries on a
+  // UNIQUE violation, which still covers a race between this read and its
+  // insert; drawing again here keeps every other caller (fixtures included)
+  // from being handed an id that is already taken.
+  for (;;) {
+    const id = randomId("t", 5);
+    if (!db.query("SELECT 1 FROM tasks WHERE id = ?").get(id)) return id;
+  }
 }
 
 /** Shared with store-messages (task message ids); store re-exports that module. */

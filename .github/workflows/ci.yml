@@ -9,26 +9,33 @@ on:
 permissions:
   contents: read
 
+# The suites are independent, so they run side by side rather than one after
+# another in a single seven-minute job. `test` at the bottom is the one status
+# branch protection requires; it passes only when every part here did.
 jobs:
-  test:
+  checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - name: lint, typecheck, and unit tests
-        run: bun run check
+      - name: doc links, version pins, and workflow pins
+        run: bun run docs:check && bun run version:check && bun run workflows:check
+      - name: lint
+        run: bun run lint:all
+      - name: typecheck
+        run: bun run typecheck:all
+      - name: root tests
+        run: bun run test:root
       - name: brand assets are current
         # SVGs + the app's inlined favicon only; the two PNGs need Chrome, and
         # build.ts skips them (rather than failing) when there is no browser
         run: bun run brand:check
-      - name: end-to-end smoke (fake harness)
-        run: bun run smoke
       - name: build (the compiled binary must embed the generated UI)
-        # `bun run check` already built and exercised the ignored bundle.
-        run: bun run build:binary
+        run: bun run build
       - name: build linux-x64 deploy artifact
         run: bun build --compile --target=bun-linux-x64 wispd/src/index.ts --outfile dist/wisp-linux-x64
       # The documented glibc floor is a property of the pinned Bun runtime, so
@@ -36,6 +43,79 @@ jobs:
       # install guide.
       - name: the artifact still meets the documented glibc floor
         run: bun -e 'import { assertGlibcFloor } from "./wispd/scripts/release-linux"; assertGlibcFloor("dist/wisp-linux-x64");'
+
+  # The daemon suite mostly WAITS (process groups, kill grace, restarts), so
+  # it splits well. Each shard is an ordinary `bun test` process with its own
+  # preload and throwaway home, exactly as a full local run is. `--parallel`
+  # is not usable: its per-file isolation drops the preload's store handle.
+  daemon:
+    name: daemon (${{ matrix.shard }}/6)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      # the web routes import the generated bundle
+      - run: bun run build:ui
+      - name: daemon tests, shard ${{ matrix.shard }} of 6
+        working-directory: wispd
+        run: bun test --shard=${{ matrix.shard }}/6
+
+  web:
+    name: web (${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: web tests, shard ${{ matrix.shard }} of 2
+        working-directory: web
+        run: bun run test --shard=${{ matrix.shard }}/2
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - name: end-to-end smoke (fake harness)
+        run: bun run smoke
+
+  # A skipped job counts as passing for a required status, so this runs
+  # always() and fails on anything that is not an explicit success.
+  test:
+    if: always()
+    needs: [checks, daemon, web, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every part passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "results: $RESULTS"
+          failed=$(printf '%s' "$RESULTS" | tr -d '[] \n"' | tr ',' '\n' | grep -v '^success$' || true)
+          if [ -n "$failed" ]; then
+            echo "a required part did not succeed"
+            exit 1
+          fi
 
   # Cookie scope, CSP enforcement, and framing refusal are BROWSER policies.
   # The daemon suite cannot exercise any of them and no amount of raw HTTP can,

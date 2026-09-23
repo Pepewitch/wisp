@@ -229,7 +229,9 @@ describe("S1 create-modal and project APIs", () => {
 
     const configured = await call({ repoPath: repo, prompt: "configured", harness: "droid" });
     expect(configured.status).toBe(201);
-    expect(((await configured.json()) as { effort: string | null }).effort).toBe("low");
+    // both halves of the configured default land on the task (P5b)
+    expect((await configured.json()) as { effort: string | null; model: string | null })
+      .toMatchObject({ effort: "low", model: "kimi-k3" });
 
     // claude accepts an effort now rather than 400-ing on it
     const claudeEffort = await call({ repoPath: repo, prompt: "claude effort", harness: "claude", effort: "xhigh" });

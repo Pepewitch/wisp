@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Fake harness for wisp smoke tests: speaks the same shape as `droid exec -o json`.
 # Behavior knobs are read from the PROMPT text (env doesn't reach daemon-spawned
-# processes from the test shell): "sleep=N", "exit=N", "silent=1", and
-# "limiterr=1" tokens.
+# processes from the test shell): "sleep=N" and "exit=N" tokens.
 # Args: [--session <id>] [--model <m>] <prompt>
 #   (session/model flags injected by the adapter's resume/model templates)
 set -euo pipefail
@@ -24,24 +23,9 @@ fake_exit=$(grep -oE 'exit=[0-9]+' <<< "$prompt" | head -1 | cut -d= -f2 || true
 
 sleep "${fake_sleep:-1}"
 
-# limiterr=1: fail the way a real harness does on quota exhaustion — a
-# limit-shaped error EVENT on stdout (droid's stream-json shape: droid's own
-# stream-json consumer reads {"type":"error","message":…}, and its 402 text is
-# "Unrecoverable 402: usage limit reached", per the droid 0.202.0 binary), then
-# exit 1 with NOTHING on stderr — the case where a stderr tail would be blind.
-if grep -q 'limiterr=1' <<< "$prompt"; then
-  printf '{"type":"error","message":"Unrecoverable 402: usage limit reached"}\n'
-  exit 1
-fi
-
 if [[ -n "$fake_exit" && "$fake_exit" != "0" ]]; then
   echo "fake harness exploding as requested" >&2
   exit "$fake_exit"
-fi
-
-# silent=1: exit 0 without emitting a result payload — the H3 quiet-liar case
-if grep -q 'silent=1' <<< "$prompt"; then
-  exit 0
 fi
 
 if [[ -z "$session" ]]; then
