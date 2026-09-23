@@ -22,6 +22,11 @@ const mocks = vi.hoisted(() => ({
   install: vi.fn(),
   refresh: vi.fn(),
   waitForUpdatedDaemon: vi.fn(),
+  connectEventsBridge: vi.fn(() => () => undefined),
+  useLogStream: vi.fn<
+    (taskId: string | null, format: "activity" | "raw", generation: number) =>
+      { activity: never[]; note: null }
+  >(() => ({ activity: [], note: null })),
 }))
 const fixtures = vi.hoisted(() => ({
   tasks: [],
@@ -193,7 +198,7 @@ vi.mock("@/hooks/mutations", () => ({
 }))
 
 vi.mock("@/hooks/useLogStream", () => ({
-  useLogStream: () => ({ activity: [], note: null }),
+  useLogStream: mocks.useLogStream,
 }))
 
 // Desktop's top bar mounts the zoom control, whose provider reaches the
@@ -207,7 +212,7 @@ vi.mock("@/hooks/useMediaQuery", () => ({
 }))
 
 vi.mock("@/lib/sse", () => ({
-  connectEventsBridge: () => () => undefined,
+  connectEventsBridge: mocks.connectEventsBridge,
 }))
 
 vi.mock("@/lib/update", () => ({
@@ -216,7 +221,6 @@ vi.mock("@/lib/update", () => ({
 
 vi.mock("@/components/auth-dialog", () => ({ AuthDialog: () => null }))
 vi.mock("@/components/changes-pane", () => ({ ChangesPane: () => null }))
-vi.mock("@/components/conn-indicator", () => ({ ConnIndicator: () => null }))
 vi.mock("@/components/conversation", () => ({ Conversation: () => null }))
 vi.mock("@/components/create-task-dialog", () => ({ CreateTaskDialog: () => null }))
 vi.mock("@/components/gallery", () => ({ Gallery: () => null }))
@@ -402,6 +406,32 @@ describe("the top bar's left end", () => {
 
     expect(screen.queryByRole("img", { name: "Wisp" })).toBeNull()
     expect(screen.getByRole("tab", { name: "Local" })).toBeInTheDocument()
+  })
+
+  it("reopens the selected connection's event and log streams after a stable reconnect", async () => {
+    const nativeBridge = desktopBridge()
+    render(
+      <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
+        <DesktopZoomProvider>
+          <DesktopApplicationProvider
+            initial={desktopBootstrap()}
+            bridge={nativeBridge}
+          >
+            <App />
+          </DesktopApplicationProvider>
+        </DesktopZoomProvider>
+      </DesktopUpdaterProvider>,
+    )
+
+    const eventCalls = mocks.connectEventsBridge.mock.calls.length
+    const logGeneration = mocks.useLogStream.mock.lastCall![2]
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect Local" }))
+
+    await waitFor(() =>
+      expect(mocks.connectEventsBridge.mock.calls.length).toBe(eventCalls + 1)
+    )
+    expect(mocks.useLogStream.mock.lastCall![2]).toBe(logGeneration + 1)
+    expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true")
   })
 })
 

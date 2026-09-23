@@ -1,8 +1,8 @@
 /**
- * The topbar's connection pill: "live" only while BOTH SSE streams (the global
+ * The selected connection tab's dot: "live" only while BOTH SSE streams (the global
  * /api/events bridge and the selected task's log stream) are healthy — the
  * classic UI's eventsErr || logErr rule. A tiny external store, because the
- * two streams live in different components and the pill lives above both.
+ * two streams live in different components and the tab lives above both.
  */
 import { LOCAL_CONNECTION_ID } from "./transport";
 
