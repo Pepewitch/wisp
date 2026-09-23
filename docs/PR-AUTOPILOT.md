@@ -3,11 +3,13 @@
 Two switches on a task, with nothing to configure:
 
 - **Auto-merge**: Wisp merges the task's pull request once it is ready.
-- **Auto-fix**: when the PR's CI fails or it conflicts with its base, Wisp
-  sends the failure back to the task's agent to fix.
+- **Auto-fix**: when the PR's CI fails, it conflicts with its base, or a
+  reviewer leaves feedback, Wisp sends it back to the task's agent to fix.
 
-Turn either on when you create the task, from the task's `…` menu, or with
-`wisp pr` at any point after:
+Turn either on when you create the task (the new-task dialog's PR picker, or
+`--auto-merge` / `--auto-fix`), from the task's `…` menu, or with `wisp pr` at
+any point after. While either one needs you (or has paused), the task's PR icon
+in the sidebar turns red, and its hover says why:
 
 ```sh
 wisp new . "Fix the flaky retry test, open a PR" --harness claude --auto-merge --auto-fix
@@ -91,7 +93,8 @@ after it hears how the merge ended.
   on by itself. `wisp pr <task> resume` releases the hold at once.
 - **Changing the agent, model, or effort, or starting a fresh session**, does
   not switch it off.
-- **Archiving** the task switches it off.
+- **Archiving** the task switches it off. While it still has a PR to act on,
+  archive asks first ("Archive anyway", or `wisp archive -f`).
 - **Closing the PR** switches it off. Wisp never moves on to another PR.
 - **Pauses**, which need `resume`: a merge that failed three times on the same
   head, and GitHub's own auto-merge found switched on for the PR. A paused
@@ -103,8 +106,9 @@ When a check that counts is red on the PR's current head — or the PR conflicts
 with its base — and the task is idle, Wisp sends the agent one **round**: a
 short message pointing at a `PR-FEEDBACK.md` file beside the task's data (never
 in the worktree). The file lists what failed and ends with the logs that
-explain it: the end of each failing GitHub Actions job's log, cut where it
-errors, or a non-Actions check's own report. A round is about the red check
+explain it: each failing GitHub Actions job's log from the step that failed to
+where it errors (runner setup, checkout and teardown are cut), or a non-Actions
+check's own report. A round is about the red check
 and the jobs that failed beside it in the same workflow run, so when the
 required check is an aggregator (a `test` job that needs six shards) the agent
 also reads the shard that failed, not only the aggregator's "a required part

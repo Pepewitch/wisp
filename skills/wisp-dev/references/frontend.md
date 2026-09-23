@@ -772,7 +772,12 @@ a waiting auto-fix round, Resume, or Continue now): menu rows, so touch and
 keyboard reach every control. Only a reason about the PR's own state
 (`about: "pr"`) may stand in for CI and review; one about the task never does.
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
-from the UI polling below.
+from the UI polling below. The new-task dialog arms both from the start with a
+PR picker on the scoping row (`AutopilotPicker`, worktree tasks only, hidden on
+a daemon without `features.taskAutopilot`). In the sidebar, an armed task whose
+autopilot needs a person, or has paused, on that PR turns the PR icon's
+`blocked` red, and the icon's label carries the reason (`lib/autopilot-words`
+is the one wording both places use).
 
 The count rides the header link and the hover card, not the sidebar icon: the
 icon compresses to three glance states on purpose, and the card is where the

@@ -241,6 +241,23 @@ describe("the sidebar pull-request status", () => {
     expect(icon.closest("a")).toBeNull()
   })
 
+  it("turns red, and says why, while auto-merge or auto-fix needs a person on that PR", () => {
+    const autopilot = {
+      autoMerge: true, autoFix: true, pr: PR.number, state: "needs-you" as const, reason: "1 review thread still open",
+      about: "pr" as const, by: "auto-fix" as const, mergedByWisp: false, pendingFix: null, fixRounds: 1, updatedAt: null,
+    }
+    const { unmount } = mount(
+      <TaskRow task={{ ...TASK, autopilot }} pullRequest={found()} selected={false} onSelect={() => {}} />,
+    )
+    const icon = screen.getByTestId("sidebar-pull-request-icon")
+    expect(icon.querySelector("svg")).toHaveClass("text-destructive")
+    expect(icon).toHaveAttribute("aria-label", `PR #${PR.number} · Blocked · Auto-fix: 1 review thread still open`)
+    unmount()
+    // merely waiting is not blocked, and a different PR is not this one's
+    mount(<TaskRow task={{ ...TASK, autopilot: { ...autopilot, state: "waiting", reason: "Waiting for checks (2 running)", by: "auto-merge" } }} pullRequest={found()} selected={false} onSelect={() => {}} />)
+    expect(screen.getByTestId("sidebar-pull-request-icon").querySelector("svg")).not.toHaveClass("text-destructive")
+  })
+
   it("names a queued PR in the sidebar tooltip", () => {
     mount(
       <TaskRow

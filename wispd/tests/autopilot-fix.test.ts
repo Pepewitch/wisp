@@ -205,5 +205,17 @@ describe("what the agent reads", () => {
     expect(tidy).not.toContain("\u001b");
     // with no error line, it stops where post-job cleanup begins
     expect(tidyLog("a\nb\nPost job cleanup.\nc")).toBe("a\nb");
+    // and it starts at the step that failed: runner setup and checkout are noise
+    const steps = [
+      "##[group]Runner Image Provisioner", "Hosted Compute Agent", "##[endgroup]",
+      "##[group]Run actions/checkout@v4", "Syncing repository", "##[endgroup]",
+      "##[group]Run ./run-tests.sh a", "./run-tests.sh a", "##[endgroup]",
+      "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",
+      "Post job cleanup.", "[command]/usr/bin/git version",
+    ].join("\n");
+    expect(tidyLog(steps)).toBe([
+      "(earlier steps omitted)", "##[group]Run ./run-tests.sh a", "./run-tests.sh a", "##[endgroup]",
+      "greet: expected 'Hello, World!', got 'Hi, World!'", "##[error]Process completed with exit code 1.",
+    ].join("\n"));
   });
 });

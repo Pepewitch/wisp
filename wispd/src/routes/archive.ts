@@ -8,6 +8,7 @@ import { archiveTaskWithCleanup, type ArchiveCleanupJob } from "../archive-jobs"
 import { getTask } from "../store";
 import { taskMode, type Task } from "../types";
 import { archivePreflight, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
+import { autopilotArchiveWarning } from "../autopilot/store";
 import { updateTaskAndEmit } from "../task-update";
 
 const PREFLIGHT_CONCURRENCY = 4;
@@ -51,6 +52,8 @@ async function prepareArchive(snapshot: Task, force: boolean): Promise<PreparedA
       task,
     };
   }
+  const autopilot = force ? null : autopilotArchiveWarning(task.id);
+  if (autopilot) return { error: autopilot, status: 409, task };
   // A local task's worktree is the user's checkout, so archiving it is only a
   // bookkeeping flip. Worktree tasks run the normal dirty/unpushed preflight.
   const removable = taskMode(task) === "worktree" && task.worktree_path !== null && task.branch !== null;

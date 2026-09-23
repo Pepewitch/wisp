@@ -9,12 +9,13 @@ import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
 import {
-  autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { formatAutopilot, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
+import { archiveTaskRows } from "../src/routes/archive";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
@@ -248,6 +249,21 @@ describe("the loop", () => {
     expect(autopilotRow(task.id)!.state).toBe("active");
   });
 
+  test("archiving asks first while it still has a PR to act on", async () => {
+    const task = doneTask();
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
+    setAutopilot(task.id, { autoMerge: true });
+    expect(autopilotArchiveWarning(task.id)).toBe("Auto-merge is on for this task's PR — archiving switches it off. Archive anyway to stop it.");
+    setAutopilot(task.id, { autoFix: true });
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7 }, new Date());
+    const refusal = await archiveTaskRows([getTask(task.id)!], false, loadConfig());
+    expect(refusal).toMatchObject({ status: 409, error: "Auto-merge and auto-fix are on for PR #7 — archiving switches them off. Archive anyway to stop them." });
+    expect(getTask(task.id)!.archived).toBe(0);
+    // once it has nothing left to do (merged, or switched off), archive does not ask
+    setAutopilot(task.id, { autoMerge: false, autoFix: false });
+    expect(autopilotArchiveWarning(task.id)).toBeNull();
+  });
+
   test("archive stands it down through the existing trigger", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoMerge: true });
@@ -318,9 +334,12 @@ describe("the loop", () => {
     setAutopilot(task.id, { autoMerge: true });
     seed(task.id, clock);
     let during = false;
-    state.onMerge = () => { during = isTaskMerging(task.id); };
+    let said = "";
+    state.onMerge = () => { during = isTaskMerging(task.id); said = autopilotStatus(task.id).reason; };
     await pass(rt, task.id, clock);
     expect(during).toBe(true);
+    // while gh runs, the status says what is happening, not the last wait
+    expect(said).toBe("Merging #7 (squash)");
     expect(isTaskMerging(task.id)).toBe(false);
   });
 });

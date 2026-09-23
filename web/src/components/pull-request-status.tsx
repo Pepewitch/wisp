@@ -1,4 +1,5 @@
 import type { AutopilotStatus } from "../../../shared/autopilot"
+import { autoMergeWords } from "@/lib/autopilot-words"
 import { BranchRequest } from "@/components/icons"
 import {
   PULL_REQUEST_ICON_TONE,
@@ -39,16 +40,6 @@ const MERGE_STATE = {
   conflicting: "Merge conflict",
   unknown: "Merge status unknown",
 } as const
-
-/** What auto-merge / auto-fix has to say about this PR, or null when it has nothing. */
-function autoMergeWords(status: AutopilotStatus | null | undefined, number: number): string | null {
-  if (!status?.autoMerge && !status?.autoFix) return null
-  const which = status.pr !== null && status.pr !== number ? ` #${status.pr}` : ""
-  const name = status.by === "auto-fix" ? "Auto-fix" : "Auto-merge"
-  // "Auto-fix will send: …" and "Auto-fix gave up…" already say who is speaking
-  if (status.reason.startsWith(name) && !which) return status.reason
-  return `${name}${which}${status.state === "paused" ? " paused" : ""}: ${status.reason}`
-}
 
 /**
  * Whether that reason may REPLACE the CI and review words. Only when it is

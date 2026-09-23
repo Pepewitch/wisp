@@ -316,24 +316,30 @@ export function controlFree(line: string): string {
 }
 
 /**
- * The part of a job log that explains the failure: the lines leading up to
- * the last `##[error]`, or else up to where post-job cleanup starts — the very
- * end of a log is checkout teardown, not the failure. Timestamps and terminal
- * escapes are dropped; nobody reads those.
+ * The part of a job log that explains the failure: the step that failed, up
+ * to its last `##[error]` (or else up to where post-job cleanup starts) — the
+ * start of a log is runner setup and checkout, and its end is teardown, not
+ * the failure. Timestamps and terminal escapes are dropped; nobody reads those.
  */
 export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string {
   const all = raw.split("\n").map((line) => controlFree(line).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
+  const teardown = (line: string) => /^(?:Post job cleanup|Cleaning up orphan processes|##\[group\]Post )/.test(line)
+  const error = all.findLastIndex((line) => line.includes("##[error]"))
   let end = all.length
-  for (let index = all.length - 1; index >= 0; index--) {
-    if (all[index]!.includes("##[error]")) { end = Math.min(all.length, index + 4); break }
-  }
-  if (end === all.length) {
-    const cleanup = all.findIndex((line) => /^(?:Post job cleanup|##\[group\]Post )/.test(line))
+  if (error >= 0) {
+    // the error, and the few lines that finish its sentence
+    end = error + 1
+    while (end < all.length && end < error + 4 && !teardown(all[end]!) && !all[end]!.startsWith("##[group]")) end++
+  } else {
+    const cleanup = all.findIndex(teardown)
     if (cleanup > 0) end = cleanup
   }
-  let text = all.slice(Math.max(0, end - maxLines), end).join("\n")
+  // From the step that failed: runner setup and checkout before it are noise.
+  const step = all.slice(0, end).findLastIndex((line) => line.startsWith("##[group]Run "))
+  const start = Math.max(step, end - maxLines, 0)
+  let text = all.slice(start, end).join("\n")
   if (Buffer.byteLength(text) > maxBytes) text = Buffer.from(text).subarray(-maxBytes).toString("utf8")
-  return text.trim()
+  return `${start > 0 ? "(earlier steps omitted)\n" : ""}${text.trim()}`
 }
 
 /**
