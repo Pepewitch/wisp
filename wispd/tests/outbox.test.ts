@@ -91,7 +91,9 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
 
     expect(a.received.length).toBe(1);
     expect(b.received.length).toBe(1);
-    expect(JSON.parse(a.received[0]!)).toMatchObject({ task_id: row.task_id, seq: row.seq, state: "done" });
+    expect(JSON.parse(a.received[0]!)).toMatchObject({
+      task_id: row.task_id, seq: row.seq, state: "done", harness: "fake", title: "outbox test", detail: "test detail",
+    });
     expect(rowById(row.id)).toBeUndefined(); // delivered rows leave the pending set
   });
 

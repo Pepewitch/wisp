@@ -197,7 +197,7 @@ bun run lint
 ```
 
 Run UI gates only when the public harness contract or UI changed. Run smoke
-when lifecycle, worktree, process, recovery, or broad API behavior changed.
+when lifecycle, worktree, process, or restart-recovery behavior changed.
 
 Before finishing:
 

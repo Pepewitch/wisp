@@ -17,11 +17,10 @@ WISP="bun $ROOT/wispd/src/index.ts"
 
 cleanup() {
   [[ -n "${DAEMON_PID:-}" ]] && kill "$DAEMON_PID" 2>/dev/null || true
-  [[ -n "${RECV_PID:-}" ]] && kill "$RECV_PID" 2>/dev/null || true
   [[ "$REMOVE_SMOKE" -eq 0 ]] || rm -rf "$SMOKE"
 }
 # On ANY failure — including set -e deaths that bypass fail() (e.g. the
-# scenario-7/8 `kill` finding the daemon already gone, seen flaking twice) —
+# scenario-7 `kill` finding the daemon already gone, seen flaking before) —
 # dump the daemon log so the postmortem has evidence.
 on_exit() {
   rc=$?
@@ -90,9 +89,9 @@ wait_state() { # id, want, tries
 # What only an end-to-end run proves: the real CLI talking to a real daemon
 # that spawns a real subprocess harness in a real worktree, and the restart
 # promise. Everything else this script used to walk through (queued sends,
-# attachments, storage and purge previews, webhooks, force-archive, setup
-# timeouts, the startup sweep, limit detection, harness defaults, search) is
-# owned by the daemon suite, which proves it faster and without sleeps.
+# image attachments, storage and purge previews, webhooks, setup timeouts,
+# limit detection, harness defaults, search) is owned by the daemon suite,
+# which proves it faster and without sleeps.
 
 echo "[1] create task, expect done"
 OUT=$($WISP new "$REPO" "hello wisp turn one" --harness fake)
@@ -119,6 +118,26 @@ RC=0
 WOUT=$($WISP wait "$ID2" --timeout 30) || RC=$?
 [[ "$RC" == "1" ]] || fail "wait should exit 1 on failed, got $RC ($WOUT)"
 grep -q "spawn failed" <<< "$WOUT" || fail "wait line does not carry state_detail: $WOUT"
+
+echo "[4c] --attach end to end: a text file travels by path and serves as text"
+printf 'id,name\n1,ada\n2,grace\n' > "$SMOKE/orders.csv"
+OUTA=$($WISP new "$REPO" "reconcile these rows" --harness fake --attach "$SMOKE/orders.csv")
+IDA=$(echo "$OUTA" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
+wait_state "$IDA" done 30
+$WISP show "$IDA" | grep -q "attached: orders.csv" || fail "wisp show did not list the text attachment"
+# the fake harness reports whether the prompt named the stored path: a csv has
+# no argv flag anywhere, so path delivery is the only way it could have arrived
+$WISP result "$IDA" | grep -q "path-delivered" || fail "the csv path never reached the prompt"
+CSVBYTES="http://127.0.0.1:$PORT/api/tasks/$IDA/attachments/1/orders.csv"
+CT=$(curl -sf -D "$SMOKE/served.headers" -o "$SMOKE/served.csv" -w '%{content_type}' \
+  -H "authorization: Bearer smoketoken" "$CSVBYTES") \
+  || fail "bytes route did not serve the text attachment"
+[[ "$CT" == "text/plain; charset=utf-8" ]] || fail "a text attachment must serve as text (got: $CT)"
+cmp -s "$SMOKE/orders.csv" "$SMOKE/served.csv" || fail "served text differs from the stored file"
+# pasted content must never render on the daemon's own origin (the route is
+# GET-only, so the headers come from the same request that fetched the bytes)
+grep -qi 'content-disposition: attachment' "$SMOKE/served.headers" \
+  || fail "a text attachment must be served as a download, not inline"
 
 echo "[5] archive clean task"
 $WISP archive "$ID" | grep -q archived || fail "archive failed"
@@ -153,10 +172,42 @@ WOUT=$($WISP wait "$ID6" --timeout 30) || RC=$?
 [[ "$(printf '%s\n' "$WOUT" | wc -l | tr -d ' ')" == "1" ]] || fail "wait printed more than one line: $WOUT"
 grep -q "^$ID6  done" <<< "$WOUT" || fail "wait did not print the settled state line (got: $WOUT)"
 
-echo "[7] LIVE re-adoption: daemon killed mid-turn, live-pid poll loop finalizes after restart"
+echo "[11] force-archive kills the running turn and marks it interrupted"
+OUT7=$($WISP new "$REPO" "doomed task sleep=60" --harness fake)
+ID7=$(echo "$OUT7" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
+wait_state "$ID7" running 20
+if $WISP archive "$ID7" 2>/dev/null; then fail "archive should have refused a running turn without force"; fi
+$WISP archive "$ID7" -f | grep -q archived || fail "force archive of running task failed"
+$WISP ls | grep -q "$ID7" && fail "force-archived task still listed"
+WT7=$($WISP show "$ID7" | sed -n 's/^worktree: //p')
+[[ -n "$WT7" ]] || fail "could not read worktree path of archived task"
+# Everything destructive is DELIBERATELY behind the response (Q11): the refusals
+# are synchronous, the killing and removing are not. So these two are polled
+# rather than asserted once — and the poll is the assertion that the background
+# job actually runs, not a workaround for it.
+for i in $(seq 1 60); do
+  $WISP show "$ID7" | grep -q 'turn 1 \[interrupted\]' && [[ ! -e "$WT7" ]] && break
+  sleep 0.25
+done
+$WISP show "$ID7" | grep -q 'turn 1 \[interrupted\]' || fail "turn not marked interrupted by force-archive"
+[[ -e "$WT7" ]] && fail "worktree still exists after force-archive teardown finished"
+
+
+echo "[7] daemon restart: a live turn is re-adopted and finalized, a task wedged in 'creating' is failed"
 OUT5=$($WISP new "$REPO" "survive a live restart sleep=8" --harness fake)
 ID5=$(echo "$OUT5" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
-sleep 2  # turn is now running — and stays running: the fake harness sleeps 8s
+# a second task stuck in setup, so the same restart also exercises the
+# startup sweep the daemon runs at boot
+REPO2="$SMOKE/repo2"
+mkdir -p "$REPO2/.wisp"
+git -C "$REPO2" init -q
+printf '#!/usr/bin/env bash\nsleep 30\n' > "$REPO2/.wisp/setup.sh"
+git -C "$REPO2" add .
+git -C "$REPO2" -c user.email=smoke@wisp -c user.name=smoke commit -q -m "add slow setup"
+OUT8=$($WISP new "$REPO2" "wedge me in creating" --harness fake)
+ID8=$(echo "$OUT8" | sed -n 's/^created \(t[a-z0-9]*\).*/\1/p')
+wait_state "$ID8" creating 10  # setup.sh (sleep 30) is running
+wait_state "$ID5" running 20  # and stays running: the fake harness sleeps 8s
 kill "$DAEMON_PID"; wait "$DAEMON_PID" 2>/dev/null || true
 # restart IMMEDIATELY, while the harness is still mid-turn — this exercises the
 # live-pid poll loop, not the dead-pid finalize path
@@ -167,6 +218,8 @@ grep -q "re-adopted task $ID5" "$SMOKE/daemon.log" || fail "live turn was not re
 # the 3s poll notices the harness exit and finalizes (exit code unknown → judged by parseable output)
 wait_state "$ID5" done 40
 $WISP show "$ID5" | grep -q '— turn 1 \[done\]' || fail "re-adopted turn not finalized as done"
+wait_state "$ID8" failed 20
+$WISP ls | grep "$ID8" | grep -q "being created" || fail "sweep failure reason not surfaced in ls"
 
 echo
 echo "SMOKE PASS ($SMOKE)"

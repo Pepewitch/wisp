@@ -254,7 +254,7 @@ Write the new harness's own tests alongside: an argv pin (`buildArgv` with
 and without session/model/effort), a transcript parse test on the probed
 shape, a usage normalization test, and formatter cases. Then the full gate:
 `bun run check`. Run `bun run smoke` as well when the change affects process,
-lifecycle, worktree, or broad API behavior.
+lifecycle, worktree, or restart-recovery behavior.
 
 ## 6. Live verification checklist
 
