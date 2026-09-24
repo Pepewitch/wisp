@@ -64,6 +64,10 @@ export interface AutopilotCheckpoint {
   lastMerged?: { pr: number; base: string; byWisp: boolean; noted: boolean }
   /** looks since the merge that found no next PR: after a few quick ones, it waits for a turn */
   nextPrMisses?: number
+  /** when the last auto-fix round went out for the bound PR: quiet is counted from it too */
+  lastRoundAt?: string
+  /** the last look found nothing for auto-fix to do and a quiet PR (see AutopilotStatus.done) */
+  done?: boolean
 }
 
 export interface AutopilotParams {
@@ -100,7 +104,7 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
 }
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
@@ -134,9 +138,16 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const by: AutopilotBy = checkpoint.by === "auto-fix" && params.autoFix ? "auto-fix" : params.autoMerge ? "auto-merge" : "auto-fix"
   const lastMerged = checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null
   return {
+    done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
     pendingFix, fixRounds: checkpoint.rounds ?? 0, updatedAt: row.updated_at,
   }
+}
+
+/** Done for now: its PR merged and nothing new is bound yet, or auto-fix found a quiet, green PR. */
+function isDone(row: WorkflowRow, state: AutopilotState, checkpoint: AutopilotCheckpoint): boolean {
+  if (row.state !== "active" || state === "needs-you" || state === "held") return false
+  return checkpoint.done === true || (checkpoint.lastMerged !== undefined && !checkpoint.pr)
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -252,6 +263,8 @@ export interface AutopilotCheck {
   about?: "pr" | "task"
   /** defaults to "auto-merge": auto-fix's own looks say so */
   by?: AutopilotBy
+  /** nothing left to do for now (AutopilotStatus.done); any other look clears it */
+  done?: boolean
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
@@ -263,7 +276,9 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   if (!current || current.state !== "active" || current.revision !== row.revision) return false
   const at = now.toISOString()
   const previous = checkpointOf(current)
-  const checkpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
+  const checkpoint: AutopilotCheckpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
+  if (check.done) checkpoint.done = true
+  else delete checkpoint.done
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
     last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
   [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + check.delayMs).toISOString(), check.reason, at, row.id])

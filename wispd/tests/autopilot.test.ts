@@ -109,7 +109,8 @@ describe("the loop", () => {
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges.map((merge) => merge.number)).toEqual([7]);
-    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true } });
+    // done for now (the sidebar's violet rail), and still on for the next PR
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true }, done: true });
     expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("delivered");
     // GitHub's open list lags the merge: #7 is still in it, and must not be adopted again
     await pass(rt, task.id, clock);
@@ -127,7 +128,7 @@ describe("the loop", () => {
     state.pulls = [opened(6, 30_000), opened(9, 120_000)];
     state.pr = snapshot({ number: 9, head: "d".repeat(40) });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ pr: 9, lastMerged: { pr: 7 } });
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: 9, lastMerged: { pr: 7 }, done: false });
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges.map((merge) => merge.number)).toEqual([7, 9]);
@@ -222,6 +223,33 @@ describe("the loop", () => {
     state.pr = snapshot({ state: "MERGED" });
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7, byWisp: true } });
+  });
+
+  test("auto-fix alone is done for now once CI is green and the PR has been quiet fifteen minutes", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoFix: true });
+    // the head appeared at START: ten minutes of quiet is not yet enough
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    // it looks again when the quiet would be complete, not five minutes later
+    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(5 * 60_000);
+    clock.now += 5 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix · no new review for 15 min", done: true });
+    // a new comment is new activity: not done until it too has gone quiet
+    state.pr = { ...state.pr, comments: [{ id: "IC_1", author: "reader", association: "NONE", bot: false, body: "hm", createdAt: new Date(clock.now - 60_000).toISOString(), editedAt: null, url: "", hidden: false }] };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    // and needing a person is never done
+    state.pr = snapshot({ checks: [{ name: "deploy", status: "WAITING", conclusion: null, required: true, url: "" }] });
+    state.required = ["deploy"];
+    clock.now += 30 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", done: false });
   });
 
   test("closing a PR still switches both off: that is how its owner abandons an approach", async () => {

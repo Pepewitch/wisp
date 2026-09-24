@@ -145,7 +145,8 @@ function mergeStateGate(pr: PrSnapshot, requiredNames: ReadonlySet<string>): Gat
       if (pr.unresolvedThreads > 0) {
         return { kind: "needs-you", reason: `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}` }
       }
-      if (pr.reviewDecision === "REVIEW_REQUIRED") return { kind: "wait", reason: "Waiting for an approving review", slow: true }
+      // Only a person can approve (never the PR's own author): that is someone to ask, not a wait.
+      if (pr.reviewDecision === "REVIEW_REQUIRED") return { kind: "needs-you", reason: "Needs an approving review" }
       if (pr.reviewDecision === "CHANGES_REQUESTED") return { kind: "needs-you", reason: "Changes requested" }
       return { kind: "needs-you", reason: "Blocked by a branch rule" }
     default:

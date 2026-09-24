@@ -20,9 +20,17 @@ wisp pr <task> skip          # never send that round
 wisp pr <task> resume        # after a pause, or to release a Stop hold early
 ```
 
-While either one needs you (or has paused), the task's PR icon in the sidebar
-turns red and its hover says why, and the desktop app posts a banner; it posts
-one too when Wisp merges the PR.
+A task with either switch on carries a thin rail on its sidebar row, so one
+left on is never out of sight:
+
+- **blue** while it is on and working;
+- **violet** once it is done for now: with auto-merge on, its PR merged (it
+  stays on for the next one); with auto-fix alone, CI is green and no review has
+  come in for 15 minutes;
+- **red** when it needs you — the same moments the PR icon turns red and the
+  desktop app posts a banner (it posts one too when Wisp merges the PR).
+
+The row's hover card says which switch is on, for which PR, and why.
 
 Auto-merge merges into the branch it targets under your GitHub account.
 Arm it for work you would merge yourself once CI is green; leave it off for
@@ -225,6 +233,35 @@ running.
 - **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
   comments in each, and the newest 100 conversation comments; the evidence
   says when there were more.
+
+## When it needs you
+
+The red rail, the red PR icon, a banner, and `wisp pr` all name the one reason.
+Each is something only a person can move:
+
+- **An approval.**
+  - A required check held for approval, or waiting on an environment's
+    reviewers.
+  - A branch rule that needs an approving review (you cannot approve your own
+    PR, so someone else must).
+  - A formal change request.
+- **A conversation.** A review thread Wisp sent that is still open: a
+  colleague's to resolve, or one the agent disagreed with. Also an unresolved
+  conversation the repository requires resolved.
+- **Something the agent cannot fix.**
+  - A check still red after a round with no new push.
+  - A cancelled job after its one rerun.
+  - A branch behind its base where the repository requires it up to date.
+  - A conflict or red check with auto-fix off.
+  - A review whose `Verdict:` line cannot be read.
+- **The PR itself.** It is a draft, targets a branch other than the default
+  or configured base, or comes from a fork; the worktree has commits the PR
+  lacks; or it is not a GitHub repository.
+- **A pause**, until Resume: auto-fix gave up after three rounds, a merge failed
+  three times on the same head, or GitHub's own auto-merge was turned on.
+
+Waiting on CI, on a fresh head, on the task's turn, or on your reviewer agents'
+next pass is not one of these: the rail stays blue.
 
 ## How often it checks
 

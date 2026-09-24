@@ -44,6 +44,8 @@ const REQUIRED_TTL_MS = 10 * 60_000
 /** How long after the task goes idle an auto-fix round waits before it is sent. */
 export const SEND_DELAY_MS = 2 * 60_000
 const MERGE_FAILURE_LIMIT = 3
+/** Auto-fix alone counts as done once CI is green and the PR has been quiet this long. */
+export const QUIET_MS = 15 * 60_000
 /** After a merge, with no next PR yet: a turn settling looks at once, so this only covers a PR opened by hand. */
 export const AFTER_MERGE_MS = 60 * 60_000
 /** Looks that could read none of a round's logs before it is sent with links only. */
@@ -149,6 +151,17 @@ function openSentThreads(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): numbe
   const sent = Object.keys(checkpoint.delivered ?? {}).filter((id) => id.startsWith("thread:"))
   const read = new Map(pr.threads.map((thread) => [`thread:${thread.id}`, thread]))
   return sent.filter((id) => (read.has(id) ? !read.get(id)!.resolved : pr.threadsTruncated)).length
+}
+
+/** The PR's latest sign of life: its head appearing, a round going out, or any review or comment. */
+function lastActivity(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
+  const times = [
+    checkpoint.heads?.[pr.head], checkpoint.lastRoundAt,
+    ...pr.reviews.map((review) => review.editedAt ?? review.submittedAt),
+    ...pr.comments.map((comment) => comment.editedAt ?? comment.createdAt),
+    ...pr.threads.flatMap((thread) => thread.comments.map((comment) => comment.editedAt ?? comment.createdAt)),
+  ]
+  return Math.max(0, ...times.map((time) => Date.parse(time ?? "")).filter(Number.isFinite))
 }
 
 /** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
@@ -350,7 +363,17 @@ export class AutopilotRuntime {
       saveAutopilotCheck(row, { state: "needs-you", reason: `${open} review thread${open === 1 ? "" : "s"} still open`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-fix" }, this.now())
       return
     }
-    if (!ctx.autoMerge) { save("waiting", nothingToFix, WAITING_ON_YOU_MS, "pr"); return }
+    if (!ctx.autoMerge) {
+      // Auto-fix alone is done for now once CI is green and the PR has been
+      // quiet a while: no push, round or review since.
+      const quietFor = now.getTime() - lastActivity(pr, checkpoint)
+      const done = quietFor >= QUIET_MS
+      saveAutopilotCheck(row, {
+        state: "waiting", reason: done ? `${nothingToFix} · no new review for ${QUIET_MS / 60_000} min` : nothingToFix, checkpoint,
+        delayMs: done ? WAITING_ON_YOU_MS : Math.min(WAITING_ON_YOU_MS, QUIET_MS - quietFor), about: "pr", by: "auto-fix", done,
+      }, now)
+      return
+    }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
       pr, requiredNames: new Set(required),
@@ -495,7 +518,7 @@ export class AutopilotRuntime {
     }
     // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
-      ...checkpoint, rounds: round,
+      ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(),
       delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
     }

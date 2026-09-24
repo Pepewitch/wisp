@@ -95,7 +95,7 @@ describe("task transition tracker", () => {
 describe("auto-merge and auto-fix news", () => {
   const armed = (id: string, state: string, over: Record<string, unknown> = {}): ApiTask => ({
     ...task(id, "done"),
-    autopilot: { autoMerge: true, autoFix: true, pr: 7, state, reason: "1 review thread still open", about: "pr", by: "auto-fix", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 1, updatedAt: null, ...over },
+    autopilot: { autoMerge: true, autoFix: true, pr: 7, state, reason: "1 review thread still open", about: "pr", by: "auto-fix", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 1, done: false, updatedAt: null, ...over },
   }) as unknown as ApiTask
 
   it("announces a merge by Wisp, and a switch that needs a person; a first sighting only seeds", () => {

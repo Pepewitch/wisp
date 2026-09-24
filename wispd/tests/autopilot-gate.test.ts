@@ -131,7 +131,7 @@ describe("the merge gate", () => {
 
   test("BLOCKED is explained from what GitHub reports, never guessed as an approval wait", () => {
     expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2 }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }) })).toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }) })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
     expect(gate({ pr: pr({ mergeState: "BLOCKED" }) })).toEqual({ kind: "needs-you", reason: "Blocked by a branch rule" });
     expect(gate({ pr: pr({ mergeState: "DIRTY" }) })).toEqual({ kind: "needs-you", reason: "Conflicts with main" });
     expect(gate({ pr: pr({ mergeState: "UNKNOWN" }) })).toMatchObject({ kind: "wait" });

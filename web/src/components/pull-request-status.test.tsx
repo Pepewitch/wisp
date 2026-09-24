@@ -157,7 +157,7 @@ describe("PR status in task headers", () => {
 describe("the auto-merge reason on the PR line", () => {
   const status = (over: Partial<AutopilotStatus> = {}): AutopilotStatus => ({
     autoMerge: true, autoFix: false, pr: 42, state: "waiting", reason: "Waiting for checks (2 running)",
-    about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null, ...over,
+    about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null, ...over,
   })
 
   it("stands in for CI and review while armed, and the hover still carries both", () => {

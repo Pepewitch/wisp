@@ -6,7 +6,7 @@ import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { Archive, Pencil, ArrowUp, BranchRequest } from "@/components/icons"
 import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
-import { autoMergeWords, autopilotBlocks } from "@/lib/autopilot-words"
+import { autoMergeWords, autopilotBlocks, autopilotRail, autopilotSwitches } from "@/lib/autopilot-words"
 import { PULL_REQUEST_ICON_TONE, pullRequestSidebarTone } from "@/lib/pull-request-tone"
 import { STATE_TEXT, stateWord, since } from "@/lib/state"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
@@ -79,6 +79,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
         setWantsCard(false)
       }}
     >
+      <AutopilotRail status={task.autopilot} />
       <PreviewCard.Root open={wantsCard && !overArchive} onOpenChange={setWantsCard}>
         <PreviewCard.Trigger
           render={<button type="button" />}
@@ -242,6 +243,27 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
   )
 }
 
+const RAIL_TONE = { "needs-you": "bg-destructive", done: "bg-primary", on: "bg-state-background" } as const
+
+/**
+ * A 2px rail on the row's left edge while auto-merge or auto-fix is on, so a
+ * switch left on is never out of sight: blue while it works, violet once it
+ * is done for now, red when it needs a person. Decoration only — the hover
+ * card and the PR icon's label say which switch and why.
+ */
+function AutopilotRail({ status }: { status: ApiTask["autopilot"] }) {
+  const rail = autopilotRail(status)
+  if (!rail) return null
+  return (
+    <span
+      aria-hidden
+      data-testid="autopilot-rail"
+      data-rail={rail}
+      className={cn("pointer-events-none absolute top-[5px] bottom-[5px] left-0 z-10 w-[2px] rounded-full", RAIL_TONE[rail])}
+    />
+  )
+}
+
 function SidebarPullRequestStatus({
   entry,
   autopilot,
@@ -385,6 +407,17 @@ export function TaskCard({
       <dl className="grid grid-cols-[62px_1fr] items-baseline gap-x-2.5 gap-y-1.5">
         <Key>Branch</Key>
         <Val className="truncate font-mono">{task.branch ?? "—"}</Val>
+
+        {task.autopilot && autopilotRail(task.autopilot) && (
+          <>
+            <Key>Autopilot</Key>
+            <Val>
+              {autopilotSwitches(task.autopilot)} on
+              {task.autopilot.pr ? ` · PR #${task.autopilot.pr}` : ""}
+              {task.autopilot.reason ? ` · ${task.autopilot.reason}` : ""}
+            </Val>
+          </>
+        )}
 
         {pr && (
           <>

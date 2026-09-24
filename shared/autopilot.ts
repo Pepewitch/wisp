@@ -53,6 +53,12 @@ export interface AutopilotStatus {
   pendingFix: { summary: string; sendsAt: string } | null
   /** auto-fix rounds sent to the agent for the bound PR */
   fixRounds: number
+  /**
+   * Nothing left for it to do right now: with auto-merge on, the current PR
+   * has merged; with auto-fix alone, CI is green and no review has come in
+   * for a while. It is still on, for the task's next PR or next review.
+   */
+  done: boolean
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }
