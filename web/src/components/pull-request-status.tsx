@@ -73,7 +73,10 @@ export function PullRequestStatusLink({
   /** the task's auto-merge status, whose reason stands in for CI and review while armed */
   autoMerge?: AutopilotStatus | null
 }) {
-  const mergedByWisp = pullRequest.lifecycle === "merged" && autoMerge?.mergedByWisp === true && autoMerge.pr === pullRequest.number
+  // a finished row names its PR; one that stayed on for the next PR remembers the last merge
+  const mergedByWisp = pullRequest.lifecycle === "merged" && Boolean(autoMerge) &&
+    ((autoMerge!.mergedByWisp && autoMerge!.pr === pullRequest.number) ||
+      (autoMerge!.lastMerged?.byWisp === true && autoMerge!.lastMerged.pr === pullRequest.number))
   const lifecycle = mergedByWisp
     ? "Merged by Wisp"
     : pullRequest.lifecycle === "open" && pullRequest.queuedToMerge

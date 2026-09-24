@@ -48,6 +48,17 @@ repository. A worktree can check out anyone's branch, and Wisp never adopts
 someone else's PR. It prefers the task's own branch, then the oldest PR onto the
 base. `wisp pr <task>` and the task menu name the PR it is bound to.
 
+**After a merge, both switches stay on for the task's next PR.** Wisp then
+adopts a PR you open from this task after the merged one was opened — the
+task's next change, or a PR that was stacked on the merged one — and never an
+older open PR, which is stale or abandoned. Everything about the merged PR
+(its rounds, reruns, and the review feedback already sent) is left behind, so
+the next PR starts with a fresh three-round budget. The status reads
+`#271 merged by Wisp · Waiting for the task's next PR` until it binds. A turn
+ending looks for it at once (and twice more over the next ten minutes, in case
+GitHub's list is slow); after that it looks hourly, so a PR you open by hand
+may take up to an hour to be picked up.
+
 ## When Wisp merges
 
 Wisp re-reads all of these immediately before merging. The first one that does
@@ -99,10 +110,12 @@ after it hears how the merge ended.
 - **Archiving** the task switches it off. While it is watching a PR, archive
   asks first ("Archive anyway", or `wisp archive -f`); anything unsaved in the
   worktree is still checked separately.
-- **Closing the PR** switches it off. Wisp never moves on to another PR.
+- **Closing the PR** switches both off: that is how you abandon an approach,
+  so Wisp does not move on to another PR.
 - **Pauses**, which need `resume`: a merge that failed three times on the same
   head, and GitHub's own auto-merge found switched on for the PR. A paused
-  task still notices when its PR is merged or closed.
+  task still notices when its PR is merged (and carries on with the next PR)
+  or closed.
 
 ## Auto-fix
 

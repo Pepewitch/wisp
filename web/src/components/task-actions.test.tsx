@@ -127,7 +127,7 @@ describe("the overflow menu", () => {
   it("asks before archive stops auto-merge, and that confirm waives nothing else", async () => {
     const autopilot = {
       autoMerge: true, autoFix: false, pr: 7, state: "waiting" as const, reason: "Waiting for checks (2 running)",
-      about: "pr" as const, by: "auto-merge" as const, mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null,
+      about: "pr" as const, by: "auto-merge" as const, mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null,
     }
     const reason = "task has unpushed commits — push first, or archive with force"
     let refuse = true
@@ -157,12 +157,12 @@ describe("the overflow menu", () => {
 describe("auto-merge in the overflow menu", () => {
   const armed = (over: Partial<NonNullable<ApiTask["autopilot"]>> = {}): ApiTask => ({
     ...TASK,
-    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null, ...over },
+    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null, ...over },
   })
   function daemon(extra: (path: string) => { status: number; body: unknown } | null = () => null) {
     return stubApi((path) => {
       if (path.endsWith("/api/harnesses")) return { status: 200, body: { harnesses: [], features: { taskAutopilot: true } } }
-      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null } }
+      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null } }
     })
   }
   async function open() {
@@ -216,7 +216,7 @@ describe("auto-merge in the overflow menu", () => {
 
   it("says why when Wisp itself switched it off", async () => {
     daemon()
-    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", by: "auto-merge", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null } }} />)
+    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null } }} />)
     await open()
     expect(screen.getByText("Auto-merge off — #7 was closed")).toBeInTheDocument()
   })

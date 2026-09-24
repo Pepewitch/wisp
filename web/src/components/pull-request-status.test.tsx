@@ -157,7 +157,7 @@ describe("PR status in task headers", () => {
 describe("the auto-merge reason on the PR line", () => {
   const status = (over: Partial<AutopilotStatus> = {}): AutopilotStatus => ({
     autoMerge: true, autoFix: false, pr: 42, state: "waiting", reason: "Waiting for checks (2 running)",
-    about: "pr", by: "auto-merge", mergedByWisp: false, pendingFix: null, fixRounds: 0, updatedAt: null, ...over,
+    about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null, ...over,
   })
 
   it("stands in for CI and review while armed, and the hover still carries both", () => {
@@ -205,6 +205,17 @@ describe("the auto-merge reason on the PR line", () => {
     other.unmount()
     render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status({ autoMerge: false, state: "off", reason: "Auto-merge off" })} />)
     expect(screen.getByRole("link")).toHaveTextContent("CI failed · Changes requested")
+  })
+
+  it("still says Wisp merged it while the switch stays on for the task's next PR", () => {
+    const merged = { ...FOUND.pullRequest, lifecycle: "merged" as const }
+    const staying = status({ pr: null, state: "waiting", reason: "#42 merged by Wisp · Waiting for the task's next PR", about: "task", lastMerged: { pr: 42, byWisp: true } })
+    const { unmount } = render(<PullRequestStatusLink pullRequest={merged} autoMerge={staying} />)
+    expect(screen.getByRole("link")).toHaveTextContent("PR #42 · Merged by Wisp")
+    unmount()
+    // a merge that was not Wisp's, or of another PR, is the provider's word
+    render(<PullRequestStatusLink pullRequest={merged} autoMerge={{ ...staying, lastMerged: { pr: 41, byWisp: true } }} />)
+    expect(screen.getByRole("link")).not.toHaveTextContent("Merged by Wisp")
   })
 
   it("names the switch whose reason it is, without saying it twice", () => {

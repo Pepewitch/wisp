@@ -16,7 +16,10 @@ export type AutopilotState =
   | "needs-you"
   /** stopped acting until Resume (repeated merge failure, provider auto-merge found on) */
   | "paused"
-  /** the PR this was bound to merged; nothing left to watch */
+  /**
+   * a finished row from before the switches stayed on across merges; a merge
+   * now keeps the row on and is recorded in `lastMerged` instead
+   */
   | "merged"
   /** not armed */
   | "off"
@@ -41,6 +44,11 @@ export interface AutopilotStatus {
   by: AutopilotBy
   /** the bound PR merged, and it was Wisp that merged it */
   mergedByWisp: boolean
+  /**
+   * The last PR that merged while the switches stayed on: they persist for the
+   * task's next PR, so this is how a client still says "Merged by Wisp".
+   */
+  lastMerged: { pr: number; byWisp: boolean } | null
   /** an auto-fix round waiting out its short delay: Send now or Skip act on it */
   pendingFix: { summary: string; sendsAt: string } | null
   /** auto-fix rounds sent to the agent for the bound PR */
