@@ -209,6 +209,45 @@ describe("the background backfill", () => {
     expect(getTurnText(done.id)?.indexed_at).toBe(indexedAt);
   });
 
+  test("a turn whose task is gone is not pending: nothing can search it, and its row could not be written", async () => {
+    const gone = task();
+    const orphan = settledTurn(gone, 1, claudeText("orphaned prose"), null);
+    // a direct row delete, as a test fixture or an old purge leaves it: turns carry no foreign key
+    db.run("DELETE FROM tasks WHERE id = ?", [gone]);
+    expect(pendingProseTurns(500).map((turn) => turn.id)).not.toContain(orphan.id);
+    const kept = settledTurn(task(), 1, claudeText("still indexed"), null);
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+    expect(getTurnText(kept.id)?.text).toBe("still indexed");
+    expect(countPendingProseTurns()).toBe(0);
+  });
+
+  test("one turn that cannot be indexed does not stop the pass, and the pass still ends", async () => {
+    const id = task();
+    const older = settledTurn(id, 1, claudeText("older, after the bad one"), null);
+    const bad = settledTurn(id, 2, claudeText("never read"), null);
+    db.run("UPDATE turns SET harness = 'boom' WHERE id = ?", [bad.id]);
+    // an adapter lookup that throws for the one bad turn, as an unexpected error would
+    const adapters = new Proxy(BUILTIN_ADAPTERS, {
+      get: (target, key) => { if (key === "boom") throw new Error("boom"); return target[key as keyof typeof target]; },
+    });
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args[0]); };
+    try {
+      await backfillTurnTexts(adapters);
+    } finally {
+      console.error = original;
+    }
+    // newest first: the bad turn came first, and the older one was still indexed
+    expect(getTurnText(older.id)?.text).toBe("older, after the bad one");
+    expect(getTurnText(bad.id)).toBeNull();
+    expect(errors).toEqual([expect.stringContaining(`prose backfill turn ${bad.id}: boom`)]);
+    // it is still pending for the next pass; tidy up so later tests start clean
+    expect(pendingProseTurns(500).map((turn) => turn.id)).toContain(bad.id);
+    db.run("UPDATE turns SET harness = 'claude' WHERE id = ?", [bad.id]);
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+  });
+
   test("reports what is left, so a client can say the search is still catching up", async () => {
     const id = task();
     settledTurn(id, 1, claudeText("counted"), null);

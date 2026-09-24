@@ -45,15 +45,17 @@ let working: Promise<void> | null = null;
 let cached: { at: number; remaining: number } | null = null;
 
 /**
- * A settled turn with no prose row. `status <> 'running'` is the whole guard:
- * a live turn's log is still being written, and finalizeTurn indexes it the
- * moment it settles.
+ * A settled turn with no prose row. `status <> 'running'` guards the log a
+ * live turn is still writing (finalizeTurn indexes it the moment it settles).
+ * A turn whose task is gone is not pending: nothing can search it, and its
+ * prose row could not be written anyway (turn_texts references the task).
  */
 function pendingQuery(select: string, limit?: number): string {
   return `SELECT ${select}
      FROM turns n
      LEFT JOIN turn_texts x ON x.turn_id = n.id AND x.kind = '${TURN_TEXT_PROSE}'
      WHERE x.turn_id IS NULL AND n.status <> 'running'
+       AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = n.task_id)
      ORDER BY n.id DESC${limit === undefined ? "" : ` LIMIT ${limit}`}`;
 }
 
@@ -88,9 +90,12 @@ function invalidateStatus(): void {
 export function backfillTurnTexts(adapters: Record<string, AdapterDef>): Promise<void> {
   if (working) return working;
   working = (async () => {
+    // turns that failed in this pass: skipped until the next one, so a pass
+    // always moves on, and ends once only failures are left
+    const failed = new Set<number>();
     for (;;) {
       if (homeIsDraining()) return;
-      const batch = pendingProseTurns();
+      const batch = pendingProseTurns(BATCH + failed.size).filter((turn) => !failed.has(turn.id)).slice(0, BATCH);
       if (batch.length === 0) return;
       for (const turn of batch) {
         if (homeIsDraining()) return;
@@ -107,7 +112,7 @@ export function backfillTurnTexts(adapters: Record<string, AdapterDef>): Promise
           // something unexpected. Reporting it and moving on is right: one bad
           // turn must not park the whole history.
           console.error(`[wisp] prose backfill turn ${turn.id}: ${error instanceof Error ? error.message : String(error)}`);
-          return;
+          failed.add(turn.id);
         }
       }
       invalidateStatus();
