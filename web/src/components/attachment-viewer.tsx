@@ -6,13 +6,14 @@ import { attachmentKind, formatBytes } from "@/lib/attachments"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
- * The presentation view for a turn's images and videos (A1a / Q2 / A1d): a
- * centred popup at roughly 80vw/80vh, NOT fullscreen — the owner asked to see
+ * The presentation view for sent and pending images and videos (A1a / Q2 / A1d):
+ * a centred popup at roughly 80vw/80vh, NOT fullscreen — the owner asked to see
  * the image large without leaving the task, and the surrounding app staying
  * visible is what makes it a look rather than a mode.
  *
- * Escape and backdrop dismiss come from the primitive, on the same
- * `z-(--z-backdrop)` / `z-(--z-modal)` pair the create-task and
+ * Pending previews use their local object URLs, while sent files load through
+ * the authenticated asset path. Escape and backdrop dismiss come from the
+ * primitive, on the same `z-(--z-backdrop)` / `z-(--z-modal)` pair the create-task and
  * project-settings dialogs already use — a third instance of a settled pattern,
  * not a new one. Left and right step through the rest of the turn's media.
  * Filename and size are one muted caption line: no chip, no badge.
@@ -25,21 +26,25 @@ import type { TurnAttachment } from "@/lib/types"
  * Fully controlled. `index` lives with whoever opened it, so the clicked file
  * is the one that shows without this component syncing state in an effect.
  */
+type AttachmentViewerProps = {
+  files: TurnAttachment[]
+  /** which file is showing; null = closed */
+  index: number | null
+  onIndex: (next: number) => void
+  onClose: () => void
+} & (
+  | { pathFor: (name: string) => string; localSrcFor?: never }
+  | { localSrcFor: (index: number) => string; pathFor?: never }
+)
+
 export function AttachmentViewer({
   files,
   index,
   onIndex,
   onClose,
   pathFor,
-}: {
-  files: TurnAttachment[]
-  /** which file is showing; null = closed */
-  index: number | null
-  onIndex: (next: number) => void
-  onClose: () => void
-  /** The daemon API path for one attachment; the transport supplies the credential. */
-  pathFor: (name: string) => string
-}) {
+  localSrcFor,
+}: AttachmentViewerProps) {
   const open = index !== null && index >= 0 && index < files.length
 
   useEffect(() => {
@@ -54,7 +59,10 @@ export function AttachmentViewer({
   }, [open, index, files.length, onIndex])
 
   const current = open ? files[index!]! : null
-  const src = useAssetSrc(current ? pathFor(current.name) : null)
+  // Sent files need an authenticated fetch; pending files already have local
+  // object URLs and must not be uploaded just to preview them.
+  const remoteSrc = useAssetSrc(current && pathFor ? pathFor(current.name) : null)
+  const src = current && localSrcFor ? localSrcFor(index!) : remoteSrc
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
