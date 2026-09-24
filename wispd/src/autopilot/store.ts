@@ -10,6 +10,7 @@ import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import { keyParts, markerOf, withDelivered } from "./feedback"
 import { taskIsIdle } from "./idle"
+import type { Judged, JudgeMiss } from "./judge"
 import { announceWorkflow, cancelWorkflowMessages, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 
@@ -52,6 +53,10 @@ export interface AutopilotCheckpoint {
   fixArmedAt?: string
   /** review items sent to the agent: item id → the fingerprint sent */
   delivered?: Record<string, string>
+  /** the review judge's answers: item id → the version it read and what it said (judge.ts) */
+  judged?: Record<string, Judged>
+  /** versions the judge could not answer: item id → how often, and when to ask again */
+  judgeMisses?: Record<string, JudgeMiss>
   /** CI evidence keys sent in a round, alone or with review feedback */
   sentCi?: string[]
   /** turn numbers that started without the note asking the agent to sign its GitHub posts (a slash command) */

@@ -6,6 +6,7 @@ import { taskMessageRoute } from "../src/routes/task-messages";
 import { startNextQueuedMessage } from "../src/runner";
 import { loadConfig } from "../src/config";
 import { db, getTask, setTaskFields } from "../src/store";
+import { judgeLogPath } from "../src/autopilot/judge";
 import { HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -102,25 +103,167 @@ describe("auto-fix for review feedback", () => {
     expect(state.merges).toHaveLength(1);
   });
 
-  // STOPGAP(1.0): delete with severity-summary.ts
-  test("STOPGAP(1.0): a reviewer's medium finding under its green check is a round, before any merge", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const body = [`## reviewer Summary for #${HEAD.slice(0, 7)}`, "", "| Severity | Count |", "|---|---|", "| 🟡 Medium | 1 |", "", "Guard the empty list in `pick()`."].join("\n");
-    const board: PrComment = { ...said({ id: "IC_5", author: "pr-reviewer", association: "NONE", bot: true, body, createdAt: "2026-09-23T11:00:00Z" }) };
+  describe("with the review judge", () => {
+    const summaryBody = "## Summary\n\n| Severity | Count |\n|---|---|\n| 🟡 Medium | 1 |\n\nGuard the empty list in `pick()`.";
+    const summary = (over: Partial<PrComment> = {}): PrComment => said({ id: "IC_5", author: "pr-reviewer", association: "NONE", bot: true, body: summaryBody, createdAt: "2026-09-23T11:00:00Z", ...over });
     const reviewer = { name: "pr-reviewer", status: "COMPLETED", conclusion: "SUCCESS", required: false, url: "https://ci/pr-reviewer", app: "pr-reviewer" };
-    const { state, github } = fakeGitHub({ pr: snapshot({ comments: [board], checks: [...snapshot().checks, reviewer] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the round");
-    expect(state.merges).toHaveLength(0);
-    expect(readFileSync(file, "utf8")).toContain("New review feedback on this PR: 1 comment.");
-    const evidence = evidenceOf(file);
-    expect(evidence).toContain("It reports 1 medium finding on this head. Fix the medium and worse ones; low ones are optional.");
-    expect(evidence).toContain("Guard the empty list in `pick()`.");
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+    function judge(kind: "needs_changes" | "all_clear" | "error" = "needs_changes") {
+      const asked: string[] = [];
+      const client = async (request: { text: string }) => {
+        asked.push(request.text);
+        if (kind === "error") throw new Error("Jev answered HTTP 529");
+        return { kind, confidence: 0.96, probabilities: { [kind]: 0.96 }, model: "jev-1.13.0", inputTokens: 700 };
+      };
+      return { asked, client };
+    }
+
+    test("a bot's summary it reads as needing changes is a round before any merge, logged, and asked about once", async () => {
+      const { task, file, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [summary()], checks: [...snapshot().checks, reviewer] }) });
+      const { asked, client } = judge();
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: client });
+      setAutopilot(task.id, { autoMerge: true, autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      await until(() => existsSync(file), "the round");
+      expect(state.merges).toHaveLength(0);
+      expect(asked).toEqual([summaryBody]);
+      expect(readFileSync(file, "utf8")).toContain("New review feedback on this PR: 1 comment.");
+      const evidence = evidenceOf(file);
+      expect(evidence).toContain("Wisp's review judge (jev-1.13.0) read this as asking for changes (confidence 0.96).");
+      expect(evidence).toContain("Guard the empty list in `pick()`.");
+      const row = autopilotRow(task.id)!;
+      const log = readFileSync(judgeLogPath(task.id, row.id), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(log).toMatchObject([{ pr: 7, item: "comment:IC_5", text: summaryBody, answer: { kind: "needs_changes", confidence: 0.96 }, inputTokens: 700 }]);
+      expect(db.query("SELECT detail FROM workflow_history WHERE workflow_id = ? AND kind = 'judged'").all(row.id)).toEqual([{ detail: "@pr-reviewer's comment: needs changes (0.96)" }]);
+      await until(() => getTask(task.id)?.state === "done", "the round to settle");
+      // the same version is never asked about again
+      await pass(rt, task.id, clock);
+      expect(asked).toHaveLength(1);
+    });
+
+    test("auto-merge alone: a problem about this head needs you; one about an earlier head waits for the bot's next pass", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      // a bot with no check of its own: only its words say whether it has looked at this head
+      const checks = snapshot().checks;
+      // written after this head was committed: it is about this head
+      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [summary({ createdAt: "2026-09-23T11:55:00Z" })], checks, headCommittedAt: "2026-09-23T11:50:00Z" }) });
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+      setAutopilot(task.id, { autoMerge: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: `@pr-reviewer reported problems on ${HEAD.slice(0, 7)}` });
+      // a summary written before this head was committed describes an earlier one: the bot's pass on this head is awaited
+      state.pr = snapshot({ comments: [summary({ createdAt: "2026-09-23T11:40:00Z" })], checks, headCommittedAt: "2026-09-23T11:50:00Z" });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: `Waiting for @pr-reviewer to review ${HEAD.slice(0, 7)}` });
+      expect(state.merges).toHaveLength(0);
+      // its pass on this head can be an approval with no words for the judge: that ends the wait too
+      state.pr = { ...state.pr, reviews: [{ id: "PRR_9", author: "pr-reviewer", association: "NONE", bot: true, state: "APPROVED", body: "", commit: HEAD, submittedAt: "2026-09-23T12:01:00Z", editedAt: null, url: "https://gh/r/9" }] };
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(1);
+    });
+
+    test("an edited summary is the bot's next pass", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      // a bot with no check of its own: only its words say whether it has looked at this head
+      const checks = snapshot().checks;
+      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [summary({ createdAt: "2026-09-23T11:40:00Z" })], checks, headCommittedAt: "2026-09-23T11:50:00Z" }) });
+      let kind: "needs_changes" | "all_clear" = "needs_changes";
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: async () => ({ kind, confidence: 0.96, probabilities: {}, model: "jev-1.13.0", inputTokens: 700 }) });
+      setAutopilot(task.id, { autoMerge: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id).reason).toBe(`Waiting for @pr-reviewer to review ${HEAD.slice(0, 7)}`);
+      kind = "all_clear";
+      state.pr = snapshot({ comments: [summary({ createdAt: "2026-09-23T11:40:00Z", editedAt: "2026-09-23T11:58:00Z", body: "## Summary\n\nNo issues found." })], checks, headCommittedAt: "2026-09-23T11:50:00Z" });
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(1);
+    });
+
+    test("a judge that keeps failing holds the merge a few looks, then stops waiting and says so", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [summary({ createdAt: "2026-09-23T11:55:00Z" })], checks: [...snapshot().checks, reviewer] }) });
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge("error").client });
+      setAutopilot(task.id, { autoMerge: true, autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Waiting for the review judge" });
+      expect(state.merges).toHaveLength(0);
+      for (let look = 0; look < 4 && state.merges.length === 0; look++) {
+        // past each backoff: 1, then 2 minutes
+        clock.now += 5 * 60_000;
+        await pass(rt, task.id, clock);
+      }
+      expect(state.merges).toHaveLength(1);
+      const row = autopilotRow(task.id)!;
+      expect(db.query("SELECT kind FROM workflow_history WHERE workflow_id = ? AND kind = 'judge-unavailable'").all(row.id)).toHaveLength(1);
+      const log = readFileSync(judgeLogPath(task.id, row.id), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      expect(log).toHaveLength(3);
+      expect(log[0]).toMatchObject({ item: "comment:IC_5", error: "Jev answered HTTP 529" });
+    });
+
+    test("an approval that lists findings is one round before the merge, and the approval still merges it", async () => {
+      const { task, file, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const body = "Verdict: APPROVE — no blocking findings.\n\n1. **Non-blocking** — the download is not cancelled with the request.\n2. **Non-blocking** — a dropped queued request is still decoded.";
+      const approval: PrReview = { ...blocking, id: "PRR_A", body, submittedAt: "2026-09-23T11:30:00Z" };
+      const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [approval] }) });
+      const questions: string[] = [];
+      const rt = runtime(github, clock, adapters, undefined, undefined, {
+        judge: async (request) => {
+          questions.push(request.question ?? "kind");
+          return { kind: request.question === "findings" ? "several_findings" : "all_clear", confidence: 0.99, probabilities: {}, model: "jev-1.13.0", inputTokens: 600 };
+        },
+      });
+      setAutopilot(task.id, { autoMerge: true, autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      await until(() => existsSync(file), "the round");
+      expect(questions).toEqual(["findings"]);
+      expect(state.merges).toHaveLength(0);
+      expect(readFileSync(file, "utf8")).toContain("New review feedback on this PR: 1 approval with notes.");
+      const evidence = evidenceOf(file);
+      expect(evidence).toContain("The reviewer approved this PR, and the approval still counts: the merge does not wait on these notes.");
+      expect(evidence).toContain("a dropped queued request is still decoded");
+      await until(() => getTask(task.id)?.state === "done", "the round to settle");
+      // one round: the notes were delivered, and the approval merges it
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(1);
+      expect(questions).toEqual(["findings"]);
+    });
+
+    test("with auto-merge alone, an approval is never sent to the judge: its notes could not become a round", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const approval: PrReview = { ...blocking, id: "PRR_A", body: "Verdict: APPROVE — no blocking findings.\n\n1. Non-blocking — a gap.", submittedAt: "2026-09-23T11:30:00Z" };
+      const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [approval] }) });
+      const asked: string[] = [];
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: async (request) => { asked.push(request.question ?? "kind"); return { kind: "several_findings", confidence: 1, probabilities: {}, model: "jev-1.13.0", inputTokens: 1 }; } });
+      setAutopilot(task.id, { autoMerge: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(asked).toEqual([]);
+      expect(state.merges).toHaveLength(1);
+    });
+
+    test("with the key removed, stored answers no longer count", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      // about this head: a stored answer still counting would hold the merge and send a round
+      const comment = summary({ createdAt: "2026-09-23T11:55:00Z" });
+      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [comment], checks: [...snapshot().checks, reviewer], headCommittedAt: "2026-09-23T11:50:00Z" }) });
+      setAutopilot(task.id, { autoMerge: true, autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, judged: { "comment:IC_5": { fp: comment.createdAt, kind: "needs_changes", confidence: 0.99, model: "jev-1.13.0" } } });
+      // no judge and no key: the summary is a status board, as it always was
+      await pass(runtime(github, clock, adapters), task.id, clock);
+      expect(state.merges).toHaveLength(1);
+      expect(autopilotStatus(task.id).fixRounds ?? 0).toBe(0);
+    });
   });
 
   test("CI and review feedback share one round and one budget", async () => {

@@ -12,13 +12,14 @@
  * - A bot's conversation comment is usually a status board it edits on every
  *   push (previews, coverage, triage). It is feedback only when the same app's
  *   check on the head is red — then once per head — or when it says "blocking".
- *   STOPGAP(1.0): or when it is the one summary format severity-summary.ts
- *   reads, reporting medium-or-worse findings for this head.
+ * - What those signals leave undecided (a bot's summary under no red check of
+ *   its own, a bot's review body with no verdict) is feedback only when the
+ *   optional review judge (judge.ts) read that version as asking for changes.
  */
 import type { PrCheck } from "./checks"
 import { classifyCheck } from "./checks"
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "./github"
-import { reportedFindings, type ReportedFindings } from "./severity-summary"
+import { listsFindings, needsChanges, type JudgeCandidate, type Judged, type Judgment } from "./judge"
 import { parseVerdict } from "./verdict"
 
 /** Every post the agent makes on GitHub while auto-fix is on ends with this, so Wisp can tell its words from a reviewer's. */
@@ -48,6 +49,8 @@ export interface FeedbackInput {
   self: (comment: PrComment) => boolean
   /** item id → the fingerprint last sent */
   delivered: Readonly<Record<string, string>>
+  /** item id → the review judge's answer for one version of it; absent without a key */
+  judged?: Readonly<Record<string, Judged>>
 }
 
 interface Base {
@@ -66,11 +69,17 @@ export type FeedbackItem =
     /** it was resolved, then a trusted reply came in */
     reopened: boolean
   }
-  | Base & { kind: "review"; review: PrReview }
+  | Base & {
+    kind: "review"; review: PrReview
+    /** the review judge's answer, when that and not a verdict is why it is sent */
+    judged?: Judgment
+    /** an approval sent for the findings it lists: it still counts, and the merge does not wait on them */
+    approval?: boolean
+  }
   | Base & {
     kind: "comment"; comment: PrComment; check: PrCheck | null
-    /** STOPGAP(1.0): what a bot's summary reports, when that and not a red check is why it is sent */
-    findings?: ReportedFindings
+    /** the review judge's answer, when that and not a red check is why it is sent */
+    judged?: Judgment
   }
 
 const time = (words: { createdAt?: string; submittedAt?: string; editedAt: string | null }): string =>
@@ -103,7 +112,7 @@ export function acknowledgement(body: string): boolean {
 }
 
 /** Words that may instruct the agent: trusted, not its own, not a draft or hidden, and asking for something. */
-function words(comment: PrComment, input: FeedbackInput): boolean {
+function words(comment: PrComment, input: Pick<FeedbackInput, "trusts" | "self">): boolean {
   // trust first: nothing a stranger wrote is parsed further
   return comment.body.trim() !== "" && !comment.hidden && input.trusts(comment) && !input.self(comment) && !acknowledgement(comment.body)
 }
@@ -148,47 +157,109 @@ function threadItem(thread: PrThread, input: FeedbackInput): FeedbackItem | null
   }
 }
 
-function reviewItem(review: PrReview, input: FeedbackInput): FeedbackItem | null {
-  if (review.state === "PENDING" || review.state === "DISMISSED" || review.body.trim() === "") return null
-  if (!input.trusts(review) || isMarked(review.body) || acknowledgement(review.body)) return null
+/** A review worth reading at all: submitted, with a body, from someone trusted, not the agent's, asking for something. */
+function readable(review: PrReview, input: Pick<FeedbackInput, "trusts">): boolean {
+  if (review.state === "PENDING" || review.state === "DISMISSED" || review.body.trim() === "") return false
+  return input.trusts(review) && !isMarked(review.body) && !acknowledgement(review.body)
+}
+
+/**
+ * A bot's review body with no verdict and no change request: its overview
+ * ("reviewed 3 files, generated 2 comments"), whose threads are the feedback.
+ * GitHub says nothing more about it; only the review judge can.
+ */
+const undecidedReview = (review: PrReview): boolean =>
+  review.bot && parseVerdict(review.body) === null && review.state !== "CHANGES_REQUESTED" && review.state !== "APPROVED"
+
+/** The version of an item the judge answered for, when it is the current one. */
+function judgedNow(input: FeedbackInput, id: string, fingerprint: string): Judged | undefined {
+  const judged = input.judged?.[id]
+  return judged?.fp === fingerprint ? judged : undefined
+}
+
+/** A formal approval, or an approving verdict line. */
+const approves = (review: PrReview): boolean => {
   const verdict = parseVerdict(review.body)
-  // An approval is the merge gate's business; an unreadable verdict is sent,
-  // so the agent can read what the reviewer meant.
-  if (verdict === "approve" || (verdict === null && review.state === "APPROVED")) return null
-  // A bot's review body is its overview ("reviewed 3 files, generated 2
-  // comments"); its threads are the feedback. Only a verdict or a formal
-  // change request says more.
-  if (review.bot && verdict === null && review.state !== "CHANGES_REQUESTED") return null
+  return verdict === "approve" || (verdict === null && review.state === "APPROVED")
+}
+
+function reviewItem(review: PrReview, input: FeedbackInput): FeedbackItem | null {
+  if (!readable(review, input)) return null
   const id = `review:${review.id}`
   const fingerprint = review.editedAt ?? review.submittedAt
   if (input.delivered[id] === fingerprint) return null
-  return { kind: "review", id, fingerprint, at: fingerprint, review }
+  // An approval is the merge gate's business, unless the review judge heard it
+  // list findings: then its notes go to the agent once. An unreadable verdict
+  // is sent, so the agent can read what the reviewer meant.
+  if (approves(review)) {
+    const judged = judgedNow(input, id, fingerprint)
+    return listsFindings(judged) ? { kind: "review", id, fingerprint, at: fingerprint, review, judged, approval: true } : null
+  }
+  if (!undecidedReview(review)) return { kind: "review", id, fingerprint, at: fingerprint, review }
+  const judged = judgedNow(input, id, fingerprint)
+  return needsChanges(judged) ? { kind: "review", id, fingerprint, at: fingerprint, review, judged } : null
+}
+
+/** The same app's red check beside a bot's comment: its verdict, when it has one. */
+const redCheckOf = (comment: PrComment, pr: PrSnapshot): PrCheck | null =>
+  pr.checks.find((check) => check.app === comment.author && classifyCheck(check) === "fix") ?? null
+
+/**
+ * A bot's comment GitHub's signals leave undecided: its own check is green or
+ * running, or it has none and says nothing "blocking". Usually a status board.
+ */
+function undecidedComment(comment: PrComment, pr: PrSnapshot): boolean {
+  if (!comment.bot || redCheckOf(comment, pr)) return false
+  const paired = pr.checks.some((check) => check.app === comment.author)
+  return paired || parseVerdict(comment.body) !== "blocking"
 }
 
 function commentItem(comment: PrComment, input: FeedbackInput): FeedbackItem | null {
   if (!words(comment, input)) return null
   const id = `comment:${comment.id}`
-  if (comment.bot) {
-    const paired = input.pr.checks.filter((check) => check.app === comment.author)
-    const red = paired.find((check) => classifyCheck(check) === "fix") ?? null
-    // STOPGAP(1.0): a summary that reports medium-or-worse findings for this
-    // head, under a check its bot keeps green. See severity-summary.ts.
-    const findings = red ? null : reportedFindings(comment.body, input.pr.head)
-    const reported = findings && findings.worth > 0 ? findings : null
-    if (paired.length > 0 || reported) {
-      // its check is the verdict: green says nothing, red is sent once per head
-      if (!red && !reported) return null
-      const fingerprint = `head:${input.pr.head}`
-      if (input.delivered[id] === fingerprint) return null
-      return { kind: "comment", id, fingerprint, at: time(comment), comment, check: red, ...(reported && { findings: reported }) }
-    }
-    if (parseVerdict(comment.body) !== "blocking") return null
-  } else if (parseVerdict(comment.body) === "approve") {
-    return null
+  const red = comment.bot ? redCheckOf(comment, input.pr) : null
+  if (red) {
+    // its check is the verdict: red is sent once per head
+    const fingerprint = `head:${input.pr.head}`
+    if (input.delivered[id] === fingerprint) return null
+    return { kind: "comment", id, fingerprint, at: time(comment), comment, check: red }
   }
+  if (!comment.bot && parseVerdict(comment.body) === "approve") return null
   const fingerprint = time(comment)
   if (input.delivered[id] === fingerprint) return null
-  return { kind: "comment", id, fingerprint, at: fingerprint, comment, check: null }
+  if (!undecidedComment(comment, input.pr)) return { kind: "comment", id, fingerprint, at: fingerprint, comment, check: null }
+  const judged = judgedNow(input, id, fingerprint)
+  return needsChanges(judged) ? { kind: "comment", id, fingerprint, at: fingerprint, comment, check: null, judged } : null
+}
+
+/**
+ * The bots' words the review judge should read: exactly those `feedbackItems`
+ * would otherwise drop as a status board or an overview.
+ */
+export function judgeCandidates(input: Pick<FeedbackInput, "pr" | "trusts" | "self">): JudgeCandidate[] {
+  const { pr } = input
+  const comments = pr.comments
+    .filter((comment) => words(comment, input) && undecidedComment(comment, pr))
+    .map((comment): JudgeCandidate => ({ id: `comment:${comment.id}`, fp: time(comment), order: time(comment), text: comment.body, postedAs: "comment", bot: true, author: comment.author, url: comment.url }))
+  const reviews = pr.reviews
+    .filter((review) => readable(review, input) && undecidedReview(review))
+    .map((review): JudgeCandidate => ({
+      id: `review:${review.id}`, fp: review.editedAt ?? review.submittedAt, order: review.submittedAt, text: review.body, postedAs: "review", bot: true, author: review.author, url: review.url, commit: review.commit,
+    }))
+  return [...comments, ...reviews]
+}
+
+/**
+ * Approvals with a body, from anyone whose words may instruct the agent: the
+ * review judge is asked only whether each lists findings.
+ */
+export function approvalCandidates(input: Pick<FeedbackInput, "pr" | "trusts">): JudgeCandidate[] {
+  return input.pr.reviews
+    .filter((review) => readable(review, input) && approves(review))
+    .map((review): JudgeCandidate => ({
+      id: `review:${review.id}`, fp: review.editedAt ?? review.submittedAt, order: review.submittedAt, text: review.body, postedAs: "review",
+      bot: review.bot, author: review.author, url: review.url, commit: review.commit, question: "findings",
+    }))
 }
 
 export function feedbackItems(input: FeedbackInput): FeedbackItem[] {
@@ -257,11 +328,13 @@ const count = (n: number, one: string, many: string): string => `${n} ${n === 1 
 
 export function feedbackSummary(items: FeedbackItem[]): string {
   const threads = items.filter((item) => item.kind === "thread").length
-  const reviews = items.filter((item) => item.kind === "review").length
+  const reviews = items.filter((item) => item.kind === "review" && !item.approval).length
+  const approvals = items.filter((item) => item.kind === "review" && item.approval).length
   const comments = items.filter((item) => item.kind === "comment").length
   return [
     threads > 0 && count(threads, "review thread", "review threads"),
     reviews > 0 && count(reviews, "review", "reviews"),
+    approvals > 0 && count(approvals, "approval with notes", "approvals with notes"),
     comments > 0 && count(comments, "comment", "comments"),
   ].filter(Boolean).join(", ")
 }

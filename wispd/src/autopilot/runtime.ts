@@ -26,7 +26,8 @@ import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import { feedbackItems, feedbackKey, feedbackSummary, isMarked, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
+import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
+import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { planFix, type FixPlan } from "./fix"
 import {
   checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
@@ -59,6 +60,8 @@ export interface AutopilotRuntimeOptions {
   branches?: (task: Task, signal: AbortSignal) => Promise<string[]>
   /** one look's deadline */
   lookTimeoutMs?: number
+  /** the review judge, in place of Jev and whether a key is set */
+  judge?: JudgeClient
 }
 
 export { taskIsIdle } from "./idle"
@@ -118,6 +121,8 @@ export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string
 interface FixContext {
   row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; required: ReadonlySet<string>
   repository: string; autoMerge: boolean; signal: AbortSignal
+  /** the review judge's answers, only while a judge is configured */
+  judged?: Record<string, Judged>
 }
 
 /** What one look at an open, unqueued PR teaches the checkpoint. */
@@ -158,6 +163,12 @@ function lastActivity(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
 /** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
 function nextPrReason(merged: NonNullable<AutopilotCheckpoint["lastMerged"]>, reason: string): string {
   return `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · ${reason === "Waiting for a PR" ? "Waiting for the task's next PR" : reason}`
+}
+
+/** The earliest this head could have been reviewed: its commit, or when Wisp first saw it. */
+function headSince(checkpoint: AutopilotCheckpoint, pr: PrSnapshot): number {
+  const times = [checkpoint.heads?.[pr.head], pr.headCommittedAt].map((at) => Date.parse(at ?? "")).filter(Number.isFinite)
+  return times.length > 0 ? Math.min(...times) : 0
 }
 
 /** The last few heads seen, and always the current one. */
@@ -346,16 +357,21 @@ export class AutopilotRuntime {
       checkpoint.idleTurn = task.turn_count
     }
 
+    const judging = await this.judgeReviews({ row, task, checkpoint, pr, repository, autoFix: ctx.autoFix, signal })
     const rules = await this.baseRules(repository, pr.baseRefName, cwd, signal)
     const required = rules.checks
     // a rule the snapshot could not read is "not required" when the branch has no classic protection at all
     if (pr.conversationRule === "unknown" && rules.classicProtection === false) pr.conversationRule = "not-required"
     // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
     const nothingToFix = ctx.autoFix
-      ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal })
+      ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal, judged: judging?.judged })
       : "Nothing to fix"
     if (nothingToFix === null) return
     if (!ctx.autoMerge) { this.autoFixAlone(row, checkpoint, pr, nothingToFix); return }
+    const firstSeenMs = Date.parse(checkpoint.heads?.[pr.head] ?? "")
+    const verdicts = judging
+      ? judgedHead(judging, pr, { sinceMs: headSince(checkpoint, pr), firstSeenMs: Number.isFinite(firstSeenMs) ? firstSeenMs : now.getTime(), nowMs: now.getTime() })
+      : { problems: [], awaited: [], pending: false }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
       pr, requiredNames: new Set(required),
@@ -363,6 +379,7 @@ export class AutopilotRuntime {
       // observe() recorded both; a missing one parses as NaN, which the gate reads as fresh
       headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
       nowMs: now.getTime(), published,
+      reviewerProblems: verdicts.problems, reviewersAwaited: verdicts.awaited, judgePending: verdicts.pending,
     })
     if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr"); return }
     if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS, "pr"); return }
@@ -442,16 +459,7 @@ export class AutopilotRuntime {
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
   private async feedbackFor(ctx: FixContext): Promise<FeedbackItem[]> {
     const { pr, task, row, checkpoint } = ctx
-    const people = new Set<string>()
-    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
-      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
-    }
-    const pushers = new Set<string>()
-    await Promise.all([...people].map(async (login) => {
-      if (await this.canPush(ctx.repository, login, task.repo_path, ctx.signal)) pushers.add(login)
-    }))
-    const trusts = ({ author, bot }: { author: string | null; bot: boolean }) =>
-      author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
+    const trusts = await this.trustsFor(pr, ctx.repository, task, ctx.signal)
     // Turns that began before auto-fix was armed were never asked to mark
     // their posts: the owner's-account comments inside them are the agent's.
     const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at, checkpoint.unmarkedTurns ?? [])
@@ -459,7 +467,49 @@ export class AutopilotRuntime {
       const at = Date.parse(comment.createdAt)
       return at >= Date.parse(turn.started_at) && at <= (turn.ended_at ? Date.parse(turn.ended_at) : Infinity)
     }))
-    return feedbackItems({ pr, trusts, self, delivered: checkpoint.delivered ?? {} })
+    return feedbackItems({ pr, trusts, self, delivered: checkpoint.delivered ?? {}, judged: ctx.judged })
+  }
+
+  /**
+   * The review judge's reading of bot words GitHub's signals leave undecided
+   * (judge.ts), or null without a key: then no stored answer counts either.
+   */
+  private async judgeReviews(ctx: {
+    row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; repository: string; autoFix: boolean; signal: AbortSignal
+  }): Promise<JudgeLook | null> {
+    const { row, task, checkpoint, pr, signal } = ctx
+    const key = this.options.judge ? null : jevKey(this.cfg)
+    const client = this.options.judge ?? (key ? jevClient(key.key) : null)
+    if (!client) return null
+    // only bots' words are ever candidates for the kind question; the agent never posts as one
+    const candidates = judgeCandidates({ pr, trusts: ({ author, bot }) => bot && author !== null && author !== "github-actions", self: (comment) => isMarked(comment.body) })
+    // an approval's notes can only become an auto-fix round, so they are asked about only then
+    if (ctx.autoFix) candidates.push(...approvalCandidates({ pr, trusts: await this.trustsFor(pr, ctx.repository, task, signal) }))
+    const look = await judgeLook({
+      candidates, checkpoint, client, pr, signal, now: this.now,
+      log: (entry) => {
+        writeJudgeLog(task.id, row.id, entry)
+        // only what can change what happens: status boards would crowd the history out
+        if (entry.answer && needsChanges(entry.answer)) recordWorkflow(row.id, "judged", `@${entry.author ?? "ghost"}'s ${entry.postedAs}: needs changes (${entry.answer.confidence.toFixed(2)})`, entry.at)
+      },
+    })
+    for (const id of look.gaveUp) {
+      recordWorkflow(row.id, "judge-unavailable", `The review judge failed ${JUDGE_FAILURE_LIMIT} times on ${id}; auto-merge no longer waits for it`, this.now().toISOString())
+    }
+    return look
+  }
+
+  /** Whose words may instruct the agent: the owner's account, a bot other than github-actions, or someone who can push. */
+  private async trustsFor(pr: PrSnapshot, repository: string, task: Task, signal: AbortSignal): Promise<(author: { author: string | null; bot: boolean }) => boolean> {
+    const people = new Set<string>()
+    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
+      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
+    }
+    const pushers = new Set<string>()
+    await Promise.all([...people].map(async (login) => {
+      if (await this.canPush(repository, login, task.repo_path, signal)) pushers.add(login)
+    }))
+    return ({ author, bot }) => author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
   }
 
   /** Whether a login may instruct the agent: cached an hour, and a failed read counts as no for five minutes. */

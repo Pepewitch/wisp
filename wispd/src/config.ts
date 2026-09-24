@@ -132,6 +132,12 @@ export interface WispConfig {
    * on the most expensive claude model because nothing pinned one.
    */
   harnessDefaults: Record<string, HarnessDefaults>;
+  /**
+   * TypeSafe Jev key for the autopilot's review judge (autopilot/judge.ts).
+   * Optional and never defaulted, so a first run does not write an empty one;
+   * written through PATCH /api/settings and never read back over HTTP.
+   */
+  jevApiKey?: string;
 }
 
 /**
@@ -252,6 +258,7 @@ const CONFIG_KEYS = [
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
+  "jevApiKey",
 ] as const;
 
 export const MIN_CONFIGURED_PORT = 1024;
@@ -374,7 +381,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     if (key === "port") assertPort(v);
     out[key] = v;
   };
-  const str = (key: "instanceId" | "host" | "token" | "terminalShell"): void => {
+  const str = (key: "instanceId" | "host" | "token" | "terminalShell" | "jevApiKey"): void => {
     const v = raw[key];
     if (v === undefined) return;
     if (typeof v !== "string") throw new Error(`config.json: ${key} must be a string, got ${typeName(v)}`);
@@ -393,6 +400,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   num("stuckMinutes");
   str("terminalShell");
   if (out.terminalShell !== undefined) assertTerminalShell(out.terminalShell);
+  str("jevApiKey");
   if (raw.maxConcurrentTasks !== undefined) {
     if (!Number.isSafeInteger(raw.maxConcurrentTasks) || (raw.maxConcurrentTasks as number) < 1) {
       throw new Error("config.json: maxConcurrentTasks must be a positive integer");

@@ -40,6 +40,11 @@ writeFileSync(
   { mode: 0o600 },
 );
 
+// The review judge must never reach TypeSafe from a test: a developer's own
+// key (exported in a shell profile) stays out, so only an injected fake runs.
+delete process.env.TYPESAFE_API_KEY;
+delete process.env.JEV_API_KEY;
+
 // Stop git's upward repository discovery at the temporary root. Deliberately
 // additive: a caller that already set a ceiling (a contributor whose TMPDIR
 // lives inside a checkout) keeps theirs.

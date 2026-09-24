@@ -64,6 +64,13 @@ afterEach(async () => {
   server = null;
 });
 
+/** The review judge with no key: what every settings answer carries until one is saved. */
+const JUDGE_OFF = {
+  configured: false, source: null, hint: null, model: "jev-1.13.0",
+  // other test files share this home's usage count, so only its shape is pinned
+  usage: { month: expect.any(String), calls: expect.any(Number), errors: expect.any(Number), inputTokens: expect.any(Number), costUsd: expect.any(Number) },
+};
+
 async function api(base: string, path: string, method = "GET", body?: unknown): Promise<Response> {
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   const init: RequestInit = { method, headers };
@@ -300,6 +307,7 @@ describe("daemon API contracts", () => {
       expect(await json(initial)).toEqual({
         autoRenameTasksFromPullRequests: true,
         hiddenModels: {},
+        reviewJudge: JUDGE_OFF,
       });
 
       const updated = await api(base, "/api/settings", "PATCH", {
@@ -309,6 +317,7 @@ describe("daemon API contracts", () => {
       expect(await json(updated)).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        reviewJudge: JUDGE_OFF,
       });
       expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
         autoRenameTasksFromPullRequests: false,
@@ -317,6 +326,7 @@ describe("daemon API contracts", () => {
       expect(await json(await api(base, "/api/settings"))).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        reviewJudge: JUDGE_OFF,
       });
       expect(events).toContainEqual({ type: "settings" });
 
@@ -330,6 +340,7 @@ describe("daemon API contracts", () => {
       expect(await json(noop)).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        reviewJudge: JUDGE_OFF,
       });
       expect(events).toEqual([]);
 
@@ -337,7 +348,7 @@ describe("daemon API contracts", () => {
         base,
         "/api/settings",
         400,
-        "autoRenameTasksFromPullRequests or hiddenModels is required",
+        "autoRenameTasksFromPullRequests, hiddenModels or jevApiKey is required",
         "PATCH",
         {},
       );
@@ -351,6 +362,35 @@ describe("daemon API contracts", () => {
       );
     } finally {
       unsubscribe();
+    }
+  });
+
+  test("the Jev key is write-only: saved to config.json, never read back, removable", async () => {
+    const base = await startServer();
+    // a plain sample, not key-shaped: the repository's secret scan reads every commit
+    const sample = "jev-test-sample-value";
+    try {
+      const saved = await api(base, "/api/settings", "PATCH", { jevApiKey: `  ${sample}  ` });
+      expect(saved.status).toBe(200);
+      const body = await saved.text();
+      // the key never crosses the wire, not even inside another field
+      expect(body).not.toContain(sample);
+      expect(JSON.parse(body).reviewJudge).toMatchObject({ configured: true, source: "settings", hint: "…alue" });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({ jevApiKey: sample, token });
+      expect(await (await api(base, "/api/settings")).text()).not.toContain(sample);
+      // an older client's PATCH of another setting leaves the key alone
+      await api(base, "/api/settings", "PATCH", { autoRenameTasksFromPullRequests: false });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8")).jevApiKey).toBe(sample);
+      await expectError(base, "/api/settings", 400, "jevApiKey must be 8–512 printable characters with no spaces", "PATCH", { jevApiKey: "has a space" });
+      await expectError(base, "/api/settings", 400, "jevApiKey must be a string or null, got number", "PATCH", { jevApiKey: 7 });
+      const removed = await api(base, "/api/settings", "PATCH", { jevApiKey: null });
+      expect((await json<{ reviewJudge: unknown }>(removed)).reviewJudge).toEqual(JUDGE_OFF);
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).not.toHaveProperty("jevApiKey");
+      // with no key, the test button says so rather than calling anyone
+      expect(await json(await api(base, "/api/settings/review-judge/test", "POST"))).toEqual({ ok: false, error: "No Jev API key is set" });
+    } finally {
+      // a fake key left in the shared test home would send later runtimes to TypeSafe
+      await api(base, "/api/settings", "PATCH", { jevApiKey: null });
     }
   });
 
@@ -371,6 +411,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: false,
         // trimmed, deduped and sorted, so an idempotent PATCH can be detected
         hiddenModels: { opencode: ["a/model", "b/model", "z/model"] },
+        reviewJudge: JUDGE_OFF,
       });
 
       // the same set in another key order and another array order is a no-op

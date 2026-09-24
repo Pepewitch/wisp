@@ -92,6 +92,8 @@ describe("validateConfig (a prior audit)", () => {
     );
     expect(thrownMessage(() => validateConfig({ host: 8710 }))).toBe("config.json: host must be a string, got number");
     expect(thrownMessage(() => validateConfig({ token: 42 }))).toBe("config.json: token must be a string, got number");
+    expect(thrownMessage(() => validateConfig({ jevApiKey: true }))).toBe("config.json: jevApiKey must be a string, got boolean");
+    expect(validateConfig({ jevApiKey: "jev_key" })).toEqual({ jevApiKey: "jev_key" });
     expect(thrownMessage(() => validateConfig({ instanceId: 42 }))).toBe(
       "config.json: instanceId must be a string, got number",
     );
@@ -219,7 +221,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });

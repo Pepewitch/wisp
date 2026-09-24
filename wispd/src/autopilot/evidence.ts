@@ -11,7 +11,7 @@ import type { PrCheck } from "./checks"
 import { feedbackSummary, type FeedbackItem } from "./feedback"
 import type { FixPlan } from "./fix"
 import type { AutopilotGitHub, PrSnapshot } from "./github"
-import { findingsWords } from "./severity-summary"
+import type { Judgment } from "./judge"
 
 export const MAX_ROUNDS = 3
 const MAX_LOGS = 6
@@ -117,6 +117,11 @@ export async function writeEvidence(input: RoundContent & {
 const who = (pr: PrSnapshot, author: { author: string | null; bot: boolean }): string =>
   `@${author.author ?? "ghost"} (${author.author === pr.viewer ? "the PR's owner" : author.bot ? "a bot" : "can push to this repository"})`
 
+const APPROVAL_NOTE = "The reviewer approved this PR, and the approval still counts: the merge does not wait on these notes. Wisp's review judge read them as listing findings, so they are yours to weigh once. Fix what is worth fixing in this PR, however the reviewer rated it, and say in your final message what you left and why."
+
+const judgedNote = (judged: Judgment): string =>
+  `Wisp's review judge (${judged.model}) read this as asking for changes (confidence ${judged.confidence.toFixed(2)}). Fix what is valid and still outstanding; minor or optional points may wait. If none of it applies, say so in your final message.`
+
 function reviewSection(pr: PrSnapshot, items: FeedbackItem[], signature: string): string[] {
   const lines = [
     "", "## Review feedback", "",
@@ -141,12 +146,15 @@ function reviewSection(pr: PrSnapshot, items: FeedbackItem[], signature: string)
       }
     } else if (item.kind === "review") {
       const { review } = item
-      lines.push("", `### Review by ${who(pr, review)}: ${review.state.toLowerCase().replaceAll("_", " ")}${review.commit ? ` on ${review.commit.slice(0, 7)}` : ""}`, "", review.url, ...fenced(review.body))
+      lines.push("", `### Review by ${who(pr, review)}: ${review.state.toLowerCase().replaceAll("_", " ")}${review.commit ? ` on ${review.commit.slice(0, 7)}` : ""}`, "", review.url)
+      if (item.kind === "review" && item.approval) lines.push("", APPROVAL_NOTE)
+      else if (item.judged) lines.push("", judgedNote(item.judged))
+      lines.push(...fenced(review.body))
     } else {
       const { comment, check } = item
       lines.push("", `### Comment by ${who(pr, comment)}`, "", comment.url)
       if (check) lines.push("", `Its check \`${check.name}\` is ${check.conclusion?.toLowerCase() ?? "red"} on this head${check.url ? `: ${check.url}` : ""}.`)
-      else if (item.findings) lines.push("", `It reports ${findingsWords(item.findings)} on this head. Fix the medium and worse ones; low ones are optional.`)
+      else if (item.judged) lines.push("", judgedNote(item.judged))
       lines.push(...fenced(comment.body))
     }
   }
