@@ -231,8 +231,12 @@ running.
   anyone else's thread and never resolves it. It never resolves a thread it
   disagreed with; it says so in its final message instead. What it cannot
   resolve stays open, and holds the merge only where the repository requires
-  conversations resolved before merging (GitHub's own rule, which Wisp reads).
-  Anywhere else, a PR GitHub calls mergeable is merged with it open.
+  conversations resolved before merging. Wisp reads that rule where it can (a
+  ruleset always; classic branch protection only if you are a repository
+  admin), and otherwise goes by GitHub reporting the PR blocked. Anywhere else,
+  a PR GitHub calls mergeable is merged with it open. With auto-merge on, an
+  agent that finds the PR must not merge as it is converts it to a draft and
+  says why, which holds the merge for you.
 - **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
   comments in each, and the newest 100 conversation comments; the evidence
   says when there were more.
@@ -246,8 +250,9 @@ Each is something only a person can move:
   - A required check held for approval, or waiting on an environment's
     reviewers.
   - A branch rule that needs an approving review (you cannot approve your own
-    PR, so someone else must), once the head has waited 15 minutes for one and
-    no reviewer app is at work on the PR.
+    PR, so someone else must), once the head has waited 15 minutes for one (30
+    if a reviewer app has approved this PR before; an app that only comments
+    never approves).
   - A formal change request.
 - **A conversation**, only where the repository requires every conversation
   resolved before merging: one still open, a colleague's to resolve or one the

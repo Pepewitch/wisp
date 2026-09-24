@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/t-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [job("test", "SUCCESS", { required: true })], actionsSuitesPending: 0, actionsSuitesWaiting: 0,
-    reviews: [], threads: [], threadsTruncated: false, requiresConversationResolution: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: "f".repeat(40), baseChecks: [], ...over,
+    reviews: [], threads: [], threadsTruncated: false, conversationRule: "not-required", comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: "f".repeat(40), baseChecks: [], ...over,
   };
 }
 const required = new Set(["test"]);
@@ -150,6 +150,12 @@ describe("what the agent reads", () => {
     expect(message).toContain("Do not wait for CI and do not merge");
     expect(message).toContain("End every comment or reply you post on GitHub with: — droid via Wisp <!-- wisp:task=t1 -->");
     expect(roundMessage({ ...content, pr: pr(), round: 1, file: "/f", autoMerge: false, signature: "" })).not.toContain("do not merge");
+    // with review feedback and auto-merge on, the agent has a way to hold a merge it thinks is wrong
+    const item = { kind: "comment", id: "comment:IC_1", fingerprint: "t", at: "t", check: null,
+      comment: { id: "IC_1", author: "owner", association: "OWNER", bot: false, body: "x", createdAt: "t", editedAt: null, url: "", hidden: false } } as const;
+    const withFeedback = roundMessage({ ci: null, items: [item], summary: "1 comment", pr: pr(), round: 1, file: "/f", autoMerge: true, signature: "" });
+    expect(withFeedback).toContain("gh pr ready --undo 7");
+    expect(roundMessage({ ci: null, items: [item], summary: "1 comment", pr: pr(), round: 1, file: "/f", autoMerge: false, signature: "" })).not.toContain("--undo");
   });
 
   test("the evidence file lists what failed, what it turned red, what is only context, and the logs", async () => {

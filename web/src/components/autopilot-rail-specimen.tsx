@@ -20,7 +20,7 @@ export function AutopilotRailSpecimen() {
     { ...TASKS[0]!, autopilot: on({ pr: null, reason: "Waiting for the task to finish", about: "task" }) },
     { ...TASKS[5]!, autopilot: on({}) },
     { ...TASKS[6]!, autopilot: on({ pr: null, reason: "#42 merged by Wisp · Waiting for the task's next PR", about: "task", lastMerged: { pr: 42, byWisp: true }, done: true }) },
-    { ...TASKS[7]!, autopilot: on({ state: "needs-you", reason: "1 review thread still open", by: "auto-fix" }) },
+    { ...TASKS[7]!, autopilot: on({ state: "needs-you", reason: "1 unresolved conversation", by: "auto-fix" }) },
   ]
   return (
     <Section title="Auto-merge and auto-fix — a rail you cannot miss">

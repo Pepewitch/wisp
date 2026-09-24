@@ -273,8 +273,10 @@ describe("the loop", () => {
     clock.now += 16 * 60_000;
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id).done).toBe(true);
-    // a turn running is work again
+    // a turn running is work again, and a task waiting on you is not idle either
     transition(task.id, "running");
+    expect(autopilotStatus(task.id).done).toBe(false);
+    transition(task.id, "needs-input");
     expect(autopilotStatus(task.id).done).toBe(false);
     transition(task.id, "done");
     expect(autopilotStatus(task.id).done).toBe(true);
@@ -951,11 +953,14 @@ describe("auto-fix", () => {
   test("a round that never started is withdrawn, and its checkpoint comes back", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoFix: true });
+    // it was done before a round came due: the round coming back does not make it done again
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { done: true }, new Date());
     const row = autopilotRow(task.id)!;
     expect(reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent test failing (round 1 of 3)", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0 }, new Date())).not.toBeNull();
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBe(1);
     expect(withdrawQueuedRound(autopilotRow(task.id)!)).toBe(true);
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
+    expect(checkpointOf(autopilotRow(task.id)!).done).toBeUndefined();
   });
 
   test("a round reserved after the task got busy is refused; Stop withdraws a queued one and keeps its hold", () => {

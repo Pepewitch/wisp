@@ -156,7 +156,8 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
  */
 function isDone(row: WorkflowRow, state: AutopilotState, checkpoint: AutopilotCheckpoint): boolean {
   if (row.state !== "active" || state !== "waiting" || checkpoint.done !== true) return false
-  return getTask(row.task_id)?.state !== "running"
+  const task = getTask(row.task_id)
+  return task !== null && taskIsIdle(task)
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -490,7 +491,8 @@ export function withdrawQueuedRound(row: WorkflowRow): boolean {
   const messageId = queuedRound(row.id)
   if (!messageId) return false
   cancelWorkflowMessages(row.id)
-  db.run("UPDATE workflows SET revision = revision + 1 WHERE id = ?", [row.id])
+  // the cancel restored the checkpoint the round came from: a round was due, so it is not done
+  db.run("UPDATE workflows SET checkpoint_json = json_remove(checkpoint_json, '$.done'), revision = revision + 1 WHERE id = ?", [row.id])
   emit({ type: "message", taskId: row.task_id, messageId })
   return true
 }
@@ -599,6 +601,7 @@ export function skipCancelledRound(workflowId: string, messageId: string): boole
   // the cancel restored the countdown this round came from: it is answered
   delete checkpoint.pending
   delete checkpoint.sendNow
+  delete checkpoint.done
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), workflowId])
   recordWorkflow(workflowId, "skipped", "A queued auto-fix round was cancelled", new Date().toISOString())
   announceWorkflow(row.task_id)

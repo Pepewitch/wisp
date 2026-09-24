@@ -168,6 +168,9 @@ export function roundMessage(input: RoundContent & { pr: PrSnapshot; round: numb
       : "- Fix what is failing or still outstanding on the current code, run the relevant tests, commit, and push.",
     ...(ci && !ci.conflict ? ["- If a failure is unrelated to this PR (flaky or infrastructure), say so instead of changing code."] : []),
     ...(items.length > 0 ? ["- The file says which review threads you may resolve, and how to reply."] : []),
+    ...(items.length > 0 && input.autoMerge
+      ? [`- Auto-merge is on: an open thread does not hold the merge unless the repository requires it. If an item shows this PR must not merge as it is, convert it to a draft (\`gh pr ready --undo ${pr.number}\`) and say why in your final message; that holds it for the owner.`]
+      : []),
     `- End every comment or reply you post on GitHub with: ${input.signature}`,
     input.autoMerge
       ? "- Do not wait for CI and do not merge: Wisp checks the new head and merges when it is ready."

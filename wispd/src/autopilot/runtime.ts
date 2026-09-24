@@ -497,7 +497,7 @@ export class AutopilotRuntime {
     }
     // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
-      ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined,
+      ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined, greenHead: undefined, greenAt: undefined,
       delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
     }
@@ -545,13 +545,15 @@ export class AutopilotRuntime {
     const now = this.now()
     const say = (state: AutopilotState, reason: string, delayMs: number, done = false) =>
       saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done }, now)
-    if (pr.requiresConversationResolution && pr.unresolvedThreads > 0) {
+    // open conversations matter where the rule is set, or, when it cannot be read, where GitHub blocks the PR
+    if (pr.unresolvedThreads > 0 && (pr.conversationRule === "required" || (pr.conversationRule === "unknown" && pr.mergeState === "BLOCKED"))) {
       say("needs-you", `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}`, WAITING_ON_YOU_MS)
       return
     }
     // only a green PR counts as done; a red that is main's own is still red
     const green = nothingToFix === "Nothing to fix"
-    if (green && checkpoint.greenHead !== pr.head) { checkpoint.greenHead = pr.head; checkpoint.greenAt = now.toISOString() }
+    if (!green) { delete checkpoint.greenHead; delete checkpoint.greenAt }
+    else if (checkpoint.greenHead !== pr.head) { checkpoint.greenHead = pr.head; checkpoint.greenAt = now.toISOString() }
     const quietFor = now.getTime() - lastActivity(pr, checkpoint)
     const done = green && quietFor >= QUIET_MS
     const reason = done ? `${nothingToFix} · no new review for ${QUIET_MS / 60_000} min` : nothingToFix

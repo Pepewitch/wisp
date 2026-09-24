@@ -127,15 +127,18 @@ function reviewGate(pr: PrSnapshot): GateResult | null {
   return null
 }
 
-/** A required approval the reviewers have had a while to give, and none of them an app about to give it, needs asking for. */
+/** A required approval the reviewers have had a while to give needs asking for. */
 export const APPROVAL_GRACE_MS = 15 * 60_000
 
 function approvalGate(input: GateInput): GateResult {
   const { pr } = input
-  // a GitHub App reviewer that has spoken on this PR usually approves on its next pass
-  const appReviewing = pr.reviews.some((review) => review.bot && review.author !== "github-actions")
+  // An app that has approved this PR before (its approval dismissed by a push)
+  // usually approves again on its next pass: it gets twice the wait, no more.
+  // An app that only comments never approves, so it earns nothing.
+  const appApproves = pr.reviews.some((review) => review.bot && review.author !== "github-actions" && review.state === "APPROVED")
+  const grace = appApproves ? 2 * APPROVAL_GRACE_MS : APPROVAL_GRACE_MS
   const waited = input.nowMs - input.headFirstSeenMs
-  if (appReviewing || !(waited >= APPROVAL_GRACE_MS)) return { kind: "wait", reason: "Waiting for an approving review", slow: true }
+  if (!(waited >= grace)) return { kind: "wait", reason: "Waiting for an approving review", slow: true }
   return { kind: "needs-you", reason: "Needs an approving review" }
 }
 
@@ -156,7 +159,8 @@ function mergeStateGate(input: GateInput): GateResult | null {
       return { kind: "needs-you", reason: `Branch is behind ${pr.baseRefName} — update it` }
     case "BLOCKED":
       // only a repository that requires them resolved is blocked by open conversations
-      if (pr.unresolvedThreads > 0 && pr.requiresConversationResolution) {
+      // (when its rule is unreadable, a BLOCKED PR with open ones is taken to be)
+      if (pr.unresolvedThreads > 0 && pr.conversationRule !== "not-required") {
         return { kind: "needs-you", reason: `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}` }
       }
       if (pr.reviewDecision === "REVIEW_REQUIRED") return approvalGate(input)

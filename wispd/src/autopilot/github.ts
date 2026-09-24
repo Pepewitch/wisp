@@ -78,8 +78,13 @@ export interface PrSnapshot {
   threads: PrThread[]
   /** more than 100 review threads exist: auto-fix read the newest 100 */
   threadsTruncated: boolean
-  /** the base branch requires every conversation resolved before a merge (classic protection or a ruleset) */
-  requiresConversationResolution: boolean
+  /**
+   * Whether the base branch requires every conversation resolved before a
+   * merge (classic protection or a ruleset). Classic protection is readable
+   * only by an admin; for anyone else it is "unknown" unless a ruleset says
+   * so, and GitHub's own BLOCKED state then decides.
+   */
+  conversationRule: "required" | "not-required" | "unknown"
   /** the newest conversation comments, oldest first */
   comments: PrComment[]
   unresolvedThreads: number
@@ -276,17 +281,15 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
 }
 
 /** The base branch head's own checks: a red that is red there too is not the PR's doing. */
-function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[]; requiresConversationResolution: boolean } {
+function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[]; conversationRule: PrSnapshot["conversationRule"] } {
   const ref = isRecord(pr.baseRef) ? pr.baseRef : null
   const commit = ref && isRecord(ref.target) ? ref.target : null
   const rollup = commit && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
-  // classic branch protection, or a ruleset's pull-request rule
-  const classic = ref && isRecord(ref.branchProtectionRule) && ref.branchProtectionRule.requiresConversationResolution === true
+  // a ruleset's pull-request rule is readable by anyone; classic protection only by an admin (null otherwise)
   const ruleset = nodes(ref?.rules).some((rule) => rule.type === "PULL_REQUEST" && isRecord(rule.parameters) && rule.parameters.requiredReviewThreadResolution === true)
-  return {
-    baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck),
-    requiresConversationResolution: Boolean(classic || ruleset),
-  }
+  const classic = ref && isRecord(ref.branchProtectionRule) ? ref.branchProtectionRule.requiresConversationResolution === true : null
+  const conversationRule = ruleset || classic === true ? "required" : classic === false ? "not-required" : "unknown"
+  return { baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck), conversationRule }
 }
 
 export function parseSnapshot(raw: unknown): PrSnapshot {

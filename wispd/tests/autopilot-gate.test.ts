@@ -19,7 +19,7 @@ function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
     number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
     head: HEAD, headRefName: "wisp/t1-x", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
-    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, requiresConversationResolution: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    checks: [check("test", "SUCCESS")], actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, conversationRule: "not-required", comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     baseHead: null, baseChecks: [], ...over,
   };
 }
@@ -130,16 +130,22 @@ describe("the merge gate", () => {
   });
 
   test("BLOCKED is explained from what GitHub reports, never guessed as an approval wait", () => {
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, requiresConversationResolution: true }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, conversationRule: "required" }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
     // a required approval: a wait while the head is fresh or an app reviewer is on the PR, then a person to ask
     expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
     expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }), headFirstSeenMs: NOW - 5 * 60_000 }))
       .toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED", reviews: [review({ author: "review-app", bot: true, association: "NONE", body: "" })] }), headFirstSeenMs: NOW - 20 * 60_000 }))
-      .toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
+    // an app that only comments never approves; one that has approved before gets twice the wait, then a person
+    const app = (state: string) => pr({ mergeState: "BLOCKED", reviewDecision: "REVIEW_REQUIRED", reviews: [review({ author: "review-app", bot: true, association: "NONE", body: "", state })] });
+    expect(gate({ pr: app("COMMENTED"), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
+    expect(gate({ pr: app("APPROVED"), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
+    expect(gate({ pr: app("APPROVED"), headFirstSeenMs: NOW - 40 * 60_000 })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
+    // a rule Wisp cannot read (classic protection, not an admin): GitHub's BLOCKED decides
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 1, conversationRule: "unknown" }) })).toEqual({ kind: "needs-you", reason: "1 unresolved conversation" });
+    expect(gate({ pr: pr({ mergeState: "CLEAN", unresolvedThreads: 1, conversationRule: "unknown" }) })).toEqual({ kind: "merge" });
     // open conversations block only where the repository requires them resolved
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, requiresConversationResolution: true }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
-    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, requiresConversationResolution: false }) })).toEqual({ kind: "needs-you", reason: "Blocked by a branch rule" });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, conversationRule: "required" }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, conversationRule: "not-required" }) })).toEqual({ kind: "needs-you", reason: "Blocked by a branch rule" });
     expect(gate({ pr: pr({ mergeState: "CLEAN", unresolvedThreads: 2 }) })).toEqual({ kind: "merge" });
     expect(gate({ pr: pr({ mergeState: "BLOCKED" }) })).toEqual({ kind: "needs-you", reason: "Blocked by a branch rule" });
     expect(gate({ pr: pr({ mergeState: "DIRTY" }) })).toEqual({ kind: "needs-you", reason: "Conflicts with main" });

@@ -63,10 +63,14 @@ describe("auto-fix for review feedback", () => {
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "waiting", reason: "Nothing to fix" });
     // where it does, an open conversation is for a person
-    state.pr = { ...state.pr, requiresConversationResolution: true };
+    state.pr = { ...state.pr, conversationRule: "required", unresolvedThreads: 1 };
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation" });
-    state.pr = { ...state.pr, requiresConversationResolution: false };
+    // where the rule cannot be read, GitHub blocking the PR says the same
+    state.pr = { ...state.pr, conversationRule: "unknown", mergeState: "BLOCKED" };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation", done: false });
+    state.pr = { ...state.pr, conversationRule: "not-required", mergeState: "CLEAN", unresolvedThreads: 0 };
     // a new reply on the thread is new feedback, and gets its own settle time
     clock.now += 5 * 60_000;
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "Still wrong for 0.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
@@ -79,7 +83,7 @@ describe("auto-fix for review feedback", () => {
     const clock = { now: START + 10 * 60_000 };
     // the agent answered the thread; a colleague has not resolved it
     const open = { threads: [thread({ id: "PRRT_9" }, [said({ author: "colleague", association: "MEMBER", createdAt: "2026-09-23T11:00:00Z" })])], unresolvedThreads: 1 };
-    const { state, github } = fakeGitHub({ pr: snapshot({ ...open, mergeState: "BLOCKED", requiresConversationResolution: true }) });
+    const { state, github } = fakeGitHub({ pr: snapshot({ ...open, mergeState: "BLOCKED", conversationRule: "required" }) });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoMerge: true, autoFix: true });
     seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, delivered: { "thread:PRRT_9": "2026-09-23T11:00:00Z" } });
@@ -87,7 +91,7 @@ describe("auto-fix for review feedback", () => {
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation" });
     expect(state.merges).toHaveLength(0);
     // a repository that does not require it: GitHub says mergeable, and Wisp merges
-    state.pr = snapshot({ ...open, mergeState: "CLEAN", requiresConversationResolution: false });
+    state.pr = snapshot({ ...open, mergeState: "CLEAN", conversationRule: "not-required" });
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(1);
   });
