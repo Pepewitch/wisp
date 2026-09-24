@@ -856,7 +856,7 @@ describe("auto-fix", () => {
     await pass(rt, task.id, clock);
     await until(() => existsSync(file), "the fix round");
     const prompt = readFileSync(file, "utf8");
-    expect(prompt.split("\n")).toContain(`[Wisp auto-fix · PR #7 · round 1 of 3 · head ${HEAD.slice(0, 7)}]`);
+    expect(prompt.split("\n")).toContain(`[Wisp auto-fix · PR #7 · round 1 of 5 · head ${HEAD.slice(0, 7)}]`);
     // the standing note travels with every turn while auto-fix is on: how to sign GitHub posts
     expect(prompt).toContain(`End every comment, review or reply you post on GitHub with: — capture via Wisp <!-- wisp:task=${task.id} -->`);
     const evidence = readFileSync(prompt.match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
@@ -903,15 +903,15 @@ describe("auto-fix", () => {
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
   });
 
-  test("after three rounds it gives up and pauses; Resume starts the budget again", async () => {
+  test("after five rounds it gives up and pauses; Resume starts the budget again", async () => {
     const { task, adapters } = fixTask();
     const clock = { now: START + 10 * 60_000 };
     const { github } = fakeGitHub({ pr: redPr() });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { rounds: 3, idleSince: longAgo, idleTurn: 1 });
+    seed(task.id, clock, { rounds: 5, idleSince: longAgo, idleTurn: 1 });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 5 rounds — resume to try again" });
     expect(resumeAutopilot(task.id).fixRounds).toBe(0);
   });
 
@@ -1166,7 +1166,7 @@ describe("auto-fix", () => {
     const { github } = fakeGitHub({ pr: redPr() });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { rounds: 3, idleSince: longAgo, idleTurn: 1, pending: { key: "k", summary: "test failing", sendsAt: longAgo } });
+    seed(task.id, clock, { rounds: 5, idleSince: longAgo, idleTurn: 1, pending: { key: "k", summary: "test failing", sendsAt: longAgo } });
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", by: "auto-fix" });
     expect(setAutopilot(task.id, { autoFix: false })).toMatchObject({ state: "waiting", autoMerge: true, by: "auto-merge", pendingFix: null });

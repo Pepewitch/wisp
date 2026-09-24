@@ -157,15 +157,15 @@ describe("auto-fix for review feedback", () => {
     expect(checkpoint.delivered).toEqual({ "thread:PRRT_1": SOON });
   });
 
-  test("review feedback counts against the same three rounds", async () => {
+  test("review feedback counts against the same five rounds", async () => {
     const { task, adapters } = reviewTask();
     const clock = { now: START + 10 * 60_000 };
     const { github } = fakeGitHub({ pr: snapshot({ reviews: [{ ...blocking, submittedAt: "2026-09-23T12:00:00Z" }] }) });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, rounds: 3 });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, rounds: 5 });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 5 rounds — resume to try again" });
   });
 
   test("the runner records which turns were asked to sign, and a reused turn number takes the later answer", async () => {
