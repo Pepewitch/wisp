@@ -76,8 +76,9 @@ Wisp re-reads all of these immediately before merging. The first one that does
 not hold is the reason shown in `wisp pr` and next to the PR in the app.
 
 - **The PR** is open, not a draft, from this repository, and targets the default
-  branch or the project's configured base. A stacked PR waits until its parent
-  has merged.
+  branch or the project's configured base. A stacked PR needs you until it
+  targets that base: Wisp never deletes a merged branch, so GitHub retargets a
+  stacked PR only where the repository deletes head branches automatically.
 - **Checks.** If the base branch has required checks, only they count, and a red
   check that is not required does not stop the merge. If it has none, every
   check counts, and GitHub reporting the PR as unstable is never read as
@@ -259,6 +260,10 @@ Each is something only a person can move:
 - **A conversation**, only where the repository requires every conversation
   resolved before merging: one still open, a colleague's to resolve or one the
   agent disagreed with.
+- **A rule Wisp cannot name.** GitHub blocks the merge for a branch rule Wisp
+  cannot read ("Blocked by a branch rule"), or, where the base has no required
+  checks, reports a failing check Wisp did not see.
+- **Evidence you skipped**, still red: "… (auto-fix skipped)", until a new push.
 - **Something the agent cannot fix.**
   - A check still red after a round with no new push.
   - A cancelled job after its one rerun.

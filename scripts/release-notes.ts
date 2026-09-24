@@ -154,7 +154,7 @@ ticket, and a verified updater signature. The public macOS daemon application
 also requires Developer ID signing, notarization, and a stapled ticket.
 Automated release gates verify immutable downloads and promote the Formula,
 Cask, daemon channel, and Desktop channel together. At source
-preparation, the ${version} artifact gates are pending; the [qualification ledger](https://github.com/Pepewitch/wisp/blob/main/docs/v0.5/QUALIFICATION.md)
+preparation, the ${version} artifact gates are pending; the [qualification ledger](https://github.com/Pepewitch/wisp/blob/main/docs/v${version.split(".").slice(0, 2).join(".")}/QUALIFICATION.md)
 records the final outcome separately from these immutable release notes.
 
 TODO limits specific to this release, then keep the standing ones below.
