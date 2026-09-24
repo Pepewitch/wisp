@@ -99,11 +99,11 @@ export function paramsOf(row: WorkflowRow): AutopilotParams {
 /** The task's unfinished autopilot row, if it has one. */
 export function autopilotRow(taskId: string): WorkflowRow | null {
   return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? AND state != 'completed'
-    ORDER BY created_at DESC, id DESC LIMIT 1`).get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
 function latestRow(taskId: string): WorkflowRow | null {
-  return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+  return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
     .get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
@@ -166,7 +166,7 @@ export function autopilotStatus(taskId: string): AutopilotStatus {
 
 /** Every task's latest autopilot row, for the task list. */
 export function autopilotStatuses(): Map<string, AutopilotStatus> {
-  const rows = db.query("SELECT * FROM workflows WHERE type = ? ORDER BY created_at, id").all(AUTOPILOT_TYPE) as WorkflowRow[]
+  const rows = db.query("SELECT * FROM workflows WHERE type = ? ORDER BY created_at, rowid").all(AUTOPILOT_TYPE) as WorkflowRow[]
   const latest = new Map<string, WorkflowRow>()
   for (const row of rows) latest.set(row.task_id, row)
   return new Map([...latest].map(([taskId, row]) => [taskId, statusOf(row)]))
