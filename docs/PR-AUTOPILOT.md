@@ -233,7 +233,9 @@ running.
   resolve stays open, and holds the merge only where the repository requires
   conversations resolved before merging. Wisp reads that rule where it can (a
   ruleset always; classic branch protection only if you are a repository
-  admin), and otherwise goes by GitHub reporting the PR blocked. Anywhere else,
+  admin, though it can always tell when there is none). Where it cannot, a PR
+  GitHub reports blocked with open conversations, and no missing approval or
+  change request to explain it, is taken to be blocked on them. Anywhere else,
   a PR GitHub calls mergeable is merged with it open. With auto-merge on, an
   agent that finds the PR must not merge as it is converts it to a draft and
   says why, which holds the merge for you.

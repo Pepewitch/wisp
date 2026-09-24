@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { classifyCheck, countingChecks, missingRequired, type PrCheck } from "../src/autopilot/checks";
 import { FRESH_HEAD_MS, mergeGate, type GateInput } from "../src/autopilot/gate";
-import { mergeMethod, parseRequiredChecks, parseSnapshot, type PrReview, type PrSnapshot } from "../src/autopilot/github";
+import { classicProtectionOf, mergeMethod, parseRequiredChecks, parseSnapshot, type PrReview, type PrSnapshot } from "../src/autopilot/github";
 import { parseVerdict } from "../src/autopilot/verdict";
 
 const HEAD = "a".repeat(40);
@@ -140,8 +140,12 @@ describe("the merge gate", () => {
     expect(gate({ pr: app("COMMENTED"), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
     expect(gate({ pr: app("APPROVED"), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
     expect(gate({ pr: app("APPROVED"), headFirstSeenMs: NOW - 40 * 60_000 })).toEqual({ kind: "needs-you", reason: "Needs an approving review" });
-    // a rule Wisp cannot read (classic protection, not an admin): GitHub's BLOCKED decides
+    // a push dismisses the app's approval: it still counts as an app that approves
+    expect(gate({ pr: app("DISMISSED"), headFirstSeenMs: NOW - 20 * 60_000 })).toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
+    // a rule Wisp cannot read (classic protection, not an admin): GitHub's BLOCKED decides, after the review decision
     expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 1, conversationRule: "unknown" }) })).toEqual({ kind: "needs-you", reason: "1 unresolved conversation" });
+    expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, conversationRule: "unknown", reviewDecision: "REVIEW_REQUIRED" }), headFirstSeenMs: NOW - 3 * 60_000 }))
+      .toEqual({ kind: "wait", reason: "Waiting for an approving review", slow: true });
     expect(gate({ pr: pr({ mergeState: "CLEAN", unresolvedThreads: 1, conversationRule: "unknown" }) })).toEqual({ kind: "merge" });
     // open conversations block only where the repository requires them resolved
     expect(gate({ pr: pr({ mergeState: "BLOCKED", unresolvedThreads: 2, conversationRule: "required" }) })).toEqual({ kind: "needs-you", reason: "2 unresolved conversations" });
@@ -262,6 +266,16 @@ describe("reading GitHub", () => {
       ["RC_1", true, "owner", false], ["RC_2", true, "owner", false], ["RC_3", false, "dependabot", true],
     ]);
     expect(snapshot.threads[0]!.starter).toEqual({ author: "owner", bot: false, body: "x" });
+  });
+
+  test("whether a branch has classic protection is readable without admin, from the branch itself", () => {
+    expect(classicProtectionOf({ name: "main", protected: true, protection: { enabled: true } })).toBe(true);
+    // protected by a ruleset alone (nansen-ai/northstar's shape): no classic protection
+    expect(classicProtectionOf({ name: "main", protected: true, protection: { enabled: false } })).toBe(false);
+    expect(classicProtectionOf({ name: "main", protected: false })).toBe(false);
+    expect(classicProtectionOf({ name: "main", protected: true })).toBeNull();
+    expect(classicProtectionOf({ name: "main" })).toBeNull();
+    expect(classicProtectionOf(null)).toBeNull();
   });
 
   test("merge method prefers squash, then the only allowed method, then the viewer's default", () => {

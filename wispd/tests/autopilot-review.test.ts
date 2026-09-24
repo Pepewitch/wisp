@@ -70,6 +70,12 @@ describe("auto-fix for review feedback", () => {
     state.pr = { ...state.pr, conversationRule: "unknown", mergeState: "BLOCKED" };
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation", done: false });
+    // but a branch with no classic protection at all, only a ruleset that does not ask for it, is not blocked on them
+    // (branch rules are cached ten minutes, so a new runtime reads them afresh)
+    state.classicProtection = false;
+    await pass(runtime(github, clock, adapters), task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "Nothing to fix" });
+    state.classicProtection = true;
     state.pr = { ...state.pr, conversationRule: "not-required", mergeState: "CLEAN", unresolvedThreads: 0 };
     // a new reply on the thread is new feedback, and gets its own settle time
     clock.now += 5 * 60_000;

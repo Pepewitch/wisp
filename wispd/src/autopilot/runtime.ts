@@ -20,9 +20,9 @@ import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
-import { mergeGate, type PublishedWork } from "./gate"
+import { conversationsBlock, mergeGate, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
-import { ghAutopilot, type AutopilotGitHub, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
+import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
@@ -175,7 +175,7 @@ export class AutopilotRuntime {
   private unsubscribe: (() => void) | null = null
   private readonly now: () => Date
   private readonly github: AutopilotGitHub
-  private readonly required = new Map<string, { names: string[]; at: number }>()
+  private readonly required = new Map<string, { rules: BaseRules; at: number }>()
   private readonly pushers = new Map<string, { ok: boolean; until: number }>()
 
   constructor(private cfg: WispConfig, private adapters: Record<string, AdapterDef>, private options: AutopilotRuntimeOptions = {}) {
@@ -346,7 +346,10 @@ export class AutopilotRuntime {
       checkpoint.idleTurn = task.turn_count
     }
 
-    const required = await this.requiredChecks(repository, pr.baseRefName, cwd, signal)
+    const rules = await this.baseRules(repository, pr.baseRefName, cwd, signal)
+    const required = rules.checks
+    // a rule the snapshot could not read is "not required" when the branch has no classic protection at all
+    if (pr.conversationRule === "unknown" && rules.classicProtection === false) pr.conversationRule = "not-required"
     // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
     const nothingToFix = ctx.autoFix
       ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal })
@@ -383,6 +386,8 @@ export class AutopilotRuntime {
     // A bot's verdict check beside the sticky comment being sent is the review flow's.
     const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
     const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
+    // running, red or rerun: the quiet since it went green starts over at its next green
+    if (plan.kind !== "none") { delete checkpoint.greenHead; delete checkpoint.greenAt }
     if (plan.kind === "rerun") {
       forgetPending(checkpoint)
       // Token-free, once per run and head: a flake gets a second chance
@@ -545,8 +550,7 @@ export class AutopilotRuntime {
     const now = this.now()
     const say = (state: AutopilotState, reason: string, delayMs: number, done = false) =>
       saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done }, now)
-    // open conversations matter where the rule is set, or, when it cannot be read, where GitHub blocks the PR
-    if (pr.unresolvedThreads > 0 && (pr.conversationRule === "required" || (pr.conversationRule === "unknown" && pr.mergeState === "BLOCKED"))) {
+    if (conversationsBlock(pr)) {
       say("needs-you", `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}`, WAITING_ON_YOU_MS)
       return
     }
@@ -598,15 +602,17 @@ export class AutopilotRuntime {
     finishAutopilot(row, "closed", `Auto-merge off — #${pr.number} was closed`, now)
   }
 
-  private async requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]> {
+  private async baseRules(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules> {
     const key = `${repository}#${base}`
     const hit = this.required.get(key)
-    if (hit && this.now().getTime() - hit.at < REQUIRED_TTL_MS) return hit.names
-    // Unreadable protection counts as none, which is the STRICTER branch:
-    // every check then counts. Cached briefly so a flaky read retries soon.
-    const names = await this.github.requiredChecks(repository, base, cwd, signal).catch(() => null)
-    this.required.set(key, { names: names ?? [], at: names ? this.now().getTime() : this.now().getTime() - REQUIRED_TTL_MS + 60_000 })
-    return names ?? []
+    if (hit && this.now().getTime() - hit.at < REQUIRED_TTL_MS) return hit.rules
+    // Unreadable protection counts as no required checks, which is the
+    // STRICTER branch: every check then counts. Cached briefly so a flaky
+    // read retries soon.
+    const rules = await this.github.requiredChecks(repository, base, cwd, signal).catch(() => null)
+    const known = rules ?? { checks: [], classicProtection: null }
+    this.required.set(key, { rules: known, at: rules ? this.now().getTime() : this.now().getTime() - REQUIRED_TTL_MS + 60_000 })
+    return known
   }
 
   /** A paused row still notices a PR that someone merged or closed, so it never sits paused on a finished PR. */

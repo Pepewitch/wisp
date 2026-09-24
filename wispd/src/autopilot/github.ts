@@ -94,6 +94,14 @@ export interface PrSnapshot {
   baseChecks: PrCheck[]
 }
 
+/** What the base branch's protection says, as far as a non-admin can read it. */
+export interface BaseRules {
+  /** required status check contexts, from classic protection and rulesets */
+  checks: string[]
+  /** whether the branch has classic protection at all; null when unreadable */
+  classicProtection: boolean | null
+}
+
 export interface OpenPullRequest {
   number: number
   headRefName: string
@@ -107,7 +115,7 @@ export interface AutopilotGitHub {
   snapshot(repository: string, number: number, cwd: string, signal: AbortSignal): Promise<PrSnapshot>
   openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; viewer: string; pulls: OpenPullRequest[] }>
   /** Context names the base branch requires, from classic protection and rulesets. */
-  requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]>
+  requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules>
   merge(input: { repository: string; number: number; method: MergeMethod; head: string }, cwd: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }>
   /** Rerun a workflow run's failed and cancelled jobs (and their dependents); costs no agent tokens. */
   rerunRun(repository: string, runId: number, cwd: string, signal: AbortSignal): Promise<boolean>
@@ -388,6 +396,18 @@ export function mergeMethod(repo: Record<string, unknown>): MergeMethod {
   return fallback === "MERGE" || fallback === "REBASE" ? fallback : "MERGE"
 }
 
+/**
+ * `branches/{b}` tells anyone who can read the repository whether classic
+ * protection exists: `protection.enabled`. (`protected` is true for a ruleset
+ * alone, so it only settles the question when it is false.)
+ */
+export function classicProtectionOf(branch: unknown): boolean | null {
+  if (!isRecord(branch)) return null
+  const enabled = isRecord(branch.protection) ? branch.protection.enabled : undefined
+  if (typeof enabled === "boolean") return enabled
+  return branch.protected === false ? false : null
+}
+
 export function parseRequiredChecks(branch: unknown, rules: unknown): string[] {
   const names = new Set<string>()
   const protection = isRecord(branch) && isRecord(branch.protection) ? branch.protection : null
@@ -442,7 +462,7 @@ export const ghAutopilot: AutopilotGitHub = {
       ghJson(["api", `${path}/branches/${encoded}`], cwd, signal),
       ghJson(["api", `${path}/rules/branches/${encoded}`], cwd, signal).catch(() => []),
     ])
-    return parseRequiredChecks(branch, rules)
+    return { checks: parseRequiredChecks(branch, rules), classicProtection: classicProtectionOf(branch) }
   },
   async rerunRun(repository, runId, cwd, signal) {
     // Per RUN, not per job: rerunning one job of a run whose aggregator needs

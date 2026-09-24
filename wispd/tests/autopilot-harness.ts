@@ -52,6 +52,7 @@ export function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot
     pulls: initial.pulls ?? [pull()],
     pr: initial.pr ?? snapshot(),
     required: ["test"],
+    classicProtection: true as boolean | null,
     merges: [] as { number: number; method: string; head: string }[],
     mergeResult: { ok: true, detail: "" } as { ok: boolean; detail: string },
     onMerge: null as null | (() => Promise<void> | void),
@@ -64,7 +65,7 @@ export function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot
   const github: AutopilotGitHub = {
     async snapshot() { state.onSnapshot?.(); return structuredClone(state.pr); },
     async openPullRequests() { return { defaultBranch: "main", viewer: "owner", pulls: state.pulls }; },
-    async requiredChecks() { return state.required; },
+    async requiredChecks() { return { checks: state.required, classicProtection: state.classicProtection }; },
     async merge(input) {
       state.merges.push({ number: input.number, method: input.method, head: input.head });
       await state.onMerge?.();
