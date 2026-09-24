@@ -233,9 +233,15 @@ export function MenuRadioItem({
 }
 
 /**
- * An on/off switch inside a menu. Same selection language as a radio row — a
- * checkmark plus the row's hover, never the accent — and it keeps the menu
- * open, so a toggle can be read back before the menu is dismissed.
+ * An on/off switch inside a menu. It keeps the menu open, so a toggle can be
+ * read back before the menu is dismissed.
+ *
+ * It ends in a small switch rather than starting with a checkmark. A radio
+ * row's empty checkmark slot is explained by its checked neighbour or the
+ * menu's header. These rows share a menu with actions and have neither, so an
+ * unticked "Auto-merge" would read as a command. The switch shows off as
+ * plainly as on, and leaves the label aligned with the actions above it. It is
+ * neutral (foreground when on), never the accent.
  */
 export function MenuCheckboxItem({
   checked,
@@ -255,10 +261,11 @@ export function MenuCheckboxItem({
       disabled={disabled}
       className={cn(ROW, "data-[checked]:text-foreground")}
     >
-      <Base.CheckboxItemIndicator className="flex size-3 shrink-0 items-center justify-center" keepMounted>
-        <Check className="size-3 opacity-0 data-[checked]:opacity-100 [[data-checked]_&]:opacity-100" />
-      </Base.CheckboxItemIndicator>
       <span className="min-w-0 flex-1 truncate">{children}</span>
+      {/* the row is the checkbox (role and aria-checked); the switch only draws its state */}
+      <span aria-hidden className="relative h-3.5 w-6 shrink-0 rounded-full bg-border-strong transition-colors [[data-checked]_&]:bg-foreground motion-reduce:transition-none">
+        <span className="absolute top-0.5 left-0.5 size-2.5 rounded-full bg-muted-foreground transition-[translate,background-color] [[data-checked]_&]:translate-x-2.5 [[data-checked]_&]:bg-background motion-reduce:transition-none" />
+      </span>
     </Base.CheckboxItem>
   )
 }
