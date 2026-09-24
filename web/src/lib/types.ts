@@ -436,7 +436,30 @@ export interface WispSettings {
    * the Settings section, never as "hide everything".
    */
   hiddenModels?: Record<string, string[]>;
+  /** The optional review judge. Absent on a daemon older than 0.6.1: hide its section. */
+  reviewJudge?: ReviewJudgeStatus;
 }
+
+/**
+ * PATCH /api/settings. The review judge's `jevApiKey` goes through its own,
+ * uncached mutation (`useSaveReviewJudgeKey`), never this one.
+ */
+export type WispSettingsPatch = Partial<Pick<WispSettings, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
+
+/** The review judge as the daemon reports it: whether a key is set and its last four characters, never the key. */
+export interface ReviewJudgeStatus {
+  configured: boolean;
+  /** "settings" was saved through PATCH /api/settings, and wins over the daemon's environment. */
+  source: "settings" | "environment" | null;
+  /** "…abcd" */
+  hint: string | null;
+  model: string;
+  /** This calendar month on this daemon, probes included. */
+  usage: { month: string; calls: number; errors: number; inputTokens: number; costUsd: number };
+}
+
+/** POST /api/settings/review-judge/test: one small call with the daemon's current key. */
+export type ReviewJudgeTest = { ok: true; ms: number; model: string } | { ok: false; error: string };
 
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then

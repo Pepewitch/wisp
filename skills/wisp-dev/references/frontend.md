@@ -912,6 +912,14 @@ leaving someone to wonder whether a remote just changed.
 - **Nothing is saved and nothing is cancelled.** A preference applies the
   moment it is picked, so the footer holds `Done` and no `Save`. A modal that
   can be abandoned needs draft state; a preference does not have any.
+  - The one exception is a secret: `Review judge` takes a pasted API key.
+    Half a key must never be sent, so the key has its own `Save` (and
+    `Cancel` while replacing one). The section says "Not saved yet" while a
+    typed key is unsaved, and `Done` leaves it unsaved.
+  - The key is write-only on the client too. The field is uncontrolled, and
+    it remounts on any change of key. Its mutation is uncached
+    (`gcTime: 0`). No `<form>` wraps it, so a browser does not mistake it
+    for a login.
 - **A section per family, one labelled row per setting.** `Appearance` owns
   `Theme` today. The section's eyebrow is the group and the row carries the
   field's name, so a second appearance setting is a row rather than a rewrite.
