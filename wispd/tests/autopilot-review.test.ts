@@ -207,6 +207,50 @@ describe("auto-fix for review feedback", () => {
       expect(log[0]).toMatchObject({ item: "comment:IC_5", error: "Jev answered HTTP 529" });
     });
 
+    test("an approval that lists findings is one round before the merge, and the approval still merges it", async () => {
+      const { task, file, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const body = "Verdict: APPROVE — no blocking findings.\n\n1. **Non-blocking** — the download is not cancelled with the request.\n2. **Non-blocking** — a dropped queued request is still decoded.";
+      const approval: PrReview = { ...blocking, id: "PRR_A", body, submittedAt: "2026-09-23T11:30:00Z" };
+      const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [approval] }) });
+      const questions: string[] = [];
+      const rt = runtime(github, clock, adapters, undefined, undefined, {
+        judge: async (request) => {
+          questions.push(request.question ?? "kind");
+          return { kind: request.question === "findings" ? "several_findings" : "all_clear", confidence: 0.99, probabilities: {}, model: "jev-1.13.0", inputTokens: 600 };
+        },
+      });
+      setAutopilot(task.id, { autoMerge: true, autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      await until(() => existsSync(file), "the round");
+      expect(questions).toEqual(["findings"]);
+      expect(state.merges).toHaveLength(0);
+      expect(readFileSync(file, "utf8")).toContain("New review feedback on this PR: 1 approval with notes.");
+      const evidence = evidenceOf(file);
+      expect(evidence).toContain("The reviewer approved this PR, and the approval still counts: the merge does not wait on these notes.");
+      expect(evidence).toContain("a dropped queued request is still decoded");
+      await until(() => getTask(task.id)?.state === "done", "the round to settle");
+      // one round: the notes were delivered, and the approval merges it
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(1);
+      expect(questions).toEqual(["findings"]);
+    });
+
+    test("with auto-merge alone, an approval is never sent to the judge: its notes could not become a round", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const approval: PrReview = { ...blocking, id: "PRR_A", body: "Verdict: APPROVE — no blocking findings.\n\n1. Non-blocking — a gap.", submittedAt: "2026-09-23T11:30:00Z" };
+      const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [approval] }) });
+      const asked: string[] = [];
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: async (request) => { asked.push(request.question ?? "kind"); return { kind: "several_findings", confidence: 1, probabilities: {}, model: "jev-1.13.0", inputTokens: 1 }; } });
+      setAutopilot(task.id, { autoMerge: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(asked).toEqual([]);
+      expect(state.merges).toHaveLength(1);
+    });
+
     test("with the key removed, stored answers no longer count", async () => {
       const { task, adapters } = reviewTask();
       const clock = { now: START + 10 * 60_000 };

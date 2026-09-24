@@ -19,7 +19,7 @@
 import type { PrCheck } from "./checks"
 import { classifyCheck } from "./checks"
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "./github"
-import { needsChanges, type JudgeCandidate, type Judged, type Judgment } from "./judge"
+import { listsFindings, needsChanges, type JudgeCandidate, type Judged, type Judgment } from "./judge"
 import { parseVerdict } from "./verdict"
 
 /** Every post the agent makes on GitHub while auto-fix is on ends with this, so Wisp can tell its words from a reviewer's. */
@@ -73,6 +73,8 @@ export type FeedbackItem =
     kind: "review"; review: PrReview
     /** the review judge's answer, when that and not a verdict is why it is sent */
     judged?: Judgment
+    /** an approval sent for the findings it lists: it still counts, and the merge does not wait on them */
+    approval?: boolean
   }
   | Base & {
     kind: "comment"; comment: PrComment; check: PrCheck | null
@@ -175,15 +177,24 @@ function judgedNow(input: FeedbackInput, id: string, fingerprint: string): Judge
   return judged?.fp === fingerprint ? judged : undefined
 }
 
+/** A formal approval, or an approving verdict line. */
+const approves = (review: PrReview): boolean => {
+  const verdict = parseVerdict(review.body)
+  return verdict === "approve" || (verdict === null && review.state === "APPROVED")
+}
+
 function reviewItem(review: PrReview, input: FeedbackInput): FeedbackItem | null {
   if (!readable(review, input)) return null
-  const verdict = parseVerdict(review.body)
-  // An approval is the merge gate's business; an unreadable verdict is sent,
-  // so the agent can read what the reviewer meant.
-  if (verdict === "approve" || (verdict === null && review.state === "APPROVED")) return null
   const id = `review:${review.id}`
   const fingerprint = review.editedAt ?? review.submittedAt
   if (input.delivered[id] === fingerprint) return null
+  // An approval is the merge gate's business, unless the review judge heard it
+  // list findings: then its notes go to the agent once. An unreadable verdict
+  // is sent, so the agent can read what the reviewer meant.
+  if (approves(review)) {
+    const judged = judgedNow(input, id, fingerprint)
+    return listsFindings(judged) ? { kind: "review", id, fingerprint, at: fingerprint, review, judged, approval: true } : null
+  }
   if (!undecidedReview(review)) return { kind: "review", id, fingerprint, at: fingerprint, review }
   const judged = judgedNow(input, id, fingerprint)
   return needsChanges(judged) ? { kind: "review", id, fingerprint, at: fingerprint, review, judged } : null
@@ -236,6 +247,19 @@ export function judgeCandidates(input: Pick<FeedbackInput, "pr" | "trusts" | "se
       id: `review:${review.id}`, fp: review.editedAt ?? review.submittedAt, order: review.submittedAt, text: review.body, postedAs: "review", bot: true, author: review.author, url: review.url, commit: review.commit,
     }))
   return [...comments, ...reviews]
+}
+
+/**
+ * Approvals with a body, from anyone whose words may instruct the agent: the
+ * review judge is asked only whether each lists findings.
+ */
+export function approvalCandidates(input: Pick<FeedbackInput, "pr" | "trusts">): JudgeCandidate[] {
+  return input.pr.reviews
+    .filter((review) => readable(review, input) && approves(review))
+    .map((review): JudgeCandidate => ({
+      id: `review:${review.id}`, fp: review.editedAt ?? review.submittedAt, order: review.submittedAt, text: review.body, postedAs: "review",
+      bot: review.bot, author: review.author, url: review.url, commit: review.commit, question: "findings",
+    }))
 }
 
 export function feedbackItems(input: FeedbackInput): FeedbackItem[] {
@@ -304,11 +328,13 @@ const count = (n: number, one: string, many: string): string => `${n} ${n === 1 
 
 export function feedbackSummary(items: FeedbackItem[]): string {
   const threads = items.filter((item) => item.kind === "thread").length
-  const reviews = items.filter((item) => item.kind === "review").length
+  const reviews = items.filter((item) => item.kind === "review" && !item.approval).length
+  const approvals = items.filter((item) => item.kind === "review" && item.approval).length
   const comments = items.filter((item) => item.kind === "comment").length
   return [
     threads > 0 && count(threads, "review thread", "review threads"),
     reviews > 0 && count(reviews, "review", "reviews"),
+    approvals > 0 && count(approvals, "approval with notes", "approvals with notes"),
     comments > 0 && count(comments, "comment", "comments"),
   ].filter(Boolean).join(", ")
 }

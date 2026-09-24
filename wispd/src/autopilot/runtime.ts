@@ -26,7 +26,7 @@ import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import { feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
+import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { planFix, type FixPlan } from "./fix"
 import {
@@ -357,7 +357,7 @@ export class AutopilotRuntime {
       checkpoint.idleTurn = task.turn_count
     }
 
-    const judging = await this.judgeReviews(row, task, checkpoint, pr, signal)
+    const judging = await this.judgeReviews({ row, task, checkpoint, pr, repository, autoFix: ctx.autoFix, signal })
     const rules = await this.baseRules(repository, pr.baseRefName, cwd, signal)
     const required = rules.checks
     // a rule the snapshot could not read is "not required" when the branch has no classic protection at all
@@ -459,16 +459,7 @@ export class AutopilotRuntime {
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
   private async feedbackFor(ctx: FixContext): Promise<FeedbackItem[]> {
     const { pr, task, row, checkpoint } = ctx
-    const people = new Set<string>()
-    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
-      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
-    }
-    const pushers = new Set<string>()
-    await Promise.all([...people].map(async (login) => {
-      if (await this.canPush(ctx.repository, login, task.repo_path, ctx.signal)) pushers.add(login)
-    }))
-    const trusts = ({ author, bot }: { author: string | null; bot: boolean }) =>
-      author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
+    const trusts = await this.trustsFor(pr, ctx.repository, task, ctx.signal)
     // Turns that began before auto-fix was armed were never asked to mark
     // their posts: the owner's-account comments inside them are the agent's.
     const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at, checkpoint.unmarkedTurns ?? [])
@@ -483,12 +474,17 @@ export class AutopilotRuntime {
    * The review judge's reading of bot words GitHub's signals leave undecided
    * (judge.ts), or null without a key: then no stored answer counts either.
    */
-  private async judgeReviews(row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, signal: AbortSignal): Promise<JudgeLook | null> {
+  private async judgeReviews(ctx: {
+    row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; repository: string; autoFix: boolean; signal: AbortSignal
+  }): Promise<JudgeLook | null> {
+    const { row, task, checkpoint, pr, signal } = ctx
     const key = this.options.judge ? null : jevKey(this.cfg)
     const client = this.options.judge ?? (key ? jevClient(key.key) : null)
     if (!client) return null
-    // only bots' words are ever candidates; the agent never posts as one
+    // only bots' words are ever candidates for the kind question; the agent never posts as one
     const candidates = judgeCandidates({ pr, trusts: ({ author, bot }) => bot && author !== null && author !== "github-actions", self: (comment) => isMarked(comment.body) })
+    // an approval's notes can only become an auto-fix round, so they are asked about only then
+    if (ctx.autoFix) candidates.push(...approvalCandidates({ pr, trusts: await this.trustsFor(pr, ctx.repository, task, signal) }))
     const look = await judgeLook({
       candidates, checkpoint, client, pr, signal, now: this.now,
       log: (entry) => {
@@ -501,6 +497,19 @@ export class AutopilotRuntime {
       recordWorkflow(row.id, "judge-unavailable", `The review judge failed ${JUDGE_FAILURE_LIMIT} times on ${id}; auto-merge no longer waits for it`, this.now().toISOString())
     }
     return look
+  }
+
+  /** Whose words may instruct the agent: the owner's account, a bot other than github-actions, or someone who can push. */
+  private async trustsFor(pr: PrSnapshot, repository: string, task: Task, signal: AbortSignal): Promise<(author: { author: string | null; bot: boolean }) => boolean> {
+    const people = new Set<string>()
+    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
+      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
+    }
+    const pushers = new Set<string>()
+    await Promise.all([...people].map(async (login) => {
+      if (await this.canPush(repository, login, task.repo_path, signal)) pushers.add(login)
+    }))
+    return ({ author, bot }) => author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
   }
 
   /** Whether a login may instruct the agent: cached an hour, and a failed read counts as no for five minutes. */

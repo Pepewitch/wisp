@@ -25,8 +25,6 @@ import { parseVerdict } from "./verdict"
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone"
 /** Pinned: `jev-latest` could change its answers under a release that did not. */
 export const JEV_MODEL = "jev-1.13.0"
-/** Bumped whenever the question below changes, so a log line says which one it answered. */
-export const JUDGE_PROMPT = "review-kind/2"
 export const MIN_CONFIDENCE = 0.6
 /** TypeSafe's published price; output tokens are free. */
 export const JEV_USD_PER_INPUT_TOKEN = 0.042 / 1_000_000
@@ -37,14 +35,23 @@ const PER_LOOK = 6
 const LEDGER_LIMIT = 200
 const LOG_LIMIT_BYTES = 2 * 1024 * 1024
 
-export type JudgeKind = "needs_changes" | "minor_only" | "all_clear" | "status" | "reply"
-const KINDS: readonly JudgeKind[] = ["needs_changes", "minor_only", "all_clear", "status", "reply"]
+/**
+ * Two questions. `kind` is asked of a bot's words GitHub's signals leave
+ * undecided. `findings` is asked of an approval: not whether it is right
+ * (the judge cannot see the code), only whether it lists anything at all.
+ */
+export type JudgeQuestion = "kind" | "findings"
+export type JudgeKind = "needs_changes" | "minor_only" | "all_clear" | "status" | "reply" | "no_findings" | "one_finding" | "several_findings"
+const CHOICES: Record<JudgeQuestion, Record<string, JudgeKind>> = {
+  kind: { needs_changes: "needs_changes", minor_only: "minor_only", all_clear: "all_clear", status: "status", reply: "reply" },
+  findings: { none: "no_findings", one: "one_finding", several: "several_findings" },
+}
 
 export interface Judgment { kind: JudgeKind; confidence: number; model: string }
 /** A checkpoint entry: which version of the comment was judged, and the answer. */
 export interface Judged extends Judgment { fp: string }
 
-export interface JudgeRequest { text: string; bot: boolean; postedAs: "comment" | "review" }
+export interface JudgeRequest { text: string; bot: boolean; postedAs: "comment" | "review"; question?: JudgeQuestion }
 export interface JudgeAnswer extends Judgment { probabilities: Record<string, number>; inputTokens: number }
 export type JudgeClient = (request: JudgeRequest, signal: AbortSignal) => Promise<JudgeAnswer>
 
@@ -55,6 +62,8 @@ export interface JudgeCandidate {
   order: string
   /** a review's commit: it is about that head and no other */
   commit?: string | null
+  /** which question it is asked; `kind` unless it is an approval */
+  question?: JudgeQuestion
 }
 
 const WHERE = { comment: "a conversation comment on the pull request", review: "the body of a pull request review" }
@@ -72,6 +81,26 @@ const QUESTION = {
   },
 }
 
+/**
+ * Asked of an approval, measured on the owner's 26 real approving reviews: it
+ * matched every one on "lists findings or not", including a "Non-blocking:
+ * none." A judgment ("is any of it a real defect?") was not reliable: it
+ * followed the reviewer's wording, so the agent, which can read the code,
+ * makes that call.
+ */
+const FINDINGS_QUESTION = {
+  type: "choice",
+  instructions: "How many distinct findings or concerns about this pull request's own code does the review raise? Count ones the reviewer accepts, marks non-blocking, optional or low, but not summaries, confirmations that something works, or follow-ups for other work.",
+  criteria: {
+    none: "No finding or concern about this pull request's code: a summary, approval, confirmations, or follow-ups for other work only.",
+    one: "Exactly one finding or concern about this pull request's code.",
+    several: "Two or more distinct findings or concerns about this pull request's code.",
+  },
+}
+
+/** Bumped whenever a question changes, so a log line says which one it answered. */
+export const JUDGE_PROMPTS: Record<JudgeQuestion, string> = { kind: "review-kind/2", findings: "approval-findings/1" }
+
 /** The text as sent: long bodies are cut (never inside a character), and the log keeps exactly what Jev saw. */
 export function sentText(text: string): string {
   if (text.length <= MAX_TEXT) return text
@@ -85,23 +114,24 @@ export function jevBody(request: JudgeRequest): Record<string, unknown> {
   return {
     model: JEV_MODEL,
     state: { author: request.bot ? "a bot" : "a person", posted_as: WHERE[request.postedAs], text },
-    questions: { kind: QUESTION },
+    questions: request.question === "findings" ? { findings: FINDINGS_QUESTION } : { kind: QUESTION },
   }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
-function parseAnswer(raw: unknown): JudgeAnswer {
-  const answer = isRecord(raw) && isRecord(raw.answers) ? raw.answers.kind : null
+function parseAnswer(raw: unknown, question: JudgeQuestion): JudgeAnswer {
+  const answer = isRecord(raw) && isRecord(raw.answers) ? raw.answers[question] : null
   const usage = isRecord(raw) && isRecord(raw.usage) ? raw.usage : null
-  if (!isRecord(answer) || !KINDS.includes(answer.choice as JudgeKind) || typeof answer.confidence !== "number") {
+  const kind = isRecord(answer) && typeof answer.choice === "string" ? CHOICES[question][answer.choice] : undefined
+  if (!isRecord(answer) || !kind || typeof answer.confidence !== "number") {
     throw new Error("Jev answered in an unexpected shape")
   }
   const probabilities = isRecord(answer.probabilities)
     ? Object.fromEntries(Object.entries(answer.probabilities).filter((entry): entry is [string, number] => typeof entry[1] === "number"))
     : {}
   return {
-    kind: answer.choice as JudgeKind, confidence: answer.confidence, probabilities,
+    kind, confidence: answer.confidence, probabilities,
     model: isRecord(raw) && typeof raw.model === "string" ? raw.model : JEV_MODEL,
     inputTokens: typeof usage?.input_tokens === "number" ? usage.input_tokens : 0,
   }
@@ -116,7 +146,7 @@ export function jevClient(key: string, fetcher: typeof fetch = fetch): JudgeClie
       signal: AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)]),
     })
     if (!response.ok) throw new Error(`Jev answered HTTP ${response.status}`)
-    return parseAnswer(await response.json())
+    return parseAnswer(await response.json(), request.question ?? "kind")
   }
 }
 
@@ -131,6 +161,11 @@ export function jevKey(cfg: Pick<WispConfig, "jevApiKey">, env: Record<string, s
 
 export function needsChanges(judged: Judgment | undefined): boolean {
   return judged?.kind === "needs_changes" && judged.confidence >= MIN_CONFIDENCE
+}
+
+/** An approval that lists at least one finding, confidently: its notes go to the agent once. */
+export function listsFindings(judged: Judgment | undefined): boolean {
+  return (judged?.kind === "one_finding" || judged?.kind === "several_findings") && judged.confidence >= MIN_CONFIDENCE
 }
 
 export interface JudgeLogEntry {
@@ -174,10 +209,10 @@ export async function judgeUndecided(input: {
     const started = performance.now()
     const base = {
       at: input.now().toISOString(), pr: input.pr.number, head: input.pr.head, item: candidate.id, fp: candidate.fp,
-      author: candidate.author, postedAs: candidate.postedAs, prompt: JUDGE_PROMPT, text: sentText(candidate.text),
+      author: candidate.author, postedAs: candidate.postedAs, prompt: JUDGE_PROMPTS[candidate.question ?? "kind"], text: sentText(candidate.text),
     }
     try {
-      const answer = await input.client({ text: candidate.text, bot: candidate.bot, postedAs: candidate.postedAs }, input.signal)
+      const answer = await input.client({ text: candidate.text, bot: candidate.bot, postedAs: candidate.postedAs, question: candidate.question ?? "kind" }, input.signal)
       delete ledger[candidate.id]
       delete misses[candidate.id]
       ledger[candidate.id] = { fp: candidate.fp, kind: answer.kind, confidence: answer.confidence, model: answer.model }
@@ -254,7 +289,9 @@ export interface JudgedHead {
  *   any review of this head, a new comment, or its own check finishing. It
  *   waits at most PASS_WAIT_MS from when this head was first seen.
  */
-export function judgedHead(look: Pick<JudgeLook, "candidates" | "judged" | "misses">, pr: PrSnapshot, times: { sinceMs: number; firstSeenMs: number; nowMs: number }): JudgedHead {
+export function judgedHead(all: Pick<JudgeLook, "candidates" | "judged" | "misses">, pr: PrSnapshot, times: { sinceMs: number; firstSeenMs: number; nowMs: number }): JudgedHead {
+  // an approval's notes are a round at most, never a reason to hold the merge
+  const look = { ...all, candidates: all.candidates.filter((candidate) => (candidate.question ?? "kind") === "kind") }
   const { judged } = look
   const answered = (candidate: JudgeCandidate) => judged[candidate.id]?.fp === candidate.fp
   const newest = new Map<string, JudgeCandidate>()

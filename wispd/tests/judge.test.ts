@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { PrSnapshot } from "../src/autopilot/github";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import {
-  JEV_MODEL, JEV_URL, PASS_WAIT_MS, jevBody, jevClient, jevKey, judgedHead, judgeLogPath, judgeLook, judgeUndecided, judgeUsage, needsChanges, sentText, writeJudgeLog,
+  JEV_MODEL, JEV_URL, PASS_WAIT_MS, jevBody, jevClient, jevKey, judgedHead, judgeLogPath, judgeLook, judgeUndecided, judgeUsage, listsFindings, needsChanges, sentText, writeJudgeLog,
   type JudgeAnswer, type JudgeCandidate, type Judged, type JudgeLogEntry,
 } from "../src/autopilot/judge";
 
@@ -48,6 +48,21 @@ describe("what is sent to Jev", () => {
     expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer jev_secret");
     // nothing but the documented body: no repository, PR number or login
     expect(Object.keys(JSON.parse(String(calls[0]!.init.body)))).toEqual(["model", "state", "questions"]);
+  });
+
+  test("an approval is asked only whether it lists findings, and the answer maps to its own kinds", async () => {
+    expect(jevBody({ text: "Verdict: APPROVE", bot: false, postedAs: "review", question: "findings" })).toMatchObject({
+      questions: { findings: { type: "choice", criteria: { none: expect.any(String), one: expect.any(String), several: expect.any(String) } } },
+    });
+    expect(Object.keys((jevBody({ text: "x", bot: false, postedAs: "review", question: "findings" }) as { questions: object }).questions)).toEqual(["findings"]);
+    const { fetcher } = fakeFetch(() => Response.json({ model: JEV_MODEL, usage: { input_tokens: 600 }, answers: { findings: { type: "choice", choice: "several", confidence: 0.99, probabilities: { several: 0.99 } } } }));
+    expect(await jevClient("k", fetcher)({ text: "x", bot: false, postedAs: "review", question: "findings" }, new AbortController().signal)).toMatchObject({ kind: "several_findings", confidence: 0.99 });
+    // an answer to the other question is no answer to this one
+    const wrong = fakeFetch(() => Response.json({ answers: { kind: { choice: "needs_changes", confidence: 1 } } }));
+    await expect(jevClient("k", wrong.fetcher)({ text: "x", bot: false, postedAs: "review", question: "findings" }, new AbortController().signal)).rejects.toThrow("unexpected shape");
+    expect(listsFindings({ kind: "one_finding", confidence: 0.9, model: JEV_MODEL })).toBe(true);
+    expect(listsFindings({ kind: "several_findings", confidence: 0.5, model: JEV_MODEL })).toBe(false);
+    expect(listsFindings({ kind: "no_findings", confidence: 1, model: JEV_MODEL })).toBe(false);
   });
 
   test("an HTTP error or an answer it cannot read is an error, never a guess", async () => {
@@ -185,6 +200,13 @@ describe("when the judge decides", () => {
       expect(judgedHead(look([[oldReview, "needs_changes"]]), pr(), times).awaited).toEqual(["reviewer"]);
     });
 
+    test("an approval's findings never hold the merge or make the judge pending", () => {
+      const approval = candidate({ id: "review:PRR_A", postedAs: "review", commit: HEAD, question: "findings", fp: "2026-09-24T12:00:00Z" });
+      expect(judgedHead({ candidates: [approval], judged: { "review:PRR_A": { fp: approval.fp, kind: "several_findings", confidence: 1, model: JEV_MODEL } }, misses: {} }, pr(), times))
+        .toEqual({ problems: [], awaited: [], pending: false });
+      expect(judgedHead({ candidates: [approval], judged: {}, misses: {} }, pr(), times).pending).toBe(false);
+    });
+
     test("pending only while a channel's newest words have no answer and have not failed too often", () => {
       const fresh = candidate({ id: "comment:IC_4", fp: "2026-09-24T12:00:00Z" });
       expect(judgedHead(look([[candidate(), "all_clear"]], [fresh]), pr(), times).pending).toBe(true);
@@ -237,5 +259,8 @@ describe.skipIf(!LIVE_KEY)("live Jev", () => {
     const signal = AbortSignal.timeout(30_000);
     expect((await client({ text: "**🟡 Medium** — the retry loop never stops, so a dead endpoint hangs the worker.", bot: true, postedAs: "comment" }, signal)).kind).toBe("needs_changes");
     expect((await client({ text: "**Preview:** https://pr12.example.dev — deployed from 3f2c1a9.", bot: true, postedAs: "comment" }, signal)).kind).toBe("status");
+    const approval = "Verdict: APPROVE — no blocking findings.\n\n1. **Non-blocking** — the download is not cancelled with the request.\n2. **Non-blocking** — a dropped queued request is still decoded.";
+    expect((await client({ text: approval, bot: false, postedAs: "review", question: "findings" }, signal)).kind).toBe("several_findings");
+    expect((await client({ text: "Verdict: APPROVE — no blocking findings. Findings: none.", bot: false, postedAs: "review", question: "findings" }, signal)).kind).toBe("no_findings");
   });
 });

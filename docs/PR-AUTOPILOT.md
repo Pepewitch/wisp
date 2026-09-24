@@ -204,7 +204,9 @@ running.
     it never instructs the agent. Neither does a bot that is only answering
     them in a thread.
 - **Not noise.**
-  - An approval is a merge signal, not something to fix.
+  - An approval is a merge signal, not something to fix. With the
+    [review judge](#the-review-judge-optional) and auto-fix on, an approval
+    that lists findings is also sent once as notes; it still counts.
   - A "LGTM", a "thanks" or a 👍, as a comment, a review or a thread reply,
     asks for nothing.
   - A bot's review body is its overview; its threads are the feedback, unless
@@ -257,17 +259,31 @@ TypeSafe, Wisp asks a small classifier about exactly these words:
 
 - a bot's conversation comment whose own check is green or running, or that
   has no check and says nothing "blocking";
-- a bot's review body with no `Verdict:` line and no change request.
+- a bot's review body with no `Verdict:` line and no change request;
+- with auto-fix on, an approval with a body (a formal approval or a
+  `Verdict: APPROVE`), from anyone whose words may instruct the agent. It is
+  asked only whether it lists findings, not whether they are right.
 
-Nothing else is judged. Red checks, review threads, change requests,
-`Verdict:` lines and people's comments work the same with or without a key.
+Nothing else is judged. Red checks, review threads, change requests and
+blocking `Verdict:` lines work the same with or without a key.
+
+**Approvals with notes.** An approval that lists one finding or more,
+non-blocking and accepted ones included, goes to the agent once per version
+as "notes from an approval", before the merge. The agent reads the code and
+decides what is worth fixing, and says in its final message what it left.
+The approval still counts, so auto-merge merges after that round whether or
+not anything changed. The judge is not asked whether a finding is a real
+defect: it cannot see the code, and it follows the reviewer's wording. On the
+owner's 26 real approving reviews, "lists findings or not" matched every one.
 
 - **What it sends:** the comment's text (up to 8,000 characters), whether a
   bot or a person wrote it, and whether it is a comment or a review body. It
   never sends the diff, the repository, the PR number or any login. The text
   is what the bot posted on GitHub, so it can quote code and paths.
-- **What it decides:** one of `needs_changes`, `minor_only`, `all_clear`,
-  `status` or `reply`. Only `needs_changes` with confidence 0.6 or more counts.
+- **What it decides:** for a bot's words, one of `needs_changes`,
+  `minor_only`, `all_clear`, `status` or `reply`, and only `needs_changes`
+  with confidence 0.6 or more counts. For an approval, `none`, `one` or
+  `several` findings, and one or several at 0.6 or more sends its notes.
   - Under auto-fix it becomes review feedback, and the evidence file says the
     judge read it that way.
   - Under auto-merge, a bot speaks per channel (its comments, its reviews)

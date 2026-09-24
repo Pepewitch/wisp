@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrCheck } from "../src/autopilot/checks";
-import { acknowledgement, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
+import { acknowledgement, approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
 import type { Judged } from "../src/autopilot/judge";
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "../src/autopilot/github";
 
@@ -200,6 +200,25 @@ describe("what GitHub leaves undecided goes to the review judge", () => {
     // a red check keeps its own path: once per head, with the check named
     expect(items({ comments: [summary], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] }, { judged: judgedAs("all_clear") }))
       .toMatchObject([{ fingerprint: `head:${HEAD}`, check: { name: "pr-reviewer" } }]);
+  });
+
+  test("an approval that lists findings goes to the agent once, as notes; one that lists none stays a merge signal", () => {
+    const approval = review({ id: "PRR_A", author: "colleague", association: "MEMBER", state: "COMMENTED", body: "Verdict: APPROVE — no blocking findings.\n\n1. Non-blocking — the download is not cancelled." });
+    const formal = review({ id: "PRR_F", author: "colleague", association: "MEMBER", state: "APPROVED", body: "Looks right. One thing: the retry never stops when the endpoint is down." });
+    const trusted = { trusts: ({ author, bot }: { author: string | null; bot: boolean }) => author === OWNER || author === "colleague" || (bot && author !== "github-actions") };
+    // both kinds of approval are asked, with the findings question; "LGTM" and strangers never are
+    expect(approvalCandidates({ pr: pr({ reviews: [approval, formal] }), ...trusted }).map((c) => [c.id, c.question])).toEqual([["review:PRR_A", "findings"], ["review:PRR_F", "findings"]]);
+    expect(approvalCandidates({ pr: pr({ reviews: [{ ...formal, body: "LGTM, thanks!" }] }), ...trusted })).toEqual([]);
+    expect(approvalCandidates({ pr: pr({ reviews: [{ ...formal, author: "reader" }] }), ...trusted })).toEqual([]);
+    const judged = (kind: Judged["kind"], confidence = 0.99) => ({ "review:PRR_A": { fp: approval.submittedAt, kind, confidence, model: "jev-1.13.0" } });
+    // without an answer, as without a key: an approval is only the gate's
+    expect(items({ reviews: [approval] })).toEqual([]);
+    expect(items({ reviews: [approval] }, { judged: judged("several_findings") })).toMatchObject([{ kind: "review", id: "review:PRR_A", approval: true, judged: { kind: "several_findings" } }]);
+    expect(items({ reviews: [approval] }, { judged: judged("one_finding") })).toHaveLength(1);
+    expect(items({ reviews: [approval] }, { judged: judged("no_findings") })).toEqual([]);
+    expect(items({ reviews: [approval] }, { judged: judged("several_findings", 0.5) })).toEqual([]);
+    expect(items({ reviews: [approval] }, { judged: judged("several_findings"), delivered: { "review:PRR_A": approval.submittedAt } })).toEqual([]);
+    expect(feedbackSummary(items({ reviews: [approval] }, { judged: judged("several_findings") }))).toBe("1 approval with notes");
   });
 
   test("a bot's review body the judge read as needing changes is sent; its overview otherwise is not", () => {
