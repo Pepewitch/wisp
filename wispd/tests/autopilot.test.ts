@@ -2,14 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateAdapters } from "../src/adapters";
 import { loadConfig } from "../src/config";
-import type { AutopilotGitHub, OpenPullRequest, PrComment, PrReview, PrSnapshot, PrThread } from "../src/autopilot/github";
+import type { PrSnapshot } from "../src/autopilot/github";
 import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
-import { AutopilotRuntime, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
+import { AFTER_MERGE_MS, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
 import {
-  autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, noteTurnSigning, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
@@ -18,96 +17,13 @@ import { autopilotRoute } from "../src/routes/autopilot";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
-import { taskMessageAttachmentsFingerprint } from "../src/attachments";
-import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, newTaskMessageId, setTaskFields, transition } from "../src/store";
+import { db, getTask, setTaskFields, transition } from "../src/store";
 import { taskPreamble } from "../src/turn-input";
 import type { Task } from "../src/types";
 import { pauseTaskWorkflows } from "../src/workflows/store";
+import { HEAD, START, forgetTasks, doneTask, snapshot, pull, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
-const HEAD = "c".repeat(40);
-const START = Date.parse("2026-09-23T12:00:00Z");
-const created: string[] = [];
-afterEach(() => { for (const id of created.splice(0)) db.run("DELETE FROM tasks WHERE id = ?", [id]); });
-
-function doneTask(over: Partial<Parameters<typeof createTask>[0]> = {}): Task {
-  const id = newTaskId();
-  createTask({ id, title: "Autopilot fixture", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot(), ...over });
-  created.push(id);
-  setTaskFields(id, { worktree_path: "/fixture/worktree", branch: `wisp/${id}-fixture` });
-  transition(id, "done");
-  return getTask(id)!;
-}
-
-function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
-  return {
-    number: 7, url: "https://github.com/o/r/pull/7", state: "OPEN", isDraft: false, isCrossRepository: false,
-    head: HEAD, headRefName: "wisp/fixture", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
-    reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
-    checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }],
-    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
-    baseHead: null, baseChecks: [], ...over,
-  };
-}
-
-/** A PR the task could have opened: by the viewer, after the task existed. */
-function pull(over: Partial<OpenPullRequest> = {}): OpenPullRequest {
-  return { number: 7, headRefName: "wisp/fixture", baseRefName: "main", createdAt: new Date(Date.now() + 60_000).toISOString(), isCrossRepository: false, author: "owner", ...over };
-}
-
-/** A fake GitHub the test can steer, and that records every merge it is asked for. */
-function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot } = {}) {
-  const state = {
-    pulls: initial.pulls ?? [pull()],
-    pr: initial.pr ?? snapshot(),
-    required: ["test"],
-    merges: [] as { number: number; method: string; head: string }[],
-    mergeResult: { ok: true, detail: "" } as { ok: boolean; detail: string },
-    onMerge: null as null | (() => Promise<void> | void),
-    onSnapshot: null as null | (() => void),
-    reruns: [] as number[],
-    logs: null as null | ((jobId: number, signal: AbortSignal) => string | Promise<string>),
-    rerunOk: true,
-    pushers: [] as string[],
-  };
-  const github: AutopilotGitHub = {
-    async snapshot() { state.onSnapshot?.(); return structuredClone(state.pr); },
-    async openPullRequests() { return { defaultBranch: "main", viewer: "owner", pulls: state.pulls }; },
-    async requiredChecks() { return state.required; },
-    async merge(input) {
-      state.merges.push({ number: input.number, method: input.method, head: input.head });
-      await state.onMerge?.();
-      if (state.mergeResult.ok) state.pr = { ...state.pr, state: "MERGED", mergedBy: "owner" };
-      return state.mergeResult;
-    },
-    async rerunRun(_repository, runId) { state.reruns.push(runId); return state.rerunOk; },
-    async jobLogTail(_repository, jobId, _cwd, signal) {
-      return state.logs ? await state.logs(jobId, signal) : `log of job ${jobId}\n(fail) retry never stops\n##[error]Process completed with exit code 1.`;
-    },
-    async checkRunReport() { return "a report"; },
-    async canPush(_repository, login) { return state.pushers.includes(login); },
-  };
-  return { state, github };
-}
-
-function runtime(github: AutopilotGitHub, clock: { now: number }, adapters = {}, cfg = loadConfig(), lookTimeoutMs?: number) {
-  return new AutopilotRuntime(cfg, adapters, {
-    now: () => new Date(clock.now), github, lookTimeoutMs,
-    repository: async () => "o/r", branches: async (task) => [task.branch!],
-    published: async () => ({ ok: true }),
-  });
-}
-
-/** Bound to #7, with its head and its ready-for-review long enough ago that checks are believed. */
-function seed(taskId: string, clock: { now: number }, extra: Record<string, unknown> = {}) {
-  const past = new Date(START).toISOString();
-  writeAutopilotCheckpoint(autopilotRow(taskId)!, { pr: 7, heads: { [HEAD]: past }, readySince: past, ...extra }, new Date(clock.now));
-}
-
-/** Make the row due and run one pass. */
-async function pass(rt: AutopilotRuntime, taskId: string, clock: { now: number }) {
-  db.run("UPDATE workflows SET next_check_at = ? WHERE task_id = ? AND type = 'pr-autopilot' AND state != 'completed'", [new Date(clock.now).toISOString(), taskId]);
-  await rt.tick();
-}
+afterEach(forgetTasks);
 
 describe("arming", () => {
   test("toggling on arms one row, toggling again changes nothing, toggling off stands down", () => {
@@ -179,7 +95,7 @@ describe("the loop", () => {
     expect(autopilotTurnNotes(task.id).notes[0]).toContain("Auto-merge is on for this task");
   });
 
-  test("after a merge it stays on for the task's next PR, and never adopts an older one", async () => {
+  test("after a merge it stays on for the task's next PR, and never adopts the merged one or an older one", async () => {
     const task = doneTask();
     const clock = { now: START };
     const opened = (number: number, ms: number) => pull({ number, createdAt: new Date(Date.parse(task.created_at) + ms).toISOString() });
@@ -195,8 +111,13 @@ describe("the loop", () => {
     expect(state.merges.map((merge) => merge.number)).toEqual([7]);
     expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true } });
     expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("delivered");
-    // an open PR older than the one that merged is stale or abandoned: never adopted
-    state.pulls = [opened(6, 30_000)];
+    // GitHub's open list lags the merge: #7 is still in it, and must not be adopted again
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, reason: "#7 merged by Wisp · Waiting for the task's next PR", lastMerged: { pr: 7, byWisp: true } });
+    // with no next PR, it waits for a turn to settle rather than polling GitHub
+    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(AFTER_MERGE_MS);
+    // an open PR numbered below the merged one is stale or abandoned: never adopted
+    state.pulls = [opened(7, 60_000), opened(6, 30_000)];
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id).reason).toBe("#7 merged by Wisp · Waiting for this task's own PR (#6 is older than #7, which merged)");
     // the task's next change is
@@ -208,6 +129,61 @@ describe("the loop", () => {
     await pass(rt, task.id, clock);
     expect(state.merges.map((merge) => merge.number)).toEqual([7, 9]);
     expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 9, byWisp: true }, autoMerge: true });
+  });
+
+  test("a PR stacked on the merged one is its next, opened before the merge or not, and the agent is told to go on there", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const opened = (number: number, ms: number, base = "main") => pull({ number, baseRefName: base, createdAt: new Date(Date.parse(task.created_at) + ms).toISOString() });
+    const { state, github } = fakeGitHub({ pulls: [opened(7, 60_000), opened(8, 90_000, "wisp/parent")] });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    await pass(rt, task.id, clock);
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(state.merges.map((merge) => merge.number)).toEqual([7]);
+    // GitHub retargets the child onto main once the parent merges
+    state.pulls = [opened(8, 90_000)];
+    state.pr = snapshot({ number: 8, head: "e".repeat(40) });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: 8 });
+    expect(autopilotTurnNotes(task.id).notes[0]).toBe("PR #7 was merged by Wisp. This task's current PR is #8: continue on its branch.");
+  });
+
+  test("switched off while a look reads a PR that merged: it stays off, and still remembers whose merge it was", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ state: "MERGED" }) });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(clock.now).toISOString() } });
+    state.onSnapshot = () => { setAutopilot(task.id, { autoMerge: false, autoFix: false }); state.onSnapshot = null; };
+    await pass(rt, task.id, clock);
+    expect(autopilotRow(task.id)).toBeNull();
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "off", autoMerge: false, lastMerged: { pr: 7, byWisp: true } });
+    // and the next turn still hears, once, that the merged branch is finished
+    const notes = autopilotTurnNotes(task.id);
+    expect(notes.notes).toEqual(["PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main."]);
+    notes.delivered();
+    expect(autopilotTurnNotes(task.id).notes).toEqual([]);
+  });
+
+  test("a Stop that lands while gh merges survives a lagging read-back", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    github.merge = async (input) => { state.merges.push({ number: input.number, method: input.method, head: input.head }); pauseTaskWorkflows(task.id); return { ok: true, detail: "" }; };
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    // the "Confirming the merge" save did not write the pre-merge checkpoint over the hold
+    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ stopHold: { turnCount: 0 }, mergeAttempt: { head: HEAD } });
+    // released, it records the merge as Wisp's
+    resumeAutopilot(task.id);
+    state.pr = snapshot({ state: "MERGED" });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7, byWisp: true } });
   });
 
   test("closing a PR still switches both off: that is how its owner abandons an approach", async () => {
@@ -389,26 +365,6 @@ describe("the loop", () => {
     expect(isTaskMerging(task.id)).toBe(false);
   });
 });
-
-async function until(check: () => boolean, what: string) {
-  for (let attempt = 0; attempt < 200; attempt++) {
-    if (check()) return;
-    await Bun.sleep(25);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
-
-/** A harness that writes the prompt it was given to a file, so a test can read exactly what the agent saw. */
-function capture() {
-  const dir = mkdtempSync(join(tmpdir(), "wisp-autopilot-turn-"));
-  const file = join(dir, "prompt.txt");
-  // written aside and moved into place, so a test that sees the file sees all of it
-  const adapters = validateAdapters({ capture: { bin: "bash", exec: ["-c", `printf '%s' "$0" > '${file}.part' && mv '${file}.part' '${file}'; printf 'done\\n'`], parse: { format: "text" } } });
-  return { dir, file, adapters };
-}
-function queue(taskId: string, text: string) {
-  createTaskMessage({ id: newTaskMessageId(), taskId, text, attachmentHash: taskMessageAttachmentsFingerprint([]) });
-}
 
 describe("binding and the edges of a merge", () => {
   test("only a PR this task could have opened is adopted", () => {
@@ -745,6 +701,11 @@ describe("API and CLI", () => {
       .toBe("auto-merge: on · PR #7 · waiting · Waiting for checks (2 running)");
     expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: 7, state: "merged", reason: "Merged by Wisp", updatedAt: null }))
       .toBe("auto-merge: done · PR #7 · Merged by Wisp");
+    // off names both switches, and a plain switch-off adds nothing
+    expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: null, state: "off", reason: "Auto-merge off", updatedAt: null } as never))
+      .toBe("auto-merge and auto-fix: off");
+    expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", updatedAt: null } as never))
+      .toBe("auto-merge and auto-fix: off · PR #7 · Auto-merge off — #7 was closed");
     const calls: unknown[] = [];
     const api = async (...args: unknown[]) => { calls.push(args); return { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", updatedAt: null }; };
     await prCommand(["tabcde", "merge", "on"], { json: true }, api);
@@ -1095,238 +1056,3 @@ describe("auto-fix", () => {
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
   });
 });
-
-describe("auto-fix for review feedback", () => {
-  const SOON = "2026-09-23T12:09:30Z";
-  const said = (over: Partial<PrComment> = {}): PrComment => ({
-    id: "RC_1", author: "owner", association: "OWNER", bot: false, body: "Rename this to `retryLimit`.",
-    createdAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#discussion_r1", hidden: false, ...over,
-  });
-  const thread = (over: Partial<PrThread> = {}, comments = [said()]): PrThread => ({
-    id: "PRRT_1", resolved: false, outdated: false, path: "src/retry.ts", line: 40,
-    starter: { author: comments[0]!.author, bot: comments[0]!.bot, body: comments[0]!.body }, comments, ...over,
-  });
-  const blocking: PrReview = {
-    id: "PRR_1", author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "Verdict: not safe to merge\n\n1. The retry never stops.",
-    commit: HEAD, submittedAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#pullrequestreview-1",
-  };
-
-  function reviewTask() {
-    const { dir, file, adapters } = capture();
-    const task = doneTask({ harness: "capture" });
-    setTaskFields(task.id, { worktree_path: dir, turn_count: 1 });
-    return { task, file, adapters };
-  }
-  const evidenceOf = (file: string) => readFileSync(readFileSync(file, "utf8").match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
-
-  test("a reviewer's review and thread go to the agent as one round, once the burst settles — and only once", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [blocking], threads: [thread()], unresolvedThreads: 1, mergeState: "BLOCKED" }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    // written 30 s ago: it waits two minutes after the newest words
-    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Auto-fix will send: 1 review thread, 1 review", by: "auto-fix" });
-    expect(existsSync(file)).toBe(false);
-    clock.now += 2 * 60_000;
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the review round");
-    const prompt = readFileSync(file, "utf8");
-    expect(prompt).toContain("New review feedback on this PR: 1 review thread, 1 review.");
-    expect(prompt).toContain(`End every comment or reply you post on GitHub with: — capture via Wisp <!-- wisp:task=${task.id} -->`);
-    const evidence = evidenceOf(file);
-    expect(evidence).toContain("### Thread on `src/retry.ts:40` — you may resolve it");
-    expect(evidence).toContain("Thread id: `PRRT_1`");
-    expect(evidence).toContain("Rename this to `retryLimit`.");
-    expect(evidence).toContain("### Review by @owner (the PR's owner): commented on");
-    expect(evidence).toContain("The retry never stops.");
-    expect(evidence).toContain("resolveReviewThread");
-    expect(autopilotStatus(task.id).fixRounds).toBe(1);
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-    // nothing new to send, but the thread Wisp sent is still open: that is for a person now
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "needs-you", reason: "1 review thread still open" });
-    // a new reply on the thread is new feedback, and gets its own settle time
-    clock.now += 5 * 60_000;
-    state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "Still wrong for 0.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 review thread");
-  });
-
-  test("on a PR with more than 100 threads, a sent thread that fell out of the newest 100 still holds the merge", async () => {
-    const { task, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const { state, github } = fakeGitHub({ pr: snapshot({ threads: [], threadsTruncated: true }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, delivered: { "thread:PRRT_OLD": SOON } });
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 review thread still open" });
-    expect(state.merges).toHaveLength(0);
-    // on a PR Wisp can read in full, a sent thread that is gone was resolved or deleted
-    state.pr = { ...state.pr, threadsTruncated: false };
-    await pass(rt, task.id, clock);
-    expect(state.merges).toHaveLength(1);
-  });
-
-  test("CI and review feedback share one round and one budget", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const red = { name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "https://ci/test", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false };
-    const { github } = fakeGitHub({ pr: snapshot({ checks: [red], reviews: [{ ...blocking, submittedAt: "2026-09-23T12:00:00Z" }] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the round");
-    expect(readFileSync(file, "utf8")).toContain("CI failed on this PR: test failing. New review feedback on this PR: 1 review.");
-    const evidence = evidenceOf(file);
-    expect(evidence).toContain("## What failed");
-    expect(evidence).toContain("## Review feedback");
-    expect(autopilotStatus(task.id).fixRounds).toBe(1);
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-    // no push, nothing new: the CI part is not sent again under its own key
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "needs-you", reason: "Still test failing after round 1, with no new push" });
-  });
-
-  test("a combined round cancelled from the message list skips its CI part and marks its feedback seen", async () => {
-    const task = doneTask();
-    setAutopilot(task.id, { autoFix: true });
-    const row = autopilotRow(task.id)!;
-    const key = `ci:${HEAD}:test|fb:thread:PRRT_1@${SOON}`;
-    const id = reserveRound(row, { key, prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0 }, new Date())!;
-    const path = `/api/tasks/${task.id}/messages/${id}`;
-    expect((await taskMessageRoute(new Request(`http://localhost${path}`, { method: "DELETE" }), path, "DELETE"))?.status).toBe(200);
-    const checkpoint = checkpointOf(autopilotRow(task.id)!);
-    expect(checkpoint.skipped).toContain(`ci:${HEAD}:test`);
-    expect(checkpoint.delivered).toEqual({ "thread:PRRT_1": SOON });
-  });
-
-  test("review feedback counts against the same three rounds", async () => {
-    const { task, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const { github } = fakeGitHub({ pr: snapshot({ reviews: [{ ...blocking, submittedAt: "2026-09-23T12:00:00Z" }] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, rounds: 3 });
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" });
-  });
-
-  test("the runner records which turns were asked to sign, and a reused turn number takes the later answer", async () => {
-    const { task, adapters } = reviewTask();
-    setAutopilot(task.id, { autoFix: true });
-    queue(task.id, "/review");
-    expect(startNextQueuedMessage(task.id, adapters, loadConfig())).not.toBeNull();
-    await until(() => getTask(task.id)?.state === "done", "the slash turn");
-    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([2]);
-    queue(task.id, "a plain turn");
-    startNextQueuedMessage(task.id, adapters, loadConfig());
-    await until(() => getTask(task.id)?.state === "done", "the plain turn");
-    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([2]);
-    // turn 2's start failed and a signing turn took its number
-    noteTurnSigning(task.id, 2, true);
-    expect(checkpointOf(autopilotRow(task.id)!).unmarkedTurns).toEqual([]);
-  });
-
-  test("a slash-command turn is never asked to sign, so the owner's-account posts inside it are the agent's", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    setAutopilot(task.id, { autoFix: true });
-    // turn 2 ran `/code-review --comment` after arming: no notes, so no signature
-    noteTurnSigning(task.id, 2, false);
-    db.run("INSERT INTO turns(task_id, n, prompt, status, log_file, started_at, ended_at) VALUES (?, 2, '/code-review', 'done', '/dev/null', ?, ?)",
-      [task.id, "2026-09-23T12:01:00Z", "2026-09-23T12:03:00Z"]);
-    const posted = said({ id: "RC_7", body: "nit: rename `x`", createdAt: "2026-09-23T12:02:00Z" });
-    const owners = said({ id: "RC_8", body: "Also handle ```` fences ````", createdAt: "2026-09-23T12:04:00Z" });
-    const { github } = fakeGitHub({ pr: snapshot({ threads: [thread({ id: "PRRT_7" }, [posted]), thread({ id: "PRRT_8" }, [owners])] }) });
-    const rt = runtime(github, clock, adapters);
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, ...{ unmarkedTurns: checkpointOf(autopilotRow(task.id)!).unmarkedTurns } });
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the round");
-    const evidence = evidenceOf(file);
-    expect(evidence).toContain("Also handle");
-    expect(evidence).not.toContain("nit: rename");
-    // the fence outruns the body's own backticks
-    expect(evidence).toContain("`````text\nAlso handle ```` fences ````\n`````");
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-  });
-
-  test("review feedback is not held back while CI is still running", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const running = { name: "test", status: "IN_PROGRESS", conclusion: null, required: true, url: "", run: { id: 5, event: "pull_request" } };
-    const { github } = fakeGitHub({ pr: snapshot({ checks: [running], reviews: [{ ...blocking, submittedAt: "2026-09-23T12:00:00Z" }] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the review round");
-    expect(readFileSync(file, "utf8")).not.toContain("CI failed");
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-  });
-
-  test("the owner's account inside a turn from before auto-fix was armed is the agent speaking; outside it, the owner", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    // a turn from before arming: its "comment" is the agent's own, unmarked
-    db.run("INSERT INTO turns(task_id, n, prompt, status, log_file, started_at, ended_at) VALUES (?, 1, 'x', 'done', '/dev/null', ?, ?)",
-      [task.id, "2026-09-23T12:00:00Z", "2026-09-23T12:05:00Z"]);
-    const theirs = { id: "IC_1", author: "owner", association: "OWNER", bot: false, body: "I opened this PR to fix the retry loop.", createdAt: "2026-09-23T12:02:00Z", editedAt: null, url: "https://gh/c/1" };
-    const mine = { ...theirs, id: "IC_2", body: "Please also cover the zero case.", createdAt: "2026-09-23T12:07:00Z" };
-    const { github } = fakeGitHub({ pr: snapshot({ comments: [theirs, mine] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, fixArmedAt: "2026-09-23T12:06:00Z" });
-    await pass(rt, task.id, clock);
-    await until(() => existsSync(file), "the round");
-    const evidence = evidenceOf(file);
-    expect(evidence).toContain("Please also cover the zero case.");
-    expect(evidence).not.toContain("I opened this PR");
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-  });
-
-  test("only people who can push instruct the agent", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const colleague = { ...blocking, author: "colleague", association: "MEMBER", submittedAt: "2026-09-23T12:00:00Z" };
-    const { state, github } = fakeGitHub({ pr: snapshot({ reviews: [colleague] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id).reason).toBe("Nothing to fix");
-    expect(existsSync(file)).toBe(false);
-    // the lookup is cached an hour, so a later grant takes a new runtime (or the hour)
-    state.pushers = ["colleague"];
-    const later = runtime(github, clock, adapters);
-    await pass(later, task.id, clock);
-    await until(() => existsSync(file), "the round");
-    expect(evidenceOf(file)).toContain("### Review by @colleague (can push to this repository)");
-    await until(() => getTask(task.id)?.state === "done", "the round to settle");
-  });
-
-  test("Skip marks the batch handled: those words are never sent, newer ones are", async () => {
-    const { task, file, adapters } = reviewTask();
-    const clock = { now: START + 10 * 60_000 };
-    const { state, github } = fakeGitHub({ pr: snapshot({ threads: [thread()] }) });
-    const rt = runtime(github, clock, adapters);
-    setAutopilot(task.id, { autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id).pendingFix).not.toBeNull();
-    skipPendingFix(task.id);
-    clock.now += 5 * 60_000;
-    await pass(rt, task.id, clock);
-    // skipped means seen, not answered: the open thread is for a person
-    expect(autopilotStatus(task.id)).toMatchObject({ reason: "1 review thread still open", pendingFix: null });
-    expect(existsSync(file)).toBe(false);
-    state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "And the zero case.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
-    await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 review thread");
-  });
-});
-

@@ -56,14 +56,12 @@ export interface AutopilotCheckpoint {
   sentCi?: string[]
   /** turn numbers that started without the note asking the agent to sign its GitHub posts (a slash command) */
   unmarkedTurns?: number[]
-  /** when the bound PR was opened: after it merges, only a PR opened later is the task's next */
-  prOpenedAt?: string
   /**
    * The last PR that merged while the switches were on. They stay on for the
    * task's next PR; this is what the PR line, the banner and the one-time
    * "branch is finished" note read.
    */
-  lastMerged?: { pr: number; base: string; byWisp: boolean; openedAt: string; noted: boolean }
+  lastMerged?: { pr: number; base: string; byWisp: boolean; noted: boolean }
 }
 
 export interface AutopilotParams {
@@ -112,6 +110,8 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
     return {
       ...OFF, pr, state: checkpoint.outcome === "merged" ? "merged" : "off", reason: row.reason,
       about: checkpoint.outcome ? "pr" : "task", mergedByWisp: checkpoint.merged?.byWisp === true, updatedAt: row.updated_at,
+      // switched off after a merge it stayed on through: the PR line still says whose merge it was
+      lastMerged: checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null,
     }
   }
   // The agent-switch trigger pauses every active workflow; autopilot follows
@@ -283,21 +283,31 @@ export function writeAutopilotCheckpoint(row: WorkflowRow, checkpoint: Autopilot
  * look for the task's next PR. Always active again: a pause was about the PR
  * that is now merged.
  */
-export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: string; byWisp: boolean; openedAt: string }, now: Date): void {
-  const current = getWorkflow(row.id) ?? row
-  const previous = checkpointOf(current)
-  const checkpoint: AutopilotCheckpoint = {
-    ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
-    ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
-    ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
-    lastMerged: { ...merged, noted: false },
-    state: "waiting", about: "task", by: "auto-merge",
-  }
+export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: string; byWisp: boolean }, now: Date): void {
   const at = now.toISOString()
-  const reason = `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · Waiting for the task's next PR`
   db.transaction(() => {
+    const current = getWorkflow(row.id)
+    if (!current) return
+    const previous = checkpointOf(current)
+    // Switched off, or the task archived, while the look was reading the PR:
+    // never bring the row back. Remember the merge on it, for the PR line and
+    // the one-time note, and stop there.
+    const task = getTask(current.task_id)
+    if (current.state === "completed" || !task || task.archived) {
+      if (previous.lastMerged?.pr === merged.pr) return
+      db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...previous, lastMerged: { ...merged, noted: false } }), row.id])
+      return
+    }
+    const checkpoint: AutopilotCheckpoint = {
+      ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
+      ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
+      ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
+      lastMerged: { ...merged, noted: false },
+      state: "waiting", about: "task", by: "auto-merge",
+    }
+    const reason = `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · Waiting for the task's next PR`
     db.run(`UPDATE workflows SET checkpoint_json = ?, state = 'active', reason = ?, revision = revision + 1, failures = 0,
-      next_check_at = ?, updated_at = ? WHERE id = ?`, [JSON.stringify(checkpoint), reason, at, at, row.id])
+      next_check_at = ?, updated_at = ? WHERE id = ? AND state != 'completed'`, [JSON.stringify(checkpoint), reason, at, at, row.id])
     recordWorkflow(row.id, "merged", merged.byWisp ? `Merged #${merged.pr}` : `#${merged.pr} was merged`, at)
   })()
   announceWorkflow(row.task_id)
@@ -355,8 +365,12 @@ export interface TurnNotes {
 
 const NO_NOTES: TurnNotes = { notes: [], marked: false, delivered() {} }
 
-function branchFinishedNote(merged: { pr: number; base: string; byWisp: boolean }): string {
-  return `PR #${merged.pr} ${merged.byWisp ? "was merged by Wisp" : "was merged"}. Its branch is finished: start any further change on a new branch from origin/${merged.base}.`
+function branchFinishedNote(merged: { pr: number; base: string; byWisp: boolean }, next?: number): string {
+  const done = `PR #${merged.pr} ${merged.byWisp ? "was merged by Wisp" : "was merged"}.`
+  // a PR already bound (a stacked child) is where the work goes on
+  return next
+    ? `${done} This task's current PR is #${next}: continue on its branch.`
+    : `${done} Its branch is finished: start any further change on a new branch from origin/${merged.base}.`
 }
 
 /** The marker is how Wisp tells the agent's own GitHub posts from a reviewer's. */
@@ -381,7 +395,7 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     const notes: string[] = []
     // once, after a merge: the switches stay on, but that branch is finished
     const merged = checkpoint.lastMerged && !checkpoint.lastMerged.noted ? checkpoint.lastMerged : null
-    if (merged) notes.push(branchFinishedNote(merged))
+    if (merged) notes.push(branchFinishedNote(merged, pr && pr !== merged.pr ? pr : undefined))
     if (autoMerge) {
       notes.push([
         `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
@@ -406,6 +420,16 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
   const latest = latestRow(taskId)
   if (!latest || latest.state !== "completed") return NO_NOTES
   const checkpoint = checkpointOf(latest)
+  // switched off after a merge it had stayed on through: that branch is still finished
+  const persisted = checkpoint.lastMerged
+  if (persisted && !persisted.noted) {
+    return {
+      notes: [branchFinishedNote(persisted)], marked: false,
+      delivered() {
+        db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, lastMerged: { ...persisted, noted: true } }), latest.id])
+      },
+    }
+  }
   const merged = checkpoint.merged
   if (checkpoint.outcome !== "merged" || !merged || merged.noted) return NO_NOTES
   return {
