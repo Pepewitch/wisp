@@ -20,7 +20,7 @@ import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
-import { conversationsBlock, mergeGate, type PublishedWork } from "./gate"
+import { conversationsBlock, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
 import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
 import { whileMerging } from "./merging"
@@ -49,6 +49,8 @@ const MERGE_FAILURE_LIMIT = 3
 export const QUIET_MS = 15 * 60_000
 /** After a merge, with no next PR yet: a turn settling looks at once, so this only covers a PR opened by hand. */
 export const AFTER_MERGE_MS = 60 * 60_000
+/** A PR that changed while a look worked is looked at again this soon, not a minute later. */
+export const RECHECK_MS = 5_000
 /** Looks that could read none of a round's logs before it is sent with links only. */
 const LOG_MISS_LIMIT = 3
 
@@ -383,6 +385,10 @@ export class AutopilotRuntime {
     })
     if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr"); return }
     if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS, "pr"); return }
+    // One more read right before merging: words or checks that arrived while
+    // this look judged and gated are looked at (and judged) first, not merged over.
+    const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(() => null)
+    if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
     await this.merge(row, checkpoint, pr, repository)
   }
 

@@ -206,6 +206,24 @@ function mergeStateGate(input: GateInput): GateResult | null {
   }
 }
 
+/**
+ * Whether anything a merge decision reads changed between two reads of the
+ * PR: the head, a comment, review or thread (new, edited, hidden, resolved),
+ * or a check. A look judges and gates one read, so words that arrive while it
+ * works would otherwise be merged over unseen. GitHub's mergeability is left
+ * out: it is recomputed on its own and flickers between reads.
+ */
+export function sameReviewState(a: PrSnapshot, b: PrSnapshot): boolean {
+  const state = (pr: PrSnapshot) => JSON.stringify([
+    pr.head, pr.state, pr.isDraft,
+    pr.comments.map((comment) => [comment.id, comment.editedAt ?? comment.createdAt, comment.hidden]),
+    pr.reviews.map((review) => [review.id, review.state, review.editedAt ?? review.submittedAt]),
+    pr.threads.map((thread) => [thread.id, thread.resolved, thread.comments.map((comment) => [comment.id, comment.editedAt ?? comment.createdAt, comment.hidden])]),
+    pr.checks.map((check) => [check.name, check.status, check.conclusion]),
+  ])
+  return state(a) === state(b)
+}
+
 export function mergeGate(input: GateInput): GateResult {
   const { pr } = input
   if (pr.isDraft) return { kind: "needs-you", reason: "Draft — mark it ready for review" }

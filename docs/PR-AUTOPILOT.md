@@ -73,7 +73,10 @@ may take up to an hour to be picked up.
 ## When Wisp merges
 
 Wisp re-reads all of these immediately before merging. The first one that does
-not hold is the reason shown in `wisp pr` and next to the PR in the app.
+not hold is the reason shown in `wisp pr` and next to the PR in the app. Then
+it reads the PR once more: if a comment, review, thread or check changed while
+it was deciding, it does not merge but looks again a few seconds later, so new
+words are read (and, with the review judge, judged) before anything merges.
 
 - **The PR** is open, not a draft, from this repository, and targets the default
   branch or the project's configured base. A stacked PR needs you until it
@@ -297,8 +300,11 @@ owner's 26 real approving reviews, "lists findings or not" matched every one.
     earlier).
   - A finding about an earlier head waits for that bot to speak on this one
     ("Waiting for @bot to review abc1234"): any review of this head, a new or
-    edited comment, or its own check finishing. It waits at most 20 minutes
-    from when Wisp first saw the head, then goes by the other signals.
+    edited comment the judge reads as a verdict (a "review in progress" edit
+    is not one), or its own check finishing. For a bot that keeps a summary
+    comment, the check finishing does not count: a bot may finish its check a
+    moment before it rewrites the summary. It waits at most 20 minutes from
+    when Wisp first saw the head, then goes by the other signals.
 - **How often:** once per version of a comment, and at most six per look; an
   edit is a new version. Auto-merge waits ("Waiting for the review judge",
   after the checks gate) while a channel's newest words are unjudged.
