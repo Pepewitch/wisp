@@ -102,6 +102,27 @@ describe("auto-fix for review feedback", () => {
     expect(state.merges).toHaveLength(1);
   });
 
+  // STOPGAP(1.0): delete with severity-summary.ts
+  test("STOPGAP(1.0): a reviewer's medium finding under its green check is a round, before any merge", async () => {
+    const { task, file, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const body = [`## reviewer Summary for #${HEAD.slice(0, 7)}`, "", "| Severity | Count |", "|---|---|", "| 🟡 Medium | 1 |", "", "Guard the empty list in `pick()`."].join("\n");
+    const board: PrComment = { ...said({ id: "IC_5", author: "pr-reviewer", association: "NONE", bot: true, body, createdAt: "2026-09-23T11:00:00Z" }) };
+    const reviewer = { name: "pr-reviewer", status: "COMPLETED", conclusion: "SUCCESS", required: false, url: "https://ci/pr-reviewer", app: "pr-reviewer" };
+    const { state, github } = fakeGitHub({ pr: snapshot({ comments: [board], checks: [...snapshot().checks, reviewer] }) });
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the round");
+    expect(state.merges).toHaveLength(0);
+    expect(readFileSync(file, "utf8")).toContain("New review feedback on this PR: 1 comment.");
+    const evidence = evidenceOf(file);
+    expect(evidence).toContain("It reports 1 medium finding on this head. Fix the medium and worse ones; low ones are optional.");
+    expect(evidence).toContain("Guard the empty list in `pick()`.");
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
   test("CI and review feedback share one round and one budget", async () => {
     const { task, file, adapters } = reviewTask();
     const clock = { now: START + 10 * 60_000 };

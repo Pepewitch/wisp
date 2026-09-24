@@ -157,6 +157,44 @@ describe("what counts as an item", () => {
   });
 });
 
+// STOPGAP(1.0): one reviewer's summary format, read as text. Delete with severity-summary.ts.
+describe("STOPGAP(1.0): a reviewer's severity summary under a green check", () => {
+  const summary = (head: string, rows: string[], more = "") => [
+    `## reviewer Summary for #${head.slice(0, 7)}`, "", `📝 **2 findings**`, "",
+    "| Severity | Count |", "|----------|-------|", ...rows, "", more,
+  ].join("\n");
+  const board = (body: string) => comment({ id: "IC_7", author: "pr-reviewer", bot: true, association: "NONE", body, editedAt: "2026-09-24T11:00:00Z" });
+  const green = [check("pr-reviewer", "SUCCESS", "pr-reviewer")];
+
+  test("medium or worse for this head is sent once per head; low alone, another head, or no count is not", () => {
+    const medium = board(summary(HEAD, ["| 🟡 Medium | 1 |", "| 🔵 Low | 1 |"]));
+    expect(items({ comments: [medium], checks: green })).toMatchObject([
+      { kind: "comment", id: "comment:IC_7", fingerprint: `head:${HEAD}`, check: null, findings: { counts: { medium: 1, low: 1 }, worth: 1 } },
+    ]);
+    // a bot with no check of its own reads the same way
+    expect(items({ comments: [medium] })).toHaveLength(1);
+    expect(items({ comments: [medium], checks: green }, { delivered: { "comment:IC_7": `head:${HEAD}` } })).toEqual([]);
+    // its summary still describes the last head it reviewed: silent until it reviews this one
+    expect(items({ head: "b".repeat(40), comments: [medium], checks: green })).toEqual([]);
+    expect(items({ comments: [board(summary(HEAD, ["| 🔵 Low | 2 |"]))], checks: green })).toEqual([]);
+    expect(items({ comments: [board(`## reviewer Summary for #${HEAD.slice(0, 7)}\n\n✅ **No issues found**`)], checks: green })).toEqual([]);
+    // a table in a code block, or in the findings' own details, is not the overview's count
+    expect(items({ comments: [board(summary(HEAD, [], "```\n| High | 3 |\n```"))], checks: green })).toEqual([]);
+    expect(items({ comments: [board(summary(HEAD, [], "<details>\n\n| High | 3 |"))], checks: green })).toEqual([]);
+    // a red check keeps its own path, and the check is named
+    expect(items({ comments: [medium], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] })).toMatchObject([{ check: { name: "pr-reviewer" } }]);
+    // only bots: a person's severity table is an ordinary comment
+    expect(items({ comments: [{ ...medium, bot: false, author: OWNER, association: "OWNER" }] })[0]).not.toHaveProperty("findings");
+  });
+
+  test("bounded: an enormous body is read no further than its overview", () => {
+    const huge = board(summary(HEAD, ["| 🟠 High | 1 |"], "x".repeat(200_000)));
+    const started = performance.now();
+    expect(items({ comments: [huge], checks: green })).toHaveLength(1);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+});
+
 describe("the ledger", () => {
   test("an item is sent once; a reply or an edit is new, and only the new words are marked fresh", () => {
     const first = items({ threads: [thread()] });

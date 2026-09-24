@@ -12,10 +12,13 @@
  * - A bot's conversation comment is usually a status board it edits on every
  *   push (previews, coverage, triage). It is feedback only when the same app's
  *   check on the head is red — then once per head — or when it says "blocking".
+ *   STOPGAP(1.0): or when it is the one summary format severity-summary.ts
+ *   reads, reporting medium-or-worse findings for this head.
  */
 import type { PrCheck } from "./checks"
 import { classifyCheck } from "./checks"
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "./github"
+import { reportedFindings, type ReportedFindings } from "./severity-summary"
 import { parseVerdict } from "./verdict"
 
 /** Every post the agent makes on GitHub while auto-fix is on ends with this, so Wisp can tell its words from a reviewer's. */
@@ -64,7 +67,11 @@ export type FeedbackItem =
     reopened: boolean
   }
   | Base & { kind: "review"; review: PrReview }
-  | Base & { kind: "comment"; comment: PrComment; check: PrCheck | null }
+  | Base & {
+    kind: "comment"; comment: PrComment; check: PrCheck | null
+    /** STOPGAP(1.0): what a bot's summary reports, when that and not a red check is why it is sent */
+    findings?: ReportedFindings
+  }
 
 const time = (words: { createdAt?: string; submittedAt?: string; editedAt: string | null }): string =>
   words.editedAt ?? words.createdAt ?? words.submittedAt ?? ""
@@ -164,12 +171,16 @@ function commentItem(comment: PrComment, input: FeedbackInput): FeedbackItem | n
   if (comment.bot) {
     const paired = input.pr.checks.filter((check) => check.app === comment.author)
     const red = paired.find((check) => classifyCheck(check) === "fix") ?? null
-    if (paired.length > 0) {
+    // STOPGAP(1.0): a summary that reports medium-or-worse findings for this
+    // head, under a check its bot keeps green. See severity-summary.ts.
+    const findings = red ? null : reportedFindings(comment.body, input.pr.head)
+    const reported = findings && findings.worth > 0 ? findings : null
+    if (paired.length > 0 || reported) {
       // its check is the verdict: green says nothing, red is sent once per head
-      if (!red) return null
+      if (!red && !reported) return null
       const fingerprint = `head:${input.pr.head}`
       if (input.delivered[id] === fingerprint) return null
-      return { kind: "comment", id, fingerprint, at: time(comment), comment, check: red }
+      return { kind: "comment", id, fingerprint, at: time(comment), comment, check: red, ...(reported && { findings: reported }) }
     }
     if (parseVerdict(comment.body) !== "blocking") return null
   } else if (parseVerdict(comment.body) === "approve") {

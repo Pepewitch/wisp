@@ -11,6 +11,7 @@ import type { PrCheck } from "./checks"
 import { feedbackSummary, type FeedbackItem } from "./feedback"
 import type { FixPlan } from "./fix"
 import type { AutopilotGitHub, PrSnapshot } from "./github"
+import { findingsWords } from "./severity-summary"
 
 export const MAX_ROUNDS = 3
 const MAX_LOGS = 6
@@ -145,6 +146,7 @@ function reviewSection(pr: PrSnapshot, items: FeedbackItem[], signature: string)
       const { comment, check } = item
       lines.push("", `### Comment by ${who(pr, comment)}`, "", comment.url)
       if (check) lines.push("", `Its check \`${check.name}\` is ${check.conclusion?.toLowerCase() ?? "red"} on this head${check.url ? `: ${check.url}` : ""}.`)
+      else if (item.findings) lines.push("", `It reports ${findingsWords(item.findings)} on this head. Fix the medium and worse ones; low ones are optional.`)
       lines.push(...fenced(comment.body))
     }
   }
