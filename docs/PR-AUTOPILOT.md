@@ -54,7 +54,10 @@ task's next change, or a PR that was stacked on the merged one — and never an
 older open PR, which is stale or abandoned. Everything about the merged PR
 (its rounds, reruns, and the review feedback already sent) is left behind, so
 the next PR starts with a fresh three-round budget. The status reads
-`#271 merged by Wisp · Waiting for the task's next PR` until it binds.
+`#271 merged by Wisp · Waiting for the task's next PR` until it binds. A turn
+ending looks for it at once (and twice more over the next ten minutes, in case
+GitHub's list is slow); after that it looks hourly, so a PR you open by hand
+may take up to an hour to be picked up.
 
 ## When Wisp merges
 

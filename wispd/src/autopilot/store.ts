@@ -62,6 +62,8 @@ export interface AutopilotCheckpoint {
    * "branch is finished" note read.
    */
   lastMerged?: { pr: number; base: string; byWisp: boolean; noted: boolean }
+  /** looks since the merge that found no next PR: after a few quick ones, it waits for a turn */
+  nextPrMisses?: number
 }
 
 export interface AutopilotParams {
@@ -189,9 +191,14 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       return
     }
     const id = randomId("w", 12)
+    // switched off and on again after a merge: the new row still knows it, so
+    // the one-time note, the attribution and the "next PR above it" rule hold
+    const before = latestRow(taskId)
+    const lastMerged = before ? checkpointOf(before).lastMerged : undefined
+    const initial: AutopilotCheckpoint = { ...(next.autoFix ? { fixArmedAt: at } : {}), ...(lastMerged ? { lastMerged } : {}) }
     db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, checkpoint_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, '1', ?, ?, 'active', 'Waiting for a PR', ?, ?, ?, ?, ?)`,
-    [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), JSON.stringify(next.autoFix ? { fixArmedAt: at } : {}), task.context_n, at, FAR_FUTURE, at, at])
+    [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), JSON.stringify(initial), task.context_n, at, FAR_FUTURE, at, at])
     recordWorkflow(id, "armed", label, at)
   })
   result()

@@ -269,7 +269,13 @@ export class AutopilotRuntime {
 
     if (checkpoint.stopHold) {
       if (idle && task.turn_count > checkpoint.stopHold.turnCount) delete checkpoint.stopHold
-      else { save("held", "Held — you pressed Stop; continues after your next turn", BUSY_MS); return }
+      else {
+        // Held, but a merge was already under way: record it if it landed,
+        // so the next turn is not told to push to a merged branch.
+        if (checkpoint.mergeAttempt && checkpoint.pr && await this.settledWhileHeld(row, task, checkpoint, signal)) return
+        save("held", "Held — you pressed Stop; continues after your next turn", BUSY_MS)
+        return
+      }
     }
 
     const repository = await (this.options.repository ?? originRepository)(task, signal)
@@ -278,11 +284,24 @@ export class AutopilotRuntime {
     const configured = repoConfigFor(this.cfg, task.repo_path)?.baseBranch?.replace(/^origin\//, "")
 
     if (!checkpoint.pr) {
-      if (!idle) { save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task), BUSY_MS); return }
+      if (!idle) {
+        // a turn is running: its end is when a next PR appears, so the quick retries start over
+        delete checkpoint.nextPrMisses
+        save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task), BUSY_MS)
+        return
+      }
       const bound = await this.bind(row, task, repository, configured, checkpoint, signal)
       // After a merge the next PR comes from a turn, whose settling kicks a
       // look at once: the slow fallback only covers a PR opened by hand.
-      if (typeof bound === "string") { save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, checkpoint.lastMerged ? AFTER_MERGE_MS : WAITING_ON_YOU_MS); return }
+      if (typeof bound === "string") {
+        // GitHub's list can lag a PR the turn just opened: two more quick
+        // looks before the slow fallback.
+        const misses = checkpoint.lastMerged ? (checkpoint.nextPrMisses ?? 0) + 1 : 0
+        if (checkpoint.lastMerged) checkpoint.nextPrMisses = misses
+        save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, checkpoint.lastMerged && misses > 2 ? AFTER_MERGE_MS : WAITING_ON_YOU_MS)
+        return
+      }
+      delete checkpoint.nextPrMisses
       checkpoint.pr = bound.number
     }
 
@@ -505,6 +524,15 @@ export class AutopilotRuntime {
     }
   }
 
+  /** A held row whose merge was under way: settle it if the PR is no longer open. */
+  private async settledWhileHeld(row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, signal: AbortSignal): Promise<boolean> {
+    const repository = await (this.options.repository ?? originRepository)(task, signal)
+    const pr = repository ? await this.github.snapshot(repository, checkpoint.pr!, task.repo_path, signal).catch(() => null) : null
+    if (!pr || pr.state === "OPEN") return false
+    this.settle(row, checkpoint, pr)
+    return true
+  }
+
   /** GitHub's own auto-merge is on: that pause is auto-merge's, whichever switch spoke last. */
   private providerPause(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot): void {
     writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-merge" }, this.now())
@@ -597,6 +625,9 @@ export class AutopilotRuntime {
 
   private afterMerge(row: WorkflowRow, started: AutopilotCheckpoint, pr: PrSnapshot, result: { ok: boolean; detail: string }, after: PrSnapshot | null): void {
     const current = getWorkflow(row.id)
+    // Switched off (or archived) while gh ran, and it merged: still record
+    // whose merge it was. rebindAfterMerge never re-arms a finished row.
+    if (current && current.state !== "active" && after?.state === "MERGED") { this.settle(current, started, after); return }
     if (!current || current.state !== "active") return
     // What changed about the task while gh ran (a Stop hold, auto-fix armed,
     // an unsigned turn) is kept: only the merge's own fields come from before.

@@ -6,7 +6,7 @@ import { loadConfig } from "../src/config";
 import type { PrSnapshot } from "../src/autopilot/github";
 import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
-import { AFTER_MERGE_MS, choosePull, SEND_DELAY_MS } from "../src/autopilot/runtime";
+import { AFTER_MERGE_MS, choosePull, SEND_DELAY_MS, WAITING_ON_YOU_MS } from "../src/autopilot/runtime";
 import {
   autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
@@ -114,7 +114,10 @@ describe("the loop", () => {
     // GitHub's open list lags the merge: #7 is still in it, and must not be adopted again
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ pr: null, reason: "#7 merged by Wisp · Waiting for the task's next PR", lastMerged: { pr: 7, byWisp: true } });
-    // with no next PR, it waits for a turn to settle rather than polling GitHub
+    // with no next PR: two more quick looks (GitHub's list can lag a new PR), then it waits for a turn
+    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(WAITING_ON_YOU_MS);
+    await pass(rt, task.id, clock);
+    await pass(rt, task.id, clock);
     expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(AFTER_MERGE_MS);
     // an open PR numbered below the merged one is stale or abandoned: never adopted
     state.pulls = [opened(7, 60_000), opened(6, 30_000)];
@@ -166,6 +169,41 @@ describe("the loop", () => {
     expect(notes.notes).toEqual(["PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main."]);
     notes.delivered();
     expect(autopilotTurnNotes(task.id).notes).toEqual([]);
+  });
+
+  test("switched off while gh merges: the merge that lands is still recorded as Wisp's", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    state.onMerge = () => { setAutopilot(task.id, { autoMerge: false }); };
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+    expect(autopilotRow(task.id)).toBeNull();
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "off", lastMerged: { pr: 7, byWisp: true } });
+    expect(autopilotTurnNotes(task.id).notes[0]).toContain("PR #7 was merged by Wisp. Its branch is finished");
+    // switched on again, the new row still knows the merge: the next PR must be numbered above it
+    setAutopilot(task.id, { autoMerge: true });
+    expect(autopilotStatus(task.id)).toMatchObject({ autoMerge: true, lastMerged: { pr: 7, byWisp: true } });
+    state.pulls = [pull({ number: 6 })];
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, reason: "#7 merged by Wisp · Waiting for this task's own PR (#6 is older than #7, which merged)" });
+  });
+
+  test("held by a Stop with a merge under way, it still notices the merge landed", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ state: "MERGED" }) });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock, { stopHold: { turnCount: 5 }, mergeAttempt: { head: HEAD, at: new Date(clock.now).toISOString() } });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(0);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7, byWisp: true } });
+    // the hold is still the task's
+    expect(checkpointOf(autopilotRow(task.id)!).stopHold).toEqual({ turnCount: 5 });
   });
 
   test("a Stop that lands while gh merges survives a lagging read-back", async () => {
