@@ -213,6 +213,15 @@ running.
   - A bot's conversation comment is usually a status board it edits on every
     push, so it counts only when the same app's check on the head is red
     (then once per head) or when it says "blocking".
+  - **Stopgap, to be replaced before 1.0:** one reviewer summary format is
+    also read as text. The summary's heading names the head it reviewed
+    (`Summary for #<sha>`), and a table counts findings by severity
+    (`| Medium | 1 |`). When it reports medium or worse findings for the
+    current head, it counts once per head even though the bot's check is
+    green. Low findings alone do not. No other bot's summary is read, so a
+    reviewer that reports findings only in a summary comment, with a green
+    check, still goes unheard. Posting findings as review threads is what
+    works for every reviewer.
 - **Never its own words.** While auto-fix is on, every turn is asked to end
   each GitHub comment, review or reply with `— <agent> via Wisp <!--
   wisp:task=<id> -->`, and Wisp never sends signed posts back (a quote of one
