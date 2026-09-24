@@ -2,7 +2,9 @@
 
 This ledger separates release evidence from the version label. The 0.5 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.5.18 is the current release; earlier 0.5 records are retained below.
+coverage. 0.5.18 was the last 0.5 release; 0.6.0 supersedes it, and its record
+is in [the 0.6 ledger](../v0.6/QUALIFICATION.md). Earlier 0.5 records are
+retained below.
 
 ## 0.5.18 publication
 
