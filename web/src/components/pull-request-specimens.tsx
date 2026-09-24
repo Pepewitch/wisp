@@ -32,7 +32,7 @@ export function PullRequestSpecimens() {
       <div className="mt-4 flex items-center gap-3">
         <PullRequestStatusLink
           pullRequest={PR_SPECIMEN}
-          autoMerge={{ autoMerge: true, autoFix: false, pr: PR_SPECIMEN.number, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null }}
+          autoMerge={{ autoMerge: true, autoFix: false, pr: PR_SPECIMEN.number, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null }}
         />
         <span className="text-[11.5px] text-muted-foreground">
           With auto-merge on, its reason stands in for CI and review — it already accounts for both, and a
@@ -42,7 +42,7 @@ export function PullRequestSpecimens() {
       <div className="mt-4 flex items-center gap-3">
         <PullRequestStatusLink
           pullRequest={{ ...PR_SPECIMEN, lifecycle: "merged" }}
-          autoMerge={{ autoMerge: false, autoFix: false, pr: PR_SPECIMEN.number, state: "merged", reason: "Merged by Wisp", about: "pr", by: "auto-merge", mergedByWisp: true, lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null }}
+          autoMerge={{ autoMerge: false, autoFix: false, pr: PR_SPECIMEN.number, state: "merged", reason: "Merged by Wisp", about: "pr", by: "auto-merge", mergedByWisp: true, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null }}
         />
         <span className="text-[11.5px] text-muted-foreground">A PR auto-merge landed says so.</span>
       </div>

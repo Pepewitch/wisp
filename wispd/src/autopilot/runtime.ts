@@ -20,9 +20,9 @@ import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
-import { mergeGate, type PublishedWork } from "./gate"
+import { conversationsBlock, mergeGate, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
-import { ghAutopilot, type AutopilotGitHub, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
+import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
@@ -44,6 +44,8 @@ const REQUIRED_TTL_MS = 10 * 60_000
 /** How long after the task goes idle an auto-fix round waits before it is sent. */
 export const SEND_DELAY_MS = 2 * 60_000
 const MERGE_FAILURE_LIMIT = 3
+/** Auto-fix alone counts as done once CI is green and the PR has been quiet this long. */
+export const QUIET_MS = 15 * 60_000
 /** After a merge, with no next PR yet: a turn settling looks at once, so this only covers a PR opened by hand. */
 export const AFTER_MERGE_MS = 60 * 60_000
 /** Looks that could read none of a round's logs before it is sent with links only. */
@@ -141,14 +143,16 @@ function forgetIdle(checkpoint: AutopilotCheckpoint): void {
   forgetPending(checkpoint)
 }
 
-/**
- * Review threads Wisp sent that are still open. On a PR with more than 100
- * threads, one pushed out of the newest 100 cannot be read, so it counts as open.
- */
-function openSentThreads(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
-  const sent = Object.keys(checkpoint.delivered ?? {}).filter((id) => id.startsWith("thread:"))
-  const read = new Map(pr.threads.map((thread) => [`thread:${thread.id}`, thread]))
-  return sent.filter((id) => (read.has(id) ? !read.get(id)!.resolved : pr.threadsTruncated)).length
+/** The PR's latest sign of life: its head appearing or going green, a round going out, or a review or comment anyone can see. */
+function lastActivity(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
+  const seen = (comment: { hidden: boolean }) => !comment.hidden
+  const times = [
+    checkpoint.heads?.[pr.head], checkpoint.lastRoundAt, checkpoint.greenHead === pr.head ? checkpoint.greenAt : undefined,
+    ...pr.reviews.filter((review) => review.state !== "PENDING").map((review) => review.editedAt ?? review.submittedAt),
+    ...pr.comments.filter(seen).map((comment) => comment.editedAt ?? comment.createdAt),
+    ...pr.threads.flatMap((thread) => thread.comments.filter(seen).map((comment) => comment.editedAt ?? comment.createdAt)),
+  ]
+  return Math.max(0, ...times.map((time) => Date.parse(time ?? "")).filter(Number.isFinite))
 }
 
 /** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
@@ -171,7 +175,7 @@ export class AutopilotRuntime {
   private unsubscribe: (() => void) | null = null
   private readonly now: () => Date
   private readonly github: AutopilotGitHub
-  private readonly required = new Map<string, { names: string[]; at: number }>()
+  private readonly required = new Map<string, { rules: BaseRules; at: number }>()
   private readonly pushers = new Map<string, { ok: boolean; until: number }>()
 
   constructor(private cfg: WispConfig, private adapters: Record<string, AdapterDef>, private options: AutopilotRuntimeOptions = {}) {
@@ -290,6 +294,7 @@ export class AutopilotRuntime {
         save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task), BUSY_MS)
         return
       }
+      const mergedHere = checkpoint.mergedHere === true
       const bound = await this.bind(row, task, repository, configured, checkpoint, signal)
       // After a merge the next PR comes from a turn, whose settling kicks a
       // look at once: the slow fallback only covers a PR opened by hand.
@@ -298,10 +303,15 @@ export class AutopilotRuntime {
         // looks before the slow fallback.
         const misses = checkpoint.lastMerged ? (checkpoint.nextPrMisses ?? 0) + 1 : 0
         if (checkpoint.lastMerged) checkpoint.nextPrMisses = misses
-        save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, checkpoint.lastMerged && misses > 2 ? AFTER_MERGE_MS : WAITING_ON_YOU_MS)
+        // its PR merged on this row and nothing new has come: done for now (the violet rail)
+        saveAutopilotCheck(row, {
+          state: "waiting", reason: checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, checkpoint,
+          delayMs: checkpoint.lastMerged && misses > 2 ? AFTER_MERGE_MS : WAITING_ON_YOU_MS, done: mergedHere,
+        }, this.now())
         return
       }
       delete checkpoint.nextPrMisses
+      delete checkpoint.mergedHere
       checkpoint.pr = bound.number
     }
 
@@ -336,21 +346,16 @@ export class AutopilotRuntime {
       checkpoint.idleTurn = task.turn_count
     }
 
-    const required = await this.requiredChecks(repository, pr.baseRefName, cwd, signal)
+    const rules = await this.baseRules(repository, pr.baseRefName, cwd, signal)
+    const required = rules.checks
+    // a rule the snapshot could not read is "not required" when the branch has no classic protection at all
+    if (pr.conversationRule === "unknown" && rules.classicProtection === false) pr.conversationRule = "not-required"
     // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
     const nothingToFix = ctx.autoFix
       ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal })
       : "Nothing to fix"
     if (nothingToFix === null) return
-    // Review threads Wisp sent that are still open: the agent answered what it
-    // could; the rest (a colleague's to resolve, or one it disagreed with) is
-    // for a person, whether or not the repository requires resolution.
-    const open = ctx.autoFix ? openSentThreads(pr, checkpoint) : 0
-    if (open > 0) {
-      saveAutopilotCheck(row, { state: "needs-you", reason: `${open} review thread${open === 1 ? "" : "s"} still open`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-fix" }, this.now())
-      return
-    }
-    if (!ctx.autoMerge) { save("waiting", nothingToFix, WAITING_ON_YOU_MS, "pr"); return }
+    if (!ctx.autoMerge) { this.autoFixAlone(row, checkpoint, pr, nothingToFix); return }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
       pr, requiredNames: new Set(required),
@@ -381,6 +386,8 @@ export class AutopilotRuntime {
     // A bot's verdict check beside the sticky comment being sent is the review flow's.
     const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
     const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
+    // running, red or rerun: the quiet since it went green starts over at its next green
+    if (plan.kind !== "none") { delete checkpoint.greenHead; delete checkpoint.greenAt }
     if (plan.kind === "rerun") {
       forgetPending(checkpoint)
       // Token-free, once per run and head: a flake gets a second chance
@@ -495,7 +502,7 @@ export class AutopilotRuntime {
     }
     // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
-      ...checkpoint, rounds: round,
+      ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined, greenHead: undefined, greenAt: undefined,
       delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
     }
@@ -531,6 +538,30 @@ export class AutopilotRuntime {
     if (!pr || pr.state === "OPEN") return false
     this.settle(row, checkpoint, pr)
     return true
+  }
+
+  /**
+   * Auto-fix alone, with nothing for it to do. Open conversations need a
+   * person only where the repository requires them resolved to merge. It is
+   * done for now once CI is green and the PR has been quiet a while: no push,
+   * round, review or comment since, and green for that long too.
+   */
+  private autoFixAlone(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, nothingToFix: string): void {
+    const now = this.now()
+    const say = (state: AutopilotState, reason: string, delayMs: number, done = false) =>
+      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done }, now)
+    if (conversationsBlock(pr)) {
+      say("needs-you", `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}`, WAITING_ON_YOU_MS)
+      return
+    }
+    // only a green PR counts as done; a red that is main's own is still red
+    const green = nothingToFix === "Nothing to fix"
+    if (!green) { delete checkpoint.greenHead; delete checkpoint.greenAt }
+    else if (checkpoint.greenHead !== pr.head) { checkpoint.greenHead = pr.head; checkpoint.greenAt = now.toISOString() }
+    const quietFor = now.getTime() - lastActivity(pr, checkpoint)
+    const done = green && quietFor >= QUIET_MS
+    const reason = done ? `${nothingToFix} · no new review for ${QUIET_MS / 60_000} min` : nothingToFix
+    say("waiting", reason, done || !green ? WAITING_ON_YOU_MS : Math.min(WAITING_ON_YOU_MS, QUIET_MS - quietFor), done)
   }
 
   /** GitHub's own auto-merge is on: that pause is auto-merge's, whichever switch spoke last. */
@@ -571,15 +602,17 @@ export class AutopilotRuntime {
     finishAutopilot(row, "closed", `Auto-merge off — #${pr.number} was closed`, now)
   }
 
-  private async requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]> {
+  private async baseRules(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules> {
     const key = `${repository}#${base}`
     const hit = this.required.get(key)
-    if (hit && this.now().getTime() - hit.at < REQUIRED_TTL_MS) return hit.names
-    // Unreadable protection counts as none, which is the STRICTER branch:
-    // every check then counts. Cached briefly so a flaky read retries soon.
-    const names = await this.github.requiredChecks(repository, base, cwd, signal).catch(() => null)
-    this.required.set(key, { names: names ?? [], at: names ? this.now().getTime() : this.now().getTime() - REQUIRED_TTL_MS + 60_000 })
-    return names ?? []
+    if (hit && this.now().getTime() - hit.at < REQUIRED_TTL_MS) return hit.rules
+    // Unreadable protection counts as no required checks, which is the
+    // STRICTER branch: every check then counts. Cached briefly so a flaky
+    // read retries soon.
+    const rules = await this.github.requiredChecks(repository, base, cwd, signal).catch(() => null)
+    const known = rules ?? { checks: [], classicProtection: null }
+    this.required.set(key, { rules: known, at: rules ? this.now().getTime() : this.now().getTime() - REQUIRED_TTL_MS + 60_000 })
+    return known
   }
 
   /** A paused row still notices a PR that someone merged or closed, so it never sits paused on a finished PR. */
@@ -599,6 +632,7 @@ export class AutopilotRuntime {
     const task = getTask(row.task_id)
     if (!task || !taskIsIdle(task)) return
     const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging", about: "pr", by: "auto-merge" }
+    delete attempt.done
     const merging = `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`
     if (!writeAutopilotCheckpoint(row, attempt, now, merging)) return
     recordWorkflow(row.id, "merging", merging, now.toISOString())

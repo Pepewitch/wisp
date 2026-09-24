@@ -774,10 +774,15 @@ keyboard reach every control. Only a reason about the PR's own state
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
 from the UI polling below. The new-task dialog arms both from the start with a
 PR picker on the scoping row (`AutopilotPicker`, worktree tasks only, hidden on
-a daemon without `features.taskAutopilot`). In the sidebar, an armed task whose
-autopilot needs a person, or has paused, on that PR turns the PR icon's
-`blocked` red, and the icon's label carries the reason (`lib/autopilot-words`
-is the one wording both places use).
+a daemon without `features.taskAutopilot`). In the sidebar, an armed task carries a
+2px rail on the row's left edge (`AutopilotRail`, from `autopilotRail` in
+`lib/autopilot-words`): `state-background` blue while on, `primary` violet
+once `status.done` (the daemon's word: its PR merged on this row, or auto-fix
+alone found a green PR quiet for 15 minutes; never while a turn runs),
+`destructive` red when it needs a person or paused. The touch row carries it
+too, and an sr-only line says the same to a screen reader. A
+needs-you also turns the PR icon's `blocked` red with the reason in its label,
+and the hover card has an Autopilot row saying which switch is on.
 
 The count rides the header link and the hover card, not the sidebar icon: the
 icon compresses to three glance states on purpose, and the card is where the

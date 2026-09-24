@@ -21,6 +21,23 @@ export function autopilotArchiveWords(status: AutopilotStatus | null | undefined
   return `${on} on for PR #${status.pr} — archiving switches ${both ? "them" : "it"} off.`
 }
 
+/** Which switches are on, for a label: "Auto-merge + auto-fix", "Auto-merge", "Auto-fix". */
+export function autopilotSwitches(status: AutopilotStatus): string {
+  return status.autoMerge && status.autoFix ? "Auto-merge + auto-fix" : status.autoMerge ? "Auto-merge" : "Auto-fix"
+}
+
+/**
+ * The sidebar rail for a task with auto-merge or auto-fix on, or null when
+ * both are off: red while it needs a person, violet once it is done for now
+ * (the PR merged, or a quiet green PR under auto-fix), and the workflow blue
+ * while it is on and working.
+ */
+export function autopilotRail(status: AutopilotStatus | null | undefined): "needs-you" | "done" | "on" | null {
+  if (!status || !(status.autoMerge || status.autoFix) || status.state === "off" || status.state === "merged") return null
+  if (status.state === "needs-you" || status.state === "paused") return "needs-you"
+  return status.done ? "done" : "on"
+}
+
 /** Autopilot is stuck on this PR and waiting for a person: needs you, or paused. */
 export function autopilotBlocks(status: AutopilotStatus | null | undefined, number: number): boolean {
   return Boolean(status && (status.autoMerge || status.autoFix) && status.pr === number &&

@@ -64,6 +64,15 @@ export interface AutopilotCheckpoint {
   lastMerged?: { pr: number; base: string; byWisp: boolean; noted: boolean }
   /** looks since the merge that found no next PR: after a few quick ones, it waits for a turn */
   nextPrMisses?: number
+  /** when the last auto-fix round went out for the bound PR: quiet is counted from it too */
+  lastRoundAt?: string
+  /** the last look found nothing for auto-fix to do and a quiet PR (see AutopilotStatus.done) */
+  done?: boolean
+  /** this row merged its PR and has bound nothing since: done for now (a fresh row inheriting lastMerged is not) */
+  mergedHere?: boolean
+  /** the head the PR last went green on, and when: quiet is counted from it too */
+  greenHead?: string
+  greenAt?: string
 }
 
 export interface AutopilotParams {
@@ -90,17 +99,17 @@ export function paramsOf(row: WorkflowRow): AutopilotParams {
 /** The task's unfinished autopilot row, if it has one. */
 export function autopilotRow(taskId: string): WorkflowRow | null {
   return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? AND state != 'completed'
-    ORDER BY created_at DESC, id DESC LIMIT 1`).get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
 function latestRow(taskId: string): WorkflowRow | null {
-  return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+  return db.query(`SELECT * FROM workflows WHERE task_id = ? AND type = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
     .get(taskId, AUTOPILOT_TYPE) as WorkflowRow | null
 }
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
 }
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
@@ -134,9 +143,21 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const by: AutopilotBy = checkpoint.by === "auto-fix" && params.autoFix ? "auto-fix" : params.autoMerge ? "auto-merge" : "auto-fix"
   const lastMerged = checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null
   return {
+    done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
     pendingFix, fixRounds: checkpoint.rounds ?? 0, updatedAt: row.updated_at,
   }
+}
+
+/**
+ * Done for now: the last look said so (its PR merged on this row and nothing
+ * new is bound, or auto-fix alone found a quiet, green PR) — and the task is
+ * not running a turn, which is work again.
+ */
+function isDone(row: WorkflowRow, state: AutopilotState, checkpoint: AutopilotCheckpoint): boolean {
+  if (row.state !== "active" || state !== "waiting" || checkpoint.done !== true) return false
+  const task = getTask(row.task_id)
+  return task !== null && taskIsIdle(task)
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -145,7 +166,7 @@ export function autopilotStatus(taskId: string): AutopilotStatus {
 
 /** Every task's latest autopilot row, for the task list. */
 export function autopilotStatuses(): Map<string, AutopilotStatus> {
-  const rows = db.query("SELECT * FROM workflows WHERE type = ? ORDER BY created_at, id").all(AUTOPILOT_TYPE) as WorkflowRow[]
+  const rows = db.query("SELECT * FROM workflows WHERE type = ? ORDER BY created_at, rowid").all(AUTOPILOT_TYPE) as WorkflowRow[]
   const latest = new Map<string, WorkflowRow>()
   for (const row of rows) latest.set(row.task_id, row)
   return new Map([...latest].map(([taskId, row]) => [taskId, statusOf(row)]))
@@ -176,6 +197,8 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       // switching auto-fix off withdraws a round that has not started yet
       if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
       const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
+      // a changed switch is looked at afresh before anything is called done
+      delete checkpoint.done
       // switching auto-fix on again is a fresh start for its round budget
       if (!current.autoFix && next.autoFix) {
         delete checkpoint.rounds
@@ -228,6 +251,7 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   const checkpoint = checkpointOf(row)
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
+  delete checkpoint.done
   // Resume after a pause is a fresh start for auto-fix's round budget too;
   // Continue after a Stop hold is not.
   if (row.state === "paused") delete checkpoint.rounds
@@ -252,6 +276,8 @@ export interface AutopilotCheck {
   about?: "pr" | "task"
   /** defaults to "auto-merge": auto-fix's own looks say so */
   by?: AutopilotBy
+  /** nothing left to do for now (AutopilotStatus.done); any other look clears it */
+  done?: boolean
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
@@ -263,7 +289,9 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   if (!current || current.state !== "active" || current.revision !== row.revision) return false
   const at = now.toISOString()
   const previous = checkpointOf(current)
-  const checkpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
+  const checkpoint: AutopilotCheckpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
+  if (check.done) checkpoint.done = true
+  else delete checkpoint.done
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
     last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
   [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + check.delayMs).toISOString(), check.reason, at, row.id])
@@ -309,7 +337,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
       ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
       ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
       ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
-      lastMerged: { ...merged, noted: false },
+      lastMerged: { ...merged, noted: false }, mergedHere: true, done: true,
       state: "waiting", about: "task", by: "auto-merge",
     }
     const reason = `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · Waiting for the task's next PR`
@@ -463,7 +491,8 @@ export function withdrawQueuedRound(row: WorkflowRow): boolean {
   const messageId = queuedRound(row.id)
   if (!messageId) return false
   cancelWorkflowMessages(row.id)
-  db.run("UPDATE workflows SET revision = revision + 1 WHERE id = ?", [row.id])
+  // the cancel restored the checkpoint the round came from: a round was due, so it is not done
+  db.run("UPDATE workflows SET checkpoint_json = json_remove(checkpoint_json, '$.done'), revision = revision + 1 WHERE id = ?", [row.id])
   emit({ type: "message", taskId: row.task_id, messageId })
   return true
 }
@@ -572,6 +601,7 @@ export function skipCancelledRound(workflowId: string, messageId: string): boole
   // the cancel restored the countdown this round came from: it is answered
   delete checkpoint.pending
   delete checkpoint.sendNow
+  delete checkpoint.done
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), workflowId])
   recordWorkflow(workflowId, "skipped", "A queued auto-fix round was cancelled", new Date().toISOString())
   announceWorkflow(row.task_id)

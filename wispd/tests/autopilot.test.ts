@@ -109,7 +109,8 @@ describe("the loop", () => {
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges.map((merge) => merge.number)).toEqual([7]);
-    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true } });
+    // done for now (the sidebar's violet rail), and still on for the next PR
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true }, done: true });
     expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("delivered");
     // GitHub's open list lags the merge: #7 is still in it, and must not be adopted again
     await pass(rt, task.id, clock);
@@ -127,7 +128,7 @@ describe("the loop", () => {
     state.pulls = [opened(6, 30_000), opened(9, 120_000)];
     state.pr = snapshot({ number: 9, head: "d".repeat(40) });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ pr: 9, lastMerged: { pr: 7 } });
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: 9, lastMerged: { pr: 7 }, done: false });
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges.map((merge) => merge.number)).toEqual([7, 9]);
@@ -222,6 +223,82 @@ describe("the loop", () => {
     state.pr = snapshot({ state: "MERGED" });
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7, byWisp: true } });
+  });
+
+  test("auto-fix alone is done for now once CI is green and the PR has been quiet fifteen minutes", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoFix: true });
+    // quiet counts from when the PR went green: the first green look starts it
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    clock.now += 12 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    // it looks again exactly when the quiet completes, not on the five-minute cadence
+    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(3 * 60_000);
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix · no new review for 15 min", done: true });
+    // a new comment is new activity: not done until it too has gone quiet
+    state.pr = { ...state.pr, comments: [{ id: "IC_1", author: "reader", association: "NONE", bot: false, body: "hm", createdAt: new Date(clock.now - 60_000).toISOString(), editedAt: null, url: "", hidden: false }] };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    // and needing a person is never done
+    state.pr = snapshot({ checks: [{ name: "deploy", status: "WAITING", conclusion: null, required: true, url: "" }] });
+    state.required = ["deploy"];
+    clock.now += 30 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", done: false });
+  });
+
+  test("done is never stale: a red that is main's, a running turn, a resume or a toggle is not done", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const red = { name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "" };
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [red], baseChecks: [red] }) });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    clock.now += 30 * 60_000;
+    await pass(rt, task.id, clock);
+    await pass(rt, task.id, clock);
+    // red on main too is not this PR's to fix, but it is not green either
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "test is red on main too", done: false });
+    state.pr = snapshot();
+    await pass(rt, task.id, clock);
+    clock.now += 16 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).done).toBe(true);
+    // a turn running is work again, and a task waiting on you is not idle either
+    transition(task.id, "running");
+    expect(autopilotStatus(task.id).done).toBe(false);
+    transition(task.id, "needs-input");
+    expect(autopilotStatus(task.id).done).toBe(false);
+    transition(task.id, "done");
+    expect(autopilotStatus(task.id).done).toBe(true);
+    // a changed switch is looked at afresh
+    setAutopilot(task.id, { autoMerge: true });
+    expect(autopilotStatus(task.id).done).toBe(false);
+  });
+
+  test("a row armed after a merge on another row is not done: nothing merged here yet", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const { github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    await pass(rt, task.id, clock);
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7 }, done: true });
+    setAutopilot(task.id, { autoMerge: false });
+    setAutopilot(task.id, { autoFix: true });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7 }, pr: null, done: false });
   });
 
   test("closing a PR still switches both off: that is how its owner abandons an approach", async () => {
@@ -876,11 +953,14 @@ describe("auto-fix", () => {
   test("a round that never started is withdrawn, and its checkpoint comes back", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoFix: true });
+    // it was done before a round came due: the round coming back does not make it done again
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { done: true }, new Date());
     const row = autopilotRow(task.id)!;
     expect(reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent test failing (round 1 of 3)", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0 }, new Date())).not.toBeNull();
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBe(1);
     expect(withdrawQueuedRound(autopilotRow(task.id)!)).toBe(true);
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
+    expect(checkpointOf(autopilotRow(task.id)!).done).toBeUndefined();
   });
 
   test("a round reserved after the task got busy is refused; Stop withdraws a queued one and keeps its hold", () => {

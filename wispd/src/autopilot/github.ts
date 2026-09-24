@@ -78,6 +78,13 @@ export interface PrSnapshot {
   threads: PrThread[]
   /** more than 100 review threads exist: auto-fix read the newest 100 */
   threadsTruncated: boolean
+  /**
+   * Whether the base branch requires every conversation resolved before a
+   * merge (classic protection or a ruleset). Classic protection is readable
+   * only by an admin; for anyone else it is "unknown" unless a ruleset says
+   * so, and GitHub's own BLOCKED state then decides.
+   */
+  conversationRule: "required" | "not-required" | "unknown"
   /** the newest conversation comments, oldest first */
   comments: PrComment[]
   unresolvedThreads: number
@@ -85,6 +92,14 @@ export interface PrSnapshot {
   /** the base branch's head, and its checks: a red that is red there too is not this PR's to fix */
   baseHead: string | null
   baseChecks: PrCheck[]
+}
+
+/** What the base branch's protection says, as far as a non-admin can read it. */
+export interface BaseRules {
+  /** required status check contexts, from classic protection and rulesets */
+  checks: string[]
+  /** whether the branch has classic protection at all; null when unreadable */
+  classicProtection: boolean | null
 }
 
 export interface OpenPullRequest {
@@ -100,7 +115,7 @@ export interface AutopilotGitHub {
   snapshot(repository: string, number: number, cwd: string, signal: AbortSignal): Promise<PrSnapshot>
   openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; viewer: string; pulls: OpenPullRequest[] }>
   /** Context names the base branch requires, from classic protection and rulesets. */
-  requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<string[]>
+  requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules>
   merge(input: { repository: string; number: number; method: MergeMethod; head: string }, cwd: string, signal: AbortSignal): Promise<{ ok: boolean; detail: string }>
   /** Rerun a workflow run's failed and cancelled jobs (and their dependents); costs no agent tokens. */
   rerunRun(repository: string, runId: number, cwd: string, signal: AbortSignal): Promise<boolean>
@@ -166,11 +181,15 @@ query($owner: String!, $name: String!, $number: Int!) {
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
         } } }
       } } }
-      baseRef { target { ... on Commit { oid statusCheckRollup { contexts(first: 100) { nodes {
-        __typename
-        ... on CheckRun { name status conclusion }
-        ... on StatusContext { context state }
-      } } } } } }
+      baseRef {
+        branchProtectionRule { requiresConversationResolution }
+        rules(first: 50) { nodes { type parameters { ... on PullRequestParameters { requiredReviewThreadResolution } } } }
+        target { ... on Commit { oid statusCheckRollup { contexts(first: 100) { nodes {
+          __typename
+          ... on CheckRun { name status conclusion }
+          ... on StatusContext { context state }
+        } } } } }
+      }
     }
   }
 }
@@ -270,10 +289,15 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
 }
 
 /** The base branch head's own checks: a red that is red there too is not the PR's doing. */
-function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[] } {
-  const commit = isRecord(pr.baseRef) && isRecord(pr.baseRef.target) ? pr.baseRef.target : null
+function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[]; conversationRule: PrSnapshot["conversationRule"] } {
+  const ref = isRecord(pr.baseRef) ? pr.baseRef : null
+  const commit = ref && isRecord(ref.target) ? ref.target : null
   const rollup = commit && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
-  return { baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck) }
+  // a ruleset's pull-request rule is readable by anyone; classic protection only by an admin (null otherwise)
+  const ruleset = nodes(ref?.rules).some((rule) => rule.type === "PULL_REQUEST" && isRecord(rule.parameters) && rule.parameters.requiredReviewThreadResolution === true)
+  const classic = ref && isRecord(ref.branchProtectionRule) ? ref.branchProtectionRule.requiresConversationResolution === true : null
+  const conversationRule = ruleset || classic === true ? "required" : classic === false ? "not-required" : "unknown"
+  return { baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck), conversationRule }
 }
 
 export function parseSnapshot(raw: unknown): PrSnapshot {
@@ -372,6 +396,18 @@ export function mergeMethod(repo: Record<string, unknown>): MergeMethod {
   return fallback === "MERGE" || fallback === "REBASE" ? fallback : "MERGE"
 }
 
+/**
+ * `branches/{b}` tells anyone who can read the repository whether classic
+ * protection exists: `protection.enabled`. (`protected` is true for a ruleset
+ * alone, so it only settles the question when it is false.)
+ */
+export function classicProtectionOf(branch: unknown): boolean | null {
+  if (!isRecord(branch)) return null
+  const enabled = isRecord(branch.protection) ? branch.protection.enabled : undefined
+  if (typeof enabled === "boolean") return enabled
+  return branch.protected === false ? false : null
+}
+
 export function parseRequiredChecks(branch: unknown, rules: unknown): string[] {
   const names = new Set<string>()
   const protection = isRecord(branch) && isRecord(branch.protection) ? branch.protection : null
@@ -426,7 +462,7 @@ export const ghAutopilot: AutopilotGitHub = {
       ghJson(["api", `${path}/branches/${encoded}`], cwd, signal),
       ghJson(["api", `${path}/rules/branches/${encoded}`], cwd, signal).catch(() => []),
     ])
-    return parseRequiredChecks(branch, rules)
+    return { checks: parseRequiredChecks(branch, rules), classicProtection: classicProtectionOf(branch) }
   },
   async rerunRun(repository, runId, cwd, signal) {
     // Per RUN, not per job: rerunning one job of a run whose aggregator needs
