@@ -437,6 +437,25 @@ export function useUpdateWispSettings() {
   });
 }
 
+/**
+ * PATCH /api/settings with the review judge's key, or `null` to remove it.
+ * The key is this mutation's variables, so it is never cached: `gcTime: 0`
+ * drops it once the mutation settles and nothing observes it. The daemon's
+ * answer is the settings view, which never carries the key.
+ */
+export function useSaveReviewJudgeKey() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (jevApiKey: string | null) =>
+      transport.request<WispSettings>("/api/settings", { method: "PATCH", body: { jevApiKey } }),
+    onSuccess: (settings) => {
+      client.setQueryData(qk.settings, settings);
+    },
+  });
+}
+
 /** POST /api/settings/review-judge/test — one probe call, which the month's usage then counts. */
 export function useTestReviewJudge() {
   const client = useQueryClient();

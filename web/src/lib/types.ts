@@ -441,12 +441,10 @@ export interface WispSettings {
 }
 
 /**
- * PATCH /api/settings. `jevApiKey` is write-only: a string saves it, `null`
- * removes it, and no response ever carries it back.
+ * PATCH /api/settings. The review judge's `jevApiKey` goes through its own,
+ * uncached mutation (`useSaveReviewJudgeKey`), never this one.
  */
-export type WispSettingsPatch = Partial<Pick<WispSettings, "autoRenameTasksFromPullRequests" | "hiddenModels">> & {
-  jevApiKey?: string | null;
-};
+export type WispSettingsPatch = Partial<Pick<WispSettings, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
 
 /** The review judge as the daemon reports it: whether a key is set and its last four characters, never the key. */
 export interface ReviewJudgeStatus {

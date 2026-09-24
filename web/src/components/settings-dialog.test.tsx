@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
@@ -24,6 +24,7 @@ function renderSettings(request = vi.fn().mockResolvedValue({
   })
   return {
     request,
+    client,
     ...render(<SettingsDialog open onOpenChange={() => {}} />, {
       wrapper: runtimeWrapper(transport, client),
     }),
@@ -109,7 +110,9 @@ describe("Wisp settings", () => {
 
   it("hides the review judge on a daemon that has none", async () => {
     renderSettings()
-    await screen.findByRole("switch", { name: "Use pull request titles" })
+    // the switch renders disabled before the settings arrive; enabled means they did
+    const toggle = await screen.findByRole("switch", { name: "Use pull request titles" })
+    await waitFor(() => expect(toggle).toBeEnabled())
     expect(screen.queryByText("Review judge")).not.toBeInTheDocument()
   })
 })
@@ -121,102 +124,171 @@ describe("the review judge", () => {
   const off = { configured: false, source: null, hint: null, model: "jev-1.13.0", usage }
   const saved = { configured: true, source: "settings", hint: "…alue", model: "jev-1.13.0", usage: { ...usage, calls: 3, costUsd: 0.00012 } }
 
+  /** A daemon whose judge state a test can also change "from another client". */
   function daemon(initial: object, test: object = { ok: true, ms: 768, model: "jev-1.13.0" }) {
-    let judge = initial
-    return vi.fn().mockImplementation((path: string, options?: { method?: string; body?: Record<string, unknown> }) => {
+    const state = { judge: initial, refuse: null as string | null }
+    const request = vi.fn().mockImplementation((path: string, options?: { method?: string; body?: Record<string, unknown> }) => {
       if (path === "/api/settings/review-judge/test") return Promise.resolve(test)
       if (options?.method === "PATCH") {
+        if (state.refuse) return Promise.reject(new Error(state.refuse))
         const key = options.body?.jevApiKey
-        judge = key === null ? off : { ...saved, hint: `…${String(key).slice(-4)}` }
+        state.judge = key === null ? off : { ...saved, hint: `…${String(key).slice(-4)}` }
       }
-      return Promise.resolve({ autoRenameTasksFromPullRequests: true, reviewJudge: judge })
+      return Promise.resolve({ autoRenameTasksFromPullRequests: true, reviewJudge: state.judge })
     })
+    return { request, state }
   }
+  const patches = (request: ReturnType<typeof vi.fn>) =>
+    request.mock.calls.filter(([, options]) => (options as { method?: string } | undefined)?.method === "PATCH")
+  const typeKey = (value: string) => fireEvent.change(screen.getByLabelText("Jev API key"), { target: { value } })
 
-  it("saves a pasted key once, clears the field, and shows only its last four characters", async () => {
-    const request = daemon(off)
-    renderSettings(request)
+  it("saves a pasted key once and keeps it nowhere in the client", async () => {
+    const { request } = daemon(off)
+    const { client } = renderSettings(request)
 
     const field = await screen.findByLabelText("Jev API key")
     expect(field).toHaveAttribute("type", "password")
+    // a password manager must neither save it nor fill a saved credential in
+    expect(field.closest("form")).toBeNull()
+    expect(field).toHaveAttribute("data-1p-ignore")
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
-    fireEvent.change(field, { target: { value: `  ${sample}  ` } })
+    typeKey(`  ${sample}  `)
+    expect(screen.getByText(/Not saved yet/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith("/api/settings", { method: "PATCH", body: { jevApiKey: sample } }),
-    )
     expect(await screen.findByText("…alue")).toBeInTheDocument()
+    expect(patches(request)).toEqual([["/api/settings", { method: "PATCH", body: { jevApiKey: sample } }]])
     expect(screen.queryByLabelText("Jev API key")).not.toBeInTheDocument()
     expect(screen.getByText("Saved on this daemon.")).toBeInTheDocument()
-    expect(document.body.textContent).not.toContain(sample)
+    expect(document.body.innerHTML).not.toContain(sample)
+    await waitFor(() => expect(client.getMutationCache().getAll()).toHaveLength(0))
+  })
+
+  it("never pre-fills a replacement with the key it replaced", async () => {
+    const { request } = daemon(off)
+    renderSettings(request)
+
+    await screen.findByLabelText("Jev API key")
+    typeKey(sample)
+    fireEvent.keyDown(screen.getByLabelText("Jev API key"), { key: "Enter" })
+    fireEvent.click(await screen.findByRole("button", { name: "Replace…" }))
+    expect(screen.getByLabelText("Jev API key")).toHaveValue("")
+    expect(screen.getByLabelText("Jev API key")).toHaveFocus()
   })
 
   it("tests the key and says how fast it answered", async () => {
-    const request = daemon(saved)
+    const { request } = daemon(saved)
     renderSettings(request)
 
     fireEvent.click(await screen.findByRole("button", { name: "Test" }))
-    expect(await screen.findByRole("status")).toHaveTextContent("The key works: answered in 768 ms.")
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The key works: answered in 768 ms."))
     expect(request).toHaveBeenCalledWith("/api/settings/review-judge/test", { method: "POST" })
     expect(screen.getByText(/3 calls this month · under \$0\.01 · jev-1\.13\.0/)).toBeInTheDocument()
   })
 
   it("says why a test failed", async () => {
-    renderSettings(daemon(saved, { ok: false, error: "Jev answered 401" }))
+    renderSettings(daemon(saved, { ok: false, error: "Jev answered HTTP 401" }).request)
 
     fireEvent.click(await screen.findByRole("button", { name: "Test" }))
-    expect(await screen.findByRole("alert")).toHaveTextContent("The test failed: Jev answered 401")
+    expect(await screen.findByRole("alert")).toHaveTextContent("The test failed: Jev answered HTTP 401")
   })
 
-  it("removes a saved key", async () => {
-    const request = daemon(saved)
+  it("drops a test result once the key it tested changes elsewhere", async () => {
+    const { request, state } = daemon(saved)
+    const { client } = renderSettings(request)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }))
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The key works"))
+    state.judge = { ...saved, hint: "…ther" }
+    await act(() => client.invalidateQueries())
+
+    expect(await screen.findByText("…ther")).toBeInTheDocument()
+    expect(screen.getByRole("status")).toBeEmptyDOMElement()
+  })
+
+  it("removes a saved key only once it is confirmed", async () => {
+    const { request } = daemon(saved)
     renderSettings(request)
 
     fireEvent.click(await screen.findByRole("button", { name: "Remove" }))
-    await waitFor(() =>
-      expect(request).toHaveBeenCalledWith("/api/settings", { method: "PATCH", body: { jevApiKey: null } }),
-    )
-    expect(await screen.findByLabelText("Jev API key")).toBeInTheDocument()
+    expect(screen.getByText("Remove the key?")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus()
+    fireEvent.click(screen.getByRole("button", { name: "Keep" }))
+    expect(screen.getByRole("button", { name: "Remove" })).toHaveFocus()
+    expect(patches(request)).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }))
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }))
+    await waitFor(() => expect(patches(request)).toEqual([["/api/settings", { method: "PATCH", body: { jevApiKey: null } }]]))
+    expect(await screen.findByLabelText("Jev API key")).toHaveFocus()
   })
 
   it("replaces a key, and Cancel keeps the one already set", async () => {
-    renderSettings(daemon(saved))
+    renderSettings(daemon(saved).request)
 
     fireEvent.click(await screen.findByRole("button", { name: "Test" }))
-    await screen.findByRole("status")
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("The key works"))
     fireEvent.click(screen.getByRole("button", { name: "Replace…" }))
     // the result was about the key being replaced
-    expect(screen.queryByRole("status")).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText("Jev API key"), { target: { value: "draft" } })
+    expect(screen.getByRole("status")).toBeEmptyDOMElement()
+    typeKey("draft-value")
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
     expect(await screen.findByText("…alue")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Replace…" })).toHaveFocus()
     fireEvent.click(screen.getByRole("button", { name: "Replace…" }))
     expect(screen.getByLabelText("Jev API key")).toHaveValue("")
   })
 
   it("cannot remove a key from the daemon's environment, only override it", async () => {
-    renderSettings(daemon({ ...saved, source: "environment" }))
+    renderSettings(daemon({ ...saved, source: "environment" }).request)
 
-    expect(await screen.findByText("From the daemon's environment. A key saved here takes its place.")).toBeInTheDocument()
+    expect(await screen.findByText(/From the daemon's environment \(TYPESAFE_API_KEY or JEV_API_KEY\)\. A key saved here takes its place\./)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Replace…" })).toBeInTheDocument()
   })
 
-  it("shows the daemon's reason when it refuses a key", async () => {
-    const request = daemon(off)
-    request.mockImplementation((_path: string, options?: { method?: string }) =>
-      options?.method === "PATCH"
-        ? Promise.reject(new Error("jevApiKey must be 8–512 printable characters with no spaces"))
-        : Promise.resolve({ autoRenameTasksFromPullRequests: true, reviewJudge: off }),
-    )
+  it("says what a key looks like before sending a malformed one", async () => {
+    const { request } = daemon(off)
     renderSettings(request)
 
-    fireEvent.change(await screen.findByLabelText("Jev API key"), { target: { value: "short" } })
+    await screen.findByLabelText("Jev API key")
+    typeKey("has a space")
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
-    expect(await screen.findByRole("alert")).toHaveTextContent("jevApiKey must be 8–512 printable characters")
+
+    expect(screen.getByRole("alert")).toHaveTextContent("A Jev key is 8 to 512 characters with no spaces.")
+    expect(screen.getByLabelText("Jev API key")).toHaveAttribute("aria-invalid", "true")
+    expect(patches(request)).toHaveLength(0)
+  })
+
+  it("shows the daemon's reason when it refuses a key, and keeps the draft", async () => {
+    const { request, state } = daemon(off)
+    state.refuse = "could not write config.json"
+    renderSettings(request)
+
+    await screen.findByLabelText("Jev API key")
+    typeKey(sample)
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not write config.json")
     // the draft stays, so a typo can be fixed rather than pasted again
-    expect(screen.getByLabelText("Jev API key")).toHaveValue("short")
+    expect(screen.getByLabelText("Jev API key")).toHaveValue(sample)
+  })
+
+  it("drops a refused draft once a key is set from another client", async () => {
+    const { request, state } = daemon(off)
+    state.refuse = "could not write config.json"
+    const { client } = renderSettings(request)
+
+    await screen.findByLabelText("Jev API key")
+    typeKey(sample)
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await screen.findByRole("alert")
+    state.judge = { ...saved, hint: "…ther" }
+    await act(() => client.invalidateQueries())
+
+    expect(await screen.findByText("…ther")).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Replace…" }))
+    expect(screen.getByLabelText("Jev API key")).toHaveValue("")
   })
 })
