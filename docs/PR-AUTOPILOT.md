@@ -64,7 +64,7 @@ adopts a PR you open from this task after the merged one was opened — the
 task's next change, or a PR that was stacked on the merged one — and never an
 older open PR, which is stale or abandoned. Everything about the merged PR
 (its rounds, reruns, and the review feedback already sent) is left behind, so
-the next PR starts with a fresh three-round budget. The status reads
+the next PR starts with a fresh five-round budget. The status reads
 `#271 merged by Wisp · Waiting for the task's next PR` until it binds. A turn
 ending looks for it at once (and twice more over the next ten minutes, in case
 GitHub's list is slow); after that it looks hourly, so a PR you open by hand
@@ -177,8 +177,8 @@ too, are listed as context, without their logs.
   holds auto-fix like auto-merge.
 - **Never twice, and never forever.** The same evidence is sent once: if the
   agent's turn ends without a push and the check is still red, Wisp says so
-  and waits for you instead of repeating itself. After three rounds on one PR
-  it pauses; **Resume** gives it three more.
+  and waits for you instead of repeating itself. After five rounds on one PR
+  it pauses; **Resume** gives it five more.
 - **Never mid-turn**, and a user message queued first still goes first.
 
 With both switches on, auto-fix acts first: nothing merges while a check is
@@ -194,7 +194,7 @@ Auto-fix also sends the agent review feedback it has not seen yet. That covers:
 - conversation comments.
 
 CI failures and review feedback go out together as one round, and share the
-three-round budget. Review feedback is not held back while CI is still
+five-round budget. Review feedback is not held back while CI is still
 running.
 
 - **Whose words count.**
@@ -364,7 +364,7 @@ Each is something only a person can move:
 - **The PR itself.** It is a draft, targets a branch other than the default
   or configured base, or comes from a fork; the worktree has commits the PR
   lacks; or it is not a GitHub repository.
-- **A pause**, until Resume: auto-fix gave up after three rounds, a merge failed
+- **A pause**, until Resume: auto-fix gave up after five rounds, a merge failed
   three times on the same head, or GitHub's own auto-merge was turned on.
 
 Waiting on CI, on a fresh head, on the task's turn, or on your reviewer agents'

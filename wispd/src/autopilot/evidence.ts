@@ -13,7 +13,7 @@ import type { FixPlan } from "./fix"
 import type { AutopilotGitHub, PrSnapshot } from "./github"
 import type { Judgment } from "./judge"
 
-export const MAX_ROUNDS = 3
+export const MAX_ROUNDS = 5
 const MAX_LOGS = 6
 /** All of a round's logs are read at once, inside this, well within the look's own deadline. */
 export const LOG_BUDGET_MS = 45_000

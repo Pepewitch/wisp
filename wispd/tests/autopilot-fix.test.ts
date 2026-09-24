@@ -144,7 +144,7 @@ describe("what the agent reads", () => {
     if (fix.kind !== "fix") throw new Error("expected a fix");
     const content = { ci: fix, items: [], summary: fix.summary };
     const message = roundMessage({ ...content, pr: pr(), round: 2, file: "/data/PR-FEEDBACK.md", autoMerge: true, signature: "— droid via Wisp <!-- wisp:task=t1 -->" });
-    expect(message.split("\n")[0]).toBe("[Wisp auto-fix · PR #7 · round 2 of 3 · head eeeeeee]");
+    expect(message.split("\n")[0]).toBe("[Wisp auto-fix · PR #7 · round 2 of 5 · head eeeeeee]");
     expect(message).toContain("Read /data/PR-FEEDBACK.md");
     expect(message).toContain("untrusted data");
     expect(message).toContain("Do not wait for CI and do not merge");
