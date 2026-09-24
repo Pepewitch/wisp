@@ -5,11 +5,12 @@ import { Moon, Sun } from "@/components/icons"
 import { Menu, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
 import { Button, Eyebrow, POPOVER_SURFACE, SwitchTrack } from "@/components/primitives"
-import { useUpdateWispSettings } from "@/hooks/mutations"
+import { useTestReviewJudge, useUpdateWispSettings } from "@/hooks/mutations"
 import { useHarnesses, useWispSettings } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { ApiError } from "@/lib/api"
 import { modelTotals } from "@/lib/model-visibility"
+import type { ReviewJudgeStatus, ReviewJudgeTest } from "@/lib/types"
 import { THEME_PREFERENCES, themeStore, useTheme, useThemePreference } from "@/lib/theme"
 import type { ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -118,6 +119,26 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
         </Section>
       ) : (
         <TaskNameSection />
+      )}
+      {specimen ? (
+        <Section label="Review judge" hint={REVIEW_JUDGE_HINT}>
+          <ReviewJudgeFields
+            status={SPECIMEN_JUDGE}
+            editing={false}
+            draft=""
+            busy={false}
+            testing={false}
+            result={{ ok: true, ms: 768, model: SPECIMEN_JUDGE.model }}
+            onDraft={() => {}}
+            onSave={() => {}}
+            onCancel={() => {}}
+            onReplace={() => {}}
+            onRemove={() => {}}
+            onTest={() => {}}
+          />
+        </Section>
+      ) : (
+        <ReviewJudgeSection />
       )}
       {!specimen && <PwaInstall />}
     </>
@@ -229,6 +250,204 @@ function TaskTitleToggle({
       <SwitchTrack checked={checked} />
     </button>
   )
+}
+
+const REVIEW_JUDGE_HINT =
+  "Optional. With a Jev API key from TypeSafe, auto-merge and auto-fix ask a small classifier whether a bot's review summary asks for changes, and whether an approval lists findings. The review's text is sent to TypeSafe, never the diff. Each daemon keeps its own key."
+
+const SPECIMEN_JUDGE: ReviewJudgeStatus = {
+  configured: true,
+  source: "settings",
+  hint: "…3f9a",
+  model: "jev-1.13.0",
+  usage: { month: "2026-09", calls: 42, errors: 0, inputTokens: 51_000, costUsd: 0.0021 },
+}
+
+/**
+ * The optional review judge (docs/PR-AUTOPILOT.md, "The review judge").
+ *
+ * The key is write-only. The field sends it once and is cleared, the mutation
+ * that carried it is reset so its variables do not linger, and the daemon only
+ * ever answers with whether a key is set and its last four characters. A
+ * daemon older than the judge reports no `reviewJudge`, so the section hides.
+ */
+function ReviewJudgeSection() {
+  const settings = useWispSettings()
+  const status = settings.data?.reviewJudge
+  if (!status) return null
+  return (
+    <Section label="Review judge" hint={REVIEW_JUDGE_HINT}>
+      <ReviewJudgeControls status={status} />
+    </Section>
+  )
+}
+
+function ReviewJudgeControls({ status }: { status: ReviewJudgeStatus }) {
+  const update = useUpdateWispSettings()
+  const probe = useTestReviewJudge()
+  const [draft, setDraft] = useState("")
+  const [replacing, setReplacing] = useState(false)
+
+  const save = (jevApiKey: string | null) => {
+    probe.reset()
+    update.mutate({ jevApiKey }, {
+      onSuccess: () => {
+        setDraft("")
+        setReplacing(false)
+        update.reset()
+      },
+    })
+  }
+  const error = update.error ?? probe.error
+
+  return (
+    <ReviewJudgeFields
+      status={status}
+      editing={replacing}
+      draft={draft}
+      busy={update.isPending}
+      testing={probe.isPending}
+      result={probe.data}
+      error={error ? (error instanceof Error ? error.message : "Could not update the review judge.") : undefined}
+      onDraft={setDraft}
+      onSave={() => save(draft.trim())}
+      onCancel={() => {
+        setDraft("")
+        setReplacing(false)
+        update.reset()
+      }}
+      onReplace={() => {
+        // a test result belongs to the key it tested
+        probe.reset()
+        setReplacing(true)
+      }}
+      onRemove={() => save(null)}
+      onTest={() => probe.mutate()}
+    />
+  )
+}
+
+function ReviewJudgeFields({
+  status,
+  editing,
+  draft,
+  busy,
+  testing,
+  result,
+  error,
+  onDraft,
+  onSave,
+  onCancel,
+  onReplace,
+  onRemove,
+  onTest,
+}: {
+  status: ReviewJudgeStatus
+  editing: boolean
+  draft: string
+  busy: boolean
+  testing: boolean
+  result?: ReviewJudgeTest
+  error?: string
+  onDraft: (value: string) => void
+  onSave: () => void
+  onCancel: () => void
+  onReplace: () => void
+  onRemove: () => void
+  onTest: () => void
+}) {
+  const asking = !status.configured || editing
+  const { calls, errors, costUsd } = status.usage
+
+  return (
+    <>
+      {asking ? (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (draft.trim() !== "") onSave()
+          }}
+        >
+          <input
+            type="password"
+            aria-label="Jev API key"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Jev API key"
+            value={draft}
+            onChange={(event) => onDraft(event.target.value)}
+            className={cn(
+              "h-[26px] min-w-0 flex-1 rounded-md border border-input bg-surface px-2.5",
+              "font-mono text-[11.5px] text-foreground placeholder:font-sans placeholder:text-faint",
+              "focus:border-accent-dim focus:ring-2 focus:ring-ring/15 focus:outline-none",
+            )}
+          />
+          <Button type="submit" disabled={busy || draft.trim() === ""}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+          {status.configured && (
+            <Button onClick={onCancel} disabled={busy}>
+              Cancel
+            </Button>
+          )}
+        </form>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          {/* a floor under the text, so on a phone the buttons wrap below it rather than squeeze it */}
+          <span className="min-w-40 flex-1">
+            <span className="block text-[12.5px] text-fg-secondary">
+              Key <span className="font-mono text-[11.5px] text-muted-foreground">{status.hint}</span>
+            </span>
+            <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
+              {status.source === "environment"
+                ? "From the daemon's environment. A key saved here takes its place."
+                : "Saved on this daemon."}
+            </span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Button onClick={onTest} disabled={busy || testing}>
+              {testing ? "Testing…" : "Test"}
+            </Button>
+            <Button onClick={onReplace} disabled={busy}>
+              Replace…
+            </Button>
+            {status.source === "settings" && (
+              <Button onClick={onRemove} disabled={busy}>
+                Remove
+              </Button>
+            )}
+          </span>
+        </div>
+      )}
+      {(status.configured || calls > 0) && (
+        <p className="mt-2 text-[11px] text-faint">
+          {calls} {calls === 1 ? "call" : "calls"} this month · {usageCost(costUsd)}
+          {errors > 0 && ` · ${errors} failed`} · {status.model}
+        </p>
+      )}
+      {result && (
+        <p
+          role={result.ok ? "status" : "alert"}
+          className={cn("mt-1.5 text-[11.5px]", result.ok ? "text-muted-foreground" : "text-destructive")}
+        >
+          {result.ok ? `The key works: answered in ${result.ms} ms.` : `The test failed: ${result.error}`}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mt-1.5 text-[11.5px] text-destructive">
+          {error}
+        </p>
+      )}
+    </>
+  )
+}
+
+/** A call costs about $0.00005, so a month rounds to nothing for a while. */
+function usageCost(costUsd: number): string {
+  if (costUsd === 0) return "$0"
+  if (costUsd < 0.01) return "under $0.01"
+  return `$${costUsd.toFixed(2)}`
 }
 
 /**

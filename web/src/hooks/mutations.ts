@@ -6,7 +6,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ReviewJudgeTest, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -426,13 +426,25 @@ export function useUpdateWispSettings() {
   return useMutation({
     // a real PATCH: each key is independent, so a client sending only the one
     // field it owns never blanks a setting it has not heard of
-    mutationFn: (settings: Partial<WispSettings>) =>
+    mutationFn: (settings: WispSettingsPatch) =>
       transport.request<WispSettings>("/api/settings", {
         method: "PATCH",
         body: settings,
       }),
     onSuccess: (settings) => {
       client.setQueryData(qk.settings, settings);
+    },
+  });
+}
+
+/** POST /api/settings/review-judge/test — one probe call, which the month's usage then counts. */
+export function useTestReviewJudge() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: () => transport.request<ReviewJudgeTest>("/api/settings/review-judge/test", { method: "POST" }),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: qk.settings });
     },
   });
 }

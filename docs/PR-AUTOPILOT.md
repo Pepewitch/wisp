@@ -318,13 +318,19 @@ owner's 26 real approving reviews, "lists findings or not" matched every one.
   it as it would without a key; the judge keeps retrying on its backoff.
   Auto-fix never waits: an unjudged comment is just not sent yet. With no key,
   nothing is judged and no stored answer counts.
-- **The key:** set it through the daemon's settings API (`PATCH /api/settings`
-  with `{"jevApiKey": "…"}`, or `null` to remove it; `POST
-  /api/settings/review-judge/test` makes one probe call), or with
-  `TYPESAFE_API_KEY` or `JEV_API_KEY` in the daemon's environment. It is stored in `config.json` (mode 0600,
-  beside the bearer token). It can be written over the API but is never read
-  back: clients see only whether one is set and its last four characters.
-  Each daemon has its own.
+- **The key:** paste it in **Settings → Review judge**, which also tests it,
+  replaces or removes it, and shows the month's calls and cost. The same
+  goes through the daemon's settings API (`PATCH /api/settings` with
+  `{"jevApiKey": "…"}`, or `null` to remove it; `POST
+  /api/settings/review-judge/test` makes one probe call). Or set
+  `TYPESAFE_API_KEY` or `JEV_API_KEY` in the daemon's environment; a key
+  saved in Settings takes its place. A daemon started by launchd or systemd
+  does not read your shell profile, so a key exported there never reaches
+  it. A saved key is stored in `config.json` (mode 0600, beside the bearer
+  token). It can be written but is never read back: clients see only whether
+  one is set, where it came from, and its last four characters. Each daemon
+  has its own; in Desktop, the section sets the key of the connection you are
+  on.
 - **The log:** every call, with the text sent and the answer or the error, is
   appended to `tasks/<task>/autopilot/<row>/judge.jsonl` beside the round
   evidence (mode 0600; the previous 2 MB is kept as `judge.1.jsonl`).

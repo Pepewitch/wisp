@@ -106,4 +106,117 @@ describe("Wisp settings", () => {
       name: "Use pull request titles",
     })).toHaveAttribute("aria-checked", "false")
   })
+
+  it("hides the review judge on a daemon that has none", async () => {
+    renderSettings()
+    await screen.findByRole("switch", { name: "Use pull request titles" })
+    expect(screen.queryByText("Review judge")).not.toBeInTheDocument()
+  })
+})
+
+describe("the review judge", () => {
+  // not key-shaped, so no secret scanner mistakes a fixture for a credential
+  const sample = "jev-test-sample-value"
+  const usage = { month: "2026-09", calls: 0, errors: 0, inputTokens: 0, costUsd: 0 }
+  const off = { configured: false, source: null, hint: null, model: "jev-1.13.0", usage }
+  const saved = { configured: true, source: "settings", hint: "…alue", model: "jev-1.13.0", usage: { ...usage, calls: 3, costUsd: 0.00012 } }
+
+  function daemon(initial: object, test: object = { ok: true, ms: 768, model: "jev-1.13.0" }) {
+    let judge = initial
+    return vi.fn().mockImplementation((path: string, options?: { method?: string; body?: Record<string, unknown> }) => {
+      if (path === "/api/settings/review-judge/test") return Promise.resolve(test)
+      if (options?.method === "PATCH") {
+        const key = options.body?.jevApiKey
+        judge = key === null ? off : { ...saved, hint: `…${String(key).slice(-4)}` }
+      }
+      return Promise.resolve({ autoRenameTasksFromPullRequests: true, reviewJudge: judge })
+    })
+  }
+
+  it("saves a pasted key once, clears the field, and shows only its last four characters", async () => {
+    const request = daemon(off)
+    renderSettings(request)
+
+    const field = await screen.findByLabelText("Jev API key")
+    expect(field).toHaveAttribute("type", "password")
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled()
+    fireEvent.change(field, { target: { value: `  ${sample}  ` } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("/api/settings", { method: "PATCH", body: { jevApiKey: sample } }),
+    )
+    expect(await screen.findByText("…alue")).toBeInTheDocument()
+    expect(screen.queryByLabelText("Jev API key")).not.toBeInTheDocument()
+    expect(screen.getByText("Saved on this daemon.")).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain(sample)
+  })
+
+  it("tests the key and says how fast it answered", async () => {
+    const request = daemon(saved)
+    renderSettings(request)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }))
+    expect(await screen.findByRole("status")).toHaveTextContent("The key works: answered in 768 ms.")
+    expect(request).toHaveBeenCalledWith("/api/settings/review-judge/test", { method: "POST" })
+    expect(screen.getByText(/3 calls this month · under \$0\.01 · jev-1\.13\.0/)).toBeInTheDocument()
+  })
+
+  it("says why a test failed", async () => {
+    renderSettings(daemon(saved, { ok: false, error: "Jev answered 401" }))
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("The test failed: Jev answered 401")
+  })
+
+  it("removes a saved key", async () => {
+    const request = daemon(saved)
+    renderSettings(request)
+
+    fireEvent.click(await screen.findByRole("button", { name: "Remove" }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("/api/settings", { method: "PATCH", body: { jevApiKey: null } }),
+    )
+    expect(await screen.findByLabelText("Jev API key")).toBeInTheDocument()
+  })
+
+  it("replaces a key, and Cancel keeps the one already set", async () => {
+    renderSettings(daemon(saved))
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }))
+    await screen.findByRole("status")
+    fireEvent.click(screen.getByRole("button", { name: "Replace…" }))
+    // the result was about the key being replaced
+    expect(screen.queryByRole("status")).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Jev API key"), { target: { value: "draft" } })
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    expect(await screen.findByText("…alue")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Replace…" }))
+    expect(screen.getByLabelText("Jev API key")).toHaveValue("")
+  })
+
+  it("cannot remove a key from the daemon's environment, only override it", async () => {
+    renderSettings(daemon({ ...saved, source: "environment" }))
+
+    expect(await screen.findByText("From the daemon's environment. A key saved here takes its place.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Replace…" })).toBeInTheDocument()
+  })
+
+  it("shows the daemon's reason when it refuses a key", async () => {
+    const request = daemon(off)
+    request.mockImplementation((_path: string, options?: { method?: string }) =>
+      options?.method === "PATCH"
+        ? Promise.reject(new Error("jevApiKey must be 8–512 printable characters with no spaces"))
+        : Promise.resolve({ autoRenameTasksFromPullRequests: true, reviewJudge: off }),
+    )
+    renderSettings(request)
+
+    fireEvent.change(await screen.findByLabelText("Jev API key"), { target: { value: "short" } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("jevApiKey must be 8–512 printable characters")
+    // the draft stays, so a typo can be fixed rather than pasted again
+    expect(screen.getByLabelText("Jev API key")).toHaveValue("short")
+  })
 })
