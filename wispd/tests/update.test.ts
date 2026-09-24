@@ -62,6 +62,18 @@ async function waitFor(manager: UpdateManager, state: UpdateStatus["state"]): Pr
   throw new Error(`update never reached ${state}`);
 }
 
+/**
+ * A restart callback and a promise that settles once it has run. The manager
+ * reports "restarting" one `restartDelayMs` before it calls restart(), so
+ * seeing the state is not seeing the call.
+ */
+function restartProbe() {
+  let count = 0;
+  let ran!: () => void;
+  const called = new Promise<void>((resolve) => { ran = resolve; });
+  return { restart: () => { count++; ran(); }, called, count: () => count };
+}
+
 describe("release selection", () => {
   test("compares stable and prerelease versions with SemVer precedence", () => {
     expect(compareVersions("0.4.0-alpha.10", "0.4.0-alpha.9")).toBe(1);
@@ -307,7 +319,7 @@ describe("UpdateManager", () => {
 
   test("updates a Homebrew installation without replacing its binary directly", async () => {
     const commands: string[][] = [];
-    let restarted = 0;
+    const probe = restartProbe();
     const run = async (cmd: string[]): Promise<CommandResult> => {
       commands.push(cmd);
       if (cmd.join(" ") === "brew --prefix wisp") {
@@ -328,9 +340,7 @@ describe("UpdateManager", () => {
       fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
       run,
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
-      restart: () => {
-        restarted++;
-      },
+      restart: probe.restart,
       restartDelayMs: 0,
     });
 
@@ -341,13 +351,14 @@ describe("UpdateManager", () => {
       latestApiProtocolVersion: API_PROTOCOL_VERSION,
     });
     await waitFor(manager, "restarting");
+    await probe.called;
     expect(commands).toEqual([
       ["brew", "update"],
       ["brew", "upgrade", "Pepewitch/tap/wisp"],
       ["brew", "--prefix", "wisp"],
       ["/opt/homebrew/opt/wisp/bin/wisp", "version", "--json"],
     ]);
-    expect(restarted).toBe(1);
+    expect(probe.count()).toBe(1);
   });
 
   test("reports a package-manager failure without restarting", async () => {
@@ -384,7 +395,7 @@ describe("UpdateManager", () => {
     const artifact = new TextEncoder().encode("verified executable");
     const checksum = new Bun.CryptoHasher("sha256").update(artifact).digest("hex");
     const commit = "c".repeat(40);
-    let restarted = 0;
+    const probe = restartProbe();
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       executablePath: oldBinary,
@@ -423,20 +434,18 @@ describe("UpdateManager", () => {
         reason: null,
         installRoot: root,
       }),
-      restart: () => {
-        restarted++;
-      },
+      restart: probe.restart,
       restartDelayMs: 0,
     });
 
     await manager.start("0.4.0-alpha.8");
     await waitFor(manager, "restarting");
-    await Bun.sleep(5);
+    await probe.called;
     const installed = join(root, "versions/0.4.0-alpha.8/wisp");
     expect(readFileSync(installed, "utf8")).toBe("verified executable");
     expect(readlinkSync(join(root, "current"))).toBe(installed);
     expect(readFileSync(oldBinary, "utf8")).toBe("old");
-    expect(restarted).toBe(1);
+    expect(probe.count()).toBe(1);
   });
 });
 
