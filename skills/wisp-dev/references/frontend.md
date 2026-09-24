@@ -595,10 +595,12 @@ does nothing once focus moves off it.
 
 Selection inside a menu is a checkmark plus `bg-hover`. The accent appears in
 the composer exactly twice: the focus ring, and the Create button.
-A menu's on/off switch (`MenuCheckboxItem`) puts its checkmark in a neutral
-outlined box. A radio row's empty slot is explained by its checked neighbour
-or its group's header. A switch shares a menu with actions and has neither, so
-without the box an unticked `Auto-merge` would read as a command.
+A menu's on/off switch (`MenuCheckboxItem`) ends in a small neutral switch
+(foreground when on, never the accent) instead of a leading checkmark. A radio
+row's empty checkmark slot is explained by its checked neighbour or its group's
+header. A switch shares a menu with actions and has neither, so a bare
+unticked `Auto-merge` would read as a command. The trailing switch shows off as
+plainly as on, and keeps the label aligned with the actions.
 
 ## 5e. The `/` palette
 
@@ -770,7 +772,7 @@ checks (2 running)` — because the reason already accounts for both, and the
 line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
 switches — Auto-merge and Auto-fix — are checkbox rows in the task's `…` menu
-(`MenuCheckboxItem`, a boxed checkmark), naming the PR they are bound to, with the reason as a
+(`MenuCheckboxItem`, a trailing switch), naming the PR they are bound to, with the reason as a
 `MenuNote` and the one action the state asks for beneath it (Send now / Skip for
 a waiting auto-fix round, Resume, or Continue now): menu rows, so touch and
 keyboard reach every control. Only a reason about the PR's own state
