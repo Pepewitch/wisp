@@ -2,7 +2,7 @@
 
 Wisp Desktop supports **Apple Silicon**, with a configured minimum of
 macOS 12.3. Intel Macs are unsupported. OS coverage is limited; see the
-[qualification ledger](v0.5/QUALIFICATION.md) for tested journeys and gaps.
+[qualification ledger](v0.6/QUALIFICATION.md) for tested journeys and gaps.
 
 You need Homebrew, Git, a repository with a configured Git identity, and an
 installed and authenticated harness: Droid, Claude Code, Codex, Cursor, or

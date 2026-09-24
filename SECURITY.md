@@ -8,12 +8,12 @@ configured harness credential as security-sensitive.
 
 | Version | Security fixes |
 |---|---|
-| Current `0.5.19` | Best effort while current; Desktop publication requires Developer ID signing, notarization, stapling, and updater signing |
+| Current `0.6.0` | Best effort while current; Desktop publication requires Developer ID signing, notarization, stapling, and updater signing |
 | Earlier versions, including `0.4.0-alpha.x` | Upgrade to the current release; no maintained backport branch |
 
 There is no production support guarantee. The 0.5.0 engineering and security
 review produced fixes, not a certification of zero vulnerabilities. See the
-[qualification ledger](docs/v0.5/QUALIFICATION.md) for release evidence,
+[qualification ledger](docs/v0.6/QUALIFICATION.md) for release evidence,
 remaining platform gaps, and native dependency advisory scope.
 
 ## Trust model

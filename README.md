@@ -51,7 +51,7 @@ troubleshooting, see the [macOS guide](docs/INSTALL-MACOS.md).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.19/scripts/install.sh | sh
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.6.0/scripts/install.sh | sh
 ```
 
 The installer verifies the download, installs under your home directory, and
@@ -97,7 +97,7 @@ unbundled and ad-hoc signed.
 - [Remote and phone access](docs/REMOTE-ACCESS.md)
 - [Storage, archive, and cleanup](docs/ARCHIVE-CLEANUP.md)
 - [Security and vulnerability reporting](SECURITY.md)
-- [Release notes](https://github.com/Pepewitch/wisp/releases) and [tested limits](docs/v0.5/QUALIFICATION.md)
+- [Release notes](https://github.com/Pepewitch/wisp/releases) and [tested limits](docs/v0.6/QUALIFICATION.md)
 
 ## Contribute
 

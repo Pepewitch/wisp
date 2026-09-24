@@ -3,7 +3,7 @@
 Release gates cover **Ubuntu 24.04 LTS, x86_64**. The binary requires
 glibc 2.17 or newer; other glibc distributions are untested, not blocked. There is
 no musl or ARM Linux artifact. Full clean-machine and rollback qualification
-still has gaps; see the [qualification ledger](v0.5/QUALIFICATION.md).
+still has gaps; see the [qualification ledger](v0.6/QUALIFICATION.md).
 
 For Apple Silicon, use the [macOS guide](INSTALL-MACOS.md).
 
@@ -24,10 +24,10 @@ running a task.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.19/scripts/install.sh | sh
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.6.0/scripts/install.sh | sh
 ```
 
-This pins the installer to release `0.5.19`. It verifies the binary checksum,
+This pins the installer to release `0.6.0`. It verifies the binary checksum,
 embedded version, and clean-build flag before activation. An expected commit
 is also checked if supplied through `WISP_COMMIT`.
 
@@ -46,7 +46,7 @@ To inspect the script first, download it into a scratch directory:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.19/scripts/install.sh \
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.6.0/scripts/install.sh \
   -o install-wisp.sh
 less install-wisp.sh
 sh install-wisp.sh
@@ -300,7 +300,7 @@ an incomplete or newer backup.
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.5.19/scripts/uninstall.sh | sh
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.6.0/scripts/uninstall.sh | sh
 ```
 
 From a checkout, use `sh scripts/uninstall.sh`. The uninstaller removes only
