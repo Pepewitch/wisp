@@ -251,6 +251,24 @@ describe("auto-fix for review feedback", () => {
       expect(state.merges).toHaveLength(1);
     });
 
+    test("a summary that lands while a look works is judged before any merge, not merged over", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const { state, github } = fakeGitHub({ pr: snapshot({}) });
+      // the first read is clean; by the read right before merging, the bot has posted its findings
+      let reads = 0;
+      state.onSnapshot = () => { if (++reads === 2) state.pr = { ...state.pr, comments: [summary({ createdAt: "2026-09-23T12:09:50Z" })] }; };
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+      setAutopilot(task.id, { autoMerge: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(0);
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "The PR changed while it was checked; checking again" });
+      await pass(rt, task.id, clock);
+      expect(state.merges).toHaveLength(0);
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: `@pr-reviewer reported problems on ${HEAD.slice(0, 7)}` });
+    });
+
     test("with the key removed, stored answers no longer count", async () => {
       const { task, adapters } = reviewTask();
       const clock = { now: START + 10 * 60_000 };

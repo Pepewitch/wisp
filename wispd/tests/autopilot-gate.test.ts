@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { classifyCheck, countingChecks, missingRequired, type PrCheck } from "../src/autopilot/checks";
-import { FRESH_HEAD_MS, mergeGate, type GateInput } from "../src/autopilot/gate";
+import { FRESH_HEAD_MS, mergeGate, sameReviewState, type GateInput } from "../src/autopilot/gate";
 import { classicProtectionOf, mergeMethod, parseRequiredChecks, parseSnapshot, type PrReview, type PrSnapshot } from "../src/autopilot/github";
 import { parseVerdict } from "../src/autopilot/verdict";
 
@@ -291,3 +291,30 @@ describe("reading GitHub", () => {
     expect(parseRequiredChecks({ protection: { required_status_checks: { enforcement_level: "off", contexts: ["x"] } } }, [])).toEqual([]);
   });
 });
+
+describe("the read right before a merge", () => {
+  const base = (): PrSnapshot => ({
+    number: 7, url: "u", state: "OPEN", isDraft: false, isCrossRepository: false, head: HEAD, headRefName: "b", baseRefName: "main", defaultBranch: "main",
+    mergeState: "CLEAN", reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
+    checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }], actionsSuitesPending: 0, actionsSuitesWaiting: 0,
+    reviews: [], threads: [], threadsTruncated: false, conversationRule: "not-required",
+    comments: [{ id: "IC_1", author: "bot", association: "NONE", bot: true, body: "x", createdAt: "2026-09-23T11:00:00Z", editedAt: null, url: "", hidden: false }],
+    unresolvedThreads: 0, mergeMethod: "SQUASH", baseHead: null, baseChecks: [],
+  });
+  test("anything a merge decision reads counts as a change; GitHub's own mergeability flicker does not", () => {
+    const a = base();
+    expect(sameReviewState(a, base())).toBe(true);
+    expect(sameReviewState(a, { ...base(), mergeState: "UNKNOWN" })).toBe(true);
+    const edited = base(); edited.comments[0]!.editedAt = "2026-09-23T11:05:00Z";
+    expect(sameReviewState(a, edited)).toBe(false);
+    const added = base(); added.comments.push({ ...added.comments[0]!, id: "IC_2" });
+    expect(sameReviewState(a, added)).toBe(false);
+    const hidden = base(); hidden.comments[0]!.hidden = true;
+    expect(sameReviewState(a, hidden)).toBe(false);
+    expect(sameReviewState(a, { ...base(), reviews: [{ id: "PRR_1", author: "r", association: "MEMBER", bot: false, state: "APPROVED", body: "", commit: HEAD, submittedAt: "t", editedAt: null, url: "" }] })).toBe(false);
+    expect(sameReviewState(a, { ...base(), checks: [{ name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "" }] })).toBe(false);
+    expect(sameReviewState(a, { ...base(), head: OLD })).toBe(false);
+    expect(sameReviewState(a, { ...base(), threads: [{ id: "T", resolved: false, outdated: false, path: "p", line: 1, starter: null, comments: [] }] })).toBe(false);
+  });
+});
+

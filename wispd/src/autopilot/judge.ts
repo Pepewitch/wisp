@@ -326,17 +326,20 @@ function approvedSince(pr: PrSnapshot, author: string, after: string): boolean {
 }
 
 /**
- * The bot has spoken on this head: a review of it in any state, its own check
- * done, or a comment since that the judge read as a verdict. A status edit
- * ("review in progress…") is not a pass.
+ * The bot has spoken on this head: a review of it in any state, a comment
+ * since that the judge read as a verdict, or its own check done. A status
+ * edit ("review in progress…") is not a pass. Nor, for a bot that keeps a
+ * summary comment, is its check finishing: it may finish a moment before the
+ * summary is rewritten, and merging in that moment would be merging over it.
  */
 function spokeOnHead(pr: PrSnapshot, look: Pick<JudgeLook, "candidates" | "judged">, author: string, sinceMs: number): boolean {
   const verdictSince = (candidate: JudgeCandidate) => {
     const judged = look.judged[candidate.id]
     return judged?.fp === candidate.fp && VERDICTS.has(judged.kind) && !(Date.parse(candidate.fp) < sinceMs)
   }
+  const keepsSummary = look.candidates.some((candidate) => candidate.postedAs === "comment" && candidate.author === author)
   return pr.reviews.some((review) => review.author === author && review.commit === pr.head && review.state !== "PENDING") ||
-    pr.checks.some((check) => check.app === author && classifyCheck(check) !== "pending") ||
+    (!keepsSummary && pr.checks.some((check) => check.app === author && classifyCheck(check) !== "pending")) ||
     look.candidates.some((candidate) => candidate.postedAs === "comment" && candidate.author === author && verdictSince(candidate))
 }
 

@@ -180,8 +180,14 @@ describe("when the judge decides", () => {
       };
       expect(withComment("status")).toEqual(["reviewer"]);
       expect(withComment("all_clear")).toEqual([]);
-      expect(judgedHead(stale, pr({ checks: [{ name: "review", app: "reviewer", status: "COMPLETED", conclusion: "SUCCESS" }] as never }), later).awaited).toEqual([]);
-      expect(judgedHead(stale, pr({ checks: [{ name: "review", app: "reviewer", status: "IN_PROGRESS", conclusion: null }] as never }), later).awaited).toEqual(["reviewer"]);
+      // a bot that keeps a summary comment has passed when the summary changes, not when its check
+      // finishes: it may finish a moment before the rewrite lands
+      const done = { checks: [{ name: "review", app: "reviewer", status: "COMPLETED", conclusion: "SUCCESS" }] as never };
+      expect(judgedHead(stale, pr(done), later).awaited).toEqual(["reviewer"]);
+      // a bot that only reviews has no summary to wait for: its check finishing is its pass
+      const reviewsOnly = look([[candidate({ id: "review:PRR_0", postedAs: "review", commit: "b".repeat(40) }), "needs_changes"]]);
+      expect(judgedHead(reviewsOnly, pr(done), later).awaited).toEqual([]);
+      expect(judgedHead(reviewsOnly, pr({ checks: [{ name: "review", app: "reviewer", status: "IN_PROGRESS", conclusion: null }] as never }), later).awaited).toEqual(["reviewer"]);
       // a bot that never speaks again is not waited on forever
       expect(judgedHead(stale, pr(), { ...later, nowMs: later.firstSeenMs + PASS_WAIT_MS }).awaited).toEqual([]);
     });
