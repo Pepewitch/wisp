@@ -31,6 +31,12 @@ export interface GateInput {
   headFirstSeenMs: number
   nowMs: number
   published: PublishedWork
+  /** bots whose latest verdict, about this head, the review judge read as asking for changes (judge.ts) */
+  reviewerProblems?: { author: string; url: string }[]
+  /** bots whose latest such verdict is about an earlier head: their pass on this one is awaited */
+  reviewersAwaited?: string[]
+  /** a bot's newest words are not judged yet */
+  judgePending?: boolean
 }
 
 const short = (sha: string): string => sha.slice(0, 7)
@@ -128,6 +134,21 @@ function reviewGate(pr: PrSnapshot): GateResult | null {
 }
 
 /**
+ * A bot the review judge heard ask for changes on this head holds the merge,
+ * as a blocking verdict would: its next pass, on a new head, speaks again.
+ */
+function judgedGate(input: GateInput): GateResult | null {
+  const listed = (authors: string[]) =>
+    `${authors.slice(0, 2).map((author) => `@${author}`).join(" and ")}${authors.length > 2 ? ` and ${authors.length - 2} more` : ""}`
+  const problems = [...new Set((input.reviewerProblems ?? []).map((problem) => problem.author))]
+  if (problems.length > 0) return { kind: "needs-you", reason: `${listed(problems)} reported problems on ${short(input.pr.head)}` }
+  if (input.judgePending) return { kind: "wait", reason: "Waiting for the review judge" }
+  const awaited = [...new Set(input.reviewersAwaited ?? [])]
+  if (awaited.length > 0) return { kind: "wait", reason: `Waiting for ${listed(awaited)} to review ${short(input.pr.head)}`, slow: true }
+  return null
+}
+
+/**
  * Open conversations hold this PR's merge: the repository requires them
  * resolved, or its rule cannot be read (classic protection, not an admin) and
  * GitHub blocks the PR with nothing else to explain it.
@@ -191,6 +212,6 @@ export function mergeGate(input: GateInput): GateResult {
   if (!input.allowedBases.has(pr.baseRefName)) {
     return { kind: "needs-you", reason: `Targets ${pr.baseRefName}; auto-merge only merges into ${pr.defaultBranch}` }
   }
-  return checksGate(input) ?? reviewGate(pr) ?? mergeStateGate(input) ??
+  return checksGate(input) ?? reviewGate(pr) ?? judgedGate(input) ?? mergeStateGate(input) ??
     (input.published.ok ? { kind: "merge" } : { kind: "needs-you", reason: input.published.reason })
 }

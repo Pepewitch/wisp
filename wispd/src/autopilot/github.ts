@@ -60,6 +60,8 @@ export interface PrSnapshot {
   isDraft: boolean
   isCrossRepository: boolean
   head: string
+  /** when the head commit was made: with its first sighting, what a comment "about this head" must follow */
+  headCommittedAt?: string | null
   headRefName: string
   baseRefName: string
   defaultBranch: string
@@ -172,7 +174,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       } }
       reviews(last: 50) { nodes { id state body submittedAt lastEditedAt url authorAssociation author { login __typename } commit { oid } } }
       comments(last: 100) { nodes { ...comment } }
-      commits(last: 1) { nodes { commit { oid
+      commits(last: 1) { nodes { commit { oid committedDate
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
         statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
@@ -321,6 +323,7 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   return {
     ...prFields(pr, repo, data),
     head,
+    headCommittedAt: str(commit.committedDate) || null,
     checks: nodes(rollup?.contexts).map(parseCheck),
     actionsSuitesPending: actions.length,
     actionsSuitesWaiting: actions.filter((suite) => str(suite.status) === "WAITING").length,

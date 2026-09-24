@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PrCheck } from "../src/autopilot/checks";
-import { acknowledgement, feedbackItems, feedbackKey, feedbackSummary, isMarked, keyParts, markerOf, pairedChecks, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
+import { acknowledgement, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
+import type { Judged } from "../src/autopilot/judge";
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "../src/autopilot/github";
 
 const HEAD = "a".repeat(40);
@@ -157,41 +158,55 @@ describe("what counts as an item", () => {
   });
 });
 
-// STOPGAP(1.0): one reviewer's summary format, read as text. Delete with severity-summary.ts.
-describe("STOPGAP(1.0): a reviewer's severity summary under a green check", () => {
-  const summary = (head: string, rows: string[], more = "") => [
-    `## reviewer Summary for #${head.slice(0, 7)}`, "", `📝 **2 findings**`, "",
-    "| Severity | Count |", "|----------|-------|", ...rows, "", more,
-  ].join("\n");
-  const board = (body: string) => comment({ id: "IC_7", author: "pr-reviewer", bot: true, association: "NONE", body, editedAt: "2026-09-24T11:00:00Z" });
+describe("what GitHub leaves undecided goes to the review judge", () => {
+  const board = (over: Partial<PrComment> = {}) => comment({ id: "IC_7", author: "pr-reviewer", bot: true, association: "NONE", body: "## Summary\n\n| Medium | 1 |\n\nthe retry never stops", editedAt: "2026-09-24T11:00:00Z", ...over });
   const green = [check("pr-reviewer", "SUCCESS", "pr-reviewer")];
+  const judgedAs = (kind: Judged["kind"], confidence = 0.95, fp = "2026-09-24T11:00:00Z"): Record<string, Judged> => ({ "comment:IC_7": { fp, kind, confidence, model: "jev-1.13.0" } });
+  const trustsBots = { trusts: ({ author, bot }: { author: string | null; bot: boolean }) => bot && author !== "github-actions", self: (c: PrComment) => isMarked(c.body) };
 
-  test("medium or worse for this head is sent once per head; low alone, another head, or no count is not", () => {
-    const medium = board(summary(HEAD, ["| 🟡 Medium | 1 |", "| 🔵 Low | 1 |"]));
-    expect(items({ comments: [medium], checks: green })).toMatchObject([
-      { kind: "comment", id: "comment:IC_7", fingerprint: `head:${HEAD}`, check: null, findings: { counts: { medium: 1, low: 1 }, worth: 1 } },
+  test("candidates: a bot's summary under a green or no check, and a bot's review body with no verdict", () => {
+    const overview = review({ id: "PRR_7", author: "copilot-pull-request-reviewer", bot: true, association: "NONE", body: "Copilot reviewed 3 files and generated 2 comments." });
+    const all = judgeCandidates({ pr: pr({ comments: [board()], reviews: [overview], checks: green }), ...trustsBots });
+    expect(all).toEqual([
+      { id: "comment:IC_7", fp: "2026-09-24T11:00:00Z", order: "2026-09-24T11:00:00Z", text: board().body, postedAs: "comment", bot: true, author: "pr-reviewer", url: board().url },
+      { id: "review:PRR_7", fp: overview.submittedAt, order: overview.submittedAt, text: overview.body, postedAs: "review", bot: true, author: "copilot-pull-request-reviewer", url: overview.url, commit: HEAD },
     ]);
-    // a bot with no check of its own reads the same way
-    expect(items({ comments: [medium] })).toHaveLength(1);
-    expect(items({ comments: [medium], checks: green }, { delivered: { "comment:IC_7": `head:${HEAD}` } })).toEqual([]);
-    // its summary still describes the last head it reviewed: silent until it reviews this one
-    expect(items({ head: "b".repeat(40), comments: [medium], checks: green })).toEqual([]);
-    expect(items({ comments: [board(summary(HEAD, ["| 🔵 Low | 2 |"]))], checks: green })).toEqual([]);
-    expect(items({ comments: [board(`## reviewer Summary for #${HEAD.slice(0, 7)}\n\n✅ **No issues found**`)], checks: green })).toEqual([]);
-    // a table in a code block, or in the findings' own details, is not the overview's count
-    expect(items({ comments: [board(summary(HEAD, [], "```\n| High | 3 |\n```"))], checks: green })).toEqual([]);
-    expect(items({ comments: [board(summary(HEAD, [], "<details>\n\n| High | 3 |"))], checks: green })).toEqual([]);
-    // a red check keeps its own path, and the check is named
-    expect(items({ comments: [medium], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] })).toMatchObject([{ check: { name: "pr-reviewer" } }]);
-    // only bots: a person's severity table is an ordinary comment
-    expect(items({ comments: [{ ...medium, bot: false, author: OWNER, association: "OWNER" }] })[0]).not.toHaveProperty("findings");
+    // an approval is the gate's own signal, whatever else its body says
+    expect(judgeCandidates({ pr: pr({ reviews: [{ ...overview, state: "APPROVED" }] }), ...trustsBots })).toEqual([]);
+    // GitHub already decided these: a red check, a "blocking" verdict, a formal change request
+    expect(judgeCandidates({ pr: pr({ comments: [board()], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] }), ...trustsBots })).toEqual([]);
+    expect(judgeCandidates({ pr: pr({ comments: [board({ body: "Verdict: blocking — a leak" })] }), ...trustsBots })).toEqual([]);
+    expect(judgeCandidates({ pr: pr({ reviews: [{ ...overview, state: "CHANGES_REQUESTED" }] }), ...trustsBots })).toEqual([]);
+    // never a person's words, github-actions, a hidden comment, or a thank-you
+    expect(judgeCandidates({ pr: pr({ comments: [comment()] }), ...trustsBots })).toEqual([]);
+    expect(judgeCandidates({ pr: pr({ comments: [board({ author: "github-actions" })] }), ...trustsBots })).toEqual([]);
+    expect(judgeCandidates({ pr: pr({ comments: [board({ hidden: true })] }), ...trustsBots })).toEqual([]);
+    expect(judgeCandidates({ pr: pr({ comments: [board({ body: "Thanks!" })] }), ...trustsBots })).toEqual([]);
   });
 
-  test("bounded: an enormous body is read no further than its overview", () => {
-    const huge = board(summary(HEAD, ["| 🟠 High | 1 |"], "x".repeat(200_000)));
-    const started = performance.now();
-    expect(items({ comments: [huge], checks: green })).toHaveLength(1);
-    expect(performance.now() - started).toBeLessThan(200);
+  test("sent only for the version the judge read as needing changes, confidently, once", () => {
+    const summary = board();
+    // without a key there is no answer: the status-board rule stands
+    expect(items({ comments: [summary], checks: green })).toEqual([]);
+    expect(items({ comments: [summary], checks: green }, { judged: judgedAs("needs_changes") })).toMatchObject([
+      { kind: "comment", id: "comment:IC_7", fingerprint: "2026-09-24T11:00:00Z", check: null, judged: { kind: "needs_changes", confidence: 0.95 } },
+    ]);
+    expect(items({ comments: [summary] }, { judged: judgedAs("needs_changes") })).toHaveLength(1);
+    expect(items({ comments: [summary], checks: green }, { judged: judgedAs("needs_changes", 0.55) })).toEqual([]);
+    expect(items({ comments: [summary], checks: green }, { judged: judgedAs("minor_only") })).toEqual([]);
+    // an answer about an older version is no answer about this one
+    expect(items({ comments: [summary], checks: green }, { judged: judgedAs("needs_changes", 0.95, "2026-09-24T10:00:00Z") })).toEqual([]);
+    expect(items({ comments: [summary], checks: green }, { judged: judgedAs("needs_changes"), delivered: { "comment:IC_7": "2026-09-24T11:00:00Z" } })).toEqual([]);
+    // a red check keeps its own path: once per head, with the check named
+    expect(items({ comments: [summary], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] }, { judged: judgedAs("all_clear") }))
+      .toMatchObject([{ fingerprint: `head:${HEAD}`, check: { name: "pr-reviewer" } }]);
+  });
+
+  test("a bot's review body the judge read as needing changes is sent; its overview otherwise is not", () => {
+    const overview = review({ id: "PRR_7", author: "reviewer-app", bot: true, association: "NONE", body: "Found a race in the token refresh; see the thread." });
+    expect(items({ reviews: [overview] })).toEqual([]);
+    const judged = { "review:PRR_7": { fp: overview.submittedAt, kind: "needs_changes" as const, confidence: 0.9, model: "jev-1.13.0" } };
+    expect(items({ reviews: [overview] }, { judged })).toMatchObject([{ kind: "review", id: "review:PRR_7", judged: { kind: "needs_changes" } }]);
   });
 });
 

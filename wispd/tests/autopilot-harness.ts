@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { validateAdapters } from "../src/adapters";
 import { loadConfig } from "../src/config";
 import type { AutopilotGitHub, OpenPullRequest, PrSnapshot } from "../src/autopilot/github";
-import { AutopilotRuntime } from "../src/autopilot/runtime";
+import { AutopilotRuntime, type AutopilotRuntimeOptions } from "../src/autopilot/runtime";
 import { autopilotRow, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { taskMessageAttachmentsFingerprint } from "../src/attachments";
 import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, newTaskMessageId, setTaskFields, transition } from "../src/store";
@@ -82,11 +82,12 @@ export function fakeGitHub(initial: { pulls?: OpenPullRequest[]; pr?: PrSnapshot
   return { state, github };
 }
 
-export function runtime(github: AutopilotGitHub, clock: { now: number }, adapters = {}, cfg = loadConfig(), lookTimeoutMs?: number) {
+export function runtime(github: AutopilotGitHub, clock: { now: number }, adapters = {}, cfg = loadConfig(), lookTimeoutMs?: number, extra: Partial<AutopilotRuntimeOptions> = {}) {
   return new AutopilotRuntime(cfg, adapters, {
     now: () => new Date(clock.now), github, lookTimeoutMs,
     repository: async () => "o/r", branches: async (task) => [task.branch!],
     published: async () => ({ ok: true }),
+    ...extra,
   });
 }
 

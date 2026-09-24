@@ -207,21 +207,16 @@ running.
   - An approval is a merge signal, not something to fix.
   - A "LGTM", a "thanks" or a 👍, as a comment, a review or a thread reply,
     asks for nothing.
-  - A bot's review body is its overview; its threads are the feedback.
+  - A bot's review body is its overview; its threads are the feedback, unless
+    the [review judge](#the-review-judge-optional) reads it as asking for
+    changes.
   - Draft review comments you have not submitted, and comments a maintainer
     hid, never count.
   - A bot's conversation comment is usually a status board it edits on every
     push, so it counts only when the same app's check on the head is red
-    (then once per head) or when it says "blocking".
-  - **Stopgap, to be replaced before 1.0:** one reviewer summary format is
-    also read as text. The summary's heading names the head it reviewed
-    (`Summary for #<sha>`), and a table counts findings by severity
-    (`| Medium | 1 |`). When it reports medium or worse findings for the
-    current head, it counts once per head even though the bot's check is
-    green. Low findings alone do not. No other bot's summary is read, so a
-    reviewer that reports findings only in a summary comment, with a green
-    check, still goes unheard. Posting findings as review threads is what
-    works for every reviewer.
+    (then once per head), when it says "blocking", or when the
+    [review judge](#the-review-judge-optional) reads that version of it as
+    asking for changes.
 - **Never its own words.** While auto-fix is on, every turn is asked to end
   each GitHub comment, review or reply with `— <agent> via Wisp <!--
   wisp:task=<id> -->`, and Wisp never sends signed posts back (a quote of one
@@ -253,6 +248,68 @@ running.
   comments in each, and the newest 100 conversation comments; the evidence
   says when there were more.
 
+## The review judge (optional)
+
+Some reviewer bots report findings only in a summary comment, and keep their
+own check green for findings they rate acceptable. GitHub gives no signal Wisp
+can read for those. With a [Jev](https://docs.typesafe.ai/api) API key from
+TypeSafe, Wisp asks a small classifier about exactly these words:
+
+- a bot's conversation comment whose own check is green or running, or that
+  has no check and says nothing "blocking";
+- a bot's review body with no `Verdict:` line and no change request.
+
+Nothing else is judged. Red checks, review threads, change requests,
+`Verdict:` lines and people's comments work the same with or without a key.
+
+- **What it sends:** the comment's text (up to 8,000 characters), whether a
+  bot or a person wrote it, and whether it is a comment or a review body. It
+  never sends the diff, the repository, the PR number or any login. The text
+  is what the bot posted on GitHub, so it can quote code and paths.
+- **What it decides:** one of `needs_changes`, `minor_only`, `all_clear`,
+  `status` or `reply`. Only `needs_changes` with confidence 0.6 or more counts.
+  - Under auto-fix it becomes review feedback, and the evidence file says the
+    judge read it that way.
+  - Under auto-merge, a bot speaks per channel (its comments, its reviews)
+    through its latest verdict: `needs_changes`, `minor_only` or `all_clear`.
+    A status board or a reply says nothing, and a later all-clear in the same
+    channel, or an edit of the same summary, supersedes an old finding.
+  - A finding about the current head needs you ("@bot reported problems on
+    abc1234"), unless the same bot has approved this head since. A review is
+    about the commit it names; a comment is about the head it was written
+    after (the head's commit time or when Wisp first saw it, whichever is
+    earlier).
+  - A finding about an earlier head waits for that bot to speak on this one
+    ("Waiting for @bot to review abc1234"): any review of this head, a new or
+    edited comment, or its own check finishing. It waits at most 20 minutes
+    from when Wisp first saw the head, then goes by the other signals.
+- **How often:** once per version of a comment, and at most six per look; an
+  edit is a new version. Auto-merge waits ("Waiting for the review judge",
+  after the checks gate) while a channel's newest words are unjudged.
+- **Model:** pinned to `jev-1.13.0`. Measured on 238 real review items, it was
+  right on "does this ask for a fix" 98.7% of the time, answered in about 0.9
+  s, and costs about $0.00005 a call.
+- **When it fails:** a version the judge could not answer is asked again after
+  1, 2, 4 … up to 30 minutes, on its own, so one body the service rejects
+  never slows the others. Auto-merge waits on a version through three
+  failures, then stops waiting for it (the workflow history says so) and reads
+  it as it would without a key; the judge keeps retrying on its backoff.
+  Auto-fix never waits: an unjudged comment is just not sent yet. With no key,
+  nothing is judged and no stored answer counts.
+- **The key:** set it through the daemon's settings API (`PATCH /api/settings`
+  with `{"jevApiKey": "…"}`, or `null` to remove it; `POST
+  /api/settings/review-judge/test` makes one probe call), or with
+  `TYPESAFE_API_KEY` or `JEV_API_KEY` in the daemon's environment. It is stored in `config.json` (mode 0600,
+  beside the bearer token). It can be written over the API but is never read
+  back: clients see only whether one is set and its last four characters.
+  Each daemon has its own.
+- **The log:** every call, with the text sent and the answer or the error, is
+  appended to `tasks/<task>/autopilot/<row>/judge.jsonl` beside the round
+  evidence (mode 0600; the previous 2 MB is kept as `judge.1.jsonl`).
+  A needs-changes answer also appears in the workflow history. A monthly
+  count of calls, errors and tokens, probes included (`judge-usage.json`),
+  is reported as `reviewJudge.usage` by `GET /api/settings`.
+
 ## When it needs you
 
 The red rail, the red PR icon, a banner, and `wisp pr` all name the one reason.
@@ -266,6 +323,9 @@ Each is something only a person can move:
     if a reviewer app has approved this PR before; an app that only comments
     never approves).
   - A formal change request.
+- **A reviewer's reported problems**, with the review judge on: a bot whose
+  latest words about this head the judge read as asking for changes, until a
+  push and that bot's next pass, or its approval of this head.
 - **A conversation**, only where the repository requires every conversation
   resolved before merging: one still open, a colleague's to resolve or one the
   agent disagreed with.
