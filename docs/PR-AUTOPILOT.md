@@ -24,13 +24,16 @@ A task with either switch on carries a thin rail on its sidebar row, so one
 left on is never out of sight:
 
 - **blue** while it is on and working;
-- **violet** once it is done for now: with auto-merge on, its PR merged (it
-  stays on for the next one); with auto-fix alone, CI is green and no review has
-  come in for 15 minutes;
-- **red** when it needs you — the same moments the PR icon turns red and the
-  desktop app posts a banner (it posts one too when Wisp merges the PR).
+- **violet** once it is done for now, until the task's next turn or PR: with
+  auto-merge on, its PR merged (it stays on for the next one); with auto-fix
+  alone, CI has been green for 15 minutes with no push, round, review or
+  comment since;
+- **red** whenever it needs you (see [When it needs you](#when-it-needs-you));
+  the desktop app posts a banner then, and when Wisp merges the PR.
 
-The row's hover card says which switch is on, for which PR, and why.
+The row's hover card says which switch is on, for which PR, and why. The rail is
+about auto-merge and auto-fix only: a task that failed or waits for your answer
+says so with its own state dot.
 
 Auto-merge merges into the branch it targets under your GitHub account.
 Arm it for work you would merge yourself once CI is green; leave it off for
@@ -227,9 +230,9 @@ running.
   bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
   anyone else's thread and never resolves it. It never resolves a thread it
   disagreed with; it says so in its final message instead. What it cannot
-  resolve stays for you: while a thread Wisp sent (or you skipped) is still
-  open, the status says so and nothing merges, whether or not the repository
-  requires conversations to be resolved.
+  resolve stays open, and holds the merge only where the repository requires
+  conversations resolved before merging (GitHub's own rule, which Wisp reads).
+  Anywhere else, a PR GitHub calls mergeable is merged with it open.
 - **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
   comments in each, and the newest 100 conversation comments; the evidence
   says when there were more.
@@ -243,11 +246,12 @@ Each is something only a person can move:
   - A required check held for approval, or waiting on an environment's
     reviewers.
   - A branch rule that needs an approving review (you cannot approve your own
-    PR, so someone else must).
+    PR, so someone else must), once the head has waited 15 minutes for one and
+    no reviewer app is at work on the PR.
   - A formal change request.
-- **A conversation.** A review thread Wisp sent that is still open: a
-  colleague's to resolve, or one the agent disagreed with. Also an unresolved
-  conversation the repository requires resolved.
+- **A conversation**, only where the repository requires every conversation
+  resolved before merging: one still open, a colleague's to resolve or one the
+  agent disagreed with.
 - **Something the agent cannot fix.**
   - A check still red after a round with no new push.
   - A cancelled job after its one rerun.

@@ -59,9 +59,14 @@ describe("auto-fix for review feedback", () => {
     expect(evidence).toContain("resolveReviewThread");
     expect(autopilotStatus(task.id).fixRounds).toBe(1);
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
-    // nothing new to send, but the thread Wisp sent is still open: that is for a person now
+    // nothing new to send; the thread is still open, but this repository does not require it resolved
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "needs-you", reason: "1 review thread still open" });
+    expect(autopilotStatus(task.id)).toMatchObject({ fixRounds: 1, state: "waiting", reason: "Nothing to fix" });
+    // where it does, an open conversation is for a person
+    state.pr = { ...state.pr, requiresConversationResolution: true };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation" });
+    state.pr = { ...state.pr, requiresConversationResolution: false };
     // a new reply on the thread is new feedback, and gets its own settle time
     clock.now += 5 * 60_000;
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "Still wrong for 0.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
@@ -69,18 +74,20 @@ describe("auto-fix for review feedback", () => {
     expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 review thread");
   });
 
-  test("on a PR with more than 100 threads, a sent thread that fell out of the newest 100 still holds the merge", async () => {
+  test("an open conversation holds the merge only where the repository requires it resolved", async () => {
     const { task, adapters } = reviewTask();
     const clock = { now: START + 10 * 60_000 };
-    const { state, github } = fakeGitHub({ pr: snapshot({ threads: [], threadsTruncated: true }) });
+    // the agent answered the thread; a colleague has not resolved it
+    const open = { threads: [thread({ id: "PRRT_9" }, [said({ author: "colleague", association: "MEMBER", createdAt: "2026-09-23T11:00:00Z" })])], unresolvedThreads: 1 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ ...open, mergeState: "BLOCKED", requiresConversationResolution: true }) });
     const rt = runtime(github, clock, adapters);
     setAutopilot(task.id, { autoMerge: true, autoFix: true });
-    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, delivered: { "thread:PRRT_OLD": SOON } });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, delivered: { "thread:PRRT_9": "2026-09-23T11:00:00Z" } });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 review thread still open" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "1 unresolved conversation" });
     expect(state.merges).toHaveLength(0);
-    // on a PR Wisp can read in full, a sent thread that is gone was resolved or deleted
-    state.pr = { ...state.pr, threadsTruncated: false };
+    // a repository that does not require it: GitHub says mergeable, and Wisp merges
+    state.pr = snapshot({ ...open, mergeState: "CLEAN", requiresConversationResolution: false });
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(1);
   });
@@ -235,8 +242,8 @@ describe("auto-fix for review feedback", () => {
     skipPendingFix(task.id);
     clock.now += 5 * 60_000;
     await pass(rt, task.id, clock);
-    // skipped means seen, not answered: the open thread is for a person
-    expect(autopilotStatus(task.id)).toMatchObject({ reason: "1 review thread still open", pendingFix: null });
+    // skipped means seen: nothing new to send (and this repository does not require the thread resolved)
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", pendingFix: null });
     expect(existsSync(file)).toBe(false);
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "And the zero case.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
     await pass(rt, task.id, clock);

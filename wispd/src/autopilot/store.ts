@@ -68,6 +68,11 @@ export interface AutopilotCheckpoint {
   lastRoundAt?: string
   /** the last look found nothing for auto-fix to do and a quiet PR (see AutopilotStatus.done) */
   done?: boolean
+  /** this row merged its PR and has bound nothing since: done for now (a fresh row inheriting lastMerged is not) */
+  mergedHere?: boolean
+  /** the head the PR last went green on, and when: quiet is counted from it too */
+  greenHead?: string
+  greenAt?: string
 }
 
 export interface AutopilotParams {
@@ -144,10 +149,14 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   }
 }
 
-/** Done for now: its PR merged and nothing new is bound yet, or auto-fix found a quiet, green PR. */
+/**
+ * Done for now: the last look said so (its PR merged on this row and nothing
+ * new is bound, or auto-fix alone found a quiet, green PR) — and the task is
+ * not running a turn, which is work again.
+ */
 function isDone(row: WorkflowRow, state: AutopilotState, checkpoint: AutopilotCheckpoint): boolean {
-  if (row.state !== "active" || state === "needs-you" || state === "held") return false
-  return checkpoint.done === true || (checkpoint.lastMerged !== undefined && !checkpoint.pr)
+  if (row.state !== "active" || state !== "waiting" || checkpoint.done !== true) return false
+  return getTask(row.task_id)?.state !== "running"
 }
 
 export function autopilotStatus(taskId: string): AutopilotStatus {
@@ -187,6 +196,8 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       // switching auto-fix off withdraws a round that has not started yet
       if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
       const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
+      // a changed switch is looked at afresh before anything is called done
+      delete checkpoint.done
       // switching auto-fix on again is a fresh start for its round budget
       if (!current.autoFix && next.autoFix) {
         delete checkpoint.rounds
@@ -239,6 +250,7 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   const checkpoint = checkpointOf(row)
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
+  delete checkpoint.done
   // Resume after a pause is a fresh start for auto-fix's round budget too;
   // Continue after a Stop hold is not.
   if (row.state === "paused") delete checkpoint.rounds
@@ -324,7 +336,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
       ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
       ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
       ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
-      lastMerged: { ...merged, noted: false },
+      lastMerged: { ...merged, noted: false }, mergedHere: true, done: true,
       state: "waiting", about: "task", by: "auto-merge",
     }
     const reason = `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · Waiting for the task's next PR`

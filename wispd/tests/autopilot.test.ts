@@ -231,13 +231,16 @@ describe("the loop", () => {
     const { state, github } = fakeGitHub();
     const rt = runtime(github, clock);
     setAutopilot(task.id, { autoFix: true });
-    // the head appeared at START: ten minutes of quiet is not yet enough
+    // quiet counts from when the PR went green: the first green look starts it
     seed(task.id, clock);
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
-    // it looks again when the quiet would be complete, not five minutes later
-    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(5 * 60_000);
-    clock.now += 5 * 60_000;
+    clock.now += 12 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix", done: false });
+    // it looks again exactly when the quiet completes, not on the five-minute cadence
+    expect(Date.parse(autopilotRow(task.id)!.next_check_at) - clock.now).toBe(3 * 60_000);
+    clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ reason: "Nothing to fix · no new review for 15 min", done: true });
     // a new comment is new activity: not done until it too has gone quiet
@@ -250,6 +253,50 @@ describe("the loop", () => {
     clock.now += 30 * 60_000;
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", done: false });
+  });
+
+  test("done is never stale: a red that is main's, a running turn, a resume or a toggle is not done", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const red = { name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "" };
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [red], baseChecks: [red] }) });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock);
+    clock.now += 30 * 60_000;
+    await pass(rt, task.id, clock);
+    await pass(rt, task.id, clock);
+    // red on main too is not this PR's to fix, but it is not green either
+    expect(autopilotStatus(task.id)).toMatchObject({ reason: "test is red on main too", done: false });
+    state.pr = snapshot();
+    await pass(rt, task.id, clock);
+    clock.now += 16 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).done).toBe(true);
+    // a turn running is work again
+    transition(task.id, "running");
+    expect(autopilotStatus(task.id).done).toBe(false);
+    transition(task.id, "done");
+    expect(autopilotStatus(task.id).done).toBe(true);
+    // a changed switch is looked at afresh
+    setAutopilot(task.id, { autoMerge: true });
+    expect(autopilotStatus(task.id).done).toBe(false);
+  });
+
+  test("a row armed after a merge on another row is not done: nothing merged here yet", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const { github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    await pass(rt, task.id, clock);
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7 }, done: true });
+    setAutopilot(task.id, { autoMerge: false });
+    setAutopilot(task.id, { autoFix: true });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7 }, pr: null, done: false });
   });
 
   test("closing a PR still switches both off: that is how its owner abandons an approach", async () => {

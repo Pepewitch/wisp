@@ -41,7 +41,8 @@ function TaskStateDot({ task, className }: { task: ApiTask; className?: string }
  *
  * Branch, agent, turn count and the state detail live in the hover card — you
  * scan the list, then ask one row for the rest. Selection is `bg-accent` and
- * nothing else: no rail, no border, no hue.
+ * nothing else: no border, no hue. (The one rail a row can carry is not about
+ * selection: it says auto-merge or auto-fix is on — see AutopilotRail.)
  *
  * The right edge carries a provider-owned PR icon plus DIRTY-FILE and AHEAD
  * counts, not a +adds/−dels diffstat: GET /api/tasks does not serve a per-task diffstat and only
@@ -112,6 +113,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             yields={archivable}
           />
           <GitMarks status={status} yields={archivable} />
+          <AutopilotSpoken status={task.autopilot} />
         </PreviewCard.Trigger>
 
         <PreviewCard.Portal>
@@ -208,38 +210,42 @@ export function RowArchiveButton({
  */
 export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: TaskRowProps) {
   return (
-    <button
-      type="button"
-      data-task-id={task.id}
-      data-state={task.state}
-      data-selected={selected || undefined}
-      onClick={() => onSelect(task.id)}
-      className={cn(
-        "flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors",
-        selected ? "bg-accent" : "active:bg-hover",
-        task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
-      )}
-    >
-      <TaskStateDot task={task} className="mt-px" />
-      <span className="min-w-0 flex-1">
-        <span className={cn("block truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
-          {task.title}
+    <div className="relative">
+      <AutopilotRail status={task.autopilot} />
+      <button
+        type="button"
+        data-task-id={task.id}
+        data-state={task.state}
+        data-selected={selected || undefined}
+        onClick={() => onSelect(task.id)}
+        className={cn(
+          "flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors",
+          selected ? "bg-accent" : "active:bg-hover",
+          task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
+        )}
+      >
+        <TaskStateDot task={task} className="mt-px" />
+        <span className="min-w-0 flex-1">
+          <span className={cn("block truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
+            {task.title}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
+            {/* two-word states ("Needs input") wrapped and took the branch's
+                baseline with them on a 340px drawer — the state never wraps */}
+            <span className={cn("shrink-0 whitespace-nowrap", STATE_TEXT[task.state])}>{stateWord(task)}</span>
+            {task.branch && (
+              <>
+                <span className="text-faint">·</span>
+                <span className="truncate font-mono text-muted-foreground">{task.branch}</span>
+              </>
+            )}
+          </span>
         </span>
-        <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
-          {/* two-word states ("Needs input") wrapped and took the branch's
-              baseline with them on a 340px drawer — the state never wraps */}
-          <span className={cn("shrink-0 whitespace-nowrap", STATE_TEXT[task.state])}>{stateWord(task)}</span>
-          {task.branch && (
-            <>
-              <span className="text-faint">·</span>
-              <span className="truncate font-mono text-muted-foreground">{task.branch}</span>
-            </>
-          )}
-        </span>
-      </span>
-      <SidebarPullRequestStatus entry={task.archived ? undefined : pullRequest} autopilot={task.autopilot} />
-      <GitMarks status={status} />
-    </button>
+        <SidebarPullRequestStatus entry={task.archived ? undefined : pullRequest} autopilot={task.autopilot} />
+        <GitMarks status={status} />
+        <AutopilotSpoken status={task.autopilot} />
+      </button>
+    </div>
   )
 }
 
@@ -262,6 +268,14 @@ function AutopilotRail({ status }: { status: ApiTask["autopilot"] }) {
       className={cn("pointer-events-none absolute top-[5px] bottom-[5px] left-0 z-10 w-[2px] rounded-full", RAIL_TONE[rail])}
     />
   )
+}
+
+/** The rail is decoration; a screen reader hears the same thing, whether or not a PR is bound. */
+function AutopilotSpoken({ status }: { status: ApiTask["autopilot"] }) {
+  const rail = autopilotRail(status)
+  if (!rail) return null
+  const words = rail === "needs-you" ? "needs you" : rail === "done" ? "done for now" : "on"
+  return <span className="sr-only">{`${autopilotSwitches(status!)} ${words}`}</span>
 }
 
 function SidebarPullRequestStatus({
@@ -412,7 +426,7 @@ export function TaskCard({
           <>
             <Key>Autopilot</Key>
             <Val>
-              {autopilotSwitches(task.autopilot)} on
+              {autopilotSwitches(task.autopilot)} {task.autopilot.state === "paused" ? "paused" : "on"}
               {task.autopilot.pr ? ` · PR #${task.autopilot.pr}` : ""}
               {task.autopilot.reason ? ` · ${task.autopilot.reason}` : ""}
             </Val>

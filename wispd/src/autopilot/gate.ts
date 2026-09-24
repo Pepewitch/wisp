@@ -127,7 +127,20 @@ function reviewGate(pr: PrSnapshot): GateResult | null {
   return null
 }
 
-function mergeStateGate(pr: PrSnapshot, requiredNames: ReadonlySet<string>): GateResult | null {
+/** A required approval the reviewers have had a while to give, and none of them an app about to give it, needs asking for. */
+export const APPROVAL_GRACE_MS = 15 * 60_000
+
+function approvalGate(input: GateInput): GateResult {
+  const { pr } = input
+  // a GitHub App reviewer that has spoken on this PR usually approves on its next pass
+  const appReviewing = pr.reviews.some((review) => review.bot && review.author !== "github-actions")
+  const waited = input.nowMs - input.headFirstSeenMs
+  if (appReviewing || !(waited >= APPROVAL_GRACE_MS)) return { kind: "wait", reason: "Waiting for an approving review", slow: true }
+  return { kind: "needs-you", reason: "Needs an approving review" }
+}
+
+function mergeStateGate(input: GateInput): GateResult | null {
+  const { pr, requiredNames } = input
   switch (pr.mergeState) {
     case "CLEAN":
     case "HAS_HOOKS":
@@ -142,11 +155,11 @@ function mergeStateGate(pr: PrSnapshot, requiredNames: ReadonlySet<string>): Gat
     case "BEHIND":
       return { kind: "needs-you", reason: `Branch is behind ${pr.baseRefName} — update it` }
     case "BLOCKED":
-      if (pr.unresolvedThreads > 0) {
+      // only a repository that requires them resolved is blocked by open conversations
+      if (pr.unresolvedThreads > 0 && pr.requiresConversationResolution) {
         return { kind: "needs-you", reason: `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}` }
       }
-      // Only a person can approve (never the PR's own author): that is someone to ask, not a wait.
-      if (pr.reviewDecision === "REVIEW_REQUIRED") return { kind: "needs-you", reason: "Needs an approving review" }
+      if (pr.reviewDecision === "REVIEW_REQUIRED") return approvalGate(input)
       if (pr.reviewDecision === "CHANGES_REQUESTED") return { kind: "needs-you", reason: "Changes requested" }
       return { kind: "needs-you", reason: "Blocked by a branch rule" }
     default:
@@ -160,6 +173,6 @@ export function mergeGate(input: GateInput): GateResult {
   if (!input.allowedBases.has(pr.baseRefName)) {
     return { kind: "needs-you", reason: `Targets ${pr.baseRefName}; auto-merge only merges into ${pr.defaultBranch}` }
   }
-  return checksGate(input) ?? reviewGate(pr) ?? mergeStateGate(pr, input.requiredNames) ??
+  return checksGate(input) ?? reviewGate(pr) ?? mergeStateGate(input) ??
     (input.published.ok ? { kind: "merge" } : { kind: "needs-you", reason: input.published.reason })
 }

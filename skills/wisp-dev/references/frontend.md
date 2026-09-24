@@ -777,7 +777,10 @@ PR picker on the scoping row (`AutopilotPicker`, worktree tasks only, hidden on
 a daemon without `features.taskAutopilot`). In the sidebar, an armed task carries a
 2px rail on the row's left edge (`AutopilotRail`, from `autopilotRail` in
 `lib/autopilot-words`): `state-background` blue while on, `primary` violet
-once `status.done`, `destructive` red when it needs a person or paused. A
+once `status.done` (the daemon's word: its PR merged on this row, or auto-fix
+alone found a green PR quiet for 15 minutes; never while a turn runs),
+`destructive` red when it needs a person or paused. The touch row carries it
+too, and an sr-only line says the same to a screen reader. A
 needs-you also turns the PR icon's `blocked` red with the reason in its label,
 and the hover card has an Autopilot row saying which switch is on.
 

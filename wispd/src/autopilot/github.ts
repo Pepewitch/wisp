@@ -78,6 +78,8 @@ export interface PrSnapshot {
   threads: PrThread[]
   /** more than 100 review threads exist: auto-fix read the newest 100 */
   threadsTruncated: boolean
+  /** the base branch requires every conversation resolved before a merge (classic protection or a ruleset) */
+  requiresConversationResolution: boolean
   /** the newest conversation comments, oldest first */
   comments: PrComment[]
   unresolvedThreads: number
@@ -166,11 +168,15 @@ query($owner: String!, $name: String!, $number: Int!) {
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
         } } }
       } } }
-      baseRef { target { ... on Commit { oid statusCheckRollup { contexts(first: 100) { nodes {
-        __typename
-        ... on CheckRun { name status conclusion }
-        ... on StatusContext { context state }
-      } } } } } }
+      baseRef {
+        branchProtectionRule { requiresConversationResolution }
+        rules(first: 50) { nodes { type parameters { ... on PullRequestParameters { requiredReviewThreadResolution } } } }
+        target { ... on Commit { oid statusCheckRollup { contexts(first: 100) { nodes {
+          __typename
+          ... on CheckRun { name status conclusion }
+          ... on StatusContext { context state }
+        } } } } }
+      }
     }
   }
 }
@@ -270,10 +276,17 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
 }
 
 /** The base branch head's own checks: a red that is red there too is not the PR's doing. */
-function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[] } {
-  const commit = isRecord(pr.baseRef) && isRecord(pr.baseRef.target) ? pr.baseRef.target : null
+function baseFields(pr: Record<string, unknown>): { baseHead: string | null; baseChecks: PrCheck[]; requiresConversationResolution: boolean } {
+  const ref = isRecord(pr.baseRef) ? pr.baseRef : null
+  const commit = ref && isRecord(ref.target) ? ref.target : null
   const rollup = commit && isRecord(commit.statusCheckRollup) ? commit.statusCheckRollup : null
-  return { baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck) }
+  // classic branch protection, or a ruleset's pull-request rule
+  const classic = ref && isRecord(ref.branchProtectionRule) && ref.branchProtectionRule.requiresConversationResolution === true
+  const ruleset = nodes(ref?.rules).some((rule) => rule.type === "PULL_REQUEST" && isRecord(rule.parameters) && rule.parameters.requiredReviewThreadResolution === true)
+  return {
+    baseHead: commit ? str(commit.oid) || null : null, baseChecks: nodes(rollup?.contexts).map(parseCheck),
+    requiresConversationResolution: Boolean(classic || ruleset),
+  }
 }
 
 export function parseSnapshot(raw: unknown): PrSnapshot {

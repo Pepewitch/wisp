@@ -284,6 +284,28 @@ describe("the sidebar pull-request status", () => {
     expect(rail(on({ autoFix: false, state: "off" }))).toBeNull()
   })
 
+  it("carries the rail on the touch row too, and says it to a screen reader either way", () => {
+    const autopilot = {
+      autoMerge: true, autoFix: false, pr: null, state: "waiting" as const, reason: "#7 merged by Wisp · Waiting for the task's next PR", about: "task" as const,
+      by: "auto-merge" as const, mergedByWisp: false, lastMerged: { pr: 7, byWisp: true }, pendingFix: null, fixRounds: 0, done: true, updatedAt: null,
+    }
+    const view = mount(<TaskRowTouch task={{ ...TASK, autopilot }} selected={false} onSelect={() => {}} />)
+    expect(screen.getByTestId("autopilot-rail")).toHaveAttribute("data-rail", "done")
+    expect(screen.getByText("Auto-merge done for now")).toHaveClass("sr-only")
+    view.unmount()
+    mount(<TaskRow task={{ ...TASK, autopilot: { ...autopilot, done: false } }} selected={false} onSelect={() => {}} />)
+    expect(screen.getByText("Auto-merge on")).toHaveClass("sr-only")
+  })
+
+  it("says in its hover card when it is paused", () => {
+    const autopilot = {
+      autoMerge: true, autoFix: false, pr: PR.number, state: "paused" as const, reason: "Merge failed: base changed", about: "pr" as const,
+      by: "auto-merge" as const, mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
+    }
+    mount(<TaskCard task={{ ...TASK, autopilot }} pullRequest={found()} />)
+    expect(screen.getByText(`Auto-merge paused · PR #${PR.number} · Merge failed: base changed`)).toBeInTheDocument()
+  })
+
   it("says in its hover card which switch is on, for which PR, and why", () => {
     const autopilot = {
       autoMerge: true, autoFix: false, pr: PR.number, state: "waiting" as const, reason: "Waiting for checks (2 running)", about: "pr" as const,

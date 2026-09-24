@@ -36,7 +36,7 @@ export function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
     head: HEAD, headRefName: "wisp/fixture", baseRefName: "main", defaultBranch: "main", mergeState: "CLEAN",
     reviewDecision: null, queued: false, providerAutoMerge: false, mergedBy: null, viewer: "owner",
     checks: [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }],
-    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
+    actionsSuitesPending: 0, actionsSuitesWaiting: 0, reviews: [], threads: [], threadsTruncated: false, requiresConversationResolution: false, comments: [], unresolvedThreads: 0, mergeMethod: "SQUASH",
     baseHead: null, baseChecks: [], ...over,
   };
 }
