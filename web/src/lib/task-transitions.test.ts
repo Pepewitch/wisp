@@ -95,7 +95,7 @@ describe("task transition tracker", () => {
 describe("auto-merge and auto-fix news", () => {
   const armed = (id: string, state: string, over: Record<string, unknown> = {}): ApiTask => ({
     ...task(id, "done"),
-    autopilot: { autoMerge: true, autoFix: true, pr: 7, state, reason: "1 review thread still open", about: "pr", by: "auto-fix", mergedByWisp: false, pendingFix: null, fixRounds: 1, updatedAt: null, ...over },
+    autopilot: { autoMerge: true, autoFix: true, pr: 7, state, reason: "1 review thread still open", about: "pr", by: "auto-fix", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 1, updatedAt: null, ...over },
   }) as unknown as ApiTask
 
   it("announces a merge by Wisp, and a switch that needs a person; a first sighting only seeds", () => {
@@ -120,6 +120,20 @@ describe("auto-merge and auto-fix news", () => {
     // a different reason is different news
     tracker.observe("c1", [armed("t1", "waiting", { about: "task" })])
     expect(tracker.observe("c1", [armed("t1", "needs-you", { reason: "Changes requested by @x" })])).toHaveLength(1)
+  })
+
+  it("announces each PR Wisp merges while the switch stays on for the next one", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("c1", [armed("t1", "merging", { lastMerged: null })])
+    const first = tracker.observe("c1", [armed("t1", "waiting", { pr: null, about: "task", lastMerged: { pr: 7, byWisp: true } })])
+    expect(first.map((transition) => transition.autopilot)).toEqual(["merged"])
+    // the next looks, still remembering #7, are not news again
+    expect(tracker.observe("c1", [armed("t1", "waiting", { pr: null, about: "task", reason: "x", lastMerged: { pr: 7, byWisp: true } })])).toEqual([])
+    // the next PR merging is
+    tracker.observe("c1", [armed("t1", "waiting", { pr: 9, lastMerged: { pr: 7, byWisp: true } })])
+    expect(tracker.observe("c1", [armed("t1", "waiting", { pr: null, about: "task", lastMerged: { pr: 9, byWisp: true } })])).toHaveLength(1)
+    // someone else's merge is not Wisp's news
+    expect(tracker.observe("c1", [armed("t1", "waiting", { pr: null, about: "task", lastMerged: { pr: 10, byWisp: false } })])).toEqual([])
   })
 
   it("stays quiet for a merge someone else made, a pause it was already in, and an archived task", () => {

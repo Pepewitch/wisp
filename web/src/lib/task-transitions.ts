@@ -50,8 +50,9 @@ export function finishedTransitions(
 /** Autopilot news worth a banner: it merged the PR, or it needs a person. */
 const AUTOPILOT_NEWS = new Set(["merged", "needs-you", "paused"])
 
+/** Per task: the autopilot state, and the last PR it merged (the switches stay on after a merge). */
 export function snapshotAutopilot(tasks: readonly Pick<ApiTask, "id" | "autopilot">[]): Map<string, string> {
-  return new Map(tasks.flatMap((task) => (task.autopilot ? [[task.id, task.autopilot.state] as const] : [])))
+  return new Map(tasks.flatMap((task) => (task.autopilot ? [[task.id, `${task.autopilot.state}|${task.autopilot.lastMerged?.pr ?? ""}`] as const] : [])))
 }
 
 /**
@@ -70,12 +71,19 @@ export function autopilotTransitions(
   for (const task of tasks) {
     const status = task.autopilot
     const state = status?.state
+    const before = previous.get(task.id)
+    // Wisp merged a PR and stayed on for the next one: news, once per PR
+    const mergedNow = status?.lastMerged?.byWisp ? status.lastMerged.pr : null
+    if (status && before !== undefined && mergedNow !== null && before.split("|")[1] !== String(mergedNow) && !task.archived) {
+      announced.set(task.id, `${mergedNow}|merged|`)
+      transitions.push({ task, from: task.state, to: task.state, autopilot: "merged" })
+      continue
+    }
     // real progress on the PR (checks running, a fresh push) ends the news it
     // was: the same blocker coming back after it is news again. A detour about
     // the task (a busy turn, a GitHub blip, Stop) is not progress.
     if (status && state && !AUTOPILOT_NEWS.has(state) && status.about === "pr") announced.delete(task.id)
-    const before = previous.get(task.id)
-    if (!state || before === undefined || before === state || task.archived || !AUTOPILOT_NEWS.has(state)) continue
+    if (!state || before === undefined || before.split("|")[0] === state || task.archived || !AUTOPILOT_NEWS.has(state)) continue
     if (state === "merged" && !status!.mergedByWisp) continue
     const news = `${status!.pr}|${state}|${status!.reason}`
     if (announced.get(task.id) === news) continue

@@ -244,7 +244,7 @@ describe("the sidebar pull-request status", () => {
   it("turns red, and says why, while auto-merge or auto-fix needs a person on that PR", () => {
     const autopilot = {
       autoMerge: true, autoFix: true, pr: PR.number, state: "needs-you" as const, reason: "1 review thread still open",
-      about: "pr" as const, by: "auto-fix" as const, mergedByWisp: false, pendingFix: null, fixRounds: 1, updatedAt: null,
+      about: "pr" as const, by: "auto-fix" as const, mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 1, updatedAt: null,
     }
     const { unmount } = mount(
       <TaskRow task={{ ...TASK, autopilot }} pullRequest={found()} selected={false} onSelect={() => {}} />,

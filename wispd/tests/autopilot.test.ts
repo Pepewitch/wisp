@@ -163,14 +163,63 @@ describe("the loop", () => {
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(state.merges).toEqual([{ number: 7, method: "SQUASH", head: HEAD }]);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "Merged by Wisp", pr: 7, autoMerge: false, mergedByWisp: true });
-    // the agent hears once that its branch is finished, and never again
+    // the switch stays on for the task's next PR, and remembers the merge
+    expect(autopilotStatus(task.id)).toMatchObject({
+      state: "waiting", reason: "#7 merged by Wisp · Waiting for the task's next PR", pr: null, autoMerge: true,
+      lastMerged: { pr: 7, byWisp: true },
+    });
+    // the agent hears once that its branch is finished, and never again; the standing note stays
     const merged = autopilotTurnNotes(task.id);
-    expect(merged.notes).toEqual(["PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main."]);
+    expect(merged.notes[0]).toBe("PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main.");
+    expect(merged.notes[1]).toContain("Auto-merge is on for this task");
     // not spent until a turn really starts with it
-    expect(autopilotTurnNotes(task.id).notes).toHaveLength(1);
+    expect(autopilotTurnNotes(task.id).notes).toHaveLength(2);
     merged.delivered();
-    expect(autopilotTurnNotes(task.id).notes).toEqual([]);
+    expect(autopilotTurnNotes(task.id).notes).toHaveLength(1);
+    expect(autopilotTurnNotes(task.id).notes[0]).toContain("Auto-merge is on for this task");
+  });
+
+  test("after a merge it stays on for the task's next PR, and never adopts an older one", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const opened = (number: number, ms: number) => pull({ number, createdAt: new Date(Date.parse(task.created_at) + ms).toISOString() });
+    const { state, github } = fakeGitHub({ pulls: [opened(7, 60_000)] });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    await pass(rt, task.id, clock);
+    // what belongs to #7 must not follow the task to its next PR
+    const row = autopilotRow(task.id)!;
+    writeAutopilotCheckpoint(row, { ...checkpointOf(row), rounds: 2, delivered: { "thread:PRRT_7": "t" } }, new Date(clock.now));
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(state.merges.map((merge) => merge.number)).toEqual([7]);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: null, autoMerge: true, autoFix: true, fixRounds: 0, lastMerged: { pr: 7, byWisp: true } });
+    expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("delivered");
+    // an open PR older than the one that merged is stale or abandoned: never adopted
+    state.pulls = [opened(6, 30_000)];
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe("#7 merged by Wisp · Waiting for this task's own PR (#6 is older than #7, which merged)");
+    // the task's next change is
+    state.pulls = [opened(6, 30_000), opened(9, 120_000)];
+    state.pr = snapshot({ number: 9, head: "d".repeat(40) });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ pr: 9, lastMerged: { pr: 7 } });
+    clock.now += 3 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(state.merges.map((merge) => merge.number)).toEqual([7, 9]);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 9, byWisp: true }, autoMerge: true });
+  });
+
+  test("closing a PR still switches both off: that is how its owner abandons an approach", async () => {
+    const task = doneTask();
+    const clock = { now: START };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true, autoFix: true });
+    seed(task.id, clock);
+    state.pr = snapshot({ state: "CLOSED" });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ autoMerge: false, autoFix: false, state: "off", reason: "Auto-merge off — #7 was closed" });
   });
 
   test("with no open PR it waits; the oldest PR onto the base wins over a stacked child", async () => {
@@ -289,7 +338,7 @@ describe("the loop", () => {
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7, mergeAttempt: { head: HEAD, at: new Date(START).toISOString() } }, new Date(clock.now));
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(0);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "Merged by Wisp" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", lastMerged: { pr: 7, byWisp: true }, reason: "#7 merged by Wisp · Waiting for the task's next PR" });
   });
 
   test("merge failures retry, then pause for Resume; GitHub's own auto-merge also pauses", async () => {
@@ -390,7 +439,7 @@ describe("binding and the edges of a merge", () => {
     expect(checkpointOf(autopilotRow(task.id)!).mergeAttempt?.head).toBe(HEAD);
     state.pr = snapshot({ state: "MERGED" });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "Merged by Wisp" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", lastMerged: { pr: 7, byWisp: true }, reason: "#7 merged by Wisp · Waiting for the task's next PR" });
   });
 
   test("a paused row still notices that its PR was merged", async () => {
@@ -403,7 +452,9 @@ describe("binding and the edges of a merge", () => {
     db.run("UPDATE workflows SET state = 'paused', reason = 'Merge failed: x' WHERE task_id = ? AND type = 'pr-autopilot'", [task.id]);
     state.pr = snapshot({ state: "MERGED" });
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "merged", reason: "#7 was merged", mergedByWisp: false });
+    // someone else merged it: not Wisp's, and the pause was about that PR, so it is active again
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "#7 merged · Waiting for the task's next PR", lastMerged: { pr: 7, byWisp: false } });
+    expect(autopilotRow(task.id)!.state).toBe("active");
   });
 
   test("marking a draft ready restarts the wait for its checks", async () => {
@@ -525,7 +576,8 @@ describe("what the agent is told", () => {
     await until(() => existsSync(file), "the queued turn");
     const prompt = readFileSync(file, "utf8");
     expect(prompt).toContain("PR #7 was merged by Wisp. Its branch is finished");
-    expect(prompt).not.toContain("Auto-merge is on");
+    // the switch stayed on: the next change gets the same standing note
+    expect(prompt).toContain("Auto-merge is on for this task");
     expect(prompt.endsWith("also fix the typo")).toBe(true);
     await until(() => getTask(task.id)?.state === "done", "the turn to settle");
   });

@@ -29,7 +29,7 @@ import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./ev
 import { feedbackItems, feedbackKey, feedbackSummary, isMarked, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
 import { planFix, type FixPlan } from "./fix"
 import {
-  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot,
+  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
@@ -85,8 +85,8 @@ async function originRepository(task: Task, signal: AbortSignal): Promise<string
  * own branch names first, then the oldest onto the base, so a stacked child
  * never jumps its parent.
  */
-export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>): OpenPullRequest | null {
-  const created = Date.parse(task.created_at)
+export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>, after = task.created_at): OpenPullRequest | null {
+  const created = Date.parse(after)
   const own = pulls
     .filter((pull) => !pull.isCrossRepository && viewer !== "" && pull.author === viewer && Date.parse(pull.createdAt) >= created)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
@@ -96,12 +96,13 @@ export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string,
 }
 
 /** Why the first open PR was not adopted, so "Waiting for a PR" never hides one that exists. */
-export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string): string | null {
+export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string, merged?: { pr: number; openedAt: string }): string | null {
   const pull = pulls[0]
   if (!pull) return null
   if (pull.isCrossRepository) return `#${pull.number} is from a fork`
   if (pull.author !== viewer) return `#${pull.number} was opened by @${pull.author ?? "someone else"}, not @${viewer}`
   if (Date.parse(pull.createdAt) < Date.parse(task.created_at)) return `#${pull.number} is older than this task`
+  if (merged && Date.parse(pull.createdAt) < Date.parse(merged.openedAt)) return `#${pull.number} is older than #${merged.pr}, which merged`
   return null
 }
 
@@ -141,6 +142,11 @@ function openSentThreads(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): numbe
   const sent = Object.keys(checkpoint.delivered ?? {}).filter((id) => id.startsWith("thread:"))
   const read = new Map(pr.threads.map((thread) => [`thread:${thread.id}`, thread]))
   return sent.filter((id) => (read.has(id) ? !read.get(id)!.resolved : pr.threadsTruncated)).length
+}
+
+/** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
+function nextPrReason(merged: NonNullable<AutopilotCheckpoint["lastMerged"]>, reason: string): string {
+  return `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · ${reason === "Waiting for a PR" ? "Waiting for the task's next PR" : reason}`
 }
 
 /** The last few heads seen, and always the current one. */
@@ -265,10 +271,11 @@ export class AutopilotRuntime {
     const configured = repoConfigFor(this.cfg, task.repo_path)?.baseBranch?.replace(/^origin\//, "")
 
     if (!checkpoint.pr) {
-      if (!idle) { save("waiting", busyReason(task), BUSY_MS); return }
-      const bound = await this.bind(row, task, repository, configured, signal)
-      if (typeof bound === "string") { save("waiting", bound, WAITING_ON_YOU_MS); return }
-      checkpoint.pr = bound
+      if (!idle) { save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task), BUSY_MS); return }
+      const bound = await this.bind(row, task, repository, configured, checkpoint, signal)
+      if (typeof bound === "string") { save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, WAITING_ON_YOU_MS); return }
+      checkpoint.pr = bound.number
+      checkpoint.prOpenedAt = bound.createdAt
     }
 
     const pr = await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
@@ -497,24 +504,33 @@ export class AutopilotRuntime {
   }
 
   /** The PR number to bind to, or the reason there is none yet. */
-  private async bind(row: WorkflowRow, task: Task, repository: string, configured: string | undefined, signal: AbortSignal): Promise<number | string> {
+  private async bind(
+    row: WorkflowRow, task: Task, repository: string, configured: string | undefined, checkpoint: AutopilotCheckpoint, signal: AbortSignal,
+  ): Promise<{ number: number; createdAt: string } | string> {
     const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
     const { defaultBranch, viewer, pulls } = await this.github.openPullRequests(repository, branches, task.repo_path, signal)
-    const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))))
+    // After a merge, only a PR opened after the merged one (the task's next
+    // change, or a stacked child): an older open one is stale or abandoned.
+    const after = checkpoint.lastMerged?.openedAt
+    const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))), after)
     if (!pick) {
-      const skipped = skippedPull(pulls, task, viewer)
+      const skipped = skippedPull(pulls, task, viewer, checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, openedAt: after! } : undefined)
       return skipped ? `Waiting for this task's own PR (${skipped})` : "Waiting for a PR"
     }
     recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, this.now().toISOString())
-    return pick.number
+    return { number: pick.number, createdAt: pick.createdAt }
   }
 
-  /** The bound PR is no longer open: record how it ended and stand down. */
+  /**
+   * The bound PR is no longer open. A merge is the task moving on, so the
+   * switches stay on for its next PR; closing one is how its owner abandons
+   * an approach, so that stands them down.
+   */
   private settle(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot): void {
     const now = this.now()
     if (pr.state === "MERGED") {
       const ours = checkpoint.mergeAttempt?.head === pr.head
-      finishAutopilot(row, "merged", ours ? `Merged by Wisp` : `#${pr.number} was merged`, now, { base: pr.baseRefName, byWisp: ours })
+      rebindAfterMerge(row, { pr: pr.number, base: pr.baseRefName, byWisp: ours, openedAt: checkpoint.prOpenedAt ?? now.toISOString() }, now)
       return
     }
     // Closing a PR is how its owner abandons an approach: never move on to another.

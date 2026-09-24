@@ -10,7 +10,7 @@ export function formatAutopilot(status: AutopilotStatus): string {
   const pr = status.pr ? ` · PR #${status.pr}` : ""
   if (status.state === "merged") return `auto-merge: done${pr} · ${status.reason}`
   const on = [status.autoMerge && "auto-merge", status.autoFix && "auto-fix"].filter(Boolean).join(" + ")
-  if (!on) return `auto-merge: off${pr}${status.reason ? ` · ${status.reason}` : ""}`
+  if (!on) return `auto-merge and auto-fix: off${pr}${status.reason ? ` · ${status.reason}` : ""}`
   const rounds = status.autoFix && status.fixRounds > 0 ? ` · fix round ${status.fixRounds}` : ""
   return `${on}: on${pr} · ${status.state} · ${status.reason}${rounds}`
 }

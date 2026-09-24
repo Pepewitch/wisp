@@ -53,6 +53,8 @@ describe("notification policy", () => {
     const news = (kind: NonNullable<TaskTransition["autopilot"]>, over: Record<string, unknown> = {}) =>
       describeTaskTransition({ ...transition({ autopilot: { ...autopilot, ...over } } as Partial<ApiTask>), autopilot: kind }, "Local")
     expect(news("merged", { state: "merged", mergedByWisp: true })).toEqual({ title: "Fix the flaky test", body: "PR #7 merged by Wisp · Local" })
+    // it stayed on for the next PR: the merged one is named, not the (now empty) binding
+    expect(news("merged", { state: "waiting", pr: null, lastMerged: { pr: 7, byWisp: true } }).body).toBe("PR #7 merged by Wisp · Local")
     expect(news("needs-you").body).toBe("PR #7 needs you — 1 review thread still open · Local")
     expect(news("paused", { state: "paused", reason: "Auto-fix gave up after 3 rounds — resume to try again" }).body)
       .toBe("PR #7: paused — Auto-fix gave up after 3 rounds — resume to try again · Local")

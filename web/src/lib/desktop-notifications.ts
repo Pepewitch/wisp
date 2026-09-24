@@ -47,8 +47,9 @@ export function describeTaskTransition(
   const title = transition.task.title.trim() || "Untitled task"
   const autopilot = transition.task.autopilot
   if (transition.autopilot && autopilot) {
+    const merged = autopilot.lastMerged?.pr ?? autopilot.pr
     const pr = autopilot.pr ? `PR #${autopilot.pr}` : "Its PR"
-    const news = transition.autopilot === "merged" ? `${pr} merged by Wisp`
+    const news = transition.autopilot === "merged" ? `${merged ? `PR #${merged}` : "Its PR"} merged by Wisp`
       : transition.autopilot === "paused" ? `${pr}: paused — ${autopilot.reason}`
         : `${pr} needs you — ${autopilot.reason}`
     return { title, body: `${news} · ${connectionName}` }
