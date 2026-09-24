@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
@@ -41,6 +41,8 @@ const task = (over: Partial<ApiTask> = {}): ApiTask =>
 const pngFile = () => new File([PNG], "shot.png", { type: "image/png" })
 const CSV = new TextEncoder().encode("id,name\n1,a\n2,b\n")
 const csvFile = () => new File([CSV], "orders.csv", { type: "text/csv" })
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe("SteerBox agent metadata", () => {
   it("keeps the task's selected effort visible after its model", () => {
@@ -165,6 +167,59 @@ describe("SteerBox attachments", () => {
     fireEvent.paste(box, { clipboardData: { files: [pngFile()], getData: () => "" } })
     await waitFor(() => expect(screen.getByTestId("pending-attachment")).toBeTruthy())
     expect((box as HTMLTextAreaElement).value).toBe("")
+  })
+
+  it("previews pasted and picked images before sending, without uploading them", async () => {
+    const createObjectURL = vi.fn()
+      .mockReturnValueOnce("blob:pasted")
+      .mockReturnValueOnce("blob:picked")
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL: vi.fn() })
+    const onSend = vi.fn()
+    const transport = fakeDaemonTransport()
+    const upload = vi.spyOn(transport, "upload")
+    render(<SteerBox task={task()} hasImage onSend={onSend} />, {
+      wrapper: runtimeWrapper(transport),
+    })
+
+    const box = screen.getByPlaceholderText("Ask for changes, or / for commands")
+    fireEvent.paste(box, { clipboardData: { files: [pngFile()], getData: () => "" } })
+    await waitFor(() => expect(screen.getByLabelText("View shot.png")).toBeTruthy())
+    fireEvent.change(screen.getByTestId("attach-input"), {
+      target: { files: [new File([PNG], "second.png", { type: "image/png" })] },
+    })
+    await waitFor(() => expect(screen.getByLabelText("View second.png")).toBeTruthy())
+
+    fireEvent.click(screen.getByLabelText("View second.png"))
+    const viewer = screen.getByTestId("attachment-viewer")
+    expect(viewer.querySelector("img")).toHaveAttribute("src", "blob:picked")
+    expect(viewer.textContent).toContain("second.png")
+    expect(viewer.textContent).toContain("2 of 2")
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" })
+    expect(screen.getByTestId("attachment-viewer").querySelector("img")).toHaveAttribute("src", "blob:pasted")
+    fireEvent.keyDown(document, { key: "Escape" })
+    await waitFor(() => expect(screen.queryByTestId("attachment-viewer")).toBeNull())
+    expect(screen.getAllByTestId("pending-attachment")).toHaveLength(2)
+    expect(onSend).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+  })
+
+  it("closes the pending preview when its image is removed", async () => {
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:pending"),
+      revokeObjectURL: vi.fn(),
+    })
+    render_(<SteerBox task={task()} hasImage onSend={() => {}} />)
+    fireEvent.paste(screen.getByPlaceholderText("Ask for changes, or / for commands"), {
+      clipboardData: { files: [pngFile()], getData: () => "" },
+    })
+    await waitFor(() => expect(screen.getByLabelText("View shot.png")).toBeTruthy())
+    fireEvent.click(screen.getByLabelText("View shot.png"))
+    expect(screen.getByTestId("attachment-viewer")).toBeTruthy()
+    fireEvent.click(screen.getByLabelText("Remove shot.png"))
+    expect(screen.queryByTestId("attachment-viewer")).toBeNull()
+    expect(screen.queryByTestId("pending-attachment")).toBeNull()
   })
 
   it("pasting Slack-style HTML hyperlinks inserts markdown links, not the label alone", () => {

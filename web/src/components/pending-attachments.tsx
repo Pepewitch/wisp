@@ -1,5 +1,6 @@
-import { useRef } from "react"
+import { useRef, useState } from "react"
 
+import { AttachmentViewer } from "@/components/attachment-viewer"
 import { Attach, Dismiss } from "@/components/icons"
 
 import { ATTACHMENT_ACCEPT, formatBytes, type PendingAttachments } from "@/lib/attachments"
@@ -8,6 +9,8 @@ import { cn } from "@/lib/utils"
 /**
  * The pending-attachment rows under a composer (S3): one quiet muted row per
  * file — `name.png · 12 KB · ✕` — with a small content thumbnail for images.
+ * The thumbnail and name open the same preview as a sent image, without
+ * submitting or uploading the pending file.
  * No chip, no badge, no tint (design law); the thumbnail is content, not
  * status. A pdf, a text file or a video has no thumbnail worth drawing, so it
  * gets its kind as one muted word instead — the row still has to say what it
@@ -31,21 +34,34 @@ export function PendingAttachmentRows({
    */
   onInsertInline?: (pasted: NonNullable<PendingAttachments["pastedText"]>) => void
 }) {
+  const [openId, setOpenId] = useState<string | null>(null)
   const pasted = pending.pastedText
   if (pending.list.length === 0 && !pending.note && !pasted) return null
   const notes = [pending.deliveryNote, pending.note].filter((n): n is string => Boolean(n))
+  const images = pending.list.filter((a) => a.kind === "image" && a.url)
+  const openIndex = openId === null ? null : images.findIndex((a) => a.id === openId)
   return (
     <div className="mt-1.5 flex flex-col gap-1" data-testid="pending-attachments">
       {pending.list.map((a) => (
         <div key={a.id} data-testid="pending-attachment" className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-          {a.url && (
-            <img
-              src={a.url}
-              alt=""
-              className={cn("shrink-0 rounded-sm object-cover", touch ? "size-8" : "size-6")}
-            />
+          {a.kind === "image" && a.url ? (
+            <button
+              type="button"
+              aria-label={`View ${a.name}`}
+              title={`View ${a.name}`}
+              className="flex min-w-0 cursor-pointer items-center gap-2 rounded-sm text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              onClick={() => setOpenId(a.id)}
+            >
+              <img
+                src={a.url}
+                alt=""
+                className={cn("shrink-0 rounded-sm object-cover", touch ? "size-8" : "size-6")}
+              />
+              <span className="truncate font-mono">{a.name}</span>
+            </button>
+          ) : (
+            <span className="truncate font-mono">{a.name}</span>
           )}
-          <span className="truncate font-mono">{a.name}</span>
           {a.kind !== "image" && (
             <>
               <span className="shrink-0 text-faint">·</span>
@@ -90,6 +106,13 @@ export function PendingAttachmentRows({
           {n}
         </div>
       ))}
+      <AttachmentViewer
+        files={images.map((a) => ({ name: a.name, size: a.bytes, mediaType: a.mediaType }))}
+        index={openIndex === -1 ? null : openIndex}
+        onIndex={(next) => setOpenId(images[next]?.id ?? null)}
+        onClose={() => setOpenId(null)}
+        localSrcFor={(index) => images[index]?.url ?? ""}
+      />
     </div>
   )
 }
