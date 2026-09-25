@@ -16,16 +16,13 @@ import { AttachButton } from "@/components/pending-attachments"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
-import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
+import { useCreateTaskComposer } from "@/hooks/useCreateTaskComposer"
 import { failureReason } from "@/lib/api"
-import {
-  discardAttachmentPayloads,
-  usePendingAttachments,
-} from "@/lib/attachments"
+import { discardAttachmentPayloads, usePendingAttachments } from "@/lib/attachments"
+import { clearCreateTaskDraft, readCreateTaskProject, writeCreateTaskProject } from "@/lib/drafts"
 import { effortOptions, rememberEffort } from "@/lib/effort"
 import { useDaemonRuntime } from "@/lib/runtime"
 import {
-  initialChoice,
   isUsable,
   loadPreferredModel,
   orderHarnesses,
@@ -91,7 +88,7 @@ export function CreateTaskDialog({
           )}
         >
           <Dialog.Title className="sr-only">New task</Dialog.Title>
-          {/* keyed so every open starts from a clean form, not the last one */}
+          {/* Each project restores only its own unsent composer. */}
           {open && (
             <Form
               key={initialRepoPath ?? "any"}
@@ -118,29 +115,6 @@ const decode = (v: string): ModelChoice => {
 const sameChoice = (a: ModelChoice | null, b: ModelChoice): boolean =>
   a?.harness === b.harness && a.model === b.model
 
-/**
- * The two agent knobs that belong to the chosen harness rather than to the
- * prompt: reasoning effort, and fast mode.
- *
- * They are held together because a harness switch has to reseed both at once —
- * effort from the destination's own default, and fast mode OFF whenever the
- * destination has no faster lane, so the create request can never carry a tier
- * the daemon would refuse. Fast mode also starts OFF on every new dialog: it
- * spends more usage, so it is asked for per task rather than remembered.
- */
-function useAgentKnobs(harnesses: HarnessInfo[], choice: ModelChoice | null) {
-  const [effort, setEffort] = useState(
-    () => harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? "",
-  )
-  const [fast, setFast] = useState(false)
-  const reseedForHarness = (name: string) => {
-    const destination = harnesses.find((candidate) => candidate.name === name)
-    setEffort(destination?.defaults.reasoningEffort ?? "")
-    if (!destination?.hasFastMode) setFast(false)
-  }
-  return { effort, setEffort, fast, setFast, reseedForHarness }
-}
-
 function Form({
   initialRepoPath,
   repos,
@@ -156,19 +130,52 @@ function Form({
   onCreated: (id: string) => void
   onClose: () => void
 }) {
+  const { connectionId } = useDaemonRuntime()
+  const [repoPath, setRepoPath] = useState(() => {
+    const last = readCreateTaskProject(connectionId)
+    return initialRepoPath ?? (repos.some((repo) => repo.path === last) ? last! : repos[0]?.path ?? "")
+  })
+  useEffect(() => {
+    if (repoPath) writeCreateTaskProject(connectionId, repoPath)
+  }, [connectionId, repoPath])
+  return (
+    <ProjectForm
+      key={repoPath}
+      repoPath={repoPath}
+      onRepoPathChange={setRepoPath}
+      repos={repos}
+      harnesses={harnesses}
+      harnessesError={harnessesError}
+      onCreated={onCreated}
+      onClose={onClose}
+    />
+  )
+}
+
+function ProjectForm({
+  repoPath,
+  onRepoPathChange,
+  repos,
+  harnesses,
+  harnessesError,
+  onCreated,
+  onClose,
+}: {
+  repoPath: string
+  onRepoPathChange: (path: string) => void
+  repos: RepoInfo[]
+  harnesses: HarnessInfo[]
+  harnessesError: string | null
+  onCreated: (id: string) => void
+  onClose: () => void
+}) {
   const { connectionId, transport } = useDaemonRuntime()
-  const [repoPath, setRepoPath] = useState(initialRepoPath ?? repos[0]?.path ?? "")
-  const [prompt, setPrompt] = useState("")
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel(connectionId))
-  const [choice, setChoice] = useState<ModelChoice | null>(() => initialChoice(harnesses, preferredChoice))
-  const { effort, setEffort, fast, setFast, reseedForHarness } = useAgentKnobs(harnesses, choice)
-  const [mode, setMode] = useState<TaskMode>("worktree")
-  // "" means "whatever this project resolves to" — the base picker only ever
-  // holds a deliberate one-off override, never the resolved default, so it
-  // cannot go stale against a project setting changed in another tab.
-  const [base, setBase] = useState("")
-  const autopilot = useAutopilotChoice(mode)
-  const [suffixPromptId, setSuffixPromptId] = useState<string | null>(null)
+  const {
+    prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
+    mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
+    harness, attachments, reseedForHarness,
+  } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
 
   const createTask = useCreateTask()
@@ -198,9 +205,7 @@ function Form({
   const submitting = useRef(false)
   const [uploading, setUploading] = useState(false)
 
-  const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
   const anyUsable = harnesses.some(isUsable)
-  const attachments = usePendingAttachments({ harness: harness?.name ?? null, hasImage: harness?.hasImage, imageNote: harness?.imageNote })
 
   const project = repos.find((r) => r.path === repoPath)
   const model = choice?.model ?? ""
@@ -255,6 +260,7 @@ function Form({
                 rememberEffort(connectionId, chosen.harness, effort.trim())
               }
               attachments.clear()
+              clearCreateTaskDraft(connectionId, repoPath)
               onCreated(task.id)
               onClose()
             },
@@ -339,7 +345,7 @@ function Form({
           {repos.length === 0 ? (
             <MenuNote>No projects configured. Add one from the sidebar first.</MenuNote>
           ) : (
-            <MenuRadioGroup value={repoPath} onValueChange={setRepoPath}>
+            <MenuRadioGroup value={repoPath} onValueChange={onRepoPathChange}>
               {repos.map((r) => (
                 <MenuRadioItem key={r.path} value={r.path} hint={r.exists ? undefined : "missing"}>
                   {r.name ?? r.path}

@@ -514,6 +514,13 @@ scrim between it and the composer underneath; saving selects the new record
 without closing that composer. Its own `⌘↵` must never leak into the create
 task form.
 
+An unfinished create composer stays in webview memory when the dialog closes:
+prompt, raw pending files and task choices restore for the same project on the
+same connection. Switching projects opens that project's own draft, and the
+global New task action reopens the last selected project. Successful creation
+clears only the submitted project's draft; a refusal keeps it for retry.
+Nothing is written to browser storage or shared across tabs.
+
 Every saved row manages itself with two quiet icon buttons. The pencil
 reopens the same nested dialog prefilled, and saving an edit keeps the
 record's id, so a composer already pointing at it never loses its selection.
