@@ -502,9 +502,19 @@ Five contract rules the modal must keep:
   then prefers a harness that has a model list, so a daemon whose first harness
   has no installed binary does not open the composer already in the free-text
   fallback. Every model row has a star: setting or clearing it affects future
-  create dialogs only, never the selection in the dialog already open. The
-  preference is client-local and connection-scoped; a missing or retired model
-  falls back normally.
+  create dialogs with no unsent draft, never the selection in the current
+  project's draft. A restored draft keeps its model until that project is
+  successfully created. The preference is client-local and connection-scoped;
+  a missing or retired model falls back normally for a new draft.
+
+An unfinished create composer stays in webview memory when the dialog closes:
+prompt, raw pending files and task choices restore for the same project on the
+same connection. Switching projects opens that project's own draft, and the
+global New task action reopens the last selected project. Successful creation
+clears only the submitted project's draft; a refusal keeps it for retry.
+Nothing is written to browser storage or shared across tabs. Fast mode still
+starts off for a new task because it spends more usage, but an unfinished
+draft restores the toggle exactly as it was left.
 
 The **suffix prompt** picker is shared by create and steer. It starts at **No
 suffix prompt**, lists the daemon-wide records in
@@ -513,13 +523,6 @@ row. Creation is a nested dialog: opening it closes the picker menu and puts a
 scrim between it and the composer underneath; saving selects the new record
 without closing that composer. Its own `⌘↵` must never leak into the create
 task form.
-
-An unfinished create composer stays in webview memory when the dialog closes:
-prompt, raw pending files and task choices restore for the same project on the
-same connection. Switching projects opens that project's own draft, and the
-global New task action reopens the last selected project. Successful creation
-clears only the submitted project's draft; a refusal keeps it for retry.
-Nothing is written to browser storage or shared across tabs.
 
 Every saved row manages itself with two quiet icon buttons. The pencil
 reopens the same nested dialog prefilled, and saving an edit keeps the

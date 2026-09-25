@@ -6,6 +6,7 @@ import { Menu, MenuAction, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/com
 import { ModelMenuFooter, ModelMenuGroups } from "@/components/model-menu"
 import { PreferButton } from "@/components/preferred-model-button"
 import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
+import { CreateTaskNotices } from "@/components/create-task-notices"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { hiddenTotal } from "@/lib/model-visibility"
 import { MENU_ACTION } from "@/lib/menu-actions"
@@ -174,7 +175,7 @@ function ProjectForm({
   const {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
     mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
-    harness, attachments, reseedForHarness,
+    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
   } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
 
@@ -208,9 +209,7 @@ function ProjectForm({
   const anyUsable = harnesses.some(isUsable)
 
   const project = repos.find((r) => r.path === repoPath)
-  const model = choice?.model ?? ""
-  const ready =
-    repoPath !== "" && prompt.trim() !== "" && model !== "" && !createTask.isPending && !uploading
+  const ready = canSubmit && !createTask.isPending && !uploading
 
   const pickChoice = (value: string) => {
     const next = decode(value)
@@ -229,6 +228,8 @@ function ProjectForm({
     if (!choice) return setValidationError("No harness on this machine can run a task")
     if (!repoPath) return setValidationError("Pick a project")
     if (!prompt.trim()) return setValidationError("A prompt is required")
+    if (!modelAvailable) return setValidationError("Pick an available model")
+    if (!suffixAvailable) return setValidationError("Pick an available suffix prompt")
     setValidationError(null)
     const chosen = choice
     submitting.current = true
@@ -363,16 +364,15 @@ function ProjectForm({
       {/* the prompt — the reason the modal exists, so it gets the room */}
       <PromptField box={box} prompt={prompt} setPrompt={setPrompt} attachments={attachments} />
 
-      {error && <div className="px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
-      {harnessesError && !error && (
-        <div className="px-4 pb-1 text-[11.5px] text-faint">Harness list unavailable ({harnessesError})</div>
-      )}
-      {!harnessesError && !error && harnesses.length > 0 && !anyUsable && (
-        <div className="px-4 pb-1 text-[11.5px] text-faint">
-          No harness on this machine reported a model, so there is nothing to run a task with. Check the CLIs are on
-          PATH, then re-probe from the harness menu.
-        </div>
-      )}
+      <CreateTaskNotices
+        error={error}
+        choice={choice}
+        modelAvailable={modelAvailable}
+        suffixAvailable={suffixAvailable}
+        harnessesError={harnessesError}
+        hasHarnesses={harnesses.length > 0}
+        anyUsable={anyUsable}
+      />
 
       <TaskControls
         attachments={attachments}

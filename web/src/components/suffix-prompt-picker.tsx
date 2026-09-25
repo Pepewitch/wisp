@@ -40,7 +40,8 @@ export function SuffixPromptPicker({
   const [dialog, setDialog] = useState<SuffixDialogState>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
-  const query = useSuffixPrompts(menuOpen)
+  // A restored choice needs its name even before the picker has been opened.
+  const query = useSuffixPrompts(menuOpen || value !== null)
   const remove = useDeleteSuffixPrompt()
   const selected = query.data?.find((prompt) => prompt.id === value)
 
@@ -61,7 +62,8 @@ export function SuffixPromptPicker({
         iconOnly={touch && !selected}
         label={
           selected?.name ??
-          (touch ? "Suffix prompt" : <span className="text-muted-foreground">Suffix prompt</span>)
+          (value && query.data ? "Unavailable suffix prompt" :
+            touch ? "Suffix prompt" : <span className="text-muted-foreground">Suffix prompt</span>)
         }
         disabled={disabled}
         // the pointer cap was 32 when harness and model shared this bar; they

@@ -341,7 +341,7 @@ export function usePendingAttachments({
    * composes this sentence itself.
    */
   imageNote?: string;
-  /** Desktop-only in-memory scope. Omitted by the browser and create dialog. */
+  /** Optional in-memory scope for composers that survive unmounts. */
   rememberKey?: string;
 }): PendingAttachments {
   const remembered = rememberKey ? rememberedAttachments.get(rememberKey) : undefined;

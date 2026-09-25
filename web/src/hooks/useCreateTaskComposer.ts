@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
 import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
+import { useSuffixPrompts } from "@/hooks/queries"
 import { usePendingAttachments } from "@/lib/attachments"
 import {
   createTaskScope,
@@ -8,7 +9,7 @@ import {
   writeCreateTaskDraft,
   writePendingAttachmentCount,
 } from "@/lib/drafts"
-import { initialChoice, type ModelChoice } from "@/lib/model-choice"
+import { initialChoice, modelOptionsFor, type ModelChoice } from "@/lib/model-choice"
 import type { HarnessInfo, TaskMode } from "@/lib/types"
 
 /** One in-memory create composer per connection and project, including raw attachment Files. */
@@ -32,6 +33,14 @@ export function useCreateTaskComposer(
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(saved?.suffixPromptId ?? null)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
+  const modelAvailable = !!harness && !!choice && modelOptionsFor(harness).includes(choice.model)
+  const suffixPrompts = useSuffixPrompts(suffixPromptId !== null)
+  // If discovery failed, let the daemon make the final decision at submit.
+  const suffixAvailable = !suffixPromptId || !suffixPrompts.data ||
+    suffixPrompts.data.some((prompt) => prompt.id === suffixPromptId)
+  const canSubmit = repoPath !== "" && prompt.trim() !== "" && !!choice?.model &&
+    modelAvailable && suffixAvailable && !suffixPrompts.isFetching &&
+    (!suffixPromptId || !!suffixPrompts.data || suffixPrompts.isError)
   const attachments = usePendingAttachments({
     harness: harness?.name ?? null,
     hasImage: harness?.hasImage,
@@ -57,6 +66,6 @@ export function useCreateTaskComposer(
   return {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
     mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
-    harness, attachments, reseedForHarness,
+    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
   }
 }

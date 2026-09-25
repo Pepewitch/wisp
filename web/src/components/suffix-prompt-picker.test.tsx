@@ -133,9 +133,8 @@ describe("suffix prompt picker", () => {
     }
 
     mount(<Harness />)
-    // the list loads when the menu opens; only then can the trigger name the selection
-    fireEvent.click(screen.getByRole("button", { name: "Suffix prompt" }))
-    await screen.findByRole("button", { name: "Intensive review" })
+    // A selected suffix loads its name without first opening the menu.
+    fireEvent.click(await screen.findByRole("button", { name: "Intensive review" }))
 
     fireEvent.click(await screen.findByRole("button", { name: "Edit suffix prompt Intensive review" }))
     const dialog = await screen.findByTestId("create-suffix-prompt-dialog")
@@ -167,9 +166,7 @@ describe("suffix prompt picker", () => {
     }
 
     mount(<Harness />)
-    // the list loads when the menu opens; only then can the trigger name the selection
-    fireEvent.click(screen.getByRole("button", { name: "Suffix prompt" }))
-    await screen.findByRole("button", { name: "Intensive review" })
+    fireEvent.click(await screen.findByRole("button", { name: "Intensive review" }))
 
     // one click arms, never deletes
     fireEvent.click(await screen.findByRole("button", { name: "Delete suffix prompt Intensive review" }))
@@ -253,6 +250,7 @@ describe("create-task suffix integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await screen.findByRole("button", { name: "Intensive review" })
 
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled())
     fireEvent.click(screen.getByRole("button", { name: "Create" }))
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("task1"))
     expect(calls.find((call) => call.path === "/api/tasks")).toEqual({
