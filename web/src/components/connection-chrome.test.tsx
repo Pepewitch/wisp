@@ -13,7 +13,13 @@ import {
   useDesktopConnections,
 } from "@/lib/desktop-connections"
 import { validateConnectionName } from "@/lib/connection-validation"
-import { clearConnectionDrafts, writeDraft } from "@/lib/drafts"
+import {
+  clearConnectionDrafts,
+  createTaskScope,
+  writeCreateTaskDraft,
+  writeDraft,
+  writePendingAttachmentCount,
+} from "@/lib/drafts"
 import { connectionStore } from "@/lib/conn"
 
 const LOCAL = {
@@ -139,6 +145,20 @@ function renderChrome(
       </DesktopApplicationProvider>
     </QueryClientProvider>
   )
+}
+
+function seedCreateDraft(connectionId: string) {
+  writeCreateTaskDraft(connectionId, "/repo", {
+    prompt: "new work",
+    choice: { harness: "droid", model: "synthetic-model" },
+    effort: "",
+    fast: false,
+    mode: "worktree",
+    base: "",
+    suffixPromptId: null,
+    autopilot: { autoMerge: false, autoFix: false },
+  })
+  writePendingAttachmentCount(connectionId, createTaskScope("/repo"), 1)
 }
 
 function PartialReconnectHarness() {
@@ -381,7 +401,7 @@ describe("desktop connection chrome", () => {
     expect(screen.getByText(/stored credential/)).toBeInTheDocument()
   })
 
-  it("requires a second confirmation before discarding a remote draft", async () => {
+  it("counts create drafts and pending files in the remote removal warning", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
     const remote = {
       id: "remote-one",
@@ -393,6 +413,7 @@ describe("desktop connection chrome", () => {
     } as const
     const removeConnection = vi.fn(async () => undefined)
     writeDraft(remote.id, "synthetic-task", "unsent work")
+    seedCreateDraft(remote.id)
     renderChrome(
       bootstrap([LOCAL, remote]),
       bridge({ removeConnection })
@@ -401,7 +422,7 @@ describe("desktop connection chrome", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
     fireEvent.click(screen.getByRole("button", { name: "Manage Remote one" }))
     fireEvent.click(await screen.findByText("Remove connection"))
-    expect(await screen.findByText(/1 unsent draft/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 unsent drafts and 1 pending attachment/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Review local data" }))
     expect(removeConnection).not.toHaveBeenCalled()
     fireEvent.click(
