@@ -66,5 +66,22 @@ export {
   type OpencodeCatalogEntry,
 } from "./discovery";
 export { PROBE_STRATEGIES, ProbeError, probeCommands, runProbe } from "./probe";
+export {
+  FACTORY_API,
+  LIMIT_STRATEGIES,
+  LimitsError,
+  normalizeCodexLimits,
+  normalizeFactoryLimits,
+  parseClaudeReset,
+  parseClaudeUsage,
+  runLimits,
+  windowLabel,
+  type HarnessLimits,
+  type LimitsCtx,
+  type LimitsIo,
+  type LimitsStatus,
+  type LimitsStrategy,
+  type LimitWindow,
+} from "./limits";
 export { discoverSkills, scanSkillDirs, SKILL_STRATEGIES } from "./skills";
 export { COMPACT_STRATEGIES, isCompactPrompt, runCompact } from "./compact";

@@ -8,6 +8,9 @@ import {
 } from "../config";
 import { JEV_MODEL, countJudgeUsage, jevClient, jevKey, judgeUsage, type JudgeClient, type JudgeKeySource, type JudgeUsage } from "../autopilot/judge";
 import { emit } from "../events";
+import type { AdapterDef } from "../adapters";
+import { LIMIT_STRATEGIES } from "../adapters";
+import { factoryKey, type FactoryKeySource, type HarnessLimitsCache } from "../harness-limits";
 import { typeName } from "../validate";
 import { err, json, jsonObjectBody } from "./http";
 
@@ -33,22 +36,40 @@ export function reviewJudgeStatus(cfg: Pick<WispConfig, "jevApiKey">, now = new 
   return { configured: key !== null, source: key?.source ?? null, hint: key ? `…${key.key.slice(-4)}` : null, model: JEV_MODEL, usage: judgeUsage(now) };
 }
 
-const settingsView = (cfg: WispConfig) => ({ ...wispSettings(cfg), reviewJudge: reviewJudgeStatus(cfg) });
+/** The Factory API key for droid's plan limits, as a client may see it: never the key. */
+export interface FactoryKeyStatus {
+  configured: boolean
+  source: FactoryKeySource | null
+  hint: string | null
+}
+
+export function factoryKeyStatus(cfg: Pick<WispConfig, "factoryApiKey">, env?: Record<string, string | undefined>): FactoryKeyStatus {
+  const key = factoryKey(cfg, env);
+  return { configured: key !== null, source: key?.source ?? null, hint: key ? `…${key.key.slice(-4)}` : null };
+}
+
+const settingsView = (cfg: WispConfig) => ({
+  ...wispSettings(cfg),
+  reviewJudge: reviewJudgeStatus(cfg),
+  usageLimits: { factoryKey: factoryKeyStatus(cfg) },
+});
+
+type SecretField = "jevApiKey" | "factoryApiKey";
 
 /** A pasted key: printable, no spaces, a sane length. `null` removes it. */
-function validJevKey(value: unknown): string | null | Response {
+function validKey(field: SecretField, value: unknown): string | null | Response {
   if (value === null) return null;
-  if (typeof value !== "string") return err(`jevApiKey must be a string or null, got ${typeName(value)}`, 400);
+  if (typeof value !== "string") return err(`${field} must be a string or null, got ${typeName(value)}`, 400);
   const key = value.trim();
-  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return err("jevApiKey must be 8–512 printable characters with no spaces", 400);
+  if (!/^[\x21-\x7e]{8,512}$/.test(key)) return err(`${field} must be 8–512 printable characters with no spaces`, 400);
   return key;
 }
 
-function saveJevKey(cfg: WispConfig, key: string | null): void {
+function saveKey(cfg: WispConfig, field: SecretField, key: string | null): void {
   // undefined drops the key from config.json; JSON has no way to write it
-  patchConfig({ jevApiKey: key ?? undefined });
-  if (key === null) delete cfg.jevApiKey;
-  else cfg.jevApiKey = key;
+  patchConfig({ [field]: key ?? undefined });
+  if (key === null) delete cfg[field];
+  else cfg[field] = key;
 }
 
 const PROBE = "The build is green and the preview is deployed.";
@@ -70,6 +91,28 @@ async function testReviewJudge(cfg: WispConfig, client?: JudgeClient): Promise<R
   }
 }
 
+export interface FactoryKeyTestContext {
+  cache: HarnessLimitsCache
+  adapters: Record<string, AdapterDef>
+}
+
+/**
+ * POST /api/settings/factory-key/test: read droid's limits now, past the
+ * cache, with the current key. `account` says whether the key was matched
+ * against droid's own login; a mismatch is a failed test.
+ */
+async function testFactoryKey(cfg: WispConfig, ctx?: FactoryKeyTestContext): Promise<Response> {
+  if (!factoryKey(cfg)) return json({ ok: false, error: "No Factory API key is set" });
+  const harness = ctx
+    ? Object.entries(ctx.adapters).find(([, def]) => def.limits && LIMIT_STRATEGIES[def.limits]?.credential === "factoryApiKey")
+    : undefined;
+  if (!ctx || !harness) return json({ ok: false, error: "No loaded harness reads its limits with a Factory API key" });
+  const started = performance.now();
+  const entry = await ctx.cache.readNow(harness[0], harness[1], cfg);
+  if (entry.status !== "ok") return json({ ok: false, error: entry.message ?? "The read failed", status: entry.status });
+  return json({ ok: true, ms: Math.round(performance.now() - started), account: entry.limits?.account ?? "unchecked" });
+}
+
 /**
  * GET/PATCH /api/settings
  *
@@ -86,8 +129,10 @@ export function settingsRoute(
   method: string,
   cfg: WispConfig,
   judge?: JudgeClient,
+  factory?: FactoryKeyTestContext,
 ): Response | Promise<Response> | null {
   if (path === "/api/settings/review-judge/test") return method === "POST" ? testReviewJudge(cfg, judge) : null;
+  if (path === "/api/settings/factory-key/test") return method === "POST" ? testFactoryKey(cfg, factory) : null;
   if (path !== "/api/settings") return null;
   if (method === "GET") return json(settingsView(cfg));
   if (method !== "PATCH") return null;
@@ -101,11 +146,14 @@ export function settingsRoute(
     const rename = parsed.autoRenameTasksFromPullRequests;
     const hidden = parsed.hiddenModels;
     const jev = parsed.jevApiKey;
-    if (rename === undefined && hidden === undefined && jev === undefined) {
-      return err("autoRenameTasksFromPullRequests, hiddenModels or jevApiKey is required", 400);
+    const factoryRaw = parsed.factoryApiKey;
+    if (rename === undefined && hidden === undefined && jev === undefined && factoryRaw === undefined) {
+      return err("autoRenameTasksFromPullRequests, hiddenModels, jevApiKey or factoryApiKey is required", 400);
     }
-    const key = jev === undefined ? undefined : validJevKey(jev);
+    const key = jev === undefined ? undefined : validKey("jevApiKey", jev);
     if (key instanceof Response) return key;
+    const factoryValue = factoryRaw === undefined ? undefined : validKey("factoryApiKey", factoryRaw);
+    if (factoryValue instanceof Response) return factoryValue;
     if (rename !== undefined) {
       if (typeof rename !== "boolean") {
         return err(
@@ -124,15 +172,18 @@ export function settingsRoute(
     }
 
     const keyChanged = key !== undefined && key !== (cfg.jevApiKey ?? null);
+    const factoryChanged = factoryValue !== undefined && factoryValue !== (cfg.factoryApiKey ?? null);
     if (
       !keyChanged &&
+      !factoryChanged &&
       next.autoRenameTasksFromPullRequests === current.autoRenameTasksFromPullRequests &&
       sameHiddenModels(next.hiddenModels, current.hiddenModels)
     ) {
       // no-op: rewriting config.json and waking every client would be noise
       return json(settingsView(cfg));
     }
-    if (keyChanged) saveJevKey(cfg, key);
+    if (keyChanged) saveKey(cfg, "jevApiKey", key);
+    if (factoryChanged) saveKey(cfg, "factoryApiKey", factoryValue);
     persistWispSettings(cfg, next);
     emit({ type: "settings" });
     return json(settingsView(cfg));

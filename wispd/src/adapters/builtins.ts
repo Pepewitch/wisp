@@ -84,6 +84,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // available there. The interactive command is a TUI pane, so Tier 2 stays
     // /context alone rather than advertising a false account read.
     probe: "factory-jsonrpc",
+    // Plan limits come from Factory's billing endpoint with a user-supplied
+    // API key (live-verified 2026-09-25), checked against droid's own login.
+    limits: "factory-billing",
     // A4 (SP2, live-verified 0.205.0): `droid.list_skills` is the ONLY
     // complete surface (20 of 21 skills are builtin:<name>, invisible to any
     // filesystem scan) and hands over the palette's filter itself —
@@ -174,6 +177,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // A3 (SP1, live-verified 2.1.251): /context and /usage are local commands
     // that print mode answers with zero model tokens, report as markdown.
     probe: "print-slash",
+    // live-verified 2.1.282: the same /usage, session-less and in UTC
+    limits: "claude-usage",
     // A4 (SP2): init-event names ∪ the ~/.claude/skills + .claude/skills
     // frontmatter scan (the only place descriptions live). Before the first
     // turn the list is honestly partial — user/project skills only.
@@ -261,6 +266,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // of band. There is NO per-thread context read (token usage is a
     // notification, never an answer), so /context is honestly absent here.
     probe: "codex-app-server",
+    // live-verified 0.156.1: account/rateLimits/read, windows labelled by length
+    limits: "codex-rate-limits",
     // A4 (SP2, live-verified 0.149.0): `skills/list` — the plan's "expect
     // nothing" was refuted (38 skills, real descriptions, malformed-skill
     // errors reported back). But codex has NO headless /name invocation, so

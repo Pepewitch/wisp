@@ -4,8 +4,9 @@ import { ApiError, LOCAL_CONNECTION_ID } from "./transport"
 
 /**
  * One client for the app. Wisp-owned state is realtime through /api/events.
- * Provider-owned PR state and the daemon-cached release check are the
- * deliberate polling exceptions, and window focus still covers a slept laptop.
+ * Provider-owned PR state, the daemon-cached release check and the daemon-
+ * cached plan limits are the deliberate polling exceptions, and window focus
+ * still covers a slept laptop.
  */
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +54,7 @@ export interface ConnectionQueryKeys {
   readonly settings: readonly [string, "settings"]
   readonly suffixPrompts: readonly [string, "suffix-prompts"]
   readonly harnesses: readonly [string, "harnesses"]
+  readonly harnessLimits: readonly [string, "harness-limits"]
   readonly update: readonly [string, "update"]
 }
 
@@ -86,6 +88,7 @@ export function createConnectionQueryKeys(
     settings: Object.freeze([connectionId, "settings"] as const),
     suffixPrompts: Object.freeze([connectionId, "suffix-prompts"] as const),
     harnesses: Object.freeze([connectionId, "harnesses"] as const),
+    harnessLimits: Object.freeze([connectionId, "harness-limits"] as const),
     update: Object.freeze([connectionId, "update"] as const),
   })
 }

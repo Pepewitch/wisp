@@ -1,20 +1,27 @@
-import { useId, useRef, useState } from "react"
+import { useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
 import { Moon, Sun } from "@/components/icons"
 import { Menu, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
 import { Button, Eyebrow, POPOVER_SURFACE, SwitchTrack } from "@/components/primitives"
-import { useSaveReviewJudgeKey, useTestReviewJudge, useUpdateWispSettings } from "@/hooks/mutations"
+import {
+  useSaveFactoryKey,
+  useSaveReviewJudgeKey,
+  useTestFactoryKey,
+  useTestReviewJudge,
+  useUpdateWispSettings,
+} from "@/hooks/mutations"
 import { useHarnesses, useWispSettings } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { ApiError } from "@/lib/api"
 import { modelTotals } from "@/lib/model-visibility"
-import type { ReviewJudgeStatus, ReviewJudgeTest } from "@/lib/types"
+import type { FactoryKeyTest, ReviewJudgeStatus, ReviewJudgeTest, SecretKeyStatus } from "@/lib/types"
 import { THEME_PREFERENCES, themeStore, useTheme, useThemePreference } from "@/lib/theme"
 import type { ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 import { PwaInstall, PwaInstallSection } from "./pwa-install"
+import { SecretKeyControls, SecretKeyRow, type SecretKeySpec } from "./secret-key-field"
 
 const THEME_LABEL: Record<ThemePreference, string> = {
   system: "System",
@@ -122,8 +129,9 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
       )}
       {specimen ? (
         <Section label="Review judge" hint={REVIEW_JUDGE_HINT}>
-          <ReviewJudgeKeyRow
+          <SecretKeyRow
             status={SPECIMEN_JUDGE}
+            environmentNote={JEV_KEY.environmentNote}
             focus={null}
             busy={false}
             testing={false}
@@ -138,6 +146,26 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
         </Section>
       ) : (
         <ReviewJudgeSection />
+      )}
+      {specimen ? (
+        <Section label="Usage limits" hint={USAGE_LIMITS_HINT}>
+          <SecretKeyRow
+            status={SPECIMEN_FACTORY_KEY}
+            environmentNote={FACTORY_KEY.environmentNote}
+            focus={null}
+            busy={false}
+            testing={false}
+            confirming={false}
+            onTest={() => {}}
+            onReplace={() => {}}
+            onRemove={() => {}}
+            onKeep={() => {}}
+            onConfirmRemove={() => {}}
+          />
+          <FactoryKeyNotes result={{ ok: true, ms: 212, account: "verified" }} />
+        </Section>
+      ) : (
+        <UsageLimitsSection />
       )}
       {!specimen && <PwaInstall />}
     </>
@@ -262,25 +290,18 @@ const SPECIMEN_JUDGE: ReviewJudgeStatus = {
   usage: { month: "2026-09", calls: 42, errors: 0, inputTokens: 51_000, costUsd: 0.0021 },
 }
 
-/** The daemon's own rule (routes/settings.ts), checked first so a typo gets a sentence, not a field name. */
-const JEV_KEY_SHAPE = /^[\x21-\x7e]{8,512}$/
-
-type JudgeFocus = "field" | "replace" | "remove" | "confirm"
+const JEV_KEY: SecretKeySpec = {
+  label: "Jev API key",
+  malformed: "A Jev key is 8 to 512 characters with no spaces.",
+  environmentNote: "From the daemon's environment (TYPESAFE_API_KEY or JEV_API_KEY). A key saved here takes its place.",
+  fallbackError: "Could not update the review judge.",
+  useSave: useSaveReviewJudgeKey,
+}
 
 /**
- * The optional review judge (docs/PR-AUTOPILOT.md, "The review judge").
- *
- * A secret, not a preference, so this is the modal's one Save (frontend.md
- * §5g): the section says when a typed key is still unsaved. The key is
- * write-only and kept out of the client:
- * - the field is uncontrolled, so the key is never React state or a DOM
- *   attribute, and it remounts whenever the key changes, here or from
- *   another client, which drops any draft;
- * - the mutation that carries it is never cached (`gcTime: 0`);
- * - the daemon answers only with whether a key is set, where it came from,
- *   and its last four characters.
- *
- * A daemon older than the judge reports no `reviewJudge`, so the section hides.
+ * The optional review judge (docs/PR-AUTOPILOT.md, "The review judge"). The
+ * key's rules are secret-key-field.tsx's. A daemon older than the judge
+ * reports no `reviewJudge`, so the section hides.
  */
 function ReviewJudgeSection() {
   const settings = useWispSettings()
@@ -295,226 +316,75 @@ function ReviewJudgeSection() {
 
 function ReviewJudgeControls({ status }: { status: ReviewJudgeStatus }) {
   const probe = useTestReviewJudge()
-  const remove = useSaveReviewJudgeKey()
-  // Each of these names the key it was about, so a key changed from anywhere
-  // ends a replacement, a pending confirmation, and a test result.
-  const [replacing, setReplacing] = useState<string | null>(null)
-  const [confirming, setConfirming] = useState<string | null>(null)
-  const [tested, setTested] = useState<string | null>(null)
-  const asking = !status.configured || replacing === status.hint
-
-  // Focus follows the control that replaces the one it was on; switching
-  // between the field and the key's row unmounts the button just pressed.
-  const [focus, setFocus] = useState<JudgeFocus | null>(null)
-  const [wasAsking, setWasAsking] = useState(asking)
-  if (wasAsking !== asking) {
-    setWasAsking(asking)
-    setFocus(asking ? "field" : "replace")
-  }
-
-  const current = tested !== null && tested === status.hint
-  const result = !asking && current ? probe.data : undefined
-  const error = asking ? null : remove.error ?? (current ? probe.error : null)
-
   return (
-    <>
-      {asking ? (
-        <ReviewJudgeKeyForm
-          key={status.hint ?? "none"}
-          autoFocus={focus === "field"}
-          canCancel={status.configured}
-          onCancel={() => setReplacing(null)}
-        />
-      ) : (
-        <ReviewJudgeKeyRow
-          status={status}
-          focus={focus}
-          busy={remove.isPending}
-          testing={probe.isPending}
-          confirming={confirming !== null && confirming === status.hint}
-          onTest={() => {
-            remove.reset()
-            setTested(status.hint)
-            probe.mutate()
-          }}
-          onReplace={() => {
-            setConfirming(null)
-            setReplacing(status.hint)
-          }}
-          onRemove={() => {
-            setFocus("confirm")
-            setConfirming(status.hint)
-          }}
-          onKeep={() => {
-            setFocus("remove")
-            setConfirming(null)
-          }}
-          onConfirmRemove={() => {
-            setTested(null)
-            remove.mutate(null)
-          }}
-        />
-      )}
-      <ReviewJudgeNotes status={status} result={result} error={error ? errorText(error) : undefined} />
-    </>
+    <SecretKeyControls
+      spec={JEV_KEY}
+      status={status}
+      probe={probe}
+      notes={(result, error) => <ReviewJudgeNotes status={status} result={result} error={error} />}
+    />
   )
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "Could not update the review judge."
+const USAGE_LIMITS_HINT =
+  "Optional. claude and codex report their plan limits through their own logins; droid's come from Factory's billing API, which needs a Factory API key. The key goes only to api.factory.ai, and Wisp checks it belongs to the account droid is logged in to. Each daemon keeps its own key."
+
+const FACTORY_KEY: SecretKeySpec = {
+  label: "Factory API key",
+  malformed: "A Factory key is 8 to 512 characters with no spaces.",
+  environmentNote: "From the daemon's environment (FACTORY_API_KEY or DROID_API_KEY). A key saved here takes its place.",
+  fallbackError: "Could not update the Factory key.",
+  useSave: useSaveFactoryKey,
 }
 
-/** Its own component so that unmounting it drops the typed key and the mutation that carried it. */
-function ReviewJudgeKeyForm({
-  autoFocus,
-  canCancel,
-  onCancel,
-}: {
-  autoFocus: boolean
-  canCancel: boolean
-  onCancel: () => void
-}) {
-  const save = useSaveReviewJudgeKey()
-  const field = useRef<HTMLInputElement>(null)
-  const [typed, setTyped] = useState(false)
-  const [malformed, setMalformed] = useState(false)
-  const errorId = useId()
+const SPECIMEN_FACTORY_KEY: SecretKeyStatus = { configured: true, source: "environment", hint: "…c41d" }
 
-  const submit = () => {
-    const key = field.current?.value.trim() ?? ""
-    if (key === "" || save.isPending) return
-    if (!JEV_KEY_SHAPE.test(key)) {
-      setMalformed(true)
-      return
-    }
-    save.mutate(key)
-  }
-  const error = malformed
-    ? "A Jev key is 8 to 512 characters with no spaces."
-    : save.error
-      ? errorText(save.error)
-      : null
+/** The Factory key for droid's limits in the top bar's usage popover. Hidden on a daemon that cannot read them. */
+function UsageLimitsSection() {
+  const settings = useWispSettings()
+  const status = settings.data?.usageLimits?.factoryKey
+  if (!status) return null
+  return (
+    <Section label="Usage limits" hint={USAGE_LIMITS_HINT}>
+      <FactoryKeyControls status={status} />
+    </Section>
+  )
+}
 
+function FactoryKeyControls({ status }: { status: SecretKeyStatus }) {
+  const probe = useTestFactoryKey()
+  return (
+    <SecretKeyControls
+      spec={FACTORY_KEY}
+      status={status}
+      probe={probe}
+      notes={(result, error) => <FactoryKeyNotes result={result} error={error} />}
+    />
+  )
+}
+
+/** The last Test's outcome. The status line stays mounted, so a screen reader hears the result when it arrives. */
+function FactoryKeyNotes({ result, error }: { result?: FactoryKeyTest; error?: string }) {
   return (
     <>
-      {/* no <form>: a password field in a form that vanishes after a fetch reads to a
-          browser as a login, and it would offer to save the key or fill in a saved one */}
-      <div className="flex items-center gap-2">
-        <input
-          ref={field}
-          type="password"
-          aria-label="Jev API key"
-          autoComplete="off"
-          data-1p-ignore
-          data-lpignore="true"
-          data-bwignore
-          data-form-type="other"
-          spellCheck={false}
-          placeholder="Jev API key"
-          autoFocus={autoFocus}
-          readOnly={save.isPending}
-          aria-invalid={error !== null}
-          aria-describedby={error !== null ? errorId : undefined}
-          onChange={(event) => {
-            setTyped(event.target.value.trim() !== "")
-            setMalformed(false)
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return
-            event.preventDefault()
-            submit()
-          }}
-          className={cn(
-            "h-[26px] min-w-0 flex-1 rounded-md border border-input bg-surface px-2.5",
-            "font-mono text-[11.5px] text-foreground placeholder:font-sans placeholder:text-faint",
-            "focus:border-accent-dim focus:ring-2 focus:ring-ring/15 focus:outline-none",
-          )}
-        />
-        <Button onClick={submit} disabled={save.isPending || !typed}>
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
-        {canCancel && (
-          <Button onClick={onCancel} disabled={save.isPending}>
-            Cancel
-          </Button>
-        )}
-      </div>
-      {error !== null ? (
-        <p id={errorId} role="alert" className="mt-1.5 text-[11.5px] text-destructive">
+      <p role="status" className="mt-1.5 text-[11.5px] text-muted-foreground empty:mt-0">
+        {result?.ok
+          ? result.account === "verified"
+            ? `The key works: droid's limits answered in ${result.ms} ms, for the account droid is logged in to.`
+            : `The key works: droid's limits answered in ${result.ms} ms. Wisp could not read droid's login to check the account.`
+          : ""}
+      </p>
+      {result && !result.ok && (
+        <p role="alert" className="mt-1.5 text-[11.5px] text-destructive">
+          The test failed: {result.error}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mt-1.5 text-[11.5px] text-destructive">
           {error}
         </p>
-      ) : (
-        typed && (
-          <p className="mt-1.5 text-[11px] text-faint">Not saved yet. Save it, or press Enter; Done leaves it unsaved.</p>
-        )
       )}
     </>
-  )
-}
-
-function ReviewJudgeKeyRow({
-  status,
-  focus,
-  busy,
-  testing,
-  confirming,
-  onTest,
-  onReplace,
-  onRemove,
-  onKeep,
-  onConfirmRemove,
-}: {
-  status: ReviewJudgeStatus
-  focus: JudgeFocus | null
-  busy: boolean
-  testing: boolean
-  confirming: boolean
-  onTest: () => void
-  onReplace: () => void
-  onRemove: () => void
-  onKeep: () => void
-  onConfirmRemove: () => void
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      {/* a floor under the text, so on a phone the buttons wrap below it rather than squeeze it */}
-      <span className="min-w-40 flex-1">
-        <span className="block text-[12.5px] text-fg-secondary">
-          Key <span className="font-mono text-[11.5px] text-muted-foreground">{status.hint}</span>
-        </span>
-        <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
-          {status.source === "environment"
-            ? "From the daemon's environment (TYPESAFE_API_KEY or JEV_API_KEY). A key saved here takes its place."
-            : "Saved on this daemon."}
-        </span>
-      </span>
-      {/* keyed, so each set of buttons mounts fresh and autoFocus lands */}
-      {confirming ? (
-        <span key="confirm" className="flex items-center gap-1.5">
-          <span className="text-[11.5px] text-muted-foreground">Remove the key?</span>
-          <Button tone="destructive" onClick={onConfirmRemove} disabled={busy} autoFocus={focus === "confirm"}>
-            {busy ? "Removing…" : "Remove"}
-          </Button>
-          <Button onClick={onKeep} disabled={busy}>
-            Keep
-          </Button>
-        </span>
-      ) : (
-        <span key="actions" className="flex items-center gap-1.5">
-          <Button onClick={onTest} disabled={busy || testing}>
-            {testing ? "Testing…" : "Test"}
-          </Button>
-          <Button onClick={onReplace} disabled={busy} autoFocus={focus === "replace"}>
-            Replace…
-          </Button>
-          {status.source === "settings" && (
-            <Button onClick={onRemove} disabled={busy} autoFocus={focus === "remove"}>
-              Remove
-            </Button>
-          )}
-        </span>
-      )}
-    </div>
   )
 }
 

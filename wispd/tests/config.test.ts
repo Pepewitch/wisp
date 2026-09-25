@@ -221,7 +221,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });

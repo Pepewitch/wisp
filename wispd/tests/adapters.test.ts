@@ -1096,7 +1096,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, limits, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });

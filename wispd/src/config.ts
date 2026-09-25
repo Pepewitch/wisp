@@ -138,6 +138,12 @@ export interface WispConfig {
    * written through PATCH /api/settings and never read back over HTTP.
    */
   jevApiKey?: string;
+  /**
+   * Factory API key for droid's plan limits (adapters/limits.ts). Same rules
+   * as jevApiKey: optional, written through PATCH /api/settings, never read
+   * back over HTTP.
+   */
+  factoryApiKey?: string;
 }
 
 /**
@@ -259,6 +265,7 @@ const CONFIG_KEYS = [
   "envAllowlist",
   "harnessDefaults",
   "jevApiKey",
+  "factoryApiKey",
 ] as const;
 
 export const MIN_CONFIGURED_PORT = 1024;
@@ -381,7 +388,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     if (key === "port") assertPort(v);
     out[key] = v;
   };
-  const str = (key: "instanceId" | "host" | "token" | "terminalShell" | "jevApiKey"): void => {
+  const str = (key: "instanceId" | "host" | "token" | "terminalShell" | "jevApiKey" | "factoryApiKey"): void => {
     const v = raw[key];
     if (v === undefined) return;
     if (typeof v !== "string") throw new Error(`config.json: ${key} must be a string, got ${typeName(v)}`);
@@ -401,6 +408,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
   str("terminalShell");
   if (out.terminalShell !== undefined) assertTerminalShell(out.terminalShell);
   str("jevApiKey");
+  str("factoryApiKey");
   if (raw.maxConcurrentTasks !== undefined) {
     if (!Number.isSafeInteger(raw.maxConcurrentTasks) || (raw.maxConcurrentTasks as number) < 1) {
       throw new Error("config.json: maxConcurrentTasks must be a positive integer");

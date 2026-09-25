@@ -274,6 +274,14 @@ export interface AdapterDef {
    */
   probe?: string;
   /**
+   * Named plan-limits strategy (keys into LIMIT_STRATEGIES): how the daemon
+   * reads the ACCOUNT's usage windows (claude's 5h/7d, codex's rate-limit
+   * windows, droid's billing buckets) without a task or a session. Omitted =
+   * the harness exposes no limits read, and the usage popover leaves it out.
+   * null clears a builtin's strategy.
+   */
+  limits?: string | null;
+  /**
    * Named skill-discovery strategy (keys into SKILL_STRATEGIES, v0.3 A4,
    * settled by SP2): how the daemon enumerates the skills this harness has
    * registered, so the palette's Tier 3 is the harness's own list instead of
@@ -579,7 +587,7 @@ export interface CompactStrategy {
 /** One-shot process runner with a cwd (the print-slash probe resumes in the task's worktree). */
 export type ProbeSpawnFn = (
   cmd: string[],
-  opts: { cwd?: string; signal?: AbortSignal },
+  opts: { cwd?: string; signal?: AbortSignal; env?: Record<string, string> },
 ) => SpawnResult | Promise<SpawnResult>;
 
 /** Everything a probe strategy needs from the outside — injected, so tests never spawn a real CLI. */

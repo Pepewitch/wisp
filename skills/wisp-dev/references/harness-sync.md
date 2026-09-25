@@ -127,7 +127,7 @@ Check each assertion even when the release notes mention only models:
 | `events`, `activity` | Assistant, thinking, tool, and subagent lifecycle events |
 | `usageFormat` | The terminal event's raw token keys |
 | `errors`, limit/transient markers | Captured real failures or shipped strings, never invented wording |
-| `probe`, `skillDiscovery`, `compact` | Local command or RPC behavior, including whether it records or spends a turn |
+| `probe`, `skillDiscovery`, `compact`, `limits` | Local command or RPC behavior, including whether it records or spends a turn |
 | image delivery | A purpose-built visual fixture, only when that surface may have changed |
 
 If a field cannot be proven, leave it absent or preserve the last proven

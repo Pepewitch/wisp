@@ -292,3 +292,56 @@ describe("the review judge", () => {
     expect(screen.getByLabelText("Jev API key")).toHaveValue("")
   })
 })
+
+describe("the Factory key for droid's limits", () => {
+  const sample = "factory-test-sample-value"
+  const off = { configured: false, source: null, hint: null }
+
+  function daemon(test: object) {
+    const state = { key: off as object }
+    const request = vi.fn().mockImplementation((path: string, options?: { method?: string; body?: Record<string, unknown> }) => {
+      if (path === "/api/settings/factory-key/test") return Promise.resolve(test)
+      if (options?.method === "PATCH") {
+        const key = options.body?.factoryApiKey
+        state.key = key === null ? off : { configured: true, source: "settings", hint: `…${String(key).slice(-4)}` }
+      }
+      return Promise.resolve({ autoRenameTasksFromPullRequests: true, usageLimits: { factoryKey: state.key } })
+    })
+    return request
+  }
+
+  it("saves the key through its own field, apart from the Jev key", async () => {
+    const request = daemon({ ok: true, ms: 212, account: "verified" })
+    renderSettings(request)
+
+    expect(await screen.findByText("Usage limits")).toBeInTheDocument()
+    expect(screen.queryByText("Review judge")).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText("Factory API key"), { target: { value: sample } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(await screen.findByText("…alue")).toBeInTheDocument()
+    expect(request).toHaveBeenCalledWith("/api/settings", { method: "PATCH", body: { factoryApiKey: sample } })
+    expect(document.body.innerHTML).not.toContain(sample)
+
+    fireEvent.click(screen.getByRole("button", { name: "Test" }))
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "The key works: droid's limits answered in 212 ms, for the account droid is logged in to.",
+      ),
+    )
+  })
+
+  it("says when the key is for a different account", async () => {
+    const request = daemon({
+      ok: false,
+      status: "account-mismatch",
+      error: "This Factory API key belongs to a different account than the one droid is logged in to.",
+    })
+    renderSettings(request)
+
+    fireEvent.change(await screen.findByLabelText("Factory API key"), { target: { value: sample } })
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    fireEvent.click(await screen.findByRole("button", { name: "Test" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("The test failed: This Factory API key belongs to a different account")
+  })
+})

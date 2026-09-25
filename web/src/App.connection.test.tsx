@@ -167,6 +167,7 @@ vi.mock("@/hooks/queries", () => ({
   // the daemon-level flags; `taskSearch` is what puts the sidebar's search
   // control on screen (an older remote omits it)
   useHarnessFeatures: () => ({ data: { taskSearch: true } }),
+  useHarnessLimits: () => ({ data: undefined, error: null }),
   useTaskSearch: () => ({ data: undefined, isPending: false, error: null }),
   useUpdateStatus: () => ({ data: UPDATE }),
   useTaskSkills: () => ({ data: undefined }),
@@ -195,6 +196,10 @@ vi.mock("@/hooks/mutations", () => ({
   }),
   // the first-run panel's "Check again"
   useReprobeHarnesses: () => ({ mutate: vi.fn(), isPending: false }),
+  // Settings' key fields name their save hooks at import
+  useSaveReviewJudgeKey: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useSaveFactoryKey: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useRefreshHarnessLimits: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/hooks/useLogStream", () => ({

@@ -13,6 +13,7 @@ import { TaskCompactor, type TaskCompactorOptions } from "../compacts";
 import type { WispConfig } from "../config";
 import { ModelProbeCache, type ModelProbeCacheOptions } from "../model-probes";
 import { TaskProbeCache, type TaskProbeCacheOptions } from "../probes";
+import { HarnessLimitsCache } from "../harness-limits";
 import { PullRequestCache, type PullRequestCacheOptions } from "../pull-requests";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "../skills";
 import { UpdateManager } from "../update";
@@ -38,6 +39,7 @@ import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
 import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
 import { settingsRoute } from "./settings";
+import { harnessLimitsRoute } from "./harness-limits";
 import { pullRequestTitleSync } from "../task-update";
 import {
   attachmentUploadRoute,
@@ -50,6 +52,15 @@ const standaloneSkillCaches = new WeakMap<Record<string, AdapterDef>, TaskSkillC
 const standaloneCompactors = new WeakMap<Record<string, AdapterDef>, TaskCompactor>();
 const standalonePullRequestCaches = new WeakMap<WispConfig, PullRequestCache>();
 const standaloneUpdateManagers = new WeakMap<WispConfig, UpdateManager>();
+const standaloneLimitsCaches = new WeakMap<Record<string, AdapterDef>, HarnessLimitsCache>();
+
+function limitsCacheFor(adapters: Record<string, AdapterDef>): HarnessLimitsCache {
+  const existing = standaloneLimitsCaches.get(adapters);
+  if (existing) return existing;
+  const cache = new HarnessLimitsCache();
+  standaloneLimitsCaches.set(adapters, cache);
+  return cache;
+}
 
 function modelCacheFor(adapters: Record<string, AdapterDef>, options?: ModelProbeCacheOptions): ModelProbeCache {
   const existing = standaloneModelCaches.get(adapters);
@@ -162,6 +173,22 @@ function suffixPromptRoutes(req: Request, path: string, method: string): Respons
   return null;
 }
 
+/** GET /api/harnesses and GET /api/harness-limits: what each harness can do, and how much of its plan is left. */
+function harnessRoutes(
+  url: URL,
+  path: string,
+  method: string,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+  models: ModelProbeCache,
+  limits: HarnessLimitsCache,
+): Response | Promise<Response> | null {
+  if (method !== "GET") return null;
+  if (path === "/api/harnesses") return harnessesRoute(url, cfg, adapters, models);
+  if (path === "/api/harness-limits") return harnessLimitsRoute(url, cfg, adapters, limits);
+  return null;
+}
+
 export function route(
   req: Request,
   url: URL,
@@ -174,6 +201,7 @@ export function route(
   compactor?: TaskCompactor,
   pullRequestCache?: PullRequestCache,
   updateManager?: UpdateManager,
+  limitsCache?: HarnessLimitsCache,
 ): Response | Promise<Response> {
   const m = req.method;
   if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
@@ -184,9 +212,10 @@ export function route(
   const compacts = compactor ?? compactorFor(adapters);
   const pullRequests = pullRequestCache ?? pullRequestCacheFor(cfg);
   const updates = updateManager ?? updateManagerFor(cfg);
+  const limits = limitsCache ?? limitsCacheFor(adapters);
 
   if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
-  const settingsResponse = settingsRoute(req, path, m, cfg);
+  const settingsResponse = settingsRoute(req, path, m, cfg, undefined, { cache: limits, adapters });
   if (settingsResponse !== null) return settingsResponse;
   // The terminal socket's own gate, asked as a plain request: a page whose
   // upgrade died cannot read the 403 that explained it, so it asks here.
@@ -211,7 +240,8 @@ export function route(
   const searchResponse = searchRoute(url, m);
   if (searchResponse !== null) return searchResponse;
 
-  if (path === "/api/harnesses" && m === "GET") return harnessesRoute(url, cfg, adapters, models);
+  const harnessResponse = harnessRoutes(url, path, m, cfg, adapters, models, limits);
+  if (harnessResponse !== null) return harnessResponse;
 
   if (path === "/api/outbox" && m === "GET") return outboxRoute();
 

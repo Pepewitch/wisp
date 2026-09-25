@@ -438,6 +438,61 @@ export interface WispSettings {
   hiddenModels?: Record<string, string[]>;
   /** The optional review judge. Absent on a daemon older than 0.6.1: hide its section. */
   reviewJudge?: ReviewJudgeStatus;
+  /** The Factory API key droid's plan limits are read with. Absent on an older daemon: hide its section. */
+  usageLimits?: { factoryKey: SecretKeyStatus };
+}
+
+/** A write-only daemon secret as a client may see it: whether it is set, where from, and its last four characters. */
+export interface SecretKeyStatus {
+  configured: boolean;
+  /** "settings" was saved through PATCH /api/settings, and wins over the daemon's environment. */
+  source: "settings" | "environment" | null;
+  /** "…abcd" */
+  hint: string | null;
+}
+
+/**
+ * POST /api/settings/factory-key/test: droid's limits read now with the
+ * current key. `account` says whether the key was matched against droid's
+ * own login; `unchecked` means droid's account file was not readable.
+ */
+export type FactoryKeyTest =
+  | { ok: true; ms: number; account: "verified" | "unchecked" }
+  | { ok: false; error: string; status?: HarnessLimitsStatus };
+
+export type HarnessLimitsStatus = "ok" | "needs-key" | "account-mismatch" | "unavailable" | "error";
+
+/** One plan-usage window, copied from the harness (wispd/src/adapters/limits.ts). */
+export interface LimitWindow {
+  id: string;
+  /** the harness's own name for it: `5h`, `7d`, `weekly`, a model name */
+  label: string;
+  /** a separate allowance inside one account (droid's standard/core); null for the only one */
+  pool: string | null;
+  usedPercent: number;
+  /** null when the window has not started, or the harness named no reset */
+  resetsAt: string | null;
+  windowMins: number | null;
+}
+
+export interface HarnessLimitsEntry {
+  name: string;
+  status: HarnessLimitsStatus;
+  limits: {
+    plan: string | null;
+    windows: LimitWindow[];
+    /** droid only: whether the key's account was checked against droid's login */
+    account?: "verified" | "unchecked";
+  } | null;
+  /** why there are no limits to show; null when status is ok */
+  message: string | null;
+  fetchedAt: string;
+  cached: boolean;
+}
+
+/** GET /api/harness-limits */
+export interface HarnessLimitsResponse {
+  harnesses: HarnessLimitsEntry[];
 }
 
 /**
@@ -447,12 +502,7 @@ export interface WispSettings {
 export type WispSettingsPatch = Partial<Pick<WispSettings, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
 
 /** The review judge as the daemon reports it: whether a key is set and its last four characters, never the key. */
-export interface ReviewJudgeStatus {
-  configured: boolean;
-  /** "settings" was saved through PATCH /api/settings, and wins over the daemon's environment. */
-  source: "settings" | "environment" | null;
-  /** "…abcd" */
-  hint: string | null;
+export interface ReviewJudgeStatus extends SecretKeyStatus {
   model: string;
   /** This calendar month on this daemon, probes included. */
   usage: { month: string; calls: number; errors: number; inputTokens: number; costUsd: number };
@@ -579,6 +629,8 @@ export interface HarnessesResponse {
     taskWorkflows?: boolean;
     /** GET/PUT /api/tasks/:id/autopilot: auto-merge for a task's PR. */
     taskAutopilot?: boolean;
+    /** GET /api/harness-limits: each harness's plan usage windows (the top bar's usage ring). */
+    harnessLimits?: boolean;
   };
 }
 

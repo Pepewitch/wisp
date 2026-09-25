@@ -103,6 +103,7 @@ field holds a *key* into one. The existing inventory:
 | `PROBE_STRATEGIES` (probe.ts) | `probe` | `print-slash`, `factory-jsonrpc`, `codex-app-server` |
 | `SKILL_STRATEGIES` (skills.ts) | `skillDiscovery` | `claude-init`, `factory-jsonrpc`, `codex-app-server` |
 | `COMPACT_STRATEGIES` (compact.ts) | `compact` | `factory-jsonrpc`, `codex-app-server` |
+| `LIMIT_STRATEGIES` (limits.ts) | `limits` | `claude-usage`, `codex-rate-limits`, `factory-billing` |
 | image strategies (images.ts) | `imageInput` / `imageDelivery` | `claude-stream-json`, `read-tool-path` |
 | live drivers (`live/`) | `liveInput` | `claude-stream-json`, `droid-jsonrpc`, `codex-app-server` |
 
@@ -182,7 +183,14 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    exposes it. Keep commands separate from skills: commands can carry argument
    hints or execute scripts, and the palette must label those facts while
    prefilling rather than immediately running them.
-9. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
+9. **`limits`** — the account's plan windows (5-hour, weekly, per-model),
+   read with no task and no model turn, for the top bar's usage popover and
+   `wisp limits`. Label a window by the length the harness states, never by
+   its position: codex's `primary` is 5 hours on one plan and 7 days on
+   another. A read that needs a credential the harness does not expose
+   (droid's, through Factory's billing API) declares it, and the daemon
+   supplies it from Settings; it goes only to the harness vendor's own host.
+10. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects
    both together). A strategy when the harness has an RPC for it; the prompt
    when its `/compact` runs headless as a dedicated recorded turn. Prompt
    compaction is idle-only: `/send` refuses it while a turn is active, and an
@@ -191,7 +199,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    `/send` also refuses ordinary messages before queueing them: a steer cannot
    target context that is being rewritten. Set the strategy's `recordsTurn`
    truthfully — the palette tells the user what a compact costs.
-10. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
+11. **`image` / `imageInput` / `imageDelivery`** — the three delivery forms
    for IMAGES (argv template, stdin envelope, prompt-path preamble), mutually
    exclusive. The trailing `--` in an argv template is mandatory. A harness
    that declares none refuses images by name; it still takes every other
@@ -199,7 +207,7 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    absolute paths in the prompt (`adapters/delivery.ts`) and every harness has
    file tools. Nothing is copied into the worktree — an attachment must never
    show up in the task's own diff.
-11. **`liveInput`** — only for a protocol verified to admit a message without
+12. **`liveInput`** — only for a protocol verified to admit a message without
    terminating the active turn. Admission must have a native acknowledgement,
    stable client message id, and a terminal event. No field means Wisp
    persists active submissions for the next turn. Never implement this with
@@ -208,9 +216,9 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    builtin's `bin` or `exec` disables inherited live input; re-declare it only
    after verifying the custom command preserves that protocol and every
    required execution-policy flag.
-12. **`attach`** — interactive attach argv; `null` means "not known yet",
+13. **`attach`** — interactive attach argv; `null` means "not known yet",
    which is a legitimate state.
-13. **`fastMode`** — a faster lane for the SAME model, as a per-task toggle
+14. **`fastMode`** — a faster lane for the SAME model, as a per-task toggle
    (`{ fast, standard, argv }`, where `argv` carries a `{tier}` slot). Declare
    it only when the CLI advertises a speed tier for the model itself: codex
    lists `service_tiers` per model in `codex debug models` and takes

@@ -1,5 +1,6 @@
 import { VERSION } from "../version";
 import { buildArgv } from "./argv";
+import { codexRateWindow } from "./limits";
 import { parseOutput } from "./parse";
 import type {
   AdapterDef,
@@ -83,17 +84,7 @@ function normalizeContextBreakdown(raw: unknown): ContextBreakdown {
 
 /** codex's rateLimits + usage reads → HarnessUsageReport (SP1 has the verbatim shapes). */
 function normalizeHarnessUsage(rateLimitsRaw: unknown, usageRaw: unknown): HarnessUsageReport {
-  const window = (v: unknown): HarnessUsageReport["primary"] => {
-    if (typeof v !== "object" || v === null) return null;
-    const w = v as Record<string, unknown>;
-    const usedPercent = num(w.usedPercent);
-    if (usedPercent === null) return null;
-    return {
-      usedPercent,
-      windowMins: num(w.windowDurationMins),
-      resetsAt: typeof w.resetsAt === "number" ? new Date(w.resetsAt * 1000).toISOString() : null,
-    };
-  };
+  const window = codexRateWindow;
   const rl = record(rateLimitsRaw, "rate-limits report");
   const limits = record(rl.rateLimits ?? rl, "rate-limits report");
   const creditsRaw = limits.credits;

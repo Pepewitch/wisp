@@ -71,6 +71,9 @@ const JUDGE_OFF = {
   usage: { month: expect.any(String), calls: expect.any(Number), errors: expect.any(Number), inputTokens: expect.any(Number), costUsd: expect.any(Number) },
 };
 
+/** No Factory API key: setup.ts keeps a developer's exported one out of the daemon's environment. */
+const LIMITS_OFF = { factoryKey: { configured: false, source: null, hint: null } };
+
 async function api(base: string, path: string, method = "GET", body?: unknown): Promise<Response> {
   const headers: Record<string, string> = { authorization: `Bearer ${token}` };
   const init: RequestInit = { method, headers };
@@ -308,6 +311,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: true,
         hiddenModels: {},
         reviewJudge: JUDGE_OFF,
+        usageLimits: LIMITS_OFF,
       });
 
       const updated = await api(base, "/api/settings", "PATCH", {
@@ -318,6 +322,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
         reviewJudge: JUDGE_OFF,
+        usageLimits: LIMITS_OFF,
       });
       expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
         autoRenameTasksFromPullRequests: false,
@@ -327,6 +332,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
         reviewJudge: JUDGE_OFF,
+        usageLimits: LIMITS_OFF,
       });
       expect(events).toContainEqual({ type: "settings" });
 
@@ -341,6 +347,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
         reviewJudge: JUDGE_OFF,
+        usageLimits: LIMITS_OFF,
       });
       expect(events).toEqual([]);
 
@@ -348,7 +355,7 @@ describe("daemon API contracts", () => {
         base,
         "/api/settings",
         400,
-        "autoRenameTasksFromPullRequests, hiddenModels or jevApiKey is required",
+        "autoRenameTasksFromPullRequests, hiddenModels, jevApiKey or factoryApiKey is required",
         "PATCH",
         {},
       );
@@ -362,35 +369,6 @@ describe("daemon API contracts", () => {
       );
     } finally {
       unsubscribe();
-    }
-  });
-
-  test("the Jev key is write-only: saved to config.json, never read back, removable", async () => {
-    const base = await startServer();
-    // a plain sample, not key-shaped: the repository's secret scan reads every commit
-    const sample = "jev-test-sample-value";
-    try {
-      const saved = await api(base, "/api/settings", "PATCH", { jevApiKey: `  ${sample}  ` });
-      expect(saved.status).toBe(200);
-      const body = await saved.text();
-      // the key never crosses the wire, not even inside another field
-      expect(body).not.toContain(sample);
-      expect(JSON.parse(body).reviewJudge).toMatchObject({ configured: true, source: "settings", hint: "…alue" });
-      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({ jevApiKey: sample, token });
-      expect(await (await api(base, "/api/settings")).text()).not.toContain(sample);
-      // an older client's PATCH of another setting leaves the key alone
-      await api(base, "/api/settings", "PATCH", { autoRenameTasksFromPullRequests: false });
-      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8")).jevApiKey).toBe(sample);
-      await expectError(base, "/api/settings", 400, "jevApiKey must be 8–512 printable characters with no spaces", "PATCH", { jevApiKey: "has a space" });
-      await expectError(base, "/api/settings", 400, "jevApiKey must be a string or null, got number", "PATCH", { jevApiKey: 7 });
-      const removed = await api(base, "/api/settings", "PATCH", { jevApiKey: null });
-      expect((await json<{ reviewJudge: unknown }>(removed)).reviewJudge).toEqual(JUDGE_OFF);
-      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).not.toHaveProperty("jevApiKey");
-      // with no key, the test button says so rather than calling anyone
-      expect(await json(await api(base, "/api/settings/review-judge/test", "POST"))).toEqual({ ok: false, error: "No Jev API key is set" });
-    } finally {
-      // a fake key left in the shared test home would send later runtimes to TypeSafe
-      await api(base, "/api/settings", "PATCH", { jevApiKey: null });
     }
   });
 
@@ -412,6 +390,7 @@ describe("daemon API contracts", () => {
         // trimmed, deduped and sorted, so an idempotent PATCH can be detected
         hiddenModels: { opencode: ["a/model", "b/model", "z/model"] },
         reviewJudge: JUDGE_OFF,
+        usageLimits: LIMITS_OFF,
       });
 
       // the same set in another key order and another array order is a no-op
@@ -625,6 +604,58 @@ describe("daemon API contracts", () => {
       archivedError,
       "DELETE",
     );
+  });
+});
+
+describe("settings secrets over the API", () => {
+  test("the Jev key is write-only: saved to config.json, never read back, removable", async () => {
+    const base = await startServer();
+    // a plain sample, not key-shaped: the repository's secret scan reads every commit
+    const sample = "jev-test-sample-value";
+    try {
+      const saved = await api(base, "/api/settings", "PATCH", { jevApiKey: `  ${sample}  ` });
+      expect(saved.status).toBe(200);
+      const body = await saved.text();
+      // the key never crosses the wire, not even inside another field
+      expect(body).not.toContain(sample);
+      expect(JSON.parse(body).reviewJudge).toMatchObject({ configured: true, source: "settings", hint: "…alue" });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({ jevApiKey: sample, token });
+      expect(await (await api(base, "/api/settings")).text()).not.toContain(sample);
+      // an older client's PATCH of another setting leaves the key alone
+      await api(base, "/api/settings", "PATCH", { autoRenameTasksFromPullRequests: false });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8")).jevApiKey).toBe(sample);
+      await expectError(base, "/api/settings", 400, "jevApiKey must be 8–512 printable characters with no spaces", "PATCH", { jevApiKey: "has a space" });
+      await expectError(base, "/api/settings", 400, "jevApiKey must be a string or null, got number", "PATCH", { jevApiKey: 7 });
+      const removed = await api(base, "/api/settings", "PATCH", { jevApiKey: null });
+      expect((await json<{ reviewJudge: unknown }>(removed)).reviewJudge).toEqual(JUDGE_OFF);
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).not.toHaveProperty("jevApiKey");
+      // with no key, the test button says so rather than calling anyone
+      expect(await json(await api(base, "/api/settings/review-judge/test", "POST"))).toEqual({ ok: false, error: "No Jev API key is set" });
+    } finally {
+      // a fake key left in the shared test home would send later runtimes to TypeSafe
+      await api(base, "/api/settings", "PATCH", { jevApiKey: null });
+    }
+  });
+
+  test("the Factory key is write-only like the Jev key, and independent of it", async () => {
+    const base = await startServer();
+    const sample = "factory-test-sample-value";
+    try {
+      const saved = await api(base, "/api/settings", "PATCH", { factoryApiKey: sample });
+      const body = await saved.text();
+      expect(body).not.toContain(sample);
+      expect(JSON.parse(body).usageLimits).toEqual({ factoryKey: { configured: true, source: "settings", hint: "…alue" } });
+      expect(JSON.parse(body).reviewJudge).toEqual(JUDGE_OFF);
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({ factoryApiKey: sample });
+      expect(await (await api(base, "/api/settings")).text()).not.toContain(sample);
+      await expectError(base, "/api/settings", 400, "factoryApiKey must be 8–512 printable characters with no spaces", "PATCH", { factoryApiKey: "short" });
+      const removed = await api(base, "/api/settings", "PATCH", { factoryApiKey: null });
+      expect((await json<{ usageLimits: unknown }>(removed)).usageLimits).toEqual(LIMITS_OFF);
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).not.toHaveProperty("factoryApiKey");
+      expect(await json(await api(base, "/api/settings/factory-key/test", "POST"))).toEqual({ ok: false, error: "No Factory API key is set" });
+    } finally {
+      await api(base, "/api/settings", "PATCH", { factoryApiKey: null });
+    }
   });
 });
 
