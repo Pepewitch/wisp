@@ -1,6 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react"
-import { afterEach, describe, expect, it } from "vitest"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { clearRememberedAttachments } from "@/lib/attachments"
+import { clearConnectionDrafts } from "@/lib/drafts"
+import type { DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -31,8 +34,11 @@ const harness = (name: string, models: string[]): HarnessInfo => ({
 })
 
 const harnesses = [harness("claude", ["claude-a"]), harness("codex", ["codex-a", "codex-b"])]
+const created = vi.fn()
 
 function mountDialog() {
+  const request = ((path: string) =>
+    Promise.resolve(path === "/api/tasks" ? { id: "synthetic-task" } : {})) as DaemonTransport["request"]
   return render(
     <CreateTaskDialog
       open
@@ -41,13 +47,27 @@ function mountDialog() {
       repos={[repo]}
       harnesses={harnesses}
       harnessesError={null}
-      onCreated={() => {}}
+      onCreated={created}
     />,
-    { wrapper: runtimeWrapper(fakeDaemonTransport()) },
+    { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request })) },
   )
 }
 
-afterEach(() => localStorage.clear())
+afterEach(() => {
+  localStorage.clear()
+  clearConnectionDrafts("test-connection")
+  clearRememberedAttachments("test-connection")
+  created.mockReset()
+})
+
+async function submitTask(number: number) {
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+  fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), {
+    target: { value: `task ${number}` },
+  })
+  fireEvent.click(screen.getByRole("button", { name: "Create" }))
+  await waitFor(() => expect(created).toHaveBeenCalledTimes(number))
+}
 
 describe("preferred model picker", () => {
   it("stars a future default without changing the current dialog, and the filled star clears it", async () => {
@@ -65,13 +85,20 @@ describe("preferred model picker", () => {
       "true",
     )
 
+    // Closing alone restores this dialog's choice, despite the new preference.
     first.unmount()
+    const reopened = mountDialog()
+    expect(await screen.findByRole("button", { name: /claude.*claude-a/ })).toBeInTheDocument()
+    // A successful create clears it, so the preference becomes the next pick.
+    await submitTask(1)
+    reopened.unmount()
     const second = mountDialog()
     const preferredCurrent = await screen.findByRole("button", { name: /codex.*codex-b/ })
     fireEvent.click(preferredCurrent)
     fireEvent.click(await screen.findByRole("button", { name: "Clear preferred model codex · codex-b" }))
 
     expect(preferredCurrent).toHaveTextContent("codex-b")
+    await submitTask(2)
     second.unmount()
     mountDialog()
     expect(await screen.findByRole("button", { name: /claude.*claude-a/ })).toBeInTheDocument()

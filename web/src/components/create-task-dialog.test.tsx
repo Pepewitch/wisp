@@ -1,8 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
+import { clearRememberedAttachments } from "@/lib/attachments"
+import { createDesktopTransport } from "@/lib/desktop-transport"
+import { clearConnectionDrafts, connectionLocalData } from "@/lib/drafts"
 import type { DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
+import { sameOriginWebTransport } from "@/lib/web-transport"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { CreateTaskDialog } from "./create-task-dialog"
@@ -30,6 +34,186 @@ const harness: HarnessInfo = {
     probedAt: "2026-09-01T00:00:00.000Z",
   },
 }
+
+afterEach(() => {
+  for (const connectionId of ["test-connection", "another-connection", "local", "remote-fixture"]) {
+    clearRememberedAttachments(connectionId)
+    clearConnectionDrafts(connectionId)
+  }
+  vi.unstubAllGlobals()
+})
+
+describe("create task drafts", () => {
+  const otherRepo: RepoInfo = { ...repo, path: "/other", name: "other" }
+  const file = new File(["id,name\n1,a\n"], "orders.csv", { type: "text/csv" })
+  const prompt = () => screen.getByPlaceholderText<HTMLTextAreaElement>("What do you want to work on?")
+  const draftDialog = (open: boolean, initialRepoPath: string | null, onCreated = vi.fn()) => (
+    <CreateTaskDialog
+      open={open}
+      onOpenChange={() => {}}
+      initialRepoPath={initialRepoPath}
+      repos={[repo, otherRepo]}
+      harnesses={[harness]}
+      harnessesError={null}
+      onCreated={onCreated}
+    />
+  )
+  const attachFile = async () => {
+    fireEvent.change(screen.getByTestId("attach-input"), { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv"))
+  }
+
+  it("restores the unsent composer after closing and keeps each project's contents separate", async () => {
+    const upload = vi.fn(async () => ({ uploadId: "test-upload", contentHash: "test-content-hash" }))
+    const view = render(draftDialog(true, "/repo"), {
+      wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", {
+        upload: upload as unknown as DaemonTransport["upload"],
+      })),
+    })
+    fireEvent.change(prompt(), { target: { value: "first project's work" } })
+    await attachFile()
+    fireEvent.click(screen.getByRole("button", { name: "Worktree" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "This repo" }))
+
+    view.rerender(draftDialog(false, "/repo"))
+    view.rerender(draftDialog(true, "/repo"))
+    expect(prompt()).toHaveValue("first project's work")
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv")
+    expect(screen.getByRole("button", { name: "This repo" })).toBeInTheDocument()
+    expect(upload).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Project" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "other" }))
+    expect(prompt()).toHaveValue("")
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+    expect(screen.getByRole("button", { name: "Worktree" })).toBeInTheDocument()
+    fireEvent.change(prompt(), { target: { value: "second project's work" } })
+
+    // The global New task action has no project path: it reopens the last
+    // selected project's composer rather than the first project in the list.
+    view.rerender(draftDialog(false, null))
+    view.rerender(draftDialog(true, null))
+    expect(prompt()).toHaveValue("second project's work")
+    expect(screen.getByRole("button", { name: "Project" })).toHaveTextContent("other")
+    fireEvent.click(screen.getByRole("button", { name: "Project" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "repo" }))
+    expect(prompt()).toHaveValue("first project's work")
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv")
+    expect(screen.getByRole("button", { name: "This repo" })).toBeInTheDocument()
+    expect(connectionLocalData("test-connection")).toEqual({ drafts: 2, pendingAttachments: 1 })
+  })
+
+  it("keeps a refused create for retry, then clears only the submitted project on success", async () => {
+    const request = vi.fn().mockRejectedValueOnce(new Error("try again")).mockResolvedValue({ id: "synthetic-task" })
+    const route = ((path: string, init?: unknown) =>
+      path === "/api/settings"
+        ? Promise.resolve({ hiddenModels: {} })
+        : path === "/api/harnesses"
+          ? Promise.resolve({ harnesses: [harness], features: {} })
+          : request(path, init)) as DaemonTransport["request"]
+    const onCreated = vi.fn()
+    const view = render(draftDialog(true, "/repo", onCreated), {
+      wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: route })),
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Project" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "other" }))
+    fireEvent.change(prompt(), { target: { value: "other unfinished work" } })
+    fireEvent.click(screen.getByRole("button", { name: "Project" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "repo" }))
+    fireEvent.change(prompt(), { target: { value: "keep this if refused" } })
+    await attachFile()
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await screen.findByText("Could not reach the daemon")
+    view.rerender(draftDialog(false, "/repo", onCreated))
+    view.rerender(draftDialog(true, "/repo", onCreated))
+    expect(prompt()).toHaveValue("keep this if refused")
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv")
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("synthetic-task"))
+    view.rerender(draftDialog(false, "/repo", onCreated))
+    view.rerender(draftDialog(true, "/repo", onCreated))
+    expect(prompt()).toHaveValue("")
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+    expect(connectionLocalData("test-connection")).toEqual({ drafts: 1, pendingAttachments: 0 })
+    expect(request.mock.calls.filter(([path]) => path === "/api/tasks")).toHaveLength(2)
+    expect(request).toHaveBeenLastCalledWith(
+      "/api/tasks",
+      expect.objectContaining({ body: expect.objectContaining({ prompt: "keep this if refused" }) }),
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Project" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "other" }))
+    expect(prompt()).toHaveValue("other unfinished work")
+  })
+
+  it("does not show another connection's project draft", async () => {
+    const first = render(draftDialog(true, "/repo"), {
+      wrapper: runtimeWrapper(fakeDaemonTransport("test-connection")),
+    })
+    fireEvent.change(prompt(), { target: { value: "local work" } })
+    await attachFile()
+    first.unmount()
+
+    const second = render(draftDialog(true, "/repo"), {
+      wrapper: runtimeWrapper(fakeDaemonTransport("another-connection")),
+    })
+    expect(prompt()).toHaveValue("")
+    expect(screen.queryByTestId("pending-attachments")).toBeNull()
+    second.unmount()
+
+    render(draftDialog(true, "/repo"), {
+      wrapper: runtimeWrapper(fakeDaemonTransport("test-connection")),
+    })
+    expect(prompt()).toHaveValue("local work")
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv")
+  })
+
+  it.each(["browser", "desktop"] as const)("submits a restored file through the %s transport", async (runtime) => {
+    const calls: { url: string; body: BodyInit | null | undefined }[] = []
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async (url, init) => {
+      const path = String(url)
+      if (init?.method === "POST") calls.push({ url: path, body: init.body })
+      const response = path.includes("/api/attachments?")
+        ? { uploadId: "synthetic-upload", contentHash: "synthetic-hash" }
+        : path.endsWith("/api/tasks")
+          ? { id: "synthetic-task" }
+          : path.endsWith("/api/harnesses")
+            ? { harnesses: [harness], features: {} }
+            : { hiddenModels: {} }
+      return new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }))
+    const transport = runtime === "browser"
+      ? sameOriginWebTransport
+      : createDesktopTransport("http://127.0.0.1:45678/fixture-capability", "remote-fixture", 1)
+    const onCreated = vi.fn()
+    const view = render(draftDialog(true, "/repo", onCreated), {
+      wrapper: runtimeWrapper(transport),
+    })
+    fireEvent.change(prompt(), { target: { value: "ship a task" } })
+    await attachFile()
+    view.rerender(draftDialog(false, "/repo", onCreated))
+    view.rerender(draftDialog(true, "/repo", onCreated))
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("orders.csv")
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith("synthetic-task"))
+    const prefix = runtime === "browser"
+      ? ""
+      : "http://127.0.0.1:45678/fixture-capability/connections/remote-fixture/1"
+    expect(calls.map((call) => call.url)).toEqual([
+      `${prefix}/api/attachments?name=orders.csv`,
+      `${prefix}/api/tasks`,
+    ])
+    expect(JSON.parse(String(calls[1]?.body))).toMatchObject({
+      repoPath: "/repo",
+      prompt: "ship a task",
+      attachments: [{ name: "orders.csv", uploadId: "synthetic-upload", contentHash: "synthetic-hash" }],
+    })
+  })
+})
 
 /**
  * Uploading starts before `createTask.isPending` goes true, so the dialog must
