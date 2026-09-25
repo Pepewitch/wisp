@@ -6,7 +6,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, ReviewJudgeTest, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -464,6 +464,48 @@ export function useTestReviewJudge() {
     mutationFn: () => transport.request<ReviewJudgeTest>("/api/settings/review-judge/test", { method: "POST" }),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: qk.settings });
+    },
+  });
+}
+
+/**
+ * PATCH /api/settings with the Factory API key droid's limits are read with,
+ * or `null` to remove it. Uncached for the same reason as the Jev key's.
+ */
+export function useSaveFactoryKey() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    gcTime: 0,
+    mutationFn: (factoryApiKey: string | null) =>
+      transport.request<WispSettings>("/api/settings", { method: "PATCH", body: { factoryApiKey } }),
+    onSuccess: (settings) => {
+      client.setQueryData(qk.settings, settings);
+      void client.invalidateQueries({ queryKey: qk.harnessLimits });
+    },
+  });
+}
+
+/** POST /api/settings/factory-key/test — reads droid's limits now, which also refreshes the popover's copy. */
+export function useTestFactoryKey() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: () => transport.request<FactoryKeyTest>("/api/settings/factory-key/test", { method: "POST" }),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: qk.harnessLimits });
+    },
+  });
+}
+
+/** GET /api/harness-limits?refresh=1 — the popover's Refresh, past the daemon's one-minute cache. */
+export function useRefreshHarnessLimits() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: () => transport.request<HarnessLimitsResponse>("/api/harness-limits?refresh=1"),
+    onSuccess: (data) => {
+      client.setQueryData(qk.harnessLimits, data);
     },
   });
 }

@@ -21,6 +21,7 @@ import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
+import { UsageLimitsControl } from "@/components/usage-limits-control"
 import { StartHere } from "@/components/start-here"
 import { Gear, WispMark } from "@/components/icons"
 import { RightColumn, Shell } from "@/components/panes"
@@ -225,9 +226,7 @@ function MainView({
   )
   useSearchShortcuts(uiIntentsFor(runtime.connectionId), projectSearch)
   // open state carries the project the sidebar's `+` preselected
-  const [createFor, setCreateFor] = useState<{
-    repoPath: string | null
-  } | null>(null)
+  const [createFor, setCreateFor] = useState<{ repoPath: string | null } | null>(null)
   const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
   const reconnectRequests = useReconnectRequests(runtime.connectionId)
   // held as a PATH, not a row: the repos query refetches after a save, and a
@@ -248,7 +247,7 @@ function MainView({
   const harnessesQuery = useHarnesses(true)
 
   // ONE EventSource owns Wisp state invalidation. Provider-owned PR status and
-  // daemon-cached release status are the only polling exceptions.
+  // daemon-cached release and plan-limit status are the only polling exceptions.
   useDaemonEventsBridge(runtime, selectedRef, bumpLogGeneration, reconnectRequests)
 
   // a fresh [] every render would re-run every memo below it
@@ -344,6 +343,7 @@ function MainView({
       }}
       // below `md` the drawer footer is the only app-chrome surface there is
       updateControl={opts?.touch ? updateControls.mobile : undefined}
+      usageControl={opts?.touch ? (open) => <UsageLimitsControl mobile harness={header?.harness ?? null} onOpenSettings={open} /> : undefined}
       search={projectSearch}
       onAddProject={projectAdd.onAddProject}
       addProjectPending={projectAdd.pending}
@@ -527,8 +527,10 @@ function AppShell({
             near each other. Updates used to sit at the LEFT end, hard against
             the connection tabs — app news in the corner that answers "which
             daemon am I on", and the only labelled button in a bar of icons.
-            The gear stays last: it is still the top-right corner (§5g). */}
+            Usage limits lead: they are read the most. The gear stays last:
+            it is still the top-right corner (§5g). */}
         <div className="flex shrink-0 items-center gap-1">
+          <UsageLimitsControl harness={task?.harness ?? null} onOpenSettings={onOpenSettings} />
           {updateControl}
           {desktop && <DesktopZoomControl />}
           <Button size="sm" icon aria-label="Settings" onClick={onOpenSettings}>

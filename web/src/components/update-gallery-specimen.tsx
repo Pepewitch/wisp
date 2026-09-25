@@ -1,5 +1,6 @@
 import { Gear, ZoomIn } from "@/components/icons"
 import { UpdateCenter } from "@/components/update-control"
+import { UsageRing } from "@/components/usage-limits-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
 import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
@@ -77,7 +78,7 @@ export function UpdateGallerySpecimen() {
  * the app, 4px apart against the header's 10px (§5h).
  *
  * The update trigger is the real component in its three readings, because the
- * dot is the whole point of an icon-only trigger. Zoom and the gear are
+ * dot is the whole point of an icon-only trigger. The usage ring, zoom and the gear are
  * stand-ins — the live zoom control needs the native bridge and the gallery has
  * no settings modal to open — the same way the connection specimen stands in
  * for its tabs.
@@ -106,6 +107,9 @@ export function HeaderClusterSpecimen() {
             <div className="mt-2 flex h-9 items-center gap-2.5 rounded-lg border border-border bg-surface px-3">
               <span className="flex-1 text-[11.5px] text-faint">the header, from its middle out</span>
               <div className="flex shrink-0 items-center gap-1">
+                <Button size="sm" icon aria-label="Usage limits">
+                  <UsageRing window={null} />
+                </Button>
                 <UpdateCenter
                   desktop={reading.desktop}
                   daemonStatus={reading.daemon}
@@ -132,6 +136,9 @@ export function HeaderClusterSpecimen() {
         <Eyebrow>The drawer footer on touch · no top bar to carry it</Eyebrow>
         <div className="mt-2 flex items-center justify-end gap-1 rounded-lg border border-border bg-sidebar px-2 py-1.5">
           <span className="flex-1 text-[11.5px] text-faint">…show archived</span>
+          <Button size="lg" icon aria-label="Usage limits, touch">
+            <UsageRing window={null} />
+          </Button>
           <UpdateCenter
             desktop={DESKTOP}
             daemonStatus={UPDATE_SPECIMEN}

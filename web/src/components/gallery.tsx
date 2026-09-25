@@ -27,6 +27,7 @@ import { PullRequestSpecimens } from "@/components/pull-request-specimens"
 import { SlashPaletteList } from "@/components/slash-palette"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
+import { UsageLimitsSpecimen } from "@/components/usage-limits-specimen"
 import { WorkflowsPaneSpecimen } from "@/components/workflows-gallery-specimen"
 import {
   HeaderClusterSpecimen,
@@ -244,7 +245,7 @@ function FoundationSpecimens() {
           </div>
       </Section>
 
-      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen /> <ProseCodeSpecimen />
+      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen /> <UsageLimitsSpecimen /> <ProseCodeSpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">

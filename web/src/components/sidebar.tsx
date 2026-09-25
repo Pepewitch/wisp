@@ -54,6 +54,12 @@ interface SidebarProps {
    */
   updateControl?: ReactNode
   /**
+   * The usage limits ring. TOUCH footer only, for the same reason as
+   * `updateControl`; it is handed the gear's own opener, so its Settings link
+   * dismisses the drawer the same way.
+   */
+  usageControl?: (openSettings: () => void) => ReactNode
+  /**
    * Cross-project search (⌘⇧F). The state lives above this pane so one search
    * survives the drawer/pane split and can be opened from the keyboard; the
    * pane owns only where the box and the results sit.
@@ -93,6 +99,7 @@ export function Sidebar({
   onOpenSettings,
   search,
   updateControl,
+  usageControl,
   onAddProject,
   addProjectPending = false,
   error,
@@ -219,6 +226,7 @@ export function Sidebar({
             Show archived
           </span>
         </button>
+        {touch && onOpenSettings && usageControl?.(onOpenSettings)}
         {touch && updateControl && (
           <span className="flex shrink-0 items-center px-1">
             {updateControl}

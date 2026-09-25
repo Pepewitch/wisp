@@ -22,6 +22,7 @@ import {
   readAttachmentFlags,
 } from "./cli-attach";
 import { searchCommand } from "./cli-search";
+import { limitsCommand } from "./cli-limits";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
 import { wispCommand } from "./command";
@@ -493,6 +494,10 @@ export async function cli(args: string[]): Promise<void> {
     }
     case "search": {
       await searchCommand(positional, flags, api);
+      break;
+    }
+    case "limits": {
+      await limitsCommand(flags, api);
       break;
     }
     case "result": {

@@ -12,6 +12,7 @@ import type {
   ConversationDetail,
   DiffResponse,
   HarnessesResponse,
+  HarnessLimitsResponse,
   PullRequestOverview,
   PullRequestStatus,
   RepoInfo,
@@ -63,6 +64,26 @@ export function useStatus() {
     queryFn: () => transport.request<{ tasks: Record<string, StatusEntry> }>("/api/status"),
     select: (data) => data.tasks,
   });
+}
+
+/** The daemon caches each harness's read for a minute, so polling faster would only re-read its cache. */
+export const HARNESS_LIMITS_POLL_MS = 60 * 1000
+
+/**
+ * GET /api/harness-limits — the top bar's usage ring and popover. Account
+ * state rather than task state, and not on the event stream, so it is the
+ * third polling exception: once a minute while the page is visible.
+ */
+export function useHarnessLimits(enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime()
+  return useQuery({
+    queryKey: qk.harnessLimits,
+    queryFn: () => transport.request<HarnessLimitsResponse>("/api/harness-limits"),
+    select: (data) => data.harnesses,
+    enabled,
+    refetchInterval: HARNESS_LIMITS_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
 }
 
 export const UPDATE_STATUS_POLL_MS = 60 * 60 * 1000

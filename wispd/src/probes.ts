@@ -52,6 +52,7 @@ export const bunProbeSpawn: ProbeSpawnFn = async (cmd, opts): Promise<SpawnResul
   return runBoundedCommand({
     cmd,
     cwd: opts.cwd,
+    ...(opts.env ? { env: opts.env } : {}),
     signal: opts.signal,
     timeoutMs: PROBE_TIMEOUT_MS,
     maxBytes: PROBE_MAX_BYTES,

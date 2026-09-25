@@ -920,6 +920,10 @@ leaving someone to wonder whether a remote just changed.
     it remounts on any change of key. Its mutation is uncached
     (`gcTime: 0`). No `<form>` wraps it, so a browser does not mistake it
     for a login.
+  - `Usage limits` holds the second secret, the Factory API key droid's
+    plan limits are read with. Both keys are one component
+    (`secret-key-field.tsx`) with a spec per key; a third secret is a new
+    spec, never a copy of the field.
 - **A section per family, one labelled row per setting.** `Appearance` owns
   `Theme` today. The section's eyebrow is the group and the row carries the
   field's name, so a second appearance setting is a row rather than a rewrite.
@@ -978,8 +982,23 @@ the connection tabs. The right end is **this app**: the connection indicator
 states what it is doing, and then everything you can do TO it sits in one
 cluster, `gap-1` against the header's `gap-2.5`, so three same-sized icon
 buttons read as a group rather than as three controls that happen to be near
-each other. Updates, then zoom (Desktop only), then the gear — last, because
-the gear is the top-right corner (§5g).
+each other. Usage limits, then Updates, then zoom (Desktop only), then the
+gear — last, because the gear is the top-right corner (§5g).
+
+**Usage limits is a ring, not a number.** `usage-limits-control.tsx` draws a
+glyph-sized progress ring for the selected task's harness at its most-used
+window, because that is the limit that stops the next turn; with no task, or a
+harness with no limits read, the ring is an empty track rather than a missing
+icon. The arc is neutral until 80%, then `--state-needs-input`, and
+`--destructive` at the limit: the same two hues the Updates dot may carry, on
+a mark the same size. Hover opens the popover and a click pins it; on touch it
+is a tap. The popover groups windows per harness (droid's `standard` and
+`core` pools as sub-groups), bars fill with the share USED, as every harness's
+own report words it, and each row says when it resets. A harness with nothing
+to show says why in one line; only a real read failure is red, and a missing
+or wrong-account Factory key links to Settings. The limits are account state,
+not on the event stream, so `useHarnessLimits` polls once a minute while the
+page is visible, against a daemon cache of the same length.
 
 **App news is not connection chrome.** The update surface used to sit at the
 left end, hard against the connection tabs: the only labelled button in a bar
@@ -992,7 +1011,7 @@ icon-only trigger's accessible name carries what the dot cannot say
 word, because that is what someone searches for.
 
 On touch this cluster does not exist: there is no persistent top bar, so the
-gear and the update surface live in the drawer footer (§6b).
+gear, the usage ring and the update surface live in the drawer footer (§6b).
 
 ## 5i. Search — two questions, two shapes
 

@@ -265,8 +265,18 @@ wisp token [--rotate]
 wisp models         per harness: the effective model for new tasks, and the
                     models on offer — the CLI's own list where it has one, else
                     the adapter's pinned subset
+wisp limits [--refresh] [--json]
+                    plan usage per harness, the same answer as the web top
+                    bar's usage popover; --refresh skips the one-minute cache
 wisp version        print the Wisp version
 ```
+
+`wisp limits` reads each harness's own plan windows: claude-code through
+`claude -p /usage`, codex through its app-server's rate-limit read, droid
+through Factory's billing API with the key from Settings → Usage limits (or
+`FACTORY_API_KEY` / `DROID_API_KEY` in the daemon's environment). A key that
+belongs to a different account than droid's login is refused rather than
+shown. Harnesses with no limits read (cursor, opencode) are not listed.
 
 `init` creates or validates private state and selects a first loopback port.
 It does not start the daemon. A persisted port never changes silently.

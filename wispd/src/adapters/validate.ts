@@ -11,6 +11,7 @@ import { IMAGE_DELIVERY_STRATEGIES, IMAGE_INPUT_STRATEGIES } from "./images";
 import { COMPACT_STRATEGIES } from "./compact";
 import { PARSE_STRATEGIES } from "./parse";
 import { PROBE_STRATEGIES } from "./probe";
+import { LIMIT_STRATEGIES } from "./limits";
 import { SKILL_STRATEGIES } from "./skills";
 import type { AdapterDef } from "./types";
 import { USAGE_FORMATTERS } from "./usage";
@@ -49,6 +50,7 @@ const ADAPTER_KEYS = [
   "usageFormat",
   "contextFormat",
   "probe",
+  "limits",
   "skillDiscovery",
   "compact",
   "compactPrompt",
@@ -349,6 +351,9 @@ function applyDiscoveryFields(raw: Record<string, any>, merged: AdapterDef, labe
   }
   if (raw.probe !== undefined) {
     merged.probe = namedStrategy(raw.probe, `${label}.probe`, PROBE_STRATEGIES, "probe strategy");
+  }
+  if (raw.limits !== undefined) {
+    merged.limits = namedStrategy(raw.limits, `${label}.limits`, LIMIT_STRATEGIES, "limits strategy", true);
   }
   if (raw.skillDiscovery !== undefined) {
     merged.skillDiscovery = namedStrategy(

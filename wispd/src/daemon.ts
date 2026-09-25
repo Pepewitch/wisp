@@ -19,6 +19,7 @@ import { startOutboxLoop } from "./outbox";
 import { WorkflowRuntime } from "./workflows/runtime";
 import { AutopilotRuntime } from "./autopilot/runtime";
 import { TaskProbeCache, type TaskProbeCacheOptions } from "./probes";
+import { HarnessLimitsCache, type HarnessLimitsCacheOptions } from "./harness-limits";
 import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests";
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
@@ -283,6 +284,8 @@ export interface ServeOptions {
   probeSpawnOnce?: TaskProbeCacheOptions["spawnOnce"];
   probeOpenRpc?: TaskProbeCacheOptions["openRpc"];
   probeTimeoutMs?: number;
+  /** test injection for the plan-limits reads: fake CLIs, network, files and clock */
+  limits?: HarnessLimitsCacheOptions;
   /** A4 test injection: the same for the skill-discovery strategies */
   skillSpawnOnce?: TaskSkillCacheOptions["spawnOnce"];
   skillOpenRpc?: TaskSkillCacheOptions["openRpc"];
@@ -413,6 +416,7 @@ async function serveOwned(
     openRpc: options.probeOpenRpc,
     timeoutMs: options.probeTimeoutMs,
   });
+  const limitsCache = new HarnessLimitsCache(options.limits);
   const skillCache = new TaskSkillCache({
     spawnOnce: options.skillSpawnOnce,
     openRpc: options.skillOpenRpc,
@@ -550,7 +554,7 @@ async function serveOwned(
         }
         if (!authorized(req, cfg)) return err("unauthorized", 401);
         return lifetime.run(() => lifetime.track(Promise.resolve()
-          .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates))
+          .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
           .catch((e) => err(String(e instanceof Error ? e.message : e), 500))));
       },
     });
