@@ -22,6 +22,8 @@ export type WispEvent =
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
+  /** The task's shell tabs changed — opened, closed, renamed, or now running something else. */
+  | { type: "terminals"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
   | { type: "harnesses" }
   | { type: "settings" }

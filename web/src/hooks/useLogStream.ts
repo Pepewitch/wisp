@@ -47,6 +47,7 @@ export function useLogStream(
 
     const open = (note: string) => {
       source?.close();
+      conn.opening("log");
       dispatch({ type: "reset", note });
       const next = factory
         ? factory(`/api/tasks/${taskId}/log/stream?format=${format}`)

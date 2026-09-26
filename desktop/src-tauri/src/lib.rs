@@ -36,6 +36,7 @@ pub mod setup;
 pub mod task_export;
 pub mod updater;
 pub mod urls;
+mod window_launch;
 
 use std::sync::Arc;
 
@@ -66,7 +67,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(updater::plugin())
         .setup(|app| {
-            let registry_path = app.path().app_config_dir()?.join("connections.json");
+            let config_dir = app.path().app_config_dir()?;
+            let registry_path = config_dir.join("connections.json");
             let wisp_home = local::wisp_home();
             let core = tauri::async_runtime::block_on(DesktopCore::start(
                 registry_path,
@@ -83,6 +85,7 @@ pub fn run() {
                 );
             }
             app.manage(updater::DesktopUpdater::default());
+            window_launch::focus_new_version(app.handle(), &config_dir);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

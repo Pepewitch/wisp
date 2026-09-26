@@ -55,7 +55,7 @@ export async function reconnectDesktopConnection({
       reconnected.id === input.connectionId &&
       target?.routeRevision === reconnected.routeRevision
     ) {
-      connectionStore(reconnected.id).set("events", false)
+      connectionStore(reconnected.id).opening("events")
       uiIntentsFor(reconnected.id).reopenStreams()
     }
   } catch (error) {

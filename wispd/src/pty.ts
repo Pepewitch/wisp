@@ -39,7 +39,7 @@
  * in `ps` output to run `stty -f` against its tty. Both are gone.
  */
 import { CString, dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
-import { createReadStream, write as fsWrite, type ReadStream } from "node:fs";
+import { createReadStream, readFileSync, write as fsWrite, type ReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /** The hidden subcommand this module spawns as its own child half. */
@@ -112,6 +112,7 @@ const SYMBOLS = {
   setsid: { args: [], returns: FFIType.int },
   dup2: { args: [FFIType.int, FFIType.int], returns: FFIType.int },
   execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
+  tcgetpgrp: { args: [FFIType.int], returns: FFIType.int },
 } as const;
 
 type LibcSymbols = ReturnType<typeof dlopen<typeof SYMBOLS>>["symbols"];
@@ -351,6 +352,61 @@ export function readPty(
     onError(error);
   });
   return stream;
+}
+
+/**
+ * The process group in the pty's foreground, or null when it cannot be read.
+ *
+ * Asked of the MASTER: both Darwin and Linux answer tcgetpgrp there for the
+ * slave's session, while the slave fd the daemon holds is not its controlling
+ * terminal and would be refused. When this equals the shell's pid the shell is
+ * at its prompt; anything else is a job the user is running.
+ */
+export function foregroundProcessGroup(masterFd: number): number | null {
+  if (masterFd < 0) return null;
+  try {
+    const pgrp = libc().tcgetpgrp(masterFd);
+    return pgrp > 0 ? pgrp : null;
+  } catch {
+    return null;
+  }
+}
+
+type ProcName = (pid: number, buffer: number, size: number) => number;
+let cachedProcName: ProcName | null | undefined;
+
+/**
+ * A process's short command name (`bun`, `vim`), or null when it is gone.
+ *
+ * Read from the kernel rather than by running ps(1): this is asked every time
+ * a busy shell prints, and spawning a process per burst of output would cost
+ * more than the answer is worth. Darwin has libproc's proc_name; Linux has
+ * /proc/<pid>/comm.
+ */
+export function processName(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (!DARWIN) {
+    try {
+      const name = readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+      return name || null;
+    } catch {
+      return null;
+    }
+  }
+  if (cachedProcName === undefined) {
+    try {
+      cachedProcName = dlopen("libSystem.B.dylib", {
+        proc_name: { args: [FFIType.int, FFIType.ptr, FFIType.u32], returns: FFIType.int },
+      }).symbols.proc_name as unknown as ProcName;
+    } catch {
+      cachedProcName = null;
+    }
+  }
+  if (!cachedProcName) return null;
+  const buffer = new Uint8Array(256);
+  const length = cachedProcName(pid, ptr(buffer), buffer.length);
+  if (length <= 0) return null;
+  return new TextDecoder().decode(buffer.subarray(0, length)) || null;
 }
 
 /** A close-on-exec duplicate of the master, for exactly one owner to close. */

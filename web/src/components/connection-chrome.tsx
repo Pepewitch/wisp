@@ -31,7 +31,7 @@ import {
   MenuRadioItem,
 } from "@/components/menu"
 import { Button, StateDot, Tab } from "@/components/primitives"
-import { connectionStore } from "@/lib/conn"
+import type { ConnectionStreamStatus } from "@/lib/conn"
 import {
   MAX_DESKTOP_CONNECTIONS,
   type DesktopConnectionMetadata,
@@ -40,6 +40,7 @@ import {
   type ConnectionReachability,
 } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
+import { useConnectionStreamStatus } from "@/hooks/useConnectionStreamStatus"
 import { STATE_LABEL } from "@/lib/state"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import type { TaskState } from "@/lib/types"
@@ -99,6 +100,33 @@ function connectionIssue(
   return null
 }
 
+function connectionStatusTitle(
+  issue: string | null,
+  reachability: ConnectionReachability,
+  streamStatus: ConnectionStreamStatus,
+  live: boolean,
+  opening: boolean
+): string {
+  if (issue) return issue
+  if (reachability === "unknown") return "Checking server…"
+  if (live) return "Live"
+  if (opening) return "Server reachable · Connecting live updates…"
+  return streamStatus === "failed"
+    ? "Server reachable · Live updates disconnected"
+    : "Server reachable · Live updates delayed"
+}
+
+function connectionDotColor(
+  unavailable: boolean,
+  live: boolean,
+  opening: boolean,
+  updatesDown: boolean
+): string {
+  if (unavailable) return "bg-destructive"
+  if (live || opening) return "bg-state-done"
+  return updatesDown ? "bg-state-needs-input" : "bg-muted-foreground/60"
+}
+
 /**
  * One connection tab, its independent reconnect button, and — when selected —
  * its management menu, inside the same chip.
@@ -133,13 +161,24 @@ export function ConnectionTab({
   /** The active tab's own menu; nothing at all on the others. */
   actions?: ReactNode
 }) {
-  const store = connectionStore(connection.id)
-  const streamsLive = useSyncExternalStore(store.subscribe, store.isLive)
+  const { status: streamStatus, delayed: updatesDelayed } =
+    useConnectionStreamStatus(
+      connection.id,
+      connection.ready && reachability === "online"
+    )
   const issue = connectionIssue(connection, reachability)
   const unavailable = issue !== null
-  // Only the selected connection mounts both UI streams. Background connections
-  // use their own daemon monitor instead of a stale/default stream snapshot.
-  const live = connection.ready && reachability === "online" && streamsLive
+  const live = connection.ready && reachability === "online" && streamStatus === "live"
+  const opening = connection.ready && reachability === "online" &&
+    streamStatus === "opening" && !updatesDelayed
+  const updatesDown = connection.ready && reachability === "online" && !live && !opening
+  const statusTitle = connectionStatusTitle(
+    issue,
+    reachability,
+    streamStatus,
+    live,
+    opening
+  )
   return (
     <span
       data-testid="connection-tab-chip"
@@ -167,18 +206,23 @@ export function ConnectionTab({
       <button
         type="button"
         aria-label={`Reconnect ${connection.name}`}
-        title={live ? "Live" : issue ?? "Reconnecting…"}
+        title={statusTitle}
         disabled={reconnectDisabled}
         onClick={onReconnect}
         className="flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
       >
-        <span
-          data-live={live}
-          className={cn(
-            "size-1.5 rounded-full",
-            live ? "bg-state-done" : "animate-pulse bg-state-needs-input"
+        <span className="relative flex size-3 items-center justify-center">
+          {opening && (
+            <span className="absolute inset-0 rounded-full border border-state-done/75 motion-safe:animate-pulse" />
           )}
-        />
+          <span
+            data-live={live}
+            className={cn(
+              "size-1.5 rounded-full",
+              connectionDotColor(unavailable, live, opening, updatesDown)
+            )}
+          />
+        </span>
       </button>
       {attention && <StateDot state={attention} className="ml-0.5" />}
       {unavailable && (

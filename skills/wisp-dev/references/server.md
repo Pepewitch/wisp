@@ -118,6 +118,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   geometry rides on the WebSocket upgrade rather than arriving in a later
   frame: the first prompt is drawn before any client message could reach the
   daemon, and a prompt drawn for the wrong width survives on screen.
+- The daemon keeps each task's shell TABS, not the clients
+  (`wispd/src/terminal-tabs.ts`). Closing a tab is what kills its shell
+  (SIGHUP to the shell and its foreground job, as a dropped SSH session does),
+  so a shell never outlives every tab that could show it. A close or restart
+  while a program is in the foreground is a 409 naming it until the client
+  retries with `force`. Tab numbers only count up; socket ids are reused.
 - What a reattaching client receives is a snapshot of the screen, not the bytes
   that produced it. Raw output encodes cursor motion that is only correct at
   the width it was written at, so replaying it into a differently sized pane
@@ -231,6 +237,7 @@ cannot tell you a browser stopped attaching a credential.
 | Realtime streams | `wispd/src/events.ts`, `wispd/src/routes/stream.ts` |
 | Webhook delivery | `wispd/src/outbox.ts` |
 | Terminal sessions | `wispd/src/terminal.ts`, `wispd/src/daemon.ts` |
+| Shell tabs (the list every client shows) | `wispd/src/terminal-tabs.ts`, `wispd/src/routes/terminals.ts` |
 | Pty allocation, sizing, and the `__pty-exec` child | `wispd/src/pty.ts` |
 | The daemon's model of each shell's screen | `wispd/src/terminal-screen.ts` |
 | Shared public shapes | `wispd/src/types.ts`, route serializers, `web/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |

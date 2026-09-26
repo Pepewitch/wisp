@@ -305,6 +305,19 @@ describe("the /api/events → queryClient bridge", () => {
     h.close();
   });
 
+  it("a terminals event re-reads only that task's shell tabs", () => {
+    const h = bridge("t1");
+    seed(h.client);
+    h.client.setQueryData(qk.terminals("t2"), []);
+    h.client.setQueryData(qk.terminals("t3"), []);
+    h.sources[0]!.emit({ type: "terminals", taskId: "t2" });
+
+    expect(invalidated(h.client, qk.terminals("t2"))).toBe(true);
+    expect(invalidated(h.client, qk.terminals("t3"))).toBe(false);
+    expect(invalidated(h.client, qk.tasksList(false))).toBe(false);
+    h.close();
+  });
+
   it("unparseable frames are ignored without tearing down the stream", () => {
     const h = bridge("t1");
     seed(h.client);

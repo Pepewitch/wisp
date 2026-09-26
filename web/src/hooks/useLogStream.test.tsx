@@ -73,6 +73,7 @@ describe("useLogStream", () => {
     })
 
     act(() => {
+      fake.source.onopen?.()
       fake.emit("hello", { version: "0.5.11-test" })
       fake.emit("backlog", {
         turn: 2,
@@ -128,6 +129,7 @@ describe("useLogStream", () => {
     rerender({ taskId: "task-two" })
     expect(first.isClosed()).toBe(true)
     act(() => {
+      second.source.onopen?.()
       second.emit("backlog", { turn: 2, prompt: "second", activity: [] })
     })
     await waitFor(() => expect(result.current.currentTurn).toBe(2))

@@ -20,8 +20,9 @@ export function InactiveConnectionMonitor({
 }) {
   useEffect(() => {
     const store = connectionStore(entry.metadata.id)
-    // A JSON probe alone cannot prove event delivery.
-    store.set("events", false)
+    // A JSON probe alone cannot prove event delivery, but a routine handoff
+    // is not an outage while this monitor opens its own stream.
+    store.opening("events")
     if (!entry.metadata.ready) {
       onAttention(entry.metadata.id, null)
       onReachability(entry.metadata.id, "offline")
@@ -56,6 +57,7 @@ export function InactiveConnectionMonitor({
       const stream = entry.transport.openEventStream("/api/events")
       events = stream
       stream.onopen = () => {
+        if (closed) return
         store.set("events", true)
         onReachability(entry.metadata.id, "online")
         refresh()
@@ -63,15 +65,17 @@ export function InactiveConnectionMonitor({
       stream.onmessage = schedule
       // Probe JSON again to distinguish stream refusal from daemon failures.
       stream.onerror = () => {
+        if (closed) return
         store.set("events", false)
         refresh()
       }
     } catch {
+      store.set("events", false)
       // The next time this connection becomes active, the normal bridge owns recovery.
     }
     return () => {
       closed = true
-      store.set("events", false)
+      store.opening("events")
       if (timer !== null) clearTimeout(timer)
       events?.close()
     }

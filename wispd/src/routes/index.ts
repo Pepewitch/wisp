@@ -33,6 +33,7 @@ import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
 import { terminalOriginRoute } from "./auth";
+import { TERMINALS_PATH, terminalsRoute } from "./terminals";
 import { searchRoute } from "./search";
 import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
@@ -206,6 +207,7 @@ export function route(
   const m = req.method;
   if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
   if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
+  if (TERMINALS_PATH.test(path)) return terminalsRoute(req, url, path, cfg);
   const models = modelCache ?? modelCacheFor(adapters);
   const probes = probeCache ?? probeCacheFor(adapters);
   const skills = skillCache ?? skillCacheFor(adapters);

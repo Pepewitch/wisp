@@ -278,6 +278,12 @@ function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffe
     });
     return;
   }
+  if (value.type === "clear") {
+    void binding.session.clear(binding.client).catch((error) => {
+      if (binding.session.accepts(binding.client)) wsError(ws, error instanceof Error ? error.message : String(error));
+    });
+    return;
+  }
   wsError(ws, `terminal protocol: unknown message type '${String(value.type)}'`);
 }
 
