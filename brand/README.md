@@ -173,6 +173,10 @@ a particular Chrome/Chromium binary, set `CHROME_PATH` and run
 `bun run scripts/brand/build.ts --pwa-only`. Add `--check` to verify them without
 rewriting. This also checks the shared generated SVGs and favicon.
 
+The check compares PNGs by their decoded pixels and metadata chunks, not their
+bytes: Chrome compresses the same image differently on Linux and macOS, and the
+committed PWA icons were rendered on Linux.
+
 ## Legacy CLI file icons
 
 Current publishable macOS releases put the daemon in a signed `Wisp Daemon.app`, so

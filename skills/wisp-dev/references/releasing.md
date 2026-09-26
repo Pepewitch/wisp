@@ -56,13 +56,18 @@ gates cheapest first: whitespace, brand assets, the evaluator suite,
 the smoke test, and a full build. Each gate logs to
 `dist/release-check/<gate>.log`; only a failing gate's tail is printed.
 
-The brand gate rasterizes the two PNG assets with headless Chrome, and no CI
-job renders them, so `release:check` decides: when nothing the PNGs are drawn
-from changed since the previous tag (the `scripts/brand/` geometry, the assets
+The brand gate rasterizes the PNG assets with headless Chrome, and no CI job
+renders them, so `release:check` decides: when nothing the PNGs are drawn from
+changed since the previous tag (the `scripts/brand/` geometry, the assets
 themselves, the desktop icons, the Geist font package), it skips the render
 and still verifies every other asset. When an input did change, the render
-runs and must pass — a hung Chrome fails after 60 seconds with the workaround
-in its message. Never ship re-rendered PNGs no gate has checked.
+runs (a few seconds) and must pass; it compares pixels, so Chrome encoding
+the same image differently is not a failure. If it reports a PNG `STALE`, a
+change since the previous release altered what the PNGs show without
+regenerating them. That is a bug on `main`, not part of the release: stop and
+report it, so the fix (`bun run brand`, with the new images reviewed) lands
+in its own PR before the release. Never ship re-rendered PNGs no gate has
+checked.
 
 The installer and activation contracts (`test:install`, `test:activation`)
 need a container runtime and are not run here; the release-candidate workflow

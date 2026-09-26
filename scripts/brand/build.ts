@@ -19,11 +19,14 @@ import { dirname, join, relative } from "node:path";
 
 import { cliIconPdf } from "./cli-icon";
 import { faviconDataUri, faviconSvg, lanternSvg, lockupSvg, markFacets, markSvg, PALETTE } from "./mark";
+import { samePng } from "./png";
 import { GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 /** One render takes a second or two; a cold first launch a few more. */
 const CHROME_TIMEOUT_MS = 60_000;
+/** A PNG is complete once its fixed IEND chunk is on disk. */
+const PNG_END = Buffer.from("0000000049454e44ae426082", "hex");
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
 const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
@@ -48,7 +51,7 @@ async function emit(path: string, content: string | Uint8Array): Promise<void> {
   const rel = relative(ROOT, path);
   const existing = existsSync(path) ? await readFile(path) : null;
   const next = typeof content === "string" ? Buffer.from(content) : Buffer.from(content);
-  if (existing && existing.equals(next)) {
+  if (existing && (existing.equals(next) || (path.endsWith(".png") && samePng(existing, next)))) {
     console.log(`  ok      ${rel}`);
     return;
   }
@@ -163,6 +166,11 @@ if (!existsSync(CHROME)) {
   const woff2 = await readFile(GEIST_WOFF2);
   const fontFace = `@font-face{font-family:'Geist';src:url(data:font/woff2;base64,${woff2.toString("base64")}) format('woff2');font-weight:100 900;font-display:block}`;
 
+  async function completePng(path: string): Promise<Buffer | null> {
+    const data = await readFile(path).catch(() => null);
+    return data && data.length > PNG_END.length && data.subarray(-PNG_END.length).equals(PNG_END) ? data : null;
+  }
+
   /** Render an HTML string to a PNG with headless Chrome, at an absolute path. */
   async function shootTo(html: string, out: string, width: number, height: number, scale: number) {
     // Scratch files live outside the repository so an interrupted render
@@ -171,7 +179,6 @@ if (!existsSync(CHROME)) {
     const page = join(scratch, "render.html");
     const png = join(scratch, "render.png");
     let proc: Bun.Subprocess | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await writeFile(page, html);
       proc = Bun.spawn(
@@ -189,27 +196,39 @@ if (!existsSync(CHROME)) {
         ],
         { stdout: "ignore", stderr: "ignore" },
       );
-      // Headless Chrome can wait forever on a first-run dialog or a GPU
-      // sandbox, and macOS has no `timeout` to bound it from outside.
-      const timedOut = await Promise.race([
-        proc.exited.then(() => false),
-        new Promise<boolean>((resolve) => {
-          timer = setTimeout(() => resolve(true), CHROME_TIMEOUT_MS);
-        }),
-      ]);
-      if (timedOut) {
-        throw new Error(
-          `Chrome did not render ${relative(ROOT, out)} within ${CHROME_TIMEOUT_MS / 1000}s. ` +
-            "If no PNG asset or its generator changed, CHROME_PATH=/nonexistent bun run brand:check " +
-            "verifies everything else; otherwise fix headless Chrome on this machine first.",
-        );
+      // Chrome often stays running after writing the screenshot (seen on
+      // Chrome 154: background services such as a default-app install keep
+      // the browser up about two runs in five), so the render is done when
+      // the PNG is complete, not when Chrome exits.
+      const deadline = Date.now() + CHROME_TIMEOUT_MS;
+      let rendered = await completePng(png);
+      while (!rendered && proc.exitCode === null && proc.signalCode === null) {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `Chrome did not render ${relative(ROOT, out)} within ${CHROME_TIMEOUT_MS / 1000}s. ` +
+              "If no PNG asset or its generator changed, CHROME_PATH=/nonexistent bun run brand:check " +
+              "verifies everything else; otherwise fix headless Chrome on this machine first.",
+          );
+        }
+        await Bun.sleep(100);
+        rendered = await completePng(png);
       }
-      if (!existsSync(png)) throw new Error(`Chrome produced no PNG for ${out}`);
-      await emit(out, await readFile(png));
+      rendered ??= await completePng(png);
+      if (!rendered) throw new Error(`Chrome produced no PNG for ${out}`);
+      await emit(out, rendered);
     } finally {
-      clearTimeout(timer);
       if (proc && proc.exitCode === null && proc.signalCode === null) {
-        proc.kill("SIGKILL");
+        // SIGTERM lets Chrome take its helper processes down with it.
+        proc.kill("SIGTERM");
+        let grace: ReturnType<typeof setTimeout> | undefined;
+        const stopped = await Promise.race([
+          proc.exited.then(() => true),
+          new Promise<boolean>((resolve) => {
+            grace = setTimeout(() => resolve(false), 5_000);
+          }),
+        ]);
+        clearTimeout(grace);
+        if (!stopped) proc.kill("SIGKILL");
         await proc.exited;
       }
       await rm(scratch, { recursive: true, force: true });
