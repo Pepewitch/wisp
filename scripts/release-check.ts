@@ -205,7 +205,7 @@ async function main(): Promise<number> {
   }
   const head = git(["rev-parse", "--short", "HEAD"]);
   console.log(`release:check passed for ${version} at ${head}.`);
-  console.log("Next: push the branch and open the release PR (releasing.md, step 4).");
+  console.log("Next: push the branch and open the release PR (releasing.md, step 3).");
   return 0;
 }
 

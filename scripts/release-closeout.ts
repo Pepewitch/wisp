@@ -296,7 +296,7 @@ export async function gatherPublication(version: string): Promise<{ facts: Publi
   if (outcome.needsRecovery) {
     const recovery = recoveryPromotion(tag, sha, pushRun.created_at);
     if (!recovery) {
-      throw new Error(`promotion of ${tag} has not finished; rerun the failed promote job or dispatch a recovery (releasing.md), then run this again`);
+      throw new Error(`promotion of ${tag} has not finished; rerun the failed promote job or dispatch a recovery (releasing.md, step 5), then run this again`);
     }
     promotionRunUrl = recovery.run.html_url;
     receipt = recovery.receipt;
