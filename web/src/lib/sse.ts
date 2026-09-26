@@ -126,6 +126,11 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       void opts.client.invalidateQueries({ queryKey: qk.settings });
       return;
     }
+    // the daemon already holds the fresh reading, so this re-ask is a cache hit
+    if (evt.type === "harness-limits") {
+      void opts.client.invalidateQueries({ queryKey: qk.harnessLimits });
+      return;
+    }
     if (!("taskId" in evt) || !evt.taskId) return;
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });

@@ -55,7 +55,7 @@ describe("the usage limits control", () => {
     expect(request).not.toHaveBeenCalledWith("/api/harness-limits")
   })
 
-  it("names the selected task's harness and its most-used window", async () => {
+  it("names the selected task's harness and its shortest window", async () => {
     const { wrapper } = daemon({ harnessLimits: true }, [CLAUDE, DROID_NEEDS_KEY])
     render(<UsageLimitsControl harness="claude" onOpenSettings={() => {}} />, { wrapper })
     expect(await screen.findByRole("button", { name: "Usage limits, claude 5h 27% used" })).toBeInTheDocument()

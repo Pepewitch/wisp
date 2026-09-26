@@ -498,7 +498,7 @@ export function useTestFactoryKey() {
   });
 }
 
-/** GET /api/harness-limits?refresh=1 — the popover's Refresh, past the daemon's one-minute cache. */
+/** GET /api/harness-limits?refresh=1 — the popover's Refresh, past the daemon's cache, for every harness. */
 export function useRefreshHarnessLimits() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();

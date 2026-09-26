@@ -996,19 +996,27 @@ each other. Usage limits, then Updates, then zoom (Desktop only), then the
 gear — last, because the gear is the top-right corner (§5g).
 
 **Usage limits is a ring, not a number.** `usage-limits-control.tsx` draws a
-glyph-sized progress ring for the selected task's harness at its most-used
-window, because that is the limit that stops the next turn; with no task, or a
-harness with no limits read, the ring is an empty track rather than a missing
-icon. The arc is neutral until 80%, then `--state-needs-input`, and
-`--destructive` at the limit: the same two hues the Updates dot may carry, on
-a mark the same size. Hover opens the popover and a click pins it; on touch it
+glyph-sized progress ring for the selected task's harness at its shortest main
+window, because that is the one that moves turn to turn: claude's 5h, a codex
+plan's 5h, or its 7d when the plan has none. Main means the harness's own
+allowance: a per-model window (claude's week for one model) and a side pool
+(droid's `core`) never speak for the ring; droid's is its `standard` pool.
+With no task, or a harness with no limits read, the ring is an empty track
+rather than a missing icon. The arc is neutral until 80%, then
+`--state-needs-input`, and `--destructive` from 99%, a step before the hard
+stop: the same two hues the Updates dot may carry, on a mark the same size.
+Any other main window at 99% turns a short arc `--destructive` too, because
+the next turn stops either way, and the trigger's name says which. Hover opens the popover and a click pins it; on touch it
 is a tap. The popover groups windows per harness (droid's `standard` and
 `core` pools as sub-groups), bars fill with the share USED, as every harness's
 own report words it, and each row says when it resets. A harness with nothing
 to show says why in one line; only a real read failure is red, and a missing
 or wrong-account Factory key links to Settings. The limits are account state,
-not on the event stream, so `useHarnessLimits` polls once a minute while the
-page is visible, against a daemon cache of the same length.
+so `useHarnessLimits` polls every two minutes while the page is visible,
+against a daemon cache that expires just before, so a poll is one fresh read
+however many clients ask. Between polls the daemon re-reads only the harness a
+turn just ended on, and a `harness-limits` event makes clients re-ask its
+cache.
 
 **App news is not connection chrome.** The update surface used to sit at the
 left end, hard against the connection tabs: the only labelled button in a bar

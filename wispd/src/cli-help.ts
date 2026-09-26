@@ -58,7 +58,7 @@ usage:
                                                tasks (--model > config default > harness default) and the
                                                model list the installed CLI exposes, when it exposes one
   ${COMMAND} limits [--refresh] [--json]             plan usage per harness (the top bar's usage popover);
-                                               --refresh skips the daemon's one-minute cache
+                                               --refresh skips the daemon's two-minute cache
   ${COMMAND} version [--json] | --version [--json]   print the Wisp version and build commit
   ${COMMAND} doctor [--harness <name>]               activation check; optionally require one harness
   ${COMMAND} doctor --database                       read-only database check; no harness probes

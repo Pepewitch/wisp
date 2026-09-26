@@ -22,6 +22,8 @@ export interface LimitWindow {
   label: string;
   /** a separate allowance inside one account (droid's standard/core, a codex per-model limit) */
   pool: string | null;
+  /** the one model this window limits (claude's per-model week); null for a window every model draws from */
+  model: string | null;
   usedPercent: number;
   /** null when the window has not started (droid's idle 5h) or the harness named no reset */
   resetsAt: string | null;
@@ -157,6 +159,7 @@ export function parseClaudeUsage(text: string, now: Date): HarnessLimits {
       id: session ? "session" : model ? `week:${model.toLowerCase()}` : "week",
       label: session ? "5h" : model ?? "7d",
       pool: null,
+      model,
       usedPercent: Number(m[3]),
       resetsAt: m[4] === undefined ? null : parseClaudeReset(m[4], now),
       windowMins: session ? 300 : 10_080,
@@ -203,7 +206,7 @@ export function normalizeCodexLimits(raw: unknown): HarnessLimits {
     if (pool === null) plan = str(limit.planType) ?? plan;
     for (const slot of ["primary", "secondary"] as const) {
       const w = codexRateWindow(limit[slot]);
-      if (w) windows.push({ id: `${limitId}:${slot}`, label: windowLabel(w.windowMins), pool, ...w });
+      if (w) windows.push({ id: `${limitId}:${slot}`, label: windowLabel(w.windowMins), pool, model: null, ...w });
     }
     const seat = limit.individualLimit;
     const remaining = isRecord(seat) ? num(seat.remainingPercent) : null;
@@ -212,6 +215,7 @@ export function normalizeCodexLimits(raw: unknown): HarnessLimits {
         id: `${limitId}:credits`,
         label: "credits",
         pool,
+        model: null,
         usedPercent: Math.max(0, 100 - remaining),
         resetsAt: epochIso(seat.resetsAt),
         windowMins: null,
@@ -263,6 +267,7 @@ export function normalizeFactoryLimits(raw: unknown, now: Date): HarnessLimits {
         id: `${pool}:${bucket.key}`,
         label: bucket.label,
         pool,
+        model: null,
         usedPercent: live ? used : 0,
         resetsAt: live ? new Date(endMs).toISOString() : null,
         windowMins: bucket.windowMins,

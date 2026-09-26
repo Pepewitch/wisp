@@ -66,13 +66,14 @@ export function useStatus() {
   });
 }
 
-/** The daemon caches each harness's read for a minute, so polling faster would only re-read its cache. */
-export const HARNESS_LIMITS_POLL_MS = 60 * 1000
+/** Plan limits move slowly; the daemon's cache (LIMITS_TTL_MS) expires just before this, so each poll is one fresh read. */
+export const HARNESS_LIMITS_POLL_MS = 2 * 60 * 1000
 
 /**
  * GET /api/harness-limits — the top bar's usage ring and popover. Account
- * state rather than task state, and not on the event stream, so it is the
- * third polling exception: once a minute while the page is visible.
+ * state rather than task state, so it is the third polling exception: every
+ * two minutes while the page is visible. Between polls, the daemon re-reads a
+ * harness when a turn on it ends and says so with a `harness-limits` event.
  */
 export function useHarnessLimits(enabled: boolean) {
   const { transport, qk } = useDaemonRuntime()

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import type { HarnessLimitsEntry, LimitWindow } from "./types"
-import { limitTone, resetsIn, ringWindow, usageTriggerLabel, windowPools } from "./usage-limits"
+import { limitTone, mainWindows, resetsIn, ringReading, usageTriggerLabel, windowPools } from "./usage-limits"
 
 const NOW = Date.parse("2026-09-25T02:00:00Z")
 
@@ -23,24 +23,72 @@ const entry = (windows: LimitWindow[], status: HarnessLimitsEntry["status"] = "o
   cached: false,
 })
 
+const perModel = (id: string, usedPercent: number): LimitWindow => ({ ...w(id, usedPercent, 10_080), model: id })
+
 describe("the ring's window", () => {
-  it("is the most-used one, and a tie goes to the shorter window", () => {
-    expect(ringWindow(entry([w("5h", 33, 300), w("7d", 51, 10_080)]))?.id).toBe("7d")
-    expect(ringWindow(entry([w("7d", 20, 10_080), w("5h", 20, 300)]))?.id).toBe("5h")
-    expect(ringWindow(entry([w("monthly", 20, null), w("5h", 20, 300)]))?.id).toBe("5h")
+  it("is the shortest window, whatever the others have used", () => {
+    // claude: 5h, never its busier week
+    expect(ringReading(entry([w("5h", 33, 300), w("7d", 51, 10_080), perModel("Fable", 0)]))?.window.id).toBe("5h")
+    // codex on a plan with a 5h window, whichever order it came in
+    expect(ringReading(entry([w("7d", 30, 10_080), w("5h", 10, 300), w("credits", 25, null)]))?.window.id).toBe("5h")
+    // codex on a team plan: no 5h, so 7d, never its credits
+    expect(ringReading(entry([w("7d", 20, 10_080), w("credits", 60, null)]))?.window.id).toBe("7d")
+  })
+
+  it("shows a window with no fixed length only when there is nothing else", () => {
+    expect(ringReading(entry([w("credits", 40, null)]))?.window.id).toBe("credits")
+  })
+
+  it("is droid's standard pool, never its core one", () => {
+    const droid = entry([
+      w("standard:5h", 12, 300, "standard"),
+      w("standard:weekly", 40, 10_080, "standard"),
+      w("core:5h", 90, 300, "core"),
+    ])
+    expect(ringReading(droid)?.window.id).toBe("standard:5h")
   })
 
   it("is nothing for a harness with no limits to show", () => {
-    expect(ringWindow(undefined)).toBeNull()
-    expect(ringWindow(entry([], "needs-key"))).toBeNull()
-    expect(ringWindow(entry([]))).toBeNull()
+    expect(ringReading(undefined)).toBeNull()
+    expect(ringReading(entry([], "needs-key"))).toBeNull()
+    expect(ringReading(entry([]))).toBeNull()
+  })
+})
+
+describe("the ring's colour", () => {
+  it("is the shown window's own until another main window reaches 99%", () => {
+    expect(ringReading(entry([w("5h", 10, 300), w("7d", 98.9, 10_080)]))).toMatchObject({ tone: "normal", reached: null })
+    expect(ringReading(entry([w("5h", 85, 300), w("7d", 50, 10_080)]))).toMatchObject({ tone: "warn", reached: null })
+    const blocked = ringReading(entry([w("5h", 10, 300), w("7d", 99, 10_080), w("credits", 100, null)]))
+    expect(blocked).toMatchObject({ tone: "reached", reached: { id: "credits" } })
+    expect(blocked?.window.id).toBe("5h")
+  })
+
+  it("is red from 99% of the shown window itself", () => {
+    expect(ringReading(entry([w("5h", 99, 300), w("7d", 40, 10_080)]))).toMatchObject({ tone: "reached", reached: null })
+  })
+
+  it("ignores a per-model window and a side pool at their limit", () => {
+    expect(ringReading(entry([w("5h", 10, 300), w("7d", 20, 10_080), perModel("Fable", 100)]))?.tone).toBe("normal")
+    const droid = entry([w("standard:5h", 10, 300, "standard"), w("core:weekly", 100, 10_080, "core")])
+    expect(ringReading(droid)?.tone).toBe("normal")
+  })
+})
+
+describe("main windows", () => {
+  it("are the unnamed pool, or the first pool when every window has one, without per-model windows", () => {
+    const ids = (windows: LimitWindow[]) => mainWindows(windows).map((x) => x.id)
+    expect(ids([w("5h", 1, 300), perModel("Fable", 1), w("other:5h", 1, 300, "Other model")])).toEqual(["5h"])
+    expect(ids([w("standard:5h", 1, 300, "standard"), w("core:5h", 1, 300, "core")])).toEqual(["standard:5h"])
   })
 })
 
 describe("tone", () => {
-  it("warns from 80% and reads as reached at 100%", () => {
+  it("warns from 80% and reads as reached from 99%", () => {
     expect(limitTone(79.9)).toBe("normal")
     expect(limitTone(80)).toBe("warn")
+    expect(limitTone(98.9)).toBe("warn")
+    expect(limitTone(99)).toBe("reached")
     expect(limitTone(100)).toBe("reached")
   })
 })
@@ -67,7 +115,15 @@ describe("pools and labels", () => {
 
   it("names the harness, the window and its pool", () => {
     expect(usageTriggerLabel(null, null)).toBe("Usage limits")
-    expect(usageTriggerLabel("claude", w("5h", 27.4, 300))).toBe("Usage limits, claude 5h 27% used")
-    expect(usageTriggerLabel("droid", { ...w("weekly", 90, 10_080, "core") })).toBe("Usage limits, droid core weekly 90% used")
+    expect(usageTriggerLabel("claude", ringReading(entry([w("5h", 27.4, 300)])))).toBe("Usage limits, claude 5h 27% used")
+    expect(usageTriggerLabel("droid", ringReading(entry([w("weekly", 90, 10_080, "standard")])))).toBe(
+      "Usage limits, droid standard weekly 90% used",
+    )
+  })
+
+  it("names the window that made a short arc red", () => {
+    expect(usageTriggerLabel("claude", ringReading(entry([w("5h", 10, 300), w("7d", 100, 10_080)])))).toBe(
+      "Usage limits, claude 5h 10% used, 7d 100% used",
+    )
   })
 })

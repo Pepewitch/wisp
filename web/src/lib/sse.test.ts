@@ -293,6 +293,18 @@ describe("the /api/events → queryClient bridge", () => {
     h.close();
   });
 
+  it("a harness-limits event re-asks only the plan limits", () => {
+    const h = bridge("t1");
+    seed(h.client);
+    h.client.setQueryData(qk.harnessLimits, { harnesses: [] });
+    h.sources[0]!.emit({ type: "harness-limits", harness: "claude" });
+
+    expect(invalidated(h.client, qk.harnessLimits)).toBe(true);
+    expect(invalidated(h.client, qk.tasksList(false))).toBe(false);
+    expect(invalidated(h.client, qk.status)).toBe(false);
+    h.close();
+  });
+
   it("unparseable frames are ignored without tearing down the stream", () => {
     const h = bridge("t1");
     seed(h.client);

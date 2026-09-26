@@ -187,7 +187,8 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    read with no task and no model turn, for the top bar's usage popover and
    `wisp limits`. Label a window by the length the harness states, never by
    its position: codex's `primary` is 5 hours on one plan and 7 days on
-   another. A read that needs a credential the harness does not expose
+   another. Name the model a per-model window limits in its `model`, so the
+   top bar's ring counts only windows every model draws from. A read that needs a credential the harness does not expose
    (droid's, through Factory's billing API) declares it, and the daemon
    supplies it from Settings; it goes only to the harness vendor's own host.
 10. **`compact` / `compactPrompt`** — mutually exclusive (validate rejects

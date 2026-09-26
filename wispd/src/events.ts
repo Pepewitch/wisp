@@ -24,7 +24,9 @@ export type WispEvent =
   | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
   | { type: "harnesses" }
-  | { type: "settings" };
+  | { type: "settings" }
+  /** The daemon re-read one harness's plan limits (after a turn on it ended); clients re-ask its cache. */
+  | { type: "harness-limits"; harness: string };
 
 export type WispEventListener = (evt: WispEvent) => void;
 

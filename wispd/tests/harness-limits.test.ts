@@ -127,9 +127,9 @@ describe("claude /usage", () => {
     expect(parseClaudeUsage(CLAUDE_REPORT, NOW)).toEqual({
       plan: null,
       windows: [
-        { id: "session", label: "5h", pool: null, usedPercent: 33, resetsAt: "2026-09-25T05:49:00.000Z", windowMins: 300 },
-        { id: "week", label: "7d", pool: null, usedPercent: 51, resetsAt: "2026-09-30T03:59:00.000Z", windowMins: 10_080 },
-        { id: "week:opus", label: "Opus", pool: null, usedPercent: 0, resetsAt: "2026-09-30T04:00:00.000Z", windowMins: 10_080 },
+        { id: "session", label: "5h", pool: null, model: null, usedPercent: 33, resetsAt: "2026-09-25T05:49:00.000Z", windowMins: 300 },
+        { id: "week", label: "7d", pool: null, model: null, usedPercent: 51, resetsAt: "2026-09-30T03:59:00.000Z", windowMins: 10_080 },
+        { id: "week:opus", label: "Opus", pool: null, model: "Opus", usedPercent: 0, resetsAt: "2026-09-30T04:00:00.000Z", windowMins: 10_080 },
       ],
     });
   });
@@ -193,6 +193,7 @@ describe("codex rate limits", () => {
           id: "codex:primary",
           label: "7d",
           pool: null,
+          model: null,
           usedPercent: 20,
           windowMins: 10_080,
           resetsAt: new Date(1_790_000_000_000).toISOString(),
@@ -335,9 +336,46 @@ describe("HarnessLimitsCache", () => {
     expect(c.reads()).toBe(1);
     await cache.read({}, adapters, { refresh: true });
     expect(c.reads()).toBe(2);
-    now += 61_000;
+    // just under the web's two-minute poll, so each poll of one client is one read
+    now += 100_000;
+    await cache.read({}, adapters);
+    expect(c.reads()).toBe(2);
+    now += 11_000;
     await cache.read({}, adapters);
     expect(c.reads()).toBe(3);
+  });
+
+  test("reading one harness now leaves every other harness's answer cached", async () => {
+    const c = counting();
+    const rpc = scriptedRpc({
+      initialize: {},
+      "account/rateLimits/read": { rateLimits: { primary: { usedPercent: 1, windowDurationMins: 300 } } },
+    });
+    let codexReads = 0;
+    const openRpc: RpcFactory = (...args) => {
+      codexReads++;
+      return rpc.openRpc(...args);
+    };
+    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, openRpc, which: (bin) => bin, env: {} });
+    await cache.read({}, { claude, codex });
+    expect([c.reads(), codexReads]).toEqual([1, 1]);
+    await cache.readNow("claude", claude, {});
+    const after = await cache.read({}, { claude, codex });
+    expect([c.reads(), codexReads]).toEqual([2, 1]);
+    expect(after.map((e) => [e.name, e.cached])).toEqual([["claude", true], ["codex", true]]);
+  });
+
+  test("remembers when a client last asked for every harness", async () => {
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({ spawnOnce: counting().spawnOnce, which: (bin) => bin, env: {}, now: () => new Date(now) });
+    expect(cache.askedWithin(60_000)).toBe(false);
+    await cache.readNow("claude", claude, {});
+    expect(cache.askedWithin(60_000)).toBe(false);
+    await cache.read({}, { claude });
+    now += 59_000;
+    expect(cache.askedWithin(60_000)).toBe(true);
+    now += 1_000;
+    expect(cache.askedWithin(60_000)).toBe(false);
   });
 
   test("concurrent polls share one read, and a failure is never cached", async () => {
