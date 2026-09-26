@@ -41,13 +41,13 @@ function createConnectionStore(): ConnectionStore {
         listeners.delete(fn);
       };
     },
-    /** useSyncExternalStore snapshot — a primitive, so identity churn is a non-issue */
     isLive(): boolean {
       return snapshot.status === "live";
     },
     status(): ConnectionStreamStatus {
       return snapshot.status;
     },
+    /** useSyncExternalStore needs the same cached object between stream changes. */
     snapshot(): ConnectionStreamSnapshot {
       return snapshot;
     },

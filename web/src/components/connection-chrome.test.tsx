@@ -834,7 +834,7 @@ describe("connection tab status", () => {
 
     connectionStore(LOCAL.id).set("log", false)
     await waitFor(() =>
-      expect(local).toHaveAttribute("title", "Server reachable · Live updates delayed")
+      expect(local).toHaveAttribute("title", "Server reachable · Live updates disconnected")
     )
     expect(local.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
     // The inactive remote does not inherit the selected connection's stream loss.
@@ -917,9 +917,9 @@ describe("connection tab status", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remote online" }))
     act(() => connectionStore(REMOTE.id).set("events", false))
     const remote = screen.getByRole("button", { name: "Reconnect Remote one" })
-    expect(remote).toHaveAttribute("title", "Server reachable · Live updates delayed")
+    expect(remote).toHaveAttribute("title", "Server reachable · Live updates disconnected")
     fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
-    expect(remote).toHaveAttribute("title", "Server reachable · Live updates delayed")
+    expect(remote).toHaveAttribute("title", "Server reachable · Live updates disconnected")
   })
 
   it("reconnects the clicked connection without selecting its tab", async () => {

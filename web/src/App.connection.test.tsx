@@ -13,6 +13,7 @@ import {
 } from "@/lib/desktop-connections"
 import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
 import { DesktopZoomProvider } from "@/lib/desktop-zoom"
+import { connectionStore } from "@/lib/conn"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import type { UpdateStatus } from "@/lib/types"
@@ -240,6 +241,18 @@ vi.mock("@/components/terminal-pane", () => ({ TerminalSection: () => null }))
 import App from "./App"
 
 describe("connection-bound update recovery", () => {
+  it("marks a newly mounted active event bridge as opening", () => {
+    const connectionId = "active-bridge-handoff"
+    render(
+      <DaemonRuntimeProvider transport={fakeDaemonTransport(connectionId)}>
+        <App />
+      </DaemonRuntimeProvider>,
+    )
+
+    expect(mocks.connectEventsBridge).toHaveBeenCalled()
+    expect(connectionStore(connectionId).status()).toBe("opening")
+  })
+
   it("keeps browser mode single-daemon without a misleading Local tab", () => {
     render(
       <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
