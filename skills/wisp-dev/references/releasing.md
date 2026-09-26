@@ -17,6 +17,12 @@ when it passes, move to the next step. Do not skip a failed gate, and do not
 invent extra ones — everything after this section explains what the commands
 enforce and is the manual fallback when one of them fails.
 
+A fetch that fails with `would clobber existing tag` means your copy of the
+tag it names is not the one on origin. For a `v*` tag, origin's is the
+published one: replace yours with
+`git fetch --force origin refs/tags/<tag>:refs/tags/<tag>` and run the command
+again. `release:closeout` does this itself for the tag it records.
+
 ### 1. Prepare the release branch
 
 ```sh

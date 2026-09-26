@@ -20,6 +20,7 @@ import {
   anonymousText,
   checkVerdicts,
   command,
+  fetchMainAndTags,
   ghApi,
   ghApiList,
   ghApiOrNull,
@@ -402,13 +403,20 @@ async function main(): Promise<number> {
   const dryRun = args.includes("--dry-run");
   assertTaggableVersion(version);
   const tag = `v${version}`;
-  git(["fetch", "--quiet", "origin", "main", "--tags"]);
   if (!remoteTagExists(tag)) {
     console.error(`${tag} has not been pushed, so nothing was published. Publish first (release:ready prints the commands).`);
     return 1;
   }
+  // Every fact below is read through the local tag, so it must be the one that
+  // was published, and a plain tag fetch refuses to replace a local one.
+  const local = command(["git", "rev-parse", "--verify", "--quiet", `refs/tags/${tag}`]).stdout;
+  git(["fetch", "--quiet", "--force", "origin", `refs/tags/${tag}:refs/tags/${tag}`]);
+  if (local && local !== git(["rev-parse", `refs/tags/${tag}`])) {
+    console.log(`  note  the local ${tag} was not the published tag; it is now (the old tag was ${local})`);
+  }
+  fetchMainAndTags();
   if (command(["git", "cat-file", "-t", `refs/tags/${tag}`]).stdout !== "tag") {
-    console.error(`${tag} is not an annotated tag locally; run: git fetch --force origin refs/tags/${tag}:refs/tags/${tag}`);
+    console.error(`${tag} on origin is a lightweight tag; the release workflow publishes only annotated tags, so nothing was published from it`);
     return 1;
   }
   // A dry run writes nothing, so only the real closeout needs a branch whose

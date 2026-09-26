@@ -193,6 +193,15 @@ export function latestRelease(tags: readonly string[]): string | null {
   return newestFirst(tags)[0] ?? null;
 }
 
+/**
+ * Fetch origin/main and every tag. Not --quiet: a local tag that differs from
+ * origin's fails the whole fetch, and git's rejection line is the only place
+ * that names it.
+ */
+export function fetchMainAndTags(): void {
+  git(["fetch", "origin", "main", "--tags"]);
+}
+
 export function remoteTagExists(tag: string): boolean {
   return git(["ls-remote", "--tags", "origin", `refs/tags/${tag}`]) !== "";
 }

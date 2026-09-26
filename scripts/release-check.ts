@@ -11,6 +11,7 @@ import { todoLines } from "./check-release-docs";
 import {
   ROOT,
   command,
+  fetchMainAndTags,
   git,
   latestRelease,
   ledgerPath,
@@ -166,7 +167,7 @@ async function runGate(gate: Gate): Promise<boolean> {
 async function main(): Promise<number> {
   const version = versionArgument(process.argv.slice(2), "bun run release:check <version>");
   assertTaggableVersion(version);
-  git(["fetch", "--quiet", "origin", "main", "--tags"]);
+  fetchMainAndTags();
   const tags = releaseTags();
   const previous = previousRelease(tags, version);
   if (!previous) throw new Error(`no release tag is older than ${version}`);

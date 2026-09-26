@@ -14,6 +14,7 @@ import {
   command,
   checkVerdicts,
   commitCheckRuns,
+  fetchMainAndTags,
   formatVerdicts,
   git,
   localTagExists,
@@ -104,7 +105,7 @@ async function main(): Promise<number> {
   const version = versionArgument(args, "bun run release:ready <version> [--wait-minutes <n>]");
   assertTaggableVersion(version);
   const tag = `v${version}`;
-  git(["fetch", "--quiet", "origin", "main", "--tags"]);
+  fetchMainAndTags();
   if (remoteTagExists(tag)) {
     console.error(`${tag} is already pushed, so the release workflow owns it. Next: bun run release:closeout ${version}`);
     return 1;
