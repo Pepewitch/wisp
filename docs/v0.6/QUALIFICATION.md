@@ -44,7 +44,8 @@ The Formula, Cask, daemon update channel, and Desktop update channel all serve
 0.6.2.
 
 0.6.2 adds no database migration. Local brand checks ran without Chrome, so
-the PNG assets were checked only in tag CI; no PNG asset changed since 0.6.1.
+the PNG assets were not re-rendered; no PNG asset or brand-generator input
+changed since 0.6.1.
 This is a fully automated publication: no maintainer qualification —
 fresh-install or upgrade receipts, a Desktop updater journey across this
 version, plan-limit reads against live claude, codex and droid accounts on the
@@ -86,7 +87,8 @@ The Formula, Cask, daemon update channel, and Desktop update channel all served
 0.6.1 until 0.6.2 was promoted.
 
 0.6.1 adds no database migration. Local brand checks ran without Chrome, so
-the PNG assets were checked only in tag CI; no PNG asset changed since 0.6.0.
+the PNG assets were not re-rendered; no PNG asset or brand-generator input
+changed since 0.6.0.
 This is a fully automated publication: no maintainer qualification —
 fresh-install or upgrade receipts, a Desktop updater journey across this
 version, a review judge run against a live repository on the published
