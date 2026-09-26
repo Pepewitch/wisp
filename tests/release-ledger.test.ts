@@ -10,6 +10,7 @@ import {
   renderLedgerSkeleton,
   renderPublicationSection,
   supersedeLedger,
+  todoLocations,
   wrap,
   type LedgerSource,
   type PublicationFacts,
@@ -31,6 +32,7 @@ const FACTS: PublicationFacts = {
   promotedAt: "2026-09-26T01:04:05.000Z",
   tapCommit: "cafe0000cafe0000cafe0000cafe0000cafe0000",
   migrations: [],
+  pngInputChanges: [],
 };
 
 const V06_LEDGER = `# Wisp 0.6 qualification
@@ -97,6 +99,11 @@ describe("wrap", () => {
     for (const line of wrapped.split("\n")) expect(line.length).toBeLessThanOrEqual(30);
     expect(wrapped).toContain("one two three four five six");
   });
+
+  test("never breaks a link's text across lines", () => {
+    const wrapped = wrap("The long preamble ([release workflow](https://example.com/runs/1)), and more words after it", 30);
+    expect(wrapped.split("\n")).toContain("([release workflow](https://example.com/runs/1)),");
+  });
 });
 
 describe("migrationSentence", () => {
@@ -147,6 +154,18 @@ describe("renderPublicationSection", () => {
 
   test("a missing PR becomes a TODO instead of a dead link", () => {
     expect(flat(renderPublicationSection({ ...FACTS, pullRequest: null }))).toContain("TODO link the pull request");
+  });
+
+  test("states that unchanged PNG inputs were not re-rendered", () => {
+    expect(flat(renderPublicationSection(FACTS))).toContain(
+      "No PNG asset or brand-generator input changed since 0.6.2, so the PNG assets were not re-rendered.",
+    );
+  });
+
+  test("changed PNG inputs ask whether the render was verified", () => {
+    const section = flat(renderPublicationSection({ ...FACTS, pngInputChanges: ["scripts/brand/", "@fontsource-variable/geist"] }));
+    expect(section).toContain("TODO `scripts/brand/` and `@fontsource-variable/geist` changed since 0.6.2;");
+    expect(section).not.toContain("not re-rendered");
   });
 });
 
@@ -212,6 +231,16 @@ describe("renderLedgerSkeleton", () => {
   });
 });
 
+describe("todoLocations", () => {
+  test("lists each marker with its file and line", () => {
+    const writes = [
+      { path: "docs/v0.6/QUALIFICATION.md", text: "# Ledger\n\nTODO say why.\nDone.\n" },
+      { path: "docs/v0.5/QUALIFICATION.md", text: "# Ledger\n" },
+    ];
+    expect(todoLocations(writes)).toEqual(["docs/v0.6/QUALIFICATION.md:3: TODO say why."]);
+  });
+});
+
 describe("limitsLedgerMinor", () => {
   test("finds the newest ledger carrying the standing limits", () => {
     expect(
@@ -253,6 +282,14 @@ describe("recordPublication", () => {
     expect(previous.text).toContain("0.6.2 was the last 0.6 release; 0.7.0 supersedes it");
     expect(previous.text).toContain("all served\n0.6.2 until 0.7.0 was promoted.");
     expect(manual.join("\n")).toContain("did not exist");
+  });
+
+  test("puts the caller's instructions in the entry, where docs:check enforces them", () => {
+    const { writes, manual } = recordPublication(source({ "docs/v0.6/QUALIFICATION.md": V06_LEDGER }), FACTS, [
+      "verify the release PR's test check by hand, then delete this line.",
+    ]);
+    expect(manual).toEqual(["verify the release PR's test check by hand, then delete this line."]);
+    expect(flat(writes[0]!.text)).toContain("## 0.6.3 publication TODO verify the release PR's test check by hand");
   });
 
   test("refuses to record a version twice", () => {

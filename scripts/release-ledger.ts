@@ -6,6 +6,8 @@
 // when the expected wording is missing, the edit becomes a TODO (which
 // docs:check refuses) instead of a silent skip that would leave two releases
 // both claiming to be the latest.
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { REPOSITORY, TAP_REPOSITORY, ledgerPath, minorLine } from "./release-github";
 
 export const LIMITS_HEADING = "Still unqualified or outside scope";
@@ -33,6 +35,8 @@ export interface PublicationFacts {
   promotedAt: string;
   tapCommit: string;
   migrations: number[];
+  /** What the PNG brand assets are drawn from that changed since the previous release. */
+  pngInputChanges: string[];
 }
 
 /** Release PR checks named in the ledger, in the order the ledger lists them. */
@@ -66,9 +70,12 @@ export interface LedgerEdit {
   manual: string[];
 }
 
-/** Greedy word wrap that never starts a line with Markdown block syntax. */
+/**
+ * Greedy word wrap that never starts a line with Markdown block syntax and
+ * never breaks a link's text across lines.
+ */
 export function wrap(paragraph: string, width = 80): string {
-  const words = paragraph.split(/\s+/).filter(Boolean);
+  const words = (paragraph.match(/\S*?\[[^\]]*\]\([^)\s]*\)\S*|\S+/g) ?? []).map((word) => word.replace(/\s+/g, " "));
   const lines: string[] = [];
   let line = "";
   for (const word of words) {
@@ -175,8 +182,15 @@ export function renderPublicationSection(facts: PublicationFacts, manual: readon
     wrap(`The Formula, Cask, daemon update channel, and Desktop update channel all serve ${facts.version}.`),
   ].join("\n");
 
+  // release:check renders the PNGs only when an input changed, and no CI job
+  // renders them at all, so the closeout cannot know whether a render passed.
+  const png =
+    facts.pngInputChanges.length === 0
+      ? `No PNG asset or brand-generator input changed since ${facts.previousVersion}, so the PNG assets were not re-rendered.`
+      : `TODO ${list(facts.pngInputChanges.map((input) => `\`${input}\``))} changed since ${facts.previousVersion}; ` +
+        "say whether release:check rendered and verified the PNG assets.";
   const limits = wrap(
-    `${migrationSentence(facts.version, facts.previousVersion, facts.migrations)} This is a fully automated ` +
+    `${migrationSentence(facts.version, facts.previousVersion, facts.migrations)} ${png} This is a fully automated ` +
       "publication: no maintainer qualification — fresh-install or upgrade receipts, a Desktop updater journey " +
       "across this version, the token-spending harness probes, or the paid evaluator panel — was performed, and " +
       "this record does not claim them. The published assets and release body remain immutable; this ledger " +
@@ -325,15 +339,32 @@ export interface LedgerWrite {
   text: string;
 }
 
+/** The ledgers in a checkout: `docs/v<major>.<minor>/QUALIFICATION.md`. */
+export function diskLedgers(root: string): LedgerSource {
+  return {
+    read: (path) => (existsSync(join(root, path)) ? readFileSync(join(root, path), "utf8") : null),
+    ledgers: () =>
+      readdirSync(join(root, "docs"), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /^v\d+\.\d+$/.test(entry.name))
+        .map((entry) => ({ minor: entry.name.slice(1), path: join(root, "docs", entry.name, "QUALIFICATION.md") }))
+        .filter((entry) => existsSync(entry.path))
+        .map((entry) => ({ minor: entry.minor, text: readFileSync(entry.path, "utf8") })),
+  };
+}
+
 /**
  * Every ledger edit one publication needs: its own entry, the intro that names
  * the current release, and the previous entry's claims that are now false.
  * The first release of a minor line also marks the previous ledger superseded.
  */
-export function recordPublication(source: LedgerSource, facts: PublicationFacts): { writes: LedgerWrite[]; manual: string[] } {
+export function recordPublication(
+  source: LedgerSource,
+  facts: PublicationFacts,
+  instructions: readonly string[] = [],
+): { writes: LedgerWrite[]; manual: string[] } {
   const file = ledgerPath(facts.version);
   const previousFile = ledgerPath(facts.previousVersion);
-  const manual: string[] = [];
+  const manual = [...instructions];
   let text = source.read(file);
   if (text === null) {
     const limits = limitsLedgerMinor(source.ledgers()) ?? minorLine(facts.previousVersion);
@@ -363,6 +394,13 @@ export function recordPublication(source: LedgerSource, facts: PublicationFacts)
   }
   writes.unshift({ path: file, text: insertSection(text, renderPublicationSection(facts, manual)) });
   return { writes, manual };
+}
+
+/** Every TODO marker in the proposed ledgers, as `path:line: text`. */
+export function todoLocations(writes: readonly LedgerWrite[]): string[] {
+  return writes.flatMap((write) =>
+    write.text.split("\n").flatMap((line, index) => (/\bTODO\b/.test(line) ? [`${write.path}:${index + 1}: ${line.trim()}`] : [])),
+  );
 }
 
 /** The newest ledger that carries the standing limits section. */

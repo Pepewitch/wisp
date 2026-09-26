@@ -4,7 +4,7 @@ import {
   parseReceipt,
   passedSourceChecks,
   receiptArtifactName,
-  recoveryRunFor,
+  recoveryCandidates,
   releasePullRequest,
   releaseRunForTag,
   tapProblems,
@@ -24,6 +24,7 @@ function workflowRun(partial: Partial<WorkflowRun>): WorkflowRun {
     head_sha: "abc",
     conclusion: "success",
     run_attempt: 1,
+    created_at: "2026-09-25T11:10:00Z",
     ...partial,
   };
 }
@@ -44,17 +45,22 @@ describe("releaseRunForTag", () => {
   });
 });
 
-describe("recoveryRunFor", () => {
-  test("picks the newest successful dispatch run", () => {
-    const recovery = workflowRun({ id: 20, event: "workflow_dispatch" });
+describe("recoveryCandidates", () => {
+  const tagRun = "2026-09-25T11:00:00Z";
+
+  test("offers successful dispatch runs after the tag's run, newest first", () => {
     const runs = [
-      workflowRun({ id: 19, event: "workflow_dispatch" }),
-      recovery,
-      workflowRun({ id: 21, event: "workflow_dispatch", conclusion: "failure" }),
-      workflowRun({ id: 22, event: "push" }),
+      workflowRun({ id: 19, event: "workflow_dispatch", created_at: "2026-09-25T11:20:00Z" }),
+      workflowRun({ id: 20, event: "workflow_dispatch", created_at: "2026-09-25T11:30:00Z" }),
+      workflowRun({ id: 21, event: "workflow_dispatch", conclusion: "failure", created_at: "2026-09-25T11:40:00Z" }),
+      workflowRun({ id: 22, event: "push", created_at: "2026-09-25T11:50:00Z" }),
     ];
-    expect(recoveryRunFor(runs)).toBe(recovery);
-    expect(recoveryRunFor([runs[3]!])).toBeNull();
+    expect(recoveryCandidates(runs, tagRun).map((entry) => entry.id)).toEqual([20, 19]);
+  });
+
+  test("a recovery that predates the tag's run cannot have promoted it", () => {
+    const earlier = workflowRun({ id: 5, event: "workflow_dispatch", created_at: "2026-09-20T09:00:00Z" });
+    expect(recoveryCandidates([earlier], tagRun)).toEqual([]);
   });
 });
 

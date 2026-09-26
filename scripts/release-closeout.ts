@@ -10,7 +10,7 @@
 //
 //   git switch -c "release/$version-closeout" origin/main
 //   bun run release:closeout "$version"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -34,10 +34,13 @@ import {
 import {
   RELEASE_JOBS,
   SOURCE_CHECK_LABELS,
+  diskLedgers,
   recordPublication,
-  type LedgerSource,
+  todoLocations,
+  type LedgerWrite,
   type PublicationFacts,
 } from "./release-ledger";
+import { PNG_INPUTS, pngInputChanges } from "./release-check";
 import { addedMigrations } from "./release-notes";
 import { releaseMetadataFromApi, validateReleaseMetadata } from "./release-promotion";
 import { assertTaggableVersion } from "./release-versions";
@@ -58,6 +61,7 @@ export interface WorkflowRun {
   head_sha: string;
   conclusion: string | null;
   run_attempt: number;
+  created_at: string;
 }
 
 export interface ReleaseJob {
@@ -93,13 +97,15 @@ export function candidateRunFor(runs: readonly WorkflowRun[], sha: string): Work
   );
 }
 
-/** The newest successful manual recovery run, if promotion needs one. */
-export function recoveryRunFor(runs: readonly WorkflowRun[]): WorkflowRun | null {
-  return (
-    runs
-      .filter((entry) => entry.event === "workflow_dispatch" && entry.conclusion === "success")
-      .sort((a, b) => b.id - a.id)[0] ?? null
-  );
+/**
+ * Successful manual recovery runs started after the tag's own run, newest
+ * first. A recovery for some other tag can be among them; only the promotion
+ * receipt says which tag a run promoted.
+ */
+export function recoveryCandidates(runs: readonly WorkflowRun[], after: string): WorkflowRun[] {
+  return runs
+    .filter((entry) => entry.event === "workflow_dispatch" && entry.conclusion === "success" && entry.created_at > after)
+    .sort((a, b) => b.id - a.id);
 }
 
 export interface GateOutcome {
@@ -232,33 +238,31 @@ async function fetchTapState(version: string, receipt: PromotionReceiptData): Pr
   return { daemonChannel, desktopChannel, formula, cask, darwinSums, desktopSums };
 }
 
-function downloadReceipt(runId: number): PromotionReceiptData {
-  const { artifacts } = ghApi<{ artifacts: Array<{ name: string; expired: boolean }> }>(
-    `repos/${REPOSITORY}/actions/runs/${runId}/artifacts`,
-  );
+function workflowRuns(workflow: string, query: string): WorkflowRun[] {
+  return ghApiList<WorkflowRun>(`repos/${REPOSITORY}/actions/workflows/${workflow}/runs?${query}&per_page=100`, ".workflow_runs[]");
+}
+
+/** A run's completed promotion receipt, or null when it has none left to download. */
+function receiptOf(runId: number): PromotionReceiptData | null {
+  const artifacts = ghApiList<{ name: string; expired: boolean }>(`repos/${REPOSITORY}/actions/runs/${runId}/artifacts?per_page=100`, ".artifacts[]");
   const name = receiptArtifactName(artifacts, runId);
-  if (!name) {
-    throw new Error(`run ${runId} has no usable release-promotion artifact (they expire after 30 days)`);
-  }
+  if (!name) return null;
   const dir = mkdtempSync(join(tmpdir(), "wisp-receipt-"));
   try {
     run(["gh", "run", "download", String(runId), "--repo", REPOSITORY, "--name", name, "--dir", dir]);
-    return parseReceipt(JSON.parse(readFileSync(join(dir, "promotion-receipt.json"), "utf8")));
+    const path = join(dir, "promotion-receipt.json");
+    return existsSync(path) ? parseReceipt(JSON.parse(readFileSync(path, "utf8"))) : null;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-function diskLedgers(): LedgerSource {
-  return {
-    read: (path) => (existsSync(join(ROOT, path)) ? readFileSync(join(ROOT, path), "utf8") : null),
-    ledgers: () =>
-      readdirSync(join(ROOT, "docs"), { withFileTypes: true })
-        .filter((entry) => entry.isDirectory() && /^v\d+\.\d+$/.test(entry.name))
-        .map((entry) => ({ minor: entry.name.slice(1), path: join("docs", entry.name, "QUALIFICATION.md") }))
-        .filter((entry) => existsSync(join(ROOT, entry.path)))
-        .map((entry) => ({ minor: entry.minor, text: readFileSync(join(ROOT, entry.path), "utf8") })),
-  };
+function recoveryPromotion(tag: string, sha: string, after: string): { run: WorkflowRun; receipt: PromotionReceiptData } | null {
+  for (const candidate of recoveryCandidates(workflowRuns("release.yml", "event=workflow_dispatch&status=success"), after)) {
+    const receipt = receiptOf(candidate.id);
+    if (receipt?.tag === tag && receipt.releaseCommit === sha) return { run: candidate, receipt };
+  }
+  return null;
 }
 
 function releaseMigrations(previousTag: string, tag: string): number[] {
@@ -266,7 +270,15 @@ function releaseMigrations(previousTag: string, tag: string): number[] {
   return addedMigrations(git(["show", `${previousTag}:${migrations}`]), git(["show", `${tag}:${migrations}`]));
 }
 
-async function gather(version: string): Promise<{ facts: PublicationFacts; manual: string[] }> {
+/** The PNG inputs release:check saw change, one entry per input directory. */
+function releasePngInputs(previousTag: string, tag: string): string[] {
+  const changed = git(["diff", "--name-only", previousTag, tag]).split("\n").filter(Boolean);
+  const dependencies = git(["diff", previousTag, tag, "--", "bun.lock", "web/package.json"]);
+  const inputs = pngInputChanges(changed, dependencies).map((path) => PNG_INPUTS.find((prefix) => path.startsWith(prefix)) ?? path);
+  return [...new Set(inputs)];
+}
+
+export async function gatherPublication(version: string): Promise<{ facts: PublicationFacts; manual: string[] }> {
   const tag = `v${version}`;
   const sha = git(["rev-list", "-n", "1", `refs/tags/${tag}`]);
   const release = ghApiOrNull<ReleaseInfo>(`repos/${REPOSITORY}/releases/tags/${tag}`);
@@ -275,24 +287,23 @@ async function gather(version: string): Promise<{ facts: PublicationFacts; manua
   validateReleaseMetadata(releaseMetadataFromApi(release, assets), tag);
   const latest = ghApi<{ tag_name: string }>(`repos/${REPOSITORY}/releases/latest`).tag_name === tag;
 
-  const runs = ghApiList<WorkflowRun>(`repos/${REPOSITORY}/actions/workflows/release.yml/runs?per_page=30`, ".workflow_runs[]");
-  const pushRun = releaseRunForTag(runs, tag, sha);
+  const pushRun = releaseRunForTag(workflowRuns("release.yml", `event=push&head_sha=${sha}`), tag, sha);
   if (!pushRun) throw new Error(`the release workflow has not run for ${tag} yet`);
   const outcome = gateOutcome(ghApiList<ReleaseJob>(`repos/${REPOSITORY}/actions/runs/${pushRun.id}/jobs?filter=latest&per_page=100`, ".jobs[]"));
   if (outcome.problems.length > 0) throw new Error(outcome.problems.join("\n"));
   let promotionRunUrl: string | null = null;
-  let receiptRun = pushRun;
+  let receipt: PromotionReceiptData | null;
   if (outcome.needsRecovery) {
-    const recovery = recoveryRunFor(runs);
-    if (!recovery) throw new Error("promotion has not finished; rerun the failed promote job or dispatch a recovery (releasing.md), then run this again");
-    const jobs = ghApiList<ReleaseJob>(`repos/${REPOSITORY}/actions/runs/${recovery.id}/jobs?filter=latest&per_page=100`, ".jobs[]");
-    if (!jobs.some((job) => job.name === "promote" && job.conclusion === "success")) {
-      throw new Error(`the recovery run ${recovery.html_url} did not promote successfully`);
+    const recovery = recoveryPromotion(tag, sha, pushRun.created_at);
+    if (!recovery) {
+      throw new Error(`promotion of ${tag} has not finished; rerun the failed promote job or dispatch a recovery (releasing.md), then run this again`);
     }
-    promotionRunUrl = recovery.html_url;
-    receiptRun = recovery;
+    promotionRunUrl = recovery.run.html_url;
+    receipt = recovery.receipt;
+  } else {
+    receipt = receiptOf(pushRun.id);
+    if (!receipt) throw new Error(`${pushRun.html_url} has no promotion receipt left to download (they expire after 30 days)`);
   }
-  const receipt = downloadReceipt(receiptRun.id);
   if (receipt.tag !== tag || receipt.releaseCommit !== sha) {
     throw new Error(`the promotion receipt is for ${receipt.tag} at ${receipt.releaseCommit.slice(0, 7)}, not ${tag} at ${sha.slice(0, 7)}`);
   }
@@ -305,10 +316,7 @@ async function gather(version: string): Promise<{ facts: PublicationFacts; manua
   const head = pulls.find((pull) => pull.number === pullRequest)?.head.sha;
   const checks = head ? passedSourceChecks(commitChecks(head)) : { labels: [], missing: CORE_CHECKS };
 
-  const candidates = ghApiList<WorkflowRun>(
-    `repos/${REPOSITORY}/actions/workflows/release-candidate.yml/runs?event=push&branch=main&per_page=30`,
-    ".workflow_runs[]",
-  );
+  const candidates = workflowRuns("release-candidate.yml", `event=push&branch=main&head_sha=${sha}`);
   const previous = previousRelease(releaseTags(), version);
   if (!previous) throw new Error(`no release tag is older than ${version}`);
 
@@ -321,7 +329,6 @@ async function gather(version: string): Promise<{ facts: PublicationFacts; manua
   if (checks.missing.length > 0) {
     manual.push(`verify the release PR's ${checks.missing.join(", ")} check(s) by hand and name them in the Source checks row, then delete this line.`);
   }
-  if (!pullRequest) manual.push("name the pull request that carried the release commit, then delete this line.");
   return {
     manual,
     facts: {
@@ -340,6 +347,7 @@ async function gather(version: string): Promise<{ facts: PublicationFacts; manua
       promotedAt: receipt.completedAt,
       tapCommit: receipt.tapCommit,
       migrations: releaseMigrations(`v${previous}`, tag),
+      pngInputChanges: releasePngInputs(`v${previous}`, tag),
     },
   };
 }
@@ -348,9 +356,24 @@ function commitChecks(sha: string): CheckRun[] {
   return ghApiList<CheckRun>(`repos/${REPOSITORY}/commits/${sha}/check-runs?per_page=100`, ".check_runs[]");
 }
 
+/** A unified diff of one proposed ledger write against the working tree. */
+function writeDiff(write: LedgerWrite): string {
+  const dir = mkdtempSync(join(tmpdir(), "wisp-closeout-"));
+  try {
+    const proposed = join(dir, "proposed.md");
+    writeFileSync(proposed, write.text);
+    const current = existsSync(join(ROOT, write.path)) ? write.path : "/dev/null";
+    const diff = command(["git", "diff", "--no-index", "--no-color", "--", current, proposed]).stdout;
+    return diff.replaceAll(proposed.replace(/^\//, ""), write.path);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   const version = versionArgument(args, "bun run release:closeout <version> [--dry-run]");
+  const dryRun = args.includes("--dry-run");
   assertTaggableVersion(version);
   const tag = `v${version}`;
   git(["fetch", "--quiet", "origin", "main", "--tags"]);
@@ -362,24 +385,25 @@ async function main(): Promise<number> {
     console.error(`${tag} is not an annotated tag locally; run: git fetch --force origin refs/tags/${tag}:refs/tags/${tag}`);
     return 1;
   }
-  const head = git(["rev-parse", "HEAD"]);
-  if (head !== git(["rev-parse", "origin/main"])) {
+  // A dry run writes nothing, so only the real closeout needs a branch whose
+  // diff will be exactly the ledger edits.
+  if (!dryRun && git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
     console.error(`run the closeout from a fresh branch at origin/main:\n  git switch -c release/${version}-closeout origin/main`);
     return 1;
   }
-  if (command(["git", "status", "--porcelain=v1", "--untracked-files=no"]).stdout !== "") {
+  if (!dryRun && command(["git", "status", "--porcelain=v1", "--untracked-files=no"]).stdout !== "") {
     console.error("the working tree has uncommitted changes; the closeout edits must be the only ones in the closeout PR");
     return 1;
   }
 
   console.log(`release:closeout ${version}: collecting the release, its jobs, the promotion receipt, and the PR`);
-  const { facts, manual } = await gather(version);
+  const { facts, manual } = await gatherPublication(version);
   console.log(`  ok    the tap and both update channels serve ${version}, verified anonymously`);
-  const { writes, manual: ledgerManual } = recordPublication(diskLedgers(), facts);
-  const todos = [...manual, ...ledgerManual];
+  const { writes } = recordPublication(diskLedgers(ROOT), facts, manual);
+  const todos = todoLocations(writes);
 
-  if (args.includes("--dry-run")) {
-    for (const write of writes) console.log(`--- ${write.path} would be written (${write.text.length} bytes)`);
+  if (dryRun) {
+    for (const write of writes) console.log(writeDiff(write));
   } else {
     for (const write of writes) {
       mkdirSync(dirname(join(ROOT, write.path)), { recursive: true });
@@ -388,8 +412,8 @@ async function main(): Promise<number> {
     }
   }
   if (todos.length > 0) {
-    console.log(`${todos.length} TODO marker(s) left for judgment:`);
-    for (const todo of todos) console.log(`  - ${todo}`);
+    console.log(`${todos.length} TODO marker(s) need judgment:`);
+    for (const todo of todos) console.log(`  ${todo}`);
   }
   console.log("Resolve every TODO (docs:check refuses them), review the diff, then commit and open the closeout PR.");
   return 0;
