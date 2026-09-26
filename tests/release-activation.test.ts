@@ -12,7 +12,7 @@ test("the activation fixture waits for the daemon before launching the CLI", () 
   expect(registration).toBeGreaterThan(readiness);
   expect(script.slice(readiness, registration)).not.toContain("wisp project add");
   expect(script).toContain("activation daemon did not listen after $ATTEMPT attempts");
-  expect(script.match(/cgroup_diagnostics/g)).toHaveLength(5);
+  expect(script.match(/cgroup_diagnostics/g)).toHaveLength(6);
 });
 
 test("the activation fixture enforces a memory budget after the daemon is ready", () => {
@@ -25,6 +25,17 @@ test("the activation fixture enforces a memory budget after the daemon is ready"
   expect(doctor).toBeGreaterThan(-1);
   expect(budget).toBeGreaterThan(doctor);
   expect(script).toContain("activation exceeded its memory budget");
+});
+
+test("the activation fixture fails instead of skipping a budget it cannot measure", () => {
+  const script = readFileSync(new URL("../wispd/scripts/test-activation.sh", import.meta.url), "utf8");
+  const refusal = script.indexOf("test -r /sys/fs/cgroup/memory.peak || {");
+  const install = script.indexOf("/bin/sh /install.sh");
+
+  expect(refusal).toBeGreaterThan(-1);
+  expect(refusal).toBeLessThan(install);
+  expect(script).toContain("/sys/fs/cgroup/memory.peak is unreadable");
+  expect(script).not.toMatch(/if test -r \/sys\/fs\/cgroup\/memory\.peak/);
 });
 
 test("the exact main candidate must pass artifact and verifier contracts before publication", () => {

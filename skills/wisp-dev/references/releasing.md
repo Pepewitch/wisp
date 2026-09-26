@@ -77,9 +77,12 @@ checked.
 
 The installer and activation contracts (`test:install`, `test:activation`)
 need a container runtime and are not run here; the release-candidate workflow
-runs them on the exact `main` commit, and step 4 requires them. When a change
-touches the release contract, keep failure-path diagnostics (the daemon's wait
-status and cgroup memory/pid counters) in the same PR as the change.
+runs them on the exact `main` commit, and step 4 requires them. Activation
+also needs the container's cgroup to report `memory.peak` (cgroup v2, Linux
+5.19 or later): it fails rather than pass without checking its memory budget.
+When a change touches the release contract, keep failure-path diagnostics (the
+daemon's wait status and cgroup memory/pid counters) in the same PR as the
+change.
 
 A gate that fails in code this release did not change is a flake: run
 `release:check` once more. If the same gate fails twice, stop and report it —

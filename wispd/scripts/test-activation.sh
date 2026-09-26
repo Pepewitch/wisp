@@ -48,6 +48,14 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
       fi
     }
 
+    # The memory budget at the end can only be checked where the cgroup
+    # reports its peak. Anywhere else, stop now instead of passing without it.
+    test -r /sys/fs/cgroup/memory.peak || {
+      cgroup_diagnostics
+      echo "activation cannot check its $MEMORY_BUDGET_MIB MiB memory budget: /sys/fs/cgroup/memory.peak is unreadable (it needs cgroup v2 on Linux 5.19 or later)" >&2
+      exit 1
+    }
+
     mkdir -p "$HOME/fake-bin" /workspace/repo
     cat > "$HOME/fake-bin/droid" <<EOF
 #!/bin/sh
@@ -142,14 +150,12 @@ EOF
     # cleanly: the cgroup reclaims instead of killing, and readiness times out
     # only on the runs where garbage collection falls behind. The budget makes
     # that regression fail every time, with its cause printed.
-    if test -r /sys/fs/cgroup/memory.peak; then
-      PEAK_MIB=$(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))
-      echo "activation memory peak: $PEAK_MIB MiB (budget $MEMORY_BUDGET_MIB MiB of 1536 MiB)"
-      [ "$PEAK_MIB" -le "$MEMORY_BUDGET_MIB" ] || {
-        cgroup_diagnostics
-        echo "activation exceeded its memory budget" >&2
-        exit 1
-      }
-    fi
+    PEAK_MIB=$(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))
+    echo "activation memory peak: $PEAK_MIB MiB (budget $MEMORY_BUDGET_MIB MiB of 1536 MiB)"
+    [ "$PEAK_MIB" -le "$MEMORY_BUDGET_MIB" ] || {
+      cgroup_diagnostics
+      echo "activation exceeded its memory budget" >&2
+      exit 1
+    }
     echo "clean install through activation receipt passed"
   '
