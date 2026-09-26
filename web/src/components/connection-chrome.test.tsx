@@ -247,6 +247,7 @@ async function changedRemoteUrlNeedsToken() {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   clearConnectionDrafts("local")
   clearConnectionDrafts("remote-one")
@@ -832,7 +833,9 @@ describe("connection tab status", () => {
     expect(screen.queryByText("Live")).toBeNull()
 
     connectionStore(LOCAL.id).set("log", false)
-    await waitFor(() => expect(local).toHaveAttribute("title", "Reconnecting…"))
+    await waitFor(() =>
+      expect(local).toHaveAttribute("title", "Server reachable · Live updates delayed")
+    )
     expect(local.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
     // The inactive remote does not inherit the selected connection's stream loss.
     expect(remote).toHaveAttribute("title", "Live")
@@ -843,6 +846,80 @@ describe("connection tab status", () => {
     expect(remote).toHaveAttribute("title", "Live")
     fireEvent.click(screen.getByRole("button", { name: "Remote offline" }))
     expect(remote).toHaveAttribute("title", "Daemon unavailable")
+    expect(remote.querySelector("[data-live]")).toHaveClass("bg-destructive")
+  })
+
+  it("keeps both tabs green during a stream handoff, then warns if updates stall", () => {
+    class EventSourceStub {
+      static instances: EventSourceStub[] = []
+      onopen: (() => void) | null = null
+      onerror: (() => void) | null = null
+      onmessage: (() => void) | null = null
+      readonly url: string
+      constructor(url: string) {
+        this.url = url
+        EventSourceStub.instances.push(this)
+      }
+      close(): void {}
+    }
+    vi.stubGlobal("EventSource", EventSourceStub)
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    vi.useFakeTimers()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider initial={bootstrap([LOCAL, REMOTE])} bridge={bridge()}>
+          <DesktopConnectionChrome />
+          <ReachabilityControls />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+    const local = screen.getByRole("button", { name: "Reconnect Local" })
+    const remote = screen.getByRole("button", { name: "Reconnect Remote one" })
+    fireEvent.click(screen.getByRole("button", { name: "Local online" }))
+    fireEvent.click(screen.getByRole("button", { name: "Remote online" }))
+    act(() => EventSourceStub.instances[0]!.onopen?.())
+    expect(local).toHaveAttribute("title", "Live")
+    expect(remote).toHaveAttribute("title", "Live")
+
+    fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+    const switchedLocal = screen.getByRole("button", { name: "Reconnect Local" })
+    const switchedRemote = screen.getByRole("button", { name: "Reconnect Remote one" })
+    expect(switchedLocal).toHaveAttribute("title", "Server reachable · Connecting live updates…")
+    expect(switchedRemote).toHaveAttribute("title", "Server reachable · Connecting live updates…")
+    for (const button of [switchedLocal, switchedRemote]) {
+      expect(button.querySelector("[data-live]")).toHaveClass("bg-state-done")
+      expect(button.querySelector(".motion-safe\\:animate-pulse")).not.toBeNull()
+    }
+    expect(EventSourceStub.instances).toHaveLength(2)
+    expect(EventSourceStub.instances[1]!.url).toContain("/connections/local/")
+
+    act(() => vi.advanceTimersByTime(3_000))
+    expect(switchedLocal).toHaveAttribute("title", "Server reachable · Live updates delayed")
+    expect(switchedLocal.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
+    act(() => EventSourceStub.instances[1]!.onopen?.())
+    expect(switchedLocal).toHaveAttribute("title", "Live")
+    act(() => connectionStore(REMOTE.id).set("events", true))
+    expect(switchedRemote).toHaveAttribute("title", "Live")
+  })
+
+  it("does not disguise a failed stream as a normal handoff", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider initial={bootstrap([LOCAL, REMOTE])} bridge={bridge()}>
+          <DesktopConnectionChrome />
+          <ReachabilityControls />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Remote online" }))
+    act(() => connectionStore(REMOTE.id).set("events", false))
+    const remote = screen.getByRole("button", { name: "Reconnect Remote one" })
+    expect(remote).toHaveAttribute("title", "Server reachable · Live updates delayed")
+    fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+    expect(remote).toHaveAttribute("title", "Server reachable · Live updates delayed")
   })
 
   it("reconnects the clicked connection without selecting its tab", async () => {

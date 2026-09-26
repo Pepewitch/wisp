@@ -46,6 +46,7 @@ import type { TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const DIRECT_CONNECTION_LIMIT = 4
+const LIVE_UPDATE_GRACE_MS = 3_000
 /** The trailing control inside a tab chip: shorter than the 26px standalone glyph. */
 const TAB_ACTION_SIZE = "size-5 shrink-0 rounded-[5px]"
 const ADD_CONNECTION_ACTION = "__add_connection__"
@@ -134,12 +135,33 @@ export function ConnectionTab({
   actions?: ReactNode
 }) {
   const store = connectionStore(connection.id)
-  const streamsLive = useSyncExternalStore(store.subscribe, store.isLive)
+  const { status: streamStatus, generation } = useSyncExternalStore(
+    store.subscribe,
+    store.snapshot
+  )
+  const [delayedGeneration, setDelayedGeneration] = useState<number | null>(null)
+  useEffect(() => {
+    if (!connection.ready || reachability !== "online" || streamStatus !== "opening") return
+    const timer = setTimeout(
+      () => setDelayedGeneration(generation),
+      LIVE_UPDATE_GRACE_MS
+    )
+    return () => clearTimeout(timer)
+  }, [connection.ready, generation, reachability, streamStatus])
   const issue = connectionIssue(connection, reachability)
   const unavailable = issue !== null
-  // Only the selected connection mounts both UI streams. Background connections
-  // use their own daemon monitor instead of a stale/default stream snapshot.
-  const live = connection.ready && reachability === "online" && streamsLive
+  const live = connection.ready && reachability === "online" && streamStatus === "live"
+  const opening = connection.ready && reachability === "online" &&
+    streamStatus === "opening" && delayedGeneration !== generation
+  const updatesDown = connection.ready && reachability === "online" && !live && !opening
+  const statusTitle = issue ??
+    (reachability === "unknown"
+      ? "Checking server…"
+      : live
+        ? "Live"
+        : opening
+          ? "Server reachable · Connecting live updates…"
+          : "Server reachable · Live updates delayed")
   return (
     <span
       data-testid="connection-tab-chip"
@@ -167,18 +189,29 @@ export function ConnectionTab({
       <button
         type="button"
         aria-label={`Reconnect ${connection.name}`}
-        title={live ? "Live" : issue ?? "Reconnecting…"}
+        title={statusTitle}
         disabled={reconnectDisabled}
         onClick={onReconnect}
         className="flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
       >
-        <span
-          data-live={live}
-          className={cn(
-            "size-1.5 rounded-full",
-            live ? "bg-state-done" : "animate-pulse bg-state-needs-input"
+        <span className="relative flex size-3 items-center justify-center">
+          {opening && (
+            <span className="absolute inset-0 rounded-full border border-state-done/75 motion-safe:animate-pulse" />
           )}
-        />
+          <span
+            data-live={live}
+            className={cn(
+              "size-1.5 rounded-full",
+              unavailable
+                ? "bg-destructive"
+                : live || opening
+                  ? "bg-state-done"
+                  : updatesDown
+                    ? "bg-state-needs-input"
+                    : "bg-muted-foreground/60"
+            )}
+          />
+        </span>
       </button>
       {attention && <StateDot state={attention} className="ml-0.5" />}
       {unavailable && (
