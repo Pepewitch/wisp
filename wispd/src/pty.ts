@@ -107,6 +107,7 @@ const SYMBOLS = {
   ptsname: { args: [FFIType.int], returns: FFIType.ptr },
   open: { args: [FFIType.ptr, FFIType.int, FFIType.u32], returns: FFIType.int },
   close: { args: [FFIType.int], returns: FFIType.int },
+  dup: { args: [FFIType.int], returns: FFIType.int },
   setsid: { args: [], returns: FFIType.int },
   dup2: { args: [FFIType.int, FFIType.int], returns: FFIType.int },
   execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
@@ -305,21 +306,33 @@ export function closePty(handle: PtyHandle): void {
 }
 
 /**
- * Stream the master fd. `node:fs` read streams are the only pump that works
+ * Stream the master. `node:fs` read streams are the only pump that works
  * here: `Bun.file(fd).stream()` yields nothing at all on a character device,
  * measured repeatedly, and a synchronous read would block the daemon.
+ *
+ * The stream reads its OWN duplicate of the master and is that duplicate's
+ * only closer. `autoClose: false` does not make a stream leave its fd alone:
+ * `destroy()` still closes it (Node semantics, and Bun's), asynchronously and,
+ * with a read in flight, only once that read returns. Sharing `masterFd` with
+ * `closePty` therefore closed one number twice, and whichever close came
+ * second landed on whatever the process had opened in between — the next
+ * shell's master, a socket, a spawn pipe. CI saw exactly those: `Bun.spawnSync`
+ * failing with EBADF, a new shell's child unable to open its slave, a terminal
+ * socket erroring on attach.
  */
 export function readPty(
   masterFd: number,
   onData: (chunk: Buffer) => void,
   onError: (error: Error) => void,
 ): ReadStream {
-  const stream = createReadStream("", { fd: masterFd, autoClose: false });
+  const readerFd = libc().dup(masterFd);
+  if (readerFd < 0) fail("dup(master)");
+  const stream = createReadStream("", { fd: readerFd, autoClose: true });
   stream.on("data", (chunk) => onData(chunk as Buffer));
   stream.on("error", (error) => {
     // Both of these mean "this pty is finished", not "something went wrong":
     // EIO is how the kernel reports the last slave closing, i.e. the shell
-    // exited, and EBADF is the stream's own teardown racing the fd close.
+    // exited, and EBADF is a read issued as the stream tears itself down.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EIO" || code === "EBADF") return;
     onError(error);
@@ -327,8 +340,14 @@ export function readPty(
   return stream;
 }
 
-/** Write to the master. Async so a large paste cannot block the event loop. */
-export function writePty(masterFd: number, data: string | Uint8Array): Promise<void> {
+/**
+ * Write to the master. Async so a large paste cannot block the event loop.
+ *
+ * The descriptor is re-read from the handle before every chunk: a paste still
+ * in flight when the shell exits must stop at `closePty`, not carry on into
+ * whatever descriptor has since been given that number.
+ */
+export function writePty(handle: PtyHandle, data: string | Uint8Array): Promise<void> {
   const buffer = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
   return new Promise((resolve, reject) => {
     const step = (offset: number): void => {
@@ -336,7 +355,11 @@ export function writePty(masterFd: number, data: string | Uint8Array): Promise<v
         resolve();
         return;
       }
-      fsWrite(masterFd, buffer, offset, buffer.length - offset, null, (error, written) => {
+      if (handle.masterFd < 0) {
+        reject(new Error("pty: write after the pty was closed"));
+        return;
+      }
+      fsWrite(handle.masterFd, buffer, offset, buffer.length - offset, null, (error, written) => {
         if (error) {
           reject(error);
           return;

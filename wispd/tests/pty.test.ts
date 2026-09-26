@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fstatSync } from "node:fs";
 import {
   clampDimension,
   closePty,
@@ -46,7 +47,7 @@ function start(argv: string[], size: PtySize): Harness {
   );
   return {
     read: () => output,
-    send: (data) => writePty(handle.masterFd, data),
+    send: (data) => writePty(handle, data),
     resize: (next) => resizePty(handle, next),
     pid: child.pid,
     stop: async () => {
@@ -159,6 +160,28 @@ describe("pty", () => {
     // still usable: a stray close would have taken this pty's descriptor out
     expect(() => resizePty(second, { cols: 100, rows: 30 })).not.toThrow();
     closePty(second);
+  });
+
+  test("tearing down the reader never closes a descriptor the handle owns", async () => {
+    // A read stream's destroy() closes its fd even with autoClose: false, and
+    // does it asynchronously. Reading the handle's own master meant closePty
+    // closed that number a second time, landing on whatever had been opened
+    // in between (a spawn pipe, a socket, the next shell's master).
+    const handle = openPty({ cols: 80, rows: 24 });
+    const reader = readPty(handle.masterFd, () => undefined, () => undefined);
+    const closed = new Promise<void>((resolve) => reader.once("close", () => resolve()));
+    reader.destroy();
+    await Promise.race([closed, Bun.sleep(2_000)]);
+    expect(reader.closed).toBe(true);
+    expect(() => fstatSync(handle.masterFd)).not.toThrow();
+    expect(() => resizePty(handle, { cols: 100, rows: 30 })).not.toThrow();
+    closePty(handle);
+  });
+
+  test("a write that outlives its pty stops instead of reaching a reused descriptor", async () => {
+    const handle = openPty({ cols: 80, rows: 24 });
+    closePty(handle);
+    await expect(writePty(handle, "late keystrokes")).rejects.toThrow(/after the pty was closed/);
   });
 
   test("the child half refuses a path that is not a terminal device", () => {
