@@ -132,6 +132,12 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (!("taskId" in evt) || !evt.taskId) return;
+    // Not only the selected task's: a pane switching back to a task must not
+    // paint a tab list another window has since changed.
+    if (evt.type === "terminals") {
+      void opts.client.invalidateQueries({ queryKey: qk.terminals(evt.taskId) });
+      return;
+    }
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
       // The task list carries has_workflow so every sidebar row can render
@@ -198,6 +204,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       void opts.client.invalidateQueries({ queryKey: qk.task(id) });
       void opts.client.invalidateQueries({ queryKey: qk.skills(id) });
       void opts.client.invalidateQueries({ queryKey: qk.diff(id) });
+      void opts.client.invalidateQueries({ queryKey: qk.terminals(id) });
     }
     opts.onReconnect?.();
   }

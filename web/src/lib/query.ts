@@ -47,6 +47,7 @@ export interface ConnectionQueryKeys {
     path: string
   ): readonly [string, "worktree-file", string, string]
   skills(id: string): readonly [string, "skills", string]
+  terminals(id: string): readonly [string, "terminals", string]
   /** The session id rides the key: a compaction's replacement id refetches. */
   attach(id: string, session: string): readonly [string, "attach", string, string]
   search(query: string): readonly [string, "search", string]
@@ -81,6 +82,8 @@ export function createConnectionQueryKeys(
       Object.freeze([connectionId, "worktree-file", id, path] as const),
     skills: (id: string) =>
       Object.freeze([connectionId, "skills", id] as const),
+    terminals: (id: string) =>
+      Object.freeze([connectionId, "terminals", id] as const),
     attach: (id: string, session: string) =>
       Object.freeze([connectionId, "attach", id, session] as const),
     search: (query: string) => Object.freeze([connectionId, "search", query] as const),

@@ -422,6 +422,7 @@ export type WispEvent =
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
+  | { type: "terminals"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
   | { type: "harnesses" }
   | { type: "settings" }
@@ -634,7 +635,27 @@ export interface HarnessesResponse {
     taskAutopilot?: boolean;
     /** GET /api/harness-limits: each harness's plan usage windows (the top bar's usage ring). */
     harnessLimits?: boolean;
+    /** /api/tasks/:id/terminals: the daemon keeps each task's shell tabs, and closing one kills its shell. */
+    taskTerminals?: boolean;
   };
+}
+
+/** One shell tab as the daemon keeps it (GET /api/tasks/:id/terminals). */
+export interface ShellInfo {
+  /** the socket's `?shell=` id; reused once its tab is closed */
+  id: number;
+  /** counts up per task and is never reused */
+  number: number;
+  name: string | null;
+  /** the window title the shell set (OSC 0/2) */
+  title: string | null;
+  /** the foreground program; null while the shell is at its prompt */
+  program: string | null;
+  /** the login shell's name, e.g. `zsh` */
+  shell: string;
+  /** set when the shell ended by itself and has not been replaced */
+  exitCode: number | null;
+  createdAt: string;
 }
 
 /** A3: the only out-of-turn reads any harness has proven to have (SP1). */

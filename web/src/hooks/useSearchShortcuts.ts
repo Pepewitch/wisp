@@ -25,6 +25,10 @@ export function useSearchShortcuts(intents: UiIntents, search: ProjectSearch): v
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey) return
       if (event.key !== "f" && event.key !== "F") return
+      // A focused terminal owns ⌘F (find in the shell) and Ctrl+F (readline's
+      // forward-char); taking either would break what the shell is doing.
+      // ⌘⇧F is nobody's in a shell, so it still searches the projects.
+      if (!event.shiftKey && event.target instanceof Element && event.target.closest("[data-terminal]")) return
       event.preventDefault()
       // ⌘F is client-side and always works; ⌘⇧F needs a daemon that answers
       if (event.shiftKey) {

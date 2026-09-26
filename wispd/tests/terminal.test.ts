@@ -4,17 +4,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
 import { parseTerminalSize, serve } from "../src/daemon";
+import { subscribe } from "../src/events";
 import {
+  createShell,
   DEFAULT_PTY_SIZE,
   DISPLACED_MESSAGE,
   killAll,
   killForTask,
+  listShells,
   openSession,
   loginShellArgv,
+  renameShell,
   resolveLoginShell,
+  restartShell,
   sessionKey,
   WEB_TERMINAL_TERM,
   webTerminalEnv,
+  type ShellInfo,
+  type TerminalClient,
 } from "../src/terminal";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
 
@@ -531,6 +538,165 @@ describe("retiring a killed shell", () => {
     expect(second.isLive()).toBe(true);
     await killAll();
   }, 30_000);
+});
+
+/** A client that records what the shell sends, for driving a session without a socket. */
+function recordingClient(): TerminalClient & { output: () => string; exits: number[] } {
+  let output = "";
+  const exits: number[] = [];
+  return {
+    isOpen: () => true,
+    sendOutput: (data) => {
+      output += data;
+    },
+    sendError: () => {},
+    sendExit: (code) => {
+      exits.push(code);
+    },
+    output: () => output,
+    exits,
+  };
+}
+
+async function until(check: () => boolean, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await Bun.sleep(25);
+  }
+}
+
+describe("shell tabs", () => {
+  async function api(path: string, init: RequestInit = {}): Promise<Response> {
+    return await fetch(`http://127.0.0.1:${server!.port}${path}`, {
+      ...init,
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...init.headers },
+    });
+  }
+
+  test("a new tab never takes a closed tab's number, though it may reuse its socket id", async () => {
+    const { task } = terminalFixture("numbers");
+    server = await serve({ port: 0 });
+    const base = `/api/tasks/${task.id}/terminals`;
+
+    const first = (await (await api(base, { method: "POST" })).json()) as ShellInfo;
+    const second = (await (await api(base, { method: "POST" })).json()) as ShellInfo;
+    expect([first.id, first.number, second.id, second.number]).toEqual([0, 1, 1, 2]);
+    expect(second.shell.length).toBeGreaterThan(0);
+
+    expect((await api(`${base}/0`, { method: "DELETE" })).status).toBe(200);
+    const third = (await (await api(base, { method: "POST" })).json()) as ShellInfo;
+    expect(third.id).toBe(0);
+    expect(third.number).toBe(3);
+
+    const listed = (await (await api(base)).json()) as ShellInfo[];
+    expect(listed.map((shell) => shell.number)).toEqual([2, 3]);
+    expect((await api(`${base}/7`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  test("closing a tab hangs up its shell, and asks first while a program runs", async () => {
+    const { task, worktree } = terminalFixture("close");
+    server = await serve({ port: 0 });
+    const base = `/api/tasks/${task.id}/terminals`;
+    const tab = (await (await api(base, { method: "POST" })).json()) as ShellInfo;
+
+    const session = openSession(task.id, tab.id, worktree);
+    const client = recordingClient();
+    session.attach(client);
+    await session.write(client, "echo tab-ready\n");
+    await until(() => client.output().includes("tab-ready"));
+    await session.write(client, "sleep 30\n");
+    await until(() => session.foregroundProgram() === "sleep");
+
+    const refused = await api(`${base}/${tab.id}`, { method: "DELETE" });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { program: string }).program).toBe("sleep");
+    expect(session.isLive()).toBe(true);
+
+    expect((await api(`${base}/${tab.id}?force=1`, { method: "DELETE" })).status).toBe(200);
+    expect(session.hasExited()).toBe(true);
+    expect(listShells(task.id)).toEqual([]);
+  }, 30_000);
+
+  test("a shell that exits by itself closes its tab, unless it was the last one", async () => {
+    const { task, worktree } = terminalFixture("exit");
+    const first = createShell(task.id);
+    const second = createShell(task.id);
+    const shells = [first, second].map((tab) => {
+      const session = openSession(task.id, tab.id, worktree);
+      const client = recordingClient();
+      session.attach(client);
+      return { session, client };
+    });
+
+    await shells[0]!.session.write(shells[0]!.client, "exit\n");
+    await until(() => shells[0]!.session.hasExited() && listShells(task.id).length === 1);
+    expect(listShells(task.id)[0]!.id).toBe(second.id);
+
+    await shells[1]!.session.write(shells[1]!.client, "exit 3\n");
+    await until(() => listShells(task.id)[0]?.exitCode === 3);
+    expect(listShells(task.id)).toHaveLength(1);
+
+    // attaching again starts a fresh shell in that same tab
+    openSession(task.id, second.id, worktree);
+    expect(listShells(task.id)[0]!.exitCode).toBeNull();
+  }, 30_000);
+
+  test("rename keeps the tab; an empty name hands back the automatic one", async () => {
+    const { task } = terminalFixture("rename");
+    server = await serve({ port: 0 });
+    const base = `/api/tasks/${task.id}/terminals`;
+    const tab = (await (await api(base, { method: "POST" })).json()) as ShellInfo;
+
+    const named = await api(`${base}/${tab.id}`, { method: "PATCH", body: JSON.stringify({ name: "  dev server " }) });
+    expect(((await named.json()) as ShellInfo).name).toBe("dev server");
+    const reset = await api(`${base}/${tab.id}`, { method: "PATCH", body: JSON.stringify({ name: "" }) });
+    expect(((await reset.json()) as ShellInfo).name).toBeNull();
+    expect((await api(`${base}/${tab.id}`, { method: "PATCH", body: JSON.stringify({ name: 7 }) })).status).toBe(400);
+    expect(
+      (await api(`${base}/${tab.id}`, { method: "PATCH", body: JSON.stringify({ name: "x".repeat(65) }) })).status,
+    ).toBe(400);
+  });
+
+  test("restart replaces the shell and keeps the tab's number and name", async () => {
+    const { task, worktree } = terminalFixture("restart");
+    const tab = createShell(task.id);
+    renameShell(task.id, tab.id, "api");
+    const session = openSession(task.id, tab.id, worktree);
+
+    const outcome = await restartShell(task.id, tab.id, false);
+    expect(outcome.kind).toBe("done");
+    expect(session.hasExited()).toBe(true);
+    const fresh = openSession(task.id, tab.id, worktree);
+    expect(fresh).not.toBe(session);
+    expect(listShells(task.id)).toMatchObject([{ id: tab.id, number: tab.number, name: "api" }]);
+  }, 30_000);
+
+  test("every tab change is announced, and a shell opened by attaching gets a tab", async () => {
+    const { task, worktree } = terminalFixture("announce");
+    const seen: string[] = [];
+    const unsubscribe = subscribe((event) => {
+      if (event.type === "terminals") seen.push(event.taskId);
+    });
+    try {
+      // an older client opens shells by attaching and never asks for a tab
+      openSession(task.id, 5, worktree);
+      expect(listShells(task.id).map((shell) => shell.id)).toEqual([5]);
+      await until(() => seen.length > 0);
+      expect(seen).toContain(task.id);
+    } finally {
+      unsubscribe();
+    }
+  }, 30_000);
+
+  test("archiving a task forgets its tabs", async () => {
+    const { task } = terminalFixture("archive-tabs");
+    createShell(task.id);
+    createShell(task.id);
+    await killForTask(task.id);
+    expect(listShells(task.id)).toEqual([]);
+    expect(createShell(task.id).number).toBe(1);
+  });
 });
 
 describe("sessionKey", () => {

@@ -18,8 +18,9 @@ modulo the font filename in the copyright line).
 
 ## Terminal emulator (S3.5)
 
-The terminal tab bundles `@xterm/xterm` and `@xterm/addon-fit` from npm —
-vite inlines them into the generated single-file bundle, so the zero-CDN
-invariant holds. Both packages are published by the xterm.js authors under
-the MIT license; the full license text rides along in `xterm.MIT.txt` (copied
-verbatim from the packages' `LICENSE` files).
+The terminal tab bundles `@xterm/xterm`, `@xterm/addon-fit` and
+`@xterm/addon-search` from npm — vite inlines them into the generated
+single-file bundle, so the zero-CDN invariant holds. All three are published
+by the xterm.js authors under the MIT license; the full license text rides
+along in `xterm.MIT.txt` (copied verbatim from `@xterm/xterm`'s `LICENSE`,
+whose copyright lines include the addons' own).

@@ -3,16 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import { connectionStorageKey } from "./connection-storage";
 import {
   DEFAULT_SHELL_TABS,
+  isApplePlatform,
+  isClearChord,
+  isFindChord,
   loadShellTabs,
   saveShellTabs,
   SHELL_TABS_KEY,
   SHELL_TABS_MAX_TASKS,
+  shellLabels,
+  shellTitle,
   TerminalConnection,
   terminalOriginRefusal,
   terminalSocketPath,
   type TerminalClientHandlers,
   type TerminalSocketLike,
 } from "./terminal";
+import type { ShellInfo } from "./types";
 
 /**
  * The WS wrapper's contract (S3.5): JSON framing of the two client→server
@@ -243,6 +249,14 @@ describe("TerminalConnection framing", () => {
     expect(JSON.parse(socket().sent[2]!)).toEqual({ type: "resize", cols: 120, rows: 40 });
   });
 
+  it("sends {type:'clear'} so the daemon drops its copy of the screen too", () => {
+    const { conn, socket } = setup();
+    conn.connect();
+    socket().open();
+    conn.sendClear();
+    expect(JSON.parse(socket().sent[0]!)).toEqual({ type: "clear" });
+  });
+
   it("never sends before the socket is open", () => {
     const { conn, socket } = setup();
     conn.connect(); // still CONNECTING
@@ -437,5 +451,73 @@ describe("terminalOriginRefusal", () => {
     const desktop = { request: vi.fn(async () => ({ verdict: "foreign", reason: "would be refused" })) };
     expect(await terminalOriginRefusal(desktop)).toBeNull();
     expect(desktop.request).not.toHaveBeenCalled();
+  });
+});
+
+function info(id: number, number: number, extra: Partial<ShellInfo> = {}): ShellInfo {
+  return {
+    id,
+    number,
+    name: null,
+    title: null,
+    program: null,
+    shell: "zsh",
+    exitCode: null,
+    createdAt: "2026-09-04T12:00:00Z",
+    ...extra,
+  };
+}
+
+describe("shellLabels", () => {
+  it("prefers a custom name, then the running program, then the title, then the shell", () => {
+    const labels = shellLabels([
+      info(0, 1, { name: " api ", program: "bun" }),
+      info(1, 2, { program: "vim", title: "notes.md" }),
+      info(2, 3, { title: "~/src" }),
+      info(3, 4),
+      info(4, 5, { shell: "" }),
+    ]);
+    expect([...labels.values()]).toEqual(["api", "vim", "~/src", "zsh", "Shell 5"]);
+  });
+
+  it("numbers repeated automatic names in tab order, and leaves custom names alone", () => {
+    const labels = shellLabels([info(2, 1), info(0, 2, { name: "zsh" }), info(1, 3), info(3, 4)]);
+    expect(labels.get(2)).toBe("zsh");
+    expect(labels.get(0)).toBe("zsh");
+    expect(labels.get(1)).toBe("zsh 2");
+    expect(labels.get(3)).toBe("zsh 3");
+  });
+});
+
+describe("shellTitle", () => {
+  it("says what a renamed tab runs, and skips what the label already says", () => {
+    expect(shellTitle(info(0, 1, { name: "api", program: "bun", title: "dev" }), "api")).toBe(
+      "api — running bun · dev · zsh",
+    );
+    expect(shellTitle(info(0, 1), "zsh")).toBe("zsh");
+  });
+});
+
+describe("terminal chords", () => {
+  const key = (init: Partial<KeyboardEvent>) =>
+    ({ key: "f", code: "KeyF", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...init }) as KeyboardEvent;
+
+  it("finds with ⌘F on Apple platforms and Ctrl+Alt+F elsewhere, leaving Ctrl+F to readline", () => {
+    expect(isFindChord(key({ metaKey: true }), true)).toBe(true);
+    expect(isFindChord(key({ ctrlKey: true }), true)).toBe(false);
+    expect(isFindChord(key({ metaKey: true, shiftKey: true }), true)).toBe(false);
+    expect(isFindChord(key({ ctrlKey: true }), false)).toBe(false);
+    expect(isFindChord(key({ ctrlKey: true, altKey: true, key: "ƒ" }), false)).toBe(true);
+  });
+
+  it("clears with ⌘K on Apple platforms only", () => {
+    expect(isClearChord(key({ key: "k", code: "KeyK", metaKey: true }), true)).toBe(true);
+    expect(isClearChord(key({ key: "k", code: "KeyK", ctrlKey: true }), false)).toBe(false);
+  });
+
+  it("recognizes Apple platforms", () => {
+    expect(isApplePlatform({ platform: "MacIntel", userAgent: "" })).toBe(true);
+    expect(isApplePlatform({ platform: "", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)" })).toBe(true);
+    expect(isApplePlatform({ platform: "Linux x86_64", userAgent: "" })).toBe(false);
   });
 });
