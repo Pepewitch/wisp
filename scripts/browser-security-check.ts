@@ -26,7 +26,7 @@
  * Everything it touches is disposable: a temporary WISP_HOME, an ephemeral
  * port, a fresh Chrome profile, and a synthetic checkout, attachment, and shell; no provider harness is called.
  */
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,7 +126,7 @@ interface Page {
 }
 
 /** A throwaway daemon on a port nothing else uses, with its own home. */
-async function startDaemon(home: string, entry: string): Promise<{ daemon: Bun.Subprocess; origin: string; token: string; port: number }> {
+async function startDaemon(home: string, entry: string, log: string): Promise<{ daemon: Bun.Subprocess; origin: string; token: string; port: number }> {
   const port = 39_000 + Math.floor(Math.random() * 900);
   const init = Bun.spawnSync({
     cmd: ["bun", entry, "init", "--port", String(port)],
@@ -146,14 +146,22 @@ async function startDaemon(home: string, entry: string): Promise<{ daemon: Bun.S
   const shell = join(home, "fixture-shell");
   await writeFile(shell, '#!/bin/sh\necho started >> "$WISP_HOME/shell-starts"\nexec /bin/bash --noprofile --norc\n');
   await chmod(shell, 0o700);
-  const daemon = Bun.spawn({
-    cmd: ["bun", entry, "serve"],
-    env: { ...process.env, WISP_HOME: home, SHELL: shell },
-    // Ignored, not piped: nothing here reads them, and a full pipe buffer
-    // would stall the very daemon under test (a review's note).
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  // A file, not a pipe: nothing reads the output while the checks run, and a
+  // full pipe buffer would stall the very daemon under test (a review's note).
+  // It is kept rather than ignored because a daemon that dies mid-run
+  // otherwise surfaces only as the next fetch's ConnectionRefused.
+  const output = openSync(log, "a", 0o600);
+  let daemon: Bun.Subprocess;
+  try {
+    daemon = Bun.spawn({
+      cmd: ["bun", entry, "serve"],
+      env: { ...process.env, WISP_HOME: home, SHELL: shell },
+      stdout: output,
+      stderr: output,
+    });
+  } finally {
+    closeSync(output);
+  }
   const origin = `http://127.0.0.1:${port}`;
   for (let attempt = 0; attempt < 100; attempt++) {
     const health = await fetch(`${origin}/api/health`).catch(() => null);
@@ -495,9 +503,29 @@ async function checkFraming(page: Page, attackerOrigin: string): Promise<void> {
   check("the browser says why it refused the frame", refusal.length > 0, "no framing refusal was logged");
 }
 
+/**
+ * What a run that threw had established, printed before teardown kills the
+ * daemon. Checks record failures and only report at the end, so an abort
+ * would otherwise hide every earlier failure, and a daemon that died shows up
+ * only as a later fetch that could not connect.
+ */
+async function reportAbort(daemon: Bun.Subprocess | null, log: string): Promise<void> {
+  for (const name of passes) console.error(`  ok   ${name}`);
+  for (const { check: name, detail } of failures) console.error(`  FAIL ${name}: ${detail}`);
+  if (!daemon) console.error("the scratch daemon had not come up yet");
+  else if (daemon.exitCode !== null || daemon.signalCode !== null) {
+    console.error(`the scratch daemon had already exited (code ${daemon.exitCode}, signal ${daemon.signalCode})`);
+  } else console.error("the scratch daemon was still running");
+  const output = await readFile(log, "utf8").catch(() => "");
+  const tail = output.trimEnd().split("\n").slice(-80).join("\n");
+  console.error(tail ? `--- last daemon output ---\n${tail}\n---` : "(the daemon wrote nothing)");
+}
+
 async function main(): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), "wisp-browser-check-home-"));
   const profile = await mkdtemp(join(tmpdir(), "wisp-browser-check-chrome-"));
+  const logs = await mkdtemp(join(tmpdir(), "wisp-browser-check-log-"));
+  const daemonLog = join(logs, "daemon.log");
   const entry = join(import.meta.dir, "..", "wispd", "src", "index.ts");
   let daemon: Bun.Subprocess | null = null;
   let attacker: Bun.Server<undefined> | null = null;
@@ -505,7 +533,7 @@ async function main(): Promise<void> {
   let page: Page | null = null;
 
   try {
-    const started = await startDaemon(home, entry);
+    const started = await startDaemon(home, entry, daemonLog);
     daemon = started.daemon;
     const attackerOrigin = `http://127.0.0.1:${started.port + 1}`;
     attacker = startOtherLocalService(started.port + 1, started.origin);
@@ -535,6 +563,9 @@ async function main(): Promise<void> {
     await checkNoAmbientCredential(page, started.origin);
     await checkOtherLocalPort(page, started.origin, attackerOrigin, started.token);
     await checkFraming(page, attackerOrigin);
+  } catch (error) {
+    await reportAbort(daemon, daemonLog);
+    throw error;
   } finally {
     page?.client.close();
     if (chrome) {
@@ -548,6 +579,7 @@ async function main(): Promise<void> {
     }
     await rm(profile, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
+    await rm(logs, { recursive: true, force: true });
   }
 
   for (const name of passes) console.log(`  ok   ${name}`);
