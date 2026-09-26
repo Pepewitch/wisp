@@ -13,18 +13,45 @@ function chunk(type: string, body: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
-/** An RGB PNG whose every scanline uses `filter` (0 none, 1 sub, 2 up). */
-function encode(width: number, height: number, pixels: Buffer, filter: 0 | 1 | 2, level: number, extra: Buffer[] = []): Buffer {
+type Filter = 0 | 1 | 2 | 3 | 4;
+
+/** The PNG spec's predictor from the byte to the left (a), above (b), and above-left (c). */
+function predict(filter: Filter, a: number, b: number, c: number): number {
+  switch (filter) {
+    case 0:
+      return 0;
+    case 1:
+      return a;
+    case 2:
+      return b;
+    case 3:
+      return Math.floor((a + b) / 2);
+    case 4: {
+      const p = a + b - c;
+      const pa = Math.abs(p - a);
+      const pb = Math.abs(p - b);
+      const pc = Math.abs(p - c);
+      return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+    }
+  }
+}
+
+/** An RGB PNG whose every scanline uses `filter` (0 none, 1 sub, 2 up, 3 average, 4 Paeth). */
+function encode(width: number, height: number, pixels: Buffer, filter: Filter, level: number, extra: Buffer[] = []): Buffer {
   const stride = width * 3;
+  const at = (x: number, y: number) => (x >= 0 && y >= 0 ? pixels[y * stride + x]! : 0);
   const raw = Buffer.alloc(height * (stride + 1));
   for (let y = 0; y < height; y++) {
     raw[y * (stride + 1)] = filter;
     for (let x = 0; x < stride; x++) {
-      const value = pixels[y * stride + x]!;
-      const predicted = filter === 1 ? (x >= 3 ? pixels[y * stride + x - 3]! : 0) : filter === 2 ? (y > 0 ? pixels[(y - 1) * stride + x]! : 0) : 0;
-      raw[y * (stride + 1) + 1 + x] = (value - predicted) & 0xff;
+      raw[y * (stride + 1) + 1 + x] = (at(x, y) - predict(filter, at(x - 3, y), at(x, y - 1), at(x - 3, y - 1))) & 0xff;
     }
   }
+  return png(width, height, raw, level, extra);
+}
+
+/** An RGB PNG around scanlines that are already filtered. */
+function png(width: number, height: number, raw: Buffer, level = 9, extra: Buffer[] = []): Buffer {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
@@ -52,6 +79,40 @@ describe("samePng", () => {
     expect(samePng(a, b)).toBe(true);
     expect(samePng(a, c)).toBe(true);
     expect(decodePng(b)!.pixels.equals(PIXELS)).toBe(true);
+  });
+
+  test("average and Paeth scanlines decode to the pixels they encode", () => {
+    for (const filter of [3, 4] as const) {
+      const encoded = encode(WIDTH, HEIGHT, PIXELS, filter, 6);
+      expect(decodePng(encoded)!.pixels.equals(PIXELS)).toBe(true);
+      expect(samePng(encoded, encode(WIDTH, HEIGHT, PIXELS, 0, 9))).toBe(true);
+    }
+  });
+
+  test("Paeth breaks a tie toward left, then above, before above-left", () => {
+    // In each bottom-right pixel the estimate is equally far from two
+    // neighbours, and preferring above-left would decode 15 instead of 35.
+    const leftWins = Buffer.from([0, 10, 10, 10, 0, 0, 0, 4, 20, 20, 20, 5, 5, 5]); // left 30, above 0, above-left 10
+    const aboveWins = Buffer.from([0, 10, 10, 10, 30, 30, 30, 4, 246, 246, 246, 5, 5, 5]); // left 0, above 30, above-left 10
+    expect([...decodePng(png(2, 2, leftWins))!.pixels]).toEqual([10, 10, 10, 0, 0, 0, 30, 30, 30, 35, 35, 35]);
+    expect([...decodePng(png(2, 2, aboveWins))!.pixels]).toEqual([10, 10, 10, 30, 30, 30, 0, 0, 0, 35, 35, 35]);
+  });
+
+  test("a truncated or corrupt PNG compares unequal instead of throwing", () => {
+    const whole = encode(WIDTH, HEIGHT, PIXELS, 4, 9);
+    const idat = whole.indexOf("IDAT") - 4;
+    const overrun = Buffer.from(whole);
+    overrun.writeUInt32BE(whole.length, idat);
+    const broken = [
+      whole.subarray(0, whole.length - 20), // cut inside IDAT
+      whole.subarray(0, whole.length - 12), // IEND missing
+      overrun, // a chunk longer than the file
+      Buffer.concat([whole.subarray(0, idat), chunk("IDAT", Buffer.from("not zlib")), chunk("IEND", Buffer.alloc(0))]),
+    ];
+    for (const file of broken) {
+      expect(decodePng(file)).toBeNull();
+      expect(samePng(whole, file)).toBe(false);
+    }
   });
 
   test("one changed pixel is a different image", () => {

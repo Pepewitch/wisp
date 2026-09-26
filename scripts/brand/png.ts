@@ -16,15 +16,20 @@ export interface PngImage {
   pixels: Buffer;
 }
 
-/** An 8-bit, non-interlaced PNG's chunks and unfiltered pixels, or null for any other PNG. */
+/**
+ * An 8-bit, non-interlaced PNG's chunks and unfiltered pixels, or null for any
+ * other PNG and for a truncated or corrupt file.
+ */
 export function decodePng(png: Uint8Array): PngImage | null {
   const data = Buffer.from(png.buffer, png.byteOffset, png.byteLength);
   if (data.length < SIGNATURE.length || !data.subarray(0, SIGNATURE.length).equals(SIGNATURE)) return null;
   const chunks: Buffer[] = [];
   const idat: Buffer[] = [];
   let header: Buffer | null = null;
-  for (let at = SIGNATURE.length; at + 12 <= data.length; ) {
+  for (let at = SIGNATURE.length; ; ) {
+    if (at + 12 > data.length) return null;
     const length = data.readUInt32BE(at);
+    if (at + 12 + length > data.length) return null;
     const type = data.subarray(at + 4, at + 8);
     const body = data.subarray(at + 8, at + 8 + length);
     if (type.toString("latin1") === "IDAT") idat.push(body);
@@ -39,7 +44,12 @@ export function decodePng(png: Uint8Array): PngImage | null {
   const channels = CHANNELS[header[9]!];
   if (!channels || header[8] !== 8 || header[12] !== 0) return null;
 
-  const raw = inflateSync(Buffer.concat(idat));
+  let raw: Buffer;
+  try {
+    raw = inflateSync(Buffer.concat(idat));
+  } catch {
+    return null;
+  }
   const stride = width * channels;
   if (raw.length < height * (stride + 1)) return null;
   const pixels = Buffer.alloc(height * stride);
