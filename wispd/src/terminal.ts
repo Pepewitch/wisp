@@ -1,11 +1,14 @@
 import { existsSync } from "node:fs";
 import type { ReadStream } from "node:fs";
 import { userInfo } from "node:os";
+import { basename } from "node:path";
 import {
   clampDimension,
   closePty,
   closePtySlave,
+  foregroundProcessGroup,
   openPty,
+  processName,
   ptyExecArgv,
   readPty,
   resizePty,
@@ -16,15 +19,37 @@ import {
 import { taskEnv } from "./runner";
 import { envForCwd } from "./turn-input";
 import { getTask } from "./store";
+import {
+  addTab,
+  findTab,
+  forgetAllTabs,
+  forgetTabs,
+  noteNaturalExit,
+  noteShell,
+  removeTab,
+  resetTab,
+  sessionKey,
+  ShellConflictError,
+  shellInfo,
+  type ShellInfo,
+  type ShellRecord,
+} from "./terminal-tabs";
 import { TerminalScreen } from "./terminal-screen";
 
 /** Live shells across every task. Each is a real login shell, so this is a resource cap. */
 const MAX_SHELLS = 32;
 /** Shells one task may hold — the terminal pane's tab count, bounded. */
 export const MAX_SHELLS_PER_TASK = 8;
-const IDLE_MS = 30 * 60 * 1000;
-const IDLE_GC_INTERVAL_MS = 60 * 1000;
+/** How often a shell that failed to die is re-checked, so archive's gate can clear. */
+const DYING_SWEEP_INTERVAL_MS = 60 * 1000;
 const KILL_GRACE_MS = 5_000;
+/**
+ * How long after output the foreground program is re-read. A command starting
+ * or finishing always prints (the echoed Return, then the next prompt), so
+ * output is the trigger, and this bounds a chatty build to a few cheap kernel
+ * reads a second rather than one per chunk.
+ */
+const FOREGROUND_PROBE_MS = 250;
 /** The browser renderer is xterm.js, regardless of the daemon's own terminal. */
 export const WEB_TERMINAL_TERM = "xterm-256color";
 
@@ -66,10 +91,14 @@ export function webTerminalEnv(
 export const DISPLACED_MESSAGE =
   "another window attached to this shell — retry to take it back";
 
-/** The sessions map key: one shell per (task, tab), so tabs are real shells. */
-export function sessionKey(taskId: string, shellId: number): string {
-  return `${taskId}:${shellId}`;
-}
+export {
+  listShells,
+  MAX_SHELL_NAME_LENGTH,
+  renameShell,
+  sessionKey,
+  ShellConflictError,
+  type ShellInfo,
+} from "./terminal-tabs";
 
 export interface TerminalClient {
   isOpen(): boolean;
@@ -136,11 +165,13 @@ class TerminalSession {
   /** the daemon's model of the screen — what a reattaching client is sent */
   private readonly screen: TerminalScreen;
   private client: TerminalClient | null = null;
-  private detachedAt = Date.now();
   private finished = false;
   /** Set the moment a kill is asked for, so no new client can be given this shell. */
   private killRequested = false;
+  /** The hangup still waiting on the process, shared by every caller that asks for one meanwhile. */
+  private killing: Promise<void> | null = null;
   private inputQueue: Promise<void> = Promise.resolve();
+  private foregroundProbe: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(
     key: string,
@@ -157,6 +188,7 @@ class TerminalSession {
     this.handle = handle;
     this.pty = handle !== null;
     this.screen = new TerminalScreen(size);
+    this.screen.onTitle((title) => noteShell(key, { title: title.trim() || null }));
 
     if (handle) {
       this.reader = readPty(
@@ -247,8 +279,42 @@ class TerminalSession {
     return this.finished || this.child.exitCode !== null || this.child.signalCode !== null;
   }
 
-  isIdle(now = Date.now()): boolean {
-    return this.client === null && now - this.detachedAt > IDLE_MS;
+  /** A kill is still waiting out its grace period on a process that has not gone yet. */
+  isClosing(): boolean {
+    return this.killing !== null && !this.hasExited();
+  }
+
+  /**
+   * The program running in the foreground, or null while the shell sits at
+   * its prompt. This is what "closing this tab would kill something" means,
+   * and what the tab is named after while it runs.
+   *
+   * The piped fallback has no terminal and so no foreground to ask about; it
+   * reports idle rather than guessing.
+   */
+  foregroundProgram(): string | null {
+    if (!this.handle || !this.isLive()) return null;
+    const group = foregroundProcessGroup(this.handle.masterFd);
+    if (group === null || group === this.child.pid) return null;
+    return processName(group) ?? "a program";
+  }
+
+  /** Clear the daemon's copy of the screen, so a reattach does not bring it back. */
+  clear(client: TerminalClient): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.accepts(client)) {
+        throw new Error(`terminal task ${this.taskId}: client is no longer attached`);
+      }
+      this.screen.clear();
+    });
+  }
+
+  private scheduleForegroundProbe(): void {
+    if (this.foregroundProbe !== null || !this.handle) return;
+    this.foregroundProbe = setTimeout(() => {
+      this.foregroundProbe = null;
+      if (this.isLive()) noteShell(this.key, { program: this.foregroundProgram() });
+    }, FOREGROUND_PROBE_MS);
   }
 
   /**
@@ -265,7 +331,6 @@ class TerminalSession {
     if (this.finished) throw new Error(`terminal task ${this.taskId}: shell has already exited`);
     const displaced = this.client;
     this.client = client;
-    this.detachedAt = 0;
     if (displaced && displaced !== client && displaced.isOpen()) {
       displaced.sendError(DISPLACED_MESSAGE);
     }
@@ -274,7 +339,6 @@ class TerminalSession {
   detach(client: TerminalClient): void {
     if (this.client !== client) return;
     this.client = null;
-    this.detachedAt = Date.now();
   }
 
   accepts(client: TerminalClient): boolean {
@@ -364,8 +428,22 @@ class TerminalSession {
     this.child.kill(sig);
   }
 
-  async kill(): Promise<void> {
-    if (this.finished) return;
+  /**
+   * Hang up, the way a dropped SSH connection does: the foreground job and
+   * the shell get SIGHUP, and the shell passes it on to its jobs. Whatever
+   * was started to survive a hangup — `nohup`, `disown`, `setsid` — does.
+   */
+  kill(): Promise<void> {
+    if (this.finished) return Promise.resolve();
+    this.killing ??= this.hangUp().finally(() => {
+      this.killing = null;
+    });
+    return this.killing;
+  }
+
+  private async hangUp(): Promise<void> {
+    // read BEFORE the flag: a kill-requested session no longer reports one
+    const foreground = this.handle ? foregroundProcessGroup(this.handle.masterFd) : null;
     this.killRequested = true;
     try {
       // SIGHUP, not SIGTERM: an interactive shell IGNORES SIGTERM, and it used
@@ -374,6 +452,16 @@ class TerminalSession {
       // out the grace period before SIGKILL. SIGHUP is what a terminal sends
       // when it goes away, and a shell exits on it.
       this.signal("SIGHUP");
+      // A job under job control leads its own group, which the signal above
+      // does not reach. The kernel hangs the foreground up when the shell
+      // exits anyway; saying it directly does not depend on the shell leaving.
+      if (foreground !== null && foreground !== this.child.pid) {
+        try {
+          process.kill(-foreground, "SIGHUP");
+        } catch {
+          // the job finished in between
+        }
+      }
     } catch (error) {
       throw new Error(`terminal task ${this.taskId}: failed to signal shell: ${messageOf(error)}`, { cause: error });
     }
@@ -425,6 +513,7 @@ class TerminalSession {
     // parsed FIRST and unconditionally: output printed while no browser is
     // attached is exactly the output a reattaching browser needs to see
     this.screen.write(data);
+    this.scheduleForegroundProbe();
     const client = this.client;
     if (!client || !client.isOpen()) return;
     try {
@@ -458,6 +547,10 @@ class TerminalSession {
     // otherwise be handed a shell that is already gone, and openSession would
     // hand back this session instead of starting a replacement.
     this.finished = true;
+    if (this.foregroundProbe !== null) {
+      clearTimeout(this.foregroundProbe);
+      this.foregroundProbe = null;
+    }
     if (this.handle) {
       closePtySlave(this.handle);
       await drained(this.reader);
@@ -466,10 +559,10 @@ class TerminalSession {
       this.reader?.destroy();
       closePty(this.handle);
     }
-    if (sessions.get(this.key) === this) {
-      sessions.delete(this.key);
-      stopIdleGcIfEmpty();
-    }
+    if (sessions.get(this.key) === this) sessions.delete(this.key);
+    // A kill was asked for by whoever now owns the tab's fate (close,
+    // restart, archive); only a shell that ended by itself changes its tab.
+    if (!this.killRequested) noteNaturalExit(this.key, code);
     const client = this.client;
     this.client = null;
     this.screen.dispose();
@@ -505,42 +598,116 @@ const sessions = new Map<string, TerminalSession>();
  * both places on a failed kill, which is what the old code effectively did by
  * skipping its `delete`, would have let a retry report success and delete the
  * worktree out from under a live shell.
+ *
+ * A set of sessions rather than a map by key: a restarted tab's new shell
+ * shares its key with the old one, and neither may evict the other.
  */
-const dying = new Map<string, TerminalSession>();
-let idleTimer: ReturnType<typeof setInterval> | null = null;
+const dying = new Set<TerminalSession>();
 
-function keepIdleGcAlive(): void {
-  if (idleTimer !== null) return;
-  idleTimer = setInterval(() => void idleGc(), IDLE_GC_INTERVAL_MS);
+/** A shell under this id has been asked to die and is still a process. */
+function dyingUnder(key: string, which: (session: TerminalSession) => boolean = () => true): boolean {
+  for (const session of dying) if (session.key === key && which(session)) return true;
+  return false;
 }
 
-function stopIdleGcIfEmpty(): void {
-  if (sessions.size !== 0 || dying.size !== 0 || idleTimer === null) return;
-  clearInterval(idleTimer);
-  idleTimer = null;
+/** Every shell a task still has a process for, live or dying. */
+function ownedShells(prefix: string): [string, TerminalSession][] {
+  const live = [...sessions.entries()];
+  const going = [...dying].map((session): [string, TerminalSession] => [session.key, session]);
+  return [...live, ...going].filter(([key]) => key.startsWith(prefix));
+}
+let sweepTimer: ReturnType<typeof setInterval> | null = null;
+
+function keepSweepAlive(): void {
+  if (sweepTimer !== null) return;
+  sweepTimer = setInterval(sweepDying, DYING_SWEEP_INTERVAL_MS);
 }
 
-async function idleGc(): Promise<void> {
-  const victims = [...sessions.entries()].filter(([, session]) => session.isIdle());
-  for (const [key, session] of victims) {
-    console.error(`[wisp] terminal ${key}: idle shell exceeded 30 minutes; killing it`);
-    try {
-      await killAndRetire(key, session);
-    } catch (error) {
-      console.error(`[wisp] terminal ${key}: idle GC failed: ${messageOf(error)}`);
-    }
+function stopSweepIfEmpty(): void {
+  if (dying.size !== 0 || sweepTimer === null) return;
+  clearInterval(sweepTimer);
+  sweepTimer = null;
+}
+
+/** A shell that lingered past its kill may have gone since; stop tracking it. */
+function sweepDying(): void {
+  for (const session of [...dying]) {
+    if (session.hasExited()) dying.delete(session);
   }
-  // A shell that lingered past its kill may have gone since; stop tracking it.
-  for (const [key, session] of [...dying.entries()]) {
-    if (session.hasExited()) dying.delete(key);
+  stopSweepIfEmpty();
+}
+
+function tabFor(taskId: string, id: number, configuredShell: string | undefined): ShellRecord {
+  return addTab(taskId, id, basename(loginShell(configuredShell)));
+}
+
+/**
+ * Open a new tab. Only the tab: its shell starts when a pane first attaches,
+ * because a shell is born at the size of the pane that shows it.
+ */
+export function createShell(taskId: string, configuredShell?: string): ShellInfo {
+  for (let id = 0; id < MAX_SHELLS_PER_TASK; id++) {
+    const key = sessionKey(taskId, id);
+    // A shell still dying under an id keeps it: its screen, its SSE events
+    // and a late natural exit are all keyed there.
+    if (findTab(key) || dyingUnder(key)) continue;
+    return shellInfo(tabFor(taskId, id, configuredShell));
   }
-  stopIdleGcIfEmpty();
+  throw new ShellConflictError(`a task can hold at most ${MAX_SHELLS_PER_TASK} shells`);
+}
+
+export type ShellKillOutcome =
+  | { kind: "done"; shell: ShellInfo | null }
+  | { kind: "busy"; program: string }
+  | { kind: "missing" };
+
+/** What a kill would interrupt, so a caller can ask before doing it. */
+function busyProgram(key: string): string | null {
+  const session = sessions.get(key);
+  return session?.isLive() ? session.foregroundProgram() : null;
+}
+
+/**
+ * Close a tab and hang up its shell.
+ *
+ * Refuses, naming the program, while something runs in the foreground and
+ * `force` is not set: closing a tab is one click, and a dev server or a build
+ * is not something to lose to a stray one.
+ */
+export async function closeShell(taskId: string, id: number, force: boolean): Promise<ShellKillOutcome> {
+  const key = sessionKey(taskId, id);
+  if (!findTab(key)) return { kind: "missing" };
+  const program = force ? null : busyProgram(key);
+  if (program !== null) return { kind: "busy", program };
+  // Out of the list FIRST, so no client is told about a tab whose shell is
+  // already going.
+  removeTab(key);
+  const session = sessions.get(key);
+  if (session) await killAndRetire(key, session);
+  return { kind: "done", shell: null };
+}
+
+/** Replace a tab's shell with a fresh one, keeping the tab and its name. */
+export async function restartShell(taskId: string, id: number, force: boolean): Promise<ShellKillOutcome> {
+  const key = sessionKey(taskId, id);
+  const record = findTab(key);
+  if (!record) return { kind: "missing" };
+  const program = force ? null : busyProgram(key);
+  if (program !== null) return { kind: "busy", program };
+  const session = sessions.get(key);
+  if (session) await killAndRetire(key, session);
+  resetTab(record);
+  return { kind: "done", shell: shellInfo(record) };
 }
 
 /**
  * Open or reuse the live shell for ONE TAB of a task. Reuse is what makes the
  * pane persistent: a tab switch, a task switch, or a browser reload builds a
  * new websocket, finds this shell still running, and is handed its screen.
+ *
+ * An id with no tab gets one. A client that predates the daemon's tab list
+ * opens shells by attaching, and its shells must still be visible — and
+ * closable — from every newer window.
  *
  * `size` is the arriving pane's real geometry. A new shell is BORN at it, so
  * the very first prompt is drawn for the pane that will show it; an existing
@@ -554,14 +721,21 @@ export function openSession(
   configuredShell?: string,
 ): TerminalSession {
   const key = sessionKey(taskId, shellId);
+  // Attaching mid-hangup would start a second process under the key the
+  // first one is still being retired from. Once the kill has run its course
+  // the id is free again, even for a process that outlived SIGKILL.
+  if (dyingUnder(key, (session) => session.isClosing())) {
+    throw new ShellConflictError("this shell is still closing; try again in a moment");
+  }
   const existing = sessions.get(key);
   if (existing?.isLive()) {
+    if (!findTab(key)) tabFor(taskId, shellId, configuredShell);
     existing.resizeForAttach(size);
     return existing;
   }
   if (existing) sessions.delete(key);
   if (sessions.size >= MAX_SHELLS) {
-    throw new Error(`terminal shell limit reached: maximum ${MAX_SHELLS} concurrent shells`);
+    throw new ShellConflictError(`terminal shell limit reached: maximum ${MAX_SHELLS} concurrent shells`);
   }
   const task = getTask(taskId);
   if (!task) throw new Error(`terminal session cannot open: unknown task ${taskId}`);
@@ -574,48 +748,52 @@ export function openSession(
     configuredShell,
   );
   sessions.set(key, session);
-  keepIdleGcAlive();
+  resetTab(findTab(key) ?? tabFor(taskId, shellId, configuredShell));
   return session;
 }
 
 /**
- * Kill one shell and retire it: out of the reusable map either way, and into
- * `dying` only while its process is still there.
+ * Kill one shell and retire it: out of the reusable map at once, and in
+ * `dying` for as long as its process is still there.
  *
- * The bookkeeping is in a `finally` on purpose. A kill that throws still means
- * "this shell must never be reused", and the old code's `delete`-after-await
- * skipped that, leaking the session AND leaving it reusable.
+ * It moves BEFORE the kill is awaited. The hangup can take the whole grace
+ * period, and other requests are served meanwhile: a shell in neither map is
+ * one `createShell` hands its id to and archive's `killForTask` never sees.
+ * Leaving `dying` is in a `finally`, so a kill that throws still leaves the
+ * lingering process tracked.
  */
 async function killAndRetire(key: string, session: TerminalSession): Promise<void> {
+  if (sessions.get(key) === session) sessions.delete(key);
+  dying.add(session);
+  keepSweepAlive();
   try {
     await session.kill();
   } finally {
-    if (sessions.get(key) === session) sessions.delete(key);
-    if (session.hasExited()) dying.delete(key);
-    else dying.set(key, session);
+    if (session.hasExited()) dying.delete(session);
+    stopSweepIfEmpty();
   }
 }
 
 /** Kill EVERY shell a task holds before its worktree is removed. */
 export async function killForTask(taskId: string): Promise<void> {
   const prefix = `${taskId}:`;
+  forgetTabs(taskId);
   // Dying shells from an earlier attempt are re-checked, so a retried archive
   // stage sees the process that is still there rather than an empty map.
-  const owned = [...sessions.entries(), ...dying.entries()].filter(([key]) => key.startsWith(prefix));
-  for (const [key, session] of owned) {
+  for (const [key, session] of ownedShells(prefix)) {
     if (session.hasExited()) {
-      sessions.delete(key);
-      dying.delete(key);
+      if (sessions.get(key) === session) sessions.delete(key);
+      dying.delete(session);
       continue;
     }
     await killAndRetire(key, session);
   }
-  stopIdleGcIfEmpty();
+  stopSweepIfEmpty();
 }
 
 /** Kill every shell during daemon shutdown. */
 export async function killAll(): Promise<void> {
-  const entries = [...sessions.entries(), ...dying.entries()];
+  const entries = ownedShells("");
   await Promise.all(
     entries.map(async ([key, session]) => {
       try {
@@ -628,7 +806,8 @@ export async function killAll(): Promise<void> {
   for (const [key, session] of entries) {
     if (sessions.get(key) === session) sessions.delete(key);
   }
-  stopIdleGcIfEmpty();
+  forgetAllTabs();
+  stopSweepIfEmpty();
 }
 
 let shuttingDown = false;

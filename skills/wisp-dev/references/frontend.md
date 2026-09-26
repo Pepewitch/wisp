@@ -223,8 +223,9 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   `hover:bg-destructive-hover` (`brightness-110` walks a light-mode violet up
   into its own white label).
 - **One licensed exception.** xterm paints to a canvas and takes JS colours, so
-  `TERMINAL_THEME` in `components/terminal-pane.tsx` holds both scales as hex
-  and follows the store. A theme switch repaints the live terminal in place;
+  `TERMINAL_THEME` in `components/shell-view.tsx` holds both scales as hex
+  and follows the store; the find highlights beside it (`FIND_DECORATIONS`)
+  are the same exception for the same reason. A theme switch repaints the live terminal in place;
   it never rebuilds one, because that would drop a running shell's scrollback.
 
 ## 2. The chip ban
@@ -1235,6 +1236,18 @@ The right column is a vertical split, not tabs: the **task panel** over
 each its own websocket, connecting only while active. A shell with something
 long-running keeps its own dot so a finishing test run is visible without
 switching to it.
+
+The **daemon** keeps the tab list (`useShellTabs`, `taskTerminals`), so every
+window shows the same tabs, and closing a tab hangs its shell up the way
+closing a terminal window or an SSH session does. A close that would stop a
+running program asks first; the daemon names the program, because only it can
+see the shell's foreground. A tab is named for what it runs (a custom name,
+then the foreground program, then the window title, then the shell), and a
+repeated name is numbered in tab order. Numbers only count up, so a new tab is
+never mistaken for the one just closed. Each tab's ⋯ holds rename, find,
+clear, restart and close. Find is ⌘F on Apple platforms and Ctrl+Alt+F
+elsewhere: plain Ctrl+F is readline's, and the terminal never takes a key the
+shell uses.
 
 ### The task panel: Changes · Workflows
 

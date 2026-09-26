@@ -39,6 +39,68 @@
 
 import { readConnectionStorage, writeConnectionStorage } from "./connection-storage";
 import type { DaemonRequestOptions, DaemonTransport } from "./transport";
+import type { ShellInfo } from "./types";
+
+/**
+ * What each tab is called, by shell id.
+ *
+ * A name someone typed wins. Otherwise a tab is named after what it is doing,
+ * the way a terminal app names its tabs: the program in the foreground, then
+ * the title the shell set, then the shell itself. Automatic names that
+ * collide are numbered in tab order (`zsh`, `zsh 2`), because two tabs that
+ * read the same cannot be told apart; a name someone chose is left as typed.
+ */
+export function shellLabels(shells: readonly ShellInfo[]): Map<number, string> {
+  const labels = new Map<number, string>();
+  const seen = new Map<string, number>();
+  for (const shell of shells) {
+    const custom = shell.name?.trim();
+    if (custom) {
+      labels.set(shell.id, custom);
+      continue;
+    }
+    const base = shell.program || shell.title?.trim() || shell.shell || `Shell ${shell.number}`;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    labels.set(shell.id, count === 1 ? base : `${base} ${count}`);
+  }
+  return labels;
+}
+
+/** The hover title: the automatic name's source, so a renamed tab still says what it runs. */
+export function shellTitle(info: ShellInfo, label: string): string {
+  const facts = [info.program ? `running ${info.program}` : null, info.title, info.shell].filter(
+    (fact): fact is string => Boolean(fact) && fact !== label,
+  );
+  return facts.length > 0 ? `${label} — ${facts.join(" · ")}` : label;
+}
+
+/** A Mac, iPhone or iPad, where ⌘ is the app's modifier and Ctrl belongs to the shell. */
+export function isApplePlatform(nav: Pick<Navigator, "platform" | "userAgent"> | undefined = globalThis.navigator): boolean {
+  if (!nav) return false;
+  return /Mac|iPhone|iPad|iPod/.test(nav.platform || nav.userAgent || "");
+}
+
+type ChordEvent = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
+
+/**
+ * Find in the shell: ⌘F on Apple platforms, Ctrl+Alt+F elsewhere.
+ *
+ * Plain Ctrl+F is NOT taken off Linux and Windows: it is readline's
+ * forward-char, and a terminal that ate it would break the shell's own line
+ * editing. `code` rather than `key` for the Alt chord, because Alt turns `f`
+ * into `ƒ` on a Mac layout and into other letters on others.
+ */
+export function isFindChord(event: ChordEvent, apple: boolean): boolean {
+  if (event.shiftKey) return false;
+  if (apple) return event.metaKey && !event.ctrlKey && !event.altKey && (event.key === "f" || event.key === "F");
+  return event.ctrlKey && event.altKey && !event.metaKey && event.code === "KeyF";
+}
+
+/** ⌘K clears the terminal on Apple platforms. Elsewhere Ctrl+K is readline's kill-line, so it stays the shell's. */
+export function isClearChord(event: ChordEvent, apple: boolean): boolean {
+  return apple && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "k" || event.key === "K");
+}
 
 export interface TerminalHello {
   pty: boolean;
@@ -269,6 +331,16 @@ export class TerminalConnection {
   sendInput(data: string): void {
     if (!this.active() || !this.socket || this.socket.readyState !== WS_OPEN) return;
     this.socket.send(JSON.stringify({ type: "in", data }));
+  }
+
+  /**
+   * Clear the daemon's copy of the screen along with the pane's, so the next
+   * reattach does not bring back what was just cleared. Only a daemon that
+   * declares `taskTerminals` understands this frame.
+   */
+  sendClear(): void {
+    if (!this.active() || !this.socket || this.socket.readyState !== WS_OPEN) return;
+    this.socket.send(JSON.stringify({ type: "clear" }));
   }
 
   /** Send a fit-driven resize; no-op when stale or not yet open. */

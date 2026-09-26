@@ -68,6 +68,20 @@ export class TerminalScreen {
     this.pending = this.pending.then(() => parsed);
   }
 
+  /** The window title the shell sets with OSC 0/2; the tab strip names a shell by it. */
+  onTitle(listener: (title: string) => void): void {
+    this.term.onTitleChange(listener);
+  }
+
+  /**
+   * Drop the scrollback, keeping the cursor's line as the new top, exactly as
+   * the pane's own xterm does. Queued behind pending writes so output already
+   * sent is cleared along with the rest rather than landing after it.
+   */
+  clear(): void {
+    this.pending = this.pending.then(() => this.term.clear());
+  }
+
   resize(size: PtySize): void {
     if (size.cols === this.term.cols && size.rows === this.term.rows) return;
     this.term.resize(size.cols, size.rows);

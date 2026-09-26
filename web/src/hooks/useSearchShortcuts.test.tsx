@@ -81,6 +81,29 @@ describe("the search chords", () => {
     expect(intents.findRequest()?.seq).toBe(before + 1)
   })
 
+  it("leaves ⌘F and Ctrl+F to a focused terminal, but still searches projects from one", () => {
+    const search = mount()
+    const before = intents.findRequest()?.seq ?? 0
+    const pane = document.createElement("div")
+    pane.setAttribute("data-terminal", "")
+    const input = document.createElement("textarea")
+    pane.append(input)
+    document.body.append(pane)
+    const pressIn = (init: KeyboardEventInit) => {
+      const event = new KeyboardEvent("keydown", { ...init, cancelable: true, bubbles: true })
+      input.dispatchEvent(event)
+      return event
+    }
+
+    expect(pressIn({ key: "f", metaKey: true }).defaultPrevented).toBe(false)
+    pressIn({ key: "f", ctrlKey: true })
+    expect(intents.findRequest()?.seq).toBe(before)
+
+    pressIn({ key: "F", metaKey: true, shiftKey: true })
+    expect(search.request).toHaveBeenCalledOnce()
+    pane.remove()
+  })
+
   it("stops listening once the shell unmounts", () => {
     function Harness() {
       useSearchShortcuts(intents, inertProjectSearch())

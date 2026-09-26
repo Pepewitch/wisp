@@ -260,6 +260,13 @@ it; it mints no credential. Every other API route requires
   unauthenticated, is asked for the token in an `auth_required` frame, and
   attaches only after `{"type":"auth","token":"…"}`. Refused outright from a
   foreign `Origin`
+- `GET|POST /api/tasks/:id/terminals` — the task's shell tabs, or open one
+  (`?ifEmpty=1` returns the first tab instead when one exists) ·
+  `PATCH /api/tasks/:id/terminals/:shell` (`{name}`; `null` resets it) ·
+  `DELETE /api/tasks/:id/terminals/:shell` closes the tab and hangs up its
+  shell, and `POST …/:shell/restart` replaces it. Both answer 409 with
+  `{error, program}` while a program runs in the foreground, unless the
+  request adds `?force=1`
 
 Errors are JSON `{error}` with a named reason; 400 = bad request, 409 = state
 refusal (archived, turn running, unsaved work), 404 = no such task.

@@ -17,6 +17,7 @@ import type {
   PullRequestStatus,
   RepoInfo,
   SearchResponse,
+  ShellInfo,
   StatusEntry,
   SuffixPrompt,
   TaskSkills,
@@ -411,6 +412,16 @@ export function useTaskWorkflows(taskId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...qk.task(taskId ?? ""), "workflows"],
     queryFn: () => transport.request<Workflow[]>(`/api/tasks/${taskId}/workflows`),
+    enabled: enabled && taskId !== null,
+  });
+}
+
+/** GET /api/tasks/:id/terminals — the task's shell tabs, kept by the daemon and pushed by `terminals` events. */
+export function useTaskShells(taskId: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: qk.terminals(taskId ?? ""),
+    queryFn: () => transport.request<ShellInfo[]>(`/api/tasks/${taskId}/terminals`),
     enabled: enabled && taskId !== null,
   });
 }
