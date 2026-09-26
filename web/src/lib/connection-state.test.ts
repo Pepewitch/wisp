@@ -22,6 +22,24 @@ describe("connection-scoped external stores", () => {
     stopSecond()
   })
 
+  it("distinguishes a routine stream handoff from a failed stream", () => {
+    const store = connectionStore("connection-stream-handoff")
+    store.opening("events")
+    expect(store.status()).toBe("opening")
+    expect(store.isLive()).toBe(false)
+
+    store.set("log", false)
+    expect(store.status()).toBe("failed")
+    store.opening("log")
+    expect(store.status()).toBe("failed")
+
+    store.set("log", true)
+    expect(store.status()).toBe("opening")
+    store.set("events", true)
+    expect(store.status()).toBe("live")
+    expect(store.isLive()).toBe(true)
+  })
+
   it("delivers focus intents only inside their connection", () => {
     const first = uiIntentsFor("connection-intents-one")
     const second = uiIntentsFor("connection-intents-two")

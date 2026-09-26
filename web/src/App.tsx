@@ -159,18 +159,17 @@ function useDaemonEventsBridge(
   reconnectRequests: number
 ) {
   const connection = connectionStore(runtime.connectionId)
-  useEffect(
-    () =>
-      connectEventsBridge({
-        client: queryClient,
-        transport: runtime.transport,
-        qk: runtime.qk,
-        getSelectedId: () => selectedRef.current,
-        onConnectionChange: (live) => connection.set("events", live),
-        onReconnect,
-      }),
-    [runtime, selectedRef, connection, onReconnect, reconnectRequests]
-  )
+  useEffect(() => {
+    connection.opening("events")
+    return connectEventsBridge({
+      client: queryClient,
+      transport: runtime.transport,
+      qk: runtime.qk,
+      getSelectedId: () => selectedRef.current,
+      onConnectionChange: (live) => connection.set("events", live),
+      onReconnect,
+    })
+  }, [runtime, selectedRef, connection, onReconnect, reconnectRequests])
 }
 
 function useReconnectRequests(connectionId: string): number {
