@@ -9,6 +9,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ledgerPath, minorLine } from "./release-github";
+import { diskLedgers, limitsLedgerMinor, renderLedgerSkeleton } from "./release-ledger";
 import { assertTaggableVersion } from "./release-versions";
 import { releaseAssetsInReadingOrder, releaseNotesPath } from "./release-promotion";
 
@@ -203,6 +205,17 @@ if (import.meta.main) {
     if (existsSync(path)) throw new Error(`release notes already exist: ${path}`);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, renderReleaseNotes(version, since, changes, migrations));
+    // The first release of a minor line also starts its qualification ledger,
+    // introduced as prepared-but-unpublished; the closeout turns that into the
+    // publication record. release:check refuses a branch whose ledger is
+    // missing, so write it here rather than as a separate step to forget.
+    const ledger = resolve(ROOT, ledgerPath(version));
+    if (!existsSync(ledger)) {
+      const previousMinor = minorLine(since.replace(/^v/, ""));
+      const limits = limitsLedgerMinor(diskLedgers(ROOT).ledgers()) ?? previousMinor;
+      writeFileSync(ledger, renderLedgerSkeleton(version, previousMinor, limits));
+      console.log(`wrote ${ledger}: a new minor line's ledger, marked prepared until the closeout`);
+    }
     const internal = changes.filter((change) => change.internal).length;
     console.log(
       `wrote ${path} with ${changes.length} change(s) since ${since}` +
