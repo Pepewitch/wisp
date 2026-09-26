@@ -72,6 +72,7 @@ const DARWIN = process.platform === "darwin";
 const TIOCSWINSZ = DARWIN ? 0x80087467n : 0x5414n;
 const TIOCGWINSZ = DARWIN ? 0x40087468n : 0x5413n;
 const TIOCSCTTY = DARWIN ? 0x20007461n : 0x540en;
+const FIOCLEX = DARWIN ? 0x20006601n : 0x5451n;
 const O_RDWR = 2;
 const O_NOCTTY = DARWIN ? 0x00020000 : 0o400;
 
@@ -107,6 +108,7 @@ const SYMBOLS = {
   ptsname: { args: [FFIType.int], returns: FFIType.ptr },
   open: { args: [FFIType.ptr, FFIType.int, FFIType.u32], returns: FFIType.int },
   close: { args: [FFIType.int], returns: FFIType.int },
+  dup: { args: [FFIType.int], returns: FFIType.int },
   setsid: { args: [], returns: FFIType.int },
   dup2: { args: [FFIType.int, FFIType.int], returns: FFIType.int },
   execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
@@ -183,6 +185,17 @@ function fail(operation: string): never {
   throw new Error(`pty: ${operation} failed${code ? ` (errno ${code})` : ""}`);
 }
 
+/**
+ * Every descriptor this module opens is the daemon's alone, and none of
+ * posix_openpt, open without O_CLOEXEC, or dup sets close-on-exec. A process
+ * started later that inherited one would hold that pty open after its
+ * session. FIOCLEX takes no argument, so the variadic ioctl problem described
+ * at IOCTL_SYMBOLS does not apply to it.
+ */
+function closeOnExec(fd: number): void {
+  if (ioctl()(fd, FIOCLEX, 0) !== 0) fail("ioctl(FIOCLEX)");
+}
+
 /** A NUL-terminated C string; the Buffer must outlive the call that reads it. */
 function cstr(value: string): Buffer {
   return Buffer.from(`${value}\0`, "utf8");
@@ -218,6 +231,7 @@ export function openPty(size: PtySize): PtyHandle {
   // process to claim, and closing it again would take out an unrelated fd.
   const handle: PtyHandle = { masterFd, slaveFd: -1, slavePath: "" };
   try {
+    closeOnExec(masterFd);
     if (c.grantpt(masterFd) !== 0) fail("grantpt");
     if (c.unlockpt(masterFd) !== 0) fail("unlockpt");
     const namePtr = c.ptsname(masterFd);
@@ -230,6 +244,7 @@ export function openPty(size: PtySize): PtyHandle {
     // has opened fails with ENOTTY.
     handle.slaveFd = c.open(ptr(cstr(handle.slavePath)), O_RDWR | O_NOCTTY, 0);
     if (handle.slaveFd < 0) fail(`open(${handle.slavePath})`);
+    closeOnExec(handle.slaveFd);
     resizePty(handle, size);
     return handle;
   } catch (error) {
@@ -306,21 +321,32 @@ export function closePty(handle: PtyHandle): void {
 }
 
 /**
- * Stream the master fd. `node:fs` read streams are the only pump that works
+ * Stream the master. `node:fs` read streams are the only pump that works
  * here: `Bun.file(fd).stream()` yields nothing at all on a character device,
  * measured repeatedly, and a synchronous read would block the daemon.
+ *
+ * The stream reads its OWN duplicate of the master and is that duplicate's
+ * only closer. `autoClose: false` does not make a stream leave its fd alone:
+ * `destroy()` still closes it (Node semantics, and Bun's), asynchronously and,
+ * with a read in flight, only once that read returns. Sharing `masterFd` with
+ * `closePty` therefore closed one number twice, and whichever close came
+ * second landed on whatever the process had opened in between — the next
+ * shell's master, a socket, a spawn pipe. CI saw exactly those: `Bun.spawnSync`
+ * failing with EBADF, a new shell's child unable to open its slave, a terminal
+ * socket erroring on attach.
  */
 export function readPty(
   masterFd: number,
   onData: (chunk: Buffer) => void,
   onError: (error: Error) => void,
 ): ReadStream {
-  const stream = createReadStream("", { fd: masterFd, autoClose: false });
+  const readerFd = dupMaster(masterFd);
+  const stream = createReadStream("", { fd: readerFd, autoClose: true });
   stream.on("data", (chunk) => onData(chunk as Buffer));
   stream.on("error", (error) => {
     // Both of these mean "this pty is finished", not "something went wrong":
     // EIO is how the kernel reports the last slave closing, i.e. the shell
-    // exited, and EBADF is the stream's own teardown racing the fd close.
+    // exited, and EBADF is a read issued as the stream tears itself down.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EIO" || code === "EBADF") return;
     onError(error);
@@ -383,8 +409,31 @@ export function processName(pid: number): string | null {
   return new TextDecoder().decode(buffer.subarray(0, length)) || null;
 }
 
-/** Write to the master. Async so a large paste cannot block the event loop. */
-export function writePty(masterFd: number, data: string | Uint8Array): Promise<void> {
+/** A close-on-exec duplicate of the master, for exactly one owner to close. */
+function dupMaster(masterFd: number): number {
+  const c = libc();
+  const fd = c.dup(masterFd);
+  if (fd < 0) fail("dup(master)");
+  try {
+    closeOnExec(fd);
+  } catch (error) {
+    c.close(fd);
+    throw error;
+  }
+  return fd;
+}
+
+/**
+ * Write to the master. Async so a large paste cannot block the event loop.
+ *
+ * Each chunk is written through its own duplicate of the master, closed when
+ * that write returns. `fs.write` makes the syscall later, on a worker thread,
+ * with the number it was handed; handed `masterFd` itself, a chunk queued
+ * before `closePty` would land in whatever was opened next under that number.
+ * The handle is still checked before every chunk, so a paste that is going
+ * when the shell exits stops at `closePty`.
+ */
+export function writePty(handle: PtyHandle, data: string | Uint8Array): Promise<void> {
   const buffer = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
   return new Promise((resolve, reject) => {
     const step = (offset: number): void => {
@@ -392,7 +441,19 @@ export function writePty(masterFd: number, data: string | Uint8Array): Promise<v
         resolve();
         return;
       }
-      fsWrite(masterFd, buffer, offset, buffer.length - offset, null, (error, written) => {
+      if (handle.masterFd < 0) {
+        reject(new Error("pty: write after the pty was closed"));
+        return;
+      }
+      let fd: number;
+      try {
+        fd = dupMaster(handle.masterFd);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      fsWrite(fd, buffer, offset, buffer.length - offset, null, (error, written) => {
+        libc().close(fd);
         if (error) {
           reject(error);
           return;

@@ -11,103 +11,174 @@ qualification do not imply permission to publish.
 
 ## The short path
 
-These commands are the release. Everything after this section explains what
-they enforce, and is the manual fallback when something fails.
+One release is two pull requests and the six steps below. Each step's command
+stops at the first problem it cannot fix and names the command that fixes it;
+when it passes, move to the next step. Do not skip a failed gate, and do not
+invent extra ones — everything after this section explains what the commands
+enforce and is the manual fallback when one of them fails.
+
+A fetch that fails with `would clobber existing tag` means your copy of the
+tag it names is not the one on origin. For a `v*` tag, origin's is the
+published one: replace yours with
+`git fetch --force origin refs/tags/<tag>:refs/tags/<tag>` and run the command
+again. `release:closeout` does this itself for the tag it records.
+
+### 1. Prepare the release branch
 
 ```sh
 version=0.0.0                        # an unused regular version, or 0.0.0-alpha.N
+git fetch origin --tags
 git switch -c "release/$version" origin/main
 bun install --frozen-lockfile
-
 bun run version:set "$version"       # writes every version site; refuses a bad version
-bun run release:notes "$version"     # scaffolds the notes; edit every TODO
-#                                      then update README/INSTALL wording that
-#                                      names the current release
-
-bun run check                        # includes version:check, docs, pins, lint, types, tests
-bun run brand:check && bun run smoke && bun run build && bun run test:evaluator
+bun run release:notes "$version"     # scaffolds the notes, and the ledger of a new minor line
 ```
 
-`brand:check` rasterizes the PNG assets with headless Chrome. On a host where
-Chrome hangs headless (first-run dialogs, GPU sandboxes), run
-`CHROME_PATH=/nonexistent bun run brand:check`: every tracked SVG, PDF, and
-text asset is still verified, and the PNG steps are skipped with a warning.
-Accept that only when no PNG asset changes in the release and tag CI runs the
-full gate, which it always does.
+Then do the judgment work the scaffolds cannot:
 
-The installer and activation contracts (`test:install`, `test:activation`)
-need a container runtime. `.github/workflows/release-candidate.yml` builds the
-real Linux artifact and validates the standalone updater verifier on relevant
-pull requests and on every `main` commit. The tag workflow refuses publication
-until that exact commit's `linux-contract` and `update-verifier` checks pass.
-This keeps a missing local container
-runtime from turning an installer or activation failure into an unpublished
-tag recovery. When a change touches the release contract, keep failure-path
-diagnostics (the daemon's wait status and cgroup memory/pid counters) in the
-same PR as the change.
+- Edit every `TODO` in `docs/v<major>.<minor>/RELEASE-NOTES-<version>.md`:
+  the summary paragraph, what each change means for a user, and the limits
+  specific to this release. The notes become an immutable release body, so
+  `docs:check` refuses a leftover `TODO` rather than letting it ship.
+- A new minor line also starts `docs/v<major>.<minor>/QUALIFICATION.md`,
+  marked prepared until the closeout. Read its introduction.
+- If `main` moved since the branch was taken, `git rebase origin/main` and
+  make sure the notes cover what landed. A change that lands after the tag
+  is pushed belongs to the next release.
 
-`main` does not hold still while the gates run. If something lands, take it
-before opening the PR, so the release describes what it actually ships:
+Commit the release preparation before moving on.
+
+### 2. Gate the branch
 
 ```sh
-git fetch origin
-git rebase origin/main
+bun run release:check "$version"
 ```
 
-Re-run the gates after a rebase, and edit the notes by hand if what landed
-changes what this release ships — `release:notes` refuses to overwrite a file
-that already exists. A change that lands after the tag is pushed belongs to the
-next release.
+It refuses the mistakes that are expensive once a tag exists — a reused or
+non-newer version, a branch behind `origin/main`, unfinished `TODO`s, an
+install document that still names the previous release — then runs the source
+gates cheapest first: whitespace, brand assets, the evaluator suite,
+`bun run check` (docs, version pins, workflow pins, lint, types, all tests),
+the smoke test, and a full build. Each gate logs to
+`dist/release-check/<gate>.log`; only a failing gate's tail is printed.
 
-Open the release-preparation PR and land it with a squash, so the release
-commit is one commit that carries one synchronized version:
+The brand gate rasterizes the PNG assets with headless Chrome, and no CI job
+renders them, so `release:check` decides: when nothing the PNGs are drawn from
+changed since the previous tag (the `scripts/brand/` geometry, the assets
+themselves, the desktop icons, the Geist font package), it skips the render
+and still verifies every other asset. When an input did change, the render
+runs (a few seconds) and must pass; it compares pixels, so Chrome encoding
+the same image differently is not a failure. If it reports a PNG `STALE`, a
+change since the previous release altered what the PNGs show without
+regenerating them. That is a bug on `main`, not part of the release: stop and
+report it, so the fix (`bun run brand`, with the new images reviewed) lands
+in its own PR before the release. Never ship re-rendered PNGs no gate has
+checked.
+
+The installer and activation contracts (`test:install`, `test:activation`)
+need a container runtime and are not run here; the release-candidate workflow
+runs them on the exact `main` commit, and step 4 requires them. Activation
+also needs the container's cgroup to report `memory.peak` (cgroup v2, Linux
+5.19 or later): it fails rather than pass without checking its memory budget.
+When a change touches the release contract, keep failure-path diagnostics (the
+daemon's wait status and cgroup memory/pid counters) in the same PR as the
+change.
+
+A gate that fails in code this release did not change is a flake: run
+`release:check` once more. If the same gate fails twice, stop and report it —
+rerunning until it passes is how a real regression ships.
+
+### 3. Land the release PR
+
+Open the PR (title it `release: prepare <version>`; the body says what the
+release ships and what the validation evidence was), wait for its checks, and
+land it with a squash so the release commit is one commit carrying one
+synchronized version:
 
 ```sh
 gh pr merge <number> --squash --delete-branch
 ```
 
-Then publish from the merged commit. The release worktree can live anywhere,
-including nested inside another worktree; publishing requires only that the
-tag points at a clean `origin/main` commit, not a particular checkout.
-`main` is normally checked out in the primary worktree, so `git switch main`
-fails there; detach instead:
+### 4. Tag the green commit
 
 ```sh
-git fetch origin && git switch --detach origin/main
-bun run build
-test -z "$(git status --porcelain=v1 --untracked-files=normal)"
-test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-# Also require release-candidate / linux-contract and update-verifier to have
-# passed for this exact origin/main commit. The tag workflow independently
-# enforces both.
-
-git tag -a "v$version" -m "Wisp $version"
-git push origin "refs/tags/v$version"   # this is the publish authorization
+bun run release:ready "$version"
 ```
 
-The tag push is the only irreversible step, and nothing above it publishes
-anything. `.github/workflows/release.yml` then builds, signs, notarizes,
-publishes the immutable release, and promotes the tap.
+It finds the commit on `origin/main` that set the version, waits for that
+commit's `test`, `browser-security`, `supply-chain`, `linux-contract`, and
+`update-verifier` checks, and prints two commands: the annotated tag for
+exactly that commit, and the push. Tagging a named commit means a change that
+lands on `main` in the meantime ships in the next release, and no local state
+can leak into a release.
 
-Then record the outcome. The release notes describe the artifact gates as
-pending, so the qualification ledger is where the result actually lands:
+The push is the only irreversible step and is the explicit publish
+authorization; nothing before it publishes anything. A failed check gets one
+rerun (`release:ready` prints the command); a check that fails again after its
+rerun is a real failure — stop and report it instead of rerunning until it
+passes. The tag workflow independently refuses a tag whose commit lacks the
+`linux-contract` and `update-verifier` results.
+
+### 5. Watch the publication
+
+`.github/workflows/release.yml` builds, signs, notarizes, publishes the
+immutable release, and promotes the tap — about ten minutes to the GitHub
+release, with promotion following as a separate job:
+
+```sh
+run=""
+until [ -n "$run" ]; do            # the run appears a few seconds after the push
+  sleep 5
+  run=$(gh run list --workflow release.yml --branch "v$version" --event push --json databaseId --jq '.[0].databaseId')
+done
+gh run watch "$run" --exit-status --compact --interval 30
+```
+
+The watch takes 10–15 minutes, so give the command a 20-minute timeout (or
+run it in the background and check back). It exits non-zero if a job fails;
+`gh run view "$run" --log-failed` shows why.
+
+If the run fails before the release exists, delete the tag
+(`git push origin ":refs/tags/v$version"`), fix, and re-tag: an unpublished
+tag is still mutable. If `promote` fails after the release is public, never
+rebuild, replace assets, or cut a new version. Rerun the failed job once
+(`gh run rerun "$run" --failed`); if it fails again, dispatch the recovery,
+which runs the current promotion code from `main` against the immutable tag:
+
+```sh
+gh workflow run release.yml --ref main -f tag="v$version"
+```
+
+### 6. Record the publication
 
 ```sh
 git switch -c "release/$version-closeout" origin/main
-# add a "## <version> publication" section to docs/v<major>.<minor>/QUALIFICATION.md:
-# the workflow run and its job outcomes, the tag's commit and its PR,
-# the promotion receipt time and tap commit, and anything the gates do NOT
-# prove. A superseded release keeps its evidence and loses only claims that
-# are now false, such as "latest".
-#
-# When no maintainer qualification ran for the release, record only what the
-# workflow's jobs prove (the same gate table, citing the run), state the
-# promotion commit and time, and name the gates that did not run —
-# fresh-install and upgrade receipts, an updater journey across the version,
-# the paid evaluator panel. Do not copy a prior release's two-version
-# receipt or claim checks nobody performed; the 0.5.6 record is the example.
-gh pr merge <number> --squash --delete-branch
+bun run release:closeout "$version"
 ```
+
+The release notes describe the artifact gates as pending, so the qualification
+ledger is where the outcome lands. The closeout reads the release, its
+workflow jobs, the promotion receipt, the release PR's checks, and the
+migrations itself, verifies anonymously that the tap and both update channels
+serve the version, and writes the `## <version> publication` section into
+`docs/v<major>.<minor>/QUALIFICATION.md`, demoting the predecessor's claims
+that are now false. Whatever still needs judgment is a `TODO` in the entry —
+the highlights, why a rerun or recovery happened, a release candidate run it
+cannot show passed before the tag, the checks nobody ran — and the command
+ends by listing each one as `path:line`. Resolve every one
+(`bun run docs:check` refuses leftovers), review the diff, and land the
+closeout PR (`docs(release): record <version> publication`) with a squash.
+`--dry-run` prints the same edits as a diff and writes nothing, from any
+branch.
+
+If it reports that the tap does not serve the version yet, promotion is still
+converging: wait a minute and run it again. If it reports that promotion has
+not finished, go back to step 5's recovery.
+
+A superseded release keeps its evidence and loses only claims that are now
+false, such as "latest". Never copy a prior release's qualification receipts
+or claim checks nobody performed; the 0.5.6 record is the example of recording
+an automated-only publication honestly.
 
 ## Release invariants
 
@@ -345,6 +416,9 @@ bun run release:notes "$version"
 That scaffolds `docs/v<major>.<minor>/RELEASE-NOTES-<version>.md` with the
 required sections, the exact ten-asset list, install commands already carrying
 the new version, and one bullet per pull request merged since the previous tag.
+The first release of a minor line also starts
+`docs/v<major>.<minor>/QUALIFICATION.md`, introduced as prepared until the
+closeout turns it into the publication record.
 Every judgment call is a `TODO` marker: the summary paragraph, what each change
 means for a user, any database migration and which older daemon can no longer
 reopen the profile, and the limits specific to this release. Edit all of them —
@@ -374,7 +448,9 @@ assets. Before public verification, describe unrun gates as pending.
 
 ## 3. Run the source gates
 
-Run the complete repository gate and the release-specific checks. `bun run
+The short path runs all of these through `bun run release:check`, which adds
+the release-branch preconditions and the PNG-render decision on top. Run the
+complete repository gate and the release-specific checks. `bun run
 check` includes `version:check`, so a partially applied version bump fails
 here:
 

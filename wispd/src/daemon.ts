@@ -55,9 +55,14 @@ import { pwaResponse } from "./pwa";
 // supported serve/test/build entry points generate it first. Bun embeds this
 // literal import in compiled release binaries, so production needs no sibling
 // asset directory. Everything the page needs, xterm included, is inlined.
+//
+// Embed it as a file and read it, never as a `type: "text"` import: in a
+// compiled binary the text form of this multi-megabyte bundle raised startup
+// RSS to about 3 GB, which stalls the daemon before it listens on a host (or
+// the release activation container) with less memory than that.
 async function bundledAppHtml(): Promise<string> {
-  const bundle = await import("../../web/ui-dist/index.html", { with: { type: "text" } });
-  return bundle.default as unknown as string;
+  const bundle = await import("../../web/ui-dist/index.html", { with: { type: "file" } });
+  return await Bun.file(bundle.default as unknown as string).text();
 }
 
 // The route handlers live in ./routes now, but tests and the CLI import these
@@ -487,8 +492,7 @@ async function serveOwned(
         const url = new URL(req.url);
         const path = url.pathname;
         if (path === "/" || path === "/index.html") {
-          // typed as HTMLBundle by @types/bun, but `with { type: "text" }` yields a string at runtime
-          return new Response(appHtml as unknown as string, {
+          return new Response(appHtml, {
             headers: {
               "content-type": "text/html; charset=utf-8",
               "cache-control": "no-store",

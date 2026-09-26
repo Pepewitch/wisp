@@ -396,7 +396,7 @@ class TerminalSession {
   private async writeAttached(data: string | Uint8Array): Promise<void> {
     try {
       if (this.handle) {
-        await writePty(this.handle.masterFd, data);
+        await writePty(this.handle, data);
         return;
       }
       const stdin = this.child.stdin as Bun.FileSink;
@@ -554,8 +554,8 @@ class TerminalSession {
     if (this.handle) {
       closePtySlave(this.handle);
       await drained(this.reader);
-      // destroy first: the stream holds the master fd, and closing it from
-      // under an active read is an EBADF the reader would report as a fault
+      // The reader closes only its own duplicate (see readPty), so this
+      // order cannot close any number twice.
       this.reader?.destroy();
       closePty(this.handle);
     }

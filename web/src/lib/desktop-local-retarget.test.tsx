@@ -312,7 +312,9 @@ describe("Local native target revisions", () => {
     )
 
     await waitFor(() => expect(callbacks.onSettled).toHaveBeenCalledOnce())
-    expect(callbacks.onMount).toHaveBeenCalledTimes(2)
+    // As with reconnect, the remount follows the new revision rather than the
+    // settled promise, so it can commit a flush after onSettled runs.
+    await waitFor(() => expect(callbacks.onMount).toHaveBeenCalledTimes(2))
     expect(callbacks.onUnmount).toHaveBeenCalledTimes(1)
     expect(readDraft("local", "synthetic-task")).toBe("")
   })

@@ -9,8 +9,8 @@ retained below.
 ## 0.5.18 publication
 
 **Published and promoted on 2026-09-23.**
-[Wisp 0.5.18](https://github.com/Pepewitch/wisp/releases/tag/v0.5.18) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.5.18](https://github.com/Pepewitch/wisp/releases/tag/v0.5.18) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 08:27:52 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`0e00922905db2f507c82deb1414709a4ee9d7aa6`](https://github.com/Pepewitch/wisp/commit/0e00922905db2f507c82deb1414709a4ee9d7aa6),
@@ -45,8 +45,8 @@ for both channels.
 
 Promotion completed at 08:57:49 UTC with Homebrew tap commit
 [`b307eb1d55a08a4bbff8b5a19d9519a48105b95a`](https://github.com/Pepewitch/homebrew-tap/commit/b307eb1d55a08a4bbff8b5a19d9519a48105b95a).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.5.18.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.5.18 until 0.6.0 was promoted.
 
 0.5.18 adds no database migration. This is a fully automated publication: no
 maintainer qualification — fresh-install or upgrade receipts, a Desktop

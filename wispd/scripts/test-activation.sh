@@ -31,6 +31,8 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
   --env WISP_COMMIT="$COMMIT" \
   --env WISP_INSTALL_SERVICE=no \
   "$IMAGE" /bin/bash -euo pipefail -c '
+    MEMORY_BUDGET_MIB=512
+
     cgroup_diagnostics() {
       for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.events; do
         if test -r "$f"; then
@@ -38,6 +40,20 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
           cat "$f" >&2
         fi
       done
+      # anon is process memory, shmem is the tmpfs mounts (the installed
+      # binary lives there), and file is reclaimable page cache.
+      if test -r /sys/fs/cgroup/memory.stat; then
+        echo "/sys/fs/cgroup/memory.stat (excerpt):" >&2
+        grep -E "^(anon|file|shmem|kernel) " /sys/fs/cgroup/memory.stat >&2 || true
+      fi
+    }
+
+    # The memory budget at the end can only be checked where the cgroup
+    # reports its peak. Anywhere else, stop now instead of passing without it.
+    test -r /sys/fs/cgroup/memory.peak || {
+      cgroup_diagnostics
+      echo "activation cannot check its $MEMORY_BUDGET_MIB MiB memory budget: /sys/fs/cgroup/memory.peak is unreadable (it needs cgroup v2 on Linux 5.19 or later)" >&2
+      exit 1
     }
 
     mkdir -p "$HOME/fake-bin" /workspace/repo
@@ -129,5 +145,17 @@ EOF
     grep -q "^ok   activation: ready for a first task with droid" "$HOME/doctor.log"
     ! grep -q "^fail " "$HOME/doctor.log"
     cat "$HOME/doctor.log"
+
+    # A daemon that needs most of this container to start does not fail
+    # cleanly: the cgroup reclaims instead of killing, and readiness times out
+    # only on the runs where garbage collection falls behind. The budget makes
+    # that regression fail every time, with its cause printed.
+    PEAK_MIB=$(( $(cat /sys/fs/cgroup/memory.peak) / 1048576 ))
+    echo "activation memory peak: $PEAK_MIB MiB (budget $MEMORY_BUDGET_MIB MiB of 1536 MiB)"
+    [ "$PEAK_MIB" -le "$MEMORY_BUDGET_MIB" ] || {
+      cgroup_diagnostics
+      echo "activation exceeded its memory budget" >&2
+      exit 1
+    }
     echo "clean install through activation receipt passed"
   '
