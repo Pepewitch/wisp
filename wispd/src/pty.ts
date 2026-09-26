@@ -72,6 +72,7 @@ const DARWIN = process.platform === "darwin";
 const TIOCSWINSZ = DARWIN ? 0x80087467n : 0x5414n;
 const TIOCGWINSZ = DARWIN ? 0x40087468n : 0x5413n;
 const TIOCSCTTY = DARWIN ? 0x20007461n : 0x540en;
+const FIOCLEX = DARWIN ? 0x20006601n : 0x5451n;
 const O_RDWR = 2;
 const O_NOCTTY = DARWIN ? 0x00020000 : 0o400;
 
@@ -183,6 +184,17 @@ function fail(operation: string): never {
   throw new Error(`pty: ${operation} failed${code ? ` (errno ${code})` : ""}`);
 }
 
+/**
+ * Every descriptor this module opens is the daemon's alone, and none of
+ * posix_openpt, open without O_CLOEXEC, or dup sets close-on-exec. A process
+ * started later that inherited one would hold that pty open after its
+ * session. FIOCLEX takes no argument, so the variadic ioctl problem described
+ * at IOCTL_SYMBOLS does not apply to it.
+ */
+function closeOnExec(fd: number): void {
+  if (ioctl()(fd, FIOCLEX, 0) !== 0) fail("ioctl(FIOCLEX)");
+}
+
 /** A NUL-terminated C string; the Buffer must outlive the call that reads it. */
 function cstr(value: string): Buffer {
   return Buffer.from(`${value}\0`, "utf8");
@@ -218,6 +230,7 @@ export function openPty(size: PtySize): PtyHandle {
   // process to claim, and closing it again would take out an unrelated fd.
   const handle: PtyHandle = { masterFd, slaveFd: -1, slavePath: "" };
   try {
+    closeOnExec(masterFd);
     if (c.grantpt(masterFd) !== 0) fail("grantpt");
     if (c.unlockpt(masterFd) !== 0) fail("unlockpt");
     const namePtr = c.ptsname(masterFd);
@@ -230,6 +243,7 @@ export function openPty(size: PtySize): PtyHandle {
     // has opened fails with ENOTTY.
     handle.slaveFd = c.open(ptr(cstr(handle.slavePath)), O_RDWR | O_NOCTTY, 0);
     if (handle.slaveFd < 0) fail(`open(${handle.slavePath})`);
+    closeOnExec(handle.slaveFd);
     resizePty(handle, size);
     return handle;
   } catch (error) {
@@ -325,8 +339,7 @@ export function readPty(
   onData: (chunk: Buffer) => void,
   onError: (error: Error) => void,
 ): ReadStream {
-  const readerFd = libc().dup(masterFd);
-  if (readerFd < 0) fail("dup(master)");
+  const readerFd = dupMaster(masterFd);
   const stream = createReadStream("", { fd: readerFd, autoClose: true });
   stream.on("data", (chunk) => onData(chunk as Buffer));
   stream.on("error", (error) => {
@@ -340,12 +353,29 @@ export function readPty(
   return stream;
 }
 
+/** A close-on-exec duplicate of the master, for exactly one owner to close. */
+function dupMaster(masterFd: number): number {
+  const c = libc();
+  const fd = c.dup(masterFd);
+  if (fd < 0) fail("dup(master)");
+  try {
+    closeOnExec(fd);
+  } catch (error) {
+    c.close(fd);
+    throw error;
+  }
+  return fd;
+}
+
 /**
  * Write to the master. Async so a large paste cannot block the event loop.
  *
- * The descriptor is re-read from the handle before every chunk: a paste still
- * in flight when the shell exits must stop at `closePty`, not carry on into
- * whatever descriptor has since been given that number.
+ * Each chunk is written through its own duplicate of the master, closed when
+ * that write returns. `fs.write` makes the syscall later, on a worker thread,
+ * with the number it was handed; handed `masterFd` itself, a chunk queued
+ * before `closePty` would land in whatever was opened next under that number.
+ * The handle is still checked before every chunk, so a paste that is going
+ * when the shell exits stops at `closePty`.
  */
 export function writePty(handle: PtyHandle, data: string | Uint8Array): Promise<void> {
   const buffer = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
@@ -359,7 +389,15 @@ export function writePty(handle: PtyHandle, data: string | Uint8Array): Promise<
         reject(new Error("pty: write after the pty was closed"));
         return;
       }
-      fsWrite(handle.masterFd, buffer, offset, buffer.length - offset, null, (error, written) => {
+      let fd: number;
+      try {
+        fd = dupMaster(handle.masterFd);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      fsWrite(fd, buffer, offset, buffer.length - offset, null, (error, written) => {
+        libc().close(fd);
         if (error) {
           reject(error);
           return;

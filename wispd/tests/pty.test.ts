@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { fstatSync } from "node:fs";
+import { dlopen, FFIType } from "bun:ffi";
+import { closeSync, fstatSync, open, openSync, readFileSync, rmSync } from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   clampDimension,
   closePty,
@@ -71,6 +74,60 @@ async function waitFor(harness: Harness, pattern: RegExp, ms = 8000): Promise<st
     await Bun.sleep(25);
   }
   throw new Error(`pty test: never saw ${pattern} in ${JSON.stringify(harness.read().slice(-400))}`);
+}
+
+let fcntl: ((fd: number, command: number, argument: number) => number) | null = null;
+
+/**
+ * FD_CLOEXEC as the kernel reports it. F_GETFD and FD_CLOEXEC are both 1 on
+ * Darwin and Linux, and F_GETFD reads no third argument, so calling the
+ * variadic fcntl directly is safe here.
+ */
+function closesOnExec(fd: number): boolean {
+  fcntl ??= dlopen(process.platform === "darwin" ? "libSystem.B.dylib" : "libc.so.6", {
+    fcntl: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
+  }).symbols.fcntl;
+  const flags = fcntl(fd, 1, 0);
+  if (flags < 0) throw new Error(`pty test: fd ${fd} is not open`);
+  return (flags & 1) !== 0;
+}
+
+/** The number the next descriptor this process opens will get. */
+function lowestFreeFd(): number {
+  const fd = openSync("/dev/null", "r");
+  closeSync(fd);
+  return fd;
+}
+
+/**
+ * Hold every worker of the runtime's fs pool inside open(2) of a FIFO nobody
+ * writes, so an async fs call made now reaches the kernel only after
+ * `release()`. Bun runs about one worker per CPU (18 blockers were needed on
+ * an 18-core Mac), so twice that leaves none free.
+ */
+async function parkFsWorkers(): Promise<{ release(): Promise<void> }> {
+  const fifo = join(tmpdir(), `wisp-pty-fifo-${process.pid}`);
+  rmSync(fifo, { force: true });
+  const made = Bun.spawnSync(["mkfifo", fifo], { stderr: "pipe" });
+  if (made.exitCode !== 0) throw new Error(`pty test: mkfifo failed: ${made.stderr.toString().trim()}`);
+  const parked = Array.from(
+    { length: Math.max(32, availableParallelism() * 2) },
+    () => new Promise<number>((resolve, reject) => open(fifo, "r", (error, fd) => (error ? reject(error) : resolve(fd)))),
+  );
+  await Bun.sleep(100);
+  let released: Promise<void> | null = null;
+  return {
+    release: () =>
+      (released ??= (async () => {
+        const writer = openSync(fifo, "w");
+        try {
+          for (const fd of await Promise.all(parked)) closeSync(fd);
+        } finally {
+          closeSync(writer);
+          rmSync(fifo, { force: true });
+        }
+      })()),
+  };
 }
 
 const sh = "/bin/sh";
@@ -182,6 +239,51 @@ describe("pty", () => {
     const handle = openPty({ cols: 80, rows: 24 });
     closePty(handle);
     await expect(writePty(handle, "late keystrokes")).rejects.toThrow(/after the pty was closed/);
+  });
+
+  test("a write in flight when the pty closes cannot land on the number's next owner", async () => {
+    // fs.write makes its syscall later, on a worker thread, with the number it
+    // was handed. Parking the workers holds a write in that gap while the pty
+    // closes and its number goes to a file; a write handed `masterFd` itself
+    // put its bytes in that file.
+    const workers = await parkFsWorkers();
+    const path = join(tmpdir(), `wisp-pty-late-write-${process.pid}`);
+    let next = -1;
+    try {
+      const handle = openPty({ cols: 80, rows: 24 });
+      const released = handle.masterFd;
+      const own = lowestFreeFd(); // where the write's duplicate is about to go
+      // EIO is expected, since the pty has no slave by the time the write runs
+      const writing = writePty(handle, "late keystrokes").catch(() => undefined);
+      expect(closesOnExec(own)).toBe(true);
+      closePty(handle);
+      next = openSync(path, "w");
+      expect(next).toBe(released); // the number really was handed on
+      await workers.release();
+      await writing;
+      expect(readFileSync(path, "utf8")).toBe("");
+      expect(() => fstatSync(own)).toThrow(); // and the write closed its duplicate
+    } finally {
+      await workers.release();
+      if (next >= 0) closeSync(next);
+      rmSync(path, { force: true });
+    }
+  });
+
+  test("every descriptor the daemon holds for a pty closes on exec", async () => {
+    // A process started later that inherited one would hold the pty open
+    // after its session ended.
+    const handle = openPty({ cols: 80, rows: 24 });
+    const reader = readPty(handle.masterFd, () => undefined, () => undefined);
+    const closed = new Promise<void>((resolve) => reader.once("close", () => resolve()));
+    try {
+      const readerFd = (reader as unknown as { fd: number }).fd;
+      for (const fd of [handle.masterFd, handle.slaveFd, readerFd]) expect(closesOnExec(fd)).toBe(true);
+    } finally {
+      reader.destroy();
+      closePty(handle);
+      await Promise.race([closed, Bun.sleep(2_000)]);
+    }
   });
 
   test("the child half refuses a path that is not a terminal device", () => {
