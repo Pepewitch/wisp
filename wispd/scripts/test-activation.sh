@@ -31,7 +31,7 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
   --env WISP_COMMIT="$COMMIT" \
   --env WISP_INSTALL_SERVICE=no \
   "$IMAGE" /bin/bash -euo pipefail -c '
-    MEMORY_BUDGET_MIB=768
+    MEMORY_BUDGET_MIB=512
 
     cgroup_diagnostics() {
       for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.peak /sys/fs/cgroup/pids.events; do

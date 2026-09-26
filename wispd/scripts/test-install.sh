@@ -40,9 +40,8 @@ docker --config "$CFG" run --rm --platform linux/amd64 \
     WISP_HOME="$HOME/occupied-home" /release/wisp serve >"$HOME/occupied.log" 2>&1 &
     OCCUPIED_PID=$!
     OCCUPIED_READY=no
-    # 100 attempts, the same budget test-activation.sh gives its daemon: the
-    # compiled binary embeds the UI bundle, so the first accept on a cold
-    # container can take seconds, and a too-tight budget fails the whole run.
+    # 100 attempts, 20 seconds. The daemon listens in well under a second; the
+    # margin is for a slow runner, where a too-tight budget fails the whole run.
     for _ in $(seq 1 100); do
       if WISP_HOME="$HOME/occupied-home" /release/wisp ls >/dev/null 2>&1; then
         OCCUPIED_READY=yes

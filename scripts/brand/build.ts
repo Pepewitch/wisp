@@ -22,6 +22,8 @@ import { faviconDataUri, faviconSvg, lanternSvg, lockupSvg, markFacets, markSvg,
 import { GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+/** One render takes a second or two; a cold first launch a few more. */
+const CHROME_TIMEOUT_MS = 60_000;
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
 const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
@@ -163,33 +165,55 @@ if (!existsSync(CHROME)) {
 
   /** Render an HTML string to a PNG with headless Chrome, at an absolute path. */
   async function shootTo(html: string, out: string, width: number, height: number, scale: number) {
-    const profile = await mkdtemp(join(tmpdir(), "wisp-brand-"));
-    const tmp = join(BRAND, ".render.html");
-    await writeFile(tmp, html);
-    const png = join(BRAND, ".render.png");
-    await rm(png, { force: true });
-    const proc = Bun.spawn(
-      [
-        CHROME,
-        "--headless",
-        `--user-data-dir=${profile}`,
-        "--disable-gpu",
-        "--hide-scrollbars",
-        "--default-background-color=00000000",
-        `--force-device-scale-factor=${scale}`,
-        `--screenshot=${png}`,
-        `--window-size=${width},${height}`,
-        `file://${tmp}`,
-      ],
-      { stdout: "ignore", stderr: "ignore" },
-    );
-    await proc.exited;
-    await rm(profile, { recursive: true, force: true });
-    await rm(tmp, { force: true });
-    if (!existsSync(png)) throw new Error(`Chrome produced no PNG for ${out}`);
-    const bytes = await readFile(png);
-    await rm(png, { force: true });
-    await emit(out, bytes);
+    // Scratch files live outside the repository so an interrupted render
+    // cannot leave untracked files in brand/ to fail a clean-tree check.
+    const scratch = await mkdtemp(join(tmpdir(), "wisp-brand-"));
+    const page = join(scratch, "render.html");
+    const png = join(scratch, "render.png");
+    let proc: Bun.Subprocess | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await writeFile(page, html);
+      proc = Bun.spawn(
+        [
+          CHROME,
+          "--headless",
+          `--user-data-dir=${join(scratch, "profile")}`,
+          "--disable-gpu",
+          "--hide-scrollbars",
+          "--default-background-color=00000000",
+          `--force-device-scale-factor=${scale}`,
+          `--screenshot=${png}`,
+          `--window-size=${width},${height}`,
+          `file://${page}`,
+        ],
+        { stdout: "ignore", stderr: "ignore" },
+      );
+      // Headless Chrome can wait forever on a first-run dialog or a GPU
+      // sandbox, and macOS has no `timeout` to bound it from outside.
+      const timedOut = await Promise.race([
+        proc.exited.then(() => false),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(true), CHROME_TIMEOUT_MS);
+        }),
+      ]);
+      if (timedOut) {
+        throw new Error(
+          `Chrome did not render ${relative(ROOT, out)} within ${CHROME_TIMEOUT_MS / 1000}s. ` +
+            "If no PNG asset or its generator changed, CHROME_PATH=/nonexistent bun run brand:check " +
+            "verifies everything else; otherwise fix headless Chrome on this machine first.",
+        );
+      }
+      if (!existsSync(png)) throw new Error(`Chrome produced no PNG for ${out}`);
+      await emit(out, await readFile(png));
+    } finally {
+      clearTimeout(timer);
+      if (proc && proc.exitCode === null && proc.signalCode === null) {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      }
+      await rm(scratch, { recursive: true, force: true });
+    }
   }
 
   /** Render into brand/. */
