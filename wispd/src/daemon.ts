@@ -20,6 +20,7 @@ import { WorkflowRuntime } from "./workflows/runtime";
 import { AutopilotRuntime } from "./autopilot/runtime";
 import { TaskProbeCache, type TaskProbeCacheOptions } from "./probes";
 import { HarnessLimitsCache, type HarnessLimitsCacheOptions } from "./harness-limits";
+import { LimitsTurnRefresh } from "./harness-limits-refresh";
 import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests";
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
@@ -577,6 +578,8 @@ async function serveOwned(
   workflows.start();
   const autopilot = new AutopilotRuntime(cfg, adapters);
   autopilot.start();
+  const limitsRefresh = new LimitsTurnRefresh(limitsCache, cfg, adapters);
+  limitsRefresh.start();
   const stopServer = server.stop.bind(server);
   let stopPromise: Promise<void> | undefined;
   server.stop = (closeActiveConnections?: boolean): Promise<void> => {
@@ -595,6 +598,7 @@ async function serveOwned(
       await processLoop.stop();
       await workflows.stop();
       await autopilot.stop();
+      await limitsRefresh.stop();
       await lifetime.drain();
       // Bun can leave a closed WebSocket's stop promise pending indefinitely.
       // Admission is closed and all stateful work has settled, so socket drain

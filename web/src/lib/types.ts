@@ -424,7 +424,8 @@ export type WispEvent =
   | { type: "workflow"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
   | { type: "harnesses" }
-  | { type: "settings" };
+  | { type: "settings" }
+  | { type: "harness-limits"; harness: string };
 
 /** GET/PATCH /api/settings, the daemon-wide preferences safe to expose. */
 export interface WispSettings {
@@ -469,6 +470,8 @@ export interface LimitWindow {
   label: string;
   /** a separate allowance inside one account (droid's standard/core); null for the only one */
   pool: string | null;
+  /** the one model this window limits (claude's per-model week); null, or absent from an older daemon, for every model */
+  model?: string | null;
   usedPercent: number;
   /** null when the window has not started, or the harness named no reset */
   resetsAt: string | null;

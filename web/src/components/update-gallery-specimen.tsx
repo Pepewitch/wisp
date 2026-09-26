@@ -108,7 +108,7 @@ export function HeaderClusterSpecimen() {
               <span className="flex-1 text-[11.5px] text-faint">the header, from its middle out</span>
               <div className="flex shrink-0 items-center gap-1">
                 <Button size="sm" icon aria-label="Usage limits">
-                  <UsageRing window={null} />
+                  <UsageRing reading={null} />
                 </Button>
                 <UpdateCenter
                   desktop={reading.desktop}
@@ -137,7 +137,7 @@ export function HeaderClusterSpecimen() {
         <div className="mt-2 flex items-center justify-end gap-1 rounded-lg border border-border bg-sidebar px-2 py-1.5">
           <span className="flex-1 text-[11.5px] text-faint">…show archived</span>
           <Button size="lg" icon aria-label="Usage limits, touch">
-            <UsageRing window={null} />
+            <UsageRing reading={null} />
           </Button>
           <UpdateCenter
             desktop={DESKTOP}

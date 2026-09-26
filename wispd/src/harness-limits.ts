@@ -24,7 +24,13 @@ import {
 import type { WispConfig } from "./config";
 import { bunProbeSpawn, bunRpcFactory } from "./probes";
 
-export const LIMITS_TTL_MS = 60_000;
+/**
+ * Just under the web client's two-minute poll (HARNESS_LIMITS_POLL_MS). A TTL
+ * equal to the poll would let every other poll land a moment before expiry and
+ * stretch one open window's reads to four minutes; this keeps them at two, and
+ * more clients never make them more frequent.
+ */
+export const LIMITS_TTL_MS = 110_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
 
 export type FactoryKeySource = "settings" | "environment";
@@ -91,6 +97,7 @@ export class HarnessLimitsCache {
   private readonly ttlMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => Date;
+  private askedAt: number | null = null;
 
   constructor(options: HarnessLimitsCacheOptions = {}) {
     this.io = {
@@ -114,11 +121,20 @@ export class HarnessLimitsCache {
     adapters: Record<string, AdapterDef>,
     options: { refresh?: boolean } = {},
   ): Promise<HarnessLimitsEntry[]> {
+    this.askedAt = this.now().getTime();
     const declared = Object.entries(adapters).filter(([, def]) => def.limits);
     return Promise.all(declared.map(([name, def]) => this.one(name, def, cfg, options.refresh === true)));
   }
 
-  /** One harness, past the cache: what Settings' Test asks after a key is saved. */
+  /** Whether a client (the web poll, `wisp limits`) has asked for every harness's limits within `ms`. */
+  askedWithin(ms: number): boolean {
+    return this.askedAt !== null && this.now().getTime() - this.askedAt < ms;
+  }
+
+  /**
+   * One harness, past the cache, leaving every other harness's reading alone:
+   * what Settings' Test asks after a key is saved, and what a finished turn asks.
+   */
   readNow(name: string, def: AdapterDef, cfg: Pick<WispConfig, "factoryApiKey">): Promise<HarnessLimitsEntry> {
     return this.one(name, def, cfg, true);
   }

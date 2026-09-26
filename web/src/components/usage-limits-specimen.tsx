@@ -1,6 +1,7 @@
 import { Eyebrow, Rule } from "@/components/primitives"
 import { UsageLimitsPopover, UsageRing } from "@/components/usage-limits-control"
 import type { HarnessLimitsEntry, LimitWindow } from "@/lib/types"
+import { ringReading, type RingReading } from "@/lib/usage-limits"
 
 const HOUR = 3_600_000
 /** Resets relative to the gallery's own render, so the countdowns always read as the future. */
@@ -23,7 +24,7 @@ const USAGE_LIMITS_SPECIMEN: HarnessLimitsEntry[] = [
       windows: [
         window({ id: "session", label: "5h", usedPercent: 33, resetsAt: at(3.8), windowMins: 300 }),
         window({ id: "week", label: "7d", usedPercent: 84, resetsAt: at(98), windowMins: 10_080 }),
-        window({ id: "week:opus", label: "Opus", usedPercent: 0, resetsAt: at(98), windowMins: 10_080 }),
+        window({ id: "week:opus", label: "Opus", model: "Opus", usedPercent: 0, resetsAt: at(98), windowMins: 10_080 }),
       ],
     },
     message: null,
@@ -82,15 +83,25 @@ const NEEDS_KEY: HarnessLimitsEntry[] = [
   },
 ]
 
-const RINGS: { label: string; window: LimitWindow | null }[] = [
-  { label: "No task, or no limits read", window: null },
-  { label: "33% · neutral", window: window({ id: "a", label: "5h", usedPercent: 33 }) },
-  { label: "84% · amber", window: window({ id: "b", label: "7d", usedPercent: 84 }) },
-  { label: "Reached · destructive", window: window({ id: "c", label: "weekly", usedPercent: 100 }) },
+const ring = (...windows: LimitWindow[]): RingReading | null =>
+  ringReading({ name: "claude", status: "ok", limits: { plan: null, windows }, message: null, fetchedAt, cached: true })
+
+const RINGS: { label: string; reading: RingReading | null }[] = [
+  { label: "No task, or no limits read", reading: null },
+  { label: "33% · neutral", reading: ring(window({ id: "a", label: "5h", usedPercent: 33, windowMins: 300 })) },
+  { label: "84% · amber", reading: ring(window({ id: "b", label: "5h", usedPercent: 84, windowMins: 300 })) },
+  { label: "Reached · destructive", reading: ring(window({ id: "c", label: "5h", usedPercent: 99, windowMins: 300 })) },
+  {
+    label: "10%, but 7d reached · destructive",
+    reading: ring(
+      window({ id: "d", label: "5h", usedPercent: 10, windowMins: 300 }),
+      window({ id: "e", label: "7d", usedPercent: 100, windowMins: 10_080 }),
+    ),
+  },
 ]
 
 /**
- * The usage ring's four readings, and the popover open in its two shapes:
+ * The usage ring's five readings, and the popover open in its two shapes:
  * every harness reporting, and the ways a harness can have nothing to show.
  */
 export function UsageLimitsSpecimen() {
@@ -101,12 +112,12 @@ export function UsageLimitsSpecimen() {
         <Rule />
       </div>
       <div className="flex flex-wrap items-center gap-6 rounded-xl border border-border bg-surface px-5 py-3">
-        {RINGS.map((ring) => (
-          <span key={ring.label} className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+        {RINGS.map((specimen) => (
+          <span key={specimen.label} className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
             <span className="flex size-[22px] items-center justify-center [&>svg]:size-3.5">
-              <UsageRing window={ring.window} />
+              <UsageRing reading={specimen.reading} />
             </span>
-            {ring.label}
+            {specimen.label}
           </span>
         ))}
       </div>
@@ -131,9 +142,10 @@ export function UsageLimitsSpecimen() {
         </div>
       </div>
       <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-        The ring is the selected task&apos;s harness at its most-used window, so it shows the limit that stops the next
-        turn. Bars fill with the share used, as every harness words it. Hue follows the Updates dot&apos;s budget: amber
-        from 80%, destructive at the limit, neutral otherwise. A harness with nothing to show says why, and only a real
+        The ring is the selected task&apos;s harness at its shortest main window (claude&apos;s 5h, a codex plan&apos;s 5h
+        or 7d, droid&apos;s standard 5h), so it moves turn to turn. It turns destructive from 99% of that window, or
+        when any other main window has reached 99%; per-model windows and droid&apos;s core pool do not count. Bars
+        fill with the share used, as every harness words it, amber from 80% and destructive from 99%. A harness with nothing to show says why, and only a real
         failure is red.
       </p>
     </section>

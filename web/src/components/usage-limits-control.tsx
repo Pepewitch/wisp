@@ -10,14 +10,15 @@ import type { HarnessLimitsEntry, LimitWindow } from "@/lib/types"
 import {
   limitTone,
   resetsIn,
-  ringWindow,
+  ringReading,
   usageTriggerLabel,
   windowPools,
   type LimitTone,
+  type RingReading,
 } from "@/lib/usage-limits"
 import { cn } from "@/lib/utils"
 
-/** An answer older than this is re-read when the popover opens; the poll alone could leave it a minute old. */
+/** An answer older than this is re-read when the popover opens; the poll alone could leave it two minutes old. */
 const STALE_ON_OPEN_MS = 30_000
 
 const ARC: Record<LimitTone, string> = {
@@ -94,7 +95,7 @@ export function UsageLimitsPopover({
   defaultOpen?: boolean
 }) {
   const focused = harness === null ? undefined : entries?.find((e) => e.name === harness)
-  const window = ringWindow(focused)
+  const reading = ringReading(focused)
 
   return (
     <Popover.Root
@@ -110,9 +111,9 @@ export function UsageLimitsPopover({
         delay={150}
         closeDelay={200}
         render={<Button size={mobile ? "lg" : "sm"} icon />}
-        aria-label={usageTriggerLabel(focused ? harness : null, window)}
+        aria-label={usageTriggerLabel(focused ? harness : null, reading)}
       >
-        <UsageRing window={window} />
+        <UsageRing reading={reading} />
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={12} className="z-(--z-menu)">
@@ -138,14 +139,15 @@ export function UsageLimitsPopover({
  * A progress ring the size of a glyph. The track is always drawn, so "no
  * task, or a harness with no limits read" is an empty ring rather than a
  * missing icon, and the arc fills with the share USED, as every harness's
- * own report words it.
+ * own report words it. Its colour is the reading's, which can be red over a
+ * short arc when another window has reached its limit.
  */
-export function UsageRing({ window }: { window: LimitWindow | null }) {
-  const used = window === null ? 0 : Math.max(0, Math.min(100, window.usedPercent))
+export function UsageRing({ reading }: { reading: RingReading | null }) {
+  const used = reading === null ? 0 : Math.max(0, Math.min(100, reading.window.usedPercent))
   return (
     <svg viewBox="0 0 16 16" aria-hidden fill="none" strokeWidth={2.25}>
       <circle cx={8} cy={8} r={6} className="stroke-border-strong" />
-      {used > 0 && window !== null && (
+      {used > 0 && reading !== null && (
         <circle
           cx={8}
           cy={8}
@@ -153,7 +155,7 @@ export function UsageRing({ window }: { window: LimitWindow | null }) {
           pathLength={100}
           strokeDasharray={`${used} 100`}
           transform="rotate(-90 8 8)"
-          className={ARC[limitTone(window.usedPercent)]}
+          className={ARC[reading.tone]}
         />
       )}
     </svg>
