@@ -156,6 +156,12 @@ describe("renderPublicationSection", () => {
     expect(flat(renderPublicationSection({ ...FACTS, pullRequest: null }))).toContain("TODO link the pull request");
   });
 
+  test("a candidate run the closeout could not vouch for stays a TODO, not a pass", () => {
+    const section = flat(renderPublicationSection({ ...FACTS, candidateRunUrl: null }));
+    expect(section).toContain("TODO link the exact-main release candidate run, which also passed");
+    expect(section).not.toContain("[release candidate]");
+  });
+
   test("states that unchanged PNG inputs were not re-rendered", () => {
     expect(flat(renderPublicationSection(FACTS))).toContain(
       "No PNG asset or brand-generator input changed since 0.6.2, so the PNG assets were not re-rendered.",

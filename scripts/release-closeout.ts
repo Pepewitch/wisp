@@ -62,6 +62,7 @@ export interface WorkflowRun {
   conclusion: string | null;
   run_attempt: number;
   created_at: string;
+  updated_at: string;
 }
 
 export interface ReleaseJob {
@@ -88,13 +89,28 @@ export function releaseRunForTag(runs: readonly WorkflowRun[], tag: string, sha:
   );
 }
 
-/** The newest exact-main run of the release candidate workflow. */
-export function candidateRunFor(runs: readonly WorkflowRun[], sha: string): WorkflowRun | null {
-  return (
-    runs
-      .filter((entry) => entry.event === "push" && entry.head_sha === sha)
-      .sort((a, b) => b.id - a.id)[0] ?? null
-  );
+export type CandidateRun = { run: WorkflowRun; problem: null } | { run: null; problem: string };
+
+/**
+ * The exact-main release candidate run the ledger may say passed before
+ * tagging: the newest run for the commit, and only if it succeeded before the
+ * tag's release run started. A newer failure, a cancellation, a run still
+ * going, or a rerun after the tag is left for a person to judge.
+ */
+export function candidateRunFor(runs: readonly WorkflowRun[], sha: string, tagPushedAt: string): CandidateRun {
+  const newest = runs
+    .filter((entry) => entry.event === "push" && entry.head_branch === "main" && entry.head_sha === sha)
+    .sort((a, b) => b.id - a.id)[0];
+  if (!newest) return { run: null, problem: `no exact-main release candidate run exists for ${sha.slice(0, 7)}` };
+  const described = `the newest exact-main release candidate run for ${sha.slice(0, 7)} (${newest.html_url})`;
+  if (newest.conclusion !== "success") {
+    return { run: null, problem: `${described} ${newest.conclusion === null ? "has not finished" : `ended ${newest.conclusion}`}` };
+  }
+  // Both times are GitHub's. A run that finished after the tag was either
+  // still going when the tag was pushed or has been rerun since, and the run
+  // no longer shows whether the attempt the tag relied on passed.
+  if (newest.updated_at > tagPushedAt) return { run: null, problem: `${described} finished after the tag was pushed` };
+  return { run: newest, problem: null };
 }
 
 /**
@@ -316,7 +332,11 @@ export async function gatherPublication(version: string): Promise<{ facts: Publi
   const head = pulls.find((pull) => pull.number === pullRequest)?.head.sha;
   const checks = head ? passedSourceChecks(commitChecks(head)) : { labels: [], missing: CORE_CHECKS };
 
-  const candidates = workflowRuns("release-candidate.yml", `event=push&branch=main&head_sha=${sha}`);
+  const candidate = candidateRunFor(
+    workflowRuns("release-candidate.yml", `event=push&branch=main&head_sha=${sha}`),
+    sha,
+    pushRun.created_at,
+  );
   const previous = previousRelease(releaseTags(), version);
   if (!previous) throw new Error(`no release tag is older than ${version}`);
 
@@ -328,6 +348,12 @@ export async function gatherPublication(version: string): Promise<{ facts: Publi
   const manual: string[] = [];
   if (checks.missing.length > 0) {
     manual.push(`verify the release PR's ${checks.missing.join(", ")} check(s) by hand and name them in the Source checks row, then delete this line.`);
+  }
+  if (candidate.problem) {
+    manual.push(
+      `${candidate.problem}. In the Source checks row, link the exact-main release candidate run that passed ` +
+        "Linux-contract and update-verifier before the tag was pushed, or say what happened instead, then delete this line.",
+    );
   }
   return {
     manual,
@@ -342,7 +368,7 @@ export async function gatherPublication(version: string): Promise<{ facts: Publi
       releaseRunUrl: pushRun.html_url,
       releaseRunAttempt: pushRun.run_attempt,
       promotionRunUrl,
-      candidateRunUrl: candidateRunFor(candidates, sha)?.html_url ?? null,
+      candidateRunUrl: candidate.run?.html_url ?? null,
       sourceChecks: checks.labels,
       promotedAt: receipt.completedAt,
       tapCommit: receipt.tapCommit,

@@ -154,8 +154,9 @@ migrations itself, verifies anonymously that the tap and both update channels
 serve the version, and writes the `## <version> publication` section into
 `docs/v<major>.<minor>/QUALIFICATION.md`, demoting the predecessor's claims
 that are now false. Whatever still needs judgment is a `TODO` in the entry —
-the highlights, why a rerun or recovery happened, the checks nobody ran — and
-the command ends by listing each one as `path:line`. Resolve every one
+the highlights, why a rerun or recovery happened, a release candidate run it
+cannot show passed before the tag, the checks nobody ran — and the command
+ends by listing each one as `path:line`. Resolve every one
 (`bun run docs:check` refuses leftovers), review the diff, and land the
 closeout PR (`docs(release): record <version> publication`) with a squash.
 `--dry-run` prints the same edits as a diff and writes nothing, from any

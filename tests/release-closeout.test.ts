@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  candidateRunFor,
   gateOutcome,
   parseReceipt,
   passedSourceChecks,
@@ -18,13 +19,14 @@ import type { CheckRun } from "../scripts/release-github";
 function workflowRun(partial: Partial<WorkflowRun>): WorkflowRun {
   return {
     id: 1,
-    html_url: "https://github.com/Pepewitch/wisp/actions/runs/1",
+    html_url: `https://github.com/Pepewitch/wisp/actions/runs/${partial.id ?? 1}`,
     event: "push",
     head_branch: "main",
     head_sha: "abc",
     conclusion: "success",
     run_attempt: 1,
     created_at: "2026-09-25T11:10:00Z",
+    updated_at: "2026-09-25T11:12:00Z",
     ...partial,
   };
 }
@@ -42,6 +44,38 @@ describe("releaseRunForTag", () => {
     expect(releaseRunForTag(runs, "v0.6.3", "sha1")).toBe(push);
     expect(releaseRunForTag(runs, "v0.6.3", "missing")).toBeNull();
     expect(releaseRunForTag(runs, "v0.6.9", "sha1")).toBeNull();
+  });
+});
+
+describe("candidateRunFor", () => {
+  const pushed = "2026-09-25T11:30:00Z";
+  const passed = workflowRun({ id: 30, head_sha: "sha1", updated_at: "2026-09-25T11:20:00Z" });
+
+  test("links the newest exact-main run when it passed before the tag was pushed", () => {
+    const runs = [
+      workflowRun({ id: 29, head_sha: "sha1", conclusion: "failure", updated_at: "2026-09-25T11:15:00Z" }),
+      passed,
+      workflowRun({ id: 31, head_sha: "other" }),
+      workflowRun({ id: 32, head_sha: "sha1", head_branch: "feature" }),
+      workflowRun({ id: 33, head_sha: "sha1", event: "workflow_dispatch" }),
+    ];
+    expect(candidateRunFor(runs, "sha1", pushed)).toEqual({ run: passed, problem: null });
+  });
+
+  test("a newer failed run is not recorded as a pass", () => {
+    const failed = workflowRun({ id: 31, head_sha: "sha1", conclusion: "failure", updated_at: "2026-09-25T11:25:00Z" });
+    const { run, problem } = candidateRunFor([passed, failed], "sha1", pushed);
+    expect(run).toBeNull();
+    expect(problem).toContain("(https://github.com/Pepewitch/wisp/actions/runs/31) ended failure");
+  });
+
+  test("a run still going, cancelled, or finished after the tag push is left for a person", () => {
+    const newest = (partial: Partial<WorkflowRun>) =>
+      candidateRunFor([passed, workflowRun({ id: 31, head_sha: "sha1", ...partial })], "sha1", pushed);
+    expect(newest({ conclusion: null })).toMatchObject({ run: null, problem: expect.stringContaining("has not finished") });
+    expect(newest({ conclusion: "cancelled" }).problem).toContain("ended cancelled");
+    expect(newest({ updated_at: "2026-09-25T11:31:00Z" }).problem).toContain("finished after the tag was pushed");
+    expect(candidateRunFor([], "sha1", pushed).problem).toBe("no exact-main release candidate run exists for sha1");
   });
 });
 
