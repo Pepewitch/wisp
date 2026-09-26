@@ -30,7 +30,7 @@ function killAnswer(outcome: ShellKillOutcome): Response {
 
 /**
  * GET    /api/tasks/:id/terminals                  the task's shell tabs
- * POST   /api/tasks/:id/terminals                  open a tab
+ * POST   /api/tasks/:id/terminals[?ifEmpty=1]      open a tab, or with ifEmpty hand back the first one
  * PATCH  /api/tasks/:id/terminals/:shell           { name } — null or "" resets it
  * DELETE /api/tasks/:id/terminals/:shell[?force=1] close the tab, hanging up its shell
  * POST   /api/tasks/:id/terminals/:shell/restart[?force=1]
@@ -47,6 +47,10 @@ export async function terminalsRoute(req: Request, url: URL, path: string, cfg: 
       if (method !== "POST") return err("Method not allowed", 405);
       if (task.archived) return err(`task ${task.id} is archived — worktree removed`, 409);
       if (!task.worktree_path) return err(`task ${task.id} has no worktree_path`, 409);
+      // Every window that opens a tab-less task asks for its first tab at
+      // once; the check and the create share one tick, so only one is made.
+      const existing = url.searchParams.get("ifEmpty") === "1" ? listShells(task.id)[0] : undefined;
+      if (existing) return json(existing);
       return json(createShell(task.id, cfg.terminalShell), 201);
     }
     const id = Number(match[2]);

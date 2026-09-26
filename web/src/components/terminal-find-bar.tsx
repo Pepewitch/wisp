@@ -74,12 +74,13 @@ export function TerminalFindBar({
   }
 
   // Typing and flipping a switch re-run the search from where it stands; the
-  // arrows and Enter are what move.
+  // arrows and Enter are what move. A theme switch repaints the highlights,
+  // which the addon only takes with a search.
   useEffect(() => {
     run(1, true)
     // `run` reads exactly these; listing it would re-search on every render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, caseSensitive, wholeWord, regex, search])
+  }, [query, caseSensitive, wholeWord, regex, search, decorations])
 
   useEffect(() => () => search.clearDecorations(), [search])
 

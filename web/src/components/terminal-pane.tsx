@@ -238,7 +238,7 @@ export function TerminalSection({
             label="New shell"
             title="New shell in this worktree"
             onAct={() => void tabs.openTab()}
-            disabled={unavailable !== null || !tabs.featuresKnown || shells.length >= MAX_SHELLS_PER_TASK}
+            disabled={unavailable !== null || !tabs.canOpen || shells.length >= MAX_SHELLS_PER_TASK}
             touch={touch}
           />
           {tabs.failure && (

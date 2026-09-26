@@ -6,6 +6,7 @@ import { CONFIG_PATH } from "../src/config";
 import { parseTerminalSize, serve } from "../src/daemon";
 import { subscribe } from "../src/events";
 import {
+  closeShell,
   createShell,
   DEFAULT_PTY_SIZE,
   DISPLACED_MESSAGE,
@@ -18,11 +19,13 @@ import {
   resolveLoginShell,
   restartShell,
   sessionKey,
+  ShellConflictError,
   WEB_TERMINAL_TERM,
   webTerminalEnv,
   type ShellInfo,
   type TerminalClient,
 } from "../src/terminal";
+import { MAX_SHELL_TITLE_LENGTH, noteShell } from "../src/terminal-tabs";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
 
 const token = "terminal-test-token";
@@ -518,14 +521,44 @@ describe("retiring a killed shell", () => {
     const first = openSession(task.id, 0, worktree);
 
     // Not awaited: the kill is in flight, which is exactly the window where
-    // the old code would hand this same session to the next client.
+    // the old code would hand this same session to the next client. Nor is
+    // it replaced yet: a second process under the same key would be one the
+    // retiring kill no longer tracks.
     const killing = killForTask(task.id);
-    const second = openSession(task.id, 0, worktree);
-    expect(second).not.toBe(first);
     expect(first.isLive()).toBe(false);
+    expect(() => openSession(task.id, 0, worktree)).toThrow(ShellConflictError);
 
     await killing;
+    expect(openSession(task.id, 0, worktree)).not.toBe(first);
     await killAll();
+  }, 30_000);
+
+  test("a shell that ignores its hangup keeps its id, and archive waits for it", async () => {
+    const { task, worktree } = terminalFixture("stubborn");
+    const tab = createShell(task.id);
+    const session = openSession(task.id, tab.id, worktree);
+    const client = recordingClient();
+    session.attach(client);
+    await session.write(client, "trap '' HUP; echo trap-$((40+2))\n");
+    await until(() => client.output().includes("trap-42"));
+
+    // SIGHUP is ignored, so this sits out the grace period before SIGKILL
+    const closing = closeShell(task.id, tab.id, true);
+    expect(session.isClosing()).toBe(true);
+    expect(createShell(task.id).id).not.toBe(tab.id);
+    expect(() => openSession(task.id, tab.id, worktree)).toThrow(ShellConflictError);
+
+    let archived = false;
+    const archiving = killForTask(task.id).then(() => {
+      archived = true;
+    });
+    await Bun.sleep(200);
+    expect(archived).toBe(false);
+    expect(session.hasExited()).toBe(false);
+
+    await closing;
+    await archiving;
+    expect(session.hasExited()).toBe(true);
   }, 30_000);
 
   test("a killed shell is replaced, not reused, by the next attach", async () => {
@@ -592,6 +625,17 @@ describe("shell tabs", () => {
     const listed = (await (await api(base)).json()) as ShellInfo[];
     expect(listed.map((shell) => shell.number)).toEqual([2, 3]);
     expect((await api(`${base}/7`, { method: "DELETE" })).status).toBe(404);
+  });
+
+  test("two windows asking for a tab-less task's first tab get the same one", async () => {
+    const { task } = terminalFixture("if-empty");
+    server = await serve({ port: 0 });
+    const first = `/api/tasks/${task.id}/terminals?ifEmpty=1`;
+    const answers = await Promise.all([api(first, { method: "POST" }), api(first, { method: "POST" })]);
+    const tabs = (await Promise.all(answers.map((answer) => answer.json()))) as ShellInfo[];
+    expect(answers.map((answer) => answer.status).sort()).toEqual([200, 201]);
+    expect(tabs[0]!.id).toBe(tabs[1]!.id);
+    expect(listShells(task.id)).toHaveLength(1);
   });
 
   test("closing a tab hangs up its shell, and asks first while a program runs", async () => {
@@ -688,6 +732,26 @@ describe("shell tabs", () => {
       unsubscribe();
     }
   }, 30_000);
+
+  test("a clear drops what the shell printed from the screen a reattach is sent", async () => {
+    const { task, worktree } = terminalFixture("clear");
+    const session = openSession(task.id, 0, worktree);
+    const client = recordingClient();
+    session.attach(client);
+    await session.write(client, "echo clear-me-$((1+1))\n");
+    await until(() => client.output().includes("clear-me-2"));
+    expect(await session.scrollback()).toContain("clear-me-2");
+
+    await session.clear(client);
+    expect(await session.scrollback()).not.toContain("clear-me-2");
+  }, 30_000);
+
+  test("a title a program sets is kept to a bounded length", () => {
+    const { task } = terminalFixture("title");
+    const tab = createShell(task.id);
+    noteShell(sessionKey(task.id, tab.id), { title: "t".repeat(10_000) });
+    expect(listShells(task.id)[0]!.title).toBe("t".repeat(MAX_SHELL_TITLE_LENGTH));
+  });
 
   test("archiving a task forgets its tabs", async () => {
     const { task } = terminalFixture("archive-tabs");

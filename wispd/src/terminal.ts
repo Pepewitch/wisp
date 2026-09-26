@@ -168,6 +168,8 @@ class TerminalSession {
   private finished = false;
   /** Set the moment a kill is asked for, so no new client can be given this shell. */
   private killRequested = false;
+  /** The hangup still waiting on the process, shared by every caller that asks for one meanwhile. */
+  private killing: Promise<void> | null = null;
   private inputQueue: Promise<void> = Promise.resolve();
   private foregroundProbe: ReturnType<typeof setTimeout> | null = null;
 
@@ -275,6 +277,11 @@ class TerminalSession {
   /** True once the process is genuinely gone, not merely asked to go. */
   hasExited(): boolean {
     return this.finished || this.child.exitCode !== null || this.child.signalCode !== null;
+  }
+
+  /** A kill is still waiting out its grace period on a process that has not gone yet. */
+  isClosing(): boolean {
+    return this.killing !== null && !this.hasExited();
   }
 
   /**
@@ -426,8 +433,15 @@ class TerminalSession {
    * the shell get SIGHUP, and the shell passes it on to its jobs. Whatever
    * was started to survive a hangup — `nohup`, `disown`, `setsid` — does.
    */
-  async kill(): Promise<void> {
-    if (this.finished) return;
+  kill(): Promise<void> {
+    if (this.finished) return Promise.resolve();
+    this.killing ??= this.hangUp().finally(() => {
+      this.killing = null;
+    });
+    return this.killing;
+  }
+
+  private async hangUp(): Promise<void> {
     // read BEFORE the flag: a kill-requested session no longer reports one
     const foreground = this.handle ? foregroundProcessGroup(this.handle.masterFd) : null;
     this.killRequested = true;
@@ -584,8 +598,24 @@ const sessions = new Map<string, TerminalSession>();
  * both places on a failed kill, which is what the old code effectively did by
  * skipping its `delete`, would have let a retry report success and delete the
  * worktree out from under a live shell.
+ *
+ * A set of sessions rather than a map by key: a restarted tab's new shell
+ * shares its key with the old one, and neither may evict the other.
  */
-const dying = new Map<string, TerminalSession>();
+const dying = new Set<TerminalSession>();
+
+/** A shell under this id has been asked to die and is still a process. */
+function dyingUnder(key: string, which: (session: TerminalSession) => boolean = () => true): boolean {
+  for (const session of dying) if (session.key === key && which(session)) return true;
+  return false;
+}
+
+/** Every shell a task still has a process for, live or dying. */
+function ownedShells(prefix: string): [string, TerminalSession][] {
+  const live = [...sessions.entries()];
+  const going = [...dying].map((session): [string, TerminalSession] => [session.key, session]);
+  return [...live, ...going].filter(([key]) => key.startsWith(prefix));
+}
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 function keepSweepAlive(): void {
@@ -601,8 +631,8 @@ function stopSweepIfEmpty(): void {
 
 /** A shell that lingered past its kill may have gone since; stop tracking it. */
 function sweepDying(): void {
-  for (const [key, session] of [...dying.entries()]) {
-    if (session.hasExited()) dying.delete(key);
+  for (const session of [...dying]) {
+    if (session.hasExited()) dying.delete(session);
   }
   stopSweepIfEmpty();
 }
@@ -618,8 +648,9 @@ function tabFor(taskId: string, id: number, configuredShell: string | undefined)
 export function createShell(taskId: string, configuredShell?: string): ShellInfo {
   for (let id = 0; id < MAX_SHELLS_PER_TASK; id++) {
     const key = sessionKey(taskId, id);
-    // A shell still dying under an id keeps it: its bookkeeping is keyed there.
-    if (findTab(key) || dying.has(key)) continue;
+    // A shell still dying under an id keeps it: its screen, its SSE events
+    // and a late natural exit are all keyed there.
+    if (findTab(key) || dyingUnder(key)) continue;
     return shellInfo(tabFor(taskId, id, configuredShell));
   }
   throw new ShellConflictError(`a task can hold at most ${MAX_SHELLS_PER_TASK} shells`);
@@ -690,6 +721,12 @@ export function openSession(
   configuredShell?: string,
 ): TerminalSession {
   const key = sessionKey(taskId, shellId);
+  // Attaching mid-hangup would start a second process under the key the
+  // first one is still being retired from. Once the kill has run its course
+  // the id is free again, even for a process that outlived SIGKILL.
+  if (dyingUnder(key, (session) => session.isClosing())) {
+    throw new ShellConflictError("this shell is still closing; try again in a moment");
+  }
   const existing = sessions.get(key);
   if (existing?.isLive()) {
     if (!findTab(key)) tabFor(taskId, shellId, configuredShell);
@@ -716,24 +753,23 @@ export function openSession(
 }
 
 /**
- * Kill one shell and retire it: out of the reusable map either way, and into
- * `dying` only while its process is still there.
+ * Kill one shell and retire it: out of the reusable map at once, and in
+ * `dying` for as long as its process is still there.
  *
- * The bookkeeping is in a `finally` on purpose. A kill that throws still means
- * "this shell must never be reused", and the old code's `delete`-after-await
- * skipped that, leaking the session AND leaving it reusable.
+ * It moves BEFORE the kill is awaited. The hangup can take the whole grace
+ * period, and other requests are served meanwhile: a shell in neither map is
+ * one `createShell` hands its id to and archive's `killForTask` never sees.
+ * Leaving `dying` is in a `finally`, so a kill that throws still leaves the
+ * lingering process tracked.
  */
 async function killAndRetire(key: string, session: TerminalSession): Promise<void> {
+  if (sessions.get(key) === session) sessions.delete(key);
+  dying.add(session);
+  keepSweepAlive();
   try {
     await session.kill();
   } finally {
-    if (sessions.get(key) === session) sessions.delete(key);
-    if (session.hasExited()) {
-      if (dying.get(key) === session) dying.delete(key);
-    } else {
-      dying.set(key, session);
-      keepSweepAlive();
-    }
+    if (session.hasExited()) dying.delete(session);
     stopSweepIfEmpty();
   }
 }
@@ -744,11 +780,10 @@ export async function killForTask(taskId: string): Promise<void> {
   forgetTabs(taskId);
   // Dying shells from an earlier attempt are re-checked, so a retried archive
   // stage sees the process that is still there rather than an empty map.
-  const owned = [...sessions.entries(), ...dying.entries()].filter(([key]) => key.startsWith(prefix));
-  for (const [key, session] of owned) {
+  for (const [key, session] of ownedShells(prefix)) {
     if (session.hasExited()) {
-      sessions.delete(key);
-      dying.delete(key);
+      if (sessions.get(key) === session) sessions.delete(key);
+      dying.delete(session);
       continue;
     }
     await killAndRetire(key, session);
@@ -758,7 +793,7 @@ export async function killForTask(taskId: string): Promise<void> {
 
 /** Kill every shell during daemon shutdown. */
 export async function killAll(): Promise<void> {
-  const entries = [...sessions.entries(), ...dying.entries()];
+  const entries = ownedShells("");
   await Promise.all(
     entries.map(async ([key, session]) => {
       try {

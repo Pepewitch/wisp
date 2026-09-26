@@ -23,9 +23,12 @@ function shell(id: number, number: number, extra: Partial<ShellInfo> = {}): Shel
 
 type Route = (path: string, init?: { method?: string; body?: unknown }) => unknown
 
-function harness(route: Route, features: Record<string, boolean> = { taskTerminals: true }) {
+function harness(route: Route, features: Record<string, boolean> | Error = { taskTerminals: true }) {
   const request = vi.fn(async (path: string, init?: { method?: string; body?: unknown }) => {
-    if (path === "/api/harnesses") return { harnesses: [], features }
+    if (path === "/api/harnesses") {
+      if (features instanceof Error) throw features
+      return { harnesses: [], features }
+    }
     return route(path, init)
   })
   const transport = fakeDaemonTransport("local", { request: request as unknown as DaemonTransport["request"] })
@@ -53,7 +56,34 @@ describe("useShellTabs", () => {
   it("opens a tab when the task has none", async () => {
     const { request, view } = harness((_path, init) => (init?.method === "POST" ? shell(0, 1) : []))
     await waitFor(() => expect(view.result.current.shells).toEqual([0]))
-    expect(calls(request)).toEqual(["GET /api/tasks/tshell/terminals", "POST /api/tasks/tshell/terminals"])
+    // ifEmpty: a second window opening the same task at once gets this tab, not another
+    expect(calls(request)).toEqual(["GET /api/tasks/tshell/terminals", "POST /api/tasks/tshell/terminals?ifEmpty=1"])
+  })
+
+  it("says so when the tab list cannot be read, rather than showing no shells", async () => {
+    const { request, view } = harness(() => {
+      throw new ApiError("daemon hiccup", 500)
+    })
+    await waitFor(() => expect(view.result.current.failure).toBe("Could not load this task's shells: daemon hiccup"))
+    expect(view.result.current.shells).toEqual([])
+    expect(view.result.current.canOpen).toBe(false)
+    await act(() => view.result.current.openTab())
+    expect(calls(request).some((call) => call.startsWith("POST"))).toBe(false)
+  })
+
+  it("waits out a failed feature check instead of falling back to per-browser tabs", async () => {
+    const { request, view } = harness(() => [shell(0, 1)], new ApiError("daemon hiccup", 500))
+    await waitFor(() => expect(view.result.current.failure).toBe("Could not load this task's shells: daemon hiccup"))
+    expect(view.result.current.shells).toEqual([])
+    expect(view.result.current.canOpen).toBe(false)
+    expect(calls(request)).toEqual([])
+  })
+
+  it("treats a daemon with no harness route as one without the tab list", async () => {
+    const { view } = harness(() => [], new ApiError("not found", 404))
+    await waitFor(() => expect(view.result.current.shells).toEqual([0]))
+    expect(view.result.current.daemonTabs).toBe(false)
+    expect(view.result.current.failure).toBeNull()
   })
 
   it("asks before closing a busy shell, then closes it with force", async () => {

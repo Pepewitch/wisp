@@ -49,8 +49,11 @@ export function useShellTabs({
   const features = useHarnessFeatures()
   const daemonTabs = features.data?.taskTerminals === true
   // Nothing attaches until the daemon has said which kind it is: a tab opened
-  // the legacy way first would be a shell the daemon's list then has to adopt.
-  const featuresKnown = features.data !== undefined || features.isError
+  // the legacy way first would be a shell the daemon's list then has to adopt,
+  // and closing it would leave its shell running. Only a daemon with no such
+  // route at all is old; any other failure is waited out, not guessed from.
+  const featuresMissing = features.error instanceof ApiError && features.error.status === 404
+  const featuresKnown = features.data !== undefined || featuresMissing
 
   const taskIdentity = `${runtime.connectionId}:${taskId ?? ""}`
   // Every write names its task up front and checks this when it lands, so a
@@ -81,6 +84,9 @@ export function useShellTabs({
   const [failure, setFailure] = useState<string | null>(null)
 
   const shellsQuery = useTaskShells(taskId, daemonTabs && available)
+  // With no list to show, an empty strip would claim the task has no shells,
+  // and a new one would be opened beside the ones still running.
+  const listFailed = daemonTabs && available && shellsQuery.isError && shellsQuery.data === undefined
   const infos: ShellInfo[] = daemonTabs ? (shellsQuery.data ?? []) : []
   const shells: number[] = !featuresKnown ? [] : daemonTabs ? infos.map((shell) => shell.id) : tabs.ids
   const activeId = shells.includes(tabs.active) ? tabs.active : (shells[shells.length - 1] ?? tabs.active)
@@ -95,9 +101,13 @@ export function useShellTabs({
     queryClient.setQueryData<ShellInfo[]>(shellsKey, (current) => change(current ?? []))
   const terminalsPath = `/api/tasks/${taskId}/terminals`
 
-  /** POST a new tab and list it at once, rather than waiting for the event. */
-  const createTab = async (): Promise<ShellInfo> => {
-    const shell = await runtime.transport.request<ShellInfo>(terminalsPath, { method: "POST" })
+  /**
+   * POST a new tab and list it at once, rather than waiting for the event.
+   * `ifEmpty` takes the task's first tab if another window already made one.
+   */
+  const createTab = async (ifEmpty = false): Promise<ShellInfo> => {
+    const path = ifEmpty ? `${terminalsPath}?ifEmpty=1` : terminalsPath
+    const shell = await runtime.transport.request<ShellInfo>(path, { method: "POST" })
     queryClient.setQueryData<ShellInfo[]>(shellsKey, (current = []) =>
       current.some((item) => item.id === shell.id) ? current : [...current, shell].sort((a, b) => a.number - b.number),
     )
@@ -106,6 +116,7 @@ export function useShellTabs({
 
   const openTab = async () => {
     setFailure(null)
+    if (!featuresKnown || listFailed) return
     if (!daemonTabs) {
       // The smallest FREE id, not max+1: on a daemon that keeps no tab list,
       // reusing a closed tab's id reattaches to the shell still running
@@ -133,7 +144,7 @@ export function useShellTabs({
     if (!listEmpty || autoOpening.current === taskIdentity) return
     autoOpening.current = taskIdentity
     const identity = taskIdentity
-    createTab()
+    createTab(true)
       .catch((error: unknown) => {
         if (stillOn(identity)) setFailure(failureOf(error))
       })
@@ -222,9 +233,12 @@ export function useShellTabs({
     else void restartTab(pending.id, true)
   }
 
+  const loadError = listFailed ? shellsQuery.error : features.isError && !featuresKnown ? features.error : null
+
   return {
     daemonTabs,
-    featuresKnown,
+    /** the tab list is known, so a new tab cannot be a duplicate of one not shown */
+    canOpen: featuresKnown && !listFailed,
     shells,
     activeId,
     infoOf: (id: number) => infos.find((shell) => shell.id === id),
@@ -237,6 +251,6 @@ export function useShellTabs({
     pendingKill,
     confirmKill,
     cancelKill: () => setPendingKill(null),
-    failure,
+    failure: failure ?? (loadError ? `Could not load this task's shells: ${failureOf(loadError)}` : null),
   }
 }

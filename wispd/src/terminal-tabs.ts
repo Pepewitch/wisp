@@ -4,6 +4,11 @@ import { emit } from "./events";
 const ANNOUNCE_MS = 100;
 /** The longest custom name a shell tab takes; the strip truncates well before it. */
 export const MAX_SHELL_NAME_LENGTH = 64;
+/**
+ * Any program in the shell sets the title, and it rides on every tab list for
+ * the tab's life. Longer than a name, because the usual one is `user@host:cwd`.
+ */
+export const MAX_SHELL_TITLE_LENGTH = 256;
 
 /** The sessions map key: one shell per (task, tab), so tabs are real shells. */
 export function sessionKey(taskId: string, shellId: number): string {
@@ -119,8 +124,9 @@ export function noteShell(key: string, change: Partial<Pick<ShellInfo, "title" |
   const record = records.get(key);
   if (!record) return;
   let changed = false;
-  if (change.title !== undefined && change.title !== record.title) {
-    record.title = change.title;
+  const title = change.title === undefined ? undefined : (change.title?.slice(0, MAX_SHELL_TITLE_LENGTH) ?? null);
+  if (title !== undefined && title !== record.title) {
+    record.title = title;
     changed = true;
   }
   if (change.program !== undefined && change.program !== record.program) {
