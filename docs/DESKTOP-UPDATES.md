@@ -39,6 +39,12 @@ Tauri updater fetches the same document again
 replace /Applications/Wisp.app -> relaunch only after successful install
 ```
 
+On the first launch of a new app version, including an in-app relaunch, the app
+brings its main window forward and zooms it to the usable screen area (not a
+macOS full-screen Space). This also covers an upgrade from a version without
+this behavior and a fresh install. Later launches of the same version keep
+their normal window size.
+
 The endpoint and updater public key are compiled into the native app.
 The URL `updates/wisp-desktop-alpha.json` and wire value `channel: "alpha"`
 remain unchanged for compatibility with installed 0.4 clients. They also carry
@@ -200,7 +206,8 @@ signed versions on an Apple Silicon Mac:
    remain separate and must not change when a saved remote tab is selected.
 5. Click **Update Desktop and relaunch**. Confirm download progress, a clean
    relaunch, the new version on the Desktop row, and the same connections and
-   tasks.
+   tasks. The new window should be focused and fit the usable screen without
+   entering a separate macOS full-screen Space.
 6. Repeat the three Apple trust checks against the newly installed app. Confirm
    a bad-signature test is rejected and leaves the old app runnable.
 7. Run `brew update` and inspect `brew info --cask wisp-desktop`. If its
