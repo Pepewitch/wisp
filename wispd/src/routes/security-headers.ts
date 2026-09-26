@@ -52,7 +52,8 @@ export function inlineScriptSources(html: string): string[] {
 }
 
 /**
- * Case-insensitive search over the ORIGINAL bytes.
+ * ASCII case-insensitive search over the ORIGINAL bytes, which is how the
+ * HTML tokenizer matches a tag name.
  *
  * The first version of this lowercased the whole document and then used those
  * indices to slice the original — which desynchronizes the moment a character
@@ -60,11 +61,22 @@ export function inlineScriptSources(html: string): string[] {
  * I). The document is agent-authored prose in places, so that is reachable,
  * and the consequence is a hash of the wrong slice: the browser refuses the
  * real script and the app is blank. Fails closed, but blank (a review's note).
+ *
+ * Folding only ASCII letters in place also allocates nothing per position.
+ * This runs over the whole multi-megabyte bundle before the daemon listens,
+ * and a slice-and-lowercase per character left hundreds of megabytes of
+ * garbage behind at startup.
  */
 function indexOfInsensitive(haystack: string, needle: string, from: number): number {
   const lowerNeedle = needle.toLowerCase();
-  for (let index = from; index <= haystack.length - needle.length; index++) {
-    if (haystack.slice(index, index + needle.length).toLowerCase() === lowerNeedle) return index;
+  const last = haystack.length - lowerNeedle.length;
+  search: for (let index = from; index <= last; index++) {
+    for (let offset = 0; offset < lowerNeedle.length; offset++) {
+      const code = haystack.charCodeAt(index + offset);
+      const folded = code >= 0x41 && code <= 0x5a ? code + 0x20 : code;
+      if (folded !== lowerNeedle.charCodeAt(offset)) continue search;
+    }
+    return index;
   }
   return -1;
 }

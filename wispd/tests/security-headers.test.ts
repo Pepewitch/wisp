@@ -92,6 +92,17 @@ describe("inline script scanning", () => {
 
   test("an upper-case tag is still found", () => {
     expect(inlineScriptSources("<SCRIPT>boot()</SCRIPT>")).toEqual(["boot()"]);
+    expect(inlineScriptSources("<ScRiPt>boot()</sCrIpT>")).toEqual(["boot()"]);
+  });
+
+  /**
+   * A browser folds only ASCII letters in a tag name, so a non-ASCII letter
+   * that lowercases to an ASCII one plus a mark (the dotted capital I) does not
+   * start or end a script. Treating it as one would hash the wrong bytes.
+   */
+  test("only ASCII letters fold, as they do in the HTML tokenizer", () => {
+    expect(inlineScriptSources("<scr\u0130pt>not code</scr\u0130pt><script>boot()</script>")).toEqual(["boot()"]);
+    expect(inlineScriptSources("<script>boot('</scr\u0130pt>')</script>")).toEqual(["boot('</scr\u0130pt>')"]);
   });
 
   test("skips a script with a src, which a hash cannot cover", () => {
