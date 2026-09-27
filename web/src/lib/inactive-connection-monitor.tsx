@@ -44,15 +44,11 @@ export function InactiveConnectionMonitor({
     let inFlight: AbortController | null = null
     let generation = 0
     let dirty = false
-    let firstOpen = true
-    let initialFinished = false
-    let initialFailed = false
-    let wasDown = false
 
     const flush = () => {
       if (closed || inFlight || !dirty) return
       dirty = false
-      refresh(false)
+      refresh()
     }
     const schedule = (delay = 250) => {
       generation++
@@ -63,37 +59,31 @@ export function InactiveConnectionMonitor({
         flush()
       }, delay)
     }
-    const refresh = (initial: boolean) => {
+    const refresh = () => {
       if (closed || inFlight) return
       const controller = new AbortController()
       const requestedGeneration = generation
       inFlight = controller
       void entry.transport.request<ApiTask[]>("/api/tasks", { signal: controller.signal }).then(
         (tasks) => {
-          if (initial) initialFinished = true
           if (!closed && !controller.signal.aborted && requestedGeneration === generation) {
-            initialFailed = false
             onAttention(entry.metadata.id, connectionAttention(tasks))
             onReachability(entry.metadata.id, "online")
             onTasks(entry.metadata.id, tasks)
           }
         },
         (error: unknown) => {
-          if (initial) { initialFinished = true; initialFailed = true }
           if (!closed && !controller.signal.aborted && requestedGeneration === generation)
             onReachability(entry.metadata.id, classifyConnectionError(error))
         },
       ).finally(() => {
         if (inFlight === controller) inFlight = null
         if (closed) return
-        if (initialFailed && !firstOpen) {
-          initialFailed = false
-          schedule(0)
-        } else if (timer === null) flush()
+        if (timer === null) flush()
       })
     }
 
-    refresh(true)
+    refresh()
     let events: DaemonEventStream | null = null
     try {
       const stream = entry.transport.openEventStream("/api/events")
@@ -102,9 +92,10 @@ export function InactiveConnectionMonitor({
         if (closed) return
         store.set("events", true)
         onReachability(entry.metadata.id, "online")
-        if (wasDown || (firstOpen && initialFinished && initialFailed)) schedule(0)
-        firstOpen = false
-        wasDown = false
+        // The initial snapshot may predate the SSE subscription even if its
+        // response arrives later. Reconcile once on every open to close that
+        // gap, while the in-flight guard keeps the reads serialized.
+        schedule(0)
       }
       stream.onmessage = (event) => {
         if (!closed && canChangeTaskList(event.data)) schedule()
@@ -113,7 +104,6 @@ export function InactiveConnectionMonitor({
       stream.onerror = () => {
         if (closed) return
         store.set("events", false)
-        wasDown = true
         schedule(0)
       }
     } catch {

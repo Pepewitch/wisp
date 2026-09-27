@@ -53,17 +53,39 @@ beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe("inactive connection task refresh", () => {
-  it("reuses the initial task read when the event stream first opens", async () => {
+  it("serializes the first-open reconciliation behind an in-flight initial read", async () => {
     const first = deferred<ApiTask[]>()
-    const request = vi.fn().mockReturnValue(first.promise)
+    const second = deferred<ApiTask[]>()
+    const request = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
     const { events, onTasks, view } = fixture(request)
     expect(request).toHaveBeenCalledTimes(1)
     expect(request.mock.calls[0]?.[1]).toEqual({ signal: expect.any(AbortSignal) })
     act(() => events.open())
     expect(request).toHaveBeenCalledTimes(1)
     await act(async () => first.resolve([task("initial")]))
+    expect(onTasks).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(0))
+    expect(request).toHaveBeenCalledTimes(2)
+    await act(async () => second.resolve([task("reconciled")]))
     expect(onTasks).toHaveBeenCalledOnce()
-    expect(onTasks.mock.calls[0]?.[1]).toEqual([task("initial")])
+    expect(onTasks.mock.calls[0]?.[1]).toEqual([task("reconciled")])
+    view.unmount()
+  })
+
+  it("rechecks when a task changes after the first snapshot but before SSE opens", async () => {
+    const request = vi.fn()
+      .mockResolvedValueOnce([task("old-state")])
+      .mockResolvedValueOnce([task("new-state")])
+    const { events, onTasks, view } = fixture(request)
+    await act(async () => Promise.resolve())
+    expect(onTasks.mock.calls[0]?.[1]).toEqual([task("old-state")])
+    act(() => {
+      events.open()
+      vi.advanceTimersByTime(0)
+    })
+    await act(async () => Promise.resolve())
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(onTasks.mock.calls[1]?.[1]).toEqual([task("new-state")])
     view.unmount()
   })
 
@@ -95,17 +117,21 @@ describe("inactive connection task refresh", () => {
     await act(async () => Promise.resolve())
     act(() => {
       events.open()
+      vi.advanceTimersByTime(0)
+    })
+    await act(async () => Promise.resolve())
+    act(() => {
       for (const type of ["project", "settings", "harnesses", "harness-limits", "message", "terminals"])
         events.message(type)
       vi.advanceTimersByTime(250)
     })
-    expect(request).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledTimes(2)
     act(() => {
       events.error()
       events.open()
       vi.advanceTimersByTime(0)
     })
-    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenCalledTimes(3)
     view.unmount()
   })
 
