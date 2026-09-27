@@ -555,12 +555,18 @@ export async function hasUnpushedWork(worktree: string, branch: string, base_com
   const head = (await git(["rev-parse", "HEAD"], worktree)).out;
   if (base_commit && head === base_commit) return false; // no new commits at all
   const upstream = await git(["rev-parse", "--abbrev-ref", "@{u}"], worktree);
-  if (upstream.ok && (await git(["rev-list", "--count", "@{u}..HEAD"], worktree)).out === "0") return false;
+  if (upstream.ok) {
+    const ahead = await git(["rev-list", "--max-count=1", "@{u}..HEAD"], worktree);
+    if (ahead.ok && ahead.out === "") return false;
+  }
   const others = (await git(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"], worktree)).out
     .split("\n")
     .filter((r) => r !== "" && r !== `refs/heads/${branch}`);
   if (others.length === 0) return true; // nothing else the commits could live on
-  return (await git(["rev-list", "HEAD", "--not", ...others], worktree)).out !== "";
+  const unique = await git(["rev-list", "--max-count=1", "HEAD", "--not", ...others], worktree);
+  // An unreadable reachability graph is not proof that the user's work was
+  // saved elsewhere. Archive must treat uncertainty as unpushed work.
+  return !unique.ok || unique.out !== "";
 }
 
 /**

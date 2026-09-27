@@ -103,6 +103,22 @@ describe("worktree lifecycle", () => {
     expect(await hasUnpushedWork(wt.path, wt.branch, wt.base_commit)).toBe(false);
   });
 
+  test("an upstream needs only a reachability answer, even several commits ahead", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tup123", cfg);
+    const baseBranch = shOut(["git", "branch", "--show-current"], repo).trim();
+    sh(["git", "branch", `--set-upstream-to=${baseBranch}`, wt.branch], repo);
+    for (const n of [1, 2]) {
+      writeFileSync(join(wt.path, `work-${n}.txt`), `${n}\n`);
+      sh(["git", "add", "."], wt.path);
+      sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", `work ${n}`], wt.path);
+    }
+    expect(await hasUnpushedWork(wt.path, wt.branch, wt.base_commit)).toBe(true);
+    expect((await statusSummary(wt.path, wt.branch, wt.base_commit)).ahead).toBe(2);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "--ff-only", wt.branch], repo);
+    expect(await hasUnpushedWork(wt.path, wt.branch, wt.base_commit)).toBe(false);
+  });
+
   test("archive refuses a dirty worktree; force commits the work onto the kept branch and removes", async () => {
     const repo = makeRepo();
     const wt = await createWorktree(repo, "tghi56", cfg);
