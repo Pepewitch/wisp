@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
-import { route, serve } from "../src/daemon";
+import { acceptsGzip, route, serve } from "../src/daemon";
 import {
   createTask,
   createTurn,
@@ -48,6 +48,16 @@ function writeConfig(): void {
 const BUNDLE_PATH = join(import.meta.dir, "../../web/ui-dist/index.html");
 
 describe("the web app", () => {
+  test("gzip negotiation honors explicit exclusions and wildcard acceptance", () => {
+    expect(acceptsGzip(null)).toBe(false);
+    expect(acceptsGzip("br, gzip")).toBe(true);
+    expect(acceptsGzip("GZIP;q=0.5, br")).toBe(true);
+    expect(acceptsGzip("gzip;q=0, *;q=1")).toBe(false);
+    expect(acceptsGzip("br, *;q=0.5")).toBe(true);
+    expect(acceptsGzip("gzip;q=0, identity")).toBe(false);
+    expect(acceptsGzip("gzip;q=2")).toBe(false);
+  });
+
   test("the generated bundle stays outside version control", () => {
     const root = join(import.meta.dir, "../..");
     const ignored = Bun.spawnSync({
@@ -77,6 +87,25 @@ describe("the web app", () => {
     // daemon embeds the same text import rather than serving a sibling file.
     expect(html).toBe(await Bun.file(BUNDLE_PATH).text());
     expect(html).toContain('id="root"');
+  });
+
+  test("the page negotiates gzip without changing its decoded bytes or security headers", async () => {
+    writeConfig();
+    server = await serve({ port: 0 });
+    const url = `http://127.0.0.1:${server.port}/`;
+    const plain = await fetch(url, { headers: { "accept-encoding": "identity" } });
+    const zipped = await fetch(url, { headers: { "accept-encoding": "br, gzip;q=1" } });
+    const excluded = await fetch(`${url}index.html`, { headers: { "accept-encoding": "gzip;q=0, *;q=1" } });
+
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(zipped.headers.get("content-encoding")).toBe("gzip");
+    expect(excluded.headers.get("content-encoding")).toBeNull();
+    for (const response of [plain, zipped, excluded]) {
+      expect(response.headers.get("vary")).toBe("Accept-Encoding");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("content-security-policy")).toBe(plain.headers.get("content-security-policy"));
+      expect(await response.text()).toBe(await Bun.file(BUNDLE_PATH).text());
+    }
   });
 
   test("/index.html is the same page, with only explicit PWA resources off the API", async () => {

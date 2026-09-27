@@ -1,4 +1,5 @@
 import { recoverCleanupProgress } from "./archive-progress";
+import { gzipSync } from "node:zlib";
 import { loadAdapters } from "./adapters";
 import { MAX_TURN_BASE64_CHARS } from "./attachments";
 import {
@@ -63,6 +64,26 @@ import { pwaResponse } from "./pwa";
 async function bundledAppHtml(): Promise<string> {
   const bundle = await import("../../web/ui-dist/index.html", { with: { type: "file" } });
   return await Bun.file(bundle.default as unknown as string).text();
+}
+
+/** Prefer the supported gzip representation only when the client accepts it. */
+export function acceptsGzip(header: string | null): boolean {
+  if (!header) return false;
+  const qualities = new Map<string, number>();
+  for (const entry of header.split(",")) {
+    const [coding, ...parameters] = entry.split(";");
+    const name = coding?.trim().toLowerCase();
+    if (!name) continue;
+    let quality = 1;
+    for (const parameter of parameters) {
+      const match = parameter.trim().match(/^q\s*=\s*(.*)$/i);
+      if (!match) continue;
+      const parsed = Number(match[1]);
+      quality = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
+    }
+    qualities.set(name, quality);
+  }
+  return (qualities.get("gzip") ?? qualities.get("*") ?? 0) > 0;
 }
 
 // The route handlers live in ./routes now, but tests and the CLI import these
@@ -458,6 +479,10 @@ async function serveOwned(
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
   recoverCleanupProgress(); // classify interrupted scripts; slow work starts after listening
 
+  // The bundle is immutable for this daemon lifetime. Compress once, before
+  // serving requests, rather than spending CPU on every page navigation.
+  const appGzip = gzipSync(appHtml, { level: 5 });
+
   let stopping = false;
   let server: Bun.Server<TerminalSocketData>;
   try {
@@ -492,10 +517,13 @@ async function serveOwned(
         const url = new URL(req.url);
         const path = url.pathname;
         if (path === "/" || path === "/index.html") {
-          return new Response(appHtml, {
+          const compressed = acceptsGzip(req.headers.get("accept-encoding"));
+          return new Response(compressed ? appGzip : appHtml, {
             headers: {
               "content-type": "text/html; charset=utf-8",
               "cache-control": "no-store",
+              "vary": "Accept-Encoding",
+              ...(compressed ? { "content-encoding": "gzip" } : {}),
               ...pageSecurityHeaders(securityPolicy, url.origin),
             },
           });
