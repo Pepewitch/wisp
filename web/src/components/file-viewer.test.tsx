@@ -43,7 +43,9 @@ describe("the worktree file viewer", () => {
     )
     await waitFor(() => expect(screen.getByRole("heading", { name: "The plan" })).toBeInTheDocument())
     expect(screen.getByText("one")).toBeInTheDocument()
-    expect(request).toHaveBeenCalledWith("/api/tasks/tk9zdy/file?path=.context%2FPLAN.md")
+    expect(request).toHaveBeenCalledWith(
+      "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md", { signal: expect.any(AbortSignal) },
+    )
     expect(screen.getByTestId("file-viewer-path")).toHaveTextContent(".context/PLAN.md")
   })
 
@@ -90,6 +92,7 @@ describe("the worktree file viewer", () => {
     expect(viewer.querySelector("h1")).toHaveTextContent("The plan")
     expect(request).toHaveBeenCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
+      { signal: expect.any(AbortSignal) },
     )
     expect(screen.getByTestId("file-viewer-path")).toHaveTextContent(
       ".context/PLAN.md#L3",
@@ -355,6 +358,7 @@ describe("the file viewer's provider", () => {
     expect(viewer.querySelector("strong")).toHaveTextContent("one")
     expect(request).toHaveBeenCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FPLAN.md",
+      { signal: expect.any(AbortSignal) },
     )
   })
 
@@ -382,6 +386,7 @@ describe("the file viewer's provider", () => {
     )
     expect(request).toHaveBeenLastCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FNOTES.md",
+      { signal: expect.any(AbortSignal) },
     )
   })
 
@@ -405,6 +410,7 @@ describe("the file viewer's provider", () => {
     )
     expect(request).toHaveBeenLastCalledWith(
       "/api/tasks/tk9zdy/file?path=.context%2FNOTES.md",
+      { signal: expect.any(AbortSignal) },
     )
   })
 

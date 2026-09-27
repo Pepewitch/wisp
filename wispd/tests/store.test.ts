@@ -11,12 +11,14 @@ import {
   createTaskMessage,
   createTask,
   createTurn,
+  db,
   finishTurn,
   freeSlot,
   getTask,
   getTaskMessage,
   getTurn,
   latestTurnOutcomes,
+  listTasksWithLatestTurn,
   newTaskId,
   newTaskMessageId,
   nextQueuedMessage,
@@ -100,6 +102,52 @@ describe("task message migrations", () => {
         "attachments_json",
       ]),
     );
+  });
+});
+
+describe("task-list rows", () => {
+  test("filters archived tasks in SQL and finds the highest-numbered turn", () => {
+    const live = makeTask();
+    const pending = makeTask();
+    const complete = makeTask();
+    const hidden = makeTask();
+    const ids = new Set([live.id, pending.id, complete.id, hidden.id]);
+    try {
+      const newest = createTurn(live.id, 2, "newest", null, "/tmp/list-newest.out.log");
+      setTurnModel(newest, "new-model");
+      finishTurn(newest, "failed", 7, ""); // an empty result still arrived
+      const older = createTurn(live.id, 1, "older", null, "/tmp/list-older.out.log");
+      setTurnModel(older, "old-model");
+      finishTurn(older, "done", 0, "older result");
+
+      for (const task of [pending, complete, hidden]) setTaskFields(task.id, { archived: 1 });
+      for (const [task, status] of [[pending, "pending"], [complete, "complete"]] as const) {
+        db.run(`INSERT INTO archive_cleanups
+          (task_id, stage, force, stop_turn, removable, repo_path, timeout_minutes, created_at, updated_at)
+          VALUES (?, 'remove-worktree', 0, 0, 0, '/tmp/repo', 1, '2099-01-01', '2099-01-01')`, [task.id]);
+        db.run("INSERT INTO archive_cleanup_progress (task_id, phase, status) VALUES (?, 'remove-worktree', ?)", [task.id, status]);
+      }
+      for (const [task, minute] of [[live, 4], [pending, 3], [complete, 2], [hidden, 1]] as const) {
+        db.run("UPDATE tasks SET updated_at = ? WHERE id = ?", [`2099-01-01T00:0${minute}:00.000Z`, task.id]);
+      }
+
+      const listed = (archived: boolean, cleanup: boolean) =>
+        listTasksWithLatestTurn(archived, cleanup).filter(({ task }) => ids.has(task.id));
+      expect(listed(false, false).map(({ task }) => task.id)).toEqual([live.id]);
+      expect(listed(false, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id]);
+      expect(listed(true, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id, hidden.id]);
+      expect(listed(false, false)[0]!.latestTurn).toEqual({ model: "new-model", exitCode: 7, hasResult: true });
+      expect(listed(true, false).find(({ task }) => task.id === hidden.id)!.latestTurn)
+        .toEqual({ model: null, exitCode: null, hasResult: false });
+    } finally {
+      for (const id of ids) {
+        db.run("DELETE FROM archive_cleanup_progress WHERE task_id = ?", [id]);
+        db.run("DELETE FROM archive_cleanups WHERE task_id = ?", [id]);
+        db.run("DELETE FROM turns WHERE task_id = ?", [id]);
+        db.run("DELETE FROM task_contexts WHERE task_id = ?", [id]);
+        db.run("DELETE FROM tasks WHERE id = ?", [id]);
+      }
+    }
   });
 });
 

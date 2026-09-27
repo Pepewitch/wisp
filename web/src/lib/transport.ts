@@ -23,7 +23,12 @@ export class ApiError extends Error {
 
 /** Decode the daemon's JSON envelope and preserve native-proxy error codes. */
 export async function daemonJsonResponse<T>(response: Response): Promise<T> {
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>
+  const data = (await response.json().catch((error: unknown) => {
+    // A fetch can be cancelled after headers but before the JSON body arrives.
+    // Do not turn that cancellation into a successful empty response.
+    if (error instanceof Error && error.name === "AbortError") throw error
+    return {}
+  })) as Record<string, unknown>
   if (!response.ok) {
     throw new ApiError(
       typeof data.error === "string"

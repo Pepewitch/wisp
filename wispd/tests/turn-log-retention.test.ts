@@ -95,7 +95,7 @@ test("reader/export leases defer eviction; durable intent resumes on a later pas
   releaseExport();
   db.run("UPDATE turns SET capture_state = 'evicted', capture_detail = 'File removal pending' WHERE id = ?", [f.turnId]);
   unlinkSync(f.log);
-  expect((await retainTurnLogs(cfg, now)).evicted).toBe(1);
+  expect((await retainTurnLogs(cfg, now, false)).evicted).toBe(1);
   expect(existsSync(f.err)).toBe(false);
   expect((await retainTurnLogs(cfg, now)).evicted).toBe(0);
 });
@@ -122,6 +122,20 @@ test("a crash after the final unlink still completes its durable eviction checkp
   expect(turnForTask(f.id, f.n)?.capture_detail).not.toContain("File removal pending");
   expect(turnForTask(f.id, f.n)?.captured_bytes).toBe(0);
   expect((await retainTurnLogs(cfg, now)).evicted).toBe(0);
+});
+
+test("routine scans skip fully evicted history while reconciliation finds restored files", async () => {
+  const f = fixture();
+  expect((await retainTurnLogs(cfg, now)).evicted).toBe(1);
+  writeFileSync(f.log, "restored log");
+  writeFileSync(f.err, "restored stderr");
+  const stamp = (now - 120 * day) / 1000;
+  utimesSync(f.log, stamp, stamp); utimesSync(f.err, stamp, stamp);
+  expect((await retainTurnLogs(cfg, now, false)).evicted).toBe(0);
+  expect(existsSync(f.log)).toBe(true);
+  expect((await retainTurnLogs(cfg, now, true)).evicted).toBe(1);
+  expect(existsSync(f.log)).toBe(false);
+  expect(existsSync(f.err)).toBe(false);
 });
 
 test("disabled retention and draining homes delete nothing; config budgets are distinct", async () => {

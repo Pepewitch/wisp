@@ -2,7 +2,6 @@ import { retentionRoute } from "./retention";
 import { taskLogResponse } from "./task-log";
 import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
-import { cleanupProgress } from "../archive-progress";
 import { trackHomeWork } from "../home-lifetime";
 import { resolve } from "node:path";
 import { buildAttachArgv, isCompactPrompt, ProbeError, probeCommands, type AdapterDef } from "../adapters";
@@ -27,8 +26,8 @@ import {
   createTask,
   freeSlot,
   getTask,
-  latestTurnOutcomes,
   listTasks,
+  listTasksWithLatestTurn,
   newTaskId,
   setTaskContextFields,
   setTaskFields,
@@ -58,18 +57,18 @@ export function listTasksRoute(url: URL): Response {
   // each task's LATEST turn, for the list surfaces: the model it actually ran
   // on (P5b), and the exit facts that let a client say "exited 1" instead of
   // "failed" when the work landed but the harness CLI exited badly (Theme B)
-  const outcomes = latestTurnOutcomes();
+  const includeArchived = url.searchParams.get("archived") === "1";
+  const includeCleanup = url.searchParams.get("cleanup") === "1";
   const attachedWorkflows = taskIdsWithAttachedWorkflows();
   const autopilot = autopilotStatuses();
   return json(
-    listTasks(url.searchParams.get("archived") === "1" || url.searchParams.get("cleanup") === "1")
-      .filter(t => !t.archived || url.searchParams.get("archived") === "1" || cleanupProgress(t.id) !== null).map((t) => ({
+    listTasksWithLatestTurn(includeArchived, includeCleanup).map(({ task: t, latestTurn }) => ({
       ...apiTask(t),
       has_workflow: attachedWorkflows.has(t.id),
       autopilot: autopilot.get(t.id) ?? null,
-      latest_turn_model: outcomes.get(t.id)?.model ?? null,
-      latest_turn_exit_code: outcomes.get(t.id)?.exitCode ?? null,
-      latest_turn_has_result: outcomes.get(t.id)?.hasResult ?? false,
+      latest_turn_model: latestTurn.model,
+      latest_turn_exit_code: latestTurn.exitCode,
+      latest_turn_has_result: latestTurn.hasResult,
     })),
   );
 }

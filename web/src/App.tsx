@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ComponentProps,
   type RefObject,
   type ReactNode,
 } from "react"
@@ -97,6 +98,19 @@ export default function App() {
 function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
   const updateControls = useWispUpdateControl()
   return <MainView key={runtimeKey} updateControls={updateControls} />
+}
+
+/** Live append frames update the transcript without re-rendering the app shell. */
+function StreamedConversation({
+  taskId,
+  generation,
+  ...props
+}: Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {
+  taskId: string | null
+  generation: number
+}) {
+  const stream = useLogStream(taskId, "activity", generation)
+  return <Conversation {...props} stream={stream} note={stream.note} />
 }
 
 function useConnectionTaskSelection(connectionId: string) {
@@ -277,7 +291,6 @@ function MainView({
   // Status owns Git health for both sidebar and header. It may arrive after
   // conversation paint, but a slow or failed Git sweep never blocks Chat.
   const status = task ? statusQuery.data?.[task.id] : undefined
-  const stream = useLogStream(selectedId, "activity", logGeneration + reconnectRequests)
   // the harness's own skill registry for Tier 3 (A4) — absent while the
   // daemon can't answer (a running turn), never faked
   const skillsQuery = useTaskSkills(selectedId, archived)
@@ -353,10 +366,10 @@ function MainView({
     />
   )
   const conversationNode = (
-    <Conversation
+    <StreamedConversation
+      taskId={selectedId}
+      generation={logGeneration + reconnectRequests}
       task={detailQuery.data ?? null}
-      stream={stream}
-      note={stream.note}
       touch={isMobile}
       hasOlderTurns={detailQuery.hasOlderTurns}
       isLoadingOlderTurns={detailQuery.isLoadingOlderTurns}

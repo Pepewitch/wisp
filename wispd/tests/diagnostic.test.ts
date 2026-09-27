@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -22,6 +22,19 @@ function fixture(overrides: Partial<DiagnosticArchiveOptions> = {}) {
 }
 
 describe("diagnostic flight recorder", () => {
+  test("startup keeps private segments private and repairs older broad permissions", () => {
+    const root = mkdtempSync(join(tmpdir(), "wisp-diagnostic-restart-"));
+    const privatePath = join(root, "turn-1-000001.jsonl");
+    const broadPath = join(root, "turn-2-000001.jsonl");
+    writeFileSync(privatePath, "private\n");
+    writeFileSync(broadPath, "repair\n");
+    chmodSync(privatePath, 0o600);
+    chmodSync(broadPath, 0o644);
+    new DiagnosticArchiveManager({ root, maxBytes: 10_000, retentionMs: 10_000 });
+    expect(statSync(privatePath).mode & 0o7777).toBe(0o600);
+    expect(statSync(broadPath).mode & 0o7777).toBe(0o600);
+  });
+
   test("writes ordered stdout/stderr JSONL with private permissions and a durable completion checkpoint", () => {
     const { root, checkpoints, manager } = fixture();
     const writer = manager.open(41);

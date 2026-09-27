@@ -89,6 +89,36 @@ describe("the same-origin web transport", () => {
     })
   })
 
+  it("lets an obsolete read leave the shared auth gate without retrying", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401))
+    const controller = new AbortController()
+    const pending = sameOriginWebTransport.request("/api/search?q=old", { signal: controller.signal })
+    await vi.waitFor(() => expect(authStore.snapshot().open).toBe(true))
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" })
+    completeAuth("fresh-synthetic-token")
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("preserves cancellation while a successful response body is still loading", async () => {
+    const controller = new AbortController()
+    let reading = false
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => {
+        reading = true
+        return new Promise((_, reject) => controller.signal.addEventListener(
+          "abort", () => reject(controller.signal.reason), { once: true },
+        ))
+      },
+    } as Response)
+    const pending = sameOriginWebTransport.request("/api/search?q=old", { signal: controller.signal })
+    await vi.waitFor(() => expect(reading).toBe(true))
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" })
+  })
+
   it("verifies the saved token instead of minting an ambient session", async () => {
     localStorage.setItem("wisp_token", "synthetic-browser-token")
     const fetchMock = vi

@@ -1,5 +1,6 @@
 import {
   Fragment,
+  memo,
   useEffect,
   useMemo,
   useRef,
@@ -49,6 +50,8 @@ import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import type { StreamState } from "@/stream/reducer"
+
+const EMPTY_MESSAGES: TaskMessage[] = []
 
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
@@ -247,7 +250,7 @@ export function Conversation({
                 <TurnBlock
                   taskId={task.id}
                   turn={turn}
-                  messages={steeredMessages.get(turn.n) ?? []}
+                  messages={steeredMessages.get(turn.n) ?? EMPTY_MESSAGES}
                   deliveryUncertain={uncertainStarts.has(turn.n)}
                   live={live[turn.n]}
                   first={i === 0 || task.turns[i - 1]?.context_n !== turn.context_n}
@@ -307,7 +310,7 @@ function ContextDivider({ turn }: { turn: Turn }) {
  * One turn. No "Turn N" rule — the right-aligned bubble is the boundary and
  * the gap carries the rhythm (30px above a bubble, 16px inside a turn).
  */
-function TurnBlock({
+const TurnBlock = memo(function TurnBlock({
   taskId,
   turn,
   messages,
@@ -438,7 +441,7 @@ function TurnBlock({
       </div>
     </article>
   )
-}
+})
 
 /**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —

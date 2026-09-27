@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useReducer, type ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import type {
@@ -16,7 +17,7 @@ import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { connectionStore } from "@/lib/conn"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
-import type { UpdateStatus } from "@/lib/types"
+import type { ApiTask, UpdateStatus } from "@/lib/types"
 import { fakeDaemonTransport } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({
@@ -24,13 +25,14 @@ const mocks = vi.hoisted(() => ({
   refresh: vi.fn(),
   waitForUpdatedDaemon: vi.fn(),
   connectEventsBridge: vi.fn(() => () => undefined),
+  renderShell: vi.fn(),
   useLogStream: vi.fn<
     (taskId: string | null, format: "activity" | "raw", generation: number) =>
       { activity: never[]; note: null }
   >(() => ({ activity: [], note: null })),
 }))
 const fixtures = vi.hoisted(() => ({
-  tasks: [],
+  tasks: [] as ApiTask[],
   status: {},
   repos: [],
   harnesses: [],
@@ -231,7 +233,13 @@ vi.mock("@/components/conversation", () => ({ Conversation: () => null }))
 vi.mock("@/components/create-task-dialog", () => ({ CreateTaskDialog: () => null }))
 vi.mock("@/components/gallery", () => ({ Gallery: () => null }))
 vi.mock("@/components/mobile-shell", () => ({ MobileShell: () => null }))
-vi.mock("@/components/panes", () => ({ Shell: () => null, RightColumn: () => null }))
+vi.mock("@/components/panes", () => ({
+  Shell: ({ centre }: { centre: ReactNode }) => {
+    mocks.renderShell()
+    return <>{centre}</>
+  },
+  RightColumn: () => null,
+}))
 vi.mock("@/components/project-settings-dialog", () => ({ ProjectSettingsDialog: () => null }))
 vi.mock("@/components/sidebar", () => ({ Sidebar: () => null }))
 vi.mock("@/components/steer-box", () => ({ SteerBox: () => null }))
@@ -427,8 +435,15 @@ describe("the top bar's left end", () => {
   })
 
   it("reopens the selected connection's event and log streams after a stable reconnect", async () => {
+    fixtures.tasks = [{
+      id: "test-task", title: "Test task", repo_path: "/tmp/repo", worktree_path: null,
+      branch: null, base_commit: null, harness: "fake", model: null, effort: null,
+      slot: 0, state: "done", state_detail: null, session_id: null, seq: 1,
+      turn_count: 0, archived: false, mode: "worktree", created_at: "2026-09-01",
+      updated_at: "2026-09-01",
+    }]
     const nativeBridge = desktopBridge()
-    render(
+    const view = render(
       <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
         <DesktopZoomProvider>
           <DesktopApplicationProvider
@@ -441,15 +456,52 @@ describe("the top bar's left end", () => {
       </DesktopUpdaterProvider>,
     )
 
-    const eventCalls = mocks.connectEventsBridge.mock.calls.length
-    const logGeneration = mocks.useLogStream.mock.lastCall![2]
-    fireEvent.click(screen.getByRole("button", { name: "Reconnect Local" }))
+    try {
+      const eventCalls = mocks.connectEventsBridge.mock.calls.length
+      const logGeneration = mocks.useLogStream.mock.lastCall![2]
+      fireEvent.click(screen.getByRole("button", { name: "Reconnect Local" }))
 
-    await waitFor(() =>
-      expect(mocks.connectEventsBridge.mock.calls.length).toBe(eventCalls + 1)
+      await waitFor(() =>
+        expect(mocks.connectEventsBridge.mock.calls.length).toBe(eventCalls + 1)
+      )
+      expect(mocks.useLogStream.mock.lastCall![2]).toBe(logGeneration + 1)
+      expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true")
+    } finally {
+      view.unmount()
+      fixtures.tasks = []
+    }
+  })
+
+  it("does not re-render the shell when a log frame updates the conversation", () => {
+    fixtures.tasks = [{
+      id: "stream-task", title: "Stream task", repo_path: "/tmp/repo", worktree_path: null,
+      branch: null, base_commit: null, harness: "fake", model: null, effort: null,
+      slot: 0, state: "running", state_detail: null, session_id: null, seq: 1,
+      turn_count: 1, archived: false, mode: "worktree", created_at: "2026-09-01",
+      updated_at: "2026-09-01",
+    }]
+    let appendFrame: () => void = () => undefined
+    const original = mocks.useLogStream.getMockImplementation() ?? (() => ({ activity: [], note: null }))
+    mocks.useLogStream.mockImplementation(() => {
+      const [, advance] = useReducer((n: number) => n + 1, 0)
+      appendFrame = () => advance()
+      return { activity: [], note: null }
+    })
+    const view = render(
+      <DaemonRuntimeProvider transport={fakeDaemonTransport("stream-isolation")}>
+        <App />
+      </DaemonRuntimeProvider>,
     )
-    expect(mocks.useLogStream.mock.lastCall![2]).toBe(logGeneration + 1)
-    expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true")
+    try {
+      expect(mocks.useLogStream).toHaveBeenCalled()
+      const shellRenders = mocks.renderShell.mock.calls.length
+      act(() => appendFrame())
+      expect(mocks.renderShell.mock.calls.length).toBe(shellRenders)
+    } finally {
+      view.unmount()
+      mocks.useLogStream.mockImplementation(original)
+      fixtures.tasks = []
+    }
   })
 })
 

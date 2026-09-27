@@ -50,7 +50,9 @@ export function useTaskSearch(query: string) {
   const trimmed = query.trim();
   return useQuery({
     queryKey: qk.search(trimmed),
-    queryFn: () => transport.request<SearchResponse>(`/api/search?q=${encodeURIComponent(trimmed)}`),
+    queryFn: ({ signal }) => transport.request<SearchResponse>(
+      `/api/search?q=${encodeURIComponent(trimmed)}`, { signal },
+    ),
     enabled: trimmed !== "",
     placeholderData: (previous) => previous,
     staleTime: 10_000,
@@ -367,9 +369,9 @@ export function useDiff(id: string | null, archived: boolean) {
   return useQuery({
     queryKey: qk.diff(id ?? ""),
     enabled: id !== null && !archived, // an archived task's worktree is gone — there is no diff to fetch
-    queryFn: async (): Promise<DiffData> => {
+    queryFn: async ({ signal }): Promise<DiffData> => {
       try {
-        const d = await transport.request<DiffResponse>(`/api/tasks/${id}/diff`);
+        const d = await transport.request<DiffResponse>(`/api/tasks/${id}/diff`, { signal });
         if (d.worktreeReason !== null) return { kind: "unavailable", message: d.worktreeReason };
         return { kind: "ok", ...d };
       } catch (e) {
@@ -393,9 +395,10 @@ export function useWorktreeFile(taskId: string | null, path: string | null) {
   return useQuery({
     queryKey: qk.worktreeFile(taskId ?? "", path ?? ""),
     enabled: taskId !== null && path !== null,
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       transport.request<WorktreeFileResponse>(
         `/api/tasks/${taskId}/file?path=${encodeURIComponent(path!)}`,
+        { signal },
       ),
   });
 }

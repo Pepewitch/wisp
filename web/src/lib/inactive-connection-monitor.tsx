@@ -7,6 +7,17 @@ import type { DesktopConnectionEntry } from "@/lib/desktop-connections"
 import type { DaemonEventStream } from "@/lib/transport"
 import type { ApiTask } from "@/lib/types"
 
+/** Unknown event types stay refreshable so a newer daemon can add task facts. */
+function canChangeTaskList(data: string): boolean {
+  try {
+    const event: unknown = JSON.parse(data)
+    if (!event || typeof event !== "object" || !("type" in event) || typeof event.type !== "string") return true
+    return !["project", "settings", "harnesses", "harness-limits", "message", "terminals"].includes(event.type)
+  } catch {
+    return true
+  }
+}
+
 export function InactiveConnectionMonitor({
   entry,
   onAttention,
@@ -30,25 +41,46 @@ export function InactiveConnectionMonitor({
     }
     let closed = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    let inFlight: AbortController | null = null
+    let generation = 0
+    let dirty = false
 
+    const flush = () => {
+      if (closed || inFlight || !dirty) return
+      dirty = false
+      refresh()
+    }
+    const schedule = (delay = 250) => {
+      generation++
+      dirty = true
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        flush()
+      }, delay)
+    }
     const refresh = () => {
-      void entry.transport.request<ApiTask[]>("/api/tasks").then(
+      if (closed || inFlight) return
+      const controller = new AbortController()
+      const requestedGeneration = generation
+      inFlight = controller
+      void entry.transport.request<ApiTask[]>("/api/tasks", { signal: controller.signal }).then(
         (tasks) => {
-          if (!closed) {
+          if (!closed && !controller.signal.aborted && requestedGeneration === generation) {
             onAttention(entry.metadata.id, connectionAttention(tasks))
             onReachability(entry.metadata.id, "online")
             onTasks(entry.metadata.id, tasks)
           }
         },
         (error: unknown) => {
-          if (!closed)
+          if (!closed && !controller.signal.aborted && requestedGeneration === generation)
             onReachability(entry.metadata.id, classifyConnectionError(error))
-        }
-      )
-    }
-    const schedule = () => {
-      if (timer !== null) clearTimeout(timer)
-      timer = setTimeout(refresh, 250)
+        },
+      ).finally(() => {
+        if (inFlight === controller) inFlight = null
+        if (closed) return
+        if (timer === null) flush()
+      })
     }
 
     refresh()
@@ -60,14 +92,19 @@ export function InactiveConnectionMonitor({
         if (closed) return
         store.set("events", true)
         onReachability(entry.metadata.id, "online")
-        refresh()
+        // The initial snapshot may predate the SSE subscription even if its
+        // response arrives later. Reconcile once on every open to close that
+        // gap, while the in-flight guard keeps the reads serialized.
+        schedule(0)
       }
-      stream.onmessage = schedule
+      stream.onmessage = (event) => {
+        if (!closed && canChangeTaskList(event.data)) schedule()
+      }
       // Probe JSON again to distinguish stream refusal from daemon failures.
       stream.onerror = () => {
         if (closed) return
         store.set("events", false)
-        refresh()
+        schedule(0)
       }
     } catch {
       store.set("events", false)
@@ -77,6 +114,7 @@ export function InactiveConnectionMonitor({
       closed = true
       store.opening("events")
       if (timer !== null) clearTimeout(timer)
+      inFlight?.abort()
       events?.close()
     }
   }, [entry, onAttention, onReachability, onTasks])

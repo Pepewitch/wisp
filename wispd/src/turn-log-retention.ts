@@ -35,14 +35,17 @@ function logGroup(turn: RetentionTurn): LogGroup | null {
   return paths.length || unfinished ? { turn, bytes, mtimeMs, paths } : null;
 }
 
-async function archivedLogs(): Promise<LogGroup[]> {
+async function archivedLogs(reconcileEvicted: boolean): Promise<LogGroup[]> {
   const groups: LogGroup[] = [];
   let cursor = 0;
   for (;;) {
     if (homeIsDraining()) return groups;
     const batch = db.query(`SELECT n.id, n.task_id, n.n, n.log_file, n.capture_state, n.capture_detail, n.status
       FROM turns n JOIN tasks t ON t.id = n.task_id
-      WHERE t.archived = 1 AND n.status <> 'running' AND n.id > ? ORDER BY n.id LIMIT ?`).all(cursor, BATCH) as RetentionTurn[];
+      WHERE t.archived = 1 AND n.status <> 'running' AND n.id > ?
+        AND (? = 1 OR n.capture_state IS NULL OR n.capture_state <> 'evicted'
+          OR n.capture_detail LIKE '%File removal pending%')
+      ORDER BY n.id LIMIT ?`).all(cursor, Number(reconcileEvicted), BATCH) as RetentionTurn[];
     if (!batch.length) return groups;
     for (const turn of batch) {
       cursor = turn.id;
@@ -85,17 +88,17 @@ function removeGroup(group: LogGroup, detail: string): number {
 }
 
 let working: Promise<TurnLogRetentionResult> | null = null;
-export function retainTurnLogs(cfg: WispConfig, now = Date.now()): Promise<TurnLogRetentionResult> {
+export function retainTurnLogs(cfg: WispConfig, now = Date.now(), reconcileEvicted = true): Promise<TurnLogRetentionResult> {
   if (working) return working;
-  working = retentionPass(cfg, now).finally(() => { working = null; });
+  working = retentionPass(cfg, now, reconcileEvicted).finally(() => { working = null; });
   return working;
 }
 
-async function retentionPass(cfg: WispConfig, now: number): Promise<TurnLogRetentionResult> {
+async function retentionPass(cfg: WispConfig, now: number, reconcileEvicted: boolean): Promise<TurnLogRetentionResult> {
   const result: TurnLogRetentionResult = { evicted: 0, reclaimedBytes: 0, retainedBytes: 0, failed: 0 };
   const settings = turnLogSettings(cfg);
   if (!settings.enabled || homeIsDraining()) return result;
-  const groups = (await archivedLogs()).sort((a, b) => a.mtimeMs - b.mtimeMs || a.turn.id - b.turn.id);
+  const groups = (await archivedLogs(reconcileEvicted)).sort((a, b) => a.mtimeMs - b.mtimeMs || a.turn.id - b.turn.id);
   result.retainedBytes = groups.reduce((n, g) => n + g.bytes, 0);
   for (const group of groups) {
     if (homeIsDraining()) break;
@@ -121,8 +124,14 @@ async function retentionPass(cfg: WispConfig, now: number): Promise<TurnLogReten
 
 /** Resumable, single-flight maintenance after listening; shutdown waits for the current turn. */
 export function startTurnLogRetentionLoop(cfg: WispConfig): ReturnType<typeof setInterval> {
+  let sweeps = 0;
   const kick = () => {
-    void trackHomeWork(retainTurnLogs(cfg)).catch(error => console.error(`[wisp] turn-log retention: ${String(error)}`));
+    // Start with a full reconciliation, then avoid statting every already-
+    // evicted archive each minute. Recheck them hourly for files restored or
+    // changed outside Wisp; pending removals stay in every routine pass.
+    const reconcileEvicted = sweeps++ % 60 === 0;
+    void trackHomeWork(retainTurnLogs(cfg, Date.now(), reconcileEvicted))
+      .catch(error => console.error(`[wisp] turn-log retention: ${String(error)}`));
   };
   const timer = setInterval(kick, 60_000);
   timer.unref();
