@@ -7,6 +7,17 @@ import type { DesktopConnectionEntry } from "@/lib/desktop-connections"
 import type { DaemonEventStream } from "@/lib/transport"
 import type { ApiTask } from "@/lib/types"
 
+/** Unknown event types stay refreshable so a newer daemon can add task facts. */
+function canChangeTaskList(data: string): boolean {
+  try {
+    const event: unknown = JSON.parse(data)
+    if (!event || typeof event !== "object" || !("type" in event) || typeof event.type !== "string") return true
+    return !["project", "settings", "harnesses", "harness-limits", "message", "terminals"].includes(event.type)
+  } catch {
+    return true
+  }
+}
+
 export function InactiveConnectionMonitor({
   entry,
   onAttention,
@@ -30,28 +41,59 @@ export function InactiveConnectionMonitor({
     }
     let closed = false
     let timer: ReturnType<typeof setTimeout> | null = null
+    let inFlight: AbortController | null = null
+    let generation = 0
+    let dirty = false
+    let firstOpen = true
+    let initialFinished = false
+    let initialFailed = false
+    let wasDown = false
 
-    const refresh = () => {
-      void entry.transport.request<ApiTask[]>("/api/tasks").then(
+    const flush = () => {
+      if (closed || inFlight || !dirty) return
+      dirty = false
+      refresh(false)
+    }
+    const schedule = (delay = 250) => {
+      generation++
+      dirty = true
+      if (timer !== null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        flush()
+      }, delay)
+    }
+    const refresh = (initial: boolean) => {
+      if (closed || inFlight) return
+      const controller = new AbortController()
+      const requestedGeneration = generation
+      inFlight = controller
+      void entry.transport.request<ApiTask[]>("/api/tasks", { signal: controller.signal }).then(
         (tasks) => {
-          if (!closed) {
+          if (initial) initialFinished = true
+          if (!closed && !controller.signal.aborted && requestedGeneration === generation) {
+            initialFailed = false
             onAttention(entry.metadata.id, connectionAttention(tasks))
             onReachability(entry.metadata.id, "online")
             onTasks(entry.metadata.id, tasks)
           }
         },
         (error: unknown) => {
-          if (!closed)
+          if (initial) { initialFinished = true; initialFailed = true }
+          if (!closed && !controller.signal.aborted && requestedGeneration === generation)
             onReachability(entry.metadata.id, classifyConnectionError(error))
-        }
-      )
-    }
-    const schedule = () => {
-      if (timer !== null) clearTimeout(timer)
-      timer = setTimeout(refresh, 250)
+        },
+      ).finally(() => {
+        if (inFlight === controller) inFlight = null
+        if (closed) return
+        if (initialFailed && !firstOpen) {
+          initialFailed = false
+          schedule(0)
+        } else if (timer === null) flush()
+      })
     }
 
-    refresh()
+    refresh(true)
     let events: DaemonEventStream | null = null
     try {
       const stream = entry.transport.openEventStream("/api/events")
@@ -60,14 +102,19 @@ export function InactiveConnectionMonitor({
         if (closed) return
         store.set("events", true)
         onReachability(entry.metadata.id, "online")
-        refresh()
+        if (wasDown || (firstOpen && initialFinished && initialFailed)) schedule(0)
+        firstOpen = false
+        wasDown = false
       }
-      stream.onmessage = schedule
+      stream.onmessage = (event) => {
+        if (!closed && canChangeTaskList(event.data)) schedule()
+      }
       // Probe JSON again to distinguish stream refusal from daemon failures.
       stream.onerror = () => {
         if (closed) return
         store.set("events", false)
-        refresh()
+        wasDown = true
+        schedule(0)
       }
     } catch {
       store.set("events", false)
@@ -77,6 +124,7 @@ export function InactiveConnectionMonitor({
       closed = true
       store.opening("events")
       if (timer !== null) clearTimeout(timer)
+      inFlight?.abort()
       events?.close()
     }
   }, [entry, onAttention, onReachability, onTasks])
