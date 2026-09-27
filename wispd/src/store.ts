@@ -468,6 +468,43 @@ export function latestTurnOutcomes(): Map<string, LatestTurnOutcome> {
   return new Map(rows.map((r) => [r.task_id, { model: r.model, exitCode: r.exit_code, hasResult: r.has_result === 1 }]));
 }
 
+/**
+ * The task-list route needs only visible tasks and their newest turn. Looking
+ * up that turn through (task_id, n) avoids scanning every archived task's
+ * history each time the sidebar refreshes.
+ */
+export function listTasksWithLatestTurn(includeArchived: boolean, includeCleanup: boolean):
+  { task: Task; latestTurn: LatestTurnOutcome }[] {
+  const where = includeArchived
+    ? ""
+    : includeCleanup
+      ? "WHERE t.archived = 0 OR EXISTS (SELECT 1 FROM archive_cleanup_progress p WHERE p.task_id = t.id)"
+      : "WHERE t.archived = 0";
+  const rows = db.query(`
+    SELECT t.*, latest.model AS latest_turn_model,
+      latest.exit_code AS latest_turn_exit_code,
+      (latest.result IS NOT NULL) AS latest_turn_has_result
+    FROM tasks t
+    LEFT JOIN turns latest ON latest.id = (
+      SELECT id FROM turns WHERE task_id = t.id ORDER BY n DESC LIMIT 1
+    )
+    ${where}
+    ORDER BY t.updated_at DESC
+  `).all() as (Task & {
+    latest_turn_model: string | null;
+    latest_turn_exit_code: number | null;
+    latest_turn_has_result: number;
+  })[];
+  return rows.map(({ latest_turn_model, latest_turn_exit_code, latest_turn_has_result, ...task }) => ({
+    task: task as Task,
+    latestTurn: {
+      model: latest_turn_model,
+      exitCode: latest_turn_exit_code,
+      hasResult: latest_turn_has_result === 1,
+    },
+  }));
+}
+
 export function turnsFor(taskId: string): Turn[] {
   return db.query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n ASC`).all(taskId) as Turn[];
 }
