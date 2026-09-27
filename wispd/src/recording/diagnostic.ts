@@ -103,12 +103,12 @@ export class DiagnosticArchiveManager {
 
   ensureCapacity(bytes: number, protectedTurnId: number): boolean {
     if (bytes > this.options.maxBytes) return false;
-    while (this.totalBytes + bytes > this.options.maxBytes) {
-      const victim = this.oldestEvictable(protectedTurnId);
-      if (victim === null) return false;
+    if (this.totalBytes + bytes <= this.options.maxBytes) return true;
+    for (const victim of this.evictableOldestFirst(protectedTurnId)) {
+      if (this.totalBytes + bytes <= this.options.maxBytes) break;
       if (!this.evict(victim, `global diagnostic quota (${this.options.maxBytes} bytes) required eviction`)) return false;
     }
-    return true;
+    return this.totalBytes + bytes <= this.options.maxBytes;
   }
 
   register(turnId: number, segment: Segment): void {
@@ -140,7 +140,7 @@ export class DiagnosticArchiveManager {
       if (!match) continue;
       const path = join(this.options.root, entry.name);
       const stat = statSync(path);
-      chmodSync(path, 0o600);
+      if ((stat.mode & 0o7777) !== 0o600) chmodSync(path, 0o600);
       const turnId = Number(match[1]);
       const segment = { index: Number(match[2]), path, size: stat.size, mtimeMs: stat.mtimeMs };
       this.register(turnId, segment);
@@ -157,10 +157,11 @@ export class DiagnosticArchiveManager {
         this.evict(group.turnId, `diagnostic retention period expired`, new Date(this.now()).toISOString());
       }
     }
-    while (this.totalBytes > this.options.maxBytes) {
-      const victim = this.oldestEvictable();
-      if (victim === null) break;
-      if (!this.evict(victim, `global diagnostic quota (${this.options.maxBytes} bytes) required eviction`)) break;
+    if (this.totalBytes > this.options.maxBytes) {
+      for (const victim of this.evictableOldestFirst()) {
+        if (this.totalBytes <= this.options.maxBytes) break;
+        if (!this.evict(victim, `global diagnostic quota (${this.options.maxBytes} bytes) required eviction`)) break;
+      }
     }
   }
 
@@ -168,16 +169,17 @@ export class DiagnosticArchiveManager {
     return this.active.has(turnId) || (this.leases.get(turnId) ?? 0) > 0;
   }
 
-  private oldestEvictable(exceptTurnId?: number): number | null {
-    let found: { turnId: number; touched: number } | null = null;
-    for (const group of this.groups.values()) {
-      if (group.turnId === exceptTurnId || this.protected(group.turnId)) continue;
-      const touched = Math.max(0, ...group.segments.map((segment) => segment.mtimeMs));
-      if (!found || touched < found.touched || (touched === found.touched && group.turnId < found.turnId)) {
-        found = { turnId: group.turnId, touched };
-      }
-    }
-    return found?.turnId ?? null;
+  private evictableOldestFirst(exceptTurnId?: number): number[] {
+    // A quota pass can evict many whole turns. Sort once instead of rescanning
+    // every remaining group after each deletion.
+    return [...this.groups.values()]
+      .filter((group) => group.turnId !== exceptTurnId && !this.protected(group.turnId))
+      .map((group) => ({
+        turnId: group.turnId,
+        touched: Math.max(0, ...group.segments.map((segment) => segment.mtimeMs)),
+      }))
+      .sort((a, b) => a.touched - b.touched || a.turnId - b.turnId)
+      .map((group) => group.turnId);
   }
 
   private evict(turnId: number, detail: string, evictedAt = new Date(this.now()).toISOString()): boolean {
