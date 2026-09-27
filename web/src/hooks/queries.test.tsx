@@ -16,6 +16,9 @@ import {
   usePullRequestOverview,
   usePullRequests,
   usePullRequestStatus,
+  useTaskSearch,
+  useDiff,
+  useWorktreeFile,
   useTaskDetail,
   useTaskUsage,
   useUpdateStatus,
@@ -32,6 +35,47 @@ const PR: PullRequestInfo = {
   mergeState: "blocked",
   updatedAt: "2026-09-04T12:00:00Z",
 }
+
+describe("disposable reads", () => {
+  beforeEach(() => mocks.request.mockReset())
+
+  it("aborts the old search when the query changes and keeps the new result", async () => {
+    let oldSignal: AbortSignal | undefined
+    mocks.request.mockImplementation((path: string, options?: { signal?: AbortSignal }) => {
+      if (typeof path === "string" && path.endsWith("old")) {
+        oldSignal = options?.signal
+        return new Promise((_, reject) => oldSignal?.addEventListener(
+          "abort", () => reject(oldSignal?.reason), { once: true },
+        ))
+      }
+      return Promise.resolve({ tasks: [{ id: "new-task" }] })
+    })
+    const { wrapper } = harness()
+    const result = renderHook(({ query }) => useTaskSearch(query), {
+      wrapper, initialProps: { query: "old" },
+    })
+    await waitFor(() => expect(oldSignal).toBeDefined())
+    result.rerender({ query: "new" })
+    await waitFor(() => expect(oldSignal?.aborted).toBe(true))
+    await waitFor(() => expect(result.result.current.data).toEqual({ tasks: [{ id: "new-task" }] }))
+  })
+
+  it("passes cancellation into diff and file reads", async () => {
+    mocks.request.mockResolvedValue({ worktreeReason: null, content: "hello" })
+    const { wrapper } = harness()
+    const diff = renderHook(() => useDiff("task-a", false), { wrapper })
+    const file = renderHook(() => useWorktreeFile("task-a", "README.md"), { wrapper })
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2))
+    expect(mocks.request).toHaveBeenCalledWith(
+      "/api/tasks/task-a/diff", { signal: expect.any(AbortSignal) },
+    )
+    expect(mocks.request).toHaveBeenCalledWith(
+      "/api/tasks/task-a/file?path=README.md", { signal: expect.any(AbortSignal) },
+    )
+    diff.unmount()
+    file.unmount()
+  })
+})
 
 function harness(connectionId = "local") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })

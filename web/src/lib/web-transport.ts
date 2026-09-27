@@ -128,11 +128,34 @@ export function completeAuth(token: string): void {
   done?.()
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError")
+}
+
+/** A caller may leave a shared auth gate without cancelling everyone else's retry. */
+async function waitForAuth(signal?: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
+  const ready = requireAuth()
+  if (!signal) return ready
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError")))
+    const finish = (settle: () => void) => {
+      signal.removeEventListener("abort", onAbort)
+      settle()
+    }
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    ready.then(() => finish(resolve), (error: unknown) => finish(() => reject(error)))
+  })
+  throwIfAborted(signal)
+}
+
 async function request<T>(
   path: string,
   options: DaemonRequestOptions = {}
 ): Promise<T> {
   for (;;) {
+    throwIfAborted(options.signal)
     const headers: Record<string, string> = { ...authHeaders() }
 
     let body: string | undefined
@@ -148,7 +171,7 @@ async function request<T>(
       signal: options.signal,
     })
     if (response.status === 401) {
-      await requireAuth()
+      await waitForAuth(options.signal)
       continue
     }
 
@@ -158,6 +181,7 @@ async function request<T>(
 
 async function upload<T>(path: string, body: Blob, signal?: AbortSignal): Promise<T> {
   for (;;) {
+    throwIfAborted(signal)
     const response = await fetch(path, {
       method: "POST",
       headers: {
@@ -170,7 +194,7 @@ async function upload<T>(path: string, body: Blob, signal?: AbortSignal): Promis
       redirect: "error",
     })
     if (response.status === 401) {
-      await requireAuth()
+      await waitForAuth(signal)
       continue
     }
     return await daemonJsonResponse<T>(response)
