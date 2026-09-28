@@ -15,9 +15,9 @@ export function ConnectionGallerySpecimen() {
         <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
           Local is always first and uses a computer; remotes use a cloud.
           Selection stays neutral. The connection dot is green while the server
-          and live updates work, rings green while updates connect, turns yellow
-          when updates are delayed, and red when the server cannot be reached.
-          Click it to reconnect.
+          and live updates work, rings green while updates connect, and turns
+          yellow when updates are delayed. When the server cannot be reached,
+          a red crossed-out cloud replaces the dot. Click either to reconnect.
           An inactive daemon also earns its highest-priority task-state dot,
           so attention is visible without mounting another conversation tree.
         </p>

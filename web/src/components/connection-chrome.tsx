@@ -117,12 +117,10 @@ function connectionStatusTitle(
 }
 
 function connectionDotColor(
-  unavailable: boolean,
   live: boolean,
   opening: boolean,
   updatesDown: boolean
 ): string {
-  if (unavailable) return "bg-destructive"
   if (live || opening) return "bg-state-done"
   return updatesDown ? "bg-state-needs-input" : "bg-muted-foreground/60"
 }
@@ -140,6 +138,10 @@ function connectionDotColor(
  *
  * Buttons cannot nest: reconnect and manage are SIBLINGS of the tab, and the
  * tablist's arrow keys still find `[role=tab]` alone.
+ *
+ * The reconnect button carries ONE status mark: the dot while the server
+ * answers, or the crossed-out cloud when it does not. A red dot beside a red
+ * cloud said the same failure twice, and only one of the two was clickable.
  */
 export function ConnectionTab({
   connection,
@@ -206,33 +208,34 @@ export function ConnectionTab({
       <button
         type="button"
         aria-label={`Reconnect ${connection.name}`}
-        title={statusTitle}
+        title={unavailable ? `${statusTitle} · Click to reconnect` : statusTitle}
         disabled={reconnectDisabled}
         onClick={onReconnect}
         className="flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
       >
-        <span className="relative flex size-3 items-center justify-center">
-          {opening && (
-            <span className="absolute inset-0 rounded-full border border-state-done/75 motion-safe:animate-pulse" />
-          )}
+        {unavailable ? (
           <span
-            data-live={live}
-            className={cn(
-              "size-1.5 rounded-full",
-              connectionDotColor(unavailable, live, opening, updatesDown)
+            data-offline
+            className="flex text-destructive [&>svg]:size-3.5"
+          >
+            <Offline aria-hidden />
+          </span>
+        ) : (
+          <span className="relative flex size-3 items-center justify-center">
+            {opening && (
+              <span className="absolute inset-0 rounded-full border border-state-done/75 motion-safe:animate-pulse" />
             )}
-          />
-        </span>
+            <span
+              data-live={live}
+              className={cn(
+                "size-1.5 rounded-full",
+                connectionDotColor(live, opening, updatesDown)
+              )}
+            />
+          </span>
+        )}
       </button>
       {attention && <StateDot state={attention} className="ml-0.5" />}
-      {unavailable && (
-        <span
-          title={issue ?? undefined}
-          className="ml-0.5 text-destructive [&>svg]:size-3"
-        >
-          <Offline aria-hidden />
-        </span>
-      )}
       {actions}
     </span>
   )

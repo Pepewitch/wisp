@@ -830,6 +830,7 @@ describe("connection tab status", () => {
     expect(remote).toHaveAttribute("title", "Live")
     expect(local.querySelector("[data-live]")).toHaveClass("bg-state-done")
     expect(remote.querySelector("[data-live]")).toHaveClass("bg-state-done")
+    expect(remote.querySelector("[data-offline]")).toBeNull()
     expect(screen.queryByText("Live")).toBeNull()
 
     connectionStore(LOCAL.id).set("log", false)
@@ -845,8 +846,42 @@ describe("connection tab status", () => {
     act(() => EventSourceStub.instances[0]!.onopen?.())
     expect(remote).toHaveAttribute("title", "Live")
     fireEvent.click(screen.getByRole("button", { name: "Remote offline" }))
-    expect(remote).toHaveAttribute("title", "Daemon unavailable")
-    expect(remote.querySelector("[data-live]")).toHaveClass("bg-destructive")
+    expect(remote).toHaveAttribute("title", "Daemon unavailable · Click to reconnect")
+    expect(remote.querySelector("[data-live]")).toBeNull()
+    expect(remote.querySelector("[data-offline]")).toHaveClass("text-destructive")
+  })
+
+  it("shows an unreachable connection as one red cloud that reconnects", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const reconnectConnection = vi.fn(async () => REMOTE)
+    const selectConnection = vi.fn(async () => undefined)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider
+          initial={bootstrap([LOCAL, REMOTE])}
+          bridge={bridge({ reconnectConnection, selectConnection })}
+        >
+          <DesktopConnectionChrome />
+          <ReachabilityControls />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Remote offline" }))
+
+    // a red dot beside a red cloud said "unreachable" twice; the cloud alone
+    // says it, and it is the reconnect control rather than a second mark
+    const chip = screen.getByRole("tab", { name: /Remote one/ }).parentElement!
+    const reconnect = screen.getByRole("button", { name: "Reconnect Remote one" })
+    expect(chip.querySelectorAll("[data-live]")).toHaveLength(0)
+    expect(chip.querySelectorAll("[data-offline]")).toHaveLength(1)
+    expect(reconnect).toContainElement(chip.querySelector("[data-offline]") as HTMLElement)
+
+    fireEvent.click(reconnect)
+    await waitFor(() =>
+      expect(reconnectConnection).toHaveBeenCalledWith({ connectionId: REMOTE.id })
+    )
+    expect(selectConnection).not.toHaveBeenCalled()
   })
 
   it("keeps both tabs green during a stream handoff, then warns if updates stall", () => {
