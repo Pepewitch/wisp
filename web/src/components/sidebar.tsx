@@ -261,12 +261,15 @@ function SidebarHeader({
   touch: boolean
 }) {
   return (
+    // box-content on touch: the 56px row sits BELOW the top inset. As a
+    // border-box the ~59pt inset swallowed it and the row centred on the
+    // status bar's bottom edge.
     <div
       className={cn(
         "flex shrink-0 items-center gap-2 pr-3 pl-3.5",
-        touch ? "h-14" : "h-[34px]"
+        touch ? "box-content h-14" : "h-[34px]"
       )}
-      style={touch ? { paddingTop: "env(safe-area-inset-top)" } : undefined}
+      style={touch ? { paddingTop: "var(--safe-top)" } : undefined}
     >
       <Eyebrow className="flex-1">Projects</Eyebrow>
       {search.available && (

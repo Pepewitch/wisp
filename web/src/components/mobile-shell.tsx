@@ -107,7 +107,7 @@ export function MobileShell({
 
   return (
     <div ref={viewportRef} className={cn("mobile-shell flex h-dvh flex-col bg-background text-foreground", !desktop && "mobile-browser-shell")}>
-      <header className="shrink-0 border-b border-border bg-surface" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <header className="shrink-0 border-b border-border bg-surface" style={{ paddingTop: "var(--safe-top)" }}>
         {/* The app band is Wisp Desktop's alone, and it is not decoration: that
             window is `titleBarStyle: Overlay`, so the traffic lights float over
             whatever sits at the top left, and a hidden title bar leaves nothing
