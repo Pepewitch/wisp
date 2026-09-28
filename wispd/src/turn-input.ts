@@ -33,17 +33,31 @@ export function briefReminder(): string {
 
 /**
  * Everything Wisp itself writes into a harness input — the first turn's task
- * preamble, standing notes, the attached-files note — goes out one `[wisp]`
- * line at a time, and a blank line separates it from the person's words. The
- * tag is what tells the agent (and anyone reading a raw prompt) which lines
- * are Wisp's and which the person typed.
+ * preamble, standing notes, the attached-files note, a workflow's own words —
+ * goes out as one `<wisp>` section, and a blank line separates it from the
+ * person's words. The tag is what tells the agent (and anyone reading a raw
+ * prompt) which text is Wisp's and which the person typed:
  *
- * A line prefix rather than an open/close block: there is nothing to close,
- * nothing a model can leave unclosed, and a person's own message that happens
- * to contain a closing tag cannot end Wisp's section early.
+ *   <wisp>Before ending this turn, save a JSON brief …</wisp>   ← one line, inline
+ *
+ *   <wisp>                                                      ← several lines, one block
+ *   You are working on task …
+ *   …
+ *   </wisp>
+ *
+ * One form for any length, in the delimiter models read most reliably. A
+ * literal `</wisp>` inside (a file name, a PR title) is escaped to `<\/wisp>`,
+ * so nothing Wisp relays can close the section early.
  */
-export function wispNoteLines(lines: string[]): string {
-  return lines.map((line) => `[wisp] ${line}`).join("\n")
+export function wispSection(lines: string[]): string {
+  if (lines.length === 0) return ""
+  const safe = lines.map((line) => line.replaceAll("</wisp>", "<\\/wisp>"))
+  return safe.length === 1 ? `<wisp>${safe[0]}</wisp>` : ["<wisp>", ...safe, "</wisp>"].join("\n")
+}
+
+/** Wisp's section, a blank line, then the person's words — or just the words when Wisp has nothing to add. */
+export function withWispSection(lines: string[], message: string): string {
+  return lines.length === 0 ? message : `${wispSection(lines)}\n\n${message}`
 }
 
 /**
@@ -72,20 +86,14 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 
-/**
- * The first turn's framing, in Wisp's voice and tagged line by line. It ends
- * with a blank line, so `${preamble}\n${message}` leaves exactly one empty
- * line before the person's words — the same boundary every later turn's
- * notes use.
- */
-export function taskPreamble(task: Task, notes: string[] = []): string {
-  return `${wispNoteLines([
+/** The first turn's framing, in Wisp's voice; the runner puts it in the turn's one Wisp section. */
+export function taskPreambleLines(task: Task): string[] {
+  return [
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
     `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
     `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
     `For follow-up after waiting on time or an external condition, use \`${wispCommand()} workflow types\` to choose durable automation instead of relying on a harness background process.`,
-    ...notes,
-  ])}\n`
+  ]
 }
 
 /**
@@ -130,14 +138,19 @@ export function nativeImageAttachments(
   return attachments.filter((attachment) => isImage(attachment) && !imageTravelsByPath(def))
 }
 
+/** The attached-files note for files that reach the harness by path; none when nothing does. */
+export function attachmentLines(def: AdapterDef, attachments: StoredAttachment[]): string[] {
+  const byPath = pathDeliveredAttachments(def, attachments)
+  return byPath.length === 0 ? [] : attachmentPreamble(byPath).split("\n")
+}
+
+/** A message with its attached-files note — a steer's whole input, which carries no other Wisp text. */
 export function deliveredMessage(
   def: AdapterDef,
   attachments: StoredAttachment[],
   message: string,
 ): string {
-  const byPath = pathDeliveredAttachments(def, attachments)
-  if (byPath.length === 0) return message
-  return `${wispNoteLines(attachmentPreamble(byPath).split("\n"))}\n\n${message}`
+  return withWispSection(attachmentLines(def, attachments), message)
 }
 
 export function inputStrategyFor(

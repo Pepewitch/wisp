@@ -73,7 +73,8 @@ async function setBrief(flags: Flags): Promise<never> {
     say(`Brief not saved: stdin is not valid JSON (${where}).`, 1)
   }
   const check = validateTaskBrief(payload)
-  if (!check.ok) say(`Brief not saved: ${briefErrorLine(check)}. Fix that field and save once more.`, 1)
+  // a guessed shape is the common mistake, so the one retry is pointed at the schema
+  if (!check.ok) say(`Brief not saved: ${briefErrorLine(check)}. See \`${wispCommand()} brief --help\`, fix it, and save once more.`, 1)
 
   const task = process.env.WISP_TASK_ID ?? ""
   const runId = process.env[BRIEF_RUN_ENV] ?? ""

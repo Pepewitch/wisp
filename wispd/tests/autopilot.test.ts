@@ -18,7 +18,7 @@ import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
 import { db, getTask, setTaskFields, transition } from "../src/store";
-import { taskPreamble } from "../src/turn-input";
+import { taskPreambleLines, wispSection } from "../src/turn-input";
 import type { Task } from "../src/types";
 import { pauseTaskWorkflows } from "../src/workflows/store";
 import { HEAD, START, forgetTasks, doneTask, snapshot, pull, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
@@ -673,10 +673,10 @@ describe("what the agent is told", () => {
     expect(note).toContain("push the branch, and open a pull request");
     expect(note).toContain("Wisp merges this task's pull request");
     expect(note).toContain("Other pull requests are unaffected");
-    // a Wisp line in the first turn's preamble, which ends before the person's words
-    const preamble = taskPreamble(task, [note!]);
-    expect(preamble).toContain(`[wisp] ${note!}`);
-    expect(preamble.endsWith("\n")).toBe(true);
+    // inside the first turn's one Wisp section, which closes before the person's words
+    const section = wispSection([...taskPreambleLines(task), note!]);
+    expect(section.split("\n")).toContain(note!);
+    expect(section.endsWith("</wisp>")).toBe(true);
   });
 });
 
@@ -858,7 +858,7 @@ describe("auto-fix", () => {
     await pass(rt, task.id, clock);
     await until(() => existsSync(file), "the fix round");
     const prompt = readFileSync(file, "utf8");
-    expect(prompt.split("\n")).toContain(`[wisp] Auto-fix · PR #7 · round 1 of 5 · head ${HEAD.slice(0, 7)}`);
+    expect(prompt.split("\n")).toContain(`Auto-fix · PR #7 · round 1 of 5 · head ${HEAD.slice(0, 7)}`);
     // the standing note travels with every turn while auto-fix is on: how to sign GitHub posts
     expect(prompt).toContain(`End every comment, review or reply you post on GitHub with: — capture via Wisp <!-- wisp:task=${task.id} -->`);
     const evidence = readFileSync(prompt.match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");

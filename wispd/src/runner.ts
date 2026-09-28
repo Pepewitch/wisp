@@ -68,13 +68,13 @@ import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
   BRIEF_RUN_ENV,
   briefReminder,
-  deliveredMessage,
+  attachmentLines,
   envForCwd,
   inputStrategyFor,
   nativeImageAttachments,
   taskEnv,
-  taskPreamble,
-  wispNoteLines,
+  taskPreambleLines,
+  withWispSection,
 } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
@@ -167,7 +167,9 @@ export function startTurn(
   // delivered by having its path named in the prompt, so the preamble goes
   // immediately before the user's message — inside the first turn's task
   // preamble, not in front of it.
-  const body = deliveredMessage(def, attachments, message);
+  // What wisp cannot hand over natively is named in the prompt, beside the
+  // task preamble and the notes, as ONE Wisp section before the person's words.
+  const attached = attachmentLines(def, attachments);
   // Wisp's own standing instructions travel with the harness input, like the
   // task preamble, and are not written into the user's message. Auto-merge
   // needs one: arming it IS asking for a push, which the preamble forbids.
@@ -181,13 +183,11 @@ export function startTurn(
   // because the turn row it names does not exist until after it.
   const brief = pendingBriefRun(task.id, def, command);
   const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
-  const prompt = n === 1
-    ? `${taskPreamble(task, notes)}\n${body}`
-    : notes.length > 0 ? `${wispNoteLines(notes)}\n\n${body}` : body;
+  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...attached], message);
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the
-  // harness through the path preamble `deliveredMessage` just built, and would
+  // harness through the attached-files note in the prompt, and would
   // fail inside the harness if they went into codex's `-i` (A1d).
   const images = nativeImageAttachments(def, attachments).map((a) => a.path);
   // buildArgv owns the argv side of an image turn (template expansion, or the

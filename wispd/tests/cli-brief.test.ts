@@ -161,6 +161,7 @@ describe("wisp brief set", () => {
     const bad = await runLive(["brief", "set", "--stdin"], bound(), JSON.stringify({ version: 1, outcome: secret, remaining: "none" }));
     expect(bad.exit).toBe(1);
     expect(bad.err).toContain("remaining must be an array");
+    expect(bad.err).toContain("brief --help");
     expect(bad.err).not.toContain(secret);
     const broken = await runLive(["brief", "set", "--stdin"], bound(), `{"outcome": "${secret}"`);
     expect(broken.exit).toBe(1);

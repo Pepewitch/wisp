@@ -6,7 +6,7 @@ import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { startTurn } from "../src/runner";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
-import { taskPreamble } from "../src/turn-input";
+import { taskPreambleLines } from "../src/turn-input";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -237,8 +237,9 @@ describe("Claude background follow-up", () => {
   });
 
   test("the task preamble points delayed follow-up at durable workflows", () => {
-    expect(taskPreamble(makeTask())).toContain("wisp workflow types");
-    expect(taskPreamble(makeTask())).toContain("instead of relying on a harness background process");
+    const preamble = taskPreambleLines(makeTask()).join("\n");
+    expect(preamble).toContain("wisp workflow types");
+    expect(preamble).toContain("instead of relying on a harness background process");
   });
 });
 

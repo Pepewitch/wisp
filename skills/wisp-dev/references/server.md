@@ -68,16 +68,20 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Task state changes go through `store.transition()`. It advances the sequence
   and writes notify-worthy outbox rows atomically, then emits realtime news
   only after commit.
-- Every line Wisp writes into a harness input is sent as its own `[wisp] …`
-  line (`wispNoteLines` in `turn-input.ts`). That covers the first turn's task
-  preamble, standing notes (auto-merge, task briefs), the attached-files note,
-  auto-fix rounds, heartbeat wakes and a plugin workflow's control lines. One
-  blank line separates it from the person's words. There is no closing tag: a
-  tag covers its line, and the first untagged line ends Wisp's section. Text
-  that is neither Wisp's nor the person's (a plugin's report) follows a tagged
-  line saying whose it is. A schedule-steer is sent untagged because its words
-  are the person's. A new injected instruction uses the same helper, never
-  untagged text.
+- Everything Wisp writes into a harness input goes in one `<wisp>` section
+  per input (`wispSection` / `withWispSection` in `turn-input.ts`). That
+  covers the first turn's task preamble, standing notes (auto-merge, task
+  briefs), the attached-files note, auto-fix rounds, heartbeat wakes and a
+  plugin workflow's control lines. A single line goes inline
+  (`<wisp>…</wisp>`), several go in a block, and a literal `</wisp>` inside is
+  escaped so relayed text cannot close it. One blank line separates it from
+  the person's words.
+  - Text that is neither Wisp's nor the person's (a plugin's report) follows
+    the section, which says whose it is.
+  - A schedule-steer's words are the person's, so they go out under one
+    `<wisp>scheduled steer</wisp>` line.
+  - `Turn.prompt` keeps the person's words alone.
+  - A new injected instruction uses the same helper, never untagged text.
 - A successful JSON turn needs a positively parsed result unless the adapter
   explicitly opts out. Process exit alone must not silently claim success.
 - `stuck` means a live process has stopped producing output; it is reversible.

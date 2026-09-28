@@ -4,7 +4,7 @@ import type { WorkflowDecision } from "../../../shared/workflows";
 import type { AdapterDef } from "../adapters";
 import { TASKS_DIR, type WispConfig } from "../config";
 import { wispCommand } from "../command";
-import { wispNoteLines } from "../turn-input";
+import { wispSection, withWispSection } from "../turn-input";
 import { homeIsDraining, trackHomeWork } from "../home-lifetime";
 import { isTaskStopping } from "../turn-interrupt";
 import { startNextQueuedMessage } from "../runner";
@@ -47,13 +47,18 @@ function uncertainDelivery(id: string): boolean {
   return Boolean(db.query("SELECT 1 FROM task_messages WHERE workflow_id = ? AND delivery_uncertain = 1 LIMIT 1").get(id));
 }
 /**
- * What a workflow's wake says to the agent. Wisp's own lines are tagged
- * `[wisp]` (turn-input wispNoteLines) so they are never read as the person's.
- * A schedule-steer is the exception because its words ARE the person's —
- * written ahead of time, sent on their schedule — so it goes out untouched.
+ * What a workflow's wake says to the agent. Wisp's own words go in a
+ * `<wisp>` section (turn-input wispSection) so they are never read as the
+ * person's. A schedule-steer's words ARE the person's — written ahead of time,
+ * sent on their schedule — so they stay outside it, under one
+ * `<wisp>scheduled steer</wisp>` line; a scheduled `/command` goes out bare,
+ * or it would stop being one.
  */
 function workflowPrompt(row: WorkflowRow, result: WorkflowDecision): string {
-  if (row.type === "schedule-steer") return result.message!;
+  if (row.type === "schedule-steer") {
+    const message = result.message!;
+    return message.trimStart().startsWith("/") ? message : withWispSection(["scheduled steer"], message);
+  }
   const item = workflow(row);
   const controlLines = [
     `Workflow ${row.id} (${row.type}).`,
@@ -67,14 +72,14 @@ function workflowPrompt(row: WorkflowRow, result: WorkflowDecision): string {
   ];
   if (row.type !== "heartbeat") {
     // a plugin's report is the workflow's, not Wisp's and not the person's: say so on a tagged line
-    return `${wispNoteLines([...controlLines, "The workflow's own report follows; it is not the person's words."])}\n\n${result.message}`;
+    return withWispSection([...controlLines, "The workflow's own report follows; it is not the person's words."], result.message!);
   }
   const dir = join(TASKS_DIR, row.task_id, "workflows", row.id, `wake-${item.wakeCount + 1}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = join(dir, "HEARTBEAT.md");
   // the file keeps the person's objective untagged and Wisp's control lines tagged, like a prompt
-  writeFileSync(file, `${result.message}\n\n---\n${wispNoteLines(controlLines)}\n`, { mode: 0o600 });
-  return wispNoteLines([`Heartbeat ${row.id}.`, `Read ${file} and follow its objective and completion instructions.`]);
+  writeFileSync(file, `${result.message}\n\n---\n${wispSection(controlLines)}\n`, { mode: 0o600 });
+  return wispSection([`Heartbeat ${row.id}.`, `Read ${file} and follow its objective and completion instructions.`]);
 }
 
 export class WorkflowRuntime {
