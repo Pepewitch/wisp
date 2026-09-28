@@ -53,7 +53,7 @@ self-contained binary. Native bridge/proxy changes also need
 
 Browser and Desktop share one UI. Describe the effect on **both clients** and
 what you tested; keep deliberate runtime differences behind their existing
-boundary. Do not commit `web/ui-dist/`, native build output, or local logs.
+boundary. Do not commit `web/ui-dist/`, `web/web-dist/`, native build output, or local logs.
 
 Documentation-only changes need link checks and verification of any commands
 or claims they change, not an unrelated native build.

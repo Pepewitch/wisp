@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   # This credential-free gate owns source identity, history scanning, and the
-  # canonical UI bytes. Every platform build starts only after it succeeds.
+  # canonical web and Desktop UI bytes. Every platform build starts only after it succeeds.
   release-source:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -109,27 +109,38 @@ jobs:
             --gitleaks-ignore-path "$PWD/.gitleaksignore" \
             --redact
 
-      # Build the ignored UI once from the exact tag. The macOS job downloads
-      # these bytes rather than generating an independent Desktop frontend.
-      - name: build and reproduce the shared UI bundle
+      # Build both ignored UIs from the exact tag. The Desktop bundle stays a
+      # single HTML file; the web bundle includes Mermaid's lazy-loaded files.
+      # Every platform downloads these exact bytes instead of rebuilding UI.
+      - name: build and reproduce the web and Desktop UI bundles
         run: |
           stage="$RUNNER_TEMP/release-ui"
-          mkdir -p "$stage"
+          mkdir -p "$stage/ui-dist"
           bun run build:ui
-          cp web/ui-dist/index.html "$stage/index.html"
+          bun run build:web
+          test -s web/ui-dist/index.html
+          test -s web/web-dist/index.html
+          test -s web/web-dist/.vite/manifest.json
+          cp web/ui-dist/index.html "$stage/ui-dist/index.html"
+          cp -R web/web-dist "$stage/web-dist"
           bun run build:ui
-          cmp -s "$stage/index.html" web/ui-dist/index.html || {
-            echo "non-reproducible UI bundle" >&2
+          bun run build:web
+          cmp -s "$stage/ui-dist/index.html" web/ui-dist/index.html || {
+            echo "non-reproducible Desktop UI bundle" >&2
             exit 1
           }
-          (cd "$stage" && sha256sum index.html > SHA256SUMS)
-      - name: stage the shared UI bundle for macOS packaging
+          diff -qr "$stage/web-dist" web/web-dist || {
+            echo "non-reproducible web UI bundle" >&2
+            exit 1
+          }
+          (cd "$stage" && find ui-dist web-dist -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS)
+      - name: stage the canonical UI bundles for platform packaging
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: canonical-ui-bundle
-          path: |
-            ${{ runner.temp }}/release-ui/index.html
-            ${{ runner.temp }}/release-ui/SHA256SUMS
+          path: ${{ runner.temp }}/release-ui/
+          # The Vite manifest is under .vite/ and must reach the platform jobs.
+          include-hidden-files: true
           retention-days: 7
           if-no-files-found: error
 
@@ -154,16 +165,18 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      - name: collect and verify the shared UI bundle
+      - name: collect the canonical UI bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: canonical-ui-bundle
           path: ${{ runner.temp }}/release-ui
-      - name: install the shared UI bundle
+      - name: verify and install the canonical UI bundles
         run: |
           (cd "$RUNNER_TEMP/release-ui" && sha256sum -c SHA256SUMS)
-          mkdir -p web/ui-dist
-          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
+          test -s "$RUNNER_TEMP/release-ui/ui-dist/index.html"
+          test -s "$RUNNER_TEMP/release-ui/web-dist/.vite/manifest.json"
+          rm -rf web/ui-dist web/web-dist
+          cp -R "$RUNNER_TEMP/release-ui/ui-dist" "$RUNNER_TEMP/release-ui/web-dist" web/
       - name: build and reproduce the Linux release artifact
         run: |
           bun run wispd/scripts/release-linux.ts --require-tag
@@ -192,7 +205,7 @@ jobs:
           if-no-files-found: error
 
   # Independent clean runners are a stronger reproducibility check than two
-  # serial builds in one workspace. Both consume the exact Linux-produced UI.
+  # serial builds in one workspace. Both consume the exact source-built UIs.
   macos-repro:
     needs: release-source
     if: github.event_name == 'push'
@@ -224,16 +237,18 @@ jobs:
         with:
           workspaces: desktop/src-tauri
           cache-targets: false
-      - name: collect and verify the shared UI bundle
+      - name: collect the canonical UI bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: canonical-ui-bundle
           path: ${{ runner.temp }}/release-ui
-      - name: install the shared UI bundle
+      - name: verify and install the canonical UI bundles
         run: |
           (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
-          mkdir -p web/ui-dist
-          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
+          test -s "$RUNNER_TEMP/release-ui/ui-dist/index.html"
+          test -s "$RUNNER_TEMP/release-ui/web-dist/.vite/manifest.json"
+          rm -rf web/ui-dist web/web-dist
+          cp -R "$RUNNER_TEMP/release-ui/ui-dist" "$RUNNER_TEMP/release-ui/web-dist" web/
       - name: build clean macOS reproducibility payload
         run: |
           bun run wispd/scripts/release-macos.ts --require-tag
@@ -304,16 +319,18 @@ jobs:
           install -m 600 /dev/null "$key_path"
           printf '%s' "$APPLE_API_PRIVATE_KEY" > "$key_path"
           echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
-      - name: collect and verify the shared UI bundle
+      - name: collect the canonical UI bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: canonical-ui-bundle
           path: ${{ runner.temp }}/release-ui
-      - name: install the shared UI bundle
+      - name: verify and install the canonical UI bundles
         run: |
           (cd "$RUNNER_TEMP/release-ui" && shasum -a 256 -c SHA256SUMS)
-          mkdir -p web/ui-dist
-          cp "$RUNNER_TEMP/release-ui/index.html" web/ui-dist/index.html
+          test -s "$RUNNER_TEMP/release-ui/ui-dist/index.html"
+          test -s "$RUNNER_TEMP/release-ui/web-dist/.vite/manifest.json"
+          rm -rf web/ui-dist web/web-dist
+          cp -R "$RUNNER_TEMP/release-ui/ui-dist" "$RUNNER_TEMP/release-ui/web-dist" web/
       - name: build and verify the trusted macOS releases
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

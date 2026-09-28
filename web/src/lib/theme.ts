@@ -65,8 +65,8 @@ export function resolveTheme(preference: ThemePreference, system: Theme): Theme 
  *
  * `color-scheme` also rides in the CSS token blocks, and the CSS property wins
  * once the stylesheet is parsed — the meta is what answers BEFORE that, which
- * matters here because the bundle is one file and its <style> follows 1.8 MB
- * of inlined module. Both are written from one place so they cannot disagree.
+ * matters especially in Desktop's one-file bundle, where <style> follows the
+ * inlined module. Both are written from one place so they cannot disagree.
  *
  * `theme-color` tints a mobile browser's OWN toolbar above the app; both
  * values match the top bar's surface. scripts/brand/build.ts writes the dark

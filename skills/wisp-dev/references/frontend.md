@@ -5,9 +5,9 @@
 packages it for Wisp Desktop. It is the only one: the classic `web/index.html`,
 the abandoned first rewrite in `web/app/`, and the vendored xterm in
 `web/vendor/` were all deleted at the v0.2 cutover (D12). The daemon serves
-this app's generated bundle at `/` and Tauri packages the same bytes.
-`web/ui-dist/` is a Git-ignored build directory: use the supported commands to
-generate it, and never edit, stage, or commit it.
+this app's generated web build at `/` and Tauri packages its single-file build.
+`web/web-dist/` and `web/ui-dist/` are Git-ignored build directories: use the
+supported commands to generate them, and never edit, stage, or commit them.
 
 ## 0. Two shipped runtimes
 
@@ -40,7 +40,7 @@ Every UI change must classify its impact on both clients:
   stay behind their runtime boundaries. Any intentional difference is named in
   the change and covered without regressing the other client.
 - Styling is only runtime-neutral when it ships **in the bundle**. The daemon
-  serves the page under its own hash-based CSP and the packaged app has a
+  serves the page under its same-origin script CSP and the packaged app has a
   separate one, so anything that
   reaches the DOM as a `<style>` element created after load — the terminal
   pane, and xterm's own renderer — depends on the desktop policy keeping
@@ -197,8 +197,8 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   over the reading column on hover whenever macOS was in light appearance — a
   native control painting in a theme the app never declared. The CSS property
   in the token blocks is the authority, and the `<meta name="color-scheme">` in
-  `index.html` is what answers BEFORE it: the bundle is one file whose
-  `<style>` follows a 1.8 MB inlined module, so the meta covers the parse.
+  `index.html` is what answers BEFORE it: Desktop's main module and both
+  builds' styles follow the meta, so it covers the parse.
   `applyTheme` rewrites both the meta and `theme-color` from one place, so they
   can never disagree with the class. `scroll-slim` still sets
   `scrollbar-color` from tokens; all of it is needed.

@@ -8,11 +8,10 @@
  * rather than from a hand-maintained list of hashes that would rot the next
  * time the build changes.
  *
- * The one self-inflicted constraint: the app is a SINGLE inlined HTML file, so
- * `script-src` cannot be `'self'` — the script has no URL. Hashing the inline
- * script is what keeps the policy meaningful anyway; a blanket
- * `'unsafe-inline'` would leave a future injection with the same authority the
- * bundle has, which is the whole thing this defends against.
+ * Desktop still has an inline entry, but the daemon-served web build uses an
+ * external entry and lazy chunks under /chunks/. The web policy permits
+ * same-origin scripts; the daemon serves only generated JavaScript paths and
+ * the fixed service worker. The offline page keeps its hash-only policy.
  */
 import { createHash } from "node:crypto";
 
@@ -31,7 +30,7 @@ import { RETIRED_COOKIE } from "./auth";
  * exactly this reason, so the alternation cannot be fooled.
  *
  * A script with a `src` is skipped: it has a URL, so it is covered by a source
- * expression rather than a hash. This bundle has none.
+ * expression rather than a hash. The browser entry is external.
  */
 export function inlineScriptSources(html: string): string[] {
   const sources: string[] = [];
@@ -87,12 +86,14 @@ export function hashSource(source: string): string {
 }
 
 export interface PageSecurityPolicy {
-  /** Hash sources for the bundle's inline scripts, computed once at startup. */
+  /** Hash sources for any inline scripts, computed once at startup. */
   scriptHashes: string[];
+  /** The daemon-served web page has generated same-origin JavaScript assets. */
+  allowSameOriginScripts?: boolean;
 }
 
-export function pageSecurityPolicy(html: string): PageSecurityPolicy {
-  return { scriptHashes: inlineScriptSources(html).map(hashSource) };
+export function pageSecurityPolicy(html: string, allowSameOriginScripts = false): PageSecurityPolicy {
+  return { scriptHashes: inlineScriptSources(html).map(hashSource), allowSameOriginScripts };
 }
 
 /**
@@ -106,14 +107,18 @@ export function contentSecurityPolicy(policy: PageSecurityPolicy, origin: string
   return [
     // Nothing loads unless a directive below says so.
     "default-src 'none'",
-    `script-src ${policy.scriptHashes.join(" ")}`.trim(),
+    // 'self' follows the browser's actual origin through HTTPS proxies even
+    // when they rewrite Host. CSP has no host-free path source expression, so
+    // the daemon's exact chunk allowlist and nosniff headers narrow what code
+    // can actually be fetched; /sw.js is its only other JavaScript route.
+    `script-src ${[...policy.scriptHashes, ...(policy.allowSameOriginScripts ? ["'self'"] : [])].join(" ")}`.trim(),
     // 'unsafe-inline' is load-bearing and cannot be narrowed: xterm creates
     // <style> elements after load (see desktop/README.md), and React writes
     // inline style attributes. Adding a hash here would DISABLE it — CSP
     // ignores 'unsafe-inline' in a directive that also carries a hash — so
     // style-src deliberately has no hashes.
     "style-src 'self' 'unsafe-inline'",
-    // Fonts are inlined as data: URIs by the single-file build.
+    // Both delivery builds inline fonts as data: URIs.
     "font-src 'self' data:",
     // 'self' for the API, blob: for attachment media the browser fetched with
     // its bearer token (SEC-01), data: for the generated favicon. Remote

@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "bun --bun vite build",
+    "build:web": "bun --bun vite build --mode web && bun scripts/generate-web-assets.ts",
     "lint": "eslint .",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",

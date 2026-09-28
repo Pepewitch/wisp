@@ -11,14 +11,15 @@ verified installation and supervised restart to the running daemon.
 - `scripts/` contains binary builds, daemon releases, smoke tests, harness
   synchronization, evaluator tooling, and the source-development launcher.
 
-The daemon embeds `../web/ui-dist/index.html`, the same generated bundle that
-Wisp Desktop packages. Build and validation orchestration stays at the
+The daemon embeds `../web/web-dist/index.html` and its allowlisted lazy Mermaid
+chunks. Wisp Desktop packages the separate single-file `web/ui-dist/index.html`
+from the same React source. Build and validation orchestration stays at the
 repository root. The public `scripts/install.sh` and `scripts/uninstall.sh`
 entrypoints also stay at the root so existing release URLs remain stable.
 
-Run `bun run build:ui` from the repository root before directly invoking a
+Run `bun run build:web` from the repository root before directly invoking a
 daemon test that starts `serve`. The root `bun run test` and `bun run check`
-commands already generate this ignored bundle first.
+commands already generate both ignored artifacts first.
 
 See [Contributing](../CONTRIBUTING.md) for source setup and focused tests.
 

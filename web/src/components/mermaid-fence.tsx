@@ -82,7 +82,7 @@ export function MermaidFence({ code, children }: { code: string; children: React
 type MermaidRender =
   | { status: "loading" }
   | { status: "ready"; svg: string }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; moduleLoadFailed: boolean }
 
 /**
  * The SVG for a fence, re-rendered whenever its source, the app's theme, or a
@@ -116,17 +116,21 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
   // The inputs that produced a result are carried with it, so no effect ever
   // has to write state synchronously to clear a stale one.
   const [done, setDone] = useState<
-    { key: string; code: string; svg: string } | { key: string; code: string; message: string } | null
+    { key: string; code: string; svg: string } |
+    { key: string; code: string; message: string; moduleLoadFailed: boolean } |
+    null
   >(null)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      let moduleLoaded = false
       try {
         // Dynamic, and the only reference to the plugin: its module loads the
         // mermaid package eagerly, so a static import here would evaluate the
         // whole library on every app start.
         const { mermaid: plugin } = await import("@streamdown/mermaid")
+        moduleLoaded = true
         const mermaid = plugin.getMermaid({
           startOnLoad: false,
           securityLevel: "strict",
@@ -139,7 +143,15 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
         const { svg } = await mermaid.render(nextMermaidId(), settled)
         if (!cancelled) setDone({ key, code: settled, svg })
       } catch (error) {
-        if (!cancelled) setDone({ key, code: settled, message: renderError(error) })
+        // A web page kept open across a daemon upgrade can ask for a chunk the
+        // new binary no longer has. A full reload gets the new HTML and chunk
+        // names; leave that choice to the user so a draft is not discarded.
+        if (!cancelled) setDone({
+          key,
+          code: settled,
+          message: moduleLoaded ? renderError(error) : "The diagram code could not be loaded.",
+          moduleLoadFailed: !moduleLoaded,
+        })
       }
     })()
     return () => {
@@ -159,7 +171,11 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
 
   const retry = useCallback(() => setAttempt((value) => value + 1), [])
   if (current === null) return [{ status: "loading" }, retry]
-  return ["svg" in current ? { status: "ready", svg: current.svg } : { status: "error", message: current.message }, retry]
+  return ["svg" in current ? { status: "ready", svg: current.svg } : {
+    status: "error",
+    message: current.message,
+    moduleLoadFailed: current.moduleLoadFailed,
+  }, retry]
 }
 
 /** The diagram's three faces, in the frame whose height a person owns. */
@@ -173,16 +189,30 @@ function MermaidDiagram({ render, onRetry }: { render: MermaidRender; onRetry: (
       ) : render.status === "error" ? (
         <div className="flex h-full flex-col items-center justify-center gap-3 rounded-md border border-border bg-code px-4 text-center">
           <p className="line-clamp-3 font-mono text-[11px] text-fg-secondary">{render.message}</p>
-          <button
-            type="button"
-            onClick={onRetry}
-            className={cn(
-              "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
-              "hover:text-foreground"
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onRetry}
+              className={cn(
+                "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
+                "hover:text-foreground"
+              )}
+            >
+              Retry
+            </button>
+            {render.moduleLoadFailed && (
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className={cn(
+                  "cursor-pointer rounded-md border border-border bg-card px-2 py-1 text-[11px] text-fg-secondary",
+                  "hover:text-foreground"
+                )}
+              >
+                Reload app
+              </button>
             )}
-          >
-            Retry
-          </button>
+          </div>
         </div>
       ) : (
         <PanZoom svg={render.svg} />

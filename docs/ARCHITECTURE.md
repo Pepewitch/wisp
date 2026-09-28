@@ -8,9 +8,9 @@ behaves the same whichever interface is open.
 ## Runtime topology
 
 ```text
-                         one shared React application
-                         web -> web/ui-dist/index.html
-                         /                         \
+                         one shared React source
+                   web/web-dist       web/ui-dist/index.html
+                         |                         |
         daemon-served browser                     Wisp Desktop (Tauri)
         same-origin transport                     native loopback proxy
                   |                               /        |        \
@@ -87,14 +87,15 @@ transport from its runtime instead of constructing daemon URLs itself:
 - delayed callbacks retain the connection that initiated them and may never
   retarget themselves to whichever tab is active later.
 
-The generated `web/ui-dist/index.html` is both the daemon's browser UI and the
-desktop app's packaged frontend. It is ignored by Git: PRs review and validate
-the source, while release CI builds one canonical copy for both products. There
-is no separate desktop fork of the React application.
+The same React source produces two Git-ignored delivery artifacts. The daemon
+embeds `web/web-dist/index.html` and its allowlisted lazy Mermaid chunks; Tauri
+packages the single-file `web/ui-dist/index.html`. PRs review source, while tag
+CI checksums and transfers both generated outputs. There is no separate desktop
+fork of the React application.
 
-Browser installation uses a fixed set of manifest, icon, and service-worker
-routes embedded in the daemon. These are the only static-resource exception;
-they do not add a filesystem asset server or change the shared UI artifact.
+Browser installation uses fixed manifest, icon, and service-worker routes plus
+the generated, content-hashed JavaScript chunk allowlist. These do not add a
+general filesystem asset server.
 Desktop does not initialize PWA installation. The worker fetches current HTML
 on every navigation and supplies only a standalone recovery document when the
 daemon cannot be reached. It never caches daemon data or reloads active clients.
@@ -256,7 +257,7 @@ any deliberate difference.
 | `web/src/` shared component, hook, cache, storage, stream, asset, terminal, auth, or update behavior | Run the root/UI gate and review both runtime semantics; build the app when Tauri, connection scope, transport, native integration, or release qualification is affected |
 | daemon route, public type, authentication, SSE, WebSocket, media, or update behavior | Run focused and root tests; check the CLI where applicable plus browser/Desktop consumers, and run transport/native gates only when those boundaries are affected |
 | `desktop/src-tauri/` command, metadata, credential, proxy, or Local setup behavior | Update the TypeScript bridge/runtime contract, run root and native gates, and preserve browser behavior |
-| generated UI bundle or packaging | Build `web/ui-dist/index.html` without committing it; prove the daemon and desktop package consume the same release bytes |
+| generated UI bundles or packaging | Build both ignored outputs; prove daemon and Desktop consume their respective checksum-verified release bytes |
 | intentionally browser-only or native-only behavior | Keep the boundary explicit and test that the other runtime is unaffected |
 
 An impact review that ignores either shipped client is insufficient for a
@@ -273,11 +274,12 @@ gates live in
 
 The source workspace is a Bun monorepo with `wispd/` for the daemon and CLI,
 `web/` for the shared React app, and `desktop/` for the Rust/Tauri crate.
-`bun run build:ui` creates the ignored single-file UI bundle;
-the daemon binary embeds it and the desktop build packages the same output.
-Pull-request CI generates and exercises this artifact but never compares it to
-Git. Tag CI reproduces it once, transfers it by checksum between runners, and
-uses those exact bytes for every release artifact.
+`bun run build:ui` creates the ignored single-file Desktop bundle, and
+`bun run build:web` creates the browser HTML plus lazy Mermaid chunks. The
+daemon binary embeds the complete browser artifact; the desktop build packages
+its single-file output. Pull-request CI generates and exercises both artifacts
+but never compares them to Git. Tag CI reproduces and checksums both, transfers
+them between runners, and uses those exact bytes for every release artifact.
 
 The compiled daemon needs no Node runtime or sibling asset directory, but it
 is not dependency-free. It embeds the UI and the `@xterm/headless` and

@@ -99,10 +99,15 @@ describe("Wisp Desktop release metadata", () => {
     expect(workflow).toContain("cache-targets: false");
   });
 
-  test("hands one reproducible UI bundle from Linux to every macOS release pass", () => {
+  test("hands reproducible web and Desktop UI bundles to every platform release pass", () => {
     const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
     expect(workflow.match(/name: canonical-ui-bundle/g)).toHaveLength(4);
-    expect(workflow).toContain("sha256sum index.html > SHA256SUMS");
+    expect(workflow).toContain("bun run build:ui");
+    expect(workflow).toContain("bun run build:web");
+    expect(workflow).toContain('diff -qr "$stage/web-dist" web/web-dist');
+    expect(workflow).toContain("find ui-dist web-dist -type f -print0");
+    expect(workflow).toContain("include-hidden-files: true");
+    expect(workflow.match(/web-dist\/\.vite\/manifest\.json/g)).toHaveLength(4);
     expect(workflow).toContain("shasum -a 256 -c SHA256SUMS");
     expect(workflow.match(/WISP_PREBUILT_UI=1/g)).toHaveLength(2);
     expect(workflow).not.toContain("committed web bundle is current");
@@ -170,7 +175,7 @@ describe("Wisp Desktop release metadata", () => {
     expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
 
     const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
-    const buildUi = workflow.indexOf("name: build shared UI bundle");
+    const buildUi = workflow.indexOf("name: build Desktop UI bundle");
     const cacheRestore = workflow.indexOf("uses: Swatinem/rust-cache");
     const bundleKey = workflow.indexOf("key: ${{ hashFiles('web/ui-dist/index.html') }}");
     expect(buildUi).toBeGreaterThan(-1);

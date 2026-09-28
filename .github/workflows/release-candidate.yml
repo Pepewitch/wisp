@@ -65,6 +65,7 @@ jobs:
       - name: build the candidate Linux artifact
         run: |
           bun run build:ui
+          bun run build:web
           bun run wispd/scripts/release-linux.ts
       - name: exercise installer and activation contracts
         run: |

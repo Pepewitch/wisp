@@ -1,7 +1,6 @@
 /**
- * The page's security headers (SEC-04), including the part that is easy to get
- * quietly wrong: the inline-script hashes have to be the hashes of the script
- * the daemon is really serving, or the policy silently blocks the whole app.
+ * The page's security headers (SEC-04). The browser entry is a generated
+ * script under /chunks/, while any inline script must carry its own hash.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -125,6 +124,15 @@ describe("the assembled policy", () => {
     expect(directive(csp, "script-src")).not.toContain("unsafe-inline");
   });
 
+  test("the web page permits same-origin scripts through a Host-rewriting HTTPS proxy", () => {
+    const webPolicy = pageSecurityPolicy('<script type="module">boot()</script>', true);
+    const origin = "https://wisp.example.ts.net";
+    const scripts = directive(contentSecurityPolicy(webPolicy, origin), "script-src");
+    expect(scripts).toBe(`${hashSource("boot()")} 'self'`);
+    expect(directive(contentSecurityPolicy(webPolicy, "http://127.0.0.1:8710"), "script-src")).toBe(scripts);
+    expect(scripts).not.toContain("'unsafe-inline'");
+  });
+
   /**
    * style-src must NOT carry a hash: CSP ignores 'unsafe-inline' in a
    * directive that also has one, and xterm creates stylesheets after load.
@@ -173,7 +181,7 @@ describe("the assembled policy", () => {
 });
 
 describe("the served page", () => {
-  test("carries a policy whose script hash matches the bundle it just served", async () => {
+  test("serves the generated entry under a same-origin script policy", async () => {
     writeConfig();
     server = await serve({ port: 0 });
     const response = await fetch(`http://127.0.0.1:${server.port}/`);
@@ -182,11 +190,9 @@ describe("the served page", () => {
     const csp = response.headers.get("content-security-policy");
     expect(csp).not.toBeNull();
     expect(response.headers.get("x-frame-options")).toBe("DENY");
-
-    // The real bundle, hashed independently of the code that served it.
-    const sources = inlineScriptSources(html);
-    expect(sources.length).toBeGreaterThan(0);
-    for (const source of sources) expect(csp).toContain(hashSource(source));
+    expect(directive(csp!, "script-src")).toBe("'self'");
+    expect(html).toMatch(/<script\b[^>]*src="\.\/chunks\/index-[A-Za-z0-9_-]{8}\.js"/);
+    expect(inlineScriptSources(html)).toEqual([]);
   });
 
   test("the policy's websocket origin follows the address the browser used", async () => {
@@ -196,6 +202,18 @@ describe("the served page", () => {
       headers: { host: "wisp.local:9999" },
     });
     expect(response.headers.get("content-security-policy")).toContain("ws://wisp.local:9999");
+  });
+
+  test("a proxy rewriting Host cannot change the browser-relative script source", async () => {
+    writeConfig();
+    server = await serve({ port: 0 });
+    const response = await fetch(`http://127.0.0.1:${server.port}/`, {
+      headers: { host: "127.0.0.1:8710", "x-forwarded-host": "wisp.example.ts.net", "x-forwarded-proto": "https" },
+    });
+    const csp = response.headers.get("content-security-policy");
+    expect(response.status).toBe(200);
+    expect(directive(csp!, "script-src")).toBe("'self'");
+    expect(csp).not.toContain("/chunks/");
   });
 
   test("attachment bytes are not stored by the browser after the daemon deletes them", async () => {

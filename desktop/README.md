@@ -1,9 +1,10 @@
 # desktop
 
 The Wisp desktop shell for Apple Silicon macOS: a Tauri 2 application whose
-webview runs the **same** React bundle the daemon serves in a browser
-(`web/ui-dist/index.html`), plus a native core that lets that one bundle talk to
-several independent Wisp daemons at once.
+webview runs the shared React app as a single-file local bundle
+(`web/ui-dist/index.html`), plus a native core that lets it talk to several
+independent Wisp daemons at once. The daemon serves a separate build of the
+same source with lazy Mermaid chunks for the browser.
 
 Start with the repository-wide [architecture](../docs/ARCHITECTURE.md), then
 use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
@@ -21,8 +22,7 @@ operation and client record to an immutable connection ID.
 
 Desktop support is a second runtime behind the `DaemonTransport` interface,
 not a change to how the browser build authenticates. Shared React changes must
-still be checked in both runtimes because the exact same generated bundle ships
-in each product.
+still be checked in both runtimes because the same source ships in each product.
 
 Application zoom is the webview's one direct native UI capability. The desktop
 provider applies the persisted 50–200% level through Tauri's narrowly scoped
@@ -294,7 +294,7 @@ bash scripts/desktop/build-macos.sh --app-only  # .app only
 ```
 
 Ordinary builds refresh the ignored `web/ui-dist`; release CI instead supplies
-the checksum-verified canonical bundle used by every artifact. The build
+the checksum-verified Desktop bundle alongside the separate web artifact. The build
 derives `icons/icon.icns` from the committed `icons/icon.png` (a generated
 brand asset — run `bun run brand` to change it), and bundles for
 `aarch64-apple-darwin`. A local build receives an ad-hoc

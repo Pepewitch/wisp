@@ -31,8 +31,9 @@ Wisp has one authoritative daemon and several clients:
   SSE streams are realtime delivery, never a ledger.
 - Harness-specific argv and wire knowledge stays under `wispd/src/adapters/`.
 - The React app uses Query for replaceable server state and a separate reducer
-  for append-oriented activity. One generated, Git-ignored HTML file ships in
-  both the daemon and Tauri app; transport and state scope vary by runtime.
+  for append-oriented activity. One source generates a Git-ignored single-file
+  Desktop bundle and a browser bundle with lazy Mermaid chunks; transport and
+  state scope also vary by runtime.
 
 ## Route the task before reading deeply
 
@@ -95,9 +96,9 @@ publication surfaces.
    not itself evidence that both runtime paths work.
    Application-global Desktop state and connection-scoped daemon state must
    remain visibly distinct; a tab change must never retarget delayed work.
-6. `web/ui-dist/index.html` is derived and Git-ignored. Never edit, stage, or
-   commit it. Supported test/build commands generate the bundle they exercise;
-   tag CI owns the canonical release copy consumed by both clients.
+6. `web/ui-dist/` and `web/web-dist/` are derived and Git-ignored. Never edit,
+   stage, or commit them. Supported test/build commands generate the artifact
+   they exercise; tag CI owns both canonical release outputs.
 7. The release version has one source, `wispd/package.json`. Every file that
    repeats it is listed in `scripts/release-versions.ts` and written by
    `bun run version:set <version>`; never edit those files by hand.

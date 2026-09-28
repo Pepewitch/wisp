@@ -3,6 +3,11 @@ declare module "*.js" {
   export default source;
 }
 
+declare module "*.gz" {
+  const path: string;
+  export default path;
+}
+
 declare module "*.css" {
   const source: string;
   export default source;

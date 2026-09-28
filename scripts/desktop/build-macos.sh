@@ -4,11 +4,12 @@
 #   bash scripts/desktop/build-macos.sh            # .app + .dmg
 #   bash scripts/desktop/build-macos.sh --app-only # skip the .dmg
 #
-# The webview loads the same generated web/ui-dist bundle the daemon serves.
-# Ordinary builds refresh it here. The release workflow supplies one verified
-# cross-job bundle and sets WISP_PREBUILT_UI=1 so every artifact packages those
-# exact bytes. Ordinary builds receive an ad-hoc signature; the tag workflow
-# supplies Developer ID/notarization credentials for its final pass.
+# The webview loads the generated single-file web/ui-dist bundle. Ordinary
+# builds refresh it here. The release workflow supplies verified Desktop and
+# web bundles across jobs and sets WISP_PREBUILT_UI=1 so the Desktop app
+# packages the canonical single-file bytes. Ordinary builds receive an ad-hoc
+# signature; the tag workflow supplies Developer ID/notarization credentials
+# for its final pass.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

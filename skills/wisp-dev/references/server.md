@@ -269,8 +269,8 @@ cannot tell you a browser stopped attaching a credential.
 ## Validation
 
 `package.json` is authoritative. `bun run check` is the aggregate gate for
-generating the ignored UI bundle plus backend and UI lint, typecheck, and unit
-tests. Generated `web/ui-dist` bytes are never staged in a PR.
+generating both ignored UI bundles plus backend and UI lint, typecheck, and unit
+tests. Generated `web/ui-dist` and `web/web-dist` bytes are never staged in a PR.
 
 For server changes, run the nearest tests while iterating, then run:
 
