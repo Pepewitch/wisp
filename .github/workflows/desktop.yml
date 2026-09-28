@@ -106,12 +106,14 @@ jobs:
         run: bun run build:ui
         working-directory: .
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # The cache holds dependencies only: rust-cache deletes the
+        # wisp-desktop crate's outputs, including the UI assets
+        # `generate_context!()` writes to its OUT_DIR, before saving, so the
+        # crate that embeds the bundle always recompiles against this run's
+        # bundle. Keying the cache on the bundle's hash made every UI change,
+        # and every PR opened before main re-saved, start from an empty target.
         with:
           workspaces: desktop/src-tauri
-          # Tauri's generated asset map is compiled into both the library and
-          # integration tests. Bind restored native outputs to the exact ignored
-          # bundle bytes they embedded, not only to Cargo's tracked inputs.
-          key: ${{ hashFiles('web/ui-dist/index.html') }}
       # `tauri::generate_context!()` embeds this file at compile time and
       # tests/webview.rs asserts against what it embedded, so a bundle that is
       # missing or empty has to fail HERE, naming itself, rather than a minute

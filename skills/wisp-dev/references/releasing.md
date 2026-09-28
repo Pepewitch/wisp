@@ -48,11 +48,21 @@ Then do the judgment work the scaffolds cannot:
 
 Commit the release preparation before moving on.
 
-### 2. Gate the branch
+### 2. Open the release PR, then gate the branch
+
+Push the branch and open the PR first, so its CI runs while the local gate
+does: title it `release: prepare <version>`, and have the body say what the
+release ships. The macOS Desktop job takes the longest, and it finishes in
+about the time the local gate takes. Then run the gate on the same commit:
 
 ```sh
+git push -u origin "release/$version"
 bun run release:check "$version"
 ```
+
+When it passes, add its result to the PR body as the validation evidence. If
+it fails, fix the problem, commit, push, and run it again; the PR's checks
+rerun on the new commit.
 
 It refuses the mistakes that are expensive once a tag exists — a reused or
 non-newer version, a branch behind `origin/main`, unfinished `TODO`s, an
@@ -90,10 +100,12 @@ rerunning until it passes is how a real regression ships.
 
 ### 3. Land the release PR
 
-Open the PR (title it `release: prepare <version>`; the body says what the
-release ships and what the validation evidence was), wait for its checks, and
-land it with a squash so the release commit is one commit carrying one
-synchronized version:
+Once `release:check` has passed and every PR check is green, including the
+macOS `native-core` Desktop job, land the PR with a squash so the release
+commit is one commit carrying one synchronized version. `native-core` is not a
+required check, and `release:ready` does not wait for it on `main`, so this run
+is the Desktop lint, test, and launch evidence the tag relies on. Do not merge
+around it:
 
 ```sh
 gh pr merge <number> --squash --delete-branch
