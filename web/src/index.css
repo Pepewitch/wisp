@@ -23,6 +23,25 @@
    the resting state is only hidden where a pointer can bring it back. */
 @custom-variant pointer (@media (hover: hover));
 
+/* The top inset a touch header pads itself by. An installed iOS app (26+,
+   black-translucent + viewport-fit=cover) gets the system's Liquid Glass
+   scroll-edge blur, drawn ABOVE the web view and reaching ~35pt past the
+   status bar; iOS 27 made it much stronger. No CSS or meta tag turns it off
+   and an opaque strip under it does not help, so the header band grows to
+   hold that ramp and its content starts below it. The min() is 0 wherever the
+   inset is (landscape, no notch), and the -webkit-touch-callout guard keeps
+   Android's edge-to-edge standalone apps, which have no blur, out of it. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root {
+      --safe-top: calc(env(safe-area-inset-top, 0px) + min(2rem, env(safe-area-inset-top, 0px) * 100));
+    }
+  }
+}
+
 /* A phone's keyboard changes its visual viewport in Safari. The app keeps
    one scroll owner per pane, with the composer above the keyboard. */
 .mobile-shell {
