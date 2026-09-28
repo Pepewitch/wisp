@@ -594,6 +594,51 @@ END;
 `);
     },
   },
+  {
+    id: 14,
+    name: "task-briefs",
+    up: (db) => {
+      // Task briefs (brief-store.ts): a per-task switch, one binding per
+      // eligible turn, and at most one report per source turn.
+      //
+      // brief_generation moves on every off→on, and a binding records the
+      // generation it was issued under, so a disable/re-enable cycle can never
+      // revive a binding an earlier turn was handed. Off for every existing
+      // task: nothing about how an old task runs changes by upgrading.
+      const columns = (db.query(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map((c) => c.name);
+      if (!columns.includes("brief_enabled")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_enabled INTEGER NOT NULL DEFAULT 0`);
+      if (!columns.includes("brief_generation")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_generation INTEGER NOT NULL DEFAULT 0`);
+      db.exec(`
+CREATE TABLE IF NOT EXISTS brief_runs (
+  run_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
+  turn_n INTEGER NOT NULL,
+  context_n INTEGER NOT NULL,
+  generation INTEGER NOT NULL,
+  instance_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brief_runs_task ON brief_runs(task_id, turn_n);
+CREATE TABLE IF NOT EXISTS task_briefs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
+  turn_n INTEGER NOT NULL,
+  context_n INTEGER NOT NULL,
+  run_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  source_json TEXT NOT NULL,
+  saved_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

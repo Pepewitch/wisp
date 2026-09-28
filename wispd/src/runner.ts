@@ -63,7 +63,10 @@ import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
+import { pendingBriefRun, recordBriefRun } from "./brief-store";
 import {
+  BRIEF_RUN_ENV,
+  briefReminder,
   deliveredMessage,
   envForCwd,
   inputStrategyFor,
@@ -168,8 +171,14 @@ export function startTurn(
   // needs one: arming it IS asking for a push, which the preamble forbids.
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
-  const autopilot = standingNotes(task.id, n, n > 1 && message.trimStart().startsWith("/"));
-  const notes = autopilot?.notes ?? [];
+  const command = n > 1 && message.trimStart().startsWith("/");
+  const autopilot = standingNotes(task.id, n, command);
+  // A task brief is asked for once per eligible turn, through this same
+  // standing-note path: never in the user's message, never on a steer, and
+  // never in front of a command. Its binding is chosen now, before the spawn,
+  // because the turn row it names does not exist until after it.
+  const brief = pendingBriefRun(task.id, def, command);
+  const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
   const prompt = n === 1
     ? `${taskPreamble(task, notes)}\n${body}`
     : notes.length > 0 ? `${notes.join("\n")}\n\n${body}` : body;
@@ -220,7 +229,11 @@ export function startTurn(
       stdout: isLive ? "pipe" : outFd,
       stderr: recorderEligible ? "pipe" : errFd,
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
-      env: envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
+      env: {
+        ...envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
+        // only this turn's own binding: envForCwd has already dropped any inherited one
+        ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
+      },
       // Its own process GROUP, so a stop reaches the builds, servers, and
       // sub-agents the harness starts — not just the harness (ENG-03). The
       // pid is unchanged, so `exited`, the persisted pid, and the identity
@@ -272,6 +285,8 @@ export function startTurn(
         { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
       );
       recordProcessGroup(id);
+      // same transaction as the turn row: no request can see one without the other
+      if (brief) recordBriefRun(brief, { taskId: task.id, turnId: id, n, contextN: task.context_n }, cfg.instanceId);
       return id;
     })();
   } catch (error) {

@@ -76,6 +76,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // `droid resume <id>` is the interactive form of the same stored session
     // (verified against droid 0.225.1's top-level help).
     attach: ["resume", "{session}"],
+    // task env reaches the agent's tool shell: tests/harness-facts/droid.json taskEnv
+    briefs: true,
     modelDiscovery: "droid-models",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
     // context out of band. Droid still has NO usage/limits RPC in 0.217.0.
@@ -169,6 +171,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // "rate limited — wait and retry"
     limitMarkers: ["usage limit", "rate limit", "credit balance", "you've reached your"],
     attach: ["--resume", "{session}"],
+    // task env reaches the agent's tool shell: tests/harness-facts/claude.json taskEnv
+    briefs: true,
     // no modelDiscovery (researched on claude-code 2.1.240): the CLI exposes
     // no model list and names no default — `--help` has no models subcommand
     // (running `claude models` starts an interactive session), and the
@@ -261,6 +265,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
       "usage not included",
     ],
     attach: ["resume", "{session}"], // `codex resume <id>` = interactive, same session
+    // task env reaches the agent's tool shell: tests/harness-facts/codex.json taskEnv
+    briefs: true,
     modelDiscovery: "codex-models",
     // A3 (SP1, live-verified 0.149.0): the app-server reads account usage out
     // of band. There is NO per-thread context read (token usage is a
@@ -335,6 +341,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // unset for the same reason: markers come from real captures, never
     // invented shapes.
     attach: ["--resume", "{session}"], // interactive resume, same session
+    // task env reaches the agent's tool shell: tests/harness-facts/cursor.json taskEnv
+    briefs: true,
     // No probe/skillDiscovery/compact strategy: none of those surfaces is
     // verified on cursor. Cursor documents interactive `/usage`, but
     // cursor-agent 2026.09.18 did not settle it in print mode, so it remains

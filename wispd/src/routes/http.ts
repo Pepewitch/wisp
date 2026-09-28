@@ -13,7 +13,8 @@ import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
  * calls `backgroundWork` bare and still sees every row.
  */
 export function apiTask(t: Task): ApiTask {
-  return { ...t, archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  const { brief_enabled, brief_generation: _generation, ...row } = t;
+  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, briefEnabled: brief_enabled === 1, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export type ApiTaskMessage = Omit<
@@ -152,6 +153,11 @@ export async function jsonObjectBody(req: Request): Promise<Record<string, unkno
   } catch (error) {
     return err(`could not read the request body: ${error instanceof Error ? error.message : String(error)}`, 400);
   }
+  return jsonObjectText(text);
+}
+
+/** The three answers above, for a body already read as text. */
+function jsonObjectText(text: string): Record<string, unknown> | Response {
   if (text.trim() === "") return {};
   let parsed: unknown;
   try {
@@ -163,6 +169,38 @@ export async function jsonObjectBody(req: Request): Promise<Record<string, unkno
     return err(`request body must be a JSON object, got ${typeName(parsed)}`, 400);
   }
   return parsed as Record<string, unknown>;
+}
+
+/**
+ * `jsonObjectBody` for a route with a small, fixed ceiling: a declared
+ * `content-length` over it is refused before a byte is read, and an
+ * undeclared or understated body is counted as it streams and cut off at the
+ * limit, so an oversized request never becomes one big string in memory.
+ */
+export async function boundedJsonObjectBody(req: Request, maxBytes: number): Promise<Record<string, unknown> | Response> {
+  const tooLarge = () => err(`request body is over the ${maxBytes}-byte limit`, 413);
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) return tooLarge();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  if (req.body) {
+    const reader = req.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => {});
+          return tooLarge();
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      return err(`could not read the request body: ${error instanceof Error ? error.message : String(error)}`, 400);
+    }
+  }
+  return jsonObjectText(Buffer.concat(chunks).toString("utf8"));
 }
 
 export function integerQueryParam(url: URL, name: string, minimum: number): number | Response | null {

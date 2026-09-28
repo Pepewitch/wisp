@@ -8,6 +8,8 @@ import {
 } from "./cli-api";
 import { workflowCommand } from "./cli-workflow";
 import { PR_USAGE, prCommand } from "./cli-pr";
+import { briefCommand } from "./cli-brief";
+import { createCommand } from "./cli-create";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
 import { retentionCommand } from "./cli-retention";
@@ -16,11 +18,8 @@ import { doctorCommand } from "./cli-doctor";
 import { updateCommand } from "./cli-update";
 import { resolve } from "node:path";
 import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
-import { formatBytes, type StagedAttachmentPayload } from "./attachments";
-import {
-  discardAttachmentPayloads,
-  readAttachmentFlags,
-} from "./cli-attach";
+import { formatBytes } from "./attachments";
+import { readAttachmentFlags } from "./cli-attach";
 import { searchCommand } from "./cli-search";
 import { limitsCommand } from "./cli-limits";
 import { sendCommand, taskMessageSummary } from "./cli-send";
@@ -113,66 +112,6 @@ function printTasks(tasks: ListedTask[]): void {
       `${t.id}  ${icon} ${word.padEnd(11)} ${t.harness.padEnd(7)} ${model ? `${model} ` : ""}turn ${String(t.turn_count).padEnd(2)} ${ago(t.updated_at).padEnd(4)} ${t.title.slice(0, 50)}${detail}`,
     );
   }
-}
-
-async function createCommand(positional: string[], flags: Flags): Promise<void> {
-  let repo: string, prompt: string;
-  if (positional.length >= 2) {
-    [repo, prompt] = [positional[0]!, positional.slice(1).join(" ")];
-  } else if (positional.length === 1) {
-    [repo, prompt] = [process.cwd(), positional[0]!];
-  } else {
-    console.error(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--attach <path>]…`,
-    );
-    process.exit(1);
-  }
-  const harness = flags.harness;
-  if (typeof harness !== "string") {
-    console.error("--harness is required (e.g. --harness droid)");
-    process.exit(1);
-  }
-  if (flags.effort !== undefined && typeof flags.effort !== "string") {
-    console.error("--effort requires a value");
-    process.exit(1);
-  }
-  if (flags.base !== undefined && typeof flags.base !== "string") {
-    console.error("--base requires a value (e.g. --base origin/develop)");
-    process.exit(1);
-  }
-  let attachments: StagedAttachmentPayload[] | undefined;
-  try {
-    attachments = await readAttachmentFlags(flags, uploadAttachment, discardAttachment);
-  } catch (error) {
-    exitApi(error);
-  }
-  let task: ApiTask;
-  try {
-    task = await daemonRequest("/api/tasks", "POST", JSON.stringify({
-      repoPath: resolve(repo),
-      prompt,
-      harness,
-      model: typeof flags.model === "string" ? flags.model : undefined,
-      effort: typeof flags.effort === "string" ? flags.effort : undefined,
-      fast: flags.fast === true ? true : undefined,
-      mode: flags.local ? "local" : undefined,
-      base: typeof flags.base === "string" ? flags.base : undefined,
-      autopilot: flags["auto-merge"] === true || flags["auto-fix"] === true
-        ? { autoMerge: flags["auto-merge"] === true, autoFix: flags["auto-fix"] === true }
-        : undefined,
-      attachments,
-    })) as ApiTask;
-  } catch (error) {
-    if (attachments) await discardAttachmentPayloads(attachments, discardAttachment);
-    exitApi(error);
-  }
-  const where = task.mode === "local" ? ", local" : "";
-  // What the daemon armed, not what was asked: an older daemon ignores the field.
-  const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean } }).autopilot;
-  const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix"].filter(Boolean).join("");
-  console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
-  const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
-  if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) console.error("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
 }
 
 async function resultCommand(positional: string[]): Promise<void> {
@@ -470,6 +409,9 @@ export async function cli(args: string[]): Promise<void> {
   switch (cmd) {
     case "workflow":
       await workflowCommand(positional, flags, api);
+      break;
+    case "brief":
+      await briefCommand(positional, flags);
       break;
     case "pr":
       try {

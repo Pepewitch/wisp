@@ -422,6 +422,7 @@ export type WispEvent =
   | { type: "turn"; taskId: string; n: number; status: string }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
+  | { type: "brief"; taskId: string }
   | { type: "terminals"; taskId: string }
   | { type: "project"; action: "add" | "remove"; path: string }
   | { type: "harnesses" }

@@ -78,6 +78,15 @@ export interface Task {
   purge_pending?: number;
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
+  /**
+   * Task briefs (brief-store.ts): 1 = each eligible turn is asked for one.
+   * SQLite's 0/1; `briefEnabled` at the API boundary. Optional in the type
+   * only because rows from older fixtures predate the column; the database
+   * always has it.
+   */
+  brief_enabled?: number;
+  /** Advances on every off→on, so a re-enable never revives an old turn's binding. */
+  brief_generation?: number;
   created_at: string;
   updated_at: string;
 }
@@ -224,13 +233,15 @@ export interface BackgroundWork {
 }
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived" | "fast"> & {
+export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_generation"> & {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
   /** Fast mode, for the same reason `archived` is a boolean here. */
   fast: boolean;
+  /** Task briefs are on for this task. Absent from a daemon older than the feature. */
+  briefEnabled?: boolean;
   background?: BackgroundWork;
 };
 

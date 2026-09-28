@@ -8,6 +8,7 @@ import { archiveCleanup } from "./archive-jobs";
 import { assertTaskProcessesEnded } from "./task-processes";
 import { taskDeliveryActive } from "./outbox";
 import { emit } from "./events";
+import { taskBriefsForExport } from "./brief-store";
 import type { Task } from "./types";
 import type { TaskExport } from "../../shared/task-export";
 
@@ -80,7 +81,7 @@ export async function exportTask(task: Task): Promise<TaskExport> {
   try {
     await processBarrier(task.id);
     const turns = turnsFor(task.id), messages = messagesFor(task.id);
-    const result: TaskExport = { format: "wisp-task-export-v1", exportedAt: new Date().toISOString(), task, turns, messages, files: [], missing: [] };
+    const result: TaskExport = { format: "wisp-task-export-v1", exportedAt: new Date().toISOString(), task, turns, messages, briefs: taskBriefsForExport(task.id), files: [], missing: [] };
     if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new RetentionError("Conversation metadata exceeds the export limit. Use the offline backup procedure.", 413);
     const list = await filesFor(task, MAX_EXPORT_FILES); result.missing = list.missing;
     let total = 0;
@@ -136,6 +137,9 @@ export async function purgeTask(task: Task): Promise<void> {
       // but permanent deletion states what it deletes rather than relying on
       // a pragma being on.
       db.query("DELETE FROM turn_texts WHERE task_id = ?").run(task.id);
+      // Task briefs and the bindings their turns were handed (brief-store.ts).
+      db.query("DELETE FROM task_briefs WHERE task_id = ?").run(task.id);
+      db.query("DELETE FROM brief_runs WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM turns WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM tasks WHERE id = ?").run(task.id);
     })();

@@ -55,10 +55,22 @@ if [ "$command_name" = "init" ]; then
     set -- "$@" --port "$DEV_PORT"
   fi
 elif [ ! -f "$DEV_HOME/config.json" ]; then
+  # Help never creates a home: any --help/-h, and `brief` with no subcommand
+  # (its help), is answered without init — an agent reads `brief --help`
+  # before it has any reason to have a working home.
+  needs_init=yes
   case "$command_name" in
-    ""|help|-h|--help|version|--version) ;;
-    *) bun "$ROOT/wispd/src/index.ts" init --port "$DEV_PORT" >/dev/null ;;
+    ""|help|-h|--help|version|--version) needs_init=no ;;
   esac
+  for arg in "$@"; do
+    case "$arg" in --help|-h) needs_init=no ;; esac
+  done
+  if [ "$command_name" = "brief" ] && { [ $# -eq 1 ] || [ "${2:-}" = "help" ]; }; then
+    needs_init=no
+  fi
+  if [ "$needs_init" = yes ]; then
+    bun "$ROOT/wispd/src/index.ts" init --port "$DEV_PORT" >/dev/null
+  fi
 fi
 
 exec bun "$ROOT/wispd/src/index.ts" "$@"

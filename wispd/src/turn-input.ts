@@ -13,6 +13,25 @@ export function taskEnv(task: Task): Record<string, string> {
 }
 
 /**
+ * The one variable that binds a turn to its brief (brief-store.ts). Named to
+ * stay clear of the KEY/SECRET/TOKEN patterns a harness may filter out of its
+ * tool environment; it is a scope check, not a credential.
+ */
+export const BRIEF_RUN_ENV = "WISP_BRIEF_RUN"
+
+/**
+ * The single line an eligible turn is given. Short on purpose — the schema,
+ * the limits and the example live in `wisp brief --help`, read only when the
+ * agent needs them — and scoped to THIS turn, never phrased as a standing
+ * session policy, so an agent that remembers it after briefs are switched off
+ * was told nothing about later turns.
+ */
+export function briefReminder(): string {
+  const cmd = wispCommand()
+  return `Before ending this turn, save a JSON brief with \`${cmd} brief set --stdin\`; help: \`${cmd} brief --help\`.`
+}
+
+/**
  * The environment for a child spawned into `cwd`, with PWD made to agree.
  *
  * The daemon inherits a PWD from whatever directory it was started in, and
@@ -30,7 +49,12 @@ export function taskEnv(task: Task): Record<string, string> {
  * two cannot drift apart.
  */
 export function envForCwd<T extends Record<string, string | undefined>>(env: T, cwd: string): T & { PWD: string } {
-  return { ...env, PWD: cwd }
+  // A brief binding is never inherited. Every child Wisp spawns into a task —
+  // a turn, a setup script, a terminal — builds its environment here, so a
+  // daemon started from inside some agent's shell cannot hand that agent's
+  // binding to anything. The runner adds a turn's OWN binding after this.
+  const { [BRIEF_RUN_ENV]: _inherited, ...rest } = env
+  return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 
 export function taskPreamble(task: Task, notes: string[] = []): string {

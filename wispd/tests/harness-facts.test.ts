@@ -110,6 +110,19 @@ describe("adapters agree with the installed CLIs' advertised contract", () => {
   });
 });
 
+describe("task briefs are claimed only where a live turn proved the binding arrives", () => {
+  test("every builtin that declares briefs has a live taskEnv fact naming the task variables", () => {
+    for (const [harness, def] of Object.entries(BUILTIN_ADAPTERS)) {
+      if (def.briefs !== true) continue;
+      const facts = FACTS.find((f) => f.harness === harness)!;
+      const surface = facts.surfaces.taskEnv;
+      expect(surface?.cost, `${harness} taskEnv`).toBe("live");
+      expect(surface?.verifiedAgainst, `${harness} taskEnv pin`).not.toBeNull();
+      expect(surfaceList(facts, "taskEnv", "reachesToolShell"), `${harness} taskEnv names`).toContain("WISP_TASK_ID");
+    }
+  });
+});
+
 describe("committed facts are safe for a public repository", () => {
   // The extractors are allowlist-based, so this is a backstop rather than the
   // defence: it catches a future extractor that starts copying free text.

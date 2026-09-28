@@ -6,6 +6,8 @@ export {};
 const args = process.argv.slice(2);
 
 try {
+  // `wisp brief` help and usage are answered from a module that imports nothing.
+  const briefAnswer = args[0] === "brief" ? (await import("./cli-brief-help")).briefOfflineAnswer(args.slice(1)) : null;
   if (args[0] === "__pty-exec") {
     // The child half of src/pty.ts, and deliberately the FIRST branch: this
     // process exists only to take a pty as its controlling terminal and
@@ -20,6 +22,11 @@ try {
     const { positional, flags } = parseArgs(args.slice(1));
     if (positional.length) throw new Error("doctor --storage does not take positional arguments");
     await doctorCommand(flags);
+  } else if (briefAnswer) {
+    // Before config: an agent reads this help with no daemon, no token, and
+    // possibly no writable home, and importing config.ts would create one.
+    (briefAnswer.stream === "out" ? console.log : console.error)(briefAnswer.text.trimEnd());
+    process.exit(briefAnswer.exit);
   } else if (args[0] === "serve") {
     const { serve } = await import("./daemon");
     await serve();
