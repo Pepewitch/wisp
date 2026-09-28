@@ -4,8 +4,9 @@
  * without each poll spawning a harness CLI.
  *
  * Limits are ACCOUNT state, not task state, so the cache is keyed by harness
- * (and, for droid, by which key it read with) rather than by task. Failures
- * are not cached: the next poll retries, and concurrent polls share one read.
+ * (and, for droid, by which key it read with) rather than by task. Concurrent
+ * callers share one read; real probe errors are cached with bounded exponential
+ * backoff so a broken or slow harness cannot be spawned on every poll.
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -25,12 +26,16 @@ import type { WispConfig } from "./config";
 import { bunProbeSpawn, bunRpcFactory } from "./probes";
 
 /**
- * Just under the web client's two-minute poll (HARNESS_LIMITS_POLL_MS). A TTL
+ * Just under the web client's five-minute poll (HARNESS_LIMITS_POLL_MS). A TTL
  * equal to the poll would let every other poll land a moment before expiry and
- * stretch one open window's reads to four minutes; this keeps them at two, and
+ * stretch one open window's reads to ten minutes; this keeps them at five, and
  * more clients never make them more frequent.
  */
-export const LIMITS_TTL_MS = 110_000;
+export const LIMITS_TTL_MS = 290_000;
+/** Target retry cadence for real probe errors; each tier gets the same headroom as the normal TTL. */
+export const LIMITS_FAILURE_BACKOFF_MS = 5 * 60_000;
+export const LIMITS_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
+export const LIMITS_BACKOFF_HEADROOM_MS = 10_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
 
 export type FactoryKeySource = "settings" | "environment";
@@ -71,8 +76,19 @@ export interface HarnessLimitsCacheOptions {
   which?: (bin: string) => string | null;
   env?: Record<string, string | undefined>;
   ttlMs?: number;
+  failureBackoffMs?: number;
+  failureBackoffMaxMs?: number;
+  failureBackoffHeadroomMs?: number;
   timeoutMs?: number;
   now?: () => Date;
+}
+
+interface CachedLimitsEntry {
+  key: string;
+  freshUntil: number;
+  value: HarnessLimitsEntry;
+  /** consecutive real probe errors for this exact harness configuration */
+  failures: number;
 }
 
 function readTextFile(path: string): string | null {
@@ -89,12 +105,15 @@ function fingerprint(secret: string): string {
 }
 
 export class HarnessLimitsCache {
-  private readonly entries = new Map<string, { key: string; at: number; value: HarnessLimitsEntry }>();
+  private readonly entries = new Map<string, CachedLimitsEntry>();
   private readonly inFlight = new Map<string, Promise<HarnessLimitsEntry>>();
   private readonly io: LimitsIo;
   private readonly which: (bin: string) => string | null;
   private readonly env: Record<string, string | undefined>;
   private readonly ttlMs: number;
+  private readonly failureBackoffMs: number;
+  private readonly failureBackoffMaxMs: number;
+  private readonly failureBackoffHeadroomMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   private askedAt: number | null = null;
@@ -111,6 +130,9 @@ export class HarnessLimitsCache {
     this.which = options.which ?? ((bin) => Bun.which(bin));
     this.env = options.env ?? process.env;
     this.ttlMs = options.ttlMs ?? LIMITS_TTL_MS;
+    this.failureBackoffMs = options.failureBackoffMs ?? LIMITS_FAILURE_BACKOFF_MS;
+    this.failureBackoffMaxMs = options.failureBackoffMaxMs ?? LIMITS_FAILURE_BACKOFF_MAX_MS;
+    this.failureBackoffHeadroomMs = options.failureBackoffHeadroomMs ?? LIMITS_BACKOFF_HEADROOM_MS;
     this.timeoutMs = options.timeoutMs ?? LIMITS_TIMEOUT_MS;
     this.now = options.now ?? (() => new Date());
   }
@@ -133,10 +155,18 @@ export class HarnessLimitsCache {
 
   /**
    * One harness, past the cache, leaving every other harness's reading alone:
-   * what Settings' Test asks after a key is saved, and what a finished turn asks.
+   * what Settings' Test and an explicit Refresh ask.
    */
   readNow(name: string, def: AdapterDef, cfg: Pick<WispConfig, "factoryApiKey">): Promise<HarnessLimitsEntry> {
     return this.one(name, def, cfg, true);
+  }
+
+  /**
+   * Re-read one harness only when its shared entry is stale. Turn-end refreshes
+   * use this path so they and the web poll cannot independently spawn a CLI.
+   */
+  readIfStale(name: string, def: AdapterDef, cfg: Pick<WispConfig, "factoryApiKey">): Promise<HarnessLimitsEntry> {
+    return this.one(name, def, cfg, false);
   }
 
   private one(
@@ -151,15 +181,29 @@ export class HarnessLimitsCache {
     const key = `${name}\u0000${def.bin}\u0000${def.limits}\u0000${credential === null ? "-" : fingerprint(credential)}`;
     const at = this.now().getTime();
     const hit = this.entries.get(name);
-    if (!refresh && hit && hit.key === key && at - hit.at < this.ttlMs) {
+    if (!refresh && hit && hit.key === key && at < hit.freshUntil) {
       return Promise.resolve({ ...hit.value, cached: true });
     }
     const running = this.inFlight.get(key);
     if (running) return running;
     const attempt = this.fetchOne(name, def, credential)
       .then((entry) => {
-        if (entry.status === "ok") this.entries.set(name, { key, at: this.now().getTime(), value: entry });
-        else if (hit?.key === key) this.entries.delete(name);
+        const completedAt = this.now().getTime();
+        const failures = entry.status !== "error"
+          ? 0
+          : hit?.key === key && hit.value.status === "error"
+            ? hit.failures + 1
+            : 1;
+        const backoff = entry.status !== "error"
+          ? this.ttlMs
+          : Math.max(
+              0,
+              Math.min(
+                this.failureBackoffMs * (2 ** Math.min(failures - 1, 30)),
+                this.failureBackoffMaxMs,
+              ) - this.failureBackoffHeadroomMs,
+            );
+        this.entries.set(name, { key, freshUntil: completedAt + backoff, value: entry, failures });
         return entry;
       })
       .finally(() => this.inFlight.delete(key));

@@ -293,7 +293,7 @@ wisp models         per harness: the effective model for new tasks, and the
                     the adapter's pinned subset
 wisp limits [--refresh] [--json]
                     plan usage per harness, the same answer as the web top
-                    bar's usage popover; --refresh skips the two-minute cache
+                    bar's usage popover; --refresh skips the five-minute cache
 wisp version        print the Wisp version
 ```
 

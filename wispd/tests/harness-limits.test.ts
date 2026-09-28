@@ -14,7 +14,14 @@ import {
   type RpcFactory,
   type RpcSession,
 } from "../src/adapters";
-import { HarnessLimitsCache, factoryKey } from "../src/harness-limits";
+import {
+  HarnessLimitsCache,
+  LIMITS_BACKOFF_HEADROOM_MS,
+  LIMITS_FAILURE_BACKOFF_MAX_MS,
+  LIMITS_FAILURE_BACKOFF_MS,
+  LIMITS_TTL_MS,
+  factoryKey,
+} from "../src/harness-limits";
 import { route } from "../src/routes";
 import type { WispConfig } from "../src/config";
 import { limitsLines, resetsIn } from "../src/cli-limits";
@@ -336,11 +343,11 @@ describe("HarnessLimitsCache", () => {
     expect(c.reads()).toBe(1);
     await cache.read({}, adapters, { refresh: true });
     expect(c.reads()).toBe(2);
-    // just under the web's two-minute poll, so each poll of one client is one read
-    now += 100_000;
+    // just under the web's five-minute poll, so each poll of one client is one read
+    now += LIMITS_TTL_MS - 1;
     await cache.read({}, adapters);
     expect(c.reads()).toBe(2);
-    now += 11_000;
+    now += 2;
     await cache.read({}, adapters);
     expect(c.reads()).toBe(3);
   });
@@ -358,6 +365,8 @@ describe("HarnessLimitsCache", () => {
     };
     const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, openRpc, which: (bin) => bin, env: {} });
     await cache.read({}, { claude, codex });
+    expect([c.reads(), codexReads]).toEqual([1, 1]);
+    expect(await cache.readIfStale("claude", claude, {})).toMatchObject({ status: "ok", cached: true });
     expect([c.reads(), codexReads]).toEqual([1, 1]);
     await cache.readNow("claude", claude, {});
     const after = await cache.read({}, { claude, codex });
@@ -378,17 +387,119 @@ describe("HarnessLimitsCache", () => {
     expect(cache.askedWithin(60_000)).toBe(false);
   });
 
-  test("concurrent polls share one read, and a failure is never cached", async () => {
+  test("concurrent polls share one read, and a failed read backs off", async () => {
     const c = counting();
-    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, which: (bin) => bin, env: {} });
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      failureBackoffMs: 100,
+      failureBackoffMaxMs: 400,
+      failureBackoffHeadroomMs: 0,
+      now: () => new Date(now),
+    });
     await Promise.all([cache.read({}, { claude }), cache.read({}, { claude })]);
     expect(c.reads()).toBe(1);
     c.failNext(true);
     const failed = await cache.read({}, { claude }, { refresh: true });
     expect(failed[0]).toMatchObject({ status: "error", limits: null });
+    const backedOff = await cache.read({}, { claude });
+    expect(backedOff[0]).toMatchObject({ status: "error", cached: true });
+    expect(c.reads()).toBe(2);
+    now += 100;
     c.failNext(false);
     const again = await cache.read({}, { claude });
     expect(again[0]).toMatchObject({ status: "ok", cached: false });
+    expect(c.reads()).toBe(3);
+  });
+
+  test("consecutive failures double their automatic retry delay up to the cap", async () => {
+    const c = counting();
+    c.failNext(true);
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      failureBackoffMs: 100,
+      failureBackoffMaxMs: 250,
+      failureBackoffHeadroomMs: 0,
+      now: () => new Date(now),
+    });
+
+    await cache.read({}, { claude }); // retry at 100ms
+    now += 100;
+    await cache.read({}, { claude }); // retry at 300ms (a 200ms delay)
+    now += 199;
+    expect((await cache.read({}, { claude }))[0]!.cached).toBe(true);
+    expect(c.reads()).toBe(2);
+    now += 1;
+    await cache.read({}, { claude }); // retry at 550ms (capped to a 250ms delay)
+    now += 249;
+    expect((await cache.read({}, { claude }))[0]!.cached).toBe(true);
+    expect(c.reads()).toBe(3);
+    c.failNext(false);
+    now += 1;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: false });
+    expect(c.reads()).toBe(4);
+  });
+
+  test("the production retry tiers expire just before their 5/10/20/30-minute polls", async () => {
+    const c = counting();
+    c.failNext(true);
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      now: () => new Date(now),
+    });
+    const delays = [
+      LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      2 * LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      4 * LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      LIMITS_FAILURE_BACKOFF_MAX_MS - LIMITS_BACKOFF_HEADROOM_MS,
+    ];
+
+    await cache.read({}, { claude });
+    for (const [index, delay] of delays.entries()) {
+      now += delay - 1;
+      expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", cached: true });
+      expect(c.reads()).toBe(index + 1);
+      now += 1;
+      expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", cached: false });
+      expect(c.reads()).toBe(index + 2);
+    }
+  });
+
+  test("an explicit refresh bypasses an active error backoff", async () => {
+    const c = counting();
+    c.failNext(true);
+    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, which: (bin) => bin, env: {} });
+    await cache.read({}, { claude });
+    expect((await cache.read({}, { claude }))[0]!.cached).toBe(true);
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "error", cached: false });
+    expect(c.reads()).toBe(2);
+  });
+
+  test("an unavailable binary uses the normal TTL rather than exponential backoff", async () => {
+    const c = counting();
+    let installed = false;
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => (installed ? bin : null),
+      env: {},
+      now: () => new Date(now),
+    });
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "unavailable", cached: false });
+    installed = true;
+    now += LIMITS_TTL_MS - 1;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "unavailable", cached: true });
+    now += 1;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: false });
+    expect(c.reads()).toBe(1);
   });
 
   test("a harness that is not installed is unavailable, and a changed key is a fresh read", async () => {
@@ -411,9 +522,12 @@ describe("HarnessLimitsCache", () => {
   });
 
   test("a read that hangs times out as a named error", async () => {
+    let reads = 0;
     const cache = new HarnessLimitsCache({
-      spawnOnce: (_cmd, opts) =>
-        new Promise((_, reject) => opts.signal?.addEventListener("abort", () => reject(new Error("killed")))),
+      spawnOnce: (_cmd, opts) => {
+        reads++;
+        return new Promise((_, reject) => opts.signal?.addEventListener("abort", () => reject(new Error("killed"))));
+      },
       which: (bin) => bin,
       env: {},
       timeoutMs: 20,
@@ -422,6 +536,8 @@ describe("HarnessLimitsCache", () => {
       status: "error",
       message: "the claude limits read timed out after 0.02s",
     });
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", cached: true });
+    expect(reads).toBe(1);
   });
 });
 

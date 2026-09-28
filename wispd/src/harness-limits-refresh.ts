@@ -1,7 +1,9 @@
 /**
  * A finished turn is when a harness's plan usage has just moved, so it is the
- * moment to re-read that one harness's limits instead of waiting out the poll.
- * Only the turn's own harness is read; the others keep their cached answers.
+ * moment to check that one harness's limits instead of waiting out the poll.
+ * Only the turn's own harness is checked; the others keep their cached
+ * answers. The shared cache decides whether the provider actually needs a
+ * read, so this path and polling cannot create separate request streams.
  *
  * Keyed off the `turn` event rather than a task's `done` state: archive,
  * retention and process cleanup re-emit a task's unchanged state, and a turn
@@ -15,8 +17,12 @@ import { turnForTask } from "./store";
 
 /** The provider's own count can trail the turn's last event by a moment, and turns ending together share one read. */
 export const TURN_END_SETTLE_MS = 5_000;
-/** At most one turn-end read per harness in this span; a later turn's read is deferred, never dropped. */
-export const TURN_END_MIN_GAP_MS = 30_000;
+/**
+ * At most one turn-end check per harness in this span. It shares the normal
+ * limits cache, so polling and finished turns together produce at most one
+ * automatic provider read per five minutes.
+ */
+export const TURN_END_MIN_GAP_MS = 5 * 60_000;
 /** No client asked for limits in this long: nobody is looking, so a finished turn spawns nothing. */
 export const LIMITS_WATCHED_MS = 10 * 60_000;
 
@@ -87,9 +93,9 @@ export class LimitsTurnRefresh {
     if (this.stopped) return;
     this.lastReadAt.set(harness, this.now());
     const read = this.cache
-      .readNow(harness, def, this.cfg)
-      .then(() => {
-        if (!this.stopped) emit({ type: "harness-limits", harness });
+      .readIfStale(harness, def, this.cfg)
+      .then((entry) => {
+        if (!this.stopped && !entry.cached) emit({ type: "harness-limits", harness });
       })
       .finally(() => this.reads.delete(read));
     this.reads.add(read);

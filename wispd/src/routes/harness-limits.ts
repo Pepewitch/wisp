@@ -8,8 +8,9 @@ import { json } from "./http";
  *
  * Every loaded harness that declares a plan-limits read, each with its own
  * status, so one harness that is not installed or not signed in never hides
- * the others. `refresh=1` skips the cache; the answer is otherwise at most
- * the cache's TTL old, and says so with `cached` and `fetchedAt`.
+ * the others. `refresh=1` skips the cache. Successful and configuration
+ * answers use the normal TTL; real probe errors back off up to 30 minutes.
+ * Every answer says whether it was `cached` and when it was fetched.
  */
 export async function harnessLimitsRoute(
   url: URL,
