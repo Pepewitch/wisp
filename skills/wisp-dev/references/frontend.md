@@ -1254,8 +1254,9 @@ brief exists for.
   60% of the column and scrolls within itself only when a long input and an
   open comparison meet a short window. The conversation remains the one
   scroller of the conversation. On touch, an open brief REPLACES the
-  transcript (hidden, still mounted) rather than squeezing it. The collapsed
-  touch row is two lines, like `TaskRowTouch`.
+  transcript (hidden, still mounted) rather than squeezing it, and a find in
+  the task closes it so the match it scrolls to is on screen. The collapsed
+  touch row is its label line plus up to two lines of text.
 - **Open or closed is presentation.** `lib/brief-open.ts` is global and
   client-local like the theme, defaulting to open on a pointer and closed on
   touch. It is never sent anywhere: collapsing a brief cannot change whether

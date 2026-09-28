@@ -1,91 +1,99 @@
 /**
- * `wisp brief set|show|enable|disable`. Help and the bare `set` usage line are
+ * `wisp brief set|show|enable|disable`. Help, usage and every `--help` are
  * answered earlier, in index.ts, from cli-brief-help.ts — before config loads.
  *
- * `set` is what an agent runs, so every answer is ONE short line and every
- * outcome that is not a mistake in the agent's own JSON exits 0: a skipped,
- * unchanged or conflicting save is final, and saying so in a way that invites
- * a retry would turn a best-effort report into a loop. The daemon being
- * unreachable exits 1 with a sentence telling the agent to carry on.
+ * `set` is what an agent runs, so every answer is ONE short line. A save that
+ * is skipped, unchanged or conflicting exits 0: it is final, and saying so in
+ * a way that invites a retry would turn a best-effort report into a loop. A
+ * mistake in the agent's own JSON exits 1 and names the field, so it can fix
+ * it once; so do an unreachable or older daemon and a refused binding, each
+ * with a sentence telling the agent to carry on without the brief.
+ *
+ * Everything `show` prints about a brief is untrusted text an agent wrote, so
+ * it passes through `controlFree` on its way to the terminal; `--json` stays
+ * lossless, with C1 controls escaped too.
  */
-import { briefErrorLine, TASK_BRIEF_LIMITS, validateTaskBrief, type BriefPublication, type BriefSettings, type BriefView } from "../../shared/task-brief"
+import { briefErrorLine, validateTaskBrief, type BriefPublication, type BriefSettings, type BriefView } from "../../shared/task-brief"
 import type { Flags } from "./cli-args"
 import { CliApiError, daemonRequest, exitApi } from "./cli-api"
-import { briefSetUsage } from "./cli-brief-help"
+import { briefSetUsage, briefUsage } from "./cli-brief-help"
 import { wispCommand } from "./command"
+import { controlFree, terminalJson } from "./control-free"
 import { BRIEF_RUN_ENV } from "./turn-input"
 
 /** A daemon that takes longer than this must not hold an agent's handoff up. */
 export const BRIEF_PUBLISH_TIMEOUT_MS = 5000
 
-const TASK_ID = /^[a-z0-9]+$/
+/**
+ * What `set` reads from stdin: the payload's own limit is checked on its
+ * compact form by the validator, so this leaves room for a pretty-printed or
+ * `\u`-escaped brief that is still inside it.
+ */
+const STDIN_LIMIT_BYTES = 16 * 1024
 
-export function briefUsage(): string {
-  const cmd = wispCommand()
-  return [
-    `usage: ${cmd} brief set --stdin [--replace <revision>]   an agent saves this turn's brief (help: ${cmd} brief --help)`,
-    `       ${cmd} brief show [task] [--json]                   the latest brief, its turn, and why it reads as it does`,
-    `       ${cmd} brief enable|disable [task]                  ask each eligible turn for a brief, or stop asking`,
-  ].join("\n")
-}
+/** A stdin that stays open and silent this long was never going to send a brief. */
+const STDIN_IDLE_MS = 10_000
+
+const TASK_ID = /^[a-z0-9]+$/
 
 class BriefUsageError extends Error {}
 
 function taskArgument(positional: string[]): string {
   const task = positional[1] ?? process.env.WISP_TASK_ID ?? ""
-  if (!TASK_ID.test(task)) throw new BriefUsageError(task ? `not a task id: ${task}` : "name a task, or run this inside one")
+  if (!TASK_ID.test(task)) throw new BriefUsageError(task ? `not a task id: ${controlFree(task)}` : "name a task, or run this inside one")
   return task
 }
 
-/** Read stdin up to `limit` bytes; more than that returns null rather than growing forever. */
-async function boundedStdin(limit: number): Promise<Uint8Array | null> {
-  const chunks: Uint8Array[] = []
-  let total = 0
-  for await (const chunk of process.stdin as AsyncIterable<Uint8Array>) {
-    total += chunk.byteLength
-    if (total > limit) return null
-    chunks.push(chunk)
-  }
-  return Buffer.concat(chunks)
+/**
+ * Read stdin up to `limit` bytes. `null` when it is larger, `"idle"` when it
+ * stays open with nothing arriving — a tool shell whose stdin never closes
+ * must not hold the agent's turn.
+ */
+function boundedStdin(limit: number, idleMs: number): Promise<Uint8Array | null | "idle"> {
+  return new Promise((resolve) => {
+    const chunks: Uint8Array[] = []
+    let total = 0
+    let timer = setTimeout(() => done("idle"), idleMs)
+    const onData = (chunk: Uint8Array) => {
+      total += chunk.byteLength
+      if (total > limit) return done(null)
+      chunks.push(chunk)
+      clearTimeout(timer)
+      timer = setTimeout(() => done("idle"), idleMs)
+    }
+    const onEnd = () => done(Buffer.concat(chunks))
+    function done(value: Uint8Array | null | "idle") {
+      clearTimeout(timer)
+      process.stdin.off("data", onData)
+      process.stdin.off("end", onEnd)
+      process.stdin.pause()
+      resolve(value)
+    }
+    process.stdin.on("data", onData)
+    process.stdin.on("end", onEnd)
+  })
 }
 
+/** One line to the agent, made terminal-safe (a field error can quote a key the agent chose), then exit. */
 function say(line: string, exit: number): never {
-  ;(exit === 0 ? console.log : console.error)(line)
+  ;(exit === 0 ? console.log : console.error)(controlFree(line))
   process.exit(exit)
 }
 
-async function setBrief(flags: Flags): Promise<never> {
-  if (flags.stdin !== true || process.stdin.isTTY) say(briefSetUsage(), 2)
-  let expectedRevision = 0
-  if (flags.replace !== undefined) {
-    const n = typeof flags.replace === "string" && /^[1-9][0-9]*$/.test(flags.replace) ? Number(flags.replace) : NaN
-    if (!Number.isSafeInteger(n)) say(`--replace needs the revision a save printed, e.g. --replace 1\n${briefSetUsage()}`, 2)
-    expectedRevision = n
-  }
-  const bytes = await boundedStdin(TASK_BRIEF_LIMITS.payloadBytes)
-  if (bytes === null) say(`Brief not saved: it is over ${TASK_BRIEF_LIMITS.payloadBytes} bytes. Shorten it and save once more.`, 1)
-  let payload: unknown
-  try {
-    payload = JSON.parse(Buffer.from(bytes).toString("utf8"))
-  } catch (error) {
-    // the parser's position, never the text: the payload is not echoed back
-    const where = error instanceof Error ? error.message.replace(/"[^"]*"/g, "…") : "invalid JSON"
-    say(`Brief not saved: stdin is not valid JSON (${where}).`, 1)
-  }
-  const check = validateTaskBrief(payload)
-  // a guessed shape is the common mistake, so the one retry is pointed at the schema
-  if (!check.ok) say(`Brief not saved: ${briefErrorLine(check)}. See \`${wispCommand()} brief --help\`, fix it, and save once more.`, 1)
+const SKIPPED: Record<Extract<BriefPublication, { kind: "skipped" }>["reason"], string> = {
+  disabled: "briefs are off for this task",
+  superseded: "briefs were switched off and on again after this turn began",
+  "run-ended": "this turn has already ended",
+  archived: "the task is archived",
+}
 
-  const task = process.env.WISP_TASK_ID ?? ""
-  const runId = process.env[BRIEF_RUN_ENV] ?? ""
-  if (!TASK_ID.test(task) || runId === "") say("Brief skipped: this turn was not asked for a brief. Continue normally.", 0)
-
+async function publish(task: string, runId: string, expectedRevision: number, payload: unknown): Promise<never> {
   let result: BriefPublication
   try {
     result = await daemonRequest(
       `/api/tasks/${task}/brief`,
       "PUT",
-      JSON.stringify({ runId, expectedRevision, payload: check.brief }),
+      JSON.stringify({ runId, expectedRevision, payload }),
       "application/json",
       BRIEF_PUBLISH_TIMEOUT_MS,
     ) as BriefPublication
@@ -99,14 +107,40 @@ async function setBrief(flags: Flags): Promise<never> {
     }
     say(`Brief not saved: ${error instanceof Error ? error.message : String(error)}. Continue without it.`, 1)
   }
-  if (result.kind === "saved") say(`Brief saved (revision ${result.revision}).`, 0)
-  if (result.kind === "unchanged") say(`Brief unchanged (revision ${result.revision}).`, 0)
-  const why = {
-    disabled: "briefs are off for this task",
-    "run-ended": "this turn has already ended",
-    archived: "the task is archived",
-  }[result.reason] ?? result.reason
-  say(`Brief skipped: ${why}. Continue normally.`, 0)
+  if (result?.kind === "saved") say(`Brief saved (revision ${result.revision}).`, 0)
+  if (result?.kind === "unchanged") say(`Brief unchanged (revision ${result.revision}).`, 0)
+  if (result?.kind === "skipped" && result.reason in SKIPPED) say(`Brief skipped: ${SKIPPED[result.reason]}. Continue normally.`, 0)
+  say("Brief not saved: the daemon gave an answer this CLI does not understand. Continue without it.", 1)
+}
+
+async function setBrief(flags: Flags): Promise<never> {
+  if (flags.stdin !== true || process.stdin.isTTY) say(briefSetUsage(), 2)
+  let expectedRevision = 0
+  if (flags.replace !== undefined) {
+    const n = typeof flags.replace === "string" && /^[1-9][0-9]*$/.test(flags.replace) ? Number(flags.replace) : NaN
+    if (!Number.isSafeInteger(n)) say(`--replace needs the revision a save printed, e.g. --replace 1\n${briefSetUsage()}`, 2)
+    expectedRevision = n
+  }
+  // an unbound turn never reads stdin at all: there is nothing to save it to
+  const task = process.env.WISP_TASK_ID ?? ""
+  const runId = process.env[BRIEF_RUN_ENV] ?? ""
+  if (!TASK_ID.test(task) || runId === "") say("Brief skipped: this turn was not asked for a brief. Continue normally.", 0)
+
+  const bytes = await boundedStdin(STDIN_LIMIT_BYTES, STDIN_IDLE_MS)
+  if (bytes === "idle") say(`Brief not saved: no JSON arrived on stdin.\n${briefSetUsage()}`, 2)
+  if (bytes === null) say(`Brief not saved: stdin is over ${STDIN_LIMIT_BYTES} bytes. Shorten the brief and save once more.`, 1)
+  let payload: unknown
+  try {
+    payload = JSON.parse(Buffer.from(bytes).toString("utf8"))
+  } catch (error) {
+    // the parser's position, never the text: the payload is not echoed back
+    const where = error instanceof Error ? error.message.replace(/"[^"]*"/g, "…") : "invalid JSON"
+    say(`Brief not saved: stdin is not valid JSON (${where}).`, 1)
+  }
+  const check = validateTaskBrief(payload)
+  // a guessed shape is the common mistake, so the one retry is pointed at the schema
+  if (!check.ok) say(`Brief not saved: ${briefErrorLine(check)}. See \`${wispCommand()} brief --help\`, fix it, and save once more.`, 1)
+  return publish(task, runId, expectedRevision, check.brief)
 }
 
 const DELIVERY: Record<NonNullable<BriefView["latestInput"]>["delivery"], string> = {
@@ -118,17 +152,37 @@ const DELIVERY: Record<NonNullable<BriefView["latestInput"]>["delivery"], string
   delivered: "delivered",
 }
 
-/** Your own words, exactly as Wisp stored them, cut to one line for a terminal. */
+/** Untrusted text, made safe and single-line for a terminal, cut to `max` code points. */
+function oneLine(text: string, max: number): string {
+  const flat = controlFree(text).replace(/\s+/g, " ").trim()
+  return [...flat].length > max ? `${[...flat].slice(0, max).join("")}…` : flat
+}
+
+/** Untrusted text, made safe for a terminal; its own line breaks kept. */
+const safe = (text: string) => controlFree(text)
+
+/** Your own words, as Wisp stored them, cut to one terminal line. */
 function inputLine(view: BriefView): string | null {
   const input = view.latestInput
   if (!input) return null
-  const oneLine = input.text.replace(/\s+/g, " ").trim()
-  const shown = [...oneLine].length > 100 ? `${[...oneLine].slice(0, 100).join("")}…` : `${oneLine}${input.truncated ? "…" : ""}`
+  const shown = `${oneLine(input.text, 100)}${input.truncated && [...input.text].length <= 100 ? "…" : ""}`
   const what = input.kind === "answer"
-    ? `answer to "${[...(input.question ?? "").replace(/\s+/g, " ")].slice(0, 60).join("")}"`
+    ? `answer to "${oneLine(input.question ?? "", 60)}"`
     : input.kind === "task-prompt" ? "task prompt, as stored" : "message"
   const facts = [what, DELIVERY[input.delivery], input.legacy ? "recorded before briefs existed" : null].filter(Boolean)
   return `you said:  "${shown}" (${facts.join(" · ")})`
+}
+
+function decisionLines(decision: NonNullable<BriefView["report"]>["brief"]["decision"]): string[] {
+  if (!decision) return []
+  const lines = [`decision:  ${safe(decision.question)}`]
+  if (decision.recommendation) lines.push(`           recommends: ${safe(decision.recommendation)}`)
+  for (const option of decision.options) {
+    lines.push(`           · ${safe(option.label)} — gain: ${safe(option.gain)}; downside: ${safe(option.downside)}; affects: ${safe(option.impact)}; effort: ${option.effort ? safe(option.effort) : "not assessed"}`)
+  }
+  for (const unknown of decision.unknowns ?? []) lines.push(`           unknown: ${safe(unknown)}`)
+  if (decision.alternativesNote) lines.push(`           alternatives: ${safe(decision.alternativesNote)}`)
+  return lines
 }
 
 function formatView(task: string, view: BriefView): string {
@@ -137,7 +191,7 @@ function formatView(task: string, view: BriefView): string {
   // while no eligible turn has run yet, or while one that predates the switch runs
   const waiting = view.activation === "next-turn" && (view.latestEligibleTurn === null || view.reasons.includes("awaiting-next-turn"))
   const state = view.enabled ? (waiting ? "on — starts with the next turn" : "on") : "off"
-  lines.push(`${task}  briefs: ${state}${view.supported ? "" : ` (${view.harness} can't write briefs)`}`)
+  lines.push(`${task}  briefs: ${state}${view.supported ? "" : ` (${safe(view.harness)} can't write briefs)`}`)
   const said = inputLine(view)
   if (said) lines.push(said)
   const report = view.report
@@ -154,26 +208,19 @@ function formatView(task: string, view: BriefView): string {
     "newer-turn-unreported": `turn ${view.latestEligibleTurn?.n} ended without one`,
     "newer-context": "a fresh context started since",
     "newer-input": "older than what you said last",
+    "input-pending": "your queued message has not reached the agent",
     "input-changed": "your input changed since",
   }
   for (const reason of view.reasons) if (notes[reason]) facts.push(notes[reason]!)
   lines.push(facts.join(" · "))
   const b = report.brief
-  lines.push(`goal:      ${b.goal ?? "(not stated)"}`)
-  lines.push(`outcome:   ${b.outcome}`)
+  lines.push(`goal:      ${b.goal ? safe(b.goal) : "(not stated)"}`)
+  lines.push(`outcome:   ${safe(b.outcome)}`)
   if (b.remaining === null) lines.push("remaining: (the agent could not say)")
   else if (b.remaining.length === 0) lines.push("remaining: none known")
-  else for (const [i, item] of b.remaining.entries()) lines.push(`${i === 0 ? "remaining:" : "          "} - ${item}`)
-  if (b.scopeChange) lines.push(`scope:     ${b.scopeChange}`)
-  if (b.decision) {
-    lines.push(`decision:  ${b.decision.question}`)
-    if (b.decision.recommendation) lines.push(`           recommends: ${b.decision.recommendation}`)
-    for (const option of b.decision.options) {
-      lines.push(`           · ${option.label} — gain: ${option.gain}; downside: ${option.downside}; affects: ${option.impact}; effort: ${option.effort ?? "not assessed"}`)
-    }
-    for (const unknown of b.decision.unknowns ?? []) lines.push(`           unknown: ${unknown}`)
-    if (b.decision.alternativesNote) lines.push(`           alternatives: ${b.decision.alternativesNote}`)
-  }
+  else for (const [i, item] of b.remaining.entries()) lines.push(`${i === 0 ? "remaining:" : "          "} - ${safe(item)}`)
+  if (b.scopeChange) lines.push(`scope:     ${safe(b.scopeChange)}`)
+  lines.push(...decisionLines(b.decision))
   return lines.join("\n")
 }
 
@@ -185,7 +232,7 @@ function settingsLine(task: string, settings: BriefSettings): string {
     : `Briefs on for ${task}. They start with the next turn.`
 }
 
-/** `wisp brief …` after help and the bare-`set` usage were answered offline. */
+/** `wisp brief …` after help, usage and every `--help` were answered offline. */
 export async function briefCommand(positional: string[], flags: Flags): Promise<void> {
   const sub = positional[0]
   try {
@@ -193,7 +240,7 @@ export async function briefCommand(positional: string[], flags: Flags): Promise<
     if (sub === "show") {
       const task = taskArgument(positional)
       const view = await daemonRequest(`/api/tasks/${task}/brief`) as BriefView
-      console.log(flags.json ? JSON.stringify(view, null, 2) : formatView(task, view))
+      console.log(flags.json ? terminalJson(view) : formatView(task, view))
       return
     }
     if (sub === "enable" || sub === "disable") {
@@ -203,10 +250,10 @@ export async function briefCommand(positional: string[], flags: Flags): Promise<
         "PUT",
         JSON.stringify({ enabled: sub === "enable" }),
       ) as BriefSettings
-      console.log(flags.json ? JSON.stringify(settings, null, 2) : settingsLine(task, settings))
+      console.log(flags.json ? terminalJson(settings) : settingsLine(task, settings))
       return
     }
-    throw new BriefUsageError(sub ? `unknown brief command: ${sub}` : "")
+    throw new BriefUsageError(sub ? `unknown brief command: ${controlFree(sub)}` : "")
   } catch (error) {
     if (error instanceof BriefUsageError) {
       if (error.message) console.error(`error: ${error.message}`)

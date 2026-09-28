@@ -40,7 +40,11 @@ export async function daemonRequest(
       body,
       signal,
     });
-    data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    // a body that is not JSON reads as `{}`, but a timeout while reading it is still a timeout
+    data = (await response.json().catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return {};
+    })) as Record<string, unknown>;
   } catch (error) {
     const timedOut = signal?.aborted === true || (error instanceof Error && error.name === "TimeoutError");
     throw new CliApiError(timedOut ? `daemon did not answer within ${timeoutMs} ms` : "daemon is unreachable", url, !timedOut, undefined, undefined, timedOut);

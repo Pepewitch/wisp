@@ -73,14 +73,21 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   covers the first turn's task preamble, standing notes (auto-merge, task
   briefs), the attached-files note, auto-fix rounds, heartbeat wakes and a
   plugin workflow's control lines. A single line goes inline
-  (`<wisp>…</wisp>`), several go in a block, and a literal `</wisp>` inside is
-  escaped so relayed text cannot close it. One blank line separates it from
-  the person's words.
+  (`<wisp>…</wisp>`), several go in a block, and a literal `</wisp>` inside
+  (any letter case) is escaped so relayed text cannot close it. One blank line
+  separates it from the person's words.
+  - Framing happens at delivery, never at composition: a queued message's
+    stored text is what was written, and `framedMessage` decides its part of
+    the section from `task_messages.origin`, which is fixed when the message
+    is created (`workflow` for Wisp's own words, `scheduled` for a
+    schedule-steer, `plugin` for a workflow plugin's wake).
   - Text that is neither Wisp's nor the person's (a plugin's report) follows
     the section, which says whose it is.
   - A schedule-steer's words are the person's, so they go out under one
     `<wisp>scheduled steer</wisp>` line.
-  - `Turn.prompt` keeps the person's words alone.
+  - A `/command` is never framed: a harness reads it as a command only when
+    the input starts with `/`.
+  - `Turn.prompt` keeps the message as stored, with no framing.
   - A new injected instruction uses the same helper, never untagged text.
 - A successful JSON turn needs a positively parsed result unless the adapter
   explicitly opts out. Process exit alone must not silently claim success.

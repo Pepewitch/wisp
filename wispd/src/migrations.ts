@@ -649,7 +649,9 @@ CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
       //  - origin: who wrote a message. `workflow_id` cannot answer that — a
       //    finished schedule-steer sets it back to NULL — so it is written
       //    once, at creation, and never cleared. Rows from before this
-      //    migration are 'legacy' unless a workflow link survives for them.
+      //    migration take their kind from a surviving workflow link
+      //    (turn-input framedMessage) — 'plugin' when the linked workflow is
+      //    gone — and are 'legacy' without one.
       //  - source_seq: the order each input was ADMITTED in, fixed then. A
       //    rowid is not stable and a delivery moves updated_at, so neither can
       //    order "what did I say last" across messages and answers.
@@ -663,11 +665,13 @@ CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
       if (!taskColumns.includes("input_seq")) db.exec(`ALTER TABLE tasks ADD COLUMN input_seq INTEGER NOT NULL DEFAULT 0`);
       if (!taskColumns.includes("input_rev")) db.exec(`ALTER TABLE tasks ADD COLUMN input_rev INTEGER NOT NULL DEFAULT 0`);
       db.exec(`
-UPDATE task_messages SET origin = CASE
-  WHEN workflow_id IS NOT NULL
-    OR id IN (SELECT message_id FROM workflow_wakes WHERE message_id IS NOT NULL)
-    OR id IN (SELECT message_id FROM workflow_history WHERE message_id IS NOT NULL)
-  THEN 'workflow' ELSE 'legacy' END
+UPDATE task_messages SET origin = COALESCE((
+  SELECT CASE WHEN type IN ('heartbeat', 'pr-autopilot') THEN 'workflow' WHEN type = 'schedule-steer' THEN 'scheduled' ELSE 'plugin' END
+  FROM workflows WHERE workflows.id = COALESCE(task_messages.workflow_id,
+    (SELECT workflow_id FROM workflow_wakes WHERE message_id = task_messages.id LIMIT 1),
+    (SELECT workflow_id FROM workflow_history WHERE message_id = task_messages.id LIMIT 1))
+), CASE WHEN workflow_id IS NOT NULL OR id IN (SELECT message_id FROM workflow_wakes)
+  OR id IN (SELECT message_id FROM workflow_history WHERE message_id IS NOT NULL) THEN 'plugin' ELSE 'legacy' END)
 WHERE source_seq IS NULL;
 UPDATE task_messages SET source_seq = (
   SELECT ranked.seq FROM (

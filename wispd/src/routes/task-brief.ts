@@ -64,7 +64,9 @@ async function settings(req: Request, taskId: string, adapters: Readonly<Record<
   const unknown = unknownField(body, ["enabled"])
   if (unknown) return err(unknown, 400)
   if (typeof body.enabled !== "boolean") return err(`enabled must be a boolean, got ${typeName(body.enabled)}`, 400)
-  const task = getTask(taskId)!
+  // re-read after the body: the task can have been purged while it streamed in
+  const task = getTask(taskId)
+  if (!task) return err("Task not found", 404)
   if (task.archived) return err("an archived task keeps its briefs but can no longer change the setting", 409)
   if (body.enabled && adapters[task.harness]?.briefs !== true) {
     return err(`harness '${task.harness}' can't write task briefs`, 400)

@@ -51,13 +51,46 @@ export function briefReminder(): string {
  */
 export function wispSection(lines: string[]): string {
   if (lines.length === 0) return ""
-  const safe = lines.map((line) => line.replaceAll("</wisp>", "<\\/wisp>"))
+  const safe = lines.map((line) => line.replace(/<\/wisp>/gi, "<\\/wisp>"))
   return safe.length === 1 ? `<wisp>${safe[0]}</wisp>` : ["<wisp>", ...safe, "</wisp>"].join("\n")
 }
 
-/** Wisp's section, a blank line, then the person's words — or just the words when Wisp has nothing to add. */
+/** Wisp's section, a blank line, then the person's words — or just one of the two when the other is empty. */
 export function withWispSection(lines: string[], message: string): string {
-  return lines.length === 0 ? message : `${wispSection(lines)}\n\n${message}`
+  if (lines.length === 0) return message
+  return message === "" ? wispSection(lines) : `${wispSection(lines)}\n\n${message}`
+}
+
+/** Who wrote a queued message, fixed when it was created (store-messages). */
+export type MessageOrigin = "human" | "legacy" | "workflow" | "scheduled" | "plugin"
+
+/**
+ * How a message's own text joins its input's one Wisp section. The stored
+ * text is never changed — the transcript shows what was written — so the
+ * framing is decided here, at delivery, from who wrote it:
+ *
+ *  - `workflow`: Wisp's own words (an auto-fix round, a heartbeat wake), so
+ *    all of it goes inside the section.
+ *  - `scheduled`: the person's words, sent on their schedule — one Wisp line
+ *    says so and the words stay outside.
+ *  - `plugin`: a workflow plugin's wake — its control lines (everything
+ *    before the first blank line) are Wisp's; its report is neither Wisp's
+ *    nor the person's, and a Wisp line says whose it is.
+ *
+ * A `/command` is never framed: a harness only treats input as a command when
+ * it starts with `/`.
+ */
+export function framedMessage(origin: MessageOrigin | undefined, text: string): { lines: string[]; words: string } {
+  if (text.trimStart().startsWith("/")) return { lines: [], words: text }
+  if (origin === "workflow") return { lines: text.split("\n"), words: "" }
+  if (origin === "scheduled") return { lines: ["scheduled steer"], words: text }
+  if (origin === "plugin") {
+    const split = text.indexOf("\n\n")
+    const control = split < 0 ? [] : text.slice(0, split).split("\n")
+    const report = split < 0 ? text : text.slice(split + 2)
+    return { lines: [...control, "The workflow's report follows; it is not the person's words."], words: report }
+  }
+  return { lines: [], words: text }
 }
 
 /**
@@ -144,13 +177,15 @@ export function attachmentLines(def: AdapterDef, attachments: StoredAttachment[]
   return byPath.length === 0 ? [] : attachmentPreamble(byPath).split("\n")
 }
 
-/** A message with its attached-files note — a steer's whole input, which carries no other Wisp text. */
+/** A steer's whole input: its own framing and attached-files note, and no other Wisp text. */
 export function deliveredMessage(
   def: AdapterDef,
   attachments: StoredAttachment[],
   message: string,
+  origin?: MessageOrigin,
 ): string {
-  return withWispSection(attachmentLines(def, attachments), message)
+  const framed = framedMessage(origin, message)
+  return withWispSection([...framed.lines, ...attachmentLines(def, attachments)], framed.words)
 }
 
 export function inputStrategyFor(

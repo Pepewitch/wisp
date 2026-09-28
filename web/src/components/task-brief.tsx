@@ -1,16 +1,20 @@
-import { useId, useState, type ReactNode } from "react"
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 
+import { FileViewerProvider } from "@/components/file-viewer"
 import { Brief, Check, ChevronRight } from "@/components/icons"
-import { Meta } from "@/components/primitives"
 import { Prose } from "@/components/prose"
 import { useHarnessFeatures, useTaskBrief } from "@/hooks/queries"
 import { useTick } from "@/hooks/useTick"
-import { briefBand, type BriefBandModel, type BriefInputView, type TaskBriefV1 } from "@/lib/brief"
+import { briefBand, recommendedOption, type BriefBandModel, type BriefInputView, type TaskBriefV1 } from "@/lib/brief"
 import { useBriefOpen } from "@/lib/brief-open"
+import { revealFileHandler } from "@/lib/external-links"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
+
+/** Hand some words to find-in-task, in the turn they belong to. */
+type Reveal = (query: string, turn: number | null) => void
 
 /**
  * The task brief: the header's second band (frontend reference §5k). The
@@ -22,12 +26,14 @@ import { cn } from "@/lib/utils"
  * never write anything; the one switch that changes generation is the task
  * menu's. Nothing here can send a steer.
  *
- * `children` is the conversation. On touch an open brief REPLACES it (kept
+ * `children` is the conversation. Band and conversation share one column, so
+ * the band's 60% cap is a share of the READING area, never of the header or
+ * the composer. On touch an open brief REPLACES the conversation (kept
  * mounted, so its scroll survives) rather than squeezing it into what is left
- * of a phone; with a pointer the band sits above it, capped so the transcript
- * always keeps room.
+ * of a phone.
  */
 export function BriefedConversation({ task, touch, children }: { task: ApiTask | null; touch: boolean; children: ReactNode }) {
+  const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
   const enabled = features.data?.taskBriefs === true && task?.briefEnabled === true
   const query = useTaskBrief(task?.id ?? null, enabled)
@@ -35,21 +41,45 @@ export function BriefedConversation({ task, touch, children }: { task: ApiTask |
   const model: BriefBandModel = enabled ? briefBand(query.data, query.error, now) : { kind: "hidden" }
   const [open, setOpen] = useBriefOpen(touch)
   const takeover = touch && open && model.kind === "report"
+
+  // Find-in-task lives in the transcript, which a touch takeover hides: any
+  // find request (the task menu's, ⌘F) gives the transcript back first.
+  const intents = uiIntentsFor(connectionId)
+  const findSeq = useSyncExternalStore(intents.subscribe, () => intents.findRequest()?.seq ?? 0)
+  const seenFind = useRef(findSeq)
+  useEffect(() => {
+    if (findSeq === seenFind.current) return
+    seenFind.current = findSeq
+    if (takeover) setOpen(false)
+  }, [findSeq, takeover, setOpen])
+  // The band's own "show it in the conversation" closes a takeover and asks a
+  // frame later, so the find runs against a transcript that is on screen.
+  const reveal: Reveal = (words, turn) => {
+    if (!takeover) return intents.openFind(words, turn)
+    setOpen(false)
+    requestAnimationFrame(() => intents.openFind(words, turn))
+  }
+
   return (
-    <>
+    <div className="flex min-h-0 flex-1 flex-col">
       {model.kind !== "hidden" && task && (
-        <TaskBriefBand
-          model={model}
-          open={open}
-          onOpenChange={setOpen}
-          touch={touch}
-          taskTitle={task.title}
-          onRetry={() => void query.refetch()}
-        />
+        // paths in the agent's prose open the file viewer, as they do in the transcript
+        <FileViewerProvider taskId={task.archived ? null : task.id} onReveal={revealFileHandler(connectionId, task.worktree_path ?? null)}>
+          <TaskBriefBand
+            // per task: nothing opened on one task's brief carries to another's
+            key={task.id}
+            model={model}
+            open={open}
+            onOpenChange={setOpen}
+            touch={touch}
+            onReveal={reveal}
+            onRetry={() => void query.refetch()}
+          />
+        </FileViewerProvider>
       )}
       {/* hidden, not unmounted: the transcript keeps its scroll for when the brief closes */}
       <div hidden={takeover} className={cn("min-h-0 flex-1 flex-col", takeover ? "hidden" : "flex")}>{children}</div>
-    </>
+    </div>
   )
 }
 
@@ -59,19 +89,19 @@ export function TaskBriefBand({
   open,
   onOpenChange,
   touch = false,
-  taskTitle,
+  onReveal,
   onRetry,
 }: {
   model: Exclude<BriefBandModel, { kind: "hidden" }>
   open: boolean
   onOpenChange: (open: boolean) => void
   touch?: boolean
-  taskTitle: string
+  onReveal?: Reveal
   onRetry?: () => void
 }) {
   if (model.kind === "line") return <BriefLine text={model.text} touch={touch} onRetry={model.retry ? onRetry : undefined} />
   // a new report (another turn or revision) starts with its comparison closed
-  return <ReportBand key={model.key} model={model} open={open} onOpenChange={onOpenChange} touch={touch} taskTitle={taskTitle} />
+  return <ReportBand key={model.key} model={model} open={open} onOpenChange={onOpenChange} touch={touch} onReveal={onReveal} />
 }
 
 const LABEL = "shrink-0 text-[12.5px] font-medium text-fg-secondary"
@@ -96,21 +126,34 @@ function BriefLine({ text, touch, onRetry }: { text: string; touch: boolean; onR
   )
 }
 
+/** One muted metadata line, as spans: it sits inside a button, where a div may not. */
+function StatusFacts({ parts }: { parts: string[] }) {
+  return (
+    <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+      {parts.map((part, i) => (
+        <span key={i} className="flex shrink-0 items-center gap-2">
+          {i > 0 && <span className="text-faint">·</span>}
+          {part}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 function ReportBand({
   model,
   open,
   onOpenChange,
   touch,
-  taskTitle,
+  onReveal,
 }: {
   model: Extract<BriefBandModel, { kind: "report" }>
   open: boolean
   onOpenChange: (open: boolean) => void
   touch: boolean
-  taskTitle: string
+  onReveal?: Reveal
 }) {
   const bodyId = useId()
-  const status = <Meta className="shrink-0" items={model.status.map((part) => <span key={part} className="shrink-0">{part}</span>)} />
   const headline = (
     <>
       {model.headline.label && <span className="text-muted-foreground">{model.headline.label} · </span>}
@@ -129,11 +172,12 @@ function ReportBand({
       <button
         type="button"
         aria-expanded={open}
-        aria-controls={bodyId}
+        aria-controls={open ? bodyId : undefined}
         onClick={() => onOpenChange(!open)}
         className={cn(
-          "flex w-full text-left transition-colors",
-          touch ? "items-start gap-2 px-4 py-2 active:bg-hover" : "h-[34px] items-center gap-2 px-4.5 hover:bg-hover/60",
+          // sticky: the way back out stays in reach however far the brief scrolls
+          "sticky top-0 z-(--z-pane) flex w-full bg-background text-left transition-colors",
+          touch ? "min-h-11 items-start gap-2 px-4 py-2 active:bg-hover" : "h-[34px] items-center gap-2 px-4.5 hover:bg-hover",
         )}
       >
         <ChevronRight className={cn("size-3 shrink-0 text-faint transition-transform motion-reduce:transition-none", open && "rotate-90", touch && "mt-[5px]")} />
@@ -141,7 +185,7 @@ function ReportBand({
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2">
               <span className={LABEL}>Brief</span>
-              {status}
+              <StatusFacts parts={model.status} />
             </span>
             {!open && <span className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-foreground">{headline}</span>}
           </span>
@@ -149,18 +193,18 @@ function ReportBand({
           <>
             <span className={LABEL}>Brief</span>
             <span className={cn("min-w-0 flex-1 truncate text-[12.5px] text-foreground", open && "invisible")}>{headline}</span>
-            {status}
+            <StatusFacts parts={model.status} />
           </>
         )}
       </button>
       {open && (
         <div id={bodyId} className={cn("flex flex-col gap-2.5 pb-3.5", touch ? "px-4" : "pr-4.5 pl-[39px]")}>
-          {model.input && <InputRow input={model.input} touch={touch} />}
+          {model.input && <InputRow key={model.input.key} input={model.input} touch={touch} onReveal={onReveal} />}
           <div className="flex items-center gap-3 pt-0.5">
             <span className="shrink-0 text-[10.5px] text-faint">{model.divider}</span>
             <span aria-hidden className="h-px flex-1 bg-border" />
           </div>
-          <ReportRows brief={model.brief} touch={touch} taskTitle={taskTitle} />
+          <ReportRows brief={model.brief} touch={touch} originalRequest={model.originalRequest} onReveal={onReveal} />
         </div>
       )}
     </section>
@@ -177,8 +221,8 @@ function Row({ label, children, touch }: { label: string; children: ReactNode; t
 }
 
 /** Agent text: rendered by the app's one safe prose path, never as HTML. */
-function AgentText({ text }: { text: string }) {
-  return <Prose text={text} mode="static" className="text-[13px] leading-[1.6] text-foreground [&_p]:my-0" />
+function AgentText({ text, className }: { text: string; className?: string }) {
+  return <Prose text={text} mode="static" className={cn("text-[13px] leading-[1.6] text-foreground [&_p]:my-0", className)} />
 }
 
 function QuietButton({ children, onClick, touch }: { children: ReactNode; onClick: () => void; touch: boolean }) {
@@ -196,9 +240,18 @@ function QuietButton({ children, onClick, touch }: { children: ReactNode; onClic
   )
 }
 
+/** A caption item and the separator before it, kept together so a wrapped caption never ends on a dot. */
+function CaptionItem({ first, children }: { first: boolean; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-2">
+      {!first && <span className="text-faint">·</span>}
+      {children}
+    </span>
+  )
+}
+
 /** The person's own words — exact, cut only where the band says it is cut. */
-function InputRow({ input, touch }: { input: BriefInputView; touch: boolean }) {
-  const { connectionId } = useDaemonRuntime()
+function InputRow({ input, touch, onReveal }: { input: BriefInputView; touch: boolean; onReveal?: Reveal }) {
   const [full, setFull] = useState(false)
   const long = [...input.text].length > 220
   const shown = full || !long ? input.text : `${[...input.text].slice(0, 200).join("").trimEnd()}`
@@ -210,34 +263,33 @@ function InputRow({ input, touch }: { input: BriefInputView; touch: boolean }) {
         “{shown}{cut ? "…" : ""}”
       </div>
       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-muted-foreground">
-        {input.caption.map((part, i) => (
-          <span key={part} className="flex items-center gap-2">
-            {i > 0 && <span className="text-faint">·</span>}
-            {part}
-          </span>
-        ))}
-        {/* each separator travels with what follows it, so a wrapped caption never ends on a dot */}
+        {input.caption.map((part, i) => <CaptionItem key={i} first={i === 0}>{part}</CaptionItem>)}
         {long && !full && (
-          <span className="flex items-center gap-2">
-            <span className="text-faint">·</span>
+          <CaptionItem first={false}>
             <QuietButton touch={touch} onClick={() => setFull(true)}>Show all</QuietButton>
-          </span>
+          </CaptionItem>
         )}
-        {input.find.query && (
-          <span className="flex items-center gap-2">
-            <span className="text-faint">·</span>
-            <QuietButton touch={touch} onClick={() => uiIntentsFor(connectionId).openFind(input.find.query, input.find.turn)}>
-              Show in conversation
-            </QuietButton>
-          </span>
+        {onReveal && input.find.query && (
+          <CaptionItem first={false}>
+            <QuietButton touch={touch} onClick={() => onReveal(input.find.query, input.find.turn)}>Show in conversation</QuietButton>
+          </CaptionItem>
         )}
       </div>
     </Row>
   )
 }
 
-function ReportRows({ brief, touch, taskTitle }: { brief: TaskBriefV1; touch: boolean; taskTitle: string }) {
-  const { connectionId } = useDaemonRuntime()
+function ReportRows({
+  brief,
+  touch,
+  originalRequest,
+  onReveal,
+}: {
+  brief: TaskBriefV1
+  touch: boolean
+  originalRequest: string | null
+  onReveal?: Reveal
+}) {
   return (
     <>
       <Row label="Goal" touch={touch}>
@@ -245,10 +297,13 @@ function ReportRows({ brief, touch, taskTitle }: { brief: TaskBriefV1; touch: bo
           <AgentText text={brief.goal} />
         ) : (
           <span className="text-muted-foreground">
-            Not stated in this report ·{" "}
-            <QuietButton touch={touch} onClick={() => uiIntentsFor(connectionId).openFind([...taskTitle].slice(0, 60).join(""), 1)}>
-              Original request
-            </QuietButton>
+            Not stated in this report
+            {onReveal && originalRequest && (
+              <>
+                {" · "}
+                <QuietButton touch={touch} onClick={() => onReveal(originalRequest, 1)}>Original request</QuietButton>
+              </>
+            )}
           </span>
         )}
       </Row>
@@ -262,8 +317,8 @@ function ReportRows({ brief, touch, taskTitle }: { brief: TaskBriefV1; touch: bo
           <span className="text-muted-foreground">Nothing the agent knows of.</span>
         ) : (
           <ul className="list-disc pl-4">
-            {brief.remaining.map((item) => (
-              <li key={item}><AgentText text={item} /></li>
+            {brief.remaining.map((item, i) => (
+              <li key={`${i}:${item}`}><AgentText text={item} /></li>
             ))}
           </ul>
         )}
@@ -278,10 +333,13 @@ function ReportRows({ brief, touch, taskTitle }: { brief: TaskBriefV1; touch: bo
   )
 }
 
+const OPTION_TEXT = "text-[12.5px] leading-[1.55] text-fg-secondary"
+
 function DecisionRow({ decision, touch }: { decision: NonNullable<TaskBriefV1["decision"]>; touch: boolean }) {
   const [compare, setCompare] = useState(false)
   const id = useId()
   const count = decision.options.length
+  const recommended = recommendedOption(decision.options.map((option) => option.label), decision.recommendation)
   return (
     <Row label="Decision" touch={touch}>
       <div className="font-medium"><AgentText text={decision.question} /></div>
@@ -293,7 +351,7 @@ function DecisionRow({ decision, touch }: { decision: NonNullable<TaskBriefV1["d
       <button
         type="button"
         aria-expanded={compare}
-        aria-controls={id}
+        aria-controls={compare ? id : undefined}
         onClick={() => setCompare(!compare)}
         className={cn("mt-1 inline-flex items-center gap-1 text-[11.5px] text-muted-foreground transition-colors hover:text-foreground", touch && "min-h-11")}
       >
@@ -306,14 +364,14 @@ function DecisionRow({ decision, touch }: { decision: NonNullable<TaskBriefV1["d
             <div key={`${index}:${option.label}`}>
               <div className="flex flex-wrap items-center gap-x-2 text-[12.5px] font-medium text-foreground">
                 {option.label}
-                {decision.recommendation !== null && sameChoice(option.label, decision.recommendation) && (
+                {index === recommended && (
                   <span className="flex items-center gap-1 text-[11.5px] font-normal text-muted-foreground">
                     <Check className="size-3" aria-hidden />
-                    recommended
+                    Recommended
                   </span>
                 )}
               </div>
-              <dl className="mt-1 grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-[12.5px] leading-[1.55]">
+              <dl className="mt-1 grid grid-cols-[64px_minmax(0,1fr)] gap-x-3 gap-y-0.5">
                 {([
                   ["Gain", option.gain],
                   ["Downside", option.downside],
@@ -322,7 +380,7 @@ function DecisionRow({ decision, touch }: { decision: NonNullable<TaskBriefV1["d
                 ] as const).map(([term, value]) => (
                   <div key={term} className="contents">
                     <dt className="pt-px text-[11.5px] text-muted-foreground">{term}</dt>
-                    <dd className="text-fg-secondary">{value}</dd>
+                    <dd><AgentText text={value} className={OPTION_TEXT} /></dd>
                   </div>
                 ))}
               </dl>
@@ -331,30 +389,19 @@ function DecisionRow({ decision, touch }: { decision: NonNullable<TaskBriefV1["d
           {decision.unknowns && decision.unknowns.length > 0 && (
             <div>
               <div className="text-[11.5px] text-muted-foreground">Unknown</div>
-              <ul className="mt-0.5 list-disc pl-4 text-[12.5px] leading-[1.55] text-fg-secondary">
-                {decision.unknowns.map((unknown) => <li key={unknown}>{unknown}</li>)}
+              <ul className="mt-0.5 list-disc pl-4">
+                {decision.unknowns.map((unknown, i) => <li key={`${i}:${unknown}`}><AgentText text={unknown} className={OPTION_TEXT} /></li>)}
               </ul>
             </div>
           )}
           {decision.alternativesNote && (
             <div>
               <div className="text-[11.5px] text-muted-foreground">Alternatives</div>
-              <div className="text-[12.5px] leading-[1.55] text-fg-secondary">{decision.alternativesNote}</div>
+              <AgentText text={decision.alternativesNote} className={OPTION_TEXT} />
             </div>
           )}
         </div>
       )}
     </Row>
   )
-}
-
-/**
- * The payload names its recommendation in prose, not by index, so a marker
- * goes on an option only when the recommendation plainly starts with its
- * label. A marker on the wrong option is worse than none.
- */
-function sameChoice(label: string, recommendation: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "").trim()
-  const l = norm(label)
-  return l.length > 0 && norm(recommendation).startsWith(l)
 }

@@ -55,18 +55,32 @@ if [ "$command_name" = "init" ]; then
     set -- "$@" --port "$DEV_PORT"
   fi
 elif [ ! -f "$DEV_HOME/config.json" ]; then
-  # Help never creates a home: any --help/-h, and `brief` with no subcommand
-  # (its help), is answered without init — an agent reads `brief --help`
-  # before it has any reason to have a working home.
+  # Help never creates a home. `brief` answers its help and usage offline
+  # (cli-brief-help briefOfflineAnswer) — an agent reads `brief --help` before
+  # it has any reason to have a working home — so exactly those forms skip
+  # init here too; every other command keeps needing one.
   needs_init=yes
   case "$command_name" in
     ""|help|-h|--help|version|--version) needs_init=no ;;
   esac
-  for arg in "$@"; do
-    case "$arg" in --help|-h) needs_init=no ;; esac
-  done
-  if [ "$command_name" = "brief" ] && { [ $# -eq 1 ] || [ "${2:-}" = "help" ]; }; then
-    needs_init=no
+  if [ "$command_name" = "brief" ]; then
+    brief_sub=${2:-}
+    brief_help=no
+    brief_stdin=no
+    i=0
+    for arg in "$@"; do
+      i=$((i + 1))
+      if [ "$i" -le 2 ]; then continue; fi
+      case "$arg" in
+        --help|-h|help) brief_help=yes ;;
+        --stdin) brief_stdin=yes ;;
+      esac
+    done
+    case "$brief_sub" in
+      ""|help|--help|-h) needs_init=no ;;
+      set) if [ "$brief_help" = yes ] || [ "$brief_stdin" = no ]; then needs_init=no; fi ;;
+      *) if [ "$brief_help" = yes ]; then needs_init=no; fi ;;
+    esac
   fi
   if [ "$needs_init" = yes ]; then
     bun "$ROOT/wispd/src/index.ts" init --port "$DEV_PORT" >/dev/null

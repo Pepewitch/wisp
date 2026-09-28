@@ -121,6 +121,22 @@ it("workflow events refresh workflow state and task dots only on the originating
   h.close();
 });
 
+it("a brief event refreshes that task's brief and the task list, never its transcript", () => {
+  const h = bridge("t1");
+  const brief = [...h.qk.task("t9"), "brief"];
+  const tasks = h.qk.tasksList(false);
+  const detail = h.qk.task("t1");
+  h.client.setQueryData(brief, {});
+  h.client.setQueryData(tasks, []);
+  h.client.setQueryData(detail, { id: "t1" });
+  // any task's, not only the selected one: switching back must not paint a stale brief
+  h.sources[0]!.emit({ type: "brief", taskId: "t9" });
+  expect(h.client.getQueryState(brief)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(tasks)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(detail)?.isInvalidated).toBe(false);
+  h.close();
+});
+
 const invalidated = (client: QueryClient, key: QueryKey): boolean => client.getQueryState(key)?.isInvalidated === true;
 
 describe("the /api/events → queryClient bridge", () => {

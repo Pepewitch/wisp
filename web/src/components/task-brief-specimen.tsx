@@ -113,7 +113,7 @@ function Band({ view, touch = false, startOpen = true }: { view: BriefView; touc
   const [open, setOpen] = useState(startOpen)
   const model = briefBand(view, null, NOW)
   if (model.kind === "hidden") return null
-  return <TaskBriefBand model={model} open={open} onOpenChange={setOpen} touch={touch} taskTitle="Stop duplicate saves in the editor" />
+  return <TaskBriefBand model={model} open={open} onOpenChange={setOpen} touch={touch} />
 }
 
 export function TaskBriefSpecimen() {
@@ -144,7 +144,7 @@ export function TaskBriefSpecimen() {
               </div>
             ))}
             <div className="h-2" />
-            <TaskBriefBand model={briefBand(undefined, new Error("offline"), NOW) as never} open={false} onOpenChange={() => {}} taskTitle="" onRetry={() => {}} />
+            <TaskBriefBand model={briefBand(undefined, new Error("offline"), NOW) as never} open={false} onOpenChange={() => {}} onRetry={() => {}} />
           </Column>
           <p className="text-[11.5px] leading-relaxed text-muted-foreground">
             Collapsed, one line: the decision if one waits, otherwise the result, and one freshness fact. Open, your

@@ -49,11 +49,11 @@ Fields (every string needs real text):
   decision     only when a choice changes the person's next step:
                see \`${cmd} brief set --help\`.
 
-Each save replaces the whole brief; omitted fields are cleared. Write
-"Not assessed" rather than guessing, name verification you did not do, and never
-research just to fill a field. Publish it yourself, not from a subagent.
-Skipped or unchanged saves exit 0; do not retry them. A field error exits 1:
-fix it once. To revise this turn's brief deliberately: --replace <revision>.
+Save once per turn; to revise, send the whole brief with --replace
+<revision> (omitted fields are cleared). Write "Not assessed" rather than
+guessing, name verification you did not do, and never research just to fill a
+field. Publish it yourself, not from a subagent. Skipped or unchanged saves
+exit 0; do not retry them. A field error exits 1: fix it once.
 `
 }
 
@@ -92,6 +92,16 @@ purpose, run ${cmd} brief set --stdin --replace <that revision>.
 `
 }
 
+/** The management verbs, for people: an agent's help (`briefHelp`) never names them. */
+export function briefUsage(): string {
+  const cmd = wispCommand()
+  return [
+    `usage: ${cmd} brief set --stdin [--replace <revision>]   an agent saves this turn's brief (help: ${cmd} brief --help)`,
+    `       ${cmd} brief show [task] [--json]                   the latest brief, its turn, and why it reads as it does`,
+    `       ${cmd} brief enable|disable [task]                  ask each eligible turn for a brief, or stop asking`,
+  ].join("\n")
+}
+
 /** The one-line hint for a `set` that would otherwise sit waiting on a terminal. */
 export function briefSetUsage(): string {
   return `usage: ${wispCommand()} brief set --stdin [--replace <revision>]   (pipe the JSON brief on stdin; help: ${wispCommand()} brief --help)`
@@ -108,5 +118,8 @@ export function briefOfflineAnswer(args: string[]): { text: string; exit: 0 | 2;
   if (sub === undefined || sub === "help" || sub === "--help" || sub === "-h") return { text: briefHelp(), exit: 0, stream: "out" }
   if (sub === "set" && help(rest)) return { text: briefSetHelp(), exit: 0, stream: "out" }
   if (sub === "set" && !rest.includes("--stdin")) return { text: briefSetUsage(), exit: 2, stream: "err" }
+  // `show|enable|disable --help` must never run the verb: `disable --help`
+  // would otherwise switch off the current task's briefs
+  if (help(rest)) return { text: briefUsage(), exit: 0, stream: "out" }
   return null
 }

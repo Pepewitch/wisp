@@ -6,8 +6,8 @@ import { More } from "@/components/icons"
 import { Menu, MenuCheckboxItem, MenuItem, MenuNote, MenuSeparator } from "@/components/menu"
 import { RenameTaskDialog } from "@/components/rename-task-dialog"
 import { useAutopilot, useBriefSettings } from "@/hooks/mutations"
-import { useHarnesses, useHarnessFeatures } from "@/hooks/queries"
-import { briefMenuNote } from "@/lib/brief"
+import { useHarnesses, useHarnessFeatures, useTaskBrief } from "@/hooks/queries"
+import { briefMenuNote, briefWaiting } from "@/lib/brief"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { failureReason } from "@/lib/api"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -116,20 +116,26 @@ export function TaskActions({ task }: { task: ApiTask }) {
  */
 function BriefItems({ task }: { task: ApiTask }) {
   const features = useHarnessFeatures()
-  const harnesses = useHarnesses(features.data?.taskBriefs === true)
+  const offered = features.data?.taskBriefs === true && !task.archived
+  const harnesses = useHarnesses(offered)
   const settings = useBriefSettings()
-  if (!features.data?.taskBriefs || task.archived) return null
-  // the daemon's answer to this menu's own change wins until the task row catches up
-  const answered = settings.data && settings.variables?.id === task.id ? settings.data : null
-  const enabled = answered ? answered.enabled : task.briefEnabled === true
+  // The answer to this menu's own click stands in only until the task row
+  // catches up; after that the row and the daemon's read model speak, so a
+  // note cannot outlive the state it describes.
+  const echo = settings.data && settings.variables?.id === task.id && settings.data.enabled !== (task.briefEnabled === true)
+    ? settings.data
+    : null
+  const enabled = echo ? echo.enabled : task.briefEnabled === true
+  // the band's own query: one key, so an open band costs the menu nothing
+  const view = useTaskBrief(task.id, offered && enabled).data
+  if (!offered) return null
   const supported = harnesses.data?.find((h) => h.name === task.harness)?.hasBriefs === true
   const note = briefMenuNote({
     enabled,
     // a harness that cannot publish is only worth mentioning to someone about to switch it on
     supported: supported || enabled,
     harness: task.harness,
-    running: answered?.turnRunning ?? task.state === "running",
-    justEnabled: answered?.enabled === true,
+    waiting: view ? briefWaiting(view) : echo?.activation === "next-turn" ? (echo.turnRunning ? "after-running" : "not-yet") : null,
   })
   return (
     <>

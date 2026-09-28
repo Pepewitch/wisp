@@ -70,22 +70,64 @@ describe("wisp brief help needs no home, daemon or credentials", () => {
     expect(existsSync(home)).toBe(false);
   });
 
-  test("wisp-dev answers help without initializing its development home", () => {
+  test("wisp-dev answers help without initializing its development home, and only help", () => {
     const dev = join(mkdtempSync(join(tmpdir(), "wisp-brief-dev-")), "dev-home");
-    for (const args of [["brief", "--help"], ["brief"], ["brief", "set", "--help"]]) {
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = String(probe.port);
+    probe.stop(true);
+    const devRun = (args: string[]) => {
       const result = Bun.spawnSync({
         cmd: ["sh", "wispd/scripts/wisp-dev", ...args],
         cwd: ROOT,
-        env: { ...process.env, WISP_DEV_HOME: dev, WISP_DEV_PORT: "18799", NODE_ENV: undefined } as Record<string, string>,
+        env: { ...process.env, WISP_DEV_HOME: dev, WISP_DEV_PORT: port, NODE_ENV: undefined, WISP_TASK_ID: undefined, WISP_BRIEF_RUN: undefined } as Record<string, string>,
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(result.exitCode).toBe(0);
-      expect(Buffer.from(result.stdout).toString("utf8")).toContain("wisp-dev brief set --stdin");
+      return { exit: result.exitCode, out: Buffer.from(result.stdout).toString("utf8"), err: Buffer.from(result.stderr).toString("utf8") };
+    };
+    for (const args of [["brief", "--help"], ["brief"], ["brief", "set", "--help"], ["brief", "show", "--help"], ["brief", "disable", "-h"]]) {
+      const result = devRun(args);
+      expect(result.exit).toBe(0);
+      expect(result.out).toContain("wisp-dev brief");
     }
+    expect(devRun(["brief", "set"]).exit).toBe(2);
     expect(existsSync(join(dev, "config.json"))).toBe(false);
+    // anything that talks to a daemon still gets its home
+    devRun(["brief", "show"]);
+    expect(existsSync(join(dev, "config.json"))).toBe(true);
   });
 });
+
+/** Terminal control sequences an agent could put in its own brief: set the clipboard, clear the screen, recolour. */
+const OSC52 = "\u001b]52;c;ZXZpbA==\u0007";
+const CSI = "\u001b[2J\u001b[31m";
+const C1 = "\u009b31m\u0085";
+const hostileView = {
+  enabled: true, generation: 1, archived: false, harness: "fake", supported: true, activation: "active",
+  report: {
+    turn: { n: 1, status: "done", contextN: 1, endedAt: null },
+    revision: 1,
+    savedAt: "2026-09-28T00:00:00.000Z",
+    brief: {
+      version: 1,
+      goal: `Goal${OSC52}`,
+      outcome: `Fixed${CSI} it${C1}`,
+      remaining: [`Check${OSC52}`],
+      decision: {
+        question: `Which${CSI}?`,
+        recommendation: "A",
+        options: [
+          { label: `A${C1}`, gain: "g", downside: "d", impact: "i", effort: null },
+          { label: "B", gain: "g", downside: "d", impact: "i", effort: null },
+        ],
+      },
+    },
+  },
+  latestEligibleTurn: { n: 1, status: "done", reported: true },
+  latestTurn: { n: 1, status: "done", contextN: 1 },
+  latestInput: { kind: "answer", id: "qa_1", text: `yes${OSC52}`, truncated: false, length: 3, question: `Ship${CSI}?`, delivery: "delivered", turnN: 1, at: "2026-09-28T00:00:00.000Z", legacy: false },
+  reasons: [],
+};
 
 describe("wisp brief set", () => {
   let home: string;
@@ -107,6 +149,7 @@ describe("wisp brief set", () => {
       hostname: "127.0.0.1",
       port,
       async fetch(req) {
+        if (req.method === "GET") return Response.json(hostileView);
         seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization"), body: await req.json() });
         if (mode === "hang") return new Promise<Response>(() => {});
         if (mode === "conflict") return Response.json({ kind: "conflict", error: "a different revision" }, { status: 409 });
@@ -175,6 +218,21 @@ describe("wisp brief set", () => {
   test("a turn that was never bound is told so, successfully", async () => {
     const r = await runLive(["brief", "set", "--stdin"], { WISP_HOME: home, WISP_TASK_ID: "tabc23" }, valid);
     expect(r).toMatchObject({ exit: 0, out: "Brief skipped: this turn was not asked for a brief. Continue normally.\n" });
+  });
+
+  test("show never lets the agent's own text drive the terminal, as text or as --json", async () => {
+    const env = { WISP_HOME: home, WISP_TASK_ID: "tabc23" };
+    const text = await runLive(["brief", "show"], env);
+    expect(text.exit).toBe(0);
+    // eslint-disable-next-line no-control-regex
+    expect(text.out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(text.out).toContain("outcome:   Fixed it");
+    const json = await runLive(["brief", "show", "--json"], env);
+    expect(json.exit).toBe(0);
+    // eslint-disable-next-line no-control-regex
+    expect(json.out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    // lossless: the escaped JSON parses back to exactly what the daemon sent
+    expect(JSON.parse(json.out)).toEqual(hostileView);
   });
 
   test("an older daemon and a daemon that never answers both end in one line, the second within the timeout", async () => {

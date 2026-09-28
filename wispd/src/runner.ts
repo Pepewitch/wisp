@@ -70,6 +70,7 @@ import {
   briefReminder,
   attachmentLines,
   envForCwd,
+  framedMessage,
   inputStrategyFor,
   nativeImageAttachments,
   taskEnv,
@@ -133,6 +134,11 @@ function startCapture(
   return { recorder, sink: recorder, stderrPump: recorder.drain(child.stderr, "stderr") };
 }
 
+/** Who wrote a queued message, for its framing at delivery (turn-input framedMessage); a direct turn is the person's. */
+function messageOrigin(sourceMessageId: string | undefined) {
+  return sourceMessageId ? getTaskMessage(sourceMessageId)?.origin : undefined;
+}
+
 /**
  * Spawn one harness turn (D7/D20). One-shot output goes fd-direct to the log;
  * a verified live protocol is pumped and normalized while stdin stays open.
@@ -183,7 +189,8 @@ export function startTurn(
   // because the turn row it names does not exist until after it.
   const brief = pendingBriefRun(task.id, def, command);
   const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
-  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...attached], message);
+  const framed = framedMessage(messageOrigin(sourceMessageId), message);
+  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the

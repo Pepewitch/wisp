@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -111,7 +111,10 @@ describe("the task brief band", () => {
     const paths = stub(VIEW, {})
     mount(TASK)
     await waitFor(() => expect(paths.some((p) => p.endsWith("/api/harnesses"))).toBe(true))
+    // let the features answer land before judging absence
+    await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.queryByRole("region", { name: "Task brief" })).toBeNull()
+    expect(paths.some((p) => p.endsWith("/brief"))).toBe(false)
   })
 
   it("opens on a pointer with your words first, then the agent's report under its own divider", async () => {
@@ -146,11 +149,12 @@ describe("the task brief band", () => {
     stub(VIEW)
     mount(TASK)
     const compare = await screen.findByRole("button", { name: "Compare 2 options" })
+    expect(compare).not.toHaveAttribute("aria-controls")
     fireEvent.click(compare)
     expect(compare).toHaveAttribute("aria-expanded", "true")
     const options = document.getElementById(compare.getAttribute("aria-controls")!)!
-    expect(within(options).getByText("In the store").parentElement).toHaveTextContent("recommended")
-    expect(within(options).getByText("In the button").parentElement).not.toHaveTextContent("recommended")
+    expect(within(options).getByText("In the store").parentElement).toHaveTextContent("Recommended")
+    expect(within(options).getByText("In the button").parentElement).not.toHaveTextContent("Recommended")
     expect(within(options).getByText("Not assessed")).toBeInTheDocument()
   })
 
@@ -159,6 +163,27 @@ describe("the task brief band", () => {
     mount(TASK)
     fireEvent.click(await screen.findByRole("button", { name: "Show in conversation" }))
     expect(uiIntentsFor(CONNECTION).findRequest()).toMatchObject({ query: "Also check autosave, but keep the API.", turn: 4 })
+  })
+
+  it("on touch, Show in conversation first gives the transcript back, then finds the words there", async () => {
+    stub(VIEW)
+    mount(TASK, true)
+    fireEvent.click(await screen.findByRole("button", { expanded: false }))
+    expect(screen.getByTestId("conversation")).not.toBeVisible()
+    const before = uiIntentsFor(CONNECTION).findRequest()?.seq ?? 0
+    fireEvent.click(screen.getByRole("button", { name: "Show in conversation" }))
+    expect(screen.getByTestId("conversation")).toBeVisible()
+    await waitFor(() => expect(uiIntentsFor(CONNECTION).findRequest()?.seq ?? 0).toBeGreaterThan(before))
+    expect(uiIntentsFor(CONNECTION).findRequest()).toMatchObject({ query: "Also check autosave, but keep the API.", turn: 4 })
+  })
+
+  it("a find from elsewhere (the task menu, ⌘F) closes a touch takeover so the transcript can answer it", async () => {
+    stub(VIEW)
+    mount(TASK, true)
+    fireEvent.click(await screen.findByRole("button", { expanded: false }))
+    expect(screen.getByTestId("conversation")).not.toBeVisible()
+    act(() => uiIntentsFor(CONNECTION).openFind("anything", null))
+    await waitFor(() => expect(screen.getByTestId("conversation")).toBeVisible())
   })
 
   it("on touch it starts closed; open, it replaces the transcript instead of squeezing it", async () => {

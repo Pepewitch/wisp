@@ -13,9 +13,11 @@
  *    only while its delivery is uncertain — one that certainly never arrived
  *    was not said to the agent.
  *  - an answer to a native questionnaire, which bypasses the message table.
- *    While briefs are on, the answer route records it here BEFORE the native
- *    write and settles it after, so a crash in between leaves it uncertain
- *    rather than silently delivered — and its text outlives the turn log.
+ *    The answer route records it here BEFORE the native write and settles it
+ *    after, so a crash in between leaves it uncertain rather than silently
+ *    delivered — and its text outlives the turn log. It is recorded whether
+ *    or not briefs are on, so switching them on later never shows an older
+ *    message as the last thing said.
  *  - the task's first prompt, when there is nothing else. It is the prompt as
  *    stored, which may carry a suffix prompt the person picked.
  */
@@ -74,7 +76,7 @@ function messageDelivery(message: TaskMessage): BriefLatestInput["delivery"] {
 function latestMessage(taskId: string): RankedInput | null {
   const message = (db.query(
     `SELECT * FROM task_messages
-     WHERE task_id = ? AND origin != 'workflow' AND source_seq IS NOT NULL
+     WHERE task_id = ? AND origin IN ('human', 'legacy') AND source_seq IS NOT NULL
        AND NOT (status = 'cancelled' AND delivery_uncertain = 0)
      ORDER BY source_seq DESC LIMIT 1`,
   ).get(taskId) as TaskMessage | null) ?? null;
@@ -106,7 +108,7 @@ function latestAnswer(taskId: string): RankedInput | null {
       kind: "answer",
       id: row.id,
       ...excerpt(answers.map((a) => a.answer).join("\n")),
-      question: row.question_text,
+      question: row.question_text || null,
       delivery: row.state === "delivered" ? "delivered" : row.state === "pending" ? "pending" : "uncertain",
       turnN: row.turn_n,
       at: row.created_at,
@@ -141,7 +143,7 @@ function uncertain(input: BriefLatestInput | undefined): boolean {
 export function inputSnapshot(task: Task): InputSnapshot {
   const latest = latestHumanInput(task.id);
   const pending = db.query(
-    `SELECT 1 FROM task_messages WHERE task_id = ? AND origin != 'workflow' AND status = 'queued' LIMIT 1`,
+    `SELECT 1 FROM task_messages WHERE task_id = ? AND origin IN ('human', 'legacy') AND status = 'queued' LIMIT 1`,
   ).get(task.id) !== null;
   return {
     inputRev: task.input_rev ?? 0,
@@ -162,6 +164,7 @@ export function parseInputSnapshot(sourceJson: string): InputSnapshot | null {
 /** Whether the latest input is newer than, or changed since, what a report saw. */
 export function inputFreshness(task: Task, latest: RankedInput | null, snapshot: InputSnapshot | null): {
   newer: boolean;
+  pending: boolean;
   changed: boolean;
   uncertain: boolean;
   legacy: boolean;
@@ -169,6 +172,8 @@ export function inputFreshness(task: Task, latest: RankedInput | null, snapshot:
   const newer = snapshot !== null && latest !== null && latest.seq > snapshot.latestSeq;
   return {
     newer,
+    // still queued now: whenever it was sent, the agent that wrote the report has not read it
+    pending: latest?.input.delivery === "queued",
     changed: snapshot !== null && !newer && (task.input_rev ?? 0) > snapshot.inputRev,
     uncertain: uncertain(latest?.input),
     legacy: latest?.input.legacy === true,
@@ -176,10 +181,9 @@ export function inputFreshness(task: Task, latest: RankedInput | null, snapshot:
 }
 
 /**
- * Record an answer about to be written into a live turn — only while the
- * task's briefs are on, and always before the native write, so the order of
- * events on disk is the order they happened. Returns the observation id to
- * settle, or null when nothing was recorded.
+ * Record an answer about to be written into a live turn, always before the
+ * native write, so the order of events on disk is the order they happened.
+ * Returns the observation id to settle, or null when nothing was recorded.
  */
 export function observeAnswer(
   taskId: string,
@@ -191,13 +195,16 @@ export function observeAnswer(
   return db.transaction((): string | null => {
     const task = getTask(taskId);
     const turn = getTurn(turnId);
-    if (!task || task.brief_enabled !== 1 || !turn) return null;
+    if (!task || !turn) return null;
     const byIndex = new Map(answers.map((a) => [a.index, a.answer.trim()]));
-    const paired = questions.map((q) => ({ index: q.index, question: q.question, answer: byIndex.get(q.index) ?? "" }));
+    const paired = questions.length > 0
+      ? questions.map((q) => ({ index: q.index, question: q.question, answer: byIndex.get(q.index) ?? "" }))
+      : answers.map((a) => ({ index: a.index, question: "", answer: a.answer.trim() }));
     const questionText = [...questions.map((q) => q.question).join("\n")].slice(0, QUESTION_TEXT_MAX).join("");
     const id = `qa_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
     const at = new Date().toISOString();
-    const seq = admitTaskInput(taskId, true);
+    // a new input is "newer" by its admission number; the revision is for inputs that change
+    const seq = admitTaskInput(taskId, false);
     db.run(
       `INSERT INTO task_answer_observations
          (id, task_id, turn_id, turn_n, context_n, source_seq, question_id, question_text, answers_json, state, created_at, updated_at)
@@ -208,13 +215,21 @@ export function observeAnswer(
   })();
 }
 
-/** The native write finished: it was delivered, or it certainly was not. */
+/**
+ * The native write finished: it was delivered, or it certainly was not. A
+ * delivery changes what a report may have seen (a pending answer); a failure
+ * leaves the latest input exactly as it was before the answer, so only a
+ * delivery moves the revision — and only once.
+ */
 export function settleAnswerObservation(id: string, state: "delivered" | "failed"): void {
-  db.run(
-    `UPDATE task_answer_observations SET state = ?, updated_at = ? WHERE id = ? AND state = 'pending'`,
-    [state, new Date().toISOString(), id],
-  );
-  db.run(`UPDATE tasks SET input_rev = input_rev + 1 WHERE id = (SELECT task_id FROM task_answer_observations WHERE id = ?)`, [id]);
+  db.transaction(() => {
+    const settled = db.run(
+      `UPDATE task_answer_observations SET state = ?, updated_at = ? WHERE id = ? AND state = 'pending'`,
+      [state, new Date().toISOString(), id],
+    );
+    if (settled.changes === 0 || state !== "delivered") return;
+    db.run(`UPDATE tasks SET input_rev = input_rev + 1 WHERE id = (SELECT task_id FROM task_answer_observations WHERE id = ?)`, [id]);
+  })();
 }
 
 /** After a crash, an answer caught between record and write may or may not have arrived. */

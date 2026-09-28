@@ -326,9 +326,9 @@ export class DroidLiveDriver {
     });
   }
 
-  /** The questionnaire the route may still answer; the oldest if several. */
-  pendingQuestion(): { id: string; questions: DroidQuestion[] } | null {
-    const pending = this.questions.values().next().value;
+  /** The questionnaire the route may still answer: the one named, else the oldest. */
+  pendingQuestion(id?: string): { id: string; questions: DroidQuestion[] } | null {
+    const pending = id === undefined ? this.questions.values().next().value : this.questions.get(id);
     return pending ? { id: pending.toolCallId, questions: pending.questions } : null;
   }
 

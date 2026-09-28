@@ -107,22 +107,28 @@ function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
  * pointer, in place of it on touch while open (task-brief.tsx).
  */
 function StreamedConversation({
-  taskId,
-  generation,
   briefTask,
   ...props
-}: Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {
-  taskId: string | null
-  generation: number
+}: LiveConversationProps & {
   /** the header's task row, which carries the brief switch */
   briefTask: ApiTask | null
 }) {
-  const stream = useLogStream(taskId, "activity", generation)
   return (
     <BriefedConversation task={briefTask} touch={props.touch ?? false}>
-      <Conversation {...props} stream={stream} note={stream.note} />
+      <LiveConversation {...props} />
     </BriefedConversation>
   )
+}
+
+type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {
+  taskId: string | null
+  generation: number
+}
+
+/** The log follow lives down here, so a frame re-renders the transcript and not the brief above it. */
+function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
+  const stream = useLogStream(taskId, "activity", generation)
+  return <Conversation {...props} stream={stream} note={stream.note} />
 }
 
 function useConnectionTaskSelection(connectionId: string) {

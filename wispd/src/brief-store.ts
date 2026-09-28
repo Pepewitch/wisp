@@ -10,8 +10,10 @@
  * still hold: the row exists for this task and daemon instance, the switch is
  * on at the SAME generation, the task is not archived, and the bound turn is
  * still running. Nothing is revoked by hand — each condition is re-read inside
- * the write's transaction, so a disable, an archive, a turn ending or a daemon
- * restart all take effect without a revocation path that could be forgotten.
+ * the write's transaction, so a disable, an archive or a turn ending takes
+ * effect without a revocation path that could be forgotten. A daemon restart
+ * changes none of it: the binding lives in SQLite and the instance id is the
+ * home's, so a turn the restarted daemon re-adopts can still publish.
  *
  * What it does not do: it never falls back to "whatever turn is latest", and
  * it cannot tell a foreground agent from a child process that inherited its
@@ -175,7 +177,9 @@ export function publishBrief(
       return { kind: "forbidden", message: "this brief binding does not belong to this task on this Wisp daemon" };
     }
     if (task.archived) return { kind: "skipped", reason: "archived" };
-    if (!enabled(task) || run.generation !== generationOf(task)) return { kind: "skipped", reason: "disabled" };
+    if (!enabled(task)) return { kind: "skipped", reason: "disabled" };
+    // on again, but this binding was issued before the last off: the turn was never asked under the current switch
+    if (run.generation !== generationOf(task)) return { kind: "skipped", reason: "superseded" };
     const turn = getTurn(run.turn_id);
     if (!turn || turn.status !== "running") return { kind: "skipped", reason: "run-ended" };
     const check = validateTaskBrief(payload);
@@ -282,6 +286,7 @@ function inputReasons(f: ReadFacts, report: TaskBriefRow | null): BriefReason[] 
   const fresh = inputFreshness(f.task, f.latestInput, report ? parseInputSnapshot(report.source_json) : null);
   const reasons: BriefReason[] = [];
   if (fresh.newer) reasons.push("newer-input");
+  if (report && fresh.pending) reasons.push("input-pending");
   if (fresh.changed) reasons.push("input-changed");
   if (fresh.uncertain) reasons.push("input-uncertain");
   if (fresh.legacy) reasons.push("coverage-legacy");
@@ -317,8 +322,16 @@ export function briefView(task: Task, adapters: Readonly<Record<string, AdapterD
       : null,
     latestTurn: latestTurn ? { n: latestTurn.n, status: status(latestTurn), contextN: latestTurn.context_n } : null,
     latestInput: f.latestInput?.input ?? null,
+    originalRequest: originalRequest(task.id),
     reasons: briefReasons(f),
   };
+}
+
+/** The first non-empty line of the first prompt, as stored — what the conversation can find. */
+function originalRequest(taskId: string): string | null {
+  const turn = db.query(`SELECT prompt FROM turns WHERE task_id = ? AND n = 1`).get(taskId) as { prompt: string } | null;
+  const line = turn?.prompt.split("\n").map((l) => l.trim()).find(Boolean);
+  return line ? [...line].slice(0, 120).join("") : null;
 }
 
 /** Every stored report for a task, oldest first — for the portable export. */

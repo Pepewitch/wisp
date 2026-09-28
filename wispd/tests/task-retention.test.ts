@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync, symlinkSync, unlinkSync, mkdtempS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TASKS_DIR, LOG_DIR, loadConfig } from "../src/config";
-import { createTask, createTurn, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTurn, db, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { exportTask, purgeTask, taskStorage } from "../src/task-retention";
 import { archiveTaskWithCleanup, clearArchiveCleanup } from "../src/archive-jobs";
 import { retentionRoute } from "../src/routes/retention";
@@ -54,6 +54,30 @@ test("export is a readable snapshot; purge removes managed files/records and kee
   expect(existsSync(f.log)).toBe(false);
   expect(existsSync(join(TASKS_DIR, f.id))).toBe(false);
   expect(readFileSync(join(f.repo, "source.txt"), "utf8")).toBe("user repository");
+});
+
+test("a task's briefs travel with its export, and purge removes them with their bindings and answers", async () => {
+  const f = fixture();
+  const turn = db.query("SELECT id FROM turns WHERE task_id = ?").get(f.id) as { id: number };
+  db.run(
+    `INSERT INTO brief_runs (run_id, task_id, turn_id, turn_n, context_n, generation, instance_id, created_at) VALUES (?, ?, ?, 1, 1, 1, 'fixture', 'now')`,
+    [`br_${f.id}`, f.id, turn.id],
+  );
+  db.run(
+    `INSERT INTO task_briefs (task_id, turn_id, turn_n, context_n, run_id, generation, schema_version, revision, payload_json, payload_hash, source_json, saved_at)
+     VALUES (?, ?, 1, 1, ?, 1, 1, 1, ?, 'hash', '{}', 'now')`,
+    [f.id, turn.id, `br_${f.id}`, JSON.stringify({ version: 1, outcome: "Kept.", remaining: [] })],
+  );
+  db.run(
+    `INSERT INTO task_answer_observations (id, task_id, turn_id, turn_n, context_n, source_seq, question_id, question_text, answers_json, state, created_at, updated_at)
+     VALUES (?, ?, ?, 1, 1, 1, 'q', 'Keep it?', '[]', 'delivered', 'now', 'now')`,
+    [`qa_${f.id}`, f.id, turn.id],
+  );
+  expect((await exportTask(f.task)).briefs).toEqual([{ turn: 1, context: 1, revision: 1, savedAt: "now", brief: { version: 1, outcome: "Kept.", remaining: [] } }]);
+  await purgeTask(f.task);
+  for (const table of ["task_briefs", "brief_runs", "task_answer_observations"]) {
+    expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE task_id = ?`).get(f.id), table).toEqual({ n: 0 });
+  }
 });
 
 test("active tasks and incomplete archive jobs cannot be deleted; explicit confirmation is required", async () => {

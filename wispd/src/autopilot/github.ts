@@ -4,6 +4,7 @@
  * host's authenticated `gh`; the only write is `gh pr merge`, which respects
  * every branch protection, ruleset, and merge queue the repository has.
  */
+import { controlFree } from "../control-free"
 import { runBounded } from "../subprocess"
 import { isRecord } from "../validate"
 import type { PrCheck } from "./checks"
@@ -331,16 +332,8 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   }
 }
 
-/** Terminal escapes (CSI and OSC sequences) and every other control character but tab and newline. */
-export function controlFree(line: string): string {
-  return line
-    // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
-}
+// shared with the CLI's brief printer; re-exported for this module's callers
+export { controlFree }
 
 /**
  * The part of a job log that explains the failure: the step that failed, up

@@ -51,6 +51,7 @@ import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
 import { pullRequestTitleSync } from "./task-update";
 import { pwaResponse } from "./pwa";
+import { BRIEF_RUN_ENV } from "./turn-input";
 // The generated single-file app is loaded only when the daemon starts. That
 // keeps source-only CLI commands usable before a checkout has built ui-dist;
 // supported serve/test/build entry points generate it first. Bun embeds this
@@ -389,6 +390,10 @@ function homeConflictMessage(reason: string): string {
 }
 
 export async function serve(options: ServeOptions = {}): Promise<Bun.Server<TerminalSocketData>> {
+  // A daemon started from inside an agent's shell must not carry that turn's
+  // brief binding into anything it runs — envForCwd strips it per child, this
+  // covers the spawns that do not go through it.
+  delete process.env[BRIEF_RUN_ENV];
   const hostOverride = process.env.WISP_HOST;
   if (hostOverride !== undefined) assertLoopbackHost(hostOverride, "WISP_HOST");
   let ownership;

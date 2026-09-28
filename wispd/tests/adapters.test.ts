@@ -1411,6 +1411,8 @@ describe("adapter task briefs", () => {
     expect(validateAdapters({ droid: { bin: "/opt/wrapper/droid", briefs: true } }, () => {}).droid!.briefs).toBe(true);
     expect(validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" } } }).foo!.briefs).toBeUndefined();
     expect(validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: true } }).foo!.briefs).toBe(true);
-    expect(() => validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: "yes" } })).toThrow("briefs must be a boolean");
+    expect(() => validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: "yes" } })).toThrow("briefs must be a boolean or null");
+    // null takes a builtin's briefs away, the same as for its other capabilities
+    expect(validateAdapters({ droid: { briefs: null } }).droid!.briefs).toBeUndefined();
   });
 });

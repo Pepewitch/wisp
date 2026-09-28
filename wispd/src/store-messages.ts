@@ -28,8 +28,8 @@ interface CreateTaskMessageInput {
   text: string;
   attachmentHash: string;
   attachmentsJson?: string | null;
-  /** who wrote it; fixed at creation (a brief never counts a workflow's message as the person's) */
-  origin?: "human" | "workflow";
+  /** who wrote it; fixed at creation, so delivery can frame it and a brief never counts a workflow's message as the person's */
+  origin?: "human" | "workflow" | "scheduled" | "plugin";
 }
 
 export type TaskAgentSelection = TaskAgentTarget & { freshContext: boolean };
@@ -52,7 +52,7 @@ export function admitTaskInput(taskId: string, human: boolean): number {
 function touchHumanInput(messageId: string): void {
   db.run(
     `UPDATE tasks SET input_rev = input_rev + 1
-     WHERE id = (SELECT task_id FROM task_messages WHERE id = ? AND origin != 'workflow')`,
+     WHERE id = (SELECT task_id FROM task_messages WHERE id = ? AND origin IN ('human', 'legacy'))`,
     [messageId],
   );
 }
@@ -215,17 +215,16 @@ export function updateQueuedTaskMessage(id: string, taskId: string, text: string
 }
 
 export function cancelQueuedTaskMessage(id: string, taskId: string): TaskMessage | null {
-  db.run(
+  const result = db.run(
     `UPDATE task_messages SET status = 'cancelled', updated_at = ?
      WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL`,
     [now(), id, taskId],
   );
   const message = getTaskMessage(id);
   const cancelled = message?.task_id === taskId && message.status === "cancelled" ? message : null;
-  if (cancelled) {
-    touchHumanInput(id);
-    emit({ type: "message", taskId, messageId: id });
-  }
+  // idempotent, but only a real cancel is an input change: a repeat must not make a brief look older
+  if (cancelled && result.changes > 0) touchHumanInput(id);
+  if (cancelled) emit({ type: "message", taskId, messageId: id });
   return cancelled;
 }
 

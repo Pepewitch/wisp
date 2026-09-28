@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { briefBand, briefInput, briefMenuNote, type BriefView } from "@/lib/brief"
+import { briefBand, briefInput, briefMenuNote, briefWaiting, recommendedOption, type BriefView } from "@/lib/brief"
 
 const NOW = Date.parse("2026-09-28T10:12:00Z")
 
@@ -68,6 +68,8 @@ describe("the brief band", () => {
     expect(fact({ reasons: ["input-uncertain"], latestInput: { ...input(), kind: "answer", delivery: "uncertain" } }))
       .toEqual(["turn 4", "your latest answer may not have arrived"])
     expect(fact({ reasons: ["newer-context"] })).toEqual(["turn 4", "before the fresh context"])
+    // sent before the save, still queued: the agent that wrote the report has not read it
+    expect(fact({ reasons: ["input-pending"] })).toEqual(["turn 4", "your queued message not read yet"])
     for (const reasons of [[], ["newer-input"], ["provisional"]] as const) {
       expect(fact({ reasons: [...reasons] }).join(" ")).not.toMatch(/complete|verified|done|up to date/i)
     }
@@ -78,6 +80,7 @@ describe("the brief band", () => {
     expect(divider({})).toBe("The agent's report")
     expect(divider({ reasons: ["newer-input"] })).toBe("The agent's report — written before your latest input")
     expect(divider({ reasons: ["input-changed"] })).toBe("The agent's report — your input changed since")
+    expect(divider({ reasons: ["input-pending", "input-changed"] })).toBe("The agent's report — written before the agent read your queued message")
     expect(divider({ supported: false, harness: "opencode" })).toBe("The agent's report — opencode can't write new ones")
   })
 
@@ -105,6 +108,7 @@ function input(): NonNullable<BriefView["latestInput"]> {
 describe("your latest words", () => {
   it("are labelled by kind and captioned with Wisp's own delivery facts", () => {
     expect(briefInput(input(), NOW)).toEqual({
+      key: "message:m1:2026-09-28T10:02:00Z",
       label: "You asked",
       question: null,
       text: "Also check autosave.\nKeep the API.",
@@ -124,12 +128,33 @@ describe("your latest words", () => {
 })
 
 describe("the task menu's note", () => {
-  const base = { enabled: false, supported: true, harness: "codex", running: false, justEnabled: false }
-  it("explains the cost before it is on, and the timing right after", () => {
+  const base = { enabled: false, supported: true, harness: "codex", waiting: null }
+  it("explains the cost before it is on, and the timing only while it is still true", () => {
     expect(briefMenuNote(base)).toContain("One extra step per turn")
-    expect(briefMenuNote({ ...base, enabled: true, justEnabled: true })).toBe("Starts with the next turn.")
-    expect(briefMenuNote({ ...base, enabled: true, justEnabled: true, running: true })).toBe("Starts with the next turn — this one began before briefs were on.")
+    expect(briefMenuNote({ ...base, enabled: true, waiting: "not-yet" })).toBe("Starts with the next turn.")
+    expect(briefMenuNote({ ...base, enabled: true, waiting: "after-running" })).toBe("Starts with the next turn — this one began before briefs were on.")
     expect(briefMenuNote({ ...base, enabled: true })).toBeNull()
     expect(briefMenuNote({ ...base, supported: false, harness: "opencode" })).toBe("opencode can't write briefs through Wisp yet.")
+  })
+
+  it("reads 'waiting' from the daemon's read model, so it expires once a briefed turn has run", () => {
+    expect(briefWaiting(view({ report: null, latestEligibleTurn: null }))).toBe("not-yet")
+    expect(briefWaiting(view({ report: null, latestEligibleTurn: null, reasons: ["awaiting-next-turn", "no-report"] }))).toBe("after-running")
+    // the first briefed turn is running or has run: the note has nothing left to say
+    expect(briefWaiting(view({ report: null, latestEligibleTurn: { n: 2, status: "running", reported: false } }))).toBeNull()
+    expect(briefWaiting(view({ activation: "active" }))).toBeNull()
+    expect(briefWaiting(view())).toBeNull()
+  })
+})
+
+describe("the recommended option", () => {
+  it("marks only a label the recommendation plainly starts with, on a word boundary", () => {
+    expect(recommendedOption(["In the store", "In the button"], "In the store, so every path gets it.")).toBe(0)
+    expect(recommendedOption(["A", "B"], "Approach B keeps the API")).toBeNull()
+    expect(recommendedOption(["Keep", "Remove"], "Keeping it costs more; remove it")).toBeNull()
+    // the longer, more specific label wins; a true tie marks nothing
+    expect(recommendedOption(["Ship", "Ship behind a flag"], "Ship behind a flag, then widen")).toBe(1)
+    expect(recommendedOption(["Store", "store"], "Store it")).toBeNull()
+    expect(recommendedOption(["Store"], null)).toBeNull()
   })
 })

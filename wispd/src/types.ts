@@ -354,11 +354,13 @@ export interface TaskMessage {
   delivery_uncertain: number;
   attachments_json: string | null;
   /**
-   * Who wrote it, fixed at creation: 'workflow' for a workflow's or
-   * autopilot's message, 'legacy' for a row older than the column. Internal —
-   * briefs read it; `workflow_id` stays the API's (clearable) link.
+   * Who wrote it, fixed at creation: 'human'; 'workflow' for Wisp's own
+   * (auto-fix, heartbeat); 'scheduled' for a schedule-steer (the person's
+   * words, sent later); 'plugin' for a workflow plugin's wake; 'legacy' for a
+   * row older than the column. Internal — delivery frames by it and briefs
+   * read it; `workflow_id` stays the API's (clearable) link.
    */
-  origin?: "human" | "workflow" | "legacy";
+  origin?: import("./turn-input").MessageOrigin;
   /** Admission order among the task's inputs (messages and answers); internal. */
   source_seq?: number | null;
   created_at: string;

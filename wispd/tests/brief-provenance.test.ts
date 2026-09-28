@@ -140,10 +140,42 @@ describe("freshness against a saved brief", () => {
     expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", delivery: "uncertain", question: "Ship it?" });
   });
 
-  test("answers are recorded only while briefs are on", () => {
+  test("answers are recorded while briefs are off, so switching them on never shows an older message as the latest", () => {
     const { task, turnId } = boundTask();
+    say(task.id, "An older message.");
     db.run(`UPDATE tasks SET brief_enabled = 0 WHERE id = ?`, [task.id]);
-    expect(observeAnswer(task.id, turnId, "q5", [{ index: 0, question: "?" }], [{ index: 0, answer: "ok" }])).toBeNull();
-    expect(db.query(`SELECT COUNT(*) AS n FROM task_answer_observations WHERE task_id = ?`).get(task.id)).toEqual({ n: 0 });
+    const answer = observeAnswer(task.id, turnId, "q5", [{ index: 0, question: "Go?" }], [{ index: 0, answer: "ok" }])!;
+    settleAnswerObservation(answer, "delivered");
+    db.run(`UPDATE tasks SET brief_enabled = 1 WHERE id = ?`, [task.id]);
+    expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", text: "ok", question: "Go?" });
+  });
+
+  test("an answer to a question Wisp could not name is still recorded, without a question", () => {
+    const { task, turnId } = boundTask();
+    observeAnswer(task.id, turnId, "q6", [], [{ index: 2, answer: "the second" }]);
+    expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", text: "the second", question: null });
+  });
+
+  test("a failed answer or a repeated cancel never makes a saved report look changed", () => {
+    const { task, turnId, runId } = boundTask();
+    const queued = say(task.id, "Maybe later.");
+    save(task.id, runId, "Fixed.");
+    const failed = observeAnswer(task.id, turnId, "q7", [{ index: 0, question: "Retry?" }], [{ index: 0, answer: "no" }])!;
+    settleAnswerObservation(failed, "failed");
+    settleAnswerObservation(failed, "failed");
+    expect(view(task.id).reasons).not.toContain("input-changed");
+    // one real cancel is a change; repeating it is not another one
+    expect(cancelQueuedTaskMessage(queued.id, task.id)?.status).toBe("cancelled");
+    const rev = getTask(task.id)!.input_rev;
+    expect(cancelQueuedTaskMessage(queued.id, task.id)?.status).toBe("cancelled");
+    expect(getTask(task.id)!.input_rev).toBe(rev);
+  });
+
+  test("a message still queued when the report is read marks it as not yet seen", () => {
+    const { task, runId } = boundTask();
+    say(task.id, "Also the shortcut.");
+    save(task.id, runId, "Fixed.");
+    // sent before the save, but the agent that wrote the report never read it
+    expect(view(task.id).reasons).toContain("input-pending");
   });
 });

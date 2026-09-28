@@ -23,6 +23,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
+import { BRIEF_RUN_ENV } from "../src/turn-input";
 import { adapterFlags } from "../scripts/harness/diff";
 import { loadAllFacts, parseFacts, serializeFacts, type HarnessFacts } from "../scripts/harness/facts";
 
@@ -111,14 +112,15 @@ describe("adapters agree with the installed CLIs' advertised contract", () => {
 });
 
 describe("task briefs are claimed only where a live turn proved the binding arrives", () => {
-  test("every builtin that declares briefs has a live taskEnv fact naming the task variables", () => {
+  test("every builtin that declares briefs has a live taskEnv fact naming the binding variable", () => {
     for (const [harness, def] of Object.entries(BUILTIN_ADAPTERS)) {
       if (def.briefs !== true) continue;
       const facts = FACTS.find((f) => f.harness === harness)!;
       const surface = facts.surfaces.taskEnv;
       expect(surface?.cost, `${harness} taskEnv`).toBe("live");
       expect(surface?.verifiedAgainst, `${harness} taskEnv pin`).not.toBeNull();
-      expect(surfaceList(facts, "taskEnv", "reachesToolShell"), `${harness} taskEnv names`).toContain("WISP_TASK_ID");
+      // the binding itself, not only its neighbours: a harness may filter tool env by name
+      expect(surfaceList(facts, "taskEnv", "reachesToolShell"), `${harness} taskEnv names`).toEqual(expect.arrayContaining(["WISP_TASK_ID", BRIEF_RUN_ENV]));
     }
   });
 });

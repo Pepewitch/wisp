@@ -194,8 +194,11 @@ function applyCoreFields(
   if (raw.effort !== undefined) merged.effort = stringArray(raw.effort, `${label}.effort`);
   if (raw.effortLevels !== undefined) merged.effortLevels = stringArray(raw.effortLevels, `${label}.effortLevels`);
   if (raw.fastMode !== undefined) merged.fastMode = validateFastMode(raw.fastMode, `${label}.fastMode`);
-  if (raw.briefs !== undefined) {
-    if (typeof raw.briefs !== "boolean") throw new Error(`${label}.briefs must be a boolean, got ${typeName(raw.briefs)}`);
+  if (raw.briefs === null) {
+    // like every other builtin capability, null takes it away
+    delete merged.briefs;
+  } else if (raw.briefs !== undefined) {
+    if (typeof raw.briefs !== "boolean") throw new Error(`${label}.briefs must be a boolean or null, got ${typeName(raw.briefs)}`);
     merged.briefs = raw.briefs;
   }
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);

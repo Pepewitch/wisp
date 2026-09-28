@@ -62,6 +62,23 @@ export function useConversationPagination({
     viewport,
   ])
 
+  // The viewport can shrink with no scroll event and no new content: a band
+  // above it growing (the task brief resolving, a new revision, Compare
+  // opening) or the composer growing. A pinned reader must stay on the tail.
+  const pinnedRef = useRef(pinned)
+  useEffect(() => {
+    pinnedRef.current = pinned
+  }, [pinned])
+  useEffect(() => {
+    const el = viewport.current
+    if (!el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) el.scrollTop = el.scrollHeight
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [taskIdentity])
+
   // A task switch and `/log` request each make this a fresh tail read.
   const [seenTask, setSeenTask] = useState(taskIdentity)
   const [seenFocus, setSeenFocus] = useState(focusRequests)

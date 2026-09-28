@@ -15,6 +15,8 @@ export type { BriefLatestInput, BriefView, TaskBriefV1 }
 
 /** The person's words as the band shows them. */
 export interface BriefInputView {
+  /** identifies this input, so per-input state (Show all) never carries to the next one */
+  key: string
   label: "You asked" | "You answered"
   /** for an answer: the question that gives its text meaning */
   question: string | null
@@ -43,6 +45,8 @@ export type BriefBandModel =
     divider: string
     brief: TaskBriefV1
     input: BriefInputView | null
+    /** a find query for the task's first prompt, when the daemon sent one */
+    originalRequest: string | null
     /** identifies this report, so a disclosure opened on one is not carried to the next */
     key: string
   }
@@ -75,6 +79,7 @@ function findQuery(text: string): string {
 export function briefInput(input: BriefLatestInput | null, now: number): BriefInputView | null {
   if (!input) return null
   return {
+    key: `${input.kind}:${input.id ?? ""}:${input.at}`,
     label: input.kind === "answer" ? "You answered" : "You asked",
     question: input.question,
     text: input.text,
@@ -105,6 +110,7 @@ function statusFact(view: BriefView, reportTurn: number, savedAt: string, now: n
   if (has(view, "newer-turn-unreported") && later) return `turn ${later.n} sent none`
   if (has(view, "newer-turn") && latest?.status === "running") return `turn ${latest.n} running`
   if (has(view, "newer-input")) return `older than your latest ${inputWord}`
+  if (has(view, "input-pending")) return "your queued message not read yet"
   if (has(view, "input-uncertain")) return `your latest ${inputWord} may not have arrived`
   if (has(view, "newer-context")) return "before the fresh context"
   if (has(view, "newer-turn") && latest) return `turn ${latest.n} ran since`
@@ -114,6 +120,7 @@ function statusFact(view: BriefView, reportTurn: number, savedAt: string, now: n
 function dividerText(view: BriefView): string {
   const clauses: string[] = []
   if (has(view, "newer-input")) clauses.push("written before your latest input")
+  else if (has(view, "input-pending")) clauses.push("written before the agent read your queued message")
   else if (has(view, "input-changed")) clauses.push("your input changed since")
   if (has(view, "newer-turn-unreported") && view.latestEligibleTurn) clauses.push(`turn ${view.latestEligibleTurn.n} ended without one`)
   if (!view.supported) clauses.push(`${view.harness} can't write new ones`)
@@ -140,26 +147,61 @@ export function briefBand(view: BriefView | undefined, error: unknown, now: numb
     divider: dividerText(view),
     brief,
     input: briefInput(view.latestInput, now),
+    originalRequest: view.originalRequest ? findQuery(view.originalRequest) : null,
     key: `${report.turn.n}:${report.revision}`,
   }
 }
 
 /**
- * The switch's one-line note in the task menu, or null when there is nothing
- * worth saying. `settings` is the answer to the last change, when there was one.
+ * The one option a prose recommendation names, or null. The payload names its
+ * recommendation in words, not by index, so this matches only a label the
+ * recommendation plainly STARTS with, on a word boundary, and only when one
+ * label is the clear match: a marker on the wrong option is worse than none.
  */
+export function recommendedOption(labels: string[], recommendation: string | null): number | null {
+  if (!recommendation) return null
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
+  const rec = norm(recommendation)
+  let best: number | null = null
+  let bestLength = 0
+  let tied = false
+  labels.forEach((label, index) => {
+    const l = norm(label)
+    if (!l || !(rec === l || rec.startsWith(`${l} `))) return
+    if (l.length > bestLength) {
+      best = index
+      bestLength = l.length
+      tied = false
+    } else if (l.length === bestLength) {
+      tied = true
+    }
+  })
+  return tied ? null : best
+}
+
+/**
+ * Whether the task is waiting for its FIRST briefed turn, from the daemon's
+ * read model rather than from the last click: the next turn is the first one
+ * asked, and a turn already running may have started before the switch.
+ */
+export function briefWaiting(view: BriefView | undefined): "not-yet" | "after-running" | null {
+  if (!view?.enabled || view.activation !== "next-turn") return null
+  if (view.reasons.includes("awaiting-next-turn")) return "after-running"
+  return view.latestEligibleTurn === null && view.report === null ? "not-yet" : null
+}
+
+/** The switch's one-line note in the task menu, or null when there is nothing worth saying. */
 export function briefMenuNote(options: {
   enabled: boolean
   supported: boolean
   harness: string
-  running: boolean
-  justEnabled: boolean
+  waiting: "not-yet" | "after-running" | null
 }): string | null {
   if (!options.supported) return `${options.harness} can't write briefs through Wisp yet.`
   if (!options.enabled) {
     return "At the end of each turn the agent saves a short report: goal, result, what remains, and any decision for you. One extra step per turn."
   }
-  if (options.justEnabled && options.running) return "Starts with the next turn — this one began before briefs were on."
-  if (options.justEnabled) return "Starts with the next turn."
+  if (options.waiting === "after-running") return "Starts with the next turn — this one began before briefs were on."
+  if (options.waiting === "not-yet") return "Starts with the next turn."
   return null
 }

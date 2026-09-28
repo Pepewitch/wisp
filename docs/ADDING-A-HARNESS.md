@@ -237,11 +237,13 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    brief (`wisp brief set`). The binding is the `WISP_BRIEF_RUN` environment
    variable, so declare it only after one live turn showed that the task
    environment reaches the shell the agent runs commands in: ask the agent to
-   run `printenv | grep ^WISP_`, and record the names under a live `taskEnv`
-   surface in `wispd/tests/harness-facts/`. A harness that filters its tool
-   environment, or runs tools in a separate daemon, stays unsupported rather
-   than being reminded to publish something it cannot. Overriding a builtin's
-   `bin` or `exec` drops the inherited value, as it drops live input.
+   run `printenv | grep ^WISP_` on a brief-enabled task, and record the names,
+   `WISP_BRIEF_RUN` among them, under a live `taskEnv` surface in
+   `wispd/tests/harness-facts/`. A harness that filters its tool environment,
+   or runs tools in a separate daemon, stays unsupported rather than being
+   reminded to publish something it cannot. Overriding a builtin's `bin` or
+   `exec` drops the inherited value, as it drops live input; `briefs: null`
+   drops it explicitly.
 
 ## 4. Honest absence is a feature
 

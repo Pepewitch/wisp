@@ -275,11 +275,16 @@ describe("auto-merge in the overflow menu", () => {
 })
 
 describe("the task brief switch", () => {
-  function daemon(hasBriefs = true) {
+  const view = (over: Record<string, unknown> = {}) => ({
+    enabled: true, generation: 1, archived: false, harness: "droid", supported: true, activation: "next-turn",
+    report: null, latestEligibleTurn: null, latestTurn: null, latestInput: null, reasons: ["no-report"], ...over,
+  })
+  function daemon(hasBriefs = true, brief: () => Record<string, unknown> = () => view()) {
     return stubApi((path) => {
       if (path.endsWith("/api/harnesses")) {
         return { status: 200, body: { harnesses: [{ name: "droid", hasBriefs, hasModel: true, hasEffort: false, hasImage: false, defaults: {} }], features: { taskBriefs: true } } }
       }
+      if (path.endsWith("/brief")) return { status: 200, body: brief() }
       return { status: 200, body: { enabled: true, generation: 1, activation: "next-turn", turnRunning: false } }
     })
   }
@@ -300,6 +305,21 @@ describe("the task brief switch", () => {
     expect(await screen.findByText("Starts with the next turn.")).toBeInTheDocument()
     // the switch writes the setting and nothing else: no send, no interrupt
     expect(calls.filter((c) => c.method !== "GET").map((c) => c.path)).toEqual([`/api/tasks/${TASK.id}/brief-settings`])
+  })
+
+  it("stops saying 'starts with the next turn' once a briefed turn has run", async () => {
+    // the row caught up with the switch, and the first briefed turn is under way
+    daemon(true, () => view({ activation: "active", latestEligibleTurn: { n: 4, status: "running", reported: false } }))
+    const { unmount } = mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    await waitFor(() => expect(screen.queryByText(/Starts with the next turn/)).toBeNull())
+    unmount()
+    // …and while it is still waiting, the note says so, from the daemon's own read model
+    daemon(true, () => view({ reasons: ["awaiting-next-turn", "no-report"] }))
+    mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
+    await open()
+    expect(await screen.findByText("Starts with the next turn — this one began before briefs were on.")).toBeInTheDocument()
   })
 
   it("is not offered to switch on for a harness that cannot publish", async () => {

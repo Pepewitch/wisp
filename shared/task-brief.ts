@@ -204,7 +204,7 @@ export type BriefPublication =
   | { kind: "saved"; revision: number }
   | { kind: "unchanged"; revision: number }
   /** a normal, successful non-write: never a request to retry */
-  | { kind: "skipped"; reason: "disabled" | "run-ended" | "archived" }
+  | { kind: "skipped"; reason: "disabled" | "superseded" | "run-ended" | "archived" }
 
 /**
  * Why a brief reads the way it does. Several hold at once — a report kept from
@@ -233,6 +233,8 @@ export type BriefReason =
   | "newer-context"
   /** the person said something (a message or an answer) after the report was saved */
   | "newer-input"
+  /** the person's latest message is still queued: the agent that wrote the report has not read it */
+  | "input-pending"
   /** nothing new, but an input the report saw was edited, cancelled or delivered since */
   | "input-changed"
   /** whether the latest input reached the agent is not known */
@@ -286,6 +288,8 @@ export interface BriefView {
   latestEligibleTurn: { n: number; status: BriefTurnStatus; reported: boolean } | null
   latestTurn: { n: number; status: BriefTurnStatus; contextN: number } | null
   latestInput: BriefLatestInput | null
+  /** the first line of the task's first prompt, for finding it in the conversation; absent on older daemons */
+  originalRequest?: string | null
   reasons: BriefReason[]
 }
 
