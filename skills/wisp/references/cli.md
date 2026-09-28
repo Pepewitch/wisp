@@ -57,7 +57,8 @@ save is bound to the turn that asked for it, so a disabled task, an ended turn,
 or another task can never be written to. Enabling never starts, steers, or
 interrupts a turn — the next eligible turn is the first to be asked. A brief is
 the agent's report, not a verified result: `show` says which turn wrote it and
-whether a later turn ran without one.
+whether a later turn ran without one, and it prints your own latest message or
+questionnaire answer exactly as Wisp recorded it, never a workflow's message.
 
 ## Auto-merge and auto-fix
 

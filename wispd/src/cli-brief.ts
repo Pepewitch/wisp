@@ -108,6 +108,28 @@ async function setBrief(flags: Flags): Promise<never> {
   say(`Brief skipped: ${why}. Continue normally.`, 0)
 }
 
+const DELIVERY: Record<NonNullable<BriefView["latestInput"]>["delivery"], string> = {
+  queued: "queued for the next turn",
+  started: "started a turn",
+  steered: "sent mid-turn",
+  uncertain: "delivery uncertain",
+  pending: "being delivered",
+  delivered: "delivered",
+}
+
+/** Your own words, exactly as Wisp stored them, cut to one line for a terminal. */
+function inputLine(view: BriefView): string | null {
+  const input = view.latestInput
+  if (!input) return null
+  const oneLine = input.text.replace(/\s+/g, " ").trim()
+  const shown = [...oneLine].length > 100 ? `${[...oneLine].slice(0, 100).join("")}…` : `${oneLine}${input.truncated ? "…" : ""}`
+  const what = input.kind === "answer"
+    ? `answer to "${[...(input.question ?? "").replace(/\s+/g, " ")].slice(0, 60).join("")}"`
+    : input.kind === "task-prompt" ? "task prompt, as stored" : "message"
+  const facts = [what, DELIVERY[input.delivery], input.legacy ? "recorded before briefs existed" : null].filter(Boolean)
+  return `you said:  "${shown}" (${facts.join(" · ")})`
+}
+
 function formatView(task: string, view: BriefView): string {
   const lines: string[] = []
   // "next-turn" only means no running turn holds a binding; it is news only
@@ -115,6 +137,8 @@ function formatView(task: string, view: BriefView): string {
   const waiting = view.activation === "next-turn" && (view.latestEligibleTurn === null || view.reasons.includes("awaiting-next-turn"))
   const state = view.enabled ? (waiting ? "on — starts with the next turn" : "on") : "off"
   lines.push(`${task}  briefs: ${state}${view.supported ? "" : ` (${view.harness} can't write briefs)`}`)
+  const said = inputLine(view)
+  if (said) lines.push(said)
   const report = view.report
   if (!report) {
     lines.push(view.enabled && view.latestEligibleTurn && view.latestEligibleTurn.status !== "running"
@@ -128,6 +152,8 @@ function formatView(task: string, view: BriefView): string {
     "newer-turn": `turn ${view.latestTurn?.n} is newer`,
     "newer-turn-unreported": `turn ${view.latestEligibleTurn?.n} ended without one`,
     "newer-context": "a fresh context started since",
+    "newer-input": "older than what you said last",
+    "input-changed": "your input changed since",
   }
   for (const reason of view.reasons) if (notes[reason]) facts.push(notes[reason]!)
   lines.push(facts.join(" · "))

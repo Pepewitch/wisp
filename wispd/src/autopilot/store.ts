@@ -520,7 +520,7 @@ export function reserveRound(row: WorkflowRow, round: {
     // next look plans again.
     if (!taskIsIdle(task) || task.turn_count !== round.turnCount) return null
     const id = randomId("m", 12)
-    createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "" }, false)
+    createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "", origin: "workflow" }, false)
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
     db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)
       ON CONFLICT(workflow_id, event_key) DO UPDATE SET message_id = excluded.message_id, prior_checkpoint_json = excluded.prior_checkpoint_json`,

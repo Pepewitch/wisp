@@ -28,17 +28,44 @@ interface CreateTaskMessageInput {
   text: string;
   attachmentHash: string;
   attachmentsJson?: string | null;
+  /** who wrote it; fixed at creation (a brief never counts a workflow's message as the person's) */
+  origin?: "human" | "workflow";
 }
 
 export type TaskAgentSelection = TaskAgentTarget & { freshContext: boolean };
 
+/**
+ * Admission order for a task's inputs (brief-store.ts): one counter shared by
+ * messages and questionnaire answers, taken when the input is admitted and
+ * never moved after — a queued message delivered late keeps its place. A
+ * person's input also advances the task's input revision.
+ */
+export function admitTaskInput(taskId: string, human: boolean): number {
+  const row = db
+    .query(`UPDATE tasks SET input_seq = input_seq + 1, input_rev = input_rev + ? WHERE id = ? RETURNING input_seq`)
+    .get(human ? 1 : 0, taskId) as { input_seq: number } | null;
+  if (!row) throw new Error(`no such task: ${taskId}`);
+  return row.input_seq;
+}
+
+/** A person's queued input was edited or changed delivery: whatever a brief saw of it is older now. */
+function touchHumanInput(messageId: string): void {
+  db.run(
+    `UPDATE tasks SET input_rev = input_rev + 1
+     WHERE id = (SELECT task_id FROM task_messages WHERE id = ? AND origin != 'workflow')`,
+    [messageId],
+  );
+}
+
 function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessage {
   const timestamp = now();
+  const origin = input.origin ?? "human";
+  const seq = admitTaskInput(input.taskId, origin === "human");
   db.run(
     `INSERT INTO task_messages
       (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,
-       attachment_hash, attachments_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?)`,
+       attachment_hash, attachments_json, origin, source_seq, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -50,6 +77,8 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       input.text,
       input.attachmentHash,
       input.attachmentsJson ?? null,
+      origin,
+      seq,
       timestamp,
       timestamp,
     ],
@@ -178,7 +207,10 @@ export function updateQueuedTaskMessage(id: string, taskId: string, text: string
     [text, now(), id, taskId],
   );
   const updated = result.changes > 0 ? getTaskMessage(id) : null;
-  if (updated) emit({ type: "message", taskId, messageId: id });
+  if (updated) {
+    touchHumanInput(id);
+    emit({ type: "message", taskId, messageId: id });
+  }
   return updated;
 }
 
@@ -190,7 +222,10 @@ export function cancelQueuedTaskMessage(id: string, taskId: string): TaskMessage
   );
   const message = getTaskMessage(id);
   const cancelled = message?.task_id === taskId && message.status === "cancelled" ? message : null;
-  if (cancelled) emit({ type: "message", taskId, messageId: id });
+  if (cancelled) {
+    touchHumanInput(id);
+    emit({ type: "message", taskId, messageId: id });
+  }
   return cancelled;
 }
 
@@ -242,7 +277,10 @@ export function releaseTaskMessageClaim(
     [deliveryUncertain ? 1 : 0, now(), id, taskId],
   );
   const released = result.changes > 0 ? getTaskMessage(id) : null;
-  if (released && deliveryUncertain) emit({ type: "message", taskId, messageId: id });
+  if (released && deliveryUncertain) {
+    touchHumanInput(id);
+    emit({ type: "message", taskId, messageId: id });
+  }
   return released;
 }
 
@@ -295,6 +333,7 @@ export function markTaskMessageDelivered(
   );
   const message = getTaskMessage(id);
   if (!message || message.status !== "delivered") throw new Error(`queued message ${id} was no longer available`);
+  touchHumanInput(id);
   emit({ type: "message", taskId: message.task_id, messageId: id });
   return message;
 }

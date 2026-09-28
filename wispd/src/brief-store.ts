@@ -31,6 +31,7 @@ import {
   type TaskBriefV1,
 } from "../../shared/task-brief";
 import type { AdapterDef } from "./adapters";
+import { inputFreshness, inputSnapshot, latestHumanInput, parseInputSnapshot, type RankedInput } from "./brief-inputs";
 import { db, getTask, getTurn, runningTurn } from "./store";
 import type { Task, Turn } from "./types";
 
@@ -183,7 +184,15 @@ export function publishBrief(
     const hash = createHash("sha256").update(canonical).digest("hex");
     const existing = (db.query(`SELECT * FROM task_briefs WHERE turn_id = ?`).get(turn.id) as TaskBriefRow | null) ?? null;
     const savedAt = new Date().toISOString();
-    const source = JSON.stringify({ turnN: turn.n, contextN: turn.context_n, taskContextN: task.context_n, taskTurnCount: task.turn_count });
+    // What the person had said by now, from Wisp's own records; an identical
+    // retry below never replaces it, so a retry cannot look newer than it is.
+    const source = JSON.stringify({
+      turnN: turn.n,
+      contextN: turn.context_n,
+      taskContextN: task.context_n,
+      taskTurnCount: task.turn_count,
+      input: inputSnapshot(task),
+    });
     if (!existing) {
       if (expectedRevision !== 0) return { kind: "conflict" };
       db.run(
@@ -220,6 +229,7 @@ interface ReadFacts {
   latestRunTurn: Turn | null;
   latestEligibleReported: boolean;
   latestTurn: Turn | null;
+  latestInput: RankedInput | null;
 }
 
 function latest<T>(sql: string, taskId: string): T | null {
@@ -244,6 +254,7 @@ function readFacts(task: Task, adapters: Readonly<Record<string, AdapterDef>>): 
       ? Boolean(db.query(`SELECT 1 FROM task_briefs WHERE turn_id = ?`).get(latestRunTurn.id))
       : false,
     latestTurn: latest<Turn>(`SELECT * FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1`, task.id),
+    latestInput: latestHumanInput(task.id),
   };
 }
 
@@ -255,7 +266,7 @@ function briefReasons(f: ReadFacts): BriefReason[] {
   if (f.on && f.state === "next-turn" && f.turnRunning) reasons.push("awaiting-next-turn");
   if (f.on && (!f.reportRow || (f.latestRunTurn !== null && !f.latestEligibleReported))) reasons.push("no-report");
   const turn = f.reportTurn;
-  if (!f.reportRow || !turn) return reasons;
+  if (!f.reportRow || !turn) return [...reasons, ...inputReasons(f, null)];
   if (turn.status === "running") reasons.push("provisional");
   if (turn.status === "failed") reasons.push("source-failed");
   if (turn.status === "interrupted") reasons.push("source-interrupted");
@@ -263,6 +274,17 @@ function briefReasons(f: ReadFacts): BriefReason[] {
   const later = f.latestRunTurn;
   if (later && later.n > turn.n && later.status !== "running" && !f.latestEligibleReported) reasons.push("newer-turn-unreported");
   if (f.task.context_n !== f.reportRow.context_n) reasons.push("newer-context");
+  return [...reasons, ...inputReasons(f, f.reportRow)];
+}
+
+/** What changed on the person's side since the report — or, with no report, what is unknown now. */
+function inputReasons(f: ReadFacts, report: TaskBriefRow | null): BriefReason[] {
+  const fresh = inputFreshness(f.task, f.latestInput, report ? parseInputSnapshot(report.source_json) : null);
+  const reasons: BriefReason[] = [];
+  if (fresh.newer) reasons.push("newer-input");
+  if (fresh.changed) reasons.push("input-changed");
+  if (fresh.uncertain) reasons.push("input-uncertain");
+  if (fresh.legacy) reasons.push("coverage-legacy");
   return reasons;
 }
 
@@ -294,6 +316,7 @@ export function briefView(task: Task, adapters: Readonly<Record<string, AdapterD
       ? { n: latestRunTurn.n, status: status(latestRunTurn), reported: f.latestEligibleReported }
       : null,
     latestTurn: latestTurn ? { n: latestTurn.n, status: status(latestTurn), contextN: latestTurn.context_n } : null,
+    latestInput: f.latestInput?.input ?? null,
     reasons: briefReasons(f),
   };
 }

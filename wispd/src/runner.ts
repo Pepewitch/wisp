@@ -64,6 +64,7 @@ import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import { pendingBriefRun, recordBriefRun } from "./brief-store";
+import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
   BRIEF_RUN_ENV,
   briefReminder,
@@ -548,6 +549,8 @@ async function watchTurn(
 export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>, cfg: WispConfig): Promise<void> {
   await refreshProcessGroups();
   releaseOrphanedTaskMessageClaims();
+  // an answer recorded but not settled before the crash may or may not have arrived
+  markPendingAnswersUncertain();
   for (const turn of runningTurns()) {
     const task = getTask(turn.task_id);
     if (!task) continue;

@@ -205,7 +205,7 @@ export function reserveWorkflowWake(row: WorkflowRow, result: WorkflowDecision, 
     if (!current || current.state !== "active" || current.revision !== row.revision || !task ||
       task.archived || task.context_n !== row.context_n || !result.key || seenWake(row.id, result.key)) return null;
     const id = randomId("m", 12);
-    createTaskMessage({ id, taskId: task.id, text: prompt, attachmentHash: "" }, false);
+    createTaskMessage({ id, taskId: task.id, text: prompt, attachmentHash: "", origin: "workflow" }, false);
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id]);
     db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)
       ON CONFLICT(workflow_id, event_key) DO UPDATE SET message_id = excluded.message_id, prior_checkpoint_json = excluded.prior_checkpoint_json`,

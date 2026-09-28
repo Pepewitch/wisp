@@ -140,6 +140,7 @@ export async function purgeTask(task: Task): Promise<void> {
       // Task briefs and the bindings their turns were handed (brief-store.ts).
       db.query("DELETE FROM task_briefs WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM brief_runs WHERE task_id = ?").run(task.id);
+      db.query("DELETE FROM task_answer_observations WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM turns WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM tasks WHERE id = ?").run(task.id);
     })();

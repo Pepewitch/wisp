@@ -229,8 +229,40 @@ export type BriefReason =
   | "newer-turn-unreported"
   /** a fresh context started after the report's turn */
   | "newer-context"
+  /** the person said something (a message or an answer) after the report was saved */
+  | "newer-input"
+  /** nothing new, but an input the report saw was edited, cancelled or delivered since */
+  | "input-changed"
+  /** whether the latest input reached the agent is not known */
+  | "input-uncertain"
+  /** the latest input predates origin tracking, so Wisp cannot prove a person wrote it */
+  | "coverage-legacy"
 
 export type BriefTurnStatus = "running" | "done" | "failed" | "interrupted"
+
+/** The most recent thing the person said, as Wisp recorded it — never as the agent retold it. */
+export interface BriefLatestInput {
+  /** a message, an answer to the agent's questionnaire, or the task's first prompt */
+  kind: "message" | "answer" | "task-prompt"
+  /** the message id, the observation id, or null for the task prompt */
+  id: string | null
+  /** exact text, cut at `BRIEF_INPUT_EXCERPT` code points when `truncated` */
+  text: string
+  truncated: boolean
+  /** the full text's length, in code points */
+  length: number
+  /** for an answer: the question it answers, which is what gives "yes" its meaning */
+  question: string | null
+  delivery: "queued" | "started" | "steered" | "uncertain" | "pending" | "delivered"
+  /** the turn it started or was steered into; null while it waits */
+  turnN: number | null
+  at: string
+  /** recorded before Wisp tracked who wrote a message */
+  legacy: boolean
+}
+
+/** How much of the latest input the read model carries; the rest is in the conversation. */
+export const BRIEF_INPUT_EXCERPT = 2000
 
 /** `GET /api/tasks/:id/brief` — reading it never generates anything. */
 export interface BriefView {
@@ -251,6 +283,7 @@ export interface BriefView {
   } | null
   latestEligibleTurn: { n: number; status: BriefTurnStatus; reported: boolean } | null
   latestTurn: { n: number; status: BriefTurnStatus; contextN: number } | null
+  latestInput: BriefLatestInput | null
   reasons: BriefReason[]
 }
 

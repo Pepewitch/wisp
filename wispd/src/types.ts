@@ -87,6 +87,10 @@ export interface Task {
   brief_enabled?: number;
   /** Advances on every off→on, so a re-enable never revives an old turn's binding. */
   brief_generation?: number;
+  /** The last admission order handed to a message or answer (store-messages admitTaskInput). */
+  input_seq?: number;
+  /** Moves whenever a person's input is added, edited, cancelled or changes delivery. */
+  input_rev?: number;
   created_at: string;
   updated_at: string;
 }
@@ -233,7 +237,7 @@ export interface BackgroundWork {
 }
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_generation"> & {
+export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_generation" | "input_seq" | "input_rev"> & {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
@@ -349,6 +353,14 @@ export interface TaskMessage {
   /** SQLite boolean: a daemon crash or failed acknowledgement made delivery indeterminate. */
   delivery_uncertain: number;
   attachments_json: string | null;
+  /**
+   * Who wrote it, fixed at creation: 'workflow' for a workflow's or
+   * autopilot's message, 'legacy' for a row older than the column. Internal —
+   * briefs read it; `workflow_id` stays the API's (clearable) link.
+   */
+  origin?: "human" | "workflow" | "legacy";
+  /** Admission order among the task's inputs (messages and answers); internal. */
+  source_seq?: number | null;
   created_at: string;
   updated_at: string;
 }

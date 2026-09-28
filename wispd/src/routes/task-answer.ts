@@ -1,3 +1,5 @@
+import { observeAnswer, settleAnswerObservation } from "../brief-inputs";
+import { emit } from "../events";
 import { activeLiveInput } from "../live-input";
 import { assertTaskNotStopping, InterruptConflict } from "../turn-interrupt";
 import type { Task } from "../types";
@@ -48,12 +50,24 @@ export function answerQuestionResponse(task: Task, req: Request): Promise<Respon
     if (!live?.answer) {
       return err("this question is no longer waiting for an answer — send it as a message instead", 409);
     }
+    // Task briefs: the answer is the person's latest input, and it never
+    // reaches the message table — record it before the write, settle it after.
+    const asked = live.question?.();
+    const observation = asked && asked.id === body.questionId
+      ? observeAnswer(task.id, live.turnId, body.questionId, asked.questions, answers)
+      : null;
     try {
       // The driver owns the state move back to running: it is the half that
       // knows the harness actually took the answer.
       await live.answer(body.questionId, answers);
     } catch (error) {
+      if (observation) settleAnswerObservation(observation, "failed");
+      if (observation) emit({ type: "brief", taskId: task.id });
       return err(String(error instanceof Error ? error.message : error), 409);
+    }
+    if (observation) {
+      settleAnswerObservation(observation, "delivered");
+      emit({ type: "brief", taskId: task.id });
     }
     return json({ ok: true });
   })();
