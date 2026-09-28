@@ -5,7 +5,7 @@
  *
  * Limits are ACCOUNT state, not task state, so the cache is keyed by harness
  * (and, for droid, by which key it read with) rather than by task. Concurrent
- * callers share one read; failures are cached with bounded exponential
+ * callers share one read; real probe errors are cached with bounded exponential
  * backoff so a broken or slow harness cannot be spawned on every poll.
  */
 import { createHash } from "node:crypto";
@@ -32,9 +32,10 @@ import { bunProbeSpawn, bunRpcFactory } from "./probes";
  * more clients never make them more frequent.
  */
 export const LIMITS_TTL_MS = 290_000;
-/** A failed automatic read waits this long; consecutive failures double up to the cap. */
+/** Target retry cadence for real probe errors; each tier gets the same headroom as the normal TTL. */
 export const LIMITS_FAILURE_BACKOFF_MS = 5 * 60_000;
 export const LIMITS_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
+export const LIMITS_BACKOFF_HEADROOM_MS = 10_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
 
 export type FactoryKeySource = "settings" | "environment";
@@ -77,6 +78,7 @@ export interface HarnessLimitsCacheOptions {
   ttlMs?: number;
   failureBackoffMs?: number;
   failureBackoffMaxMs?: number;
+  failureBackoffHeadroomMs?: number;
   timeoutMs?: number;
   now?: () => Date;
 }
@@ -85,7 +87,7 @@ interface CachedLimitsEntry {
   key: string;
   freshUntil: number;
   value: HarnessLimitsEntry;
-  /** consecutive failed reads for this exact harness configuration */
+  /** consecutive real probe errors for this exact harness configuration */
   failures: number;
 }
 
@@ -111,6 +113,7 @@ export class HarnessLimitsCache {
   private readonly ttlMs: number;
   private readonly failureBackoffMs: number;
   private readonly failureBackoffMaxMs: number;
+  private readonly failureBackoffHeadroomMs: number;
   private readonly timeoutMs: number;
   private readonly now: () => Date;
   private askedAt: number | null = null;
@@ -129,6 +132,7 @@ export class HarnessLimitsCache {
     this.ttlMs = options.ttlMs ?? LIMITS_TTL_MS;
     this.failureBackoffMs = options.failureBackoffMs ?? LIMITS_FAILURE_BACKOFF_MS;
     this.failureBackoffMaxMs = options.failureBackoffMaxMs ?? LIMITS_FAILURE_BACKOFF_MAX_MS;
+    this.failureBackoffHeadroomMs = options.failureBackoffHeadroomMs ?? LIMITS_BACKOFF_HEADROOM_MS;
     this.timeoutMs = options.timeoutMs ?? LIMITS_TIMEOUT_MS;
     this.now = options.now ?? (() => new Date());
   }
@@ -151,7 +155,7 @@ export class HarnessLimitsCache {
 
   /**
    * One harness, past the cache, leaving every other harness's reading alone:
-   * what Settings' Test asks after a key is saved, and what a finished turn asks.
+   * what Settings' Test and an explicit Refresh ask.
    */
   readNow(name: string, def: AdapterDef, cfg: Pick<WispConfig, "factoryApiKey">): Promise<HarnessLimitsEntry> {
     return this.one(name, def, cfg, true);
@@ -185,14 +189,20 @@ export class HarnessLimitsCache {
     const attempt = this.fetchOne(name, def, credential)
       .then((entry) => {
         const completedAt = this.now().getTime();
-        const failures = entry.status === "ok"
+        const failures = entry.status !== "error"
           ? 0
-          : hit?.key === key && hit.value.status !== "ok"
+          : hit?.key === key && hit.value.status === "error"
             ? hit.failures + 1
             : 1;
-        const backoff = entry.status === "ok"
+        const backoff = entry.status !== "error"
           ? this.ttlMs
-          : Math.min(this.failureBackoffMs * (2 ** Math.min(failures - 1, 30)), this.failureBackoffMaxMs);
+          : Math.max(
+              0,
+              Math.min(
+                this.failureBackoffMs * (2 ** Math.min(failures - 1, 30)),
+                this.failureBackoffMaxMs,
+              ) - this.failureBackoffHeadroomMs,
+            );
         this.entries.set(name, { key, freshUntil: completedAt + backoff, value: entry, failures });
         return entry;
       })

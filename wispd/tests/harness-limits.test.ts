@@ -14,7 +14,14 @@ import {
   type RpcFactory,
   type RpcSession,
 } from "../src/adapters";
-import { HarnessLimitsCache, LIMITS_TTL_MS, factoryKey } from "../src/harness-limits";
+import {
+  HarnessLimitsCache,
+  LIMITS_BACKOFF_HEADROOM_MS,
+  LIMITS_FAILURE_BACKOFF_MAX_MS,
+  LIMITS_FAILURE_BACKOFF_MS,
+  LIMITS_TTL_MS,
+  factoryKey,
+} from "../src/harness-limits";
 import { route } from "../src/routes";
 import type { WispConfig } from "../src/config";
 import { limitsLines, resetsIn } from "../src/cli-limits";
@@ -389,6 +396,7 @@ describe("HarnessLimitsCache", () => {
       env: {},
       failureBackoffMs: 100,
       failureBackoffMaxMs: 400,
+      failureBackoffHeadroomMs: 0,
       now: () => new Date(now),
     });
     await Promise.all([cache.read({}, { claude }), cache.read({}, { claude })]);
@@ -416,6 +424,7 @@ describe("HarnessLimitsCache", () => {
       env: {},
       failureBackoffMs: 100,
       failureBackoffMaxMs: 250,
+      failureBackoffHeadroomMs: 0,
       now: () => new Date(now),
     });
 
@@ -434,6 +443,63 @@ describe("HarnessLimitsCache", () => {
     now += 1;
     expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: false });
     expect(c.reads()).toBe(4);
+  });
+
+  test("the production retry tiers expire just before their 5/10/20/30-minute polls", async () => {
+    const c = counting();
+    c.failNext(true);
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      now: () => new Date(now),
+    });
+    const delays = [
+      LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      2 * LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      4 * LIMITS_FAILURE_BACKOFF_MS - LIMITS_BACKOFF_HEADROOM_MS,
+      LIMITS_FAILURE_BACKOFF_MAX_MS - LIMITS_BACKOFF_HEADROOM_MS,
+    ];
+
+    await cache.read({}, { claude });
+    for (const [index, delay] of delays.entries()) {
+      now += delay - 1;
+      expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", cached: true });
+      expect(c.reads()).toBe(index + 1);
+      now += 1;
+      expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", cached: false });
+      expect(c.reads()).toBe(index + 2);
+    }
+  });
+
+  test("an explicit refresh bypasses an active error backoff", async () => {
+    const c = counting();
+    c.failNext(true);
+    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, which: (bin) => bin, env: {} });
+    await cache.read({}, { claude });
+    expect((await cache.read({}, { claude }))[0]!.cached).toBe(true);
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "error", cached: false });
+    expect(c.reads()).toBe(2);
+  });
+
+  test("an unavailable binary uses the normal TTL rather than exponential backoff", async () => {
+    const c = counting();
+    let installed = false;
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => (installed ? bin : null),
+      env: {},
+      now: () => new Date(now),
+    });
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "unavailable", cached: false });
+    installed = true;
+    now += LIMITS_TTL_MS - 1;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "unavailable", cached: true });
+    now += 1;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: false });
+    expect(c.reads()).toBe(1);
   });
 
   test("a harness that is not installed is unavailable, and a changed key is a fresh read", async () => {

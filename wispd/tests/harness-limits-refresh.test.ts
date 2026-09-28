@@ -12,13 +12,13 @@ const adapters: Record<string, AdapterDef> = {
 };
 
 /** A cache stand-in that records which harness was read now, and whether a client is watching. */
-function fakeCache(watching = true) {
+function fakeCache(watching = true, cached = false) {
   const reads: string[] = [];
   const cache = {
     askedWithin: () => watching,
     readIfStale: (name: string) => {
       reads.push(name);
-      return Promise.resolve({ name, status: "ok" } as HarnessLimitsEntry);
+      return Promise.resolve({ name, status: "ok", cached } as HarnessLimitsEntry);
     },
   } as unknown as HarnessLimitsCache;
   return { cache, reads };
@@ -63,6 +63,17 @@ describe("re-reading limits when a turn ends", () => {
     await sleep(30);
     expect(reads).toEqual(["claude"]);
     expect(told.events).toEqual(["claude"]);
+    told.stop();
+  });
+
+  test("a cache hit after a turn emits nothing and does not reset client poll timers", async () => {
+    const { cache, reads } = fakeCache(true, true);
+    const told = limitEvents();
+    start(cache);
+    emit({ type: "turn", taskId: "tc", n: 1, status: "done" });
+    await sleep(30);
+    expect(reads).toEqual(["claude"]);
+    expect(told.events).toEqual([]);
     told.stop();
   });
 

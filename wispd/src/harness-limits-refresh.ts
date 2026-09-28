@@ -94,8 +94,8 @@ export class LimitsTurnRefresh {
     this.lastReadAt.set(harness, this.now());
     const read = this.cache
       .readIfStale(harness, def, this.cfg)
-      .then(() => {
-        if (!this.stopped) emit({ type: "harness-limits", harness });
+      .then((entry) => {
+        if (!this.stopped && !entry.cached) emit({ type: "harness-limits", harness });
       })
       .finally(() => this.reads.delete(read));
     this.reads.add(read);

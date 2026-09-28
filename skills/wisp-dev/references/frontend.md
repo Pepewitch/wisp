@@ -1017,8 +1017,10 @@ so `useHarnessLimits` polls every five minutes while the page is visible,
 against a daemon cache that expires just before, so a poll is one fresh read
 however many clients ask. Between polls the daemon checks only the harness a
 turn just ended on; that check shares the same cache, and a `harness-limits`
-event makes clients re-ask it. Failed automatic reads back off from five to at
-most thirty minutes instead of spawning a broken or slow harness every poll.
+event makes clients re-ask it only after a fresh read. Automatic probe errors
+back off from about five to at most thirty minutes instead of spawning a
+broken or slow harness every poll; configuration states keep the normal cache
+window so installing a CLI or changing its local login recovers promptly.
 
 **App news is not connection chrome.** The update surface used to sit at the
 left end, hard against the connection tabs: the only labelled button in a bar

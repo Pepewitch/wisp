@@ -70,7 +70,7 @@ export function useStatus() {
   });
 }
 
-/** Plan limits move slowly; the daemon's cache (LIMITS_TTL_MS) expires just before this, so each poll is one fresh read. */
+/** Successful limits expire just before this poll; real probe errors back off longer in the daemon. */
 export const HARNESS_LIMITS_POLL_MS = 5 * 60 * 1000
 
 /**
