@@ -98,6 +98,8 @@ test("scheduled steer queues behind a non-live running turn and still completes"
   await new WorkflowRuntime(loadConfig(), {}, { now: () => clock }).tick();
   const message = messagesFor(item.taskId)[0]!;
   expect(message).toMatchObject({ status: "queued", workflow_id: null });
+  // the person's own words, scheduled: sent exactly as written, with no Wisp tag
+  expect(message.text).toBe("Use the staged rollout");
   expect(nextQueuedMessage(item.taskId)?.id).toBe(message.id);
   expect(getWorkflow(item.id)?.state).toBe("completed");
   expect(getWorkflow(item.id)?.reason).toBe("Scheduled steer queued for next turn");
@@ -116,6 +118,13 @@ test("heartbeat is durable, writes its completion footer outside the worktree, a
   expect(readFileSync(file, "utf8")).toContain(`workflow complete ${item.id}`);
   expect(readFileSync(file, "utf8")).toContain("Push permission: authorized for task changes.");
   expect(readFileSync(file, "utf8")).toContain("Merge permission: authorized after rechecking current provider protections.");
+  // the wake is Wisp's words, every line tagged; in the file, the person's objective stays untagged
+  const wake = messagesFor(item.taskId)[0]!.text;
+  expect(wake.split("\n").every((line) => line.startsWith("[wisp] "))).toBe(true);
+  expect(wake).toContain(`[wisp] Read ${file} and follow its objective`);
+  const [objective, control] = readFileSync(file, "utf8").split("\n\n---\n");
+  expect(objective!.includes("[wisp]")).toBe(false);
+  expect(control!.trim().split("\n").every((line) => line.startsWith("[wisp] "))).toBe(true);
   await new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch }).tick();
   expect(messagesFor(item.taskId)).toHaveLength(1);
 });
