@@ -48,6 +48,7 @@ export function harnessesRoute(
       taskAutopilot: true,
       harnessLimits: true,
       taskTerminals: true,
+      taskBriefs: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

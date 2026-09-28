@@ -1224,6 +1224,56 @@ naming whose filesystem the path is on). The disabled button it replaced meant
 the web UI could not be taken from zero to one project without a terminal, on
 the one surface — a phone — where that costs the most.
 
+## 5k. The task brief — the header's second band
+
+`components/task-brief.tsx`. When a task's briefs are on, the reading column
+gets one more band directly under the task header. The header says **which
+task this is**; the brief says **where it stands**. That is the banded-header
+rule (§6b) applied to the pointer shell as well. It is not a tab in the task
+panel: a tab is invisible at the moment of return, which is the moment the
+brief exists for.
+
+- **Two voices, split where the speaker changes.** Your latest words come
+  first, exact and in quotes, with a caption of Wisp's own facts (`sent
+  mid-turn 4`, `queued for the next turn`, `may not have arrived`). Then a
+  labelled divider, `The agent's report`, and below it Goal, Result,
+  Remaining, Decision and Scope. The divider borrows the context divider's
+  register and carries why the report may be older (`— written before your
+  latest input`). Recorded facts and agent claims never share a sentence.
+- **Collapsed, it is one line.** It shows the decision if one is waiting,
+  otherwise the result, and ONE freshness fact on the right edge. The fact is
+  chosen by priority in `lib/brief.ts`; the best state is a time. No state
+  says "complete", "verified" or "up to date". An empty remaining list reads
+  `Nothing the agent knows of.`, never "Done".
+- **No accent, no chips.** Send stays the one primary. "Recommended" is a
+  check glyph and a muted word, and it marks an option only when the
+  recommendation plainly starts with that option's label: the payload names
+  its recommendation in prose, and a marker on the wrong option is worse than
+  none. Sentence-case `Brief`, not an eyebrow; the centre pane has none.
+- **Bounded, with one exception to §5 stated plainly.** The band is capped at
+  60% of the column and scrolls within itself only when a long input and an
+  open comparison meet a short window. The conversation remains the one
+  scroller of the conversation. On touch, an open brief REPLACES the
+  transcript (hidden, still mounted) rather than squeezing it. The collapsed
+  touch row is two lines, like `TaskRowTouch`.
+- **Open or closed is presentation.** `lib/brief-open.ts` is global and
+  client-local like the theme, defaulting to open on a pointer and closed on
+  touch. It is never sent anywhere: collapsing a brief cannot change whether
+  one is generated.
+- **Reading never writes.** Expanding, Compare, Show all and Show in
+  conversation are local. Show in conversation hands the words to find-in-task
+  (`openFind(query, turn)`), which already knows how to load pages until a
+  turn is mounted. The task menu's `Task brief` switch (`MenuCheckboxItem`,
+  like Auto-merge) is the band feature's only mutation, and its note says the
+  switch starts with the NEXT turn, because nothing visible happens on click.
+- **Honest absence.** Off, or a daemon without `features.taskBriefs`, renders
+  nothing. On with no report is one line that never guesses why (`Turn 5
+  ended without one.`). A harness without `hasBriefs` is named as unable, and
+  the create composer offers its glyph toggle (§5c-ii's shape, on the scoping
+  row beside the PR picker) only where the harness can publish.
+
+The gallery's *Task brief* section draws every state from real models.
+
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its

@@ -273,3 +273,54 @@ describe("auto-merge in the overflow menu", () => {
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
   })
 })
+
+describe("the task brief switch", () => {
+  function daemon(hasBriefs = true) {
+    return stubApi((path) => {
+      if (path.endsWith("/api/harnesses")) {
+        return { status: 200, body: { harnesses: [{ name: "droid", hasBriefs, hasModel: true, hasEffort: false, hasImage: false, defaults: {} }], features: { taskBriefs: true } } }
+      }
+      return { status: 200, body: { enabled: true, generation: 1, activation: "next-turn", turnRunning: false } }
+    })
+  }
+  async function open() {
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    return await screen.findByRole("menuitemcheckbox", { name: "Task brief" })
+  }
+
+  it("says what it costs before it is on, and switches it on without starting anything", async () => {
+    const calls = daemon()
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(screen.getByText(/One extra step per turn/)).toBeInTheDocument()
+    await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"))
+    fireEvent.click(toggle)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/brief-settings`, method: "PUT", body: { enabled: true } }))
+    expect(await screen.findByText("Starts with the next turn.")).toBeInTheDocument()
+    // the switch writes the setting and nothing else: no send, no interrupt
+    expect(calls.filter((c) => c.method !== "GET").map((c) => c.path)).toEqual([`/api/tasks/${TASK.id}/brief-settings`])
+  })
+
+  it("is not offered to switch on for a harness that cannot publish", async () => {
+    daemon(false)
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    expect(await screen.findByText("droid can't write briefs through Wisp yet.")).toBeInTheDocument()
+    expect(toggle).toHaveAttribute("aria-disabled", "true")
+  })
+
+  it("is absent on an archived task and on a daemon without briefs", async () => {
+    stubApi((path) => (path.endsWith("/api/harnesses") ? { status: 200, body: { harnesses: [], features: {} } } : { status: 200, body: {} }))
+    const { unmount } = mount(<TaskActions task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+    unmount()
+    daemon()
+    mount(<TaskActions task={{ ...TASK, archived: true }} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+  })
+})

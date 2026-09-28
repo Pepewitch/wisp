@@ -5,8 +5,9 @@ import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { More } from "@/components/icons"
 import { Menu, MenuCheckboxItem, MenuItem, MenuNote, MenuSeparator } from "@/components/menu"
 import { RenameTaskDialog } from "@/components/rename-task-dialog"
-import { useAutopilot } from "@/hooks/mutations"
-import { useHarnessFeatures } from "@/hooks/queries"
+import { useAutopilot, useBriefSettings } from "@/hooks/mutations"
+import { useHarnesses, useHarnessFeatures } from "@/hooks/queries"
+import { briefMenuNote } from "@/lib/brief"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { failureReason } from "@/lib/api"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -79,6 +80,7 @@ export function TaskActions({ task }: { task: ApiTask }) {
             Export or delete task data…
           </MenuItem>
         )}
+        <BriefItems task={task} />
         <AutoMergeItems task={task} />
       </Menu>
 
@@ -103,6 +105,44 @@ export function TaskActions({ task }: { task: ApiTask }) {
         onForce={() => archive.request(true)}
         stopsAutopilot={archive.stopsAutopilot}
       />
+    </>
+  )
+}
+
+/**
+ * Task briefs: one switch, and one line saying what switching it does. On
+ * means the NEXT eligible turn is asked — the menu says so, because nothing
+ * visible happens at the moment of the click, and that is on purpose.
+ */
+function BriefItems({ task }: { task: ApiTask }) {
+  const features = useHarnessFeatures()
+  const harnesses = useHarnesses(features.data?.taskBriefs === true)
+  const settings = useBriefSettings()
+  if (!features.data?.taskBriefs || task.archived) return null
+  // the daemon's answer to this menu's own change wins until the task row catches up
+  const answered = settings.data && settings.variables?.id === task.id ? settings.data : null
+  const enabled = answered ? answered.enabled : task.briefEnabled === true
+  const supported = harnesses.data?.find((h) => h.name === task.harness)?.hasBriefs === true
+  const note = briefMenuNote({
+    enabled,
+    // a harness that cannot publish is only worth mentioning to someone about to switch it on
+    supported: supported || enabled,
+    harness: task.harness,
+    running: answered?.turnRunning ?? task.state === "running",
+    justEnabled: answered?.enabled === true,
+  })
+  return (
+    <>
+      <MenuSeparator />
+      <MenuCheckboxItem
+        checked={enabled}
+        disabled={settings.isPending || (!enabled && !supported)}
+        onCheckedChange={(checked) => settings.mutate({ id: task.id, enabled: checked })}
+      >
+        Task brief
+      </MenuCheckboxItem>
+      {note && <div className="max-w-[280px]"><MenuNote>{note}</MenuNote></div>}
+      {settings.error && <div className="max-w-[280px]"><MenuNote>{failureReason(settings.error)}</MenuNote></div>}
     </>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 
 import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
+import { useBriefChoice } from "@/hooks/useBriefChoice"
 import { useSuffixPrompts } from "@/hooks/queries"
 import { usePendingAttachments } from "@/lib/attachments"
 import {
@@ -33,6 +34,7 @@ export function useCreateTaskComposer(
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(saved?.suffixPromptId ?? null)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
+  const brief = useBriefChoice(harness, saved)
   const modelAvailable = !!harness && !!choice && modelOptionsFor(harness).includes(choice.model)
   const suffixPrompts = useSuffixPrompts(suffixPromptId !== null)
   // If discovery failed, let the daemon make the final decision at submit.
@@ -50,9 +52,9 @@ export function useCreateTaskComposer(
 
   useEffect(() => {
     writeCreateTaskDraft(connectionId, repoPath, {
-      prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot: autopilot.value,
+      prompt, choice, effort, fast, brief: brief.value, mode, base, suffixPromptId, autopilot: autopilot.value,
     })
-  }, [connectionId, repoPath, prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot.value])
+  }, [connectionId, repoPath, prompt, choice, effort, fast, brief.value, mode, base, suffixPromptId, autopilot.value])
   useEffect(() => {
     writePendingAttachmentCount(connectionId, createTaskScope(repoPath), attachments.list.length)
   }, [connectionId, repoPath, attachments.list.length])
@@ -65,7 +67,7 @@ export function useCreateTaskComposer(
 
   return {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
-    mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
+    mode, setMode, base, setBase, autopilot, brief, suffixPromptId, setSuffixPromptId,
     harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
   }
 }

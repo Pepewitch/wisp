@@ -174,6 +174,8 @@ vi.mock("@/hooks/queries", () => ({
   useTaskSearch: () => ({ data: undefined, isPending: false, error: null }),
   useUpdateStatus: () => ({ data: UPDATE }),
   useTaskSkills: () => ({ data: undefined }),
+  // no `taskBriefs` flag above, so the band stays off and never reads this
+  useTaskBrief: () => ({ data: undefined, error: null, refetch: () => {} }),
   useWispSettings: () => ({
     data: { autoRenameTasksFromPullRequests: true },
     error: null,

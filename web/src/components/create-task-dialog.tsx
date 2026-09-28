@@ -174,7 +174,7 @@ function ProjectForm({
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel(connectionId))
   const {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
-    mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
+    mode, setMode, base, setBase, autopilot, brief, suffixPromptId, setSuffixPromptId,
     harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
   } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
@@ -253,6 +253,7 @@ function ProjectForm({
             ...(suffixPromptId ? { suffixPromptId } : {}),
             ...(payloads ? { attachments: payloads } : {}),
             ...autopilot.body,
+            ...brief.body,
           },
           {
             onSuccess: (task) => {
@@ -359,6 +360,7 @@ function ProjectForm({
         <ModePicker mode={mode} onChange={setMode} />
         {mode === "worktree" && <BasePicker base={base} onChange={setBase} onRestoreComposer={restoreComposer} />}
         {autopilot.picker}
+        {brief.toggle}
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}

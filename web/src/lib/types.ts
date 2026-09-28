@@ -143,6 +143,8 @@ export interface ApiTask {
   has_workflow?: boolean;
   /** auto-merge for the task's PR; null or absent when it was never armed (or the daemon predates it) */
   autopilot?: AutopilotStatus | null;
+  /** Task briefs are on for this task. Absent on a daemon older than the feature. */
+  briefEnabled?: boolean;
   /** the model the task's latest turn actually ran on (P5b) — list endpoint only */
   latest_turn_model?: string | null;
   /** the latest turn's exit code (Theme B) — the fact behind the "Exited N" word */
@@ -575,6 +577,11 @@ export interface HarnessInfo {
    * hides the control rather than offering a switch /send would ignore.
    */
   hasFastMode?: boolean;
+  /**
+   * The harness can be asked for a task brief (a live turn verified the
+   * binding reaches its tool shell). Absent on an older daemon: no toggle.
+   */
+  hasBriefs?: boolean;
   /** S3: the adapter declares one of the three image mechanisms — without it a pasted IMAGE is refused by name */
   hasImage: boolean;
   /**
@@ -638,6 +645,8 @@ export interface HarnessesResponse {
     harnessLimits?: boolean;
     /** /api/tasks/:id/terminals: the daemon keeps each task's shell tabs, and closing one kills its shell. */
     taskTerminals?: boolean;
+    /** GET/PUT /api/tasks/:id/brief and …/brief-settings: the optional per-task brief. */
+    taskBriefs?: boolean;
   };
 }
 

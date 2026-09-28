@@ -16,6 +16,7 @@ import { AuthDialog } from "@/components/auth-dialog"
 import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
+import { BriefedConversation } from "@/components/task-brief"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
@@ -100,17 +101,28 @@ function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
   return <MainView key={runtimeKey} updateControls={updateControls} />
 }
 
-/** Live append frames update the transcript without re-rendering the app shell. */
+/**
+ * Live append frames update the transcript without re-rendering the app shell.
+ * The task brief rides with it as the header's second band: above it on a
+ * pointer, in place of it on touch while open (task-brief.tsx).
+ */
 function StreamedConversation({
   taskId,
   generation,
+  briefTask,
   ...props
 }: Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {
   taskId: string | null
   generation: number
+  /** the header's task row, which carries the brief switch */
+  briefTask: ApiTask | null
 }) {
   const stream = useLogStream(taskId, "activity", generation)
-  return <Conversation {...props} stream={stream} note={stream.note} />
+  return (
+    <BriefedConversation task={briefTask} touch={props.touch ?? false}>
+      <Conversation {...props} stream={stream} note={stream.note} />
+    </BriefedConversation>
+  )
 }
 
 function useConnectionTaskSelection(connectionId: string) {
@@ -369,6 +381,7 @@ function MainView({
     <StreamedConversation
       taskId={selectedId}
       generation={logGeneration + reconnectRequests}
+      briefTask={header}
       task={detailQuery.data ?? null}
       touch={isMobile}
       hasOlderTurns={detailQuery.hasOlderTurns}

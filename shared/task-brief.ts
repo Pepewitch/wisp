@@ -60,8 +60,10 @@ const DECISION_KEYS = ["question", "recommendation", "options", "unknowns", "alt
 const OPTION_KEYS = ["label", "gain", "downside", "impact", "effort"]
 
 class Invalid extends Error {
-  constructor(readonly field: string, message: string) {
+  readonly field: string
+  constructor(field: string, message: string) {
     super(message)
+    this.field = field
   }
 }
 

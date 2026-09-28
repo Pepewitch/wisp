@@ -94,6 +94,7 @@ unbundled and ad-hoc signed.
 - [CLI reference](skills/wisp/references/cli.md)
 - [Task workflows: heartbeats and scheduled steers](docs/WORKFLOWS.md)
 - [Auto-merge and auto-fix: merge a task's PR once it is ready, fix its red CI and review feedback](docs/PR-AUTOPILOT.md)
+- [Task briefs: an optional short report from the agent at the end of each turn](skills/wisp/references/cli.md#task-briefs)
 - [Remote and phone access](docs/REMOTE-ACCESS.md)
 - [Storage, archive, and cleanup](docs/ARCHIVE-CLEANUP.md)
 - [Security and vulnerability reporting](SECURITY.md)

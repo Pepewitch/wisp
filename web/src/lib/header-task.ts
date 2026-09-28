@@ -9,5 +9,7 @@ import type { ApiTask } from "@/lib/types"
  */
 export function headerTask<T extends ApiTask>(detail: T | undefined, row: ApiTask | null): T | ApiTask | null {
   if (!detail) return row
-  return row && row.id === detail.id ? { ...detail, autopilot: row.autopilot } : detail
+  return row && row.id === detail.id
+    ? { ...detail, autopilot: row.autopilot, briefEnabled: row.briefEnabled ?? detail.briefEnabled }
+    : detail
 }
