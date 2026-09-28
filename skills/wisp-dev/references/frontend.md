@@ -1013,11 +1013,12 @@ is a tap. The popover groups windows per harness (droid's `standard` and
 own report words it, and each row says when it resets. A harness with nothing
 to show says why in one line; only a real read failure is red, and a missing
 or wrong-account Factory key links to Settings. The limits are account state,
-so `useHarnessLimits` polls every two minutes while the page is visible,
+so `useHarnessLimits` polls every five minutes while the page is visible,
 against a daemon cache that expires just before, so a poll is one fresh read
-however many clients ask. Between polls the daemon re-reads only the harness a
-turn just ended on, and a `harness-limits` event makes clients re-ask its
-cache.
+however many clients ask. Between polls the daemon checks only the harness a
+turn just ended on; that check shares the same cache, and a `harness-limits`
+event makes clients re-ask it. Failed automatic reads back off from five to at
+most thirty minutes instead of spawning a broken or slow harness every poll.
 
 **App news is not connection chrome.** The update surface used to sit at the
 left end, hard against the connection tabs: the only labelled button in a bar

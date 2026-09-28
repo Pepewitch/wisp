@@ -18,7 +18,7 @@ import {
 } from "@/lib/usage-limits"
 import { cn } from "@/lib/utils"
 
-/** An answer older than this is re-read when the popover opens; the poll alone could leave it two minutes old. */
+/** An answer older than this is re-asked when the popover opens; the daemon still applies its shared cache/backoff. */
 const STALE_ON_OPEN_MS = 30_000
 
 const ARC: Record<LimitTone, string> = {

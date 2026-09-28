@@ -16,7 +16,7 @@ function fakeCache(watching = true) {
   const reads: string[] = [];
   const cache = {
     askedWithin: () => watching,
-    readNow: (name: string) => {
+    readIfStale: (name: string) => {
       reads.push(name);
       return Promise.resolve({ name, status: "ok" } as HarnessLimitsEntry);
     },
