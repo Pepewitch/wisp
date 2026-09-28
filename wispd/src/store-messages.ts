@@ -52,7 +52,7 @@ export function admitTaskInput(taskId: string, human: boolean): number {
 function touchHumanInput(messageId: string): void {
   db.run(
     `UPDATE tasks SET input_rev = input_rev + 1
-     WHERE id = (SELECT task_id FROM task_messages WHERE id = ? AND origin IN ('human', 'legacy'))`,
+     WHERE id = (SELECT task_id FROM task_messages WHERE id = ? AND origin IN ('human', 'legacy', 'scheduled'))`,
     [messageId],
   );
 }
@@ -60,7 +60,7 @@ function touchHumanInput(messageId: string): void {
 function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessage {
   const timestamp = now();
   const origin = input.origin ?? "human";
-  const seq = admitTaskInput(input.taskId, origin === "human");
+  const seq = admitTaskInput(input.taskId, origin === "human" || origin === "scheduled");
   db.run(
     `INSERT INTO task_messages
       (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,

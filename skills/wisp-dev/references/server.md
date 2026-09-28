@@ -85,8 +85,11 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
     the section, which says whose it is.
   - A schedule-steer's words are the person's, so they go out under one
     `<wisp>scheduled steer</wisp>` line.
-  - A `/command` is never framed: a harness reads it as a command only when
-    the input starts with `/`.
+  - A queued `/command` gets no framing of its own, and after the first turn
+    no standing notes either: a harness reads it as a command only when the
+    input starts with `/`.
+  - A plugin's report is relayed data, so `<wisp` and `</wisp` in it are
+    escaped too: it cannot open or close a section of its own.
   - `Turn.prompt` keeps the message as stored, with no framing.
   - A new injected instruction uses the same helper, never untagged text.
 - A successful JSON turn needs a positively parsed result unless the adapter

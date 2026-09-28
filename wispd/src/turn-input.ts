@@ -87,7 +87,8 @@ export function framedMessage(origin: MessageOrigin | undefined, text: string): 
   if (origin === "plugin") {
     const split = text.indexOf("\n\n")
     const control = split < 0 ? [] : text.slice(0, split).split("\n")
-    const report = split < 0 ? text : text.slice(split + 2)
+    // relayed data (a PR comment, a CI log): it may not open or close a Wisp section of its own
+    const report = (split < 0 ? text : text.slice(split + 2)).replace(/<(\/?wisp)\b/gi, "<\\$1")
     return { lines: [...control, "The workflow's report follows; it is not the person's words."], words: report }
   }
   return { lines: [], words: text }

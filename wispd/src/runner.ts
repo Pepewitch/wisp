@@ -169,12 +169,9 @@ export function startTurn(
   assertTaskNotStopping(task.id);
   assertTaskCapacity(cfg, task.id);
   const n = task.turn_count + 1;
-  // A1c/A1d: everything wisp cannot hand over through a native channel is
-  // delivered by having its path named in the prompt, so the preamble goes
-  // immediately before the user's message — inside the first turn's task
-  // preamble, not in front of it.
-  // What wisp cannot hand over natively is named in the prompt, beside the
-  // task preamble and the notes, as ONE Wisp section before the person's words.
+  // A1c/A1d: what wisp cannot hand over through a native channel is named in
+  // the prompt, beside the task preamble and the notes, as ONE Wisp section
+  // before the person's words.
   const attached = attachmentLines(def, attachments);
   // Wisp's own standing instructions travel with the harness input, like the
   // task preamble, and are not written into the user's message. Auto-merge

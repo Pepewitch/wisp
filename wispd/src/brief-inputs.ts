@@ -7,9 +7,10 @@
  * was delivered: an older queued message that reaches the agent after a newer
  * answer does not become "the latest thing you said".
  *
- *  - a message the person wrote (origin 'human', or 'legacy' for rows from
- *    before origin was recorded). A workflow's message never counts, even
- *    after a finished workflow clears its link. A cancelled message counts
+ *  - a message the person wrote (origin 'human', 'scheduled' for their words
+ *    sent later by a schedule-steer, or 'legacy' for rows from before origin
+ *    was recorded). Wisp's own messages and a plugin's never count, even after
+ *    a finished workflow clears its link. A cancelled message counts
  *    only while its delivery is uncertain — one that certainly never arrived
  *    was not said to the agent.
  *  - an answer to a native questionnaire, which bypasses the message table.
@@ -76,7 +77,7 @@ function messageDelivery(message: TaskMessage): BriefLatestInput["delivery"] {
 function latestMessage(taskId: string): RankedInput | null {
   const message = (db.query(
     `SELECT * FROM task_messages
-     WHERE task_id = ? AND origin IN ('human', 'legacy') AND source_seq IS NOT NULL
+     WHERE task_id = ? AND origin IN ('human', 'legacy', 'scheduled') AND source_seq IS NOT NULL
        AND NOT (status = 'cancelled' AND delivery_uncertain = 0)
      ORDER BY source_seq DESC LIMIT 1`,
   ).get(taskId) as TaskMessage | null) ?? null;
@@ -143,7 +144,7 @@ function uncertain(input: BriefLatestInput | undefined): boolean {
 export function inputSnapshot(task: Task): InputSnapshot {
   const latest = latestHumanInput(task.id);
   const pending = db.query(
-    `SELECT 1 FROM task_messages WHERE task_id = ? AND origin IN ('human', 'legacy') AND status = 'queued' LIMIT 1`,
+    `SELECT 1 FROM task_messages WHERE task_id = ? AND origin IN ('human', 'legacy', 'scheduled') AND status = 'queued' LIMIT 1`,
   ).get(task.id) !== null;
   return {
     inputRev: task.input_rev ?? 0,

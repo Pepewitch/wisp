@@ -88,6 +88,14 @@ export interface AdapterDef {
    * separate models the picker already offers, and rewriting a chosen model id
    * under the user would break "a model is always PICKED, never typed".
    */
+  fastMode?: {
+    /** the tier value that buys speed (codex: "fast") */
+    fast: string;
+    /** the tier value that means ordinary speed (codex: "default") */
+    standard: string;
+    /** one-shot argv, "{tier}" substituted (codex: ["-c", "service_tier={tier}"]) */
+    argv: string[];
+  } | null;
   /**
    * Task briefs (brief-store.ts): this harness's turns may be asked to publish
    * one with `wisp brief set`, bound to the turn by `WISP_BRIEF_RUN`.
@@ -102,14 +110,6 @@ export interface AdapterDef {
    * drops liveInput: the verification was of that command.
    */
   briefs?: boolean;
-  fastMode?: {
-    /** the tier value that buys speed (codex: "fast") */
-    fast: string;
-    /** the tier value that means ordinary speed (codex: "default") */
-    standard: string;
-    /** one-shot argv, "{tier}" substituted (codex: ["-c", "service_tier={tier}"]) */
-    argv: string[];
-  } | null;
   /**
    * A curated model list for a harness whose CLI enumerates none.
    *

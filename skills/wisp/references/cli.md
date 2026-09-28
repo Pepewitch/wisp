@@ -52,16 +52,18 @@ wisp brief --help                   # what an agent reads before publishing
 Briefs are off unless you switch them on for a task. While on, each ordinary
 turn on a harness that supports them (claude, codex, droid, cursor) carries one
 line asking the agent to run `wisp brief set --stdin` before it ends; a
-`/command` turn, a steer, and a questionnaire answer carry nothing. The agent's
+`/command` after the first turn, a steer, and a questionnaire answer carry no
+reminder. The agent's
 save is bound to the turn that asked for it, so a disabled task, an ended turn,
 or another task can never be written to. Enabling never starts, steers, or
 interrupts a turn — the next eligible turn is the first to be asked. A brief is
 the agent's report, not a verified result: `show` says which turn wrote it and
 whether a later turn ran without one. It also shows the start of your own latest
 message or questionnaire answer, taken from Wisp's records rather than the
-agent's (never a workflow's message), on one line with terminal control
+agent's, on one line with terminal control
 characters removed. Everything else it prints is the agent's text, cleaned the
-same way; `--json` stays lossless.
+same way; `--json` stays lossless. A scheduled steer counts as yours, since its
+words are; Wisp's own messages and a workflow plugin's never do.
 
 ## Auto-merge and auto-fix
 

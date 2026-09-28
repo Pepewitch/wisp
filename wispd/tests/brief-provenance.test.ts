@@ -29,7 +29,7 @@ function boundTask(prompt = "Stop duplicate saves.") {
   return { task: getTask(task.id)!, turnId, runId };
 }
 
-function say(taskId: string, text: string, origin: "human" | "workflow" = "human") {
+function say(taskId: string, text: string, origin: "human" | "workflow" | "scheduled" | "plugin" = "human") {
   return createTaskMessage({ id: newTaskMessageId(), taskId, text, attachmentHash: "", origin }, false);
 }
 
@@ -53,6 +53,11 @@ describe("the person's latest input", () => {
     expect(latestHumanInput(task.id)?.input.id).toBe(mine.id);
     db.run(`UPDATE task_messages SET workflow_id = NULL WHERE id = ?`, [automated.id]);
     expect(latestHumanInput(task.id)?.input.id).toBe(mine.id);
+    say(task.id, "The build is red.", "plugin");
+    expect(latestHumanInput(task.id)?.input.id).toBe(mine.id);
+    // a scheduled steer is the person's own words, sent later: it is what they last said
+    const scheduled = say(task.id, "Use the staged rollout.", "scheduled");
+    expect(latestHumanInput(task.id)?.input.id).toBe(scheduled.id);
   });
 
   test("an older queued message delivered after a newer answer does not become the latest", () => {
