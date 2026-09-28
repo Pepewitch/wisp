@@ -239,7 +239,10 @@ out:
 
 1. `release-source` requires the tag to point at `origin/main`, requires that
    exact commit's pre-tag `linux-contract` and `update-verifier` success, scans
-   full history with Gitleaks, and builds the canonical UI twice.
+   full history with Gitleaks, and builds both canonical UIs twice: a single-file
+   Desktop bundle and a web bundle with lazy-loaded assets. It checksums every
+   web file, including the Vite manifest, before handing either bundle to the
+   platform jobs.
 2. `release-linux`, two clean `macos-repro` matrix runners, and
    `macos-trusted` run concurrently. Linux still reproduces its asset and
    repeats the installer/activation journey. The two independent Mac runners
@@ -463,8 +466,9 @@ bun run test:evaluator
 git diff --check
 ```
 
-Review the full source diff. `web/ui-dist/index.html` is ignored build output;
-never stage it in the release-preparation PR. Commit the release preparation
+Review the full source diff. `web/ui-dist/` and `web/web-dist/` are ignored
+build outputs; never stage them in the release-preparation PR. Commit the
+release preparation
 and land it on `main`. Re-run `bun run build` after the commit and require a
 clean source tree:
 
@@ -487,14 +491,15 @@ test "$(git describe --tags --exact-match HEAD)" = "$tag"
 ## 4. Reproduce the payload, then build all ten assets
 
 Build on Apple Silicon macOS so the same checkout can cross-compile Linux and
-produce and verify the native Mac artifacts. Generate the ignored UI bundle
-once and retain its checksum; every builder in this release must consume those
-exact bytes rather than silently regenerate them. First build both Mac
-artifacts without release credentials; this is the reproducible payload proof,
+produce and verify the native Mac artifacts. Generate both ignored UI bundles
+once and retain checksums for every file; every builder in this release must
+consume those exact bytes rather than silently regenerate them. First build
+both Mac artifacts without release credentials; this is the reproducible
+payload proof,
 not either public Mac artifact:
 
 ```sh
-bun run build:ui
+bun run build:all-ui
 bun run wispd/scripts/release-linux.ts --require-tag
 bun run wispd/scripts/release-macos.ts --require-tag
 desktop_repro_target="$(mktemp -d)"
@@ -575,10 +580,11 @@ ad-hoc or Developer ID posture, background-app metadata and icon, archive
 contents, and embedded version/commit identity.
 The Desktop builder additionally verifies the Cargo/Tauri/plist/binary version,
 Mach-O deployment minimum, exact bundle inventory, absence of builder paths,
-and a clean source tree after packaging. Tag CI builds and reproduces the UI on
-Linux, transfers it with a checksum, and sets `WISP_PREBUILT_UI=1` for all
-three parallel Desktop builds so the daemon and application package one
-canonical bundle. CI's two reproducibility copies run on independent clean
+and a clean source tree after packaging. Tag CI builds and reproduces both UIs
+on Linux, transfers every web asset and the Desktop HTML with checksums, and
+sets `WISP_PREBUILT_UI=1` for all three parallel Desktop builds. Each daemon
+binary embeds the split web bundle; each Desktop app packages the single-file
+bundle. CI's two reproducibility copies run on independent clean
 macOS hosts with target caching disabled; publication compares their six
 outputs before accepting the separate trusted archives. For the sequential
 manual fallback above, Apple's linker changes the required Mach-O UUID when

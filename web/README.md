@@ -2,8 +2,9 @@
 
 The React application used by both Wisp clients: the daemon serves it at `/` in
 a browser, and Wisp Desktop packages it in a Tauri webview. React 19 + Vite +
-Tailwind v4 + shadcn (on base-ui primitives) build to **one Git-ignored,
-derived single-file bundle** at `web/ui-dist/index.html`.
+Tailwind v4 + shadcn (on base-ui primitives) build from the same source into two
+Git-ignored delivery artifacts: a single-file Desktop bundle at
+`web/ui-dist/index.html` and a browser bundle under `web/web-dist/`.
 It is a Bun workspace managed by the repository root lockfile.
 
 Three sources are binding law before you write any of it:
@@ -39,30 +40,40 @@ This previews the daemon-served browser runtime. For only one half, use
 get; `#/gallery` is the one route that renders standalone, off
 `src/lib/fixtures.ts`.
 
-## The one-file rule
+## Delivery builds
 
-`bunx vite build` writes exactly one artifact to `web/ui-dist/`. Scripts,
-styles, xterm.js, Geist fonts, and the favicon are inlined. The daemon embeds
-this file, so running the UI requires neither a CDN nor a sibling directory.
-`wispd/tests/web.test.ts` asserts the self-contained bundle and rejects the old
-`/vendor/*` asset paths.
+`bun run build:ui` writes exactly one artifact to `web/ui-dist/` for Desktop.
+Scripts, styles, xterm.js, Geist fonts, Mermaid, and the favicon are inlined.
+Tauri packages that file, preserving its local first-diagram behavior.
+
+`bun run build:web` writes `web/web-dist/index.html` with styles, fonts, and
+favicon inline. The main app is one content-hashed entry script; Mermaid and
+its diagram-family modules are separate, lazy JavaScript chunks. The compiled
+daemon embeds this complete generated web artifact and serves only its
+allowlisted scripts. A browser with no diagram does not download Mermaid; its
+first diagram fetches the needed chunks. Neither client needs a CDN or a
+sibling directory at installation.
+`wispd/tests/web.test.ts` checks the browser artifact and asset routes; Desktop
+bundle tests keep the one-file assertion.
 
 PWA installation adds a precise exception: `wispd/src/pwa.ts` serves an embedded
 allowlist of `/manifest.webmanifest`, `/sw.js`, `/apple-touch-icon.png`, and
-two `/icons/wisp-*.png` images. There is no general static-file route. The
+two `/icons/wisp-*.png` images. The only other static routes are the generated
+web chunks; there is no general filesystem server. The
 browser entry point attaches the manifest/icon links and registers the worker
 only in secure production contexts; Desktop neither attaches these links nor
 registers a worker. `web/pwa/` owns the standalone offline document and the
 stateless navigation worker. The worker never caches application/API responses
-and never reloads an active client. See [phone installation](../docs/REMOTE-ACCESS.md#install-wisp-on-your-phone).
+or web chunks and never reloads an active client. A page that cannot fetch its
+first diagram chunk still shows the diagram source and offers an explicit app
+reload; it does not discard a draft automatically. See
+[phone installation](../docs/REMOTE-ACCESS.md#install-wisp-on-your-phone).
 
-`web/ui-dist/index.html` is deliberately **not committed**. Supported test,
-development, Desktop, and release commands generate it before anything consumes
-it. Tests compare the daemon-served bytes with that generated artifact, and the
-Tauri configuration packages the same directory. There is no second desktop
-bundle to update by hand. Tag CI builds one canonical copy, verifies its
-checksum after transfer to the macOS runner, and packages those exact bytes in
-both release products.
+Both generated directories are deliberately **not committed**. Supported test,
+development, Desktop, and release commands generate the artifact they consume.
+Tag CI checksums the full web asset tree and the Desktop HTML, then transfers
+those exact bytes to Linux and macOS packaging jobs. There is no second React
+source tree to maintain.
 
 ## Layout
 
@@ -105,25 +116,24 @@ runtime-only behavior. In particular, review auth, cache/storage scope, late
 callbacks, SSE, WebSockets, media URLs, terminal ownership, and daemon update
 recovery whenever a change touches them.
 
-During iteration, run the root gate; it generates the shared artifact before
+During iteration, run the root gate; it generates both artifacts before
 the tests that exercise it:
 
 ```sh
 bun run check
 ```
 
-Do not review or stage `web/ui-dist/index.html`. When the compiled boundary is
-affected, build the binary from the generated artifact as a separate check:
+Do not review or stage either generated directory. When the compiled boundary
+is affected, build the binary from the generated web artifact as a separate check:
 
 ```sh
 bun run build
 ```
 
 The root gate covers both workspaces: bundle generation, lint, typecheck, and
-unit tests. The build proves the generated single-file application embeds in
-the daemon. Release CI separately proves reproducibility and exact sharing
-between daemon and Desktop artifacts; Git cleanliness is no longer a proxy for
-either property.
+unit tests. The build proves the generated web assets embed in the daemon.
+Release CI separately proves reproducibility and exact transfer of both
+delivery artifacts; Git cleanliness is no longer a proxy for either property.
 
 Run `bun run desktop:check` when native code changes or when a daemon/UI change
 affects rules the native core enforces: capability or identity negotiation,

@@ -46,6 +46,7 @@ function writeConfig(): void {
 }
 
 const BUNDLE_PATH = join(import.meta.dir, "../../web/ui-dist/index.html");
+const WEB_BUNDLE_PATH = join(import.meta.dir, "../../web/web-dist/index.html");
 
 describe("the web app", () => {
   test("gzip negotiation honors explicit exclusions and wildcard acceptance", () => {
@@ -58,24 +59,26 @@ describe("the web app", () => {
     expect(acceptsGzip("gzip;q=2")).toBe(false);
   });
 
-  test("the generated bundle stays outside version control", () => {
+  test("both generated bundles stay outside version control", () => {
     const root = join(import.meta.dir, "../..");
-    const ignored = Bun.spawnSync({
-      cmd: ["git", "-C", root, "check-ignore", "--no-index", "web/ui-dist/index.html"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(ignored.exitCode).toBe(0);
+    for (const path of ["web/ui-dist/index.html", "web/web-dist/index.html", "web/web-dist/embedded-assets.ts"]) {
+      const ignored = Bun.spawnSync({
+        cmd: ["git", "-C", root, "check-ignore", "--no-index", path],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(ignored.exitCode).toBe(0);
 
-    const tracked = Bun.spawnSync({
-      cmd: ["git", "-C", root, "ls-files", "--error-unmatch", "web/ui-dist/index.html"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(tracked.exitCode).not.toBe(0);
+      const tracked = Bun.spawnSync({
+        cmd: ["git", "-C", root, "ls-files", "--error-unmatch", path],
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(tracked.exitCode).not.toBe(0);
+    }
   });
 
-  test("GET / serves the generated single-file bundle used by the binary", async () => {
+  test("GET / serves the generated web entry used by the binary", async () => {
     writeConfig();
     server = await serve({ port: 0 });
     const res = await fetch(`http://127.0.0.1:${server.port}/`);
@@ -84,8 +87,8 @@ describe("the web app", () => {
     const html = await res.text();
 
     // Byte-for-byte the artifact generated before this test. The compiled
-    // daemon embeds the same text import rather than serving a sibling file.
-    expect(html).toBe(await Bun.file(BUNDLE_PATH).text());
+    // daemon embeds this file rather than serving a sibling on disk.
+    expect(html).toBe(await Bun.file(WEB_BUNDLE_PATH).text());
     expect(html).toContain('id="root"');
   });
 
@@ -104,7 +107,7 @@ describe("the web app", () => {
       expect(response.headers.get("vary")).toBe("Accept-Encoding");
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(response.headers.get("content-security-policy")).toBe(plain.headers.get("content-security-policy"));
-      expect(await response.text()).toBe(await Bun.file(BUNDLE_PATH).text());
+      expect(await response.text()).toBe(await Bun.file(WEB_BUNDLE_PATH).text());
     }
   });
 
@@ -122,11 +125,50 @@ describe("the web app", () => {
     }
   });
 
-  /**
-   * The core UI stays in ONE file, so the bundle has to be truly
-   * self-contained: a CDN reference or an un-inlined chunk would 404 in the
-   * browser and there is no static handler left to catch it.
-   */
+  test("only generated chunks are served, with immutable gzip and safe script headers", async () => {
+    const { embeddedWebAssets, embeddedWebCompressedAssets } = await import("../../web/web-dist/embedded-assets");
+    const chunks = Object.keys(embeddedWebAssets);
+    const manifest = await Bun.file(join(import.meta.dir, "../../web/web-dist/asset-manifest.json")).json() as {
+      assets: Array<{ path: string }>;
+    };
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(Object.keys(embeddedWebCompressedAssets).sort()).toEqual([...chunks].sort());
+    expect(chunks.sort()).toEqual(manifest.assets.map((asset) => asset.path).sort());
+
+    writeConfig();
+    server = await serve({ port: 0 });
+    const base = `http://127.0.0.1:${server.port}`;
+    const chunk = chunks[0]!;
+    const raw = await Bun.file(embeddedWebAssets[chunk]!).text();
+    const plain = await fetch(`${base}${chunk}`, { headers: { "accept-encoding": "identity" } });
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(plain.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+    expect(plain.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(plain.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(plain.headers.get("vary")).toBe("Accept-Encoding");
+    expect(await plain.text()).toBe(raw);
+
+    const compressed = await fetch(`${base}${chunk}`, { headers: { "accept-encoding": "gzip" } });
+    expect(compressed.status).toBe(200);
+    expect(compressed.headers.get("content-encoding")).toBe("gzip");
+    expect(await compressed.text()).toBe(raw);
+
+    const head = await fetch(`${base}${chunk}`, { method: "HEAD", headers: { "accept-encoding": "gzip" } });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-encoding")).toBe("gzip");
+    expect(head.headers.get("content-length")).toBe(String(Bun.file(embeddedWebCompressedAssets[chunk]!).size));
+    expect(await head.text()).toBe("");
+
+    const post = await fetch(`${base}${chunk}`, { method: "POST" });
+    expect(post.status).toBe(405);
+    expect(post.headers.get("allow")).toBe("GET, HEAD");
+    for (const missing of ["/chunks/missing.js", "/assets/app.js", "/chunks/missing.js.map", "/asset-manifest.json"]) {
+      expect((await fetch(`${base}${missing}`)).status).toBe(404);
+    }
+  });
+
   /**
    * A stylesheet is not unit-testable — jsdom parses no CSS — so the one place
    * this rule can be proved is the artifact that ships it. WebKit never
@@ -155,7 +197,7 @@ describe("the web app", () => {
     expect(html).toMatch(/\.hljs-addition[^{]*\{[^}]*var\(--diff-add\)/);
   });
 
-  test("the bundle is self-contained — one file, nothing external", async () => {
+  test("the Desktop bundle is self-contained — one file, nothing external", async () => {
     const html = await Bun.file(BUNDLE_PATH).text();
     expect(html).not.toMatch(/<(script|link|img)[^>]+(src|href)="https?:/);
     // An `@import` RULE, not the six letters: highlight.js ships `@import`

@@ -52,19 +52,67 @@ import { UpdateManager } from "./update";
 import { pullRequestTitleSync } from "./task-update";
 import { pwaResponse } from "./pwa";
 import { BRIEF_RUN_ENV } from "./turn-input";
-// The generated single-file app is loaded only when the daemon starts. That
-// keeps source-only CLI commands usable before a checkout has built ui-dist;
-// supported serve/test/build entry points generate it first. Bun embeds this
-// literal import in compiled release binaries, so production needs no sibling
-// asset directory. Everything the page needs, xterm included, is inlined.
+// The generated web app is loaded only when the daemon starts. That keeps
+// source-only CLI commands usable before a checkout has built web-dist;
+// supported serve/test/build entry points generate it first. Bun embeds the
+// literal file imports in compiled release binaries, so production needs no
+// sibling asset directory. The browser entry and Mermaid's lazy chunks are
+// served from an exact allowlist; styles and fonts stay in the HTML.
 //
 // Embed it as a file and read it, never as a `type: "text"` import: in a
 // compiled binary the text form of this multi-megabyte bundle raised startup
 // RSS to about 3 GB, which stalls the daemon before it listens on a host (or
 // the release activation container) with less memory than that.
-async function bundledAppHtml(): Promise<string> {
-  const bundle = await import("../../web/ui-dist/index.html", { with: { type: "file" } });
-  return await Bun.file(bundle.default as unknown as string).text();
+type WebAssetPaths = Record<string, string>;
+type BundledWeb = { html: string; assets: WebAssetPaths; compressedAssets: WebAssetPaths };
+
+async function bundledWeb(): Promise<BundledWeb> {
+  const [bundle, embedded] = await Promise.all([
+    import("../../web/web-dist/index.html", { with: { type: "file" } }),
+    import("../../web/web-dist/embedded-assets"),
+  ]);
+  const assets = embedded.embeddedWebAssets as WebAssetPaths;
+  const compressedAssets = embedded.embeddedWebCompressedAssets as WebAssetPaths;
+  const paths = Object.keys(assets);
+  if (paths.length === 0 || paths.length !== Object.keys(compressedAssets).length) {
+    throw new Error("web build has no chunks or mismatched compressed chunks");
+  }
+  for (const path of paths) {
+    // The generated module is an allowlist, never a general filesystem route.
+    // A mistaken asset name must fail at startup instead of broadening it.
+    if (!/^\/chunks\/[a-zA-Z0-9._-]+\.js$/.test(path) || !Object.hasOwn(compressedAssets, path)) {
+      throw new Error(`invalid generated web chunk: ${path}`);
+    }
+  }
+  return {
+    html: await Bun.file(bundle.default as unknown as string).text(),
+    assets,
+    compressedAssets,
+  };
+}
+
+/** Only an exact generated chunk path can reach this unauthenticated route. */
+function webAssetResponse(request: Request, web: BundledWeb): Response | null {
+  const path = new URL(request.url).pathname;
+  if (!Object.hasOwn(web.assets, path)) return null;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response(null, { status: 405, headers: { allow: "GET, HEAD" } });
+  }
+  const compressed = acceptsGzip(request.headers.get("accept-encoding"));
+  const assetPath = (compressed ? web.compressedAssets : web.assets)[path]!;
+  const file = Bun.file(assetPath);
+  return new Response(request.method === "HEAD" ? null : file, {
+    headers: {
+      "content-type": "text/javascript; charset=utf-8",
+      "cache-control": "public, max-age=31536000, immutable",
+      "vary": "Accept-Encoding",
+      "content-length": String(file.size),
+      ...(compressed ? { "content-encoding": "gzip" } : {}),
+      "x-content-type-options": "nosniff",
+      "cross-origin-resource-policy": "same-origin",
+      "referrer-policy": "no-referrer",
+    },
+  });
 }
 
 /** Prefer the supported gzip representation only when the client accepts it. */
@@ -409,11 +457,11 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   // config and initialize the database. Every failed start releases the lock.
   const lifetime = new HomeLifetime();
   try {
-    const appHtml = await bundledAppHtml();
+    const web = await bundledWeb();
     const cfg = loadConfig();
     const hostname = hostOverride ?? cfg.host;
     const port = options.port ?? cfg.port;
-    return await lifetime.run(() => serveOwned(options, cfg, hostname, port, appHtml, ownership, lifetime));
+    return await lifetime.run(() => serveOwned(options, cfg, hostname, port, web, ownership, lifetime));
   } catch (error) {
     // Report startup failure immediately. If recovery already started work,
     // retain ownership until it settles (or the process exits), not until the
@@ -428,13 +476,13 @@ async function serveOwned(
   cfg: WispConfig,
   hostname: string,
   port: number,
-  appHtml: string,
+  web: BundledWeb,
   ownership: { release(): void },
   lifetime: HomeLifetime,
 ): Promise<Bun.Server<TerminalSocketData>> {
-  // Hashing 2 MB of bundle is startup work, not per-request work; the policy
-  // itself is assembled per response because it names this daemon's origin.
-  const securityPolicy = pageSecurityPolicy(appHtml);
+  // Scan the generated HTML once at startup; the policy is assembled per
+  // response because it names this daemon's origin.
+  const securityPolicy = pageSecurityPolicy(web.html, true);
   const preflightFailure = port === 0 ? undefined : bindFailure(hostname, port);
   if (preflightFailure) {
     if ((preflightFailure as NodeJS.ErrnoException).code === "EADDRINUSE") {
@@ -486,7 +534,7 @@ async function serveOwned(
 
   // The bundle is immutable for this daemon lifetime. Compress once, before
   // serving requests, rather than spending CPU on every page navigation.
-  const appGzip = gzipSync(appHtml, { level: 5 });
+  const appGzip = gzipSync(web.html, { level: 5 });
 
   let stopping = false;
   let server: Bun.Server<TerminalSocketData>;
@@ -523,7 +571,7 @@ async function serveOwned(
         const path = url.pathname;
         if (path === "/" || path === "/index.html") {
           const compressed = acceptsGzip(req.headers.get("accept-encoding"));
-          return new Response(compressed ? appGzip : appHtml, {
+          return new Response(compressed ? appGzip : web.html, {
             headers: {
               "content-type": "text/html; charset=utf-8",
               "cache-control": "no-store",
@@ -533,6 +581,8 @@ async function serveOwned(
             },
           });
         }
+        const webAsset = webAssetResponse(req, web);
+        if (webAsset) return webAsset;
         const pwa = pwaResponse(req);
         if (pwa) return pwa;
         if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });

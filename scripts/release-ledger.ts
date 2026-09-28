@@ -169,7 +169,7 @@ export function renderPublicationSection(facts: PublicationFacts, manual: readon
     "| Gate | Result |",
     "|---|---|",
     `| Source checks | Release PR ${labels} checks passed; ${candidate} also passed Linux-contract and update-verifier before tagging |`,
-    "| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; shared UI, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |",
+    "| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |",
     "| Linux installation | Published-artifact installer and fixture activation contracts passed |",
     "| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |",
     `| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit \`${facts.commit.slice(0, 7)}\` were verified |`,

@@ -7,8 +7,8 @@ terminal-ish data.
 
 Both fonts ship as woff2 via the bundler-importable fontsource variable
 packages (`@fontsource-variable/geist`, `@fontsource-variable/geist-mono`) —
-vite inlines them into the generated single-file bundle
-(`web/ui-dist/index.html`), preserving the zero-CDN invariant. Their
+Vite inlines them into both generated HTML builds, including the Desktop
+single-file bundle (`web/ui-dist/index.html`), preserving the zero-CDN invariant. Their
 `@font-face` rules use `font-display: swap`.
 
 Geist is published by Vercel under the SIL Open Font License 1.1. The full
@@ -19,8 +19,8 @@ modulo the font filename in the copyright line).
 ## Terminal emulator (S3.5)
 
 The terminal tab bundles `@xterm/xterm`, `@xterm/addon-fit` and
-`@xterm/addon-search` from npm — vite inlines them into the generated
-single-file bundle, so the zero-CDN invariant holds. All three are published
+`@xterm/addon-search` from npm — Vite bundles them into both builds, so the
+zero-CDN invariant holds. All three are published
 by the xterm.js authors under the MIT license; the full license text rides
 along in `xterm.MIT.txt` (copied verbatim from `@xterm/xterm`'s `LICENSE`,
 whose copyright lines include the addons' own).

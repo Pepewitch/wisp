@@ -8,7 +8,7 @@
  * test suite cannot exercise any of them, and no amount of raw HTTP can.
  *
  * So this drives Chrome over the DevTools protocol against a throwaway daemon
- * and asserts the six things that must stay true:
+ * and asserts the browser behaviors that must stay true:
  *
  *   1. the app loads and renders with no CSP violation and no console error;
  *   2. after authenticating, the page holds NO cookies (SEC-01);
@@ -17,6 +17,7 @@
  *   5. a page on another local port receives no Wisp cookie, cannot write
  *      cross-origin, and cannot upgrade a terminal socket (SEC-01/SEC-02);
  *   6. the app refuses to be framed (SEC-04).
+ *   7. Mermaid stays lazy and a missing chunk can be recovered explicitly.
  *
  * It is deliberately a script rather than a `bun test` file: it needs a real
  * browser, a real listener, and a throwaway profile, and none of those belong
@@ -26,10 +27,11 @@
  * Everything it touches is disposable: a temporary WISP_HOME, an ephemeral
  * port, a fresh Chrome profile, and a synthetic checkout, attachment, and shell; no provider harness is called.
  */
-import { closeSync, existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startHostRewritingProxy, startOtherLocalService } from "./browser-security-servers";
 
 /** Where a browser lives, in the order worth trying. `CHROME_PATH` wins. */
 const BROWSER_CANDIDATES = [
@@ -138,8 +140,12 @@ async function startDaemon(home: string, entry: string, log: string): Promise<{ 
   const token = (JSON.parse(await readFile(join(home, "config.json"), "utf8")) as { token: string }).token;
   const checkout = join(home, "checkout");
   await mkdir(checkout);
+  const fixtureOutput = [
+    `![External fixture](https://example.invalid/wisp-image-fixture.png)\n\n![Local fixture](http://127.0.0.1:${port + 1}/wisp-image-fixture.png)\n\n![Internal fixture](http://10.0.0.1/wisp-image-fixture.png)`,
+    "```mermaid\nflowchart TD\n  A --> B\n```",
+  ].join("\n\n");
   const seed = Bun.spawnSync([process.execPath, join(import.meta.dir, "../wispd/tests/helpers/seed-transport-daemon.ts"), "browser", checkout,
-    `![External fixture](https://example.invalid/wisp-image-fixture.png)\n\n![Local fixture](http://127.0.0.1:${port + 1}/wisp-image-fixture.png)\n\n![Internal fixture](http://10.0.0.1/wisp-image-fixture.png)`], {
+    fixtureOutput], {
     env: { ...process.env, WISP_HOME: home }, stdout: "pipe", stderr: "pipe",
   });
   if (seed.exitCode !== 0) throw new Error(`browser fixture failed: ${seed.stderr.toString()}`);
@@ -170,36 +176,6 @@ async function startDaemon(home: string, entry: string, log: string): Promise<{ 
     await sleep(100);
   }
   return { daemon, origin, token, port };
-}
-
-/**
- * The other local service: same host, different port. This is the whole point
- * of SEC-01 — a host-scoped cookie is delivered here, and this records what
- * arrives.
- */
-function startOtherLocalService(port: number, daemonOrigin: string): Bun.Server<undefined> {
-  return Bun.serve({
-    port,
-    hostname: "127.0.0.1",
-    fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname === "/wisp-image-fixture.png") return new Response(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"), { headers: { "content-type": "image/png" } });
-      if (url.pathname === "/cookies") {
-        return new Response(JSON.stringify({ cookie: request.headers.get("cookie") }), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (url.pathname === "/frame") {
-        return new Response(
-          `<!doctype html><title>frame</title><body><iframe id="f" src="${daemonOrigin}/"></iframe></body>`,
-          { headers: { "content-type": "text/html; charset=utf-8" } },
-        );
-      }
-      return new Response("<!doctype html><title>other service</title><body>another local service</body>", {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    },
-  });
 }
 
 async function startBrowser(profile: string, token: string): Promise<{ chrome: Bun.Subprocess; page: Page }> {
@@ -305,6 +281,11 @@ async function checkTheAppLoads(page: Page, origin: string): Promise<void> {
   await waitInPage(page, 'document.body.innerText.includes("PROJECTS")', "the app to render");
   const rendered = String(await page.evaluate("document.body.innerText"));
   check("the app renders", rendered.includes("PROJECTS"), `body text was ${JSON.stringify(rendered.slice(0, 200))}`);
+  const unexpectedChunks = page.client.events
+    .filter(event => event.method === "Network.requestWillBeSent")
+    .map(event => String((event.params.request as { url?: string }).url ?? ""))
+    .filter(url => url.startsWith(`${origin}/chunks/`) && !/\/(?:index|rolldown-runtime)-[^/]+\.js$/.test(url));
+  check("a diagram-free page does not fetch Mermaid chunks", unexpectedChunks.length === 0, unexpectedChunks.join("; "));
   const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
   check("no CSP violation", violations.length === 0, violations.join("; "));
   const consoleErrors = page.client.events
@@ -405,10 +386,10 @@ async function checkTerminalHandshake(page: Page, origin: string, home: string):
 }
 
 /** No image URL chosen by Markdown gets a network request before consent. */
-async function checkImageConsent(page: Page, origin: string): Promise<void> {
+async function checkImageConsent(page: Page, origin: string, mermaidPath: string): Promise<void> {
   // Block non-fixture destinations even if the renderer regresses. Network events
   // still record attempted requests, so blocking cannot make this test pass falsely.
-  await page.client.send("Network.setBlockedURLs", { urls: ["https://example.invalid/*", "http://10.0.0.1/*"] }, page.session);
+  await page.client.send("Network.setBlockedURLs", { urls: ["https://example.invalid/*", "http://10.0.0.1/*", `${origin}${mermaidPath}`] }, page.session);
   page.client.events.length = 0;
   await page.client.send("Page.navigate", { url: `${origin}/` }, page.session);
   await waitInPage(page, `Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Load image').length === 3`, "remote image placeholders");
@@ -417,6 +398,45 @@ async function checkImageConsent(page: Page, origin: string): Promise<void> {
   await page.evaluate(`Array.from(document.querySelectorAll('button')).filter(b => b.textContent === 'Load image')[1].click()`);
   await waitInPage(page, `Array.from(document.images).some(i => i.src.includes('wisp-image-fixture.png') && i.naturalWidth === 1)`, "consented fixture image");
   check("only the individually consented image loads", requested().length === 1 && String((requested()[0]?.params.request as { url?: string }).url).startsWith("http://127.0.0.1:"), JSON.stringify(requested()));
+}
+
+/** A missing lazy chunk leaves source visible and offers an explicit reload. */
+async function checkMermaidRecovery(page: Page, origin: string, mermaidPath: string): Promise<void> {
+  await waitInPage(page, `!!Array.from(document.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Render diagram')`, "Mermaid source fallback");
+  const sourceBefore = String(await page.evaluate("document.body.innerText"));
+  await page.evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Render diagram').click()`);
+  await waitInPage(page, `!!Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Reload app')`, "missing-chunk recovery option");
+  const sourceText = String(await page.evaluate("document.body.innerText"));
+  check("a missing Mermaid chunk keeps source and offers reload",
+    sourceText.includes("The diagram code could not be loaded.") && sourceBefore.includes("A --> B"),
+    `the blocked chunk was ${mermaidPath}; before: ${sourceBefore.slice(-300)}; after: ${sourceText.slice(-300)}`);
+
+  // An old page after an upgrade must not be reloaded automatically: a draft
+  // could be in progress. The explicit button gives the new HTML/chunk names.
+  await page.client.send("Network.setBlockedURLs", { urls: [] }, page.session);
+  page.client.events.length = 0;
+  await page.evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent === 'Reload app').click()`);
+  await waitInPage(page, `!!document.querySelector('[role="application"][aria-label="Mermaid diagram"] svg')`, "Mermaid after reload", 30_000);
+  const chunkResponses = page.client.events
+    .filter(event => event.method === "Network.responseReceived")
+    .map(event => event.params.response as { url?: string; status?: number })
+    .filter(response => response.url?.startsWith(`${origin}/chunks/`));
+  check("the browser fetches and renders the lazy Mermaid graph",
+    chunkResponses.some(response => response.url === `${origin}${mermaidPath}` && response.status === 200),
+    JSON.stringify(chunkResponses).slice(0, 600));
+  const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
+  check("lazy Mermaid loads under the browser CSP", violations.length === 0, violations.join("; "));
+}
+
+function mermaidChunkPath(): string {
+  const manifest = JSON.parse(readFileSync(join(import.meta.dir, "../web/web-dist/.vite/manifest.json"), "utf8")) as
+    Record<string, { file: string; isDynamicEntry?: boolean }>;
+  const entries = Object.entries(manifest).filter(([source, entry]) =>
+    source.includes("@streamdown/mermaid/dist/index.js") && entry.isDynamicEntry);
+  if (entries.length !== 1 || !/^chunks\/[a-zA-Z0-9_-]+\.js$/.test(entries[0]![1].file)) {
+    throw new Error(`expected one hashed Mermaid entry chunk, got ${JSON.stringify(entries)}`);
+  }
+  return `/${entries[0]![1].file}`;
 }
 
 /** 5: what a page on another local port can get out of the daemon. */
@@ -527,8 +547,10 @@ async function main(): Promise<void> {
   const logs = await mkdtemp(join(tmpdir(), "wisp-browser-check-log-"));
   const daemonLog = join(logs, "daemon.log");
   const entry = join(import.meta.dir, "..", "wispd", "src", "index.ts");
+  const mermaidPath = mermaidChunkPath();
   let daemon: Bun.Subprocess | null = null;
   let attacker: Bun.Server<undefined> | null = null;
+  let proxy: Bun.Server<undefined> | null = null;
   let chrome: Bun.Subprocess | null = null;
   let page: Page | null = null;
 
@@ -542,7 +564,8 @@ async function main(): Promise<void> {
     page = browser.page;
 
     await checkTerminalHandshake(page, started.origin, home);
-    await checkImageConsent(page, started.origin);
+    await checkImageConsent(page, started.origin, mermaidPath);
+    await checkMermaidRecovery(page, started.origin, mermaidPath);
     await checkPwa(page, started.origin);
     // Reset this fixture's selection before the clean-app navigation below.
     await page.evaluate(`Object.keys(localStorage).filter(key => key !== 'wisp_token').forEach(key => localStorage.removeItem(key))`);
@@ -559,10 +582,19 @@ async function main(): Promise<void> {
     }
     // App-load assertions concern its own navigation, not the JSON document's favicon.
     page.client.events.length = 0;
+    await page.client.send("Network.setCacheDisabled", { cacheDisabled: true }, page.session);
     await checkTheAppLoads(page, started.origin);
     await checkNoAmbientCredential(page, started.origin);
     await checkOtherLocalPort(page, started.origin, attackerOrigin, started.token);
     await checkFraming(page, attackerOrigin);
+    proxy = startHostRewritingProxy(started.origin);
+    const proxyOrigin = `http://127.0.0.1:${proxy.port}`;
+    const proxyCsp = (await fetch(proxyOrigin)).headers.get("content-security-policy") ?? "";
+    check("the proxy actually rewrites Host", proxyCsp.includes(`ws://127.0.0.1:${started.port}`) && !proxyCsp.includes(`ws://127.0.0.1:${proxy.port}`), proxyCsp);
+    await page.client.send("Page.navigate", { url: proxyOrigin }, page.session);
+    await waitInPage(page, 'document.body.innerText.includes("PROJECTS")', "the app behind a Host-rewriting proxy");
+    const proxyViolations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
+    check("the app renders through a Host-rewriting proxy without a script violation", proxyViolations.length === 0, proxyViolations.join("; "));
   } catch (error) {
     await reportAbort(daemon, daemonLog);
     throw error;
@@ -573,6 +605,7 @@ async function main(): Promise<void> {
       await chrome.exited;
     }
     attacker?.stop(true);
+    proxy?.stop(true);
     if (daemon) {
       daemon.kill();
       await daemon.exited;

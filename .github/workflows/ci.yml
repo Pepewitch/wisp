@@ -62,8 +62,9 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
-      # the web routes import the generated bundle
-      - run: bun run build:ui
+      # The daemon imports the generated web bundle; some contract tests also
+      # inspect the Desktop bundle to check the two runtime paths.
+      - run: bun run build:all-ui
       - name: daemon tests, shard ${{ matrix.shard }} of 6
         working-directory: wispd
         run: bun test --shard=${{ matrix.shard }}/6

@@ -42,9 +42,9 @@ export WISP_COMMAND_NAME=wisp-dev
 
 command_name=${1:-}
 if [ "$command_name" = "serve" ]; then
-  # ui-dist is intentionally absent from Git. Keep the direct development
+  # web-dist is intentionally absent from Git. Keep the direct development
   # daemon command as reliable as `bun run dev:server` on a fresh checkout.
-  (cd "$ROOT" && bun run build:ui)
+  (cd "$ROOT" && bun run build:web)
 fi
 if [ "$command_name" = "init" ]; then
   has_port=no

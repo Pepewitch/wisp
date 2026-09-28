@@ -354,8 +354,8 @@ export function faviconSvg(): string {
 /**
  * The favicon as a data URI, for inlining into the app's <head>.
  *
- * The daemon serves ONE file and no asset routes (wispd/tests/web.test.ts), so the
- * favicon cannot be a sibling file — it rides in the head. Kept unencoded apart
+ * Both web and Desktop builds inline this favicon in the HTML head, so it
+ * needs no extra asset request. Kept unencoded apart
  * from the characters that would break the attribute: an un-escaped `#`
  * truncates the URI and `<`/`>`/`"` end the tag. Percent-encoding the whole
  * thing would cost ~35% more bytes for nothing.
