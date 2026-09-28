@@ -32,6 +32,21 @@ export function briefReminder(): string {
 }
 
 /**
+ * Everything Wisp itself writes into a harness input — the first turn's task
+ * preamble, standing notes, the attached-files note — goes out one `[wisp]`
+ * line at a time, and a blank line separates it from the person's words. The
+ * tag is what tells the agent (and anyone reading a raw prompt) which lines
+ * are Wisp's and which the person typed.
+ *
+ * A line prefix rather than an open/close block: there is nothing to close,
+ * nothing a model can leave unclosed, and a person's own message that happens
+ * to contain a closing tag cannot end Wisp's section early.
+ */
+export function wispNoteLines(lines: string[]): string {
+  return lines.map((line) => `[wisp] ${line}`).join("\n")
+}
+
+/**
  * The environment for a child spawned into `cwd`, with PWD made to agree.
  *
  * The daemon inherits a PWD from whatever directory it was started in, and
@@ -57,16 +72,20 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 
+/**
+ * The first turn's framing, in Wisp's voice and tagged line by line. It ends
+ * with a blank line, so `${preamble}\n${message}` leaves exactly one empty
+ * line before the person's words — the same boundary every later turn's
+ * notes use.
+ */
 export function taskPreamble(task: Task, notes: string[] = []): string {
-  return [
+  return `${wispNoteLines([
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
     `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
     `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
     `For follow-up after waiting on time or an external condition, use \`${wispCommand()} workflow types\` to choose durable automation instead of relying on a harness background process.`,
     ...notes,
-    ``,
-    `Task:`,
-  ].join("\n")
+  ])}\n`
 }
 
 /**
@@ -118,7 +137,7 @@ export function deliveredMessage(
 ): string {
   const byPath = pathDeliveredAttachments(def, attachments)
   if (byPath.length === 0) return message
-  return `${attachmentPreamble(byPath)}\n\n${message}`
+  return `${wispNoteLines(attachmentPreamble(byPath).split("\n"))}\n\n${message}`
 }
 
 export function inputStrategyFor(

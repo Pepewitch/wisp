@@ -68,6 +68,12 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Task state changes go through `store.transition()`. It advances the sequence
   and writes notify-worthy outbox rows atomically, then emits realtime news
   only after commit.
+- Every line Wisp writes into a harness input — the first turn's task
+  preamble, standing notes (auto-merge, task briefs), the attached-files note —
+  is sent as its own `[wisp] …` line, and one blank line separates it from the
+  person's words (`wispNoteLines` in `turn-input.ts`). `Turn.prompt` keeps the
+  person's words alone. A new injected instruction uses the same helper, never
+  untagged text.
 - A successful JSON turn needs a positively parsed result unless the adapter
   explicitly opts out. Process exit alone must not silently claim success.
 - `stuck` means a live process has stopped producing output; it is reversible.

@@ -74,6 +74,7 @@ import {
   nativeImageAttachments,
   taskEnv,
   taskPreamble,
+  wispNoteLines,
 } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
@@ -182,7 +183,7 @@ export function startTurn(
   const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
   const prompt = n === 1
     ? `${taskPreamble(task, notes)}\n${body}`
-    : notes.length > 0 ? `${notes.join("\n")}\n\n${body}` : body;
+    : notes.length > 0 ? `${wispNoteLines(notes)}\n\n${body}` : body;
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the

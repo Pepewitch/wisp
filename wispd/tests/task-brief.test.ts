@@ -8,7 +8,7 @@ import type { WispConfig } from "../src/config";
 import { briefRoute } from "../src/routes/task-brief";
 import { startTurn } from "../src/runner";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
-import { briefReminder, taskPreamble } from "../src/turn-input";
+import { briefReminder, taskPreamble, wispNoteLines } from "../src/turn-input";
 import { wispCommand } from "../src/command";
 
 const cfg: WispConfig = {
@@ -123,7 +123,11 @@ describe("the reminder and the binding", () => {
     const task = makeTask(true);
     const { prompt, runId } = await begin(task.id, "fix the bug");
     expect(prompt.split(briefReminder()).length - 1).toBe(1);
-    expect(prompt.trimEnd().endsWith("fix the bug")).toBe(true);
+    // every line Wisp wrote is tagged; the person's words follow one blank line, untagged
+    const [wisp, person] = prompt.split("\n\n");
+    expect(wisp!.split("\n").every((line) => line.startsWith("[wisp] "))).toBe(true);
+    expect(wisp).toContain(`[wisp] ${briefReminder()}`);
+    expect(person).toBe("fix the bug");
     expect(runId).toMatch(/^br_[0-9a-f]{32}$/);
     const turn = turnsFor(task.id)[0]!;
     expect(turn.prompt).toBe("fix the bug");
@@ -133,9 +137,14 @@ describe("the reminder and the binding", () => {
 
     // a later ordinary turn: the reminder goes before the message, never into it
     const second = await begin(task.id, "and the autosave path");
-    expect(second.prompt).toBe(`${briefReminder()}\n\nand the autosave path`);
+    expect(second.prompt).toBe(`[wisp] ${briefReminder()}\n\nand the autosave path`);
     expect(second.runId).not.toBe(runId);
     await finish(task.id);
+  });
+
+  test("every Wisp note is its own [wisp] line, so the person's words are never mistaken for Wisp's", () => {
+    expect(wispNoteLines(["Auto-merge is on.", briefReminder()])).toBe(`[wisp] Auto-merge is on.\n[wisp] ${briefReminder()}`);
+    expect(wispNoteLines([])).toBe("");
   });
 
   test("a command turn keeps its native meaning: nothing in front of it, no binding", async () => {
@@ -157,13 +166,13 @@ describe("the reminder and the binding", () => {
     await finish(task.id);
   });
 
-  test("the reminder stays within 160 characters under either command name", () => {
-    expect(briefReminder().length).toBeLessThanOrEqual(160);
+  test("the reminder stays within 160 characters under either command name, tag included", () => {
+    expect(wispNoteLines([briefReminder()]).length).toBeLessThanOrEqual(160);
     expect(wispCommand({ WISP_COMMAND_NAME: "wisp-dev" })).toBe("wisp-dev");
     process.env.WISP_COMMAND_NAME = "wisp-dev";
     try {
       expect(briefReminder()).toContain("`wisp-dev brief set --stdin`");
-      expect(briefReminder().length).toBeLessThanOrEqual(160);
+      expect(wispNoteLines([briefReminder()]).length).toBeLessThanOrEqual(160);
     } finally {
       delete process.env.WISP_COMMAND_NAME;
     }

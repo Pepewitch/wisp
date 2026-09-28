@@ -673,8 +673,10 @@ describe("what the agent is told", () => {
     expect(note).toContain("push the branch, and open a pull request");
     expect(note).toContain("Wisp merges this task's pull request");
     expect(note).toContain("Other pull requests are unaffected");
+    // a Wisp line in the first turn's preamble, which ends before the person's words
     const preamble = taskPreamble(task, [note!]);
-    expect(preamble.indexOf(note!)).toBeLessThan(preamble.indexOf("Task:"));
+    expect(preamble).toContain(`[wisp] ${note!}`);
+    expect(preamble.endsWith("\n")).toBe(true);
   });
 });
 
