@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // `bun run release:check <version>` is the local gate for a committed release
-// branch, run before the release PR opens. It first refuses the mistakes that
+// branch, run while the release PR's CI runs. It first refuses the mistakes that
 // are expensive once a tag exists: a reused or older version, a branch behind
 // main, unfinished notes, a document that still names the previous release.
 // Then it runs the source gates, cheapest first. Each gate writes to its own
@@ -206,7 +206,7 @@ async function main(): Promise<number> {
   }
   const head = git(["rev-parse", "--short", "HEAD"]);
   console.log(`release:check passed for ${version} at ${head}.`);
-  console.log("Next: push the branch and open the release PR (releasing.md, step 3).");
+  console.log("Next: add this result to the release PR, and land it once every check is green (releasing.md, step 3).");
   return 0;
 }
 

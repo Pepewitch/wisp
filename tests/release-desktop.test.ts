@@ -164,7 +164,7 @@ describe("Wisp Desktop release metadata", () => {
     expect(publish).not.toContain("cargo run");
   });
 
-  test("binds cached native outputs to the UI generated before Tauri compiles", () => {
+  test("caches only native dependencies, so the crate embedding the UI always recompiles", () => {
     const checkScript = readFileSync(new URL("../scripts/desktop/check.sh", import.meta.url), "utf8");
     expect(checkScript.indexOf("bun run build:ui")).toBeGreaterThan(-1);
     expect(checkScript.indexOf("bun run build:ui")).toBeLessThan(checkScript.indexOf("cargo fmt"));
@@ -172,11 +172,13 @@ describe("Wisp Desktop release metadata", () => {
     const workflow = readFileSync(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8");
     const buildUi = workflow.indexOf("name: build shared UI bundle");
     const cacheRestore = workflow.indexOf("uses: Swatinem/rust-cache");
-    const bundleKey = workflow.indexOf("key: ${{ hashFiles('web/ui-dist/index.html') }}");
     expect(buildUi).toBeGreaterThan(-1);
     expect(cacheRestore).toBeGreaterThan(buildUi);
-    expect(bundleKey).toBeGreaterThan(cacheRestore);
     expect(buildUi).toBeLessThan(workflow.indexOf("name: formatting"));
+    // Caching workspace crates would restore wisp-desktop outputs that embed
+    // an older bundle; a bundle-derived key would make every UI change cold.
+    expect(workflow).not.toContain("cache-workspace-crates");
+    expect(workflow).not.toContain("hashFiles('web/ui-dist");
     expect(workflow).not.toContain("cargo clean --package wisp-desktop");
     expect(workflow).not.toContain("cache-targets: false");
     expect(workflow.match(/CARGO_BUILD_JOBS: "1"/g)).toHaveLength(2);
