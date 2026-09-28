@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
+import { latestHumanInput } from "../src/brief-inputs";
 import { activeLiveInput } from "../src/live-input";
+import { answerQuestionResponse } from "../src/routes/task-answer";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -44,76 +46,82 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
-describe("Droid live AskUser and interrupt", () => {
-  test("AskUser suspends the turn, and answering it in-protocol resumes the same turn", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-"));
-    const answerPath = join(dir, "answers.json");
-    const harnessPath = join(dir, "fake-droid");
-    writeFileSync(
-      harnessPath,
-      `#!/usr/bin/env bun
+/** A Droid stand-in that asks one AskUser question and records the reply it gets at `answerPath`. */
+function fakeDroid(dir: string, answerPath: string): AdapterDef {
+  const harnessPath = join(dir, "fake-droid");
+  writeFileSync(
+    harnessPath,
+    `#!/usr/bin/env bun
 import { writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const notify = (notification) => frame({
-  jsonrpc: "2.0",
-  type: "notification",
-  method: "droid.session_notification",
-  params: { notification },
+jsonrpc: "2.0",
+type: "notification",
+method: "droid.session_notification",
+params: { notification },
 });
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
-  const request = JSON.parse(line);
-  if (request.method === "droid.initialize_session") {
-    frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-ask-session" } });
-  } else if (request.method === "droid.add_user_message") {
-    frame({ jsonrpc: "2.0", id: request.id, result: {} });
-    notify({ type: "create_message", message: {
-      id: "assistant-1",
-      role: "assistant",
-      content: [
-        { type: "text", text: "WHICH_OPTION" },
-        { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire: "1. [question] Where to?\\n[option] Japan\\n[option] Italy" } },
-      ],
-      createdAt: 123,
-    } });
-    // The structured half: Droid now BLOCKS until this is answered.
-    frame({
-      jsonrpc: "2.0",
-      type: "request",
-      id: "ask-request-1",
-      method: "droid.ask_user",
-      params: { toolCallId: "ask-1", questions: [
-        { index: 1, topic: "Travel", question: "Where to?", options: ["Japan", "Italy"] },
-      ] },
-    });
-  } else if (request.type === "response") {
-    writeFileSync(${JSON.stringify(answerPath)}, JSON.stringify(request));
-    notify({ type: "create_message", message: {
-      id: "assistant-2",
-      role: "assistant",
-      content: [{ type: "text", text: "BOOKED_JAPAN" }],
-      createdAt: 456,
-    } });
-    notify({ type: "agent_turn_completed", reason: "completed" });
-  }
+const request = JSON.parse(line);
+if (request.method === "droid.initialize_session") {
+  frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-ask-session" } });
+} else if (request.method === "droid.add_user_message") {
+  frame({ jsonrpc: "2.0", id: request.id, result: {} });
+  notify({ type: "create_message", message: {
+    id: "assistant-1",
+    role: "assistant",
+    content: [
+      { type: "text", text: "WHICH_OPTION" },
+      { type: "tool_use", id: "ask-1", name: "AskUser", input: { questionnaire: "1. [question] Where to?\\n[option] Japan\\n[option] Italy" } },
+    ],
+    createdAt: 123,
+  } });
+  // The structured half: Droid now BLOCKS until this is answered.
+  frame({
+    jsonrpc: "2.0",
+    type: "request",
+    id: "ask-request-1",
+    method: "droid.ask_user",
+    params: { toolCallId: "ask-1", questions: [
+      { index: 1, topic: "Travel", question: "Where to?", options: ["Japan", "Italy"] },
+    ] },
+  });
+} else if (request.type === "response") {
+  writeFileSync(${JSON.stringify(answerPath)}, JSON.stringify(request));
+  notify({ type: "create_message", message: {
+    id: "assistant-2",
+    role: "assistant",
+    content: [{ type: "text", text: "BOOKED_JAPAN" }],
+    createdAt: 456,
+  } });
+  notify({ type: "agent_turn_completed", reason: "completed" });
+}
 }
 `,
-    );
-    chmodSync(harnessPath, 0o755);
-    const def: AdapterDef = {
-      bin: harnessPath,
-      exec: [],
-      liveInput: "droid-jsonrpc",
-      activity: "droid-stream-json",
-      parse: {
-        format: "json",
-        resultType: "completion",
-        result: "finalText",
-        session: "session_id",
-        needsInput: "needs_input",
-      },
-      attach: null,
-    };
+  );
+  chmodSync(harnessPath, 0o755);
+  const def: AdapterDef = {
+    bin: harnessPath,
+    exec: [],
+    liveInput: "droid-jsonrpc",
+    activity: "droid-stream-json",
+    parse: {
+      format: "json",
+      resultType: "completion",
+      result: "finalText",
+      session: "session_id",
+      needsInput: "needs_input",
+    },
+    attach: null,
+  };
+  return def;
+}
+
+describe("Droid live AskUser and interrupt", () => {
+  test("AskUser suspends the turn, and answering it in-protocol resumes the same turn", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-"));
+    const answerPath = join(dir, "answers.json");
+    const def = fakeDroid(dir, answerPath);
     const task = makeTask();
     startTurn(task, "ask me", def, cfg);
     await until(() => getTask(task.id)?.state === "needs-input");
@@ -146,6 +154,33 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     // ...and the SAME turn carried on to its conclusion — no second turn.
     expect(turnsFor(task.id)).toHaveLength(1);
     expect(turnsFor(task.id)[0]).toMatchObject({ n: 1, status: "done", result: "BOOKED_JAPAN" });
+  });
+
+  test("the answer route refuses an incomplete answer before recording it, and records a complete one while briefs are off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-answer-"));
+    const answerPath = join(dir, "answers.json");
+    const task = makeTask();
+    startTurn(task, "ask me", fakeDroid(dir, answerPath), cfg);
+    await until(() => getTask(task.id)?.state === "needs-input");
+    const post = (answers: unknown) =>
+      answerQuestionResponse(getTask(task.id)!, new Request("http://127.0.0.1/answer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: "ask-1", answers }),
+      }));
+    const observations = () => db.query(`SELECT state FROM task_answer_observations WHERE task_id = ?`).all(task.id);
+
+    const empty = await post([{ index: 1, answer: "  " }]);
+    expect(empty.status).toBe(409);
+    expect(((await empty.json()) as { error: string }).error).toContain("answer every question first");
+    expect(observations()).toEqual([]);
+    expect(getTask(task.id)!.input_rev).toBe(0);
+
+    expect((await post([{ index: 1, answer: "Japan" }])).status).toBe(200);
+    expect(observations()).toEqual([{ state: "delivered" }]);
+    // briefs were never on for this task: switching them on later still sees what was said last
+    expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", text: "Japan", question: "Where to?", delivery: "delivered" });
+    await until(() => getTask(task.id)?.state === "done");
   });
 
   test("interrupt closes live stdin before SIGTERM so a TERM-trapping harness can exit", async () => {

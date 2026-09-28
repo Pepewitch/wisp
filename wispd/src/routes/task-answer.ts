@@ -1,3 +1,5 @@
+import { observeAnswer, settleAnswerObservation } from "../brief-inputs";
+import { emit } from "../events";
 import { activeLiveInput } from "../live-input";
 import { assertTaskNotStopping, InterruptConflict } from "../turn-interrupt";
 import type { Task } from "../types";
@@ -5,6 +7,12 @@ import { err, json, jsonObjectBody } from "./http";
 
 /** One answer's ceiling. Four questions of prose is not an answer, it is a prompt. */
 const ANSWER_MAX = 2_000;
+
+/** How many of the questions have no answer — the same check the harness makes. */
+function missingAnswers(questions: { index: number }[], answers: { index: number; answer: string }[]): number {
+  const byIndex = new Map(answers.map((a) => [a.index, a.answer.trim()]));
+  return questions.filter((q) => !byIndex.get(q.index)).length;
+}
 
 /**
  * Answer a questionnaire the harness is blocked on, in its own protocol, so
@@ -48,12 +56,27 @@ export function answerQuestionResponse(task: Task, req: Request): Promise<Respon
     if (!live?.answer) {
       return err("this question is no longer waiting for an answer — send it as a message instead", 409);
     }
+    // Task briefs: the answer is the person's latest input, and it never
+    // reaches the message table — record it before the write, settle it after.
+    // A submission the harness would refuse is refused here first, so a
+    // rejected answer is never recorded as something the person said.
+    const asked = live.question?.(body.questionId);
+    if (asked && missingAnswers(asked.questions, answers) > 0) {
+      return err(`answer every question first (${missingAnswers(asked.questions, answers)} still empty)`, 409);
+    }
+    const observation = asked ? observeAnswer(task.id, live.turnId, asked.id, asked.questions, answers) : null;
     try {
       // The driver owns the state move back to running: it is the half that
       // knows the harness actually took the answer.
       await live.answer(body.questionId, answers);
     } catch (error) {
+      if (observation) settleAnswerObservation(observation, "failed");
+      if (observation) emit({ type: "brief", taskId: task.id });
       return err(String(error instanceof Error ? error.message : error), 409);
+    }
+    if (observation) {
+      settleAnswerObservation(observation, "delivered");
+      emit({ type: "brief", taskId: task.id });
     }
     return json({ ok: true });
   })();

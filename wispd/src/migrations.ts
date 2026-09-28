@@ -594,6 +594,110 @@ END;
 `);
     },
   },
+  {
+    id: 14,
+    name: "task-briefs",
+    up: (db) => {
+      // Task briefs (brief-store.ts): a per-task switch, one binding per
+      // eligible turn, and at most one report per source turn.
+      //
+      // brief_generation moves on every off→on, and a binding records the
+      // generation it was issued under, so a disable/re-enable cycle can never
+      // revive a binding an earlier turn was handed. Off for every existing
+      // task: nothing about how an old task runs changes by upgrading.
+      const columns = (db.query(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map((c) => c.name);
+      if (!columns.includes("brief_enabled")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_enabled INTEGER NOT NULL DEFAULT 0`);
+      if (!columns.includes("brief_generation")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_generation INTEGER NOT NULL DEFAULT 0`);
+      db.exec(`
+CREATE TABLE IF NOT EXISTS brief_runs (
+  run_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
+  turn_n INTEGER NOT NULL,
+  context_n INTEGER NOT NULL,
+  generation INTEGER NOT NULL,
+  instance_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_brief_runs_task ON brief_runs(task_id, turn_n);
+CREATE TABLE IF NOT EXISTS task_briefs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
+  turn_n INTEGER NOT NULL,
+  context_n INTEGER NOT NULL,
+  run_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  source_json TEXT NOT NULL,
+  saved_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
+`);
+    },
+  },
+  {
+    id: 15,
+    name: "brief-provenance",
+    up: (db) => {
+      // What a brief needs to know about the person's own input, recorded by
+      // Wisp rather than asked of the model (brief-store.ts):
+      //
+      //  - origin: who wrote a message. `workflow_id` cannot answer that — a
+      //    finished schedule-steer sets it back to NULL — so it is written
+      //    once, at creation, and never cleared. Rows from before this
+      //    migration take their kind from a surviving workflow link
+      //    (turn-input framedMessage) — 'plugin' when the linked workflow is
+      //    gone — and are 'legacy' without one.
+      //  - source_seq: the order each input was ADMITTED in, fixed then. A
+      //    rowid is not stable and a delivery moves updated_at, so neither can
+      //    order "what did I say last" across messages and answers.
+      //  - tasks.input_rev: moves when a human input is added, edited,
+      //    cancelled or changes delivery, so a report can tell it went stale
+      //    without comparing timestamps.
+      const messageColumns = (db.query(`PRAGMA table_info(task_messages)`).all() as { name: string }[]).map((c) => c.name);
+      if (!messageColumns.includes("origin")) db.exec(`ALTER TABLE task_messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'human'`);
+      if (!messageColumns.includes("source_seq")) db.exec(`ALTER TABLE task_messages ADD COLUMN source_seq INTEGER`);
+      const taskColumns = (db.query(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map((c) => c.name);
+      if (!taskColumns.includes("input_seq")) db.exec(`ALTER TABLE tasks ADD COLUMN input_seq INTEGER NOT NULL DEFAULT 0`);
+      if (!taskColumns.includes("input_rev")) db.exec(`ALTER TABLE tasks ADD COLUMN input_rev INTEGER NOT NULL DEFAULT 0`);
+      db.exec(`
+UPDATE task_messages SET origin = COALESCE((
+  SELECT CASE WHEN type IN ('heartbeat', 'pr-autopilot') THEN 'workflow' WHEN type = 'schedule-steer' THEN 'scheduled' ELSE 'plugin' END
+  FROM workflows WHERE workflows.id = COALESCE(task_messages.workflow_id,
+    (SELECT workflow_id FROM workflow_wakes WHERE message_id = task_messages.id LIMIT 1),
+    (SELECT workflow_id FROM workflow_history WHERE message_id = task_messages.id LIMIT 1))
+), CASE WHEN workflow_id IS NOT NULL OR id IN (SELECT message_id FROM workflow_wakes)
+  OR id IN (SELECT message_id FROM workflow_history WHERE message_id IS NOT NULL) THEN 'plugin' ELSE 'legacy' END)
+WHERE source_seq IS NULL;
+UPDATE task_messages SET source_seq = (
+  SELECT ranked.seq FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at, rowid) AS seq FROM task_messages
+  ) AS ranked WHERE ranked.id = task_messages.id
+) WHERE source_seq IS NULL;
+UPDATE tasks SET input_seq = COALESCE((SELECT MAX(source_seq) FROM task_messages WHERE task_id = tasks.id), 0);
+CREATE INDEX IF NOT EXISTS idx_task_messages_source ON task_messages(task_id, source_seq);
+CREATE TABLE IF NOT EXISTS task_answer_observations (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  turn_id INTEGER NOT NULL,
+  turn_n INTEGER NOT NULL,
+  context_n INTEGER NOT NULL,
+  source_seq INTEGER NOT NULL,
+  question_id TEXT NOT NULL,
+  question_text TEXT NOT NULL,
+  answers_json TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_observations(task_id, source_seq);
+`);
+    },
+  },
 ];
 
 /** The newest schema this build knows how to run. */

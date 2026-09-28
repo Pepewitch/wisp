@@ -13,6 +13,8 @@ export interface CreateTaskDraft {
   choice: { harness: string; model: string } | null
   effort: string
   fast: boolean
+  /** ask each turn for a task brief; optional so a draft from before the toggle reads as off */
+  brief?: boolean
   mode: "worktree" | "local"
   base: string
   suffixPromptId: string | null

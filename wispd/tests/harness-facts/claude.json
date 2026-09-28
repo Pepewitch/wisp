@@ -183,6 +183,21 @@
       "verifiedAgainst": "2.1.251",
       "source": "claude's stream-json stdin admission of a mid-turn message"
     },
+    "taskEnv": {
+      "cost": "live",
+      "verifiedAgainst": "2.1.283",
+      "source": "a Wisp-run claude turn's Bash tool listed the WISP_ names from its own environment, and a brief-enabled turn published its brief with that binding",
+      "note": "names only; the turn env is set once per spawn in runner.ts, so any variable added there travels the same way unless the harness filters it by name",
+      "lists": {
+        "reachesToolShell": [
+          "WISP_BRIEF_RUN",
+          "WISP_REPO",
+          "WISP_TASK_ID",
+          "WISP_TASK_SLOT",
+          "WISP_WORKTREE"
+        ]
+      }
+    },
     "usageKeys": {
       "cost": "live",
       "verifiedAgainst": "2.1.240",

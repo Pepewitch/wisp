@@ -310,6 +310,21 @@
         "default": null
       }
     },
+    "taskEnv": {
+      "cost": "live",
+      "verifiedAgainst": "2026.09.26-dd393fe",
+      "source": "one live turn: the shell tool listed the WISP_ names and an authenticated wisp CLI call reached the daemon; brief-enabled turns published with their WISP_BRIEF_RUN binding",
+      "note": "names only; the turn env is set once per spawn in runner.ts, so any variable added there travels the same way unless the harness filters it by name",
+      "lists": {
+        "reachesToolShell": [
+          "WISP_BRIEF_RUN",
+          "WISP_REPO",
+          "WISP_TASK_ID",
+          "WISP_TASK_SLOT",
+          "WISP_WORKTREE"
+        ]
+      }
+    },
     "usageKeys": {
       "cost": "live",
       "verifiedAgainst": "2026.08.31-4057e58",

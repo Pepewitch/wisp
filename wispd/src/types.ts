@@ -78,6 +78,19 @@ export interface Task {
   purge_pending?: number;
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
+  /**
+   * Task briefs (brief-store.ts): 1 = each eligible turn is asked for one.
+   * SQLite's 0/1; `briefEnabled` at the API boundary. Optional in the type
+   * only because rows from older fixtures predate the column; the database
+   * always has it.
+   */
+  brief_enabled?: number;
+  /** Advances on every off→on, so a re-enable never revives an old turn's binding. */
+  brief_generation?: number;
+  /** The last admission order handed to a message or answer (store-messages admitTaskInput). */
+  input_seq?: number;
+  /** Moves whenever a person's input is added, edited, cancelled or changes delivery. */
+  input_rev?: number;
   created_at: string;
   updated_at: string;
 }
@@ -224,13 +237,15 @@ export interface BackgroundWork {
 }
 
 /** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived" | "fast"> & {
+export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_generation" | "input_seq" | "input_rev"> & {
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: import("./archive-progress").CleanupSummary;
   archived: boolean;
   /** Fast mode, for the same reason `archived` is a boolean here. */
   fast: boolean;
+  /** Task briefs are on for this task. Absent from a daemon older than the feature. */
+  briefEnabled?: boolean;
   background?: BackgroundWork;
 };
 
@@ -338,6 +353,16 @@ export interface TaskMessage {
   /** SQLite boolean: a daemon crash or failed acknowledgement made delivery indeterminate. */
   delivery_uncertain: number;
   attachments_json: string | null;
+  /**
+   * Who wrote it, fixed at creation: 'human'; 'workflow' for Wisp's own
+   * (auto-fix, heartbeat); 'scheduled' for a schedule-steer (the person's
+   * words, sent later); 'plugin' for a workflow plugin's wake; 'legacy' for a
+   * row older than the column. Internal — delivery frames by it and briefs
+   * read it; `workflow_id` stays the API's (clearable) link.
+   */
+  origin?: import("./turn-input").MessageOrigin;
+  /** Admission order among the task's inputs (messages and answers); internal. */
+  source_seq?: number | null;
   created_at: string;
   updated_at: string;
 }

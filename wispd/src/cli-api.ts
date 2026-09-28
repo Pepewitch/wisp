@@ -2,11 +2,17 @@ import type { StagedAttachmentPayload } from "./attachments";
 import { wispCommand } from "./command";
 import { loadConfig, type WispConfig } from "./config";
 
-class CliApiError extends Error {
+export class CliApiError extends Error {
   constructor(
     message: string,
     readonly url: string,
     readonly unreachable = false,
+    /** the HTTP status, when the daemon answered at all */
+    readonly status?: number,
+    /** the daemon's JSON answer, when it sent one */
+    readonly data?: Record<string, unknown>,
+    /** no answer arrived within the caller's `timeoutMs` */
+    readonly timedOut = false,
   ) {
     super(message);
   }
@@ -19,24 +25,37 @@ export async function daemonRequest(
   method = "GET",
   body?: BodyInit,
   contentType = "application/json",
+  /** give up after this long; omitted = wait as long as the daemon takes */
+  timeoutMs?: number,
 ): Promise<any> {
   const cfg = daemonConfig ??= loadConfig();
   const url = `http://${cfg.host}:${cfg.port}${path}`;
+  const signal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
   let response: Response;
+  let data: Record<string, unknown>;
   try {
     response = await fetch(url, {
       method,
       headers: { authorization: `Bearer ${cfg.token}`, "content-type": contentType },
       body,
+      signal,
     });
-  } catch {
-    throw new CliApiError("daemon is unreachable", url, true);
+    // a body that is not JSON reads as `{}`, but a timeout while reading it is still a timeout
+    data = (await response.json().catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return {};
+    })) as Record<string, unknown>;
+  } catch (error) {
+    const timedOut = signal?.aborted === true || (error instanceof Error && error.name === "TimeoutError");
+    throw new CliApiError(timedOut ? `daemon did not answer within ${timeoutMs} ms` : "daemon is unreachable", url, !timedOut, undefined, undefined, timedOut);
   }
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     throw new CliApiError(
       typeof data.error === "string" ? data.error : response.statusText,
       url,
+      false,
+      response.status,
+      data,
     );
   }
   return data;

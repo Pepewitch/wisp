@@ -1,4 +1,6 @@
-import { Flash } from "@/components/icons"
+import type { ReactNode } from "react"
+
+import { Brief, Flash } from "@/components/icons"
 import { cn } from "@/lib/utils"
 
 /**
@@ -32,13 +34,72 @@ export function FastModeToggle({
   touch?: boolean
   onChange: (value: boolean) => void
 }) {
-  const label = value ? "Fast mode on" : "Fast mode"
+  return (
+    <GlyphToggle
+      icon={<Flash />}
+      name="Fast mode"
+      onText="Fast"
+      title={value ? "Fast mode on — the same model, in the harness's faster lane" : "Fast mode off — standard speed"}
+      value={value}
+      disabled={disabled}
+      touch={touch}
+      onChange={onChange}
+    />
+  )
+}
+
+/**
+ * Task briefs, chosen before the first turn: the same glyph-until-chosen shape
+ * as fast mode (§5c-ii), because it too changes what every turn is sent — one
+ * short line asking the agent for a brief. Off for every new task.
+ */
+export function BriefToggle({ value, touch = false, onChange }: { value: boolean; touch?: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <GlyphToggle
+      icon={<Brief />}
+      name="Task brief"
+      onText="Brief"
+      title={value
+        ? "Task brief on — each turn ends with the agent saving a short report"
+        : "Task brief off — no report is asked for"}
+      value={value}
+      touch={touch}
+      onChange={onChange}
+    />
+  )
+}
+
+/**
+ * The control-bar toggle both of these are: shaped like a Menu trigger (same
+ * heights, same hover and focus language), its glyph alone while off and its
+ * value spelled out while on, and ON said with the menus' own "chosen"
+ * styling rather than the accent.
+ */
+function GlyphToggle({
+  icon,
+  name,
+  onText,
+  title,
+  value,
+  disabled = false,
+  touch = false,
+  onChange,
+}: {
+  icon: ReactNode
+  name: string
+  onText: string
+  title: string
+  value: boolean
+  disabled?: boolean
+  touch?: boolean
+  onChange: (value: boolean) => void
+}) {
   return (
     <button
       type="button"
-      aria-label={label}
+      aria-label={value ? `${name} on` : name}
       aria-pressed={value}
-      title={value ? "Fast mode on — the same model, in the harness's faster lane" : "Fast mode off — standard speed"}
+      title={title}
       disabled={disabled}
       onClick={() => onChange(!value)}
       className={cn(
@@ -53,8 +114,8 @@ export function FastModeToggle({
         value ? "bg-hover text-foreground [&>svg]:text-foreground" : "[&>svg]:text-muted-foreground",
       )}
     >
-      <Flash />
-      {value && <span className="truncate">Fast</span>}
+      {icon}
+      {value && <span className="truncate">{onText}</span>}
     </button>
   )
 }

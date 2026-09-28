@@ -273,3 +273,74 @@ describe("auto-merge in the overflow menu", () => {
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
   })
 })
+
+describe("the task brief switch", () => {
+  const view = (over: Record<string, unknown> = {}) => ({
+    enabled: true, generation: 1, archived: false, harness: "droid", supported: true, activation: "next-turn",
+    report: null, latestEligibleTurn: null, latestTurn: null, latestInput: null, reasons: ["no-report"], ...over,
+  })
+  function daemon(hasBriefs = true, brief: () => Record<string, unknown> = () => view()) {
+    return stubApi((path) => {
+      if (path.endsWith("/api/harnesses")) {
+        return { status: 200, body: { harnesses: [{ name: "droid", hasBriefs, hasModel: true, hasEffort: false, hasImage: false, defaults: {} }], features: { taskBriefs: true } } }
+      }
+      if (path.endsWith("/brief")) return { status: 200, body: brief() }
+      return { status: 200, body: { enabled: true, generation: 1, activation: "next-turn", turnRunning: false } }
+    })
+  }
+  async function open() {
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    return await screen.findByRole("menuitemcheckbox", { name: "Task brief" })
+  }
+
+  it("says what it costs before it is on, and switches it on without starting anything", async () => {
+    const calls = daemon()
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(screen.getByText(/One extra step per turn/)).toBeInTheDocument()
+    await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"))
+    fireEvent.click(toggle)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/brief-settings`, method: "PUT", body: { enabled: true } }))
+    expect(await screen.findByText("Starts with the next turn.")).toBeInTheDocument()
+    // the switch writes the setting and nothing else: no send, no interrupt
+    expect(calls.filter((c) => c.method !== "GET").map((c) => c.path)).toEqual([`/api/tasks/${TASK.id}/brief-settings`])
+  })
+
+  it("stops saying 'starts with the next turn' once a briefed turn has run", async () => {
+    // the row caught up with the switch, and the first briefed turn is under way
+    daemon(true, () => view({ activation: "active", latestEligibleTurn: { n: 4, status: "running", reported: false } }))
+    const { unmount } = mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
+    const toggle = await open()
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    await waitFor(() => expect(screen.queryByText(/Starts with the next turn/)).toBeNull())
+    unmount()
+    // …and while it is still waiting, the note says so, from the daemon's own read model
+    daemon(true, () => view({ reasons: ["awaiting-next-turn", "no-report"] }))
+    mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
+    await open()
+    expect(await screen.findByText("Starts with the next turn — this one began before briefs were on.")).toBeInTheDocument()
+  })
+
+  it("is not offered to switch on for a harness that cannot publish", async () => {
+    daemon(false)
+    mount(<TaskActions task={TASK} />)
+    const toggle = await open()
+    expect(await screen.findByText("droid can't write briefs through Wisp yet.")).toBeInTheDocument()
+    expect(toggle).toHaveAttribute("aria-disabled", "true")
+  })
+
+  it("is absent on an archived task and on a daemon without briefs", async () => {
+    stubApi((path) => (path.endsWith("/api/harnesses") ? { status: 200, body: { harnesses: [], features: {} } } : { status: 200, body: {} }))
+    const { unmount } = mount(<TaskActions task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+    unmount()
+    daemon()
+    mount(<TaskActions task={{ ...TASK, archived: true }} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    await screen.findAllByRole("menuitem")
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+  })
+})

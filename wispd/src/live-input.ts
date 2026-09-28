@@ -33,8 +33,8 @@ export interface ActiveLiveInput {
    * by sending, which is the send path above.
    */
   answer?: (questionId: string, answers: QuestionAnswer[]) => Promise<void>;
-  /** The questionnaire this turn is waiting on, if any. */
-  question?: () => { id: string; questions: QuestionPrompt[] } | null;
+  /** The questionnaire this turn is waiting on, if any: the one named, else the oldest. */
+  question?: (questionId?: string) => { id: string; questions: QuestionPrompt[] } | null;
   close: () => Promise<void>;
 }
 
@@ -327,7 +327,7 @@ function frameDropNote(recorder: LiveOutputSink): (chars: number) => void {
  * csv attached mid-turn would reach a live harness as bytes nobody mentioned.
  */
 function steerText(def: AdapterDef, message: TaskMessage, files: StoredAttachment[]): string {
-  return deliveredMessage(def, files, message.text);
+  return deliveredMessage(def, files, message.text, message.origin);
 }
 
 function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
@@ -391,7 +391,7 @@ function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
       noteDelivery(options.recorder, message, files);
     },
     answer: (questionId, answers) => driver.answer(questionId, answers),
-    question: () => driver.pendingQuestion(),
+    question: (questionId) => driver.pendingQuestion(questionId),
     close: () => driver.close(),
   });
   return Promise.all([

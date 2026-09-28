@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { AutopilotStatus } from "../../../shared/autopilot";
+import type { BriefSettings } from "../../../shared/task-brief";
 
 import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
@@ -72,6 +73,8 @@ export interface CreateTaskBody {
   attachments?: AttachmentPayload[];
   /** arm auto-merge / auto-fix for the task's PR from the start (worktree tasks only) */
   autopilot?: { autoMerge: boolean; autoFix: boolean };
+  /** ask each eligible turn for a task brief from the first one; omitted = off */
+  briefEnabled?: boolean;
 }
 
 /** POST /api/tasks — the composer's submit. Resolves to the created row. */
@@ -131,6 +134,26 @@ export function useAutopilot() {
       client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) =>
         current?.map((task) => (task.id === id ? { ...task, autopilot: status } : task)),
       );
+    },
+  });
+}
+
+/**
+ * PUT /api/tasks/:id/brief-settings — the task's brief switch. On success the
+ * task row learns the persisted value in place; a failure leaves the row (and
+ * so the switch) showing what the daemon still holds, and the caller shows the
+ * error. It starts nothing: the next eligible turn is the first to be asked.
+ */
+export function useBriefSettings() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      transport.request<BriefSettings>(`/api/tasks/${id}/brief-settings`, { method: "PUT", body: { enabled } }),
+    onSuccess: (settings, { id }) => {
+      const patch = (task: ApiTask) => (task.id === id ? { ...task, briefEnabled: settings.enabled } : task);
+      client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) => current?.map(patch));
+      void client.invalidateQueries({ queryKey: [...qk.task(id), "brief"] });
     },
   });
 }

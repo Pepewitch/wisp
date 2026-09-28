@@ -97,6 +97,20 @@ export interface AdapterDef {
     argv: string[];
   } | null;
   /**
+   * Task briefs (brief-store.ts): this harness's turns may be asked to publish
+   * one with `wisp brief set`, bound to the turn by `WISP_BRIEF_RUN`.
+   *
+   * Declared, never inferred. The binding is an environment variable, and
+   * whether a harness hands its spawn environment on to the shell its agent
+   * runs commands in is the harness's own behaviour — Codex, for one, filters
+   * its tool environment by name. So a builtin sets this only after a live turn
+   * showed the task environment reaching its tool shell (the `taskEnv` surface
+   * in tests/harness-facts/), and a custom adapter stays unsupported until its
+   * author declares it. Overriding a builtin's bin or exec drops it, as it
+   * drops liveInput: the verification was of that command.
+   */
+  briefs?: boolean;
+  /**
    * A curated model list for a harness whose CLI enumerates none.
    *
    * THE ONE DOCUMENTED EXCEPTION to "never hardcode a model id". It exists for

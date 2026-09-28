@@ -63,13 +63,19 @@ import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
+import { pendingBriefRun, recordBriefRun } from "./brief-store";
+import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
-  deliveredMessage,
+  BRIEF_RUN_ENV,
+  briefReminder,
+  attachmentLines,
   envForCwd,
+  framedMessage,
   inputStrategyFor,
   nativeImageAttachments,
   taskEnv,
-  taskPreamble,
+  taskPreambleLines,
+  withWispSection,
 } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
 
@@ -128,6 +134,11 @@ function startCapture(
   return { recorder, sink: recorder, stderrPump: recorder.drain(child.stderr, "stderr") };
 }
 
+/** Who wrote a queued message, for its framing at delivery (turn-input framedMessage); a direct turn is the person's. */
+function messageOrigin(sourceMessageId: string | undefined) {
+  return sourceMessageId ? getTaskMessage(sourceMessageId)?.origin : undefined;
+}
+
 /**
  * Spawn one harness turn (D7/D20). One-shot output goes fd-direct to the log;
  * a verified live protocol is pumped and normalized while stdin stays open.
@@ -158,25 +169,29 @@ export function startTurn(
   assertTaskNotStopping(task.id);
   assertTaskCapacity(cfg, task.id);
   const n = task.turn_count + 1;
-  // A1c/A1d: everything wisp cannot hand over through a native channel is
-  // delivered by having its path named in the prompt, so the preamble goes
-  // immediately before the user's message — inside the first turn's task
-  // preamble, not in front of it.
-  const body = deliveredMessage(def, attachments, message);
+  // A1c/A1d: what wisp cannot hand over through a native channel is named in
+  // the prompt, beside the task preamble and the notes, as ONE Wisp section
+  // before the person's words.
+  const attached = attachmentLines(def, attachments);
   // Wisp's own standing instructions travel with the harness input, like the
   // task preamble, and are not written into the user's message. Auto-merge
   // needs one: arming it IS asking for a push, which the preamble forbids.
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
-  const autopilot = standingNotes(task.id, n, n > 1 && message.trimStart().startsWith("/"));
-  const notes = autopilot?.notes ?? [];
-  const prompt = n === 1
-    ? `${taskPreamble(task, notes)}\n${body}`
-    : notes.length > 0 ? `${notes.join("\n")}\n\n${body}` : body;
+  const command = n > 1 && message.trimStart().startsWith("/");
+  const autopilot = standingNotes(task.id, n, command);
+  // A task brief is asked for once per eligible turn, through this same
+  // standing-note path: never in the user's message, never on a steer, and
+  // never in front of a command. Its binding is chosen now, before the spawn,
+  // because the turn row it names does not exist until after it.
+  const brief = pendingBriefRun(task.id, def, command);
+  const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
+  const framed = framedMessage(messageOrigin(sourceMessageId), message);
+  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the
-  // harness through the path preamble `deliveredMessage` just built, and would
+  // harness through the attached-files note in the prompt, and would
   // fail inside the harness if they went into codex's `-i` (A1d).
   const images = nativeImageAttachments(def, attachments).map((a) => a.path);
   // buildArgv owns the argv side of an image turn (template expansion, or the
@@ -220,7 +235,11 @@ export function startTurn(
       stdout: isLive ? "pipe" : outFd,
       stderr: recorderEligible ? "pipe" : errFd,
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
-      env: envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
+      env: {
+        ...envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
+        // only this turn's own binding: envForCwd has already dropped any inherited one
+        ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
+      },
       // Its own process GROUP, so a stop reaches the builds, servers, and
       // sub-agents the harness starts — not just the harness (ENG-03). The
       // pid is unchanged, so `exited`, the persisted pid, and the identity
@@ -272,6 +291,8 @@ export function startTurn(
         { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
       );
       recordProcessGroup(id);
+      // same transaction as the turn row: no request can see one without the other
+      if (brief) recordBriefRun(brief, { taskId: task.id, turnId: id, n, contextN: task.context_n }, cfg.instanceId);
       return id;
     })();
   } catch (error) {
@@ -533,6 +554,8 @@ async function watchTurn(
 export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>, cfg: WispConfig): Promise<void> {
   await refreshProcessGroups();
   releaseOrphanedTaskMessageClaims();
+  // an answer recorded but not settled before the crash may or may not have arrived
+  markPendingAnswersUncertain();
   for (const turn of runningTurns()) {
     const task = getTask(turn.task_id);
     if (!task) continue;

@@ -16,6 +16,7 @@ export {
   BranchRegular as Branch,
   BranchRequestRegular as BranchRequest,
   BotRegular as Bot,
+  TextDescriptionRegular as Brief,
   CheckmarkRegular as Check,
   ClipboardPasteRegular as ClipboardPaste,
   CloudRegular as Remote,

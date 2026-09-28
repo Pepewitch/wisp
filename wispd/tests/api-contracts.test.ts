@@ -607,6 +607,26 @@ describe("daemon API contracts", () => {
   });
 });
 
+describe("task briefs at the create boundary", () => {
+  test("a wrong type is named, and a harness that cannot publish refuses the switch", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-create-brief-"));
+    const base = await startServer();
+    await expectError(base, "/api/tasks", 400, "briefEnabled must be a boolean, got string", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "claude",
+      briefEnabled: "yes",
+    });
+    // refused rather than showing a band that never fills
+    await expectError(base, "/api/tasks", 400, "harness 'opencode' can't write task briefs", "POST", {
+      repoPath: repo,
+      prompt: "make a task",
+      harness: "opencode",
+      briefEnabled: true,
+    });
+  });
+});
+
 describe("settings secrets over the API", () => {
   test("the Jev key is write-only: saved to config.json, never read back, removable", async () => {
     const base = await startServer();

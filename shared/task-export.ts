@@ -5,6 +5,8 @@ export interface TaskExport {
   task: { id: string; title: string };
   turns: unknown[];
   messages: unknown[];
+  /** task briefs, oldest first; absent from a daemon older than the feature */
+  briefs?: unknown[];
   files: { path: string; dataBase64: string }[];
   missing: string[];
 }

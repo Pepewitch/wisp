@@ -39,6 +39,7 @@ import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
 import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
+import { BRIEF_PATH, briefRoute } from "./task-brief";
 import { settingsRoute } from "./settings";
 import { harnessLimitsRoute } from "./harness-limits";
 import { pullRequestTitleSync } from "../task-update";
@@ -190,6 +191,21 @@ function harnessRoutes(
   return null;
 }
 
+/** The task sub-resources whose paths have more than one segment after the id. */
+function taskFamilyRoute(
+  req: Request,
+  url: URL,
+  path: string,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+): Response | Promise<Response> | null {
+  if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
+  if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
+  if (BRIEF_PATH.test(path)) return briefRoute(req, path, cfg, adapters);
+  if (TERMINALS_PATH.test(path)) return terminalsRoute(req, url, path, cfg);
+  return null;
+}
+
 export function route(
   req: Request,
   url: URL,
@@ -205,9 +221,8 @@ export function route(
   limitsCache?: HarnessLimitsCache,
 ): Response | Promise<Response> {
   const m = req.method;
-  if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
-  if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
-  if (TERMINALS_PATH.test(path)) return terminalsRoute(req, url, path, cfg);
+  const family = taskFamilyRoute(req, url, path, cfg, adapters);
+  if (family !== null) return family;
   const models = modelCache ?? modelCacheFor(adapters);
   const probes = probeCache ?? probeCacheFor(adapters);
   const skills = skillCache ?? skillCacheFor(adapters);

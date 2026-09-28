@@ -122,6 +122,21 @@
       "verifiedAgainst": "0.149.0",
       "source": "app-server turn/steer during an active turn"
     },
+    "taskEnv": {
+      "cost": "live",
+      "verifiedAgainst": "0.157.1",
+      "source": "one live turn (app-server, danger-full-access): the shell tool listed the WISP_ names and an authenticated wisp CLI call reached the daemon; brief-enabled turns published with their WISP_BRIEF_RUN binding",
+      "note": "names only; the turn env is set once per spawn in runner.ts, so any variable added there travels the same way unless the harness filters it by name",
+      "lists": {
+        "reachesToolShell": [
+          "WISP_BRIEF_RUN",
+          "WISP_REPO",
+          "WISP_TASK_ID",
+          "WISP_TASK_SLOT",
+          "WISP_WORKTREE"
+        ]
+      }
+    },
     "usageKeys": {
       "cost": "live",
       "verifiedAgainst": "0.153.4",

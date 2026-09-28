@@ -19,6 +19,7 @@ import { SearchSpecimens } from "@/components/search-gallery-specimen"
 import { StartHereSpecimen } from "@/components/start-here"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import { AutopilotRailSpecimen } from "@/components/autopilot-rail-specimen"
+import { TaskBriefSpecimen } from "@/components/task-brief-specimen"
 import { MetricRow, Section, Specimen, TextRow } from "@/components/gallery-chrome"
 import { ModelVisibilitySpecimen } from "@/components/model-visibility-specimen"
 import { SettingsSpecimen } from "@/components/settings-dialog"
@@ -110,6 +111,8 @@ export function Gallery() {
         </Section>
 
         <AutopilotRailSpecimen />
+
+        <TaskBriefSpecimen />
 
         <InteractionSpecimens />
         <WorkflowSpecimens />

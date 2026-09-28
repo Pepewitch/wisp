@@ -85,6 +85,7 @@ interface CreateTaskBody {
   suffixPromptId?: unknown;
   attachments?: unknown;
   autopilot?: unknown;
+  briefEnabled?: unknown;
 }
 
 function createTaskBodyError(body: CreateTaskBody): Response | null {
@@ -107,8 +108,10 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
     return err(`effort must be a string, got ${typeName(body.effort)}`, 400);
   }
   if (body.effort === "") return err("effort must not be empty", 400);
-  if (body.fast !== undefined && typeof body.fast !== "boolean") {
-    return err(`fast must be a boolean, got ${typeName(body.fast)}`, 400);
+  for (const flag of ["fast", "briefEnabled"] as const) {
+    if (body[flag] !== undefined && typeof body[flag] !== "boolean") {
+      return err(`${flag} must be a boolean, got ${typeName(body[flag])}`, 400);
+    }
   }
   if (body.base !== undefined && typeof body.base !== "string") {
     return err(`base must be a string, got ${typeName(body.base)}`, 400);
@@ -140,6 +143,18 @@ function armRequestedAutopilot(taskId: string, requested: unknown): void {
   } catch (error) {
     console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** A choice the chosen harness cannot honour is refused by name, never silently dropped. */
+function unsupportedRequest(
+  def: AdapterDef,
+  harness: string,
+  asked: { effort: string | null; fast: boolean; brief: boolean },
+): Response | null {
+  if (asked.effort !== null && !def.effort) return err(`harness '${harness}' has no effort support`, 400);
+  if (asked.fast && !def.fastMode) return err(`harness '${harness}' has no fast mode`, 400);
+  if (asked.brief && def.briefs !== true) return err(`harness '${harness}' can't write task briefs`, 400);
+  return null;
 }
 
 /** POST /api/tasks */
@@ -178,13 +193,10 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       body.model as string | undefined,
       body.effort as string | undefined,
     );
-    if (effort !== null && !def.effort) {
-      return err(`harness '${harness}' has no effort support`, 400);
-    }
     const fast = body.fast === true;
-    if (fast && !def.fastMode) {
-      return err(`harness '${harness}' has no fast mode`, 400);
-    }
+    const brief = body.briefEnabled === true;
+    const unsupported = unsupportedRequest(def, harness, { effort, fast, brief });
+    if (unsupported) return unsupported;
     // Two local tasks in one repo means two agents editing the SAME files
     // with no isolation between them — the exact hazard worktrees exist to
     // remove. Refuse by name so the fix is obvious. (Worktree tasks are
@@ -238,6 +250,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
             effort,
             fast,
             mode,
+            brief,
             slot: freeSlot(),
           });
         } catch (e) {

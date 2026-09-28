@@ -121,6 +121,65 @@ describe("the ledger", () => {
     db.close();
   });
 
+  test("upgrading records who wrote each message and keeps the order they arrived in", () => {
+    const db = freshDatabase("brief-provenance");
+    migrate(db);
+    db.exec(`
+DROP INDEX IF EXISTS idx_task_messages_source;
+DROP TABLE task_answer_observations;
+ALTER TABLE task_messages DROP COLUMN origin;
+ALTER TABLE task_messages DROP COLUMN source_seq;
+ALTER TABLE tasks DROP COLUMN input_seq;
+ALTER TABLE tasks DROP COLUMN input_rev;
+DELETE FROM schema_migrations WHERE id = 15;
+`);
+    for (const id of ["tfixture", "tother"]) {
+      db.query("INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES (?, 'fixture', '/fixture', 'fake', 'done', 'now', 'now')").run(id);
+    }
+    const message = (id: string, at: string, workflow: string | null, task = "tfixture") =>
+      db.query(
+        `INSERT INTO task_messages (id, task_id, context_n, harness, text, status, workflow_id, attachment_hash, created_at, updated_at)
+         VALUES (?, ?, 1, 'fake', 'text', 'delivered', ?, '', ?, ?)`,
+      ).run(id, task, workflow, at, at);
+    const workflow = (id: string, type: string) =>
+      db.query(
+        `INSERT INTO workflows (id, task_id, type, version, params_json, state, reason, revision, context_n, next_check_at, expires_at, created_at, updated_at)
+         VALUES (?, 'tfixture', ?, '1', '{}', 'completed', 'done', 1, 1, 'later', 'later', 'now', 'now')`,
+      ).run(id, type);
+    message("m-second", "2026-09-02T00:00:00.000Z", null);
+    message("m-first", "2026-09-01T00:00:00.000Z", null);
+    workflow("wbeat", "heartbeat");
+    message("m-still-linked", "2026-09-03T00:00:00.000Z", "wbeat");
+    // a finished schedule-steer cleared its link; its wake record still names the message
+    workflow("wdone", "schedule-steer");
+    message("m-unlinked", "2026-09-04T00:00:00.000Z", null);
+    db.query("INSERT INTO workflow_wakes (workflow_id, event_key, message_id, prior_checkpoint_json) VALUES ('wdone', 'k', 'm-unlinked', '{}')").run();
+    // a plugin's wake known only from its history
+    workflow("wplug", "ci-watch");
+    message("m-history", "2026-09-05T00:00:00.000Z", null);
+    db.query("INSERT INTO workflow_history (workflow_id, at, kind, detail, message_id) VALUES ('wplug', 'now', 'wake', '', 'm-history')").run();
+    // linked to a workflow that no longer exists: not the person's, kind unknown
+    message("m-orphan", "2026-09-06T00:00:00.000Z", "wgone");
+    // another task counts its own order from 1
+    message("m-other", "2026-09-01T12:00:00.000Z", null, "tother");
+
+    expect(migrate(db).applied).toEqual([15]);
+    expect(db.query("SELECT id, origin, source_seq FROM task_messages WHERE task_id = 'tfixture' ORDER BY source_seq").all()).toEqual([
+      { id: "m-first", origin: "legacy", source_seq: 1 },
+      { id: "m-second", origin: "legacy", source_seq: 2 },
+      { id: "m-still-linked", origin: "workflow", source_seq: 3 },
+      { id: "m-unlinked", origin: "scheduled", source_seq: 4 },
+      { id: "m-history", origin: "plugin", source_seq: 5 },
+      { id: "m-orphan", origin: "plugin", source_seq: 6 },
+    ]);
+    expect(db.query("SELECT origin, source_seq FROM task_messages WHERE task_id = 'tother'").get()).toEqual({ origin: "legacy", source_seq: 1 });
+    expect(db.query("SELECT id, input_seq, input_rev FROM tasks ORDER BY id").all()).toEqual([
+      { id: "tfixture", input_seq: 6, input_rev: 0 },
+      { id: "tother", input_seq: 1, input_rev: 0 },
+    ]);
+    db.close();
+  });
+
   test("upgrading seeds fast mode off and teaches the workflow guard to watch it", () => {
     const db = freshDatabase("fast-mode");
     migrate(db);
