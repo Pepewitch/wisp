@@ -2,20 +2,76 @@
 
 This ledger separates release evidence from the version label. The 0.6 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.6.4 is the current release; earlier 0.6 records are retained
+coverage. 0.6.5 is the current release; earlier 0.6 records are retained
 below. The 0.5 records remain in
 [the 0.5 ledger](../v0.5/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.6.4.
+still apply to 0.6.5.
+
+## 0.6.5 publication
+
+**Published and promoted on 2026-09-29.**
+[Wisp 0.6.5](https://github.com/Pepewitch/wisp/releases/tag/v0.6.5) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 20:40:43 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`40d44f1e1c56c5e1d12214c66ce67758d215a7d9`](https://github.com/Pepewitch/wisp/commit/40d44f1e1c56c5e1d12214c66ce67758d215a7d9),
+landed through [PR #338](https://github.com/Pepewitch/wisp/pull/338). It carries
+a daemon that stays up: idle terminal shells no longer freeze it
+([#319](https://github.com/Pepewitch/wisp/pull/319)), one malformed harness
+line no longer crashes it ([#317](https://github.com/Pepewitch/wisp/pull/317)),
+it stops gracefully and asks before an update interrupts running tasks
+([#330](https://github.com/Pepewitch/wisp/pull/330)), and it runs on Bun 1.4.2
+([#329](https://github.com/Pepewitch/wisp/pull/329)). It also contains
+agent-written diagrams and HTML ([#328](https://github.com/Pepewitch/wisp/pull/328)),
+hardens Desktop ([#321](https://github.com/Pepewitch/wisp/pull/321)), opens
+finished tasks and runs search without stalling the daemon
+([#332](https://github.com/Pepewitch/wisp/pull/332),
+[#336](https://github.com/Pepewitch/wisp/pull/336)), and carries the other
+changes listed in the release notes since 0.6.4.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/36626985549)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/36626775506) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `40d44f1` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 20:42:44 UTC with Homebrew tap commit
+[`8c608d35095df08f567f5704ddfd35e67023de1f`](https://github.com/Pepewitch/homebrew-tap/commit/8c608d35095df08f567f5704ddfd35e67023de1f).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.6.5.
+
+0.6.5 adds database migrations 16–19, so a 0.6.4 daemon cannot reopen a profile
+that 0.6.5 has opened. `brand/README.md` and `scripts/brand/mark.ts` changed
+since 0.6.4, so release:check re-rendered the PNG assets and verified that none
+was stale. This is a fully
+automated publication: no maintainer qualification — fresh-install or upgrade
+receipts, a Desktop updater journey across this version, the token-spending
+harness probes, or the paid evaluator panel — was performed, and this record
+does not claim them. The published assets and release body remain immutable;
+this ledger records the completed outcome separately.
+
+No one ran this release's headline changes against the published build: the
+idle-shell fix with more shells than CPU cores, the update confirmation with a
+task running, and Desktop's navigation policy, proxy bypass and
+corrupt-connections recovery on an installed app. Those Desktop paths were
+launch-tested only on a local pre-release build during review.
 
 ## 0.6.4 publication
 
 **Published and promoted on 2026-09-28.**
-[Wisp 0.6.4](https://github.com/Pepewitch/wisp/releases/tag/v0.6.4) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.6.4](https://github.com/Pepewitch/wisp/releases/tag/v0.6.4) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 10:15:17 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`e5b51eb591e18be527eb72e1ff9ffb4180f781fb`](https://github.com/Pepewitch/wisp/commit/e5b51eb591e18be527eb72e1ff9ffb4180f781fb),
@@ -44,8 +100,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 10:17:19 UTC with Homebrew tap commit
 [`3ec17d3247a2603636d256d85503011ff5a5bc7e`](https://github.com/Pepewitch/homebrew-tap/commit/3ec17d3247a2603636d256d85503011ff5a5bc7e).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.6.4.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.6.4 until 0.6.5 was promoted.
 
 0.6.4 adds database migrations 14 and 15, so a 0.6.3 daemon cannot reopen a
 profile that 0.6.4 has opened. `brand/README.md` and `scripts/brand/` changed
