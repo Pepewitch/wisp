@@ -43,7 +43,13 @@ bun run --cwd web test -- src/components/start-here.test.tsx
 ```
 
 The last two commands run one daemon test file and one UI test file;
-substitute the file closest to your change.
+substitute the file closest to your change. Always run a daemon test with
+`--cwd wispd` (or `bun run test:wispd`): that is what preloads
+`wispd/tests/setup.ts`'s `WISP_HOME` isolation. A bare `bun test
+wispd/tests/...` from the repository root skips that preload; `config.ts`
+now refuses to fall back to `~/.wisp` in that case and fails fast with a
+named error instead of touching your real profile, but the fix is still to
+run it from `wispd`.
 
 For code changes, run `bun run check` before opening a PR. It covers docs,
 release versions, workflow pins, lint, type checks, and tests. Use

@@ -76,11 +76,12 @@ remaining platform gaps, and native dependency advisory scope.
    updater-signature verification. Anonymous public-byte verification precedes
    channel promotion.
 
-The update API accepts only a newer release returned by the fixed
-`Pepewitch/wisp` GitHub endpoint. Linux activation verifies the published
-manifest, artifact hash, and embedded build identity. macOS delegates
-installation and checksum verification to Homebrew. Neither path accepts a
-caller-provided URL or uses `sudo`.
+The update API accepts only a newer release named by the fixed
+`Pepewitch/homebrew-tap` update channel file, downloaded from
+`github.com/Pepewitch/wisp`'s own release assets. Linux activation verifies
+the published manifest, artifact hash, and embedded build identity. macOS
+delegates installation and checksum verification to Homebrew. Neither path
+accepts a caller-provided URL or uses `sudo`.
 
 The browser keeps the bearer token in its origin-scoped `localStorage` and
 sends it explicitly on every hop: API requests, the event streams (served over
@@ -114,12 +115,17 @@ the Wisp origin as able to read the bearer token; the self-contained bundle and
 private encrypted transport remain part of the security boundary.
 
 The daemon-served page carries a content security policy built from the bundle
-it is serving: `default-src 'none'`, the inline script's own sha256 hash (never
-`'unsafe-inline'` for scripts), `frame-ancestors 'none'` alongside
-`X-Frame-Options: DENY`, `object-src`/`base-uri`/`form-action` at `'none'`, and
+it is serving: `default-src 'none'`, `script-src` of the bundle's inline
+script hashes plus `'self'` for its external entry and lazy chunks under
+`/chunks/` (never `'unsafe-inline'` for scripts — the daemon's exact chunk
+allowlist and `X-Content-Type-Options: nosniff` narrow what `'self'` can
+actually fetch), `frame-ancestors 'none'` alongside `X-Frame-Options: DENY`,
+`object-src`/`base-uri`/`form-action` at `'none'`, and
 `Referrer-Policy: no-referrer`. `style-src` keeps `'unsafe-inline'` because
 xterm creates stylesheets after load, so it deliberately carries no hash — a
-hash would disable the allowance the terminal depends on.
+hash would disable the allowance the terminal depends on. The offline page
+(served when the daemon cannot reach the requested resource) keeps the
+older hash-only policy, with no `'self'`.
 
 Agent-supplied remote images are placeholders until the reader explicitly
 chooses **Load image** for that URL. The destination and disclosure consequence

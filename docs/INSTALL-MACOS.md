@@ -120,6 +120,7 @@ command synchronizes it. For a damaged app, quit it and run
 | Port is occupied | Inspect it with `lsof -nP -iTCP:8710 -sTCP:LISTEN`, substituting the port in `~/.wisp/config.json`. Stop the unintended listener or change Wisp's port, then restart the service. |
 | Profile is already being served | Use that daemon or stop its supervisor before restarting. Never delete `daemon-owner.lock.db`. |
 | Browser or tunnel cannot reconnect after a port change | Run `wisp token` and update bookmarks, tunnels, and proxy mappings to the persisted address. |
+| Need the daemon's own log | `$(brew --prefix)/var/log/wisp.log` (stdout and stderr both go there). |
 
 Initialization prefers port `8710`, trying `8711`–`8799` if needed. An existing
 profile never silently changes ports. Separate daemons need separate

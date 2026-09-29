@@ -574,8 +574,8 @@ would be two labels where one is news.
 ## 5d. Project settings
 
 The gear on a project row opens its settings: **setup script**, **archive
-script**, and **files to copy**. All three are worktree-only, and the modal says
-so once at the top rather than three times.
+script**, **files to copy**, and **base branch**. All four are worktree-only,
+and the modal says so once at the top rather than four times.
 
 - **Files to copy** solves the `.env` problem: git does not carry ignored files,
   so a fresh worktree cannot run without them. One glob per line; a pattern with
@@ -1161,7 +1161,7 @@ this app:
   daemon**, and Desktop has up to five.
 
 So the panel is DERIVED and owns no state. `lib/first-run.ts` builds its rows
-from `LocalSetupReport`, `GET /api/harnesses` and `GET /api/projects`;
+from `LocalSetupReport`, `GET /api/harnesses` and `GET /api/repos`;
 `hooks/useFirstRunPanel.ts` binds them to the active connection. There is no
 `hasOnboarded` flag, nothing per-connection to keep straight, and nothing in
 Settings to restart it (§5g). It shows because `tasks.length === 0`, and it

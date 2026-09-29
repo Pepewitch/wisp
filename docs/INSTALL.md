@@ -42,6 +42,24 @@ The installer initializes the profile and enables/starts a systemd **user**
 service when available. It uses no `sudo` and refuses to replace unmanaged
 paths. Uninstall preserves task data and repositories.
 
+The generated unit (`~/.config/systemd/user/wisp.service`) runs
+`ExecStart=%h/.local/bin/wisp serve` with `Restart=always`, `RestartSec=2`,
+`KillMode=process`, and `UMask=0077`. It carries no `Environment=` line, so a
+custom `WISP_HOME` or `WISP_INSTALL_ROOT` passed to the installer applies only
+at install time — the running service still serves the default `~/.wisp`. For
+a systemd-managed daemon that needs either overridden, add them to a drop-in
+the same way as [service credentials](#harness-credentials-under-a-service-manager).
+
+The installer itself reads several environment variables (`sh install.sh
+--help`): `WISP_VERSION` (release to install), `WISP_SHA256`/`WISP_COMMIT`
+(pin the expected checksum/commit instead of fetching `SHA256SUMS`),
+`WISP_RELEASE_BASE_URL` (release asset directory), `WISP_INSTALL_ROOT`
+(managed version directory, default `~/.local/share/wisp`), `WISP_BIN_DIR`
+(where the `wisp` symlink goes, default `~/.local/bin`), `WISP_HOME`
+(data/config directory), `WISP_ARTIFACT_PATH` (a verified local/offline
+artifact), and `WISP_INSTALL_SERVICE` (`auto` or `no`). `uninstall.sh` needs
+the same `WISP_INSTALL_ROOT`/`WISP_BIN_DIR` values to find what it installed.
+
 To inspect the script first, download it into a scratch directory:
 
 ```sh
@@ -209,6 +227,7 @@ URL. If the initial range is full, run `wisp init --port <unused-port>`.
 | Git identity or project check fails | Configure Git's name/email and register an existing Git working tree. |
 | CLI and daemon versions differ | Restart the managed daemon after installation. |
 | Database startup fails | Run `wisp doctor --database` against the same `WISP_HOME`; preserve files before repair or restore. |
+| Need the daemon's own log | `journalctl --user -u wisp.service` under systemd; `wisp serve` in a terminal prints directly to it. |
 
 Database diagnosis is read-only and does not probe harnesses. Wisp takes
 exclusive home ownership before migrations; a rejected second start does not
@@ -227,7 +246,8 @@ restart. The shell must accept `-l`.
 
 See [storage and retention](ARCHIVE-CLEANUP.md) for disk usage and cleanup,
 and the [CLI reference](../skills/wisp/references/cli.md#daemon--diagnostics)
-for diagnostic logs and concurrency settings.
+for per-turn diagnostic archives and concurrency settings — a separate thing
+from the daemon's own log above.
 
 ## Back up and restore a Wisp home
 
@@ -304,6 +324,8 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 ```
 
 From a checkout, use `sh scripts/uninstall.sh`. The uninstaller removes only
-installer-managed binaries, symlinks, and the user service. It refuses
-unmarked installations and preserves `~/.wisp`, repositories, branches, and
-worktrees. Review retained data and running work before deleting anything.
+installer-managed binaries, symlinks, and the user service — the systemd unit
+and the install root each carry their own marker, checked independently
+before that artifact is touched — and preserves `~/.wisp`, repositories,
+branches, and worktrees. Review retained data and running work before
+deleting anything.

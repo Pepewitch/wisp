@@ -85,7 +85,9 @@ wispd/scripts/evaluator/run.sh \
 
 Raw, sanitized evidence lands under `dist/evaluator/<run-id>/`, which is
 gitignored. Each case emits `case.json`; the run emits `summary.json`. Publish
-only the reviewed, sanitized records selected for `docs/v0.4/evidence/`.
+only the reviewed, sanitized records selected for the current release's
+qualification ledger (`docs/v0.6/QUALIFICATION.md`, or its successor); no
+evidence directory has been published yet, so agree on one before publishing.
 
 The runner refuses a dirty worktree, a release manifest from another commit, a
 bad checksum, a symlinked key path, or a key file not mode `0600`.

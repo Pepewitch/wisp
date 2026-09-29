@@ -1,6 +1,6 @@
 # Desktop transport contract
 
-Status: implemented transport boundary for Wisp Desktop 0.5.0. Installation
+Status: implemented transport boundary for Wisp Desktop. Installation
 and release mechanics are documented separately from this security contract.
 See [Architecture](ARCHITECTURE.md) first for the system-wide ownership and
 shared-client model.
@@ -29,8 +29,8 @@ same-origin shortcuts cannot be reused by a multi-daemon desktop shell:
 | Query cache | one global client and daemon-global keys | every daemon-owned key begins with `connectionId` |
 | Connectivity | one global value combining event and log streams | reachability, auth, and selected-log health are separate per connection |
 | Daemon update | one global query and a full-page reload on success | the app-global updater is bound to built-in Local; remotes cannot be updated through Desktop |
-| UI bundle | one inlined HTML document served by `wispd` | Tauri loads the same built React application from packaged assets |
-| Content policy | none: the daemon serves the page without a CSP | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
+| UI bundle | an HTML entry plus lazy-loaded chunks under `/chunks/`, served by `wispd` | Tauri loads the same built React application from packaged assets |
+| Content policy | a CSP built from the served bundle: hashed inline scripts plus `'self'` for the generated chunks | a declared CSP that must keep allowing the stylesheets xterm creates after load (`desktop/README.md`) |
 
 The web runtime remains intentionally single-daemon. It keeps same-origin
 requests and its current token migration behavior. Desktop support is added
@@ -51,8 +51,8 @@ The UI reads or mutates these route families:
   `/api/update`, and `POST /api/terminal-origin`, which reports whether the
   daemon would accept a terminal socket from the caller's `Origin`;
 - tasks and actions: `/api/tasks`, `/api/tasks/:id`, task action subroutes,
-  `/api/status`, `/api/pull-requests`, and `/api/outbox` (the current
-  same-origin session probe);
+  `/api/status`, `/api/pull-requests`, and `/api/outbox` (the undelivered
+  webhook queue);
 - daemon-owned configuration: `/api/repos`, `/api/projects`,
   `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
 - cross-task text search: `/api/search?q=…`, whose query string a proxy must
@@ -80,7 +80,8 @@ daemon refusal into a generic proxy failure.
 
 ### Server-sent events
 
-`GET /api/events` has transient task, turn, message, and project notifications.
+`GET /api/events` has transient task, turn, message, workflow, brief,
+terminals, project, harnesses, settings, and harness-limits notifications.
 It is an invalidation stream, not a durable snapshot. Every initial connection
 and every reconnect therefore performs a baseline refetch before treating the
 cache as current.
@@ -105,10 +106,12 @@ elements can display them. The desktop URL names only the immutable connection
 and daemon path. Native code injects the credential upstream; neither a query
 parameter nor a generated media URL may contain the daemon token.
 
-The daemon-served web bundle is one inlined HTML file. There are no additional
-web assets to proxy in the current build, but `assetUrl()` remains part of the
-runtime boundary because attachments and future daemon-owned content need the
-same connection binding.
+Desktop loads its own packaged React build (above) rather than the daemon-served
+one, so the daemon-served bundle's external entry and lazy chunks are not
+something the native proxy has to serve. There are no additional web assets to
+proxy in the current build, but `assetUrl()` remains part of the runtime
+boundary because attachments and future daemon-owned content need the same
+connection binding.
 
 ## Connection identity and routing
 

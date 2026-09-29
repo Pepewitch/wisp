@@ -82,9 +82,9 @@ src/
   App.tsx            route split (main vs #/gallery), the three-pane shell
   index.css          tokens — the ONLY place a colour is defined
   components/        surfaces; ui/ holds the vendored shadcn primitives
-  lib/               state.ts (STATE_LABEL), api.ts, queries.ts, diff.ts, …
+  lib/               state.ts (STATE_LABEL), api.ts, query.ts, diff.ts, …
   stream/            the log-stream reducer
-  hooks/             useLogStream, useMediaQuery
+  hooks/             useLogStream, useMediaQuery, queries.ts (data-fetching hooks)
 ```
 
 `main.tsx` selects one of two runtimes. The browser supplies one same-origin
@@ -150,7 +150,10 @@ build, but it still requires an explicit browser/Desktop impact review.
 
 For pixel checks, prefer `bun scripts/capture-app.ts [outdir]` (zero-dep, raw
 CDP against system Chrome) over eyeballing a browser pane: it emits
-deterministic desktop, mobile, and gallery PNGs.
+deterministic desktop, mobile, and gallery PNGs. It is hard-wired to the
+installed production daemon (`127.0.0.1:8710` and `~/.wisp/config.json`), not
+a `wisp-dev` profile — run it against a machine/profile you are fine
+screenshotting, or point a browser at the dev server instead.
 
 The shadcn 4.19.0 Tailwind stylesheet is vendored unchanged at
 `src/styles/shadcn.css`, with its MIT notice in `licenses/shadcn-MIT.txt`.
