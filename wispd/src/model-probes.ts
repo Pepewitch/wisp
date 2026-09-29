@@ -108,6 +108,7 @@ export class ModelProbeCache {
   private readonly cachePath: string | undefined;
   private readonly refreshIntervalMs: number;
   private lastRefreshAttemptAt = 0;
+  private readonly stopping = new AbortController();
 
   constructor(
     private readonly adapters: Record<string, AdapterDef>,
@@ -140,8 +141,18 @@ export class ModelProbeCache {
     return this.refresh();
   }
 
+  /**
+   * Abandon the refresh in flight, killing its probes, and start no more. It
+   * is a read-only cache refresh, so a stopping daemon must not wait up to a
+   * probe timeout for it. The cache keeps what it had.
+   */
+  stop(): void {
+    this.stopping.abort(new Error("the daemon is stopping"));
+  }
+
   /** Force a refresh. Explicit re-probes use this even when the cache is fresh. */
   refresh(): Promise<void> {
+    if (this.stopping.signal.aborted) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;
     this.lastRefreshAttemptAt = this.now().getTime();
     let changed = false;
@@ -150,6 +161,8 @@ export class ModelProbeCache {
       Object.entries(this.adapters).map(async ([name, def]) => {
         const previous = this.snapshot(name);
         const next = await this.probe(def);
+        // abandoned, not failed: an interrupted probe is no news about the harness
+        if (this.stopping.signal.aborted) return;
         const answer = next.models ? next : { ...next, models: previous.models };
         this.entries.set(name, answer);
         if (!sameAnswer(previous, answer)) changed = true;
@@ -226,15 +239,20 @@ export class ModelProbeCache {
   private async probe(def: AdapterDef): Promise<ModelCacheEntry> {
     const controller = new AbortController();
     let timeout: ReturnType<typeof setTimeout> | null = null;
-    const timedOut = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        const error = new Error(`model probe timed out after ${this.timeoutMs / 1000}s`);
+    let onStop: (() => void) | null = null;
+    // A timeout or a daemon stop both end the probe at once, and kill it.
+    const abandoned = new Promise<never>((_, reject) => {
+      const abandon = (error: Error): void => {
         reject(error);
         controller.abort(error);
-      }, this.timeoutMs);
+      };
+      timeout = setTimeout(() => abandon(new Error(`model probe timed out after ${this.timeoutMs / 1000}s`)), this.timeoutMs);
+      onStop = () => abandon(new Error("model probe abandoned: the daemon is stopping"));
+      if (this.stopping.signal.aborted) onStop();
+      else this.stopping.signal.addEventListener("abort", onStop, { once: true });
     });
     try {
-      const discovery = await Promise.race([discoverModels(def, this.spawn, controller.signal), timedOut]);
+      const discovery = await Promise.race([discoverModels(def, this.spawn, controller.signal), abandoned]);
       return {
         models: {
           list: discovery.models ?? [],
@@ -247,6 +265,7 @@ export class ModelProbeCache {
       return { models: null, modelsError: isMissingBinary(message) ? "bin not found" : message };
     } finally {
       if (timeout !== null) clearTimeout(timeout);
+      if (onStop !== null) this.stopping.signal.removeEventListener("abort", onStop);
     }
   }
 }

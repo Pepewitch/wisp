@@ -327,10 +327,13 @@ When any task has one, `wisp update` names how many and asks `Update anyway?
 [y/N]` on a terminal. Without a terminal it refuses unless `--yes` (`-y`) is
 given. The web update control asks the same question, with Cancel and Update
 anyway. Both follow the daemon: `POST /api/update` answers `409` with
-`running: N` while turns run, unless the request sets `force: true`.
+`running: N` while turns run, unless the request sets `force: true`. The
+check happens once, before the install: a turn that starts while the update
+installs is still interrupted by the restart.
 
 On SIGTERM or SIGINT (a service restart, an update, Ctrl-C) the daemon stops
-gracefully for up to 5 seconds, then stops its terminal shells and exits.
+gracefully for up to 5 seconds, then stops its terminal shells and exits. It
+does not wait for running turns; the next boot recovers them.
 
 `wisp limits` reads each harness's own plan windows: claude-code through
 `claude -p /usage`, codex through its app-server's rate-limit read, droid

@@ -22,7 +22,8 @@ progress.
 A daemon update restarts that daemon, which interrupts every running turn.
 When any task has one, the daemon refuses the update and says how many, and
 the shared UI asks before interrupting them (Cancel / Update anyway), in
-Desktop and the browser alike.
+Desktop and the browser alike. The question is asked once, before the install;
+a turn that starts while the update installs is still interrupted.
 
 ## Discovery and installation
 

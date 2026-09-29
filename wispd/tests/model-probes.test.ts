@@ -58,6 +58,34 @@ describe("daemon model probe cache", () => {
     });
   });
 
+  test("a stopping daemon abandons discovery at once, kills the probe, and keeps the cached answer", async () => {
+    let hang = false;
+    let probeSignal: AbortSignal | undefined;
+    const spawn: ModelProbeCacheOptions["spawn"] = (cmd, signal) => {
+      if (!hang) return droidSpawn()(cmd);
+      probeSignal = signal;
+      return new Promise(() => undefined);
+    };
+    // the probe timeout is long: only stop() can end this refresh promptly
+    const cache = new ModelProbeCache({ droid: BUILTIN_ADAPTERS.droid }, { spawn, timeoutMs: 60_000 });
+    await cache.refresh();
+    const before = cache.snapshot("droid");
+
+    hang = true;
+    const refreshing = cache.refresh();
+    await Bun.sleep(10);
+    const started = Date.now();
+    cache.stop();
+    await refreshing;
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(probeSignal?.aborted).toBe(true);
+    expect(cache.snapshot("droid")).toEqual(before);
+    // and no new refresh starts
+    probeSignal = undefined;
+    await cache.refresh();
+    expect(probeSignal).toBeUndefined();
+  });
+
   test("refresh replaces the old snapshot asynchronously and coalesces concurrent refreshes", async () => {
     let generation = 0;
     const spawn: SpawnFn = (cmd) => {

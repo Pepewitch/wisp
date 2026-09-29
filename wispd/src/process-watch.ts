@@ -78,7 +78,8 @@ interface ReAdoptionPollOptions {
  */
 export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
   let finish!: () => void;
-  trackHomeWork(new Promise<void>(resolve => { finish = resolve; }));
+  // Recoverable: an exiting daemon leaves the process for the next boot to re-adopt again.
+  trackHomeWork(new Promise<void>(resolve => { finish = resolve; }), { recoverable: true });
   let capTermAt: number | null = null;
   let polling = false;
   let settled = false;

@@ -10,7 +10,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { ADAPTERS_PATH, CONFIG_PATH } from "../src/config";
+import { serve, stopForExit } from "../src/daemon";
+import { acquireHomeOwnership } from "../src/home-lock";
 import { shutDown } from "../src/shutdown";
+import { createTask, freeSlot, newTaskId, runningTurn, setTaskFields, transition } from "../src/store";
 
 const homes: string[] = [];
 afterAll(() => {
@@ -33,7 +37,9 @@ async function startDaemon() {
   const proc = Bun.spawn({
     cmd: [process.execPath, "src/index.ts", "serve"],
     cwd: resolve(import.meta.dir, ".."),
-    env: { ...process.env, WISP_HOME: home },
+    // Hermetic: no harness may launch (so model discovery fails at once, as
+    // it does with nothing installed), and nothing reads the user's home.
+    env: { ...process.env, WISP_HOME: home, HOME: home, PATH: "/usr/bin:/bin", WISP_LAUNCH_POLICY: "block" },
     stdout: "ignore",
     stderr: "pipe",
   });
@@ -120,4 +126,46 @@ describe("the shutdown sequence", () => {
     });
     expect(steps).toEqual(["shells", "exit 143"]);
   });
+});
+
+describe("stopping a daemon that is about to exit", () => {
+  test("does not wait for a running turn, and releases ownership", async () => {
+    const token = "shutdown-turn-token";
+    writeFileSync(CONFIG_PATH, JSON.stringify({ port: 18710, host: "127.0.0.1", token, webhooks: [], repos: [] }));
+    // a harness that outlives any reasonable stop: bash is an allowed stand-in
+    writeFileSync(ADAPTERS_PATH, JSON.stringify({ sleeper: { bin: "bash", exec: ["-c", "sleep 60"], parse: { format: "text" } } }));
+    const worktree = mkdtempSync(join(tmpdir(), "wisp-shutdown-turn-"));
+    homes.push(worktree);
+    const server = await serve({ port: 0, modelProbeSpawn: () => { throw new Error("no probes here"); }, modelProbeTimeoutMs: 100 });
+    const id = newTaskId();
+    let pid: number | null = null;
+    try {
+      createTask({ id, title: "Shutdown fixture", repo_path: worktree, harness: "sleeper", model: null, slot: freeSlot() });
+      setTaskFields(id, { worktree_path: worktree });
+      transition(id, "done");
+      // through the API, so the turn watcher is the daemon's tracked work
+      const sent = await fetch(`http://127.0.0.1:${server.port}/api/tasks/${id}/send`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ message: "keep going" }),
+      });
+      expect(sent.ok).toBe(true);
+      const deadline = Date.now() + 5_000;
+      while (!runningTurn(id)?.pid && Date.now() < deadline) await Bun.sleep(20);
+      pid = runningTurn(id)?.pid ?? null;
+      expect(pid).not.toBeNull();
+
+      const started = Date.now();
+      await stopForExit(server);
+      expect(Date.now() - started).toBeLessThan(2_000);
+      // ownership is free for the next daemon, and the turn was left running for it
+      acquireHomeOwnership().release();
+      expect(runningTurn(id)).not.toBeNull();
+    } finally {
+      if (pid !== null) {
+        try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+      }
+      rmSync(ADAPTERS_PATH, { force: true });
+    }
+  }, 20_000);
 });
