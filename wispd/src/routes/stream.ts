@@ -268,11 +268,30 @@ function emitRendered(
   send(event, rendered.kind === "activity" ? { ...head, activity: rendered.activity } : { ...head, text: rendered.text });
 }
 
+function logStreamOptions(url: URL): { format: LogFormat; requested: number | null; liveOnly: boolean } | Response {
+  const format = url.searchParams.get("format") ?? "human";
+  if (format !== "activity" && format !== "human" && format !== "raw") {
+    return err(`format must be activity, human or raw, got '${format}'`, 400);
+  }
+  const requested = integerQueryParam(url, "turn", 1);
+  if (requested instanceof Response) return requested;
+  const follow = url.searchParams.get("follow");
+  if (follow !== null && follow !== "live") return err(`follow must be live, got '${follow}'`, 400);
+  return { format, requested, liveOnly: follow === "live" };
+}
+
 /**
- * GET /api/tasks/:id/log/stream?turn=n&format=activity|human|raw — the streaming
- * replacement for tail polling: a progressive backlog from byte zero, append
- * events as bytes land, turn-end when the turn settles, and task state events.
- * The stream stays open across turns; the client closes it when switching.
+ * GET /api/tasks/:id/log/stream?turn=n&format=activity|human|raw&follow=live — the
+ * streaming replacement for tail polling: a progressive backlog from byte zero,
+ * append events as bytes land, turn-end when the turn settles, and task state
+ * events. The stream stays open across turns; the client closes it when switching.
+ *
+ * `follow=live` is for a viewer that keeps only the turn in progress (the web
+ * pane drops a turn's structured activity at its turn-end). A turn that has
+ * already settled when the stream reaches it is reported by its turn-end
+ * alone: replaying its whole log only for the client to discard it made every
+ * click on a finished task cost the full transcript, up to the log budget. A
+ * settled turn's history has its own request (`turn=n` without `follow`).
  *
  * All follow transitions are driven by ONE serialized poll tick reading the
  * turn rows — the db is the source of truth and is written before any event
@@ -281,16 +300,12 @@ function emitRendered(
  * order (append… → turn-end → backlog) race-free.
  */
 export function logStream(task: Task, url: URL, adapters: Record<string, AdapterDef>): Response {
-  const format = url.searchParams.get("format") ?? "human";
-  if (format !== "activity" && format !== "human" && format !== "raw") {
-    return err(`format must be activity, human or raw, got '${format}'`, 400);
-  }
-  const turn = integerQueryParam(url, "turn", 1);
-  if (turn instanceof Response) return turn;
+  const options = logStreamOptions(url);
+  if (options instanceof Response) return options;
+  const { format, requested, liveOnly } = options;
   // A refused request must not consume a subscriber slot.
   if (activeLogStreams >= MAX_LOG_STREAMS) return err("too many log stream subscribers", 503);
   activeLogStreams++;
-  const requested = turn;
   const enc = new TextEncoder();
   let closed = false;
   let controller: ReadableStreamDefaultController<Uint8Array>;
@@ -344,6 +359,25 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
 
   const sendRendered = (event: "backlog" | "append", n: number, rendered: RenderedChunk, prompt?: string): void =>
     emitRendered(send, event, n, rendered, prompt);
+
+  /**
+   * Every byte a turn without a broker has written so far, one slice at a
+   * time under backpressure. One slice per poll used to be the whole budget,
+   * so opening a long turn mid-run caught up at 512 KiB/s. For a running turn
+   * a short read means the stream reached the writer, and later bytes wait
+   * for the next poll; a settled turn is read until nothing new arrives.
+   */
+  const drainAvailable = async (turn: number, settled: boolean): Promise<void> => {
+    for (let caughtUp = false; settled || !caughtUp;) {
+      const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE, renderer.bytes);
+      if (slice.size === offset) return;
+      caughtUp = slice.size - offset < LOG_STREAM_SLICE;
+      offset = slice.size;
+      await waitForCapacity();
+      if (closed) return;
+      sendRendered("append", turn, renderer.chunk(slice.text));
+    }
+  };
 
   const drainPrimaryTo = async (turn: number, target: number): Promise<void> => {
     while (offset < target) {
@@ -402,6 +436,13 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     }
   };
 
+  /** Settled before a live-only viewer reached it: its turn-end is all that client keeps, and it ends "connecting…". */
+  const skipSettledTurn = async (turn: Turn): Promise<void> => {
+    lastOpened = turn.n;
+    await waitForCapacity();
+    if (!closed) send("turn-end", { turn: turn.n, status: turn.status });
+  };
+
   /** The turn settled: drain every remaining byte (turn-end never precedes output), flush, report. */
   const endTurn = async (status: string): Promise<void> => {
     const n = currentN!;
@@ -411,14 +452,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
       brokerSubscription?.close();
       brokerSubscription = null;
     } else if (!evicted) {
-      for (;;) {
-        const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE, renderer.bytes);
-        if (slice.size === offset) break; // no new bytes
-        offset = slice.size;
-        await waitForCapacity();
-        if (closed) return;
-        sendRendered("append", n, renderer.chunk(slice.text));
-      }
+      await drainAvailable(n, true);
+      if (closed) return;
       // the bytes of a character the log never finished, now shown as U+FFFD
       const held = renderer.bytes.decode();
       if (held) sendRendered("append", n, renderer.chunk(held));
@@ -450,20 +485,12 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
               ? (turnForTask(task.id, requested) ?? latestTurnForTask(task.id))
               : latestTurnForTask(task.id);
           if (next && next.n > lastOpened) {
-            await openTurn(next);
+            await (liveOnly && next.status !== "running" ? skipSettledTurn(next) : openTurn(next));
             continue;
           }
           return;
         }
-        if (!brokerPump && !evicted) {
-          const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE, renderer.bytes);
-          if (slice.size !== offset) {
-            offset = slice.size;
-            await waitForCapacity();
-            if (closed) return;
-            sendRendered("append", currentN, renderer.chunk(slice.text));
-          }
-        }
+        if (!brokerPump && !evicted) await drainAvailable(currentN, false);
         const row = turnForTask(task.id, currentN);
         if (row && row.status !== "running") {
           await endTurn(row.status);

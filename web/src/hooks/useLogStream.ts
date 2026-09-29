@@ -22,6 +22,11 @@ import { initialStreamState, streamReducer, type StreamState } from "@/stream/re
  * `generation` lets the events bridge force a reopen after a reconnect (the
  * classic UI's openLogStream-on-reconnect): both streams die together when a
  * laptop sleeps.
+ *
+ * The activity pane asks for `follow=live`: its reducer keeps only the turn in
+ * progress, so a turn that settled before the stream reached it arrives as its
+ * turn-end alone rather than as its whole transcript. Settled history loads
+ * per turn through `fetchTurnActivity`.
  */
 export function useLogStream(
   taskId: string | null,
@@ -49,9 +54,8 @@ export function useLogStream(
       source?.close();
       conn.opening("log");
       dispatch({ type: "reset", note });
-      const next = factory
-        ? factory(`/api/tasks/${taskId}/log/stream?format=${format}`)
-        : runtime.transport.openEventStream(`/api/tasks/${taskId}/log/stream?format=${format}`);
+      const path = `/api/tasks/${taskId}/log/stream?format=${format}${format === "activity" ? "&follow=live" : ""}`;
+      const next = factory ? factory(path) : runtime.transport.openEventStream(path);
       const decoder = createLogStreamDecoder();
       let protocolFailed = false;
       const isCurrent = () => !closed && !protocolFailed && source === next;
