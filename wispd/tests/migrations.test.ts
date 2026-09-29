@@ -15,8 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { checkDatabase } from "../src/doctor";
+import { enforceForeignKeys } from "../src/foreign-keys";
+import { pendingProseCountSql, pendingProseSql } from "../src/turn-text-backfill";
 import {
-  enforceForeignKeys,
   integrityProblems,
   migrate,
   MIGRATIONS,
@@ -243,7 +244,8 @@ DELETE FROM schema_migrations WHERE id = 13;
        VALUES ('wfixture', 'tfixture', 'pr-autopilot', '1', '{}', '{"pr":7}', 'active', 'watching', 1, 1, 'later', 'later', 'then', 'then')`,
     ).run();
 
-    expect(migrate(db).applied).toEqual([17]);
+    // Everything after 16, starting with the step this test is about.
+    expect(migrate(db).applied).toEqual(MIGRATIONS.map((entry) => entry.id).filter((id) => id > 16));
     expect(columns(db, "workflow_history")).toEqual(expect.arrayContaining(["pr", "sha"]));
     const history = () => db.query("SELECT kind, detail, pr FROM workflow_history WHERE workflow_id = 'wfixture' ORDER BY id").all();
     db.query("UPDATE tasks SET model = 'another' WHERE id = 'tfixture'").run();
@@ -533,10 +535,70 @@ describe("foreign keys and integrity", () => {
     db.close();
   });
 
+  test("a clean check is remembered, so a start repeats it only after a migration or a week", () => {
+    const day = 86_400_000;
+    const cleanAt = Date.parse("2026-01-10T00:00:00.000Z");
+    const orphan = (db: Database, id: string): void => {
+      // Written with enforcement off, as only a tool outside Wisp could.
+      db.exec("PRAGMA foreign_keys = OFF");
+      db.query(
+        `INSERT INTO task_messages (id, task_id, text, status, attachment_hash, created_at, updated_at)
+         VALUES (?, 'tgone', 'msg', 'queued', '', 'now', 'now')`,
+      ).run(id);
+    };
+
+    const db = freshDatabase("fk-remembered");
+    migrate(db);
+    expect(enforceForeignKeys(db, { now: cleanAt })).toEqual({ enabled: true, violations: 0 });
+    orphan(db, "orphan-after-clean");
+    // The next start trusts the recorded answer rather than walking every row.
+    expect(enforceForeignKeys(db, { now: cleanAt + day })).toEqual({ enabled: true, violations: 0 });
+    // A start that applied a migration checks again, and finds it.
+    db.exec("PRAGMA foreign_keys = OFF");
+    expect(enforceForeignKeys(db, { now: cleanAt + day, recheck: true })).toEqual({ enabled: false, violations: 1 });
+    // A profile with violations is checked on every start, as before.
+    expect(enforceForeignKeys(db, { now: cleanAt + day })).toEqual({ enabled: false, violations: 1 });
+    db.close();
+
+    const weekOld = freshDatabase("fk-week");
+    migrate(weekOld);
+    expect(enforceForeignKeys(weekOld, { now: cleanAt })).toEqual({ enabled: true, violations: 0 });
+    orphan(weekOld, "orphan-a-week-on");
+    expect(enforceForeignKeys(weekOld, { now: cleanAt + 8 * day })).toEqual({ enabled: false, violations: 1 });
+    weekOld.close();
+  });
+
   test("a healthy database reports no integrity problems", () => {
     const db = freshDatabase("integrity");
     migrate(db);
     expect(integrityProblems(db)).toEqual([]);
+    db.close();
+  });
+});
+
+describe("the lookups that run on every send and every minute", () => {
+  const plan = (db: Database, sql: string, ...params: number[]): string =>
+    (db.query(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]).map((row) => row.detail).join("\n");
+
+  test("running turns and live process groups come from partial indexes, not a scan of all history", () => {
+    const db = freshDatabase("plans");
+    migrate(db);
+    // The same text as runningTurns() and the process-group loop: a partial
+    // index serves only a query whose WHERE implies the index's own.
+    expect(plan(db, "SELECT * FROM turns WHERE status = 'running'")).toContain("idx_turns_running");
+    expect(plan(db, "SELECT * FROM turn_process_groups WHERE state != 'none'")).toContain("idx_turn_process_groups_live");
+    db.close();
+  });
+
+  test("the prose backfill reads only the turns past what it has already caught up on", () => {
+    const db = freshDatabase("backfill-plan");
+    migrate(db);
+    expect(plan(db, pendingProseSql("n.id", 25), 0)).toContain("USING INTEGER PRIMARY KEY (rowid>?)");
+    const count = plan(db, pendingProseCountSql(), 0);
+    expect(count).toContain("USING INTEGER PRIMARY KEY (rowid>?)");
+    expect(count).toContain("USING COVERING INDEX idx_turns_running");
+    // Scans of its own subqueries are fine; a scan of `turns` is the cost this removes.
+    expect(count).not.toMatch(/^SCAN (n|turns)\b/m);
     db.close();
   });
 });

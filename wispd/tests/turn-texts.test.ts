@@ -248,6 +248,27 @@ describe("the background backfill", () => {
     await backfillTurnTexts(BUILTIN_ADAPTERS);
   });
 
+  test("once caught up it still finds a turn that was running under newer indexed ones", async () => {
+    const id = task();
+    const running = createTurn(id, 1, "outlives the turns after it", null, join(logDir(), `${id}-turn1.out.log`));
+    const later = settledTurn(task(), 1, claudeText("indexed while the first still ran"), null);
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+    expect(getTurnText(later.id)?.text).toBe("indexed while the first still ran");
+    expect(countPendingProseTurns()).toBe(0);
+
+    // Settled with no prose row, as recovery after a restart settles a turn.
+    finishTurn(running, "interrupted", null, null);
+    expect(pendingProseTurns(500).map((turn) => turn.id)).toContain(running);
+    expect(countPendingProseTurns()).toBeGreaterThan(0);
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+    expect(getTurnText(running)).not.toBeNull();
+    // A turn created after the history was caught up is found too.
+    const fresh = settledTurn(task(), 1, claudeText("after the catch-up"), null);
+    expect(pendingProseTurns(500).map((turn) => turn.id)).toContain(fresh.id);
+    await backfillTurnTexts(BUILTIN_ADAPTERS);
+    expect(getTurnText(fresh.id)?.text).toBe("after the catch-up");
+  });
+
   test("reports what is left, so a client can say the search is still catching up", async () => {
     const id = task();
     settledTurn(id, 1, claudeText("counted"), null);
@@ -264,7 +285,7 @@ describe("searching the prose", () => {
     const turn = settledTurn(id, 3, claudeText("I rewired the coalescer before touching anything else"), "done");
     await indexTurnProse({ turnId: turn.id, taskId: id, logFile: turn.path, result: "done", def: BUILTIN_ADAPTERS.claude });
 
-    const found = searchTasks("coalescer").tasks.find((candidate) => candidate.id === id);
+    const found = searchTasks("coalescer", db).tasks.find((candidate) => candidate.id === id);
 
     expect(found).toBeDefined();
     expect(found!.snippets.map((snippet) => snippet.kind)).toContain("prose");
@@ -280,6 +301,6 @@ describe("searching the prose", () => {
     await purgeTask(getTask(id)!);
 
     expect(getTurnText(turn.id)).toBeNull();
-    expect(searchTasks("purgeable").tasks.some((candidate) => candidate.id === id)).toBe(false);
+    expect(searchTasks("purgeable", db).tasks.some((candidate) => candidate.id === id)).toBe(false);
   });
 });

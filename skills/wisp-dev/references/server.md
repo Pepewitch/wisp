@@ -34,7 +34,8 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   a newer Wisp refused rather than read with unknown columns (ENG-06). Add a
   migration by appending a new id; never renumber a released one. Foreign-key
   enforcement is turned on only after `PRAGMA foreign_key_check` says this
-  profile can survive it.
+  profile can survive it (`wispd/src/foreign-keys.ts`); a clean answer is
+  remembered until a migration runs or a week passes.
 - `wispd/src/store-database.ts` initializes the database explicitly under home
   ownership; importing store/query helpers never opens or migrates it. Offline
   mutating tools must take the same lock; `doctor --database` opens read-only.
@@ -285,6 +286,7 @@ cannot tell you a browser stopped attaching a credential.
 | Harness definitions and wire formats | `wispd/src/adapters/` |
 | Realtime streams | `wispd/src/events.ts`, `wispd/src/routes/stream.ts` |
 | Webhook delivery | `wispd/src/outbox.ts` |
+| Cross-task search (a Worker with its own read-only connection; the compiled binary embeds its entry) | `wispd/src/store-search.ts`, `wispd/src/search-runner.ts`, `wispd/src/search-worker.ts` |
 | Terminal sessions | `wispd/src/terminal.ts`, `wispd/src/daemon.ts` |
 | Shell tabs (the list every client shows) | `wispd/src/terminal-tabs.ts`, `wispd/src/routes/terminals.ts` |
 | Pty allocation, sizing, and the `__pty-exec` child | `wispd/src/pty.ts` |

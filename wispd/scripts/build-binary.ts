@@ -68,6 +68,9 @@ export function buildBinary(options: BuildBinaryOptions): SourceIdentity {
     `--define=__WISP_BUILD_COMMIT__=${JSON.stringify(identity.commit)}`,
     `--define=__WISP_BUILD_DIRTY__=${String(identity.dirty)}`,
     "wispd/src/index.ts",
+    // A Worker's entry must be compiled in as its own entry point; the daemon
+    // resolves it by this name inside the binary (search-runner.ts).
+    "wispd/src/search-worker.ts",
     `--outfile=${outfile}`,
   ];
   const result = Bun.spawnSync({

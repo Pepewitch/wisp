@@ -56,10 +56,47 @@ async function archivedLogs(reconcileEvicted: boolean): Promise<LogGroup[]> {
   }
 }
 
-function eligible(turn: RetentionTurn): boolean {
+/**
+ * `later` is a wait that ends by itself (a reader, a cleanup, a prose row the
+ * backfill has yet to write); `never` holds until something the pass watches
+ * changes (a partial or unavailable prose row is final; so is a task that is
+ * gone or restored).
+ */
+type Eligibility = "now" | "later" | "never";
+function eligibility(turn: RetentionTurn): Eligibility {
   const task = getTask(turn.task_id);
-  return Boolean(task?.archived && !task.purge_pending && !archiveCleanup(task.id) &&
-    turn.status !== "running" && !transcriptReadActive(turn.id) && getTurnText(turn.id)?.state === "complete");
+  if (!task?.archived) return "never";
+  const prose = getTurnText(turn.id)?.state;
+  if (prose === "partial" || prose === "unavailable") return "never";
+  return task.purge_pending || archiveCleanup(task.id) || turn.status === "running" ||
+    transcriptReadActive(turn.id) || prose !== "complete" ? "later" : "now";
+}
+
+function eligible(turn: RetentionTurn): boolean {
+  return eligibility(turn) === "now";
+}
+
+/**
+ * What the last routine pass left behind, when it left nothing to do. Until an
+ * archived task changes, the settings change or the oldest retained log
+ * reaches its age limit, the next pass would stat the same files and reach the
+ * same verdict, so it is skipped. The hourly reconciliation pass always runs in
+ * full; it is what notices files changed outside Wisp.
+ */
+interface Quiet { archive: string; settings: string; nextExpiryAt: number; retainedBytes: number }
+let quiet: Quiet | null = null;
+
+/**
+ * Every archived task's identity and last write, plus any turn still running
+ * in one. Archiving, restoring, a purge starting, a settle: each moves it.
+ * The tasks table is small next to `turns`, and the running turns come from a
+ * partial index, so this costs far less than one stat per archived turn.
+ */
+function archiveSignature(): string {
+  const tasks = db.query("SELECT id, updated_at, seq, purge_pending FROM tasks WHERE archived = 1 ORDER BY id").values();
+  const running = db.query(`SELECT n.id FROM turns n INDEXED BY idx_turns_running JOIN tasks t ON t.id = n.task_id
+    WHERE n.status = 'running' AND t.archived = 1 ORDER BY n.id`).values();
+  return Bun.hash(JSON.stringify([tasks, running])).toString(16);
 }
 
 /** No await between the final safety check, durable eviction intent, and whole-turn removal. */
@@ -98,27 +135,43 @@ async function retentionPass(cfg: WispConfig, now: number, reconcileEvicted: boo
   const result: TurnLogRetentionResult = { evicted: 0, reclaimedBytes: 0, retainedBytes: 0, failed: 0 };
   const settings = turnLogSettings(cfg);
   if (!settings.enabled || homeIsDraining()) return result;
+  const archive = archiveSignature();
+  const settingsKey = JSON.stringify(settings);
+  if (!reconcileEvicted && quiet !== null && quiet.archive === archive && quiet.settings === settingsKey && now < quiet.nextExpiryAt) {
+    return { ...result, retainedBytes: quiet.retainedBytes };
+  }
+  quiet = null;
   const groups = (await archivedLogs(reconcileEvicted)).sort((a, b) => a.mtimeMs - b.mtimeMs || a.turn.id - b.turn.id);
   result.retainedBytes = groups.reduce((n, g) => n + g.bytes, 0);
+  // Anything left for a later pass keeps the next one from being skipped.
+  let unresolved = homeIsDraining();
+  let nextExpiryAt = Infinity;
   for (const group of groups) {
-    if (homeIsDraining()) break;
+    if (homeIsDraining()) { unresolved = true; break; }
     const expired = group.mtimeMs < now - settings.retentionMs;
-    if (!expired && result.retainedBytes <= settings.maxBytes && group.turn.capture_state !== "evicted") continue;
-    if (!eligible(group.turn)) continue;
+    if (!expired && result.retainedBytes <= settings.maxBytes && group.turn.capture_state !== "evicted") {
+      nextExpiryAt = Math.min(nextExpiryAt, group.mtimeMs + settings.retentionMs);
+      continue;
+    }
+    const verdict = eligibility(group.turn);
+    if (verdict !== "now") { if (verdict === "later") unresolved = true; continue; }
     const release = acquireTaskRetention(group.turn.task_id);
-    if (!release) continue;
+    if (!release) { unresolved = true; continue; }
     try {
       await assertTaskProcessesEnded(group.turn.task_id);
-      if (homeIsDraining()) break;
+      if (homeIsDraining()) { unresolved = true; break; }
       const bytes = removeGroup(group, expired ? "Retention age expired." : "Archived turn-log quota exceeded.");
       if (bytes || (group.bytes === 0 && turnForTask(group.turn.task_id, group.turn.n)?.capture_state === "evicted")) result.evicted++;
+      else unresolved = true;
       result.reclaimedBytes += bytes; result.retainedBytes -= bytes;
     } catch (error) {
+      unresolved = true;
       result.failed++;
       console.error(`[wisp] turn-log retention ${group.turn.id}: ${String(error)}`);
     } finally { release(); }
     await Bun.sleep(25);
   }
+  if (!unresolved) quiet = { archive, settings: settingsKey, nextExpiryAt, retainedBytes: result.retainedBytes };
   return result;
 }
 

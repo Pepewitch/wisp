@@ -25,8 +25,14 @@
  * one gap is non-ASCII case folding: searching "CAFÉ" does not find "café",
  * because LIKE never offered the row. Add SQLite's ICU extension before
  * promising otherwise — the daemon ships zero runtime dependencies (D10).
+ *
+ * The scan is linear in history (hundreds of milliseconds at tens of thousands
+ * of turns), so the daemon never runs it on its request thread: search-runner.ts
+ * hands it to a worker holding its own read-only connection. That is also why
+ * this module takes its database as an argument and imports nothing that opens
+ * one — the worker loads it, and must not load the daemon with it.
  */
-import { db } from "./store-database";
+import type { Database } from "bun:sqlite";
 import type {
   SearchResponse,
   SearchSnippet,
@@ -153,12 +159,35 @@ interface TaskColumns {
   archived: number;
 }
 
-export function searchTasks(query: string): SearchResponse {
+/** Thrown between statements when the caller no longer wants the answer. */
+export class SearchCancelled extends Error {
+  constructor() {
+    super("search cancelled");
+    this.name = "SearchCancelled";
+  }
+}
+
+/**
+ * `cancelled` is polled between the four scans. SQLite offers no way to stop
+ * a statement from another thread here, so a superseded search still finishes
+ * the scan it is in, but not the ones after it.
+ */
+export function searchTasks(query: string, db: Database, cancelled: () => boolean = () => false): SearchResponse {
+  // One read transaction: the four scans answer from one snapshot, even though
+  // the daemon keeps writing while a worker runs them.
+  return db.transaction(() => scan(query, db, cancelled))();
+}
+
+function scan(query: string, db: Database, cancelled: () => boolean): SearchResponse {
   const needle = query.toLowerCase();
   const like = `%${escapeLike(query)}%`;
   const hits = new Hits(needle);
   let truncated = false;
+  const checkpoint = (): void => {
+    if (cancelled()) throw new SearchCancelled();
+  };
 
+  checkpoint();
   const titles = db
     .query(
       `SELECT id, title, repo_path, updated_at, state, archived FROM tasks
@@ -169,6 +198,7 @@ export function searchTasks(query: string): SearchResponse {
   truncated ||= titles.length === SEARCH_ROW_LIMIT;
   for (const row of titles) hits.add(row, "title", null, row.title);
 
+  checkpoint();
   const turns = db
     .query(
       `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, n.prompt, n.result
@@ -189,6 +219,7 @@ export function searchTasks(query: string): SearchResponse {
   // than this: a partial row simply holds less text, and the honest thing to
   // report is the BACKFILL's progress (the route adds it), not a per-row flag
   // a person cannot act on.
+  checkpoint();
   const prose = db
     .query(
       `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, x.text
@@ -202,6 +233,7 @@ export function searchTasks(query: string): SearchResponse {
   truncated ||= prose.length === SEARCH_ROW_LIMIT;
   for (const row of prose) hits.add(row, "prose", row.n, row.text);
 
+  checkpoint();
   const messages = db
     .query(
       `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, m.text

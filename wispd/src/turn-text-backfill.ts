@@ -45,26 +45,61 @@ let working: Promise<void> | null = null;
 let cached: { at: number; remaining: number } | null = null;
 
 /**
+ * Every turn at or below this id is known not to be pending: settled and
+ * indexed, or its task gone. Without it, "is anything left?" is an anti-join
+ * over the whole of `turns`, asked every minute and on every search, long after
+ * the history was caught up. It is safe to trust because nothing moves a turn
+ * back below it: ids are AUTOINCREMENT (never reused), a settled turn never
+ * runs again, and a prose row is only ever deleted with its whole task. It is
+ * held under the oldest RUNNING turn, whose settle may not write a row (a
+ * turn recovered after a restart), so that turn is looked at again. Memory
+ * only: the first count after a start walks the history once.
+ */
+let settledFloor = 0;
+
+/**
  * A settled turn with no prose row. `status <> 'running'` guards the log a
  * live turn is still writing (finalizeTurn indexes it the moment it settles).
  * A turn whose task is gone is not pending: nothing can search it, and its
  * prose row could not be written anyway (turn_texts references the task).
+ * `n.id > ?` is the floor above, and a rowid range, so SQLite walks only the
+ * turns past it.
  */
-function pendingQuery(select: string, limit?: number): string {
+export function pendingProseSql(select: string, limit?: number): string {
   return `SELECT ${select}
      FROM turns n
      LEFT JOIN turn_texts x ON x.turn_id = n.id AND x.kind = '${TURN_TEXT_PROSE}'
-     WHERE x.turn_id IS NULL AND n.status <> 'running'
+     WHERE n.id > ? AND x.turn_id IS NULL AND n.status <> 'running'
        AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = n.task_id)
      ORDER BY n.id DESC${limit === undefined ? "" : ` LIMIT ${limit}`}`;
 }
 
 export function pendingProseTurns(limit = BATCH): PendingTurn[] {
-  return db.query(pendingQuery("n.id, n.task_id, n.log_file, n.result, n.harness", limit)).all() as PendingTurn[];
+  return db.query(pendingProseSql("n.id, n.task_id, n.log_file, n.result, n.harness", limit)).all(settledFloor) as PendingTurn[];
 }
 
+/**
+ * The count, the oldest pending turn, the oldest running one and the newest,
+ * in one statement. INDEXED BY because SQLite otherwise answers MIN(id) by
+ * walking the table from its first row until one is running.
+ */
+export function pendingProseCountSql(): string {
+  return `SELECT pending.n, pending.oldest_pending,
+       (SELECT MIN(id) FROM turns INDEXED BY idx_turns_running WHERE status = 'running') AS oldest_running,
+       (SELECT MAX(id) FROM turns) AS newest
+     FROM (SELECT COUNT(*) AS n, MIN(id) AS oldest_pending FROM (${pendingProseSql("n.id")})) AS pending`;
+}
+
+/** Count what is left, and move the floor up to just below the oldest turn that still might be. */
 export function countPendingProseTurns(): number {
-  const row = db.query(`SELECT COUNT(*) AS n FROM (${pendingQuery("n.id")})`).get() as { n: number };
+  // One synchronous read, so no turn can start or settle between the count
+  // and the floor it justifies.
+  const row = db.query(pendingProseCountSql()).get(settledFloor) as { n: number; oldest_pending: number | null; oldest_running: number | null; newest: number | null };
+  settledFloor = Math.max(settledFloor, Math.min(
+    row.newest ?? settledFloor,
+    row.oldest_pending === null ? Infinity : row.oldest_pending - 1,
+    row.oldest_running === null ? Infinity : row.oldest_running - 1,
+  ));
   return row.n;
 }
 
@@ -93,6 +128,9 @@ export function backfillTurnTexts(adapters: Record<string, AdapterDef>): Promise
     // turns that failed in this pass: skipped until the next one, so a pass
     // always moves on, and ends once only failures are left
     const failed = new Set<number>();
+    // The common case, once history is caught up: nothing past the floor, and
+    // no batch query at all.
+    if (countPendingProseTurns() === 0) return;
     for (;;) {
       if (homeIsDraining()) return;
       const batch = pendingProseTurns(BATCH + failed.size).filter((turn) => !failed.has(turn.id)).slice(0, BATCH);

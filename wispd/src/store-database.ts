@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite";
 import { DB_PATH } from "./config";
 import { wispCommand } from "./command";
 import { ownsHome } from "./home-lock";
-import { enforceForeignKeys, migrate, SchemaTooNewError } from "./migrations";
+import { enforceForeignKeys } from "./foreign-keys";
+import { migrate, SchemaTooNewError } from "./migrations";
 
 // An import must never create or migrate the application database. The daemon
 // initializes this live binding only after acquiring profile ownership.
@@ -14,8 +15,9 @@ export function initializeStore(): void {
   let opened: Database | undefined;
   try {
     opened = initialized ? db : new Database(DB_PATH, { create: true });
-    migrate(opened);
-    enforceForeignKeys(opened);
+    const { applied } = migrate(opened);
+    // A migration may have rewritten rows, so its start re-runs the full check.
+    enforceForeignKeys(opened, { recheck: applied.length > 0 });
     db = opened;
     initialized = true;
   } catch (error) {
