@@ -8,14 +8,18 @@ import {
   DESKTOP_MANIFEST,
   DESKTOP_MINIMUM_SYSTEM_VERSION,
   DESKTOP_TARGET,
+  UPDATER_SIGNING_KEYS,
+  assertNoUpdaterSigningKey,
   cargoPackageVersion,
   desktopPackageVersion,
   desktopTargetDir,
   deterministicAppTarGz,
   machOHasUuid,
   releaseCertificateSource,
+  signDesktopUpdate,
   verifyDesktopInventory,
   verifyNoBuilderPaths,
+  withoutUpdaterSigningKey,
 } from "../scripts/release-desktop";
 import { VERSION } from "../wispd/src/version";
 
@@ -96,7 +100,9 @@ describe("Wisp Desktop release metadata", () => {
     expect(workflow).toContain("name: release-macos-repro-${{ matrix.copy }}");
     expect(workflow).toContain("require independent byte-identical macOS payloads");
     expect(workflow).not.toContain("cargo clean --manifest-path desktop/src-tauri/Cargo.toml");
-    expect(workflow).toContain("cache-targets: false");
+    // No Actions cache at all in a release: a tag run can read entries any
+    // main run wrote (`workflows:check` enforces this too).
+    expect(workflow).not.toContain("Swatinem/rust-cache");
   });
 
   test("hands reproducible web and Desktop UI bundles to every platform release pass", () => {
@@ -234,5 +240,153 @@ describe("Wisp Desktop release metadata", () => {
     const app = syntheticApp("forward");
     symlinkSync("Info.plist", join(app, "Contents/Alias.plist"));
     expect(() => deterministicAppTarGz(app)).toThrow("refuses symbolic link");
+  });
+});
+
+/**
+ * The updater key forges the one signature meant to survive a GitHub or tap
+ * compromise. It must never be in a build's environment, where every crate's
+ * build script can read it, so signing is its own pass over a finished archive.
+ */
+describe("updater signing is a separate pass that builds nothing", () => {
+  const KEY = { TAURI_SIGNING_PRIVATE_KEY: "synthetic-key", TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "synthetic-password" };
+
+  function git(root: string, ...args: string[]): string {
+    const result = Bun.spawnSync({
+      cmd: ["git", "-C", root, "-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+    return result.stdout.toString().trim();
+  }
+
+  /** A clean synthetic source at VERSION and a build pass's output for it. */
+  function builtRelease(signing: "developer-id" | "ad-hoc" = "developer-id") {
+    const root = tempRoot("wisp-desktop-sign-");
+    mkdirSync(join(root, "wispd"), { recursive: true });
+    mkdirSync(join(root, "desktop/src-tauri"), { recursive: true });
+    writeFileSync(join(root, "wispd/package.json"), JSON.stringify({ version: VERSION }));
+    writeFileSync(join(root, "desktop/src-tauri/updater-public.key"), "synthetic-public-key\n");
+    writeFileSync(join(root, ".gitignore"), "dist/\n");
+    git(root, "init", "--quiet");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "synthetic");
+    const commit = git(root, "rev-parse", "HEAD");
+    const outDir = join(root, "dist/release", `v${VERSION}`);
+    mkdirSync(outDir, { recursive: true });
+    const file = `wisp-desktop-v${VERSION}-${DESKTOP_TARGET}.tar.gz`;
+    const archive = new TextEncoder().encode("synthetic notarized archive");
+    writeFileSync(join(outDir, file), archive);
+    const manifest = {
+      schemaVersion: 2,
+      product: "wisp-desktop",
+      version: VERSION,
+      commit,
+      dirty: false,
+      signing: { kind: signing, notarized: signing === "developer-id" },
+      updater: null,
+      artifact: { file, sha256: new Bun.CryptoHasher("sha256").update(archive).digest("hex"), size: archive.byteLength },
+    };
+    writeFileSync(join(outDir, DESKTOP_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+    return { root, outDir, file };
+  }
+
+  const fakeSigner = (calls: string[]) => (archive: string, environment: Record<string, string | undefined>) => {
+    calls.push(`sign ${environment.TAURI_SIGNING_PRIVATE_KEY}`);
+    writeFileSync(`${archive}.sig`, "synthetic-signature\n");
+  };
+
+  test("the build pass refuses to run with the key in its environment", () => {
+    expect(() => assertNoUpdaterSigningKey({ PATH: "/usr/bin" })).not.toThrow();
+    expect(() => assertNoUpdaterSigningKey({ ...KEY })).toThrow("must not be in the build environment");
+    expect(() => assertNoUpdaterSigningKey({ TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "" })).toThrow("--sign-updater");
+    expect(withoutUpdaterSigningKey({ PATH: "/usr/bin", ...KEY })).toEqual({ PATH: "/usr/bin" });
+    for (const name of UPDATER_SIGNING_KEYS) expect(Object.keys(KEY)).toContain(name);
+  });
+
+  test("signs the built archive and binds the signature into the manifest and checksums", () => {
+    const { root, outDir, file } = builtRelease();
+    const calls: string[] = [];
+    const manifest = signDesktopUpdate({
+      root,
+      environment: { ...KEY },
+      sign: fakeSigner(calls),
+      verify: (archive, signature, publicKey) => {
+        calls.push(
+          `verify ${archive === join(outDir, file)} ${signature === join(outDir, `${file}.sig`)} ${publicKey.endsWith("updater-public.key")}`,
+        );
+      },
+    });
+    expect(calls).toEqual(["sign synthetic-key", "verify true true true"]);
+    expect(manifest.updater).toEqual({
+      algorithm: "minisign-ed25519",
+      signatureFile: `${file}.sig`,
+      signature: "synthetic-signature",
+      publicKeySha256: new Bun.CryptoHasher("sha256").update("synthetic-public-key").digest("hex"),
+    });
+    expect(JSON.parse(readFileSync(join(outDir, DESKTOP_MANIFEST), "utf8"))).toEqual(manifest);
+    const sha = (name: string) => new Bun.CryptoHasher("sha256").update(readFileSync(join(outDir, name))).digest("hex");
+    expect(readFileSync(join(outDir, DESKTOP_CHECKSUMS), "utf8")).toBe(
+      `${sha(file)}  ${file}\n${sha(`${file}.sig`)}  ${file}.sig\n${sha(DESKTOP_MANIFEST)}  ${DESKTOP_MANIFEST}\n`,
+    );
+  });
+
+  test("refuses an archive that changed after the build pass, before signing it", () => {
+    const { root, outDir, file } = builtRelease();
+    writeFileSync(join(outDir, file), "substituted archive bytes");
+    const calls: string[] = [];
+    expect(() => signDesktopUpdate({ root, environment: { ...KEY }, sign: fakeSigner(calls), verify: () => {} })).toThrow(
+      "changed after the build pass",
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("refuses an ad-hoc build, a second signature, and a missing key", () => {
+    const adHoc = builtRelease("ad-hoc");
+    expect(() =>
+      signDesktopUpdate({ root: adHoc.root, environment: { ...KEY }, sign: fakeSigner([]), verify: () => {} }),
+    ).toThrow("Developer ID signed and notarized");
+    const release = builtRelease();
+    signDesktopUpdate({ root: release.root, environment: { ...KEY }, sign: fakeSigner([]), verify: () => {} });
+    expect(() =>
+      signDesktopUpdate({ root: release.root, environment: { ...KEY }, sign: fakeSigner([]), verify: () => {} }),
+    ).toThrow("already updater-signed");
+    expect(() => signDesktopUpdate({ root: builtRelease().root, environment: {}, sign: fakeSigner([]) })).toThrow(
+      "updater signing requires TAURI_SIGNING_PRIVATE_KEY",
+    );
+  });
+
+  test("the release workflow gives the key to one step, which compiles nothing", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const steps = workflow.split(/\n(?= {6}- )/);
+    const holders = steps.filter((step) => /secrets\.TAURI_SIGNING_PRIVATE_KEY(?:_PASSWORD)? *}}/.test(step));
+    expect(holders).toHaveLength(1);
+    const signing = holders[0]!;
+    expect(signing).toContain("name: updater-sign the Desktop archive");
+    expect(signing).toContain("scripts/release-desktop.ts --require-tag --sign-updater");
+    expect(signing).not.toMatch(/cargo |release-macos\.ts|--signed|build-macos|bun install/);
+    const build = steps.find((step) => step.includes("name: build, sign, and notarize the trusted macOS releases"))!;
+    expect(build).toContain("scripts/release-desktop.ts --require-tag --signed");
+    expect(build).not.toContain("TAURI_SIGNING");
+    expect(build).not.toContain("APPLE_CERTIFICATE");
+    expect(workflow.indexOf("name: updater-sign the Desktop archive")).toBeGreaterThan(
+      workflow.indexOf("name: build, sign, and notarize the trusted macOS releases"),
+    );
+  });
+
+  test("the certificate password reaches security(1) on stdin, and signing material is removed", () => {
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const trusted = workflow.slice(workflow.indexOf("  macos-trusted:"), workflow.indexOf("  publish:"));
+    expect(trusted).not.toMatch(/-P "\$APPLE_CERTIFICATE_PASSWORD"/);
+    expect(trusted).toContain("| security -q -i");
+    expect(trusted).toContain('rm -f "$APPLE_API_KEY_PATH"');
+    const cleanup = trusted.slice(trusted.indexOf("name: remove signing material"));
+    expect(cleanup).toContain("if: always()");
+    expect(cleanup).toContain("AuthKey_*.p8");
+    expect(cleanup).toContain('security delete-keychain "$RELEASE_KEYCHAIN"');
+    expect(trusted.indexOf("name: remove signing material")).toBeLessThan(
+      trusted.indexOf("name: stage trusted macOS assets"),
+    );
   });
 });

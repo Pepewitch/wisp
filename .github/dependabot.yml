@@ -1,0 +1,21 @@
+# Proposes updates to the SHA-pinned actions in .github/workflows. Dependabot
+# keeps a commit-SHA pin a SHA and rewrites its trailing version comment, and
+# `workflows:check` fails any update PR that would not, so pinning holds.
+# Every update is still a reviewed PR, never an automatic merge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # A new action release waits a week before it is proposed, so a
+    # compromised release has time to be noticed and pulled first.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    ignore:
+      # Pinned to a commit of its `stable` branch, not to a release tag, and
+      # the toolchain version is set explicitly beside it. Bump it by hand.
+      - dependency-name: dtolnay/rust-toolchain

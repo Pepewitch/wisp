@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { chmod, mkdir, open, rename, rm, symlink } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, symlink } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -18,6 +17,12 @@ import {
   isSupervisordServiceProcess,
 } from "./update-supervisor";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
+import {
+  assertReleaseDownloadUrl,
+  downloadVerifiedArtifact,
+  MAX_ARTIFACT_BYTES,
+  readBoundedText,
+} from "./update-download";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
 
 export { compareVersions } from "../../shared/release-version";
@@ -33,7 +38,8 @@ const MANAGED_INSTALL_MARKER = "wisp-managed-install-v1";
 const RELEASE_CACHE_MS = 6 * 60 * 60 * 1000;
 const RESTART_DELAY_MS = 500;
 const MAX_CHANNEL_BYTES = 16 * 1024;
-const MAX_ARTIFACT_BYTES = 250 * 1024 * 1024;
+/** A real manifest is about 1 KiB; the bound only has to stop a hostile body. */
+const MAX_MANIFEST_BYTES = 64 * 1024;
 export const UPDATE_COMMAND_MAX_BYTES = DEFAULT_MAX_BYTES;
 const UPDATE_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -242,53 +248,6 @@ function parseDaemonUpdateChannel(value: unknown): ReleaseInfo {
   };
 }
 
-async function downloadVerifiedArtifact(
-  response: Response,
-  path: string,
-  expectedSize: number,
-  expectedSha256: string,
-): Promise<void> {
-  if (!response.body) throw new Error("release artifact response has no body");
-  const advertisedSize = response.headers.get("content-length");
-  if (advertisedSize !== null) {
-    const size = Number(advertisedSize);
-    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_ARTIFACT_BYTES) {
-      throw new Error("release artifact Content-Length is invalid or too large");
-    }
-  }
-  const file = await open(path, "wx", 0o755);
-  const reader = response.body.getReader();
-  const hash = createHash("sha256");
-  let size = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      size += chunk.value.byteLength;
-      if (size > expectedSize || size > MAX_ARTIFACT_BYTES) {
-        throw new Error("release artifact is larger than its manifest");
-      }
-      hash.update(chunk.value);
-      let offset = 0;
-      while (offset < chunk.value.byteLength) {
-        const written = await file.write(chunk.value.subarray(offset));
-        if (written.bytesWritten < 1) throw new Error("could not write the release artifact");
-        offset += written.bytesWritten;
-      }
-    }
-  } catch (error) {
-    await reader.cancel(error).catch(() => {});
-    throw error;
-  } finally {
-    reader.releaseLock();
-    await file.close();
-  }
-  if (size !== expectedSize) throw new Error("release artifact size does not match its manifest");
-  if (hash.digest("hex") !== expectedSha256) {
-    throw new Error("release artifact checksum does not match its manifest");
-  }
-}
-
 function validateLinuxManifest(value: unknown, release: ReleaseInfo): asserts value is LinuxManifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("release manifest is not an object");
   const manifest = value as LinuxManifest;
@@ -412,10 +371,7 @@ export class UpdateManager {
       return;
     }
     if (!response.ok) throw new Error(`daemon update channel returned ${response.status}`);
-    const body = await response.text();
-    if (Buffer.byteLength(body) > MAX_CHANNEL_BYTES) {
-      throw new Error("daemon update channel is too large");
-    }
+    const body = await readBoundedText(response, MAX_CHANNEL_BYTES, "daemon update channel");
     let channel: unknown;
     try {
       channel = JSON.parse(body);
@@ -557,7 +513,14 @@ export class UpdateManager {
     const manifestUrl = `${RELEASE_URL}/${release.tag}/release-manifest.json`;
     const manifestResponse = await this.fetcher(manifestUrl, { signal: AbortSignal.timeout(20_000) });
     if (!manifestResponse.ok) throw new Error(`release manifest returned ${manifestResponse.status}`);
-    const manifest = (await manifestResponse.json()) as unknown;
+    assertReleaseDownloadUrl(manifestResponse, "release manifest");
+    const manifestText = await readBoundedText(manifestResponse, MAX_MANIFEST_BYTES, "release manifest");
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(manifestText);
+    } catch {
+      throw new Error("release manifest is not valid JSON");
+    }
     validateLinuxManifest(manifest, release);
 
     const versionDir = join(installRoot, "versions", release.version);
@@ -583,6 +546,7 @@ export class UpdateManager {
       const artifactUrl = `${RELEASE_URL}/${release.tag}/${manifest.artifact.file}`;
       const artifactResponse = await this.fetcher(artifactUrl, { signal: AbortSignal.timeout(120_000) });
       if (!artifactResponse.ok) throw new Error(`release artifact returned ${artifactResponse.status}`);
+      assertReleaseDownloadUrl(artifactResponse, "release artifact");
       await downloadVerifiedArtifact(
         artifactResponse,
         candidate,
