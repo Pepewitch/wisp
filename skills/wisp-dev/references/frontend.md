@@ -1311,19 +1311,22 @@ clear, restart and close. Find is ⌘F on Apple platforms and Ctrl+Alt+F
 elsewhere: plain Ctrl+F is readline's, and the terminal never takes a key the
 shell uses.
 
-### The task panel: Changes · Workflows
+### The task panel: Brief · Changes · Workflows
 
 `Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
-slot in beside it later". **Workflows** is the sibling that arrived first
-(`task-panel.tsx`), and the shape was right: two tabs, selection is a background
-pill, no underline and no hue.
+slot in beside it later". **Workflows** is the sibling that arrived first, and
+the **Brief** (§5k) joined them (`task-panel.tsx`); the shape was right:
+tabs, selection is a background pill, no underline and no hue. The Brief is
+first and the panel opens on it.
 
 Both panes stay **mounted**; the inactive one is `hidden`, so switching tabs
 never closes the diff you had open. The strip is handed to the VISIBLE pane's
 `PaneHeader`, never to both — two tablists in one tree is the bug that trades
 one duplicated label for a broken a11y tree. Each pane still renders its own
-plain label when it is given no strip — which is exactly what an older daemon
-without `taskWorkflows` sees.
+plain label when it is given no strip. The strip is built from the daemon's
+features (`taskBriefs`, `taskWorkflows`): a daemon with neither gets Changes
+alone, with its own label. The panel paints nothing until those features are
+known, so a cold load never opens on Changes and then jumps to the Brief.
 
 **Nothing that CREATES may sit at the right end of a tab strip.** Changes keeps
 its Refresh there because refreshing acts on the view. Workflows put a `+`
@@ -1405,11 +1408,12 @@ version wrapped onto two lines inside the width the title needed.
 3. **A pull request gets its own full-width row**, not a share of the header.
    The compact link is a 44px two-line thumb target; splitting the header with
    the title left both unreadable.
-4. **The tab strip is three equal thirds** (`flex-1`), a segmented control
-   rather than left-packed pills with a dead right half. It stays three: the
-   task panel's own `Changes · Workflows` strip nests inside the Changes tab
-   rather than becoming a fourth thumb target, and its `PaneHeader` takes
-   `touch` so those tabs and the pane's action each reach 44px.
+4. **The tab strip fills the row** (`flex-1 basis-auto`, `px-1`), a segmented
+   control rather than left-packed pills with a dead right half. It is `Chat ·
+   Brief · Changes · Workflows · Terminal`; Brief and Workflows appear only
+   where the daemon supports them. Tabs are sized by their content plus an
+   equal share, so all five still fit at 320px. Each pane's `PaneHeader` takes
+   `touch` so its own action reaches 44px.
 
 **App-level state lives in the drawer footer on touch**, beside the gear that is
 already there, because below `md` there is no persistent top bar to carry it.

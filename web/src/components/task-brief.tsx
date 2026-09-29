@@ -67,11 +67,12 @@ export function BriefPane({
           {header ?? <span className="text-[12.5px] font-medium text-foreground">Brief</span>}
         </PaneHeader>
       )}
-      <section aria-label="Task brief" className="@container scroll-slim min-h-0 flex-1 overflow-y-auto">
+      <section aria-label="Task brief" className="@container flex min-h-0 flex-1 flex-col">
         {!task ? (
           <p className="px-3.5 py-3 text-[12.5px] text-muted-foreground">No task selected.</p>
         ) : (
           <>
+            {/* pinned above the scroller: a long report must not take the switch out of reach */}
             {brief.switchable && (
               <BriefSwitch
                 enabled={brief.enabled}
@@ -84,16 +85,18 @@ export function BriefPane({
               />
             )}
             {/* Archived tasks cannot be switched, but a report already written stays readable. */}
-            {model.kind !== "hidden" && (
-              <BriefBody
-                // per task: nothing opened on one task's brief carries to another's
-                key={task.id}
-                model={model}
-                touch={touch}
-                onReveal={reveal}
-                onRetry={() => void brief.query.refetch()}
-              />
-            )}
+            <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
+              {model.kind !== "hidden" && (
+                <BriefBody
+                  // per task: nothing opened on one task's brief carries to another's
+                  key={task.id}
+                  model={model}
+                  touch={touch}
+                  onReveal={reveal}
+                  onRetry={() => void brief.query.refetch()}
+                />
+              )}
+            </div>
           </>
         )}
       </section>
@@ -237,7 +240,7 @@ function CaptionItem({ first, children }: { first: boolean; children: ReactNode 
   )
 }
 
-/** The person's own words — exact, cut only where the band says it is cut. */
+/** The person's own words — exact, cut only where the brief says it is cut. */
 function InputRow({ input, touch, onReveal }: { input: BriefInputView; touch: boolean; onReveal?: Reveal }) {
   const [full, setFull] = useState(false)
   const long = [...input.text].length > 220

@@ -156,6 +156,16 @@ describe("the task brief tab", () => {
     expect(within(pane).queryByRole("button", { expanded: true })).toBeNull()
   })
 
+  it("keeps the switch outside the scrolling report, so a long brief cannot take it out of reach", async () => {
+    stub(VIEW)
+    mount(TASK)
+    const toggle = await screen.findByRole("switch", { name: "Task brief" })
+    const report = (await screen.findByText("Stop the editor saving twice.")).closest(".scroll-slim")
+    expect(report).not.toBeNull()
+    expect(report!.contains(toggle)).toBe(false)
+    expect(toggle.closest(".scroll-slim")).toBeNull()
+  })
+
   it("compares options in place, marking the recommended one", async () => {
     stub(VIEW)
     mount(TASK)
@@ -229,7 +239,8 @@ describe("the task panel", () => {
     expect(report.closest("[aria-hidden='true']")).toBeNull()
   })
 
-  it("puts the workflow count on Workflows only, never on the Brief", async () => {
+  it("puts the workflow count on Workflows only, never on the Brief, with no React key warnings", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {})
     const workflow = {
       id: "wfixture", taskId: TASK.id, type: "heartbeat", version: "1", params: {}, state: "active",
       reason: "Waiting", revision: 1, contextN: 1, wakeCount: 0, checkCount: 0,
@@ -248,6 +259,9 @@ describe("the task panel", () => {
     const tabs = await screen.findByRole("tablist", { name: "Task panel" })
     await waitFor(() => expect(within(tabs).getByRole("tab", { name: /Workflows/ })).toHaveTextContent("1"))
     expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Brief", "Changes0", "Workflows1"])
+    // sibling panes with one key make React drop a fiber when the task changes
+    expect(errors.mock.calls.filter((call) => String(call[0]).includes("same key"))).toEqual([])
+    errors.mockRestore()
   })
 
   it("paints nothing until it knows which tabs the daemon has, so it never opens on Changes and jumps", async () => {

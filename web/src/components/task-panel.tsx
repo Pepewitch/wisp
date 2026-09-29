@@ -100,8 +100,9 @@ export function TaskPanel({
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {briefsSupported && (
         <BriefPane
-          // a task's brief belongs to ONE task on ONE daemon
-          key={`${connectionId}:${taskId ?? ""}`}
+          // a task's brief belongs to ONE task on ONE daemon; the prefix keeps
+          // it apart from its sibling, whose key would otherwise be identical
+          key={`brief:${connectionId}:${taskId ?? ""}`}
           task={task}
           header={view === "brief" ? strip : undefined}
           hidden={view !== "brief"}
@@ -120,7 +121,7 @@ export function TaskPanel({
         <WorkflowsPane
           // a drill-down belongs to ONE task on ONE daemon: switching either
           // must not leave a half-filled form pointing at the wrong place
-          key={`${connectionId}:${taskId ?? ""}`}
+          key={`workflows:${connectionId}:${taskId ?? ""}`}
           task={task}
           header={view === "workflows" ? strip : undefined}
           hidden={view !== "workflows"}
