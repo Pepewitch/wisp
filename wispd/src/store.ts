@@ -639,6 +639,7 @@ export {
   createTaskMessage,
   createTaskMessageWithAgent,
   getTaskMessage,
+  isQueueHead,
   markTaskMessageDelivered,
   messagesFor,
   messagesForTurnPage,

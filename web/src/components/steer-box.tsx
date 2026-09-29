@@ -223,7 +223,10 @@ export function SteerBox({
     when: delivery.when,
     onSend,
     onInterrupt,
-    onSent: (taskId) => (setSuffixSelection({ taskId, value: null }), delivery.reset()),
+    onSent: (taskId) => {
+      setSuffixSelection({ taskId, value: null })
+      delivery.reset()
+    },
     setValue,
     setSending,
     setNote,
@@ -339,9 +342,7 @@ export function SteerBox({
           onTrack={track}
           onDismissPalette={dismiss}
           onDismissReport={dismissReport}
-          onSuffixPromptChange={(value) =>
-            setSuffixSelection({ taskId, value })
-          }
+          onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
           onAgentChange={agent.setChoice}
           onSend={send}
           onStop={stop}

@@ -192,7 +192,10 @@ export function taskMessageSendNowRoute(
   if (!task) return err(`no such task: ${taskId}`, 404);
   const message = getTaskMessage(messageId!);
   if (!message || message.task_id !== task.id) return err(`no such message: ${messageId}`, 404);
+  // the same refusals /send makes, so the runner's own archived guard never fires from here
   if (task.archived) return err("task is archived — archived tasks are read-only", 409);
+  if (task.state === "creating") return err("task is still being created", 409);
+  if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
   if (message.workflow_id) return err("a workflow's generated instruction is sent by its workflow", 409);
   const running = hasRunningTurn(task.id);
   if (compacts.isCompacting(task.id) || (running && isCompactPrompt(adapters[running.harness], running.prompt))) {
@@ -210,8 +213,6 @@ export function taskMessageSendNowRoute(
       });
     } catch (error) {
       if (error instanceof InterruptConflict) return err(error.message, 409);
-      const detail = error instanceof Error ? error.message : String(error);
-      if (detail === "task is archived — archived tasks are read-only") return err(detail, 409);
       throw error;
     }
   })();

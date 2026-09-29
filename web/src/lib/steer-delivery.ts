@@ -57,10 +57,15 @@ export function steerAction({
   return input.mode
 }
 
-/** The `when` a send carries: omitted for an older daemon, which would refuse it. */
+/**
+ * The `when` a send carries. `now` may stop a turn, so it goes only with an
+ * action whose note said so; an idle or legacy send omits `when` and the
+ * daemon steers or queues, never stops. An older daemon would refuse `when`.
+ */
 export function sendWhen(supported: boolean, action: SteerAction | null): SendWhen | undefined {
   if (!supported) return undefined
-  return action === "queue" ? "next-turn" : "now"
+  if (action === "queue") return "next-turn"
+  return action === "steer" || action === "wait" || action === "interrupt" ? "now" : undefined
 }
 
 /** The note above the composer while a turn runs; `warn` when a send would stop it. */

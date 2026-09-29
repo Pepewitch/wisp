@@ -53,7 +53,8 @@ JSON-RPC, and Codex app-server drivers stay duplex during a turn for native
 steering; other adapters queue follow-ups for the next turn. A send may say
 when it should arrive: `now` steers when the running turn can take it and
 otherwise stops that turn so the message starts next (unless the turn has
-already answered and is exiting), and `next-turn` holds it, never steered and
+already answered and is exiting, or older messages are already queued, in
+which case it keeps its place), and `next-turn` holds it, never steered and
 queued behind any later message sent without the hold. Each running task
 reports its turn's input mode (`steer`, `wait`, or `interrupt`) and agent so
 a client can say which will happen before the person sends.

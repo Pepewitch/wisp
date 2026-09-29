@@ -191,7 +191,8 @@ The CLI's `send` never stops a turn. The API's `when` field on
 composer send: `now` steers when the running turn can take the message and
 otherwise stops that turn so the message starts next, leaving workflows and
 background work running; a turn that has already answered and is exiting is
-left to finish instead. `next-turn` holds the message: it is never steered,
+left to finish instead, and a message behind older queued ones keeps its
+place without stopping anything. `next-turn` holds the message: it is never steered,
 and a later message sent without the hold goes ahead of it. A queued message
 can be sent later with `POST /tasks/<id>/messages/<message>/send-now`. Tasks
 carry `turn_input` (the running turn's `mode`, `steer`/`wait`/`interrupt`,

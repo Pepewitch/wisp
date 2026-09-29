@@ -224,7 +224,10 @@ export function updateQueuedTaskMessage(id: string, taskId: string, text: string
   return updated;
 }
 
-/** Lift a queued message's next-turn hold, so it can be delivered now. Idempotent. */
+/**
+ * Lift a queued message's next-turn hold, so it can be delivered now.
+ * Idempotent. A claimed row is already on its way, so it is not returned.
+ */
 export function releaseTaskMessageHold(id: string, taskId: string): TaskMessage | null {
   const result = db.run(
     `UPDATE task_messages SET deferred = 0, updated_at = ?
@@ -232,7 +235,7 @@ export function releaseTaskMessageHold(id: string, taskId: string): TaskMessage 
     [now(), id, taskId],
   );
   const message = getTaskMessage(id);
-  if (!message || message.task_id !== taskId || message.status !== "queued") return null;
+  if (!message || message.task_id !== taskId || message.status !== "queued" || message.claim !== null) return null;
   if (result.changes > 0) {
     touchHumanInput(id);
     emit({ type: "message", taskId, messageId: id });
@@ -263,6 +266,17 @@ export function claimTaskMessageForSteering(id: string, taskId: string, turnN: n
   return claimTaskMessage(id, taskId, turnN, "steered");
 }
 
+/** The FIFO head for (task, id), counting rows already claimed by an admission in flight. */
+const QUEUE_HEAD = `SELECT queued.id FROM task_messages AS queued
+  WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
+  ORDER BY queued.deferred ASC, queued.created_at ASC, queued.rowid ASC LIMIT 1`;
+
+/** Whether this queued message is the one the next turn would start. */
+export function isQueueHead(id: string, taskId: string): boolean {
+  const head = db.query(QUEUE_HEAD).get(taskId, id) as { id: string } | null;
+  return head?.id === id;
+}
+
 function claimTaskMessage(
   id: string,
   taskId: string,
@@ -273,11 +287,7 @@ function claimTaskMessage(
     `UPDATE task_messages
      SET claim = ?, claim_turn_n = ?, updated_at = ?
      WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL
-       AND id = (
-         SELECT queued.id FROM task_messages AS queued
-         WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
-         ORDER BY queued.deferred ASC, queued.created_at ASC, queued.rowid ASC LIMIT 1
-       )`,
+       AND id = (${QUEUE_HEAD})`,
     [delivery, turnN, now(), id, taskId, taskId, id],
   );
   return result.changes > 0 ? getTaskMessage(id) : null;

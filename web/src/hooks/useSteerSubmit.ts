@@ -19,6 +19,7 @@ interface PendingSend {
   attachments: AttachmentPayload[] | undefined
   clientMessageId: string
   agent: AgentSubmission | null
+  when: SendWhen | undefined
 }
 
 export interface AgentSubmission {
@@ -51,7 +52,7 @@ export function useSteerSubmit({
   value,
   suffixPromptId,
   attachments,
-  when,
+  when: currentWhen,
   onSend,
   onInterrupt,
   onSent,
@@ -113,15 +114,19 @@ export function useSteerSubmit({
     agent: AgentSubmission | null,
   ) => {
     const previous = pendingSend.current
-    const clientMessageId =
+    const retry =
       previous?.taskId === id &&
       previous.message === message &&
       previous.suffixPromptId === suffixPromptId &&
       sameAgent(previous.agent, agent) &&
       sameAttachments(previous.attachments, payloads)
-        ? previous.clientMessageId
-        : crypto.randomUUID()
-    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent }
+        ? previous
+        : null
+    const clientMessageId = retry?.clientMessageId ?? crypto.randomUUID()
+    // A retry may name a row the first attempt already persisted with its
+    // hold; a changed toggle must not send `now` for a row still held.
+    const when = retry ? retry.when : currentWhen
+    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent, when }
     const done = (result: SendResponse | void) => {
       pendingSend.current = null
       setSending(false)

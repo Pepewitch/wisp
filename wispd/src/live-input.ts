@@ -12,7 +12,8 @@ import {
   readMessageAttachments,
   type StoredAttachment,
 } from "./attachments";
-import { runningTurn, transition } from "./store";
+import { emit } from "./events";
+import { getTask, runningTurn, transition } from "./store";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage, TurnInput, TurnInputMode } from "./types";
@@ -106,7 +107,14 @@ export async function closeLiveInput(taskId: string, turnId: number): Promise<vo
   const live = liveInputs.get(taskId);
   if (live?.turnId !== turnId) return;
   liveInputs.delete(taskId);
+  // turn_input just went from steer to wait; no state transition will say so
+  if (liveTurns.get(taskId) === turnId) notifyTask(taskId);
   await live.close().catch(() => {});
+}
+
+function notifyTask(taskId: string): void {
+  const task = getTask(taskId);
+  if (task) emit({ type: "task", taskId, state: task.state, stateDetail: task.state_detail, seq: task.seq });
 }
 
 /** Compatibility sink for live transports whose parser is not recorder-capable. */

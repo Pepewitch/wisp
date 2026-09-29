@@ -119,6 +119,41 @@ describe("the queue toggle", () => {
     await waitFor(() => expect(sends).toHaveLength(1))
     expect(sends[0]!.body).not.toHaveProperty("when")
   })
+
+  // `now` may stop a turn, so only a send whose note said so carries it
+  it.each([
+    ["an idle task", task(null, "done"), "Send"],
+    ["a running task with no turn to aim at", task(null), "Send safely"],
+  ] as const)("a send from %s carries no when", async (_case, shownTask, label) => {
+    const sends = stubSend()
+    render(<SteerBox task={shownTask} canChooseDelivery />, { wrapper: runtimeWrapper(sameOriginWebTransport) })
+    type("hello")
+    fireEvent.click(screen.getByRole("button", { name: label }))
+    await waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends[0]!.body).not.toHaveProperty("when")
+  })
+
+  it("a retry keeps the delivery the first attempt asked for", async () => {
+    const sends: Sent[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (url, init) => {
+        if (String(url).endsWith("/send")) sends.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+        return new Response(JSON.stringify({ error: "network hiccup" }), { status: 500, headers: { "content-type": "application/json" } })
+      }),
+    )
+    render(<SteerBox task={task(input("steer"))} canChooseDelivery />, { wrapper: runtimeWrapper(sameOriginWebTransport) })
+    fireEvent.click(screen.getByRole("button", { name: "Queue for the next turn" }))
+    type("after this turn")
+    fireEvent.click(screen.getByRole("button", { name: "Queue message" }))
+    await waitFor(() => expect(sends).toHaveLength(1))
+    await screen.findByTestId("steer-note")
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue for the next turn", pressed: true }))
+    fireEvent.click(screen.getByRole("button", { name: "Send to the running turn" }))
+    await waitFor(() => expect(sends).toHaveLength(2))
+    expect(sends[1]!.body).toMatchObject({ clientMessageId: sends[0]!.body.clientMessageId, when: "next-turn" })
+  })
 })
 
 describe("the running note says what send will do", () => {

@@ -4,11 +4,16 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
+import { subscribe } from "../src/events";
+import { STOPPING } from "../src/interrupt-state";
 import { turnInput } from "../src/live-input";
 import { route } from "../src/routes";
 import { sendTaskBodyError } from "../src/routes/send-agent";
-import { hasRunningTurn, sendQueuedMessageNow, startTurn, submitTaskMessage } from "../src/runner";
-import { createTask, createTaskMessage, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { hasRunningTurn, sendQueuedMessageNow, startNextQueuedMessage, startTurn, submitTaskMessage } from "../src/runner";
+import { createTask, createTaskMessage, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
+import { validateWorkflowParams } from "../src/workflows/definitions";
+import { workflowById } from "../src/workflows/plugins";
+import { createWorkflow, getWorkflow } from "../src/workflows/store";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -167,7 +172,75 @@ describe("a message sent now", () => {
     expect(prompts(task.id)).toEqual([["long turn", "interrupted"], ["held", "done"]]);
     expect(await sendQueuedMessageNow(task.id, held.message.id, { fake: quick }, cfg)).toBeNull();
   }, 20_000);
+
+  test("behind an older queued message, keeps its place and lets the turn run", async () => {
+    const def = bashAdapter('sleep 0.5; printf "ok\\n"');
+    const task = makeTask();
+    startTurn(task, "first", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+    createTaskMessage({ id: `older-${task.id}`, taskId: task.id, text: "older", attachmentHash: "" });
+
+    const result = await submitTaskMessage(getTask(task.id)!, "newer", def, cfg, [], undefined, { fake: def }, undefined, "now");
+
+    expect(result.disposition).toBe("queued-next");
+    expect(result.interrupted).toBeUndefined();
+    await until(() => turnsFor(task.id).length === 3 && turnsFor(task.id)[2]?.status === "done");
+    expect(prompts(task.id)).toEqual([["first", "done"], ["older", "done"], ["newer", "done"]]);
+  }, 20_000);
+
+  test("stops a workflow's turn without pausing the workflow, and runs next", async () => {
+    const def = bashAdapter("sleep 30");
+    const task = makeTask();
+    const heartbeat = workflowById("heartbeat")!.definition;
+    const flow = createWorkflow(task.id, heartbeat, validateWorkflowParams(heartbeat, { prompt: "Check the objective" }));
+    const round = `round-${task.id}`;
+    createTaskMessage({ id: round, taskId: task.id, text: "workflow round", attachmentHash: "", origin: "workflow" });
+    db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [flow.id, round]);
+    expect(startNextQueuedMessage(task.id, { fake: def }, cfg, round)?.delivery).toBe("started");
+    await until(() => hasRunningTurn(task.id) !== null);
+
+    const quick = bashAdapter('printf "ok\\n"');
+    const result = await submitTaskMessage(getTask(task.id)!, "new direction", quick, cfg, [], undefined, { fake: quick }, undefined, "now");
+
+    expect(result).toMatchObject({ disposition: "started", interrupted: true });
+    await until(() => turnsFor(task.id)[1]?.status === "done");
+    expect(prompts(task.id)).toEqual([["workflow round", "interrupted"], ["new direction", "done"]]);
+    expect(getWorkflow(flow.id)?.state).toBe("active");
+  }, 20_000);
+
+  test("while it stops the turn, another send is refused without talk of a Stop", async () => {
+    // the turn takes a second to exit once asked
+    const def = bashAdapter("trap 'sleep 1; exit 0' TERM; sleep 30 & wait");
+    const task = makeTask();
+    startTurn(task, "long turn", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+    const quick = bashAdapter('printf "ok\\n"');
+
+    const first = submitTaskMessage(getTask(task.id)!, "first", quick, cfg, [], undefined, { fake: quick }, undefined, "now");
+    await until(() => getTask(task.id)?.state_detail === STOPPING);
+    const second = submitTaskMessage(getTask(task.id)!, "second", quick, cfg, [], undefined, { fake: quick }, undefined, "now");
+
+    await expect(second).rejects.toThrow("The running turn is stopping so an earlier message can start; try again in a moment.");
+    expect(await first).toMatchObject({ interrupted: true });
+  }, 20_000);
 });
+
+test("a turn that has answered tells clients it now waits", async () => {
+  const def = liveAdapter(["IFS= read -r first", RESULT, "sleep 1"].join("; "));
+  const task = makeTask();
+  const modes: (string | undefined)[] = [];
+  const unsubscribe = subscribe((event) => {
+    if (event.type === "task" && event.taskId === task.id) modes.push(turnInput(task.id)?.mode);
+  });
+  try {
+    startTurn(task, "original", def, cfg);
+    await until(() => turnInput(task.id)?.mode === "wait");
+    expect(modes).toContain("wait");
+  } finally {
+    unsubscribe();
+  }
+  await until(() => turnsFor(task.id)[0]?.status === "done");
+}, 20_000);
 
 test("send validates when", () => {
   expect(sendTaskBodyError({ message: "x", when: "now" })).toBeNull();
@@ -218,6 +291,8 @@ describe("over the API", () => {
     db.run("UPDATE task_messages SET status = 'cancelled' WHERE id = 'already-cancelled'");
 
     const post = (id: string) => call(`/api/tasks/${task.id}/messages/${id}/send-now`, {}, { method: "POST" });
+    expect(await post("already-cancelled")).toEqual({ status: 409, body: { error: "task is still being created" } });
+    transition(task.id, "done");
     expect((await post("workflow-generated")).status).toBe(409);
     expect(await post("already-cancelled")).toEqual({ status: 409, body: { error: "only queued messages can be sent now" } });
     expect((await post("no-such-message")).status).toBe(404);
