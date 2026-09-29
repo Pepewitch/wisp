@@ -11,12 +11,12 @@ use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the
 security boundary implemented here.
 
 Wisp Desktop requires macOS 12.3 or newer on Apple Silicon. Local and ordinary CI
-builds are ad-hoc signed. Starting with alpha.12, public Desktop releases
-require Developer ID signing, notarization, stapling, and updater signing
-before immutable publication. The 0.5.0 release follows the same trust pipeline;
-the historical alpha.8 predates that pipeline and remains ad-hoc signed.
+builds are ad-hoc signed. Every current public Desktop release requires
+Developer ID signing, notarization, stapling, and updater signing before
+immutable publication; only the historical alpha.8 release predates that
+pipeline and remains ad-hoc signed.
 
-Status: usable pre-1.0 Desktop, released with the 0.5.0 daemon. The shared React application selects the desktop runtime
+Status: usable pre-1.0 Desktop, released alongside the daemon. The shared React application selects the desktop runtime
 when launched by Tauri, shows connection tabs, and binds every daemon-owned
 operation and client record to an immutable connection ID.
 
@@ -62,6 +62,10 @@ transport all live in Rust.
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
 | `src-tauri/src/notifications.rs` | macOS task notifications and the click that reopens the task |
 | `src-tauri/src/updater.rs` | Fixed-channel discovery, signed app installation, status events, relaunch |
+| `src-tauri/src/task_export.rs` | Validates a task export before it is written; no arbitrary path from JavaScript |
+| `src-tauri/src/window_launch.rs` | First-launch-of-version window sizing and focus, including after an updater restart |
+| `src-tauri/src/capability.rs` | The per-launch proxy capability: a fresh secret minted at launch, never written to disk |
+| `src-tauri/src/random.rs` | The one place the crate asks the OS for randomness |
 | `src-tauri/src/core.rs` | The command surface, free of `tauri` types so it is testable |
 | `src-tauri/src/commands.rs` | One-line Tauri adapters over `core.rs` |
 
@@ -214,6 +218,7 @@ The other commands:
 | `install_desktop_update` | `confirmedVersion` | `DesktopUpdateStatus` |
 | `relaunch_desktop` | — | `void` |
 | `reveal_worktree_file` | `connectionId`, `worktreePath`, `path` | `void` |
+| `save_task_export` | `taskId`, `data` | `boolean` (`false` if the native Save panel was cancelled) |
 
 Two adjustments the React shell has to absorb:
 

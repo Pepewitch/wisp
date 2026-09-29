@@ -192,7 +192,7 @@ Run the server gates:
 
 ```sh
 bun run test
-bun run typecheck
+bun run typecheck:wispd
 bun run lint
 ```
 

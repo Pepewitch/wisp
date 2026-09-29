@@ -16,7 +16,7 @@ The generator lives in [`scripts/brand/`](../scripts/brand/):
 | `mark.ts` | the lantern, its flat reduction, the favicon, and the lockup |
 | `cli-icon.ts` | the Finder icon for a `wisp` binary, emitted as PDF without a rasteriser |
 | `wordmark-data.ts` | "Wisp" in Geist 600, converted to outlines once |
-| `build.ts` | writes this directory; rasterises the two PNGs with Chrome |
+| `build.ts` | writes this directory; rasterises the five PNGs with Chrome |
 
 ## The name
 
@@ -221,7 +221,7 @@ The mark's alignment inside the lockup is **optical, not metric**: centring on
 the x-height band leaves it looking low, because the i's dot and the p's
 descender put more ink above the x-height than below the baseline. The band is
 stretched 18% past the x-height before centring. Keep the ratios (`fontRatio`
-0.60, `gap` 0.20, tracking −2%) rather than re-eyeballing them at a new size.
+0.56, `gap` 0.20, tracking −2%) rather than re-eyeballing them at a new size.
 
 For a single-colour context (a stamp, a sticker die-cut, a mark on a photo),
 `markSvg({ flat: "#eaeaee" })` gives every facet that one colour and separates

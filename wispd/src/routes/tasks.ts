@@ -699,10 +699,12 @@ async function diffRoute(task: Task): Promise<Response> {
  * task, which is the only arrangement that also works for a remote connection
  * — and it gives the browser the same feature.
  *
- * `path` may be worktree-relative or absolute; what it may not be is anywhere
- * outside the worktree, and the refusal never says which of "not there" or
- * "not yours" it was. Distinguishing them would answer questions about the
- * daemon's whole disk.
+ * `path` may be worktree-relative or absolute, and must resolve INSIDE the
+ * worktree; the refusal never says which of "not there" or "not yours" it
+ * was, because distinguishing them would answer questions about the daemon's
+ * whole disk. That containment check is on the path string, not the file it
+ * names: symlinks are never resolved, so a symlink inside the worktree can
+ * still point outside it and be served (see SECURITY.md's trust model).
  */
 async function worktreeFileRoute(task: Task, url: URL): Promise<Response> {
   const path = url.searchParams.get("path");

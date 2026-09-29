@@ -16,13 +16,14 @@ unsupervised daemon dies with its shell or container. Any of:
 - Homebrew on macOS: `brew services start wisp` (launchd)
 
 Liveness: `GET /api/health`. `wisp doctor` is the full self-check (harness
-CLIs and their auth, git identity, config files, daemon reachability) and
-exits 1 naming what failed. Its harness and auth probes are spawned in the
-CLI's own process, so they describe the invoking shell's environment; only the
-`daemon` check reaches the daemon. Under a supervisor whose environment
-differs, a green harness line can accompany a turn that fails to authenticate
-— confirm with one real task. Crash recovery (re-adopting running tasks) is
-the daemon's job; process restart is the supervisor's.
+CLIs and their auth, git identity, config files, daemon reachability, terminal
+origins) and exits 1 naming what failed. Its harness and auth probes are
+spawned in the CLI's own process, so they describe the invoking shell's
+environment; only the `daemon` and `terminal origins` checks ask the running
+daemon directly. Under a supervisor whose environment differs, a green
+harness line can accompany a turn that fails to authenticate — confirm with
+one real task. Crash recovery (re-adopting running tasks) is the daemon's job;
+process restart is the supervisor's.
 
 ## Browser and desktop clients
 
@@ -44,15 +45,12 @@ CLI/daemon too when needed. Both names are passed because Homebrew trusts only
 the fully qualified names it is given from a non-official tap, not their
 dependencies; the Cask alone stops with `Refusing to load formula
 pepewitch/tap/wisp from untrusted tap`. The app does not bundle or own a child
-daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Public
-Desktop alpha.8 is ad-hoc signed and not notarized. Starting with alpha.12,
-Desktop releases fail closed unless Developer ID signing and notarization pass.
-The current release pipeline applies the same gate to the standalone daemon,
-packaged as a branded background app under the stable `dev.wisp.daemon`
-identifier; v0.5.13 and earlier daemon releases were unbundled and ad-hoc
-signed. Do not bypass Gatekeeper for a current artifact that fails
-verification. The public alpha.12-to-alpha.13 self-update passed end to end on
-one Apple Silicon Mac.
+daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Every
+current release — Desktop and the standalone daemon, the latter packaged as a
+branded background app under the stable `dev.wisp.daemon` identifier — fails
+closed unless Developer ID signing and notarization pass; only the historical
+public alpha.8 release predates that gate and is ad-hoc signed instead. Do not
+bypass Gatekeeper for a current artifact that fails verification.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
 can be renamed; `+` adds a saved remote; a remote can be renamed, reconnected,
@@ -132,16 +130,29 @@ harmless preferences.
 ## Files under ~/.wisp (WISP_HOME env relocates)
 
 - `config.json` — daemon config. Wrong-typed values fail at boot with a named
-  field; unknown keys warn. Keys: `instanceId` (a generated, non-secret
+  field, except `harnessDefaults`, which only warns and drops what it cannot
+  use (so a config written for another Wisp version never bricks the daemon);
+  unknown keys warn. Keys: `instanceId` (a generated, non-secret
   Wisp-home identity), `port` (8710), `host` (127.0.0.1), `token`,
   `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
-  at-least-once, dedup on task_id+seq), `repos`, `stuckMinutes` (10),
-  `turnTranscriptBytes` (25 MB; `logMaxBytes` is its legacy alias; a stored
-  `5000000`, the old default every earlier first run wrote, follows the
-  current default — pin a budget with any other value),
-  `setupTimeoutMinutes` (10), `terminalShell` (an optional absolute executable
-  path for embedded login terminals), `envAllowlist`,
-  `harnessDefaults`, `hiddenModels`.
+  at-least-once, dedup on task_id+seq), `repos` (each entry: `path`, `name`,
+  `setupScript`, `archiveScript`, `baseBranch`, `copyFiles` — see
+  `wisp project set` in [cli.md](cli.md)), `stuckMinutes` (10),
+  `maxConcurrentTasks` (100), `turnTranscriptBytes` (25 MB; `logMaxBytes` is
+  its legacy alias; a stored `5000000`, the old default every earlier first
+  run wrote, follows the current default — pin a budget with any other
+  value), `diagnosticEnabled`/`diagnosticMaxBytes`/`diagnosticRetentionDays`
+  (diagnostic archive quota and retention — see [cli.md](cli.md)),
+  `turnLogRetentionEnabled`/`turnLogMaxBytes`/`turnLogRetentionDays` (archived
+  turn-log retention — see [ARCHIVE-CLEANUP.md](../../../docs/ARCHIVE-CLEANUP.md)),
+  `autoRenameTasksFromPullRequests` (keep a task's title aligned with its
+  linked pull request; default on),
+  `setupTimeoutMinutes` (10; also caps an archive script's run), `terminalShell`
+  (an optional absolute executable path for embedded login terminals),
+  `envAllowlist`, `harnessDefaults`, `hiddenModels`, `jevApiKey` (the
+  autopilot review judge's key), `factoryApiKey` (droid's Factory key for
+  `wisp limits`) — the last two are write-only: set through Settings or
+  `PATCH /api/settings`, never read back over the API.
 - `instance-id` — the create-exclusive authority mirrored by
   `config.json.instanceId`; it prevents simultaneous legacy migrations from
   minting different identities. Do not edit either value independently.
@@ -162,10 +173,22 @@ harmless preferences.
   browser or desktop composers and appended to the prompt on submit. UI-only
   convenience: the CLI has no flag for it (the API accepts `suffixPromptId` on
   create/send); an agent just writes the full text into the prompt itself.
-- `tasks/<id>/attachments/turn-<n>/` — image bytes (see images.md);
+- `tasks/<id>/attachments/turn-<n>/` — attachment bytes (see images.md);
   `worktrees/` — the task worktrees; `wisp.db` — all state (SQLite);
   `logs/` — bounded primary transcripts for recorder-capable live turns;
-  unsupported legacy turns retain the fatal size cap.
+  unsupported legacy turns retain the fatal size cap; `diagnostics/` —
+  the per-turn diagnostic archives `diagnosticEnabled` governs;
+  `attachment-uploads/` — short-lived one-shot attachment uploads, promoted
+  into `tasks/` on submission; `model-probes.json` — the last successful
+  per-harness model discovery, served immediately while it refreshes. The
+  autopilot judge's own state (`judge-usage.json`,
+  `tasks/<id>/autopilot/<row>/judge.jsonl`) is documented in
+  [PR-AUTOPILOT.md](../../../docs/PR-AUTOPILOT.md).
+
+Every harness turn also runs with `WISP_TASK_ID`, `WISP_TASK_SLOT`,
+`WISP_WORKTREE`, and `WISP_REPO` set in its environment. `wisp brief` (used
+with no task id, e.g. from inside a running turn) falls back to
+`$WISP_TASK_ID` when one is running in the harness's own shell.
 
 ## Models and effort
 
@@ -192,7 +215,7 @@ model. Levels per harness:
 
 - droid: none, dynamic, off, minimal, low, medium, high, xhigh, max
 - claude: low, medium, high, xhigh, max
-- codex: none, minimal, low, medium, high, xhigh, max
+- codex: none, minimal, low, medium, high, xhigh, max, ultra
 - cursor: no effort flag — effort is a bracket override on the model id
   (`claude-opus-4-8[effort=high]`), so pass it via `--model`
 - opencode: minimal, low, medium, high, xhigh, max — opencode calls these
@@ -233,8 +256,9 @@ it; it mints no credential. Every other API route requires
 - `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?}`) ·
   `…/interrupt` · `…/fresh-session` · `…/push` · `…/archive` (`{force?}`)
 - `GET /api/tasks/:id/log?turn=N&offset=B` — pollable log bytes
-- `GET /api/tasks/:id/attachments/:turn/:name` — image bytes (410 after
-  archive)
+- `GET /api/tasks/:id/attachments/:turn/:name` — attachment bytes (kept after
+  archive; `410` only for a legacy archive made before attachments were
+  retained)
 - `GET /api/tasks/:id/diff` · `GET /api/tasks/:id/log/stream` (SSE) ·
   `GET /api/events` (SSE, all task transitions)
 - `GET /api/tasks/:id/pull-request` (selected task) ·

@@ -43,18 +43,17 @@ reference.
 Desktop and daemon releases are independent. In Desktop, use the **Updates**
 popover: **Wisp Desktop** is the global signed application update and the named
 **Local daemon** row always applies to the built-in Local connection, even
-when a remote tab is selected. Update saved remote daemons on their own host. Public alpha.8 predates
-self-update; bootstrap a current signed release through Homebrew with
-`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. The public
-alpha.12-to-alpha.13 in-app path is qualified on one Apple Silicon Mac. The
-0.5 releases follow the same signing and promotion gates, with their release
-evidence and pending human updater journey recorded in
-[the qualification ledger](../../docs/v0.5/QUALIFICATION.md).
+when a remote tab is selected. Update saved remote daemons on their own host.
+The historical public alpha.8 release predates self-update; bootstrap a
+current signed release through Homebrew with
+`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. Release evidence
+and pending human updater journeys are recorded in
+[the qualification ledger](../../docs/v0.6/QUALIFICATION.md).
 
 ## 2. Creating tasks
 
     wisp new <repo> "prompt" --harness <droid|claude|codex|cursor|opencode>
-        [--model <m>] [--effort <level>] [--local] [--image <path>]…
+        [--model <m>] [--effort <level>] [--local] [--attach <path>]…
 
 - Prompts MUST be self-contained: the task worktree sees only the repo, and no
   conversation context carries over. Restate the goal, relevant file paths,
@@ -82,8 +81,8 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
 
 ## 4. Reading results
 
-- `wisp result <id> [turn]` — the agent's full answer (default: latest turn).
-  Read this first.
+- `wisp result <id> [turn]` — the agent's full answer (default: latest turn
+  with a result). Read this first.
 - `wisp show <id>` — state, state_detail, per-turn model/usage/attachments,
   worktree + branch, diffstat.
 - `wisp log <id> [turn] [-f] [--raw]` — the activity feed. Only when debugging
@@ -92,7 +91,7 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
 
 ## 5. Steering
 
-- `wisp send <id> "message" [--image <path>]…` — a follow-up turn in the same
+- `wisp send <id> "message" [--attach <path>]…` — a follow-up turn in the same
   session (the harness remembers prior turns; send also re-arms a done task).
 - `wisp interrupt <id>` — stop a runaway turn. The session survives.
 - `wisp fresh <id>` — the next turn starts a fresh harness session.
@@ -105,16 +104,19 @@ needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
   records the harness that actually ran it, so logs and `wisp show` report the
   turn's own harness rather than the task's current one.
 
-## 6. Image attachments
+## 6. Attachments
 
-    wisp new <repo> "fix the layout bug in this screenshot" --harness codex --image ./shot.png
-    wisp send <id> "now compare against this mock" --image ./mock.png
+    wisp new <repo> "fix the layout bug in this screenshot" --harness codex --attach ./shot.png
+    wisp send <id> "now compare against this mock" --attach ./mock.png
 
-`--image` repeats — up to 10 files per turn, 5 MB each, png/jpeg/gif/webp
-(detected by magic bytes, not the extension). All five builtin harnesses
-accept images; droid/cursor receive them as file paths to read (png/jpeg
-only), claude/codex/opencode get them natively. Images are stored outside the worktree
-and never appear in the task's diff. Delivery, limits, and lifecycle:
+`--attach` repeats — up to 10 files per turn, 50 MB total (`--image` is the
+old name and still works). Detected by magic bytes, not the extension:
+png/jpeg/gif/webp images (5 MB each), pdf (20 MB), utf-8 text (20 MB), and
+mp4/mov/webm video (50 MB). All five builtin harnesses accept every kind;
+droid/cursor receive images as file paths to read (png/jpeg only, claude/codex/
+opencode get images natively), and every harness receives pdf/text/video the
+same path-in-the-prompt way. Attachments are stored outside the worktree and
+never appear in the task's diff. Delivery, limits, and lifecycle:
 [references/images.md](references/images.md).
 
 ## 7. Integrating work
@@ -126,8 +128,10 @@ branch).
 1. Review the diff: `git -C <repo> diff main...<branch>`.
 2. Merge the branch locally into main yourself, or `wisp push <id>` to push
    it to origin.
-3. `wisp archive <id>` — cleanup + remove the worktree. It REFUSES on unsaved
-   work (dirty tree or unpushed commits): resolve the refusal and retry.
+3. `wisp archive <id>` — cleanup + remove the worktree. It REFUSES on a
+   running turn, a Stop still in progress, background work not yet verified
+   stopped, or unsaved work (dirty tree or unpushed commits): resolve the
+   refusal and retry.
    `-f` kills a running turn and commits leftovers onto the branch as
    `wisp: uncommitted work at archive` (the branch is always kept). Teardown
    finishes in the background after the response; a failure lands in
@@ -157,6 +161,6 @@ rebase task branches by sending a follow-up turn:
 ## Reference files
 
 - [references/cli.md](references/cli.md) — every command, flag, and output
-- [references/images.md](references/images.md) — image attachments in full
+- [references/images.md](references/images.md) — attachments in full
 - [references/setup.md](references/setup.md) — daemon ops, config files,
   browser/Desktop setup, connections, projects, models/effort, the HTTP API
