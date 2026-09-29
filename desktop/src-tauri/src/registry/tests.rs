@@ -646,8 +646,38 @@ fn a_tombstoned_connection_has_no_route_even_before_cleanup_runs() {
     assert!(reopened.list().iter().all(|c| c.id != info.id));
 }
 
+/// Open `path` against a Local profile and the given credential store.
+fn open_existing(path: &Path, secrets: Arc<MemorySecretStore>) -> Result<Registry, RegistryError> {
+    Registry::open(
+        path.to_path_buf(),
+        secrets,
+        PathBuf::from("/synthetic/.wisp"),
+        Ok(local_profile()),
+    )
+}
+
+/// The one backup a recovery left next to `path`.
+fn only_backup(path: &Path) -> PathBuf {
+    let backups: Vec<PathBuf> = std::fs::read_dir(path.parent().expect("parent"))
+        .expect("list")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|candidate| {
+            candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("connections.unreadable-"))
+        })
+        .collect();
+    assert_eq!(backups.len(), 1, "exactly one backup: {backups:?}");
+    backups.into_iter().next().expect("backup")
+}
+
+/// Unusable contents cost the saved remotes for this launch, never the app:
+/// the file is kept byte for byte, nothing in it becomes a route, the
+/// Keychain is untouched (so moving the file back restores everything), and
+/// the shell is told why.
 #[test]
-fn invalid_existing_metadata_fails_closed_instead_of_orphaning_credentials() {
+fn invalid_existing_metadata_is_set_aside_and_never_becomes_a_route() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("connections.json");
     let poisoned = serde_json::json!({
@@ -661,33 +691,94 @@ fn invalid_existing_metadata_fails_closed_instead_of_orphaning_credentials() {
         ],
         "pendingRemovals": []
     });
-    std::fs::write(&path, serde_json::to_vec_pretty(&poisoned).expect("json")).expect("write");
-    let result = Registry::open(
-        path,
-        Arc::new(MemorySecretStore::new()),
-        PathBuf::from("/synthetic/.wisp"),
-        Ok(local_profile()),
+    let bytes = serde_json::to_vec_pretty(&poisoned).expect("json");
+    std::fs::write(&path, &bytes).expect("write");
+    let secrets = Arc::new(MemorySecretStore::new());
+    secrets
+        .set("c-good", "synthetic-remote-token")
+        .expect("seed a saved credential");
+
+    let registry = open_existing(&path, secrets.clone()).expect("the app still opens");
+
+    let listed = registry.list();
+    assert_eq!(listed.len(), 1, "only Local: {listed:?}");
+    assert_eq!(listed[0].id, LOCAL_CONNECTION_ID);
+    assert_eq!(listed[0].label, LOCAL_CONNECTION_LABEL);
+    for id in ["c-good", "c-plainhttp", "c-file"] {
+        assert!(registry.resolve(id).is_none(), "{id} must not route");
+    }
+    let recovery = registry
+        .recovery()
+        .expect("the launch reports the reset")
+        .clone();
+    assert!(
+        recovery.reason.contains("invalid connection registry"),
+        "{}",
+        recovery.reason
     );
-    assert!(matches!(result, Err(RegistryError::InvalidFile { .. })));
+    assert_eq!(recovery.backup, only_backup(&path));
+    assert_eq!(std::fs::read(&recovery.backup).expect("backup"), bytes);
+    assert_eq!(secrets.accounts(), vec!["c-good".to_string()]);
+
+    // The fresh file is a working registry, and the next launch is ordinary.
+    let saved = registry
+        .add_remote(
+            "Studio",
+            &remote("https://wisp.example.com"),
+            "synthetic-remote-token-2",
+            REMOTE_INSTANCE,
+        )
+        .expect("add after recovery");
+    drop(registry);
+    let reopened = open_existing(&path, secrets.clone()).expect("reopens");
+    assert!(reopened.recovery().is_none());
+    assert!(reopened.resolve(&saved.id).is_some());
+    assert_eq!(only_backup(&path), recovery.backup);
 }
 
 #[test]
-fn malformed_existing_metadata_fails_closed() {
+fn undecodable_existing_metadata_is_set_aside() {
+    for bytes in [&b"{not-json"[..], &[0xff, 0xfe, 0x00, 0x7b][..], &b""[..]] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("connections.json");
+        std::fs::write(&path, bytes).expect("write");
+
+        let registry =
+            open_existing(&path, Arc::new(MemorySecretStore::new())).expect("the app still opens");
+        let recovery = registry.recovery().expect("reported");
+        assert!(
+            recovery.reason.starts_with("could not decode"),
+            "{bytes:?}: {}",
+            recovery.reason
+        );
+        assert_eq!(std::fs::read(only_backup(&path)).expect("backup"), bytes);
+        assert_eq!(registry.list().len(), 1);
+    }
+}
+
+/// A downgrade leaves a file from a newer schema behind. The older build must
+/// not refuse to launch over it, and must not rewrite it in place either.
+#[test]
+fn a_newer_schema_version_is_set_aside_rather_than_rewritten() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("connections.json");
-    std::fs::write(&path, b"{not-json").expect("write");
+    let newer = serde_json::json!({ "version": 2, "connections": [], "somethingNew": true });
+    let bytes = serde_json::to_vec_pretty(&newer).expect("json");
+    std::fs::write(&path, &bytes).expect("write");
 
-    let result = Registry::open(
-        path,
-        Arc::new(MemorySecretStore::new()),
-        PathBuf::from("/synthetic/.wisp"),
-        Ok(local_profile()),
+    let registry =
+        open_existing(&path, Arc::new(MemorySecretStore::new())).expect("the app still opens");
+    let recovery = registry.recovery().expect("reported");
+    assert!(
+        recovery.reason.contains("unsupported schema version"),
+        "{}",
+        recovery.reason
     );
-    assert!(matches!(result, Err(RegistryError::Decode { .. })));
+    assert_eq!(std::fs::read(&recovery.backup).expect("backup"), bytes);
 }
 
 #[test]
-fn unbounded_or_non_uuid_saved_identity_fails_closed() {
+fn unbounded_or_non_uuid_saved_identity_is_set_aside() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("connections.json");
     let poisoned = serde_json::json!({
@@ -703,19 +794,52 @@ fn unbounded_or_non_uuid_saved_identity_fails_closed() {
     });
     std::fs::write(&path, serde_json::to_vec_pretty(&poisoned).expect("json")).expect("write");
 
-    let result = Registry::open(
-        path,
-        Arc::new(MemorySecretStore::new()),
-        PathBuf::from("/synthetic/.wisp"),
-        Ok(local_profile()),
+    let registry =
+        open_existing(&path, Arc::new(MemorySecretStore::new())).expect("the app still opens");
+    assert!(registry.resolve("c-valid").is_none());
+    let recovery = registry.recovery().expect("reported");
+    assert!(
+        recovery.reason.ends_with("a daemon identity is invalid"),
+        "{}",
+        recovery.reason
     );
-    assert!(matches!(
-        result,
-        Err(RegistryError::InvalidFile {
-            reason: "a daemon identity is invalid",
-            ..
-        })
-    ));
+}
+
+/// An I/O failure says nothing about the contents, so nothing is set aside:
+/// the launch fails and the shell reports the error instead.
+#[test]
+fn a_registry_that_cannot_be_read_still_fails_the_launch() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("connections.json");
+    std::fs::create_dir(&path).expect("a directory where the file should be");
+
+    let result = open_existing(&path, Arc::new(MemorySecretStore::new()));
+    assert!(matches!(result, Err(RegistryError::Read { .. })));
+    assert!(path.is_dir(), "left exactly where it was");
+}
+
+/// Two unusable files in a row keep two backups.
+#[test]
+fn a_second_recovery_never_overwrites_the_first_backup() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("connections.json");
+    std::fs::write(&path, b"first").expect("write");
+    let first = open_existing(&path, Arc::new(MemorySecretStore::new()))
+        .expect("opens")
+        .recovery()
+        .expect("reported")
+        .backup
+        .clone();
+    std::fs::write(&path, b"second").expect("write");
+    let second = open_existing(&path, Arc::new(MemorySecretStore::new()))
+        .expect("opens")
+        .recovery()
+        .expect("reported")
+        .backup
+        .clone();
+    assert_ne!(first, second);
+    assert_eq!(std::fs::read(&first).expect("first backup"), b"first");
+    assert_eq!(std::fs::read(&second).expect("second backup"), b"second");
 }
 
 #[test]

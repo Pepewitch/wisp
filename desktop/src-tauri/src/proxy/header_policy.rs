@@ -4,24 +4,41 @@ use axum::response::{IntoResponse, Response};
 use http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
     ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_REQUEST_HEADERS, ACCESS_CONTROL_REQUEST_METHOD,
-    AUTHORIZATION, ORIGIN, VARY,
+    AUTHORIZATION, CONTENT_SECURITY_POLICY, HOST, ORIGIN, VARY, X_CONTENT_TYPE_OPTIONS,
 };
 use http::{HeaderMap, HeaderValue, StatusCode};
 use url::Url;
 
 use super::ProxyState;
 
-/// Origins the packaged macOS webview actually uses. An `Origin` header is
+/// The document origin of the packaged webview on this platform.
+///
+/// WKWebView (and WebKitGTK) serve the bundle from Tauri's `tauri://`
+/// protocol. `http(s)://tauri.localhost` is the WebView2 and Android form,
+/// and on those platforms only: everywhere else it is just a hostname, and
+/// browsers resolve every `*.localhost` name to loopback, so accepting it
+/// would admit an ordinary web page.
+#[cfg(not(any(windows, target_os = "android")))]
+pub const PACKAGED_APP_ORIGIN: &str = "tauri://localhost";
+#[cfg(any(windows, target_os = "android"))]
+pub const PACKAGED_APP_ORIGIN: &str = "http://tauri.localhost";
+
+/// Origins the packaged webview actually uses. An `Origin` header is
 /// forgeable by any local process, so this only ever *supplements* the
 /// capability check — it is never the thing standing between a caller and a
 /// daemon.
 pub fn packaged_app_origins() -> Vec<String> {
-    vec![
-        "tauri://localhost".to_string(),
-        "http://tauri.localhost".to_string(),
-        "https://tauri.localhost".to_string(),
-    ]
+    vec![PACKAGED_APP_ORIGIN.to_string()]
 }
+
+/// The one Content-Security-Policy every proxy response carries.
+///
+/// Daemon bytes are data to this app. `fetch`, `EventSource` and `<img>` ignore
+/// a response's CSP, so JSON, streams and attachments load exactly as before;
+/// the policy only applies if a response is ever rendered as a document, and
+/// then it runs no script, loads nothing, and gets an opaque origin instead of
+/// this proxy's. A hostile remote cannot relax it: upstream values are replaced.
+pub(super) const RESPONSE_CONTENT_SECURITY_POLICY: &str = "sandbox; default-src 'none'";
 
 /// Client headers that must never reach a daemon.
 ///
@@ -102,6 +119,30 @@ pub(super) fn refuse(
     response
         .headers_mut()
         .insert(PROXY_ERROR_HEADER, HeaderValue::from_static(code));
+    response
+}
+
+/// Whether a request names this listener: `Host` (or, without one, the
+/// request-target authority) must be exactly `127.0.0.1:<port>`.
+pub(super) fn addressed_to(headers: &HeaderMap, uri: &http::Uri, expected: &str) -> bool {
+    match headers.get(HOST) {
+        Some(host) => host.as_bytes() == expected.as_bytes(),
+        None => uri
+            .authority()
+            .is_some_and(|authority| authority.as_str() == expected),
+    }
+}
+
+/// Stop a relayed body from ever becoming a document on the proxy origin:
+/// no MIME sniffing, and a sandboxing policy that replaces whatever the
+/// upstream sent.
+pub(super) fn with_content_protection(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(
+        CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(RESPONSE_CONTENT_SECURITY_POLICY),
+    );
     response
 }
 
@@ -197,7 +238,9 @@ pub(super) fn upstream_request(
     upstream: Url,
     credential: &str,
 ) -> reqwest::RequestBuilder {
-    let mut builder = state.client.request(parts.method.clone(), upstream);
+    let mut builder = state
+        .client_for(&upstream)
+        .request(parts.method.clone(), upstream);
     for (name, value) in parts.headers.iter() {
         if REQUEST_HEADER_DENYLIST.contains(&name.as_str()) {
             continue;

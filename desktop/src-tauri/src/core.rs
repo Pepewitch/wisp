@@ -205,8 +205,17 @@ impl DesktopCore {
 
     /// Ask Finder to select one file in a Local task's worktree.
     ///
-    /// The join happens here rather than in the webview so `..` is refused on
-    /// a settled path. Nothing is opened — see `external::reveal`.
+    /// The resolution happens here rather than in the webview: `path` must be
+    /// worktree-relative, and the canonical file must still be inside the
+    /// canonical worktree (`external::worktree_file`). Nothing is opened — see
+    /// `external::reveal`.
+    ///
+    /// `worktree_path` is the webview's copy of the daemon's task record. It is
+    /// not re-read from the daemon here: a webview able to lie about it can
+    /// already drive the same Local daemon through the proxy, terminals
+    /// included, so a second lookup would guard nothing. What this does
+    /// guarantee is that an agent-written link cannot walk out of the
+    /// worktree the UI named.
     pub fn reveal_local_file(
         &self,
         connection_id: &str,
@@ -214,8 +223,8 @@ impl DesktopCore {
         path: &str,
     ) -> Result<(), CoreError> {
         self.require_local(connection_id)?;
-        let joined = std::path::Path::new(worktree_path).join(path);
-        Ok(crate::external::reveal(&joined.to_string_lossy())?)
+        let file = crate::external::worktree_file(worktree_path, path)?;
+        Ok(crate::external::reveal(&file)?)
     }
 
     pub fn finish_local_picker(&self, generation: u64) -> Result<(), CoreError> {
@@ -252,7 +261,7 @@ impl DesktopCore {
         token: &str,
     ) -> Result<probe::DaemonIdentity, CoreError> {
         let (url, token) = check(url, token)?;
-        Ok(probe::probe(self.state.client(), &url, &token).await?)
+        Ok(probe::probe(self.state.client_for(&url), &url, &token).await?)
     }
 
     pub async fn add_remote_checked(
@@ -263,7 +272,7 @@ impl DesktopCore {
         expected_instance_id: Option<&str>,
     ) -> Result<ConnectionInfo, CoreError> {
         let (url, token) = check(url, token)?;
-        let identity = probe::probe(self.state.client(), &url, &token).await?;
+        let identity = probe::probe(self.state.client_for(&url), &url, &token).await?;
         if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
             return Err(CoreError::RemoteIdentityChanged);
         }
@@ -302,7 +311,7 @@ impl DesktopCore {
             None => target.base.clone(),
         };
         let next_token = self.reconnect_token(&target, &next_url, token)?;
-        Ok(probe::probe(self.state.client(), &next_url, &next_token).await?)
+        Ok(probe::probe(self.state.client_for(&next_url), &next_url, &next_token).await?)
     }
 
     pub async fn reconnect_checked(
@@ -316,8 +325,12 @@ impl DesktopCore {
         // daemon replacement may all have happened since app launch.
         if connection_id == local::LOCAL_CONNECTION_ID {
             let profile = local::load(&self.wisp_home)?;
-            let identity =
-                probe::probe(self.state.client(), profile.base(), profile.token()).await?;
+            let identity = probe::probe(
+                self.state.client_for(profile.base()),
+                profile.base(),
+                profile.token(),
+            )
+            .await?;
             if identity.instance_id != profile.instance_id() {
                 return Err(CoreError::LocalIdentityMismatch);
             }
@@ -335,7 +348,8 @@ impl DesktopCore {
         };
         let next_token = self.reconnect_token(&target, &next_url, token)?;
 
-        let identity = probe::probe(self.state.client(), &next_url, &next_token).await?;
+        let identity =
+            probe::probe(self.state.client_for(&next_url), &next_url, &next_token).await?;
         if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
             return Err(CoreError::RemoteIdentityChanged);
         }
@@ -413,7 +427,13 @@ impl DesktopCore {
         let cli = setup::find_wisp_cli(std::env::var_os("HOME").map(PathBuf::from).as_deref());
         let reachable = match &profile {
             Ok(profile) => {
-                match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                match probe::probe(
+                    self.state.client_for(profile.base()),
+                    profile.base(),
+                    profile.token(),
+                )
+                .await
+                {
                     Ok(identity) if identity.instance_id == profile.instance_id() => {
                         self.registry.refresh_local(profile.clone())?;
                         true
@@ -447,7 +467,13 @@ impl DesktopCore {
         for _ in 0..120 {
             match local::load(&self.wisp_home) {
                 Ok(profile) => {
-                    match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                    match probe::probe(
+                        self.state.client_for(profile.base()),
+                        profile.base(),
+                        profile.token(),
+                    )
+                    .await
+                    {
                         Ok(identity) => {
                             if identity.instance_id != profile.instance_id() {
                                 return Err(CoreError::LocalIdentityMismatch);

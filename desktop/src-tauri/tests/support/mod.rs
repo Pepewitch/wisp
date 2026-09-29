@@ -77,6 +77,8 @@ struct DaemonState {
     seen: Mutex<Vec<SeenRequest>>,
     /// Where `/api/redirect` points. A hit on that server is a test failure.
     redirect_to: Mutex<String>,
+    /// When set, `/api/capabilities` answers with a body that never ends.
+    endless_capabilities: Mutex<bool>,
 }
 
 struct CapabilityGate {
@@ -105,6 +107,7 @@ impl MockDaemon {
             update_protocol_version: Mutex::new(1),
             seen: Mutex::new(Vec::new()),
             redirect_to: Mutex::new("https://redirect-target.invalid/api/tasks".to_string()),
+            endless_capabilities: Mutex::new(false),
         });
         let app = Router::new()
             .route("/api/health", get(health))
@@ -117,6 +120,7 @@ impl MockDaemon {
             .route("/api/events", get(events))
             .route("/api/redirect", get(redirect))
             .route("/api/cookie", get(cookie))
+            .route("/api/page", get(page))
             .route("/api/update", get(update_status).post(start_update))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -218,6 +222,17 @@ impl MockDaemon {
         (wait_for_started, release)
     }
 
+    /// Answer every later identity check with an endless, well-formed start
+    /// of a JSON document: the shape a hostile address would use to exhaust
+    /// a reader that buffers until the body ends.
+    pub fn stream_endless_capabilities(&self) {
+        *self
+            .state
+            .endless_capabilities
+            .lock()
+            .expect("endless capabilities") = true;
+    }
+
     pub fn point_redirect_at(&self, url: &str) {
         *self.state.redirect_to.lock().expect("redirect") = url.to_string();
     }
@@ -274,7 +289,26 @@ async fn health() -> impl IntoResponse {
     Json(json!({ "ok": true }))
 }
 
-async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
+async fn capabilities(State(state): State<Arc<DaemonState>>) -> Response {
+    if *state
+        .endless_capabilities
+        .lock()
+        .expect("endless capabilities")
+    {
+        let head = format!(
+            r#"{{"apiProtocolVersion":1,"instanceId":"{}","version":"0.0.0-synthetic","padding":""#,
+            state.instance_id.lock().expect("instance")
+        );
+        let padding = futures_util::stream::repeat_with(|| {
+            Ok::<Bytes, std::io::Error>(Bytes::from(vec![b'a'; 16 * 1024]))
+        });
+        let body = futures_util::stream::once(async move { Ok(Bytes::from(head)) }).chain(padding);
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from_stream(body))
+            .expect("endless response");
+    }
     // Capture before waiting: a later request can observe a replacement daemon
     // and complete first, precisely modeling reordered network responses.
     let protocol_version = *state.protocol_version.lock().expect("protocol");
@@ -304,7 +338,7 @@ async fn capabilities(State(state): State<Arc<DaemonState>>) -> impl IntoRespons
     {
         *state.token.lock().expect("token") = token;
     }
-    response
+    response.into_response()
 }
 
 async fn update_status(State(state): State<Arc<DaemonState>>) -> impl IntoResponse {
@@ -424,6 +458,21 @@ async fn cookie() -> impl IntoResponse {
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(Body::from(r#"{"ok":true}"#))
         .expect("cookie response")
+}
+
+/// What a hostile daemon would put at a URL the user might open: a document
+/// with script, and a content policy of its own that tries to allow it.
+async fn page() -> impl IntoResponse {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(
+            http::header::CONTENT_SECURITY_POLICY,
+            "script-src * 'unsafe-inline'",
+        )
+        .header(http::header::X_CONTENT_TYPE_OPTIONS, "sniff-please")
+        .body(Body::from("<script>fetch('/')</script>"))
+        .expect("page response")
 }
 
 /// Echo terminal: every text frame comes back prefixed with the daemon label.
@@ -579,6 +628,9 @@ impl Harness {
         );
         let proxy = proxy::start(state).await.expect("proxy binds");
         let client = reqwest::Client::builder()
+            // The test's own client talks to the proxy directly, whatever
+            // the machine's or the test's proxy environment says.
+            .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("test client");

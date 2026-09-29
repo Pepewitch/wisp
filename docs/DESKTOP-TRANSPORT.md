@@ -161,8 +161,9 @@ ready:
 
 1. Bind only to loopback and require a per-launch capability known to the
    packaged webview. A random port alone is not authorization.
-2. Accept only packaged-app origins. Origin checking supplements the per-launch
-   capability; local clients can forge an `Origin` header.
+2. Accept only the platform's packaged-app origin (`tauri://localhost` on
+   macOS) and a `Host` of exactly `127.0.0.1:<port>`. Both supplement the
+   per-launch capability; local clients can forge either header.
 3. Resolve targets exclusively from native connection state. Reject unknown,
    removed, or cleanup-pending connection IDs before opening an upstream
    request. Recheck the exact target generation after client-controlled await
@@ -190,6 +191,15 @@ ready:
 12. Refuse a saved remote's `POST /api/update` before any upstream request.
     Wisp Desktop owns only the built-in Local daemon's package-manager action;
     the daemon-served browser remains a one-daemon client and is unaffected.
+13. Never route a loopback target (`127.0.0.0/8`, `::1`, `localhost`) through
+    a system or environment HTTP proxy: it would see the bearer token in
+    cleartext and would choose which machine answers. HTTPS remotes keep the
+    configured proxy, which sees only a CONNECT tunnel, so networks with a
+    mandatory proxy still reach them.
+14. Read identity and compatibility answers with a size cap and a deadline.
+15. Send every response with `X-Content-Type-Options: nosniff` and
+    `Content-Security-Policy: sandbox; default-src 'none'`, replacing upstream
+    values, so daemon bytes never run as a document on the proxy origin.
 
 ## Client state that must be scoped
 
@@ -284,10 +294,13 @@ reveal_worktree_file     select one Local worktree file in Finder, never open it
 
 `open_external_url` and the Desktop updater commands carry no connection. A link in a
 task's prose belongs to the internet, not to the daemon that reported it. It
-exists because the packaged webview has no new-window handler, so
-`target="_blank"` is inert there and every link simply did nothing; `http` and
+exists because the packaged webview opens no new windows, so
+`target="_blank"` alone is inert there and every link simply did nothing; `http` and
 `https` are the only schemes that open, and the shared UI applies the same rule
-before it renders an anchor at all.
+before it renders an anchor at all. The webview's own navigation follows the
+same rule natively: it stays on the bundle's origin, sends other `http(s)`
+addresses (including "Open Link" and new-window requests) to the browser, and
+refuses proxy URLs, which carry the capability.
 notify_task_transition   post one macOS notification for a task the UI saw stop running
 ```
 

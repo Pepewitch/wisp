@@ -1,7 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Native core surface of the Wisp desktop shell. The webview gets no direct filesystem, dialog, shell, or HTTP capability — every native action is mediated by a narrow Rust command and every daemon byte travels through the loopback proxy.",
+  "description": "Native core surface of the Wisp desktop shell. The webview gets no direct filesystem, dialog, shell, or HTTP capability — every native action is mediated by a narrow Rust command and every daemon byte travels through the loopback proxy. Beyond the app's own commands it may only listen for native events, set its zoom, and double-click the title bar; tests/webview.rs pins this set to what web/src actually calls.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:webview:allow-set-webview-zoom"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:webview:allow-set-webview-zoom",
+    "core:window:allow-internal-toggle-maximize"
+  ]
 }

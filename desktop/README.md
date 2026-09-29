@@ -57,6 +57,7 @@ transport all live in Rust.
 | `src-tauri/src/secrets.rs` | Remote tokens in the macOS Keychain |
 | `src-tauri/src/local.rs` | The built-in Local connection, read from the standard Wisp profile |
 | `src-tauri/src/external.rs` | The two actions that leave the app: opening a web link, revealing a file |
+| `src-tauri/src/navigation.rs` | Where the webview may navigate; what goes to the browser instead |
 | `src-tauri/src/urls.rs` | Which addresses are allowed, and how a client path joins one |
 | `src-tauri/src/probe.rs` | The authenticated `/api/capabilities` handshake |
 | `src-tauri/src/setup.rs` | Local diagnosis plus confirmed `wisp init` / Homebrew service repair |
@@ -81,8 +82,9 @@ http://127.0.0.1:<ephemeral>/<capability>/connections/<id>/<revision>/api/...
   because `EventSource`, `WebSocket`, and `<img src>` cannot set a header. It
   authorizes talking to the proxy — it is never a daemon credential — and it
   dies with the process.
-* `Origin` is also checked against the packaged-app origins, but only as a
-  supplement: any local process can forge that header.
+* `Origin` is also checked against the packaged-app origin (`tauri://localhost`
+  on macOS), and `Host` must be exactly `127.0.0.1:<port>`, but only as a
+  supplement: any local process can forge those headers.
 * The connection ID and route revision are the entire addressing scheme. A
   frontend request names one saved connection generation; there is no code
   path from a frontend string to a host, and stale Local work is refused.
@@ -114,6 +116,26 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 12. `POST /api/update` is accepted only for the built-in Local connection.
     Saved remotes are updated on their host, not through this app-global
     package-manager surface.
+13. Loopback targets never use a system or environment HTTP proxy (tested in
+    `src-tauri/tests/proxy_env.rs`): plain HTTP goes only to loopback, and a
+    proxy would receive its bearer token in cleartext. HTTPS remotes still
+    honour the configured proxy through a CONNECT tunnel.
+14. Identity and update-compatibility answers are read with a 64 KiB cap and a
+    deadline, so an endless body is a refusal, not an allocation.
+15. Every response carries `X-Content-Type-Options: nosniff` and
+    `Content-Security-Policy: sandbox; default-src 'none'`, replacing any
+    upstream value. `fetch`, `EventSource`, and `<img>` ignore a response
+    CSP; a relayed document can never run on the proxy origin.
+
+The webview itself may only stay on the bundle's origin
+(`src-tauri/src/navigation.rs`). "Open Link" or a new-window request for any
+other `http(s)` address goes to the system browser, a proxy URL is refused
+outright because it carries the capability, and everything else is cancelled.
+The main window is built only after the proxy is running; if startup fails,
+Desktop shows the reason and quits instead of crashing. A `connections.json`
+this build cannot use is renamed next to itself, the app starts with Local
+only, and a message names the backup; Keychain items are left alone, so moving
+the file back restores the saved remotes.
 
 ## The webview content policy
 
@@ -236,7 +258,7 @@ Two adjustments the React shell has to absorb:
 
 `open_external_url` is the only command that takes no connection: a link in a
 task's prose belongs to the internet, not to the daemon that reported it. It
-exists because the webview has no new-window handler, so `target="_blank"` is
+exists because the webview opens no new windows, so `target="_blank"` alone is
 inert in the packaged app and every PR link did nothing. `src-tauri/src/external.rs`
 opens `http` and `https` only, and hands the launcher the reparsed URL rather
 than the string the webview sent.
@@ -246,8 +268,9 @@ the point: it *reveals* rather than opens, so Finder selects a file and nothing
 runs it. "Open with the default application" stays absent — the path came from
 a link an agent wrote, and that is not a thing to hand to LaunchServices. Local
 only, gated like the folder picker, because a remote daemon's worktree is on
-another machine; the join happens in Rust so `..` is declined rather than
-resolved. Reading a file is not here at all: the daemon that owns the worktree
+another machine. The path must be worktree-relative with no `..`, and the
+canonical file (symlinks resolved) must lie inside the canonical worktree, or
+the reveal is declined. Reading a file is not here at all: the daemon that owns the worktree
 serves it, which is what gives the browser the same viewer.
 
 **Task notifications** run the other way around from every other command. The

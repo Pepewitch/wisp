@@ -22,9 +22,10 @@
 //! The path is not trusted and is not treated as if it were. What bounds the
 //! action is what the action can do — selecting something in Finder — plus the
 //! caller-side rule that only the Local connection may ask, because a remote
-//! daemon's paths are not on this machine at all.
+//! daemon's paths are not on this machine at all, and [`worktree_file`]: the
+//! file must resolve, symlinks and all, to something inside the worktree.
 
-use std::path::Component;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use url::Url;
@@ -44,8 +45,49 @@ pub enum ExternalError {
     Launch(#[source] std::io::Error),
     #[error("only an absolute path can be revealed")]
     NotAbsolute,
+    #[error("only a file inside the task's worktree can be revealed")]
+    NotInWorktree,
     #[error("could not reveal that file: {0}")]
     Reveal(#[source] std::io::Error),
+}
+
+/// The file Finder may select for `path` in `worktree`, or why it may not.
+///
+/// `path` is worktree-relative, the form the daemon's file route returns, with
+/// no `..`: `Path::join` would let an absolute `path` replace the worktree
+/// outright. Both sides are then canonicalized, so a symlink inside the
+/// worktree cannot point the reveal somewhere else. Every refusal is the same
+/// error: "not there" and "not yours" are not distinguished.
+pub fn worktree_file(worktree: &str, path: &str) -> Result<PathBuf, ExternalError> {
+    let worktree = Path::new(worktree);
+    if !worktree.is_absolute() || worktree.components().any(|c| c == Component::ParentDir) {
+        return Err(ExternalError::NotAbsolute);
+    }
+    let relative = Path::new(path);
+    let mut names_a_file = false;
+    for component in relative.components() {
+        match component {
+            Component::Normal(_) => names_a_file = true,
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(ExternalError::NotInWorktree)
+            }
+        }
+    }
+    if !names_a_file {
+        return Err(ExternalError::NotInWorktree);
+    }
+    let root = worktree
+        .canonicalize()
+        .map_err(|_| ExternalError::NotInWorktree)?;
+    let resolved = root
+        .join(relative)
+        .canonicalize()
+        .map_err(|_| ExternalError::NotInWorktree)?;
+    if resolved == root || !resolved.starts_with(&root) {
+        return Err(ExternalError::NotInWorktree);
+    }
+    Ok(resolved)
 }
 
 /// The exact string a launcher may receive for `href`, or an error naming why
@@ -85,8 +127,8 @@ pub fn open(href: &str) -> Result<(), ExternalError> {
 /// Absolute only, and `..` is refused rather than normalized: a path that
 /// needs resolving did not come from where it says it did, and the honest
 /// answer is to decline instead of guessing which file was meant.
-pub fn reveal(path: &str) -> Result<(), ExternalError> {
-    let path = std::path::Path::new(path);
+pub fn reveal(path: impl AsRef<Path>) -> Result<(), ExternalError> {
+    let path = path.as_ref();
     if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
         return Err(ExternalError::NotAbsolute);
     }
@@ -152,6 +194,72 @@ mod tests {
             openable("https://example.invalid/a b").unwrap(),
             "https://example.invalid/a%20b"
         );
+    }
+
+    /// A worktree-relative file resolves to its canonical path, which is what
+    /// Finder is handed.
+    #[test]
+    fn a_file_inside_the_worktree_resolves_to_its_canonical_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let worktree = dir.path().join("worktree");
+        std::fs::create_dir_all(worktree.join(".context")).expect("worktree");
+        std::fs::write(worktree.join(".context/PLAN.md"), "plan").expect("file");
+        let canonical = worktree
+            .canonicalize()
+            .expect("canonical")
+            .join(".context/PLAN.md");
+        let root = worktree.to_str().expect("utf-8 path");
+        for path in [".context/PLAN.md", "./.context/PLAN.md"] {
+            assert_eq!(
+                super::worktree_file(root, path).expect(path),
+                canonical,
+                "{path}"
+            );
+        }
+    }
+
+    /// `Path::join` lets an absolute path replace the base, and a symlink can
+    /// point anywhere. Neither may carry a reveal out of the worktree.
+    #[test]
+    fn nothing_outside_the_worktree_resolves() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let worktree = dir.path().join("worktree");
+        std::fs::create_dir_all(&worktree).expect("worktree");
+        std::fs::write(worktree.join("PLAN.md"), "plan").expect("file");
+        let outside = dir.path().join("outside.txt");
+        std::fs::write(&outside, "not the task's").expect("outside file");
+        std::os::unix::fs::symlink(&outside, worktree.join("escape.txt")).expect("symlink");
+        std::os::unix::fs::symlink(dir.path(), worktree.join("parent")).expect("dir symlink");
+        let root = worktree.to_str().expect("utf-8 path");
+        let absolute_outside = outside.to_str().expect("utf-8 path");
+        for path in [
+            absolute_outside,
+            "/etc/hosts",
+            "../outside.txt",
+            "sub/../../outside.txt",
+            "escape.txt",
+            "parent/outside.txt",
+            "missing.md",
+            "",
+            ".",
+        ] {
+            assert!(
+                matches!(
+                    super::worktree_file(root, path),
+                    Err(ExternalError::NotInWorktree)
+                ),
+                "{path:?} must not resolve"
+            );
+        }
+        for base in ["relative/worktree", "", "/task/../worktree"] {
+            assert!(
+                matches!(
+                    super::worktree_file(base, "PLAN.md"),
+                    Err(ExternalError::NotAbsolute)
+                ),
+                "{base:?} is not a worktree path"
+            );
+        }
     }
 
     /// Revealing does not resolve anything. A relative path or a `..` is a
