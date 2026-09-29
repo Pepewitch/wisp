@@ -48,8 +48,9 @@ pepewitch/tap/wisp from untrusted tap`. The app does not bundle or own a child
 daemon; Local uses the standard `~/.wisp` profile and Homebrew service. Every
 current release — Desktop and the standalone daemon, the latter packaged as a
 branded background app under the stable `dev.wisp.daemon` identifier — fails
-closed unless Developer ID signing and notarization pass; only the historical
-public alpha.8 release predates that gate and is ad-hoc signed instead. Do not
+closed unless Developer ID signing and notarization pass. Two historical
+releases predate that gate and are ad-hoc signed instead: Desktop alpha.8, and
+standalone daemon releases v0.5.13 and earlier, which were also unbundled. Do not
 bypass Gatekeeper for a current artifact that fails verification.
 
 The desktop header scopes the entire UI to one connection. Local is fixed but
@@ -257,8 +258,8 @@ it; it mints no credential. Every other API route requires
   `…/interrupt` · `…/fresh-session` · `…/push` · `…/archive` (`{force?}`)
 - `GET /api/tasks/:id/log?turn=N&offset=B` — pollable log bytes
 - `GET /api/tasks/:id/attachments/:turn/:name` — attachment bytes (kept after
-  archive; `410` only for a legacy archive made before attachments were
-  retained)
+  archive; `410` while a purge is pending, or for a legacy archive made before
+  attachments were retained)
 - `GET /api/tasks/:id/diff` · `GET /api/tasks/:id/log/stream` (SSE) ·
   `GET /api/events` (SSE, all task transitions)
 - `GET /api/tasks/:id/pull-request` (selected task) ·

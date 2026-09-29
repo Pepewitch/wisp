@@ -96,7 +96,7 @@ signs its GitHub posts so Wisp never feeds them back. See
 
 ```
 wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local]
-         [--base <ref>] [--auto-merge] [--auto-fix] [--attach <path>]…
+         [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.

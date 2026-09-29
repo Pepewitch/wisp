@@ -70,7 +70,7 @@ Archiving a task (plain or forced) keeps the attachment bytes — only the
 worktree is removed. `wisp show` keeps naming what was attached, and
 `GET /api/tasks/<id>/attachments/<turn>/<name>` keeps serving the bytes.
 `wisp purge` is what actually deletes them, one task or, with
-`--archived-before`, in bulk; the `410 Gone` some older archives still show is
-a leftover from archives made before the daemon started retaining
-attachments, not the current behavior. See
+`--archived-before`, in bulk. A `410 Gone` means a purge of that task is
+pending, or the task is an older archive made before the daemon started
+retaining attachments. See
 [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md).
