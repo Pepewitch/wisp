@@ -32,6 +32,7 @@ import { assertTaskNotStopping, interruptTaskTurn, isTaskStopping, turnFinalized
 import { assertTaskProcessesEnded, backgroundWork, processStop, processStopPending, recordProcessGroup, recordedGroupRebooted, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { signalProcessTree } from "./process-tree";
+import { settlePipes } from "./pipe-drain";
 import { processStartTime } from "./procid";
 import {
   db,
@@ -86,6 +87,8 @@ export { taskEnv } from "./turn-input";
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
+/** How long a turn's output pipes may stay open after the harness exits (see settlePipes). */
+const PIPE_DRAIN_GRACE_MS = 2000;
 /** Interrupt details written by force-archive, and the only reading of them. */
 const FORCE_ARCHIVE_DETAIL = "turn interrupted by force-archive";
 const FORCE_ARCHIVE_ESCALATED_DETAIL = `${FORCE_ARCHIVE_DETAIL} (escalated to SIGKILL after SIGTERM was trapped)`;
@@ -528,8 +531,12 @@ async function watchTurn(
   liveChildren.delete(turnId);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
-  await outputPump.catch(() => {});
-  await stderrPump.catch(() => {});
+  // Bounded: a process the harness left behind can hold its pipes open for as
+  // long as it lives, and the turn must not wait on it to settle.
+  if (await settlePipes([child.stdout, child.stderr], [outputPump, stderrPump], PIPE_DRAIN_GRACE_MS)) {
+    console.error(`[wisp] task ${taskId}: turn ${turnId} settled without waiting for a process that still holds its output open`);
+    recorder?.recordNote("· the harness exited while a process it started still held its output open; the turn settled without waiting for it");
+  }
   const recorderOutcome = recorder?.finish();
   for (const fd of fds) {
     closeDescriptors([fd]);
