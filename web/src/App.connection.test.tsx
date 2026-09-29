@@ -297,7 +297,7 @@ describe("connection-bound update recovery", () => {
         name: `Update daemon ${UPDATE.latestVersion}`,
       })
     )
-    await waitFor(() => expect(mocks.install).toHaveBeenCalledWith(UPDATE.latestVersion))
+    await waitFor(() => expect(mocks.install).toHaveBeenCalledWith({ version: UPDATE.latestVersion }))
 
     view.rerender(
       <DaemonRuntimeProvider transport={second} recoverAfterUpdate={recoverSecond}>
@@ -343,7 +343,7 @@ describe("connection-bound update recovery", () => {
       screen.getByRole("button", { name: "Update Local daemon" })
     )
     await waitFor(() =>
-      expect(mocks.install).toHaveBeenCalledWith(UPDATE.latestVersion)
+      expect(mocks.install).toHaveBeenCalledWith({ version: UPDATE.latestVersion })
     )
 
     fireEvent.click(

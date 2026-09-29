@@ -87,7 +87,7 @@ describe("task writes", () => {
     const { result } = renderHook(() => useInstallUpdate(), { wrapper })
 
     await act(async () => {
-      await result.current.mutateAsync("0.4.0-alpha.8")
+      await result.current.mutateAsync({ version: "0.4.0-alpha.8" })
     })
 
     expect(mocks.request).toHaveBeenCalledWith("/api/update", {
@@ -95,6 +95,21 @@ describe("task writes", () => {
       body: { version: "0.4.0-alpha.8" },
     })
     expect(client.getQueryData(qk.update)).toEqual(status)
+  })
+
+  it("sends force only when the person confirmed interrupting running tasks", async () => {
+    mocks.request.mockResolvedValue({ state: "installing" })
+    const { wrapper } = harness()
+    const { result } = renderHook(() => useInstallUpdate(), { wrapper })
+
+    await act(async () => {
+      await result.current.mutateAsync({ version: "0.4.0-alpha.8", force: true })
+    })
+
+    expect(mocks.request).toHaveBeenCalledWith("/api/update", {
+      method: "POST",
+      body: { version: "0.4.0-alpha.8", force: true },
+    })
   })
 
   it("force-refreshes an explicit Local daemon while a remote is active", async () => {

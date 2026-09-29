@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { CliApiError } from "../src/cli-api";
 import { HELP } from "../src/cli-help";
 import { updateCommand } from "../src/cli-update";
 import type { UpdateStatus } from "../src/update";
@@ -164,5 +165,86 @@ describe("wisp update", () => {
     await expect(
       updateCommand(["0.5.1"], async () => status(), () => {}),
     ).rejects.toThrow("usage: wisp update");
+  });
+});
+
+describe("wisp update while tasks are running", () => {
+  /** The daemon's rule: an unforced start refuses with 409 and the running count. */
+  function busyDaemon(running: number) {
+    const posts: unknown[] = [];
+    const request = async (path: string, method?: string, body?: unknown) => {
+      if (method !== "POST") return status();
+      posts.push(body);
+      if (!(body as { force?: boolean }).force) {
+        const error = `${running} tasks have a running turn that restarting Wisp would interrupt`;
+        throw new CliApiError(error, `http://127.0.0.1:1${path}`, false, 409, { error, running });
+      }
+      return status({ state: "installing" });
+    };
+    return { posts, request };
+  }
+  const WARNING = "2 tasks have a running turn. Updating restarts the daemon and interrupts them.";
+  const UPDATING = "Updating Wisp 0.5.0 to 0.5.1. The daemon will restart automatically.";
+
+  test("on a terminal it names the count, asks, and updates once the answer is yes", async () => {
+    const { posts, request } = busyDaemon(2);
+    const lines: string[] = [];
+    const questions: string[] = [];
+    await updateCommand([], request, (line) => lines.push(line), {
+      interactive: true,
+      ask: async (question) => { questions.push(question); return true; },
+    });
+    expect(questions).toEqual(["Update anyway? [y/N] "]);
+    expect(posts).toEqual([{ version: "0.5.1" }, { version: "0.5.1", force: true }]);
+    expect(lines).toEqual([WARNING, UPDATING]);
+  });
+
+  test("any other answer cancels without forcing", async () => {
+    const { posts, request } = busyDaemon(1);
+    const lines: string[] = [];
+    await updateCommand([], request, (line) => lines.push(line), { interactive: true, ask: async () => false });
+    expect(posts).toEqual([{ version: "0.5.1" }]);
+    expect(lines).toEqual([
+      "1 task has a running turn. Updating restarts the daemon and interrupts it.",
+      "Update cancelled.",
+    ]);
+  });
+
+  test("without a terminal it refuses unless --yes was given", async () => {
+    const refused = busyDaemon(2);
+    const lines: string[] = [];
+    await expect(
+      updateCommand([], refused.request, (line) => lines.push(line), {
+        interactive: false,
+        ask: async () => { throw new Error("must not ask without a terminal"); },
+      }),
+    ).rejects.toThrow("not updating while tasks are running; rerun with --yes to interrupt them");
+    expect(refused.posts).toEqual([{ version: "0.5.1" }]);
+    expect(lines).toEqual([WARNING]);
+
+    const confirmed = busyDaemon(2);
+    const confirmedLines: string[] = [];
+    await updateCommand([], confirmed.request, (line) => confirmedLines.push(line), {
+      yes: true,
+      interactive: false,
+      ask: async () => { throw new Error("--yes must not ask"); },
+    });
+    expect(confirmed.posts).toEqual([{ version: "0.5.1" }, { version: "0.5.1", force: true }]);
+    expect(confirmedLines).toEqual([WARNING, UPDATING]);
+  });
+
+  test("any other refusal is not mistaken for running tasks", async () => {
+    await expect(
+      updateCommand([], async (path, method) => {
+        if (method !== "POST") return status();
+        throw new CliApiError("an update is already in progress", `http://127.0.0.1:1${path}`, false, 409, {
+          error: "an update is already in progress",
+        });
+      }, () => {}, { yes: true }),
+    ).rejects.toThrow("an update is already in progress");
+  });
+
+  test("--help names --yes", () => {
+    expect(HELP).toContain("update [--yes]");
   });
 });

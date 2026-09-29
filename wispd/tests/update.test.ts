@@ -19,8 +19,10 @@ import {
   isSupervisordServiceProcess,
   runUpdateCommand,
   UPDATE_COMMAND_MAX_BYTES,
+  UpdateInterruptsTasksError,
   UpdateManager,
 } from "../src/update";
+import { createTask, createTurn, db, freeSlot, newTaskId, transition } from "../src/store";
 import { updateRoute } from "../src/routes/update";
 import { API_PROTOCOL_VERSION } from "../src/version";
 
@@ -654,5 +656,87 @@ describe("update API", () => {
     expect(await invalid!.json()).toEqual({ error: "version must name a complete Wisp release" });
 
     expect(updateRoute(new Request("http://wisp.test/elsewhere"), "/elsewhere", "GET", manager)).toBeNull();
+  });
+});
+
+describe("updating over running turns", () => {
+  const brewRun = async (cmd: string[]): Promise<CommandResult> => {
+    if (cmd.join(" ") === "brew --prefix wisp") return { exitCode: 0, stdout: "/opt/homebrew/opt/wisp", stderr: "" };
+    if (cmd.at(-2) === "version") {
+      return { exitCode: 0, stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit: "b".repeat(40), dirty: false }), stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+  function brewManager(restart: () => void, latest = "0.4.0-alpha.8") {
+    return new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: false,
+      fetch: async () => jsonResponse(daemonChannel(latest)),
+      run: brewRun,
+      detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
+      restart,
+      restartDelayMs: 0,
+    });
+  }
+
+  test("refuses, naming the count, only an update that would run and only without force", async () => {
+    // an update that cannot run anyway says so, rather than asking about tasks
+    await expect(brewManager(() => {}, "0.4.0-alpha.6").start("0.4.0-alpha.8", { runningTasks: () => 2 }))
+      .rejects.toThrow("Wisp is already up to date");
+
+    const probe = restartProbe();
+    const manager = brewManager(probe.restart);
+    const refusal = await manager.start("0.4.0-alpha.8", { runningTasks: () => 2 }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(UpdateInterruptsTasksError);
+    expect((refusal as UpdateInterruptsTasksError).running).toBe(2);
+    expect((refusal as Error).message).toContain("2 tasks have a running turn");
+    // nothing started: the same update can still be asked for
+    expect((await manager.getStatus()).state).toBe("available");
+
+    expect(await manager.start("0.4.0-alpha.8", { force: true, runningTasks: () => 2 })).toMatchObject({ state: "installing" });
+    await probe.called;
+    expect(probe.count()).toBe(1);
+  });
+
+  test("POST /api/update answers 409 with the running count, and force updates anyway", async () => {
+    const ids = [newTaskId(), newTaskId()];
+    for (const id of ids) {
+      createTask({ id, title: "Update fixture", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot() });
+      transition(id, "running", "turn 1");
+      createTurn(id, 1, "prompt", 99999, "/tmp/update-running-test.out.log");
+    }
+    try {
+      const probe = restartProbe();
+      const manager = brewManager(probe.restart);
+      const post = (body: unknown) => updateRoute(
+        new Request("http://wisp.test/api/update", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        "/api/update",
+        "POST",
+        manager,
+      )!;
+
+      const refused = await post({ version: "0.4.0-alpha.8" });
+      expect(refused.status).toBe(409);
+      const answer = await refused.json() as { error: string; running: number };
+      // the test database is shared: at least this file's two tasks
+      expect(answer.running).toBeGreaterThanOrEqual(2);
+      expect(answer.error).toContain("running turn");
+
+      expect((await post({ version: "0.4.0-alpha.8", force: "yes" })).status).toBe(400);
+
+      const forced = await post({ version: "0.4.0-alpha.8", force: true });
+      expect(forced.status).toBe(202);
+      expect(await forced.json()).toMatchObject({ state: "installing" });
+      await probe.called;
+    } finally {
+      for (const id of ids) {
+        db.run("DELETE FROM turns WHERE task_id = ?", [id]);
+        db.run("DELETE FROM tasks WHERE id = ?", [id]);
+      }
+    }
   });
 });

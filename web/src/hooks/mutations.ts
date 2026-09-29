@@ -32,8 +32,12 @@ export function useInstallUpdate(
   const active = useDaemonRuntime()
   const { transport, qk } = target ?? active
   return useMutation({
-    mutationFn: (version: string) =>
-      transport.request<UpdateStatus>("/api/update", { method: "POST", body: { version } }),
+    // force: the person confirmed interrupting the tasks the daemon said are running
+    mutationFn: ({ version, force = false }: { version: string; force?: boolean }) =>
+      transport.request<UpdateStatus>("/api/update", {
+        method: "POST",
+        body: force ? { version, force: true } : { version },
+      }),
     onSuccess: (status) => {
       client.setQueryData(qk.update, status)
     },

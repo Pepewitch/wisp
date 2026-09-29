@@ -346,7 +346,8 @@ export function startTurn(
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   // Detached: the turn settles on its own. A watcher that fails must still
-  // leave a trace, and must never reject unhandled.
+  // leave a trace, and must never reject unhandled. Recoverable: a daemon
+  // that is exiting leaves the harness running for boot recovery to re-adopt.
   void backgroundPass(`turn watcher for task ${task.id} turn ${n}`, () => watchTurn(
     child,
     task.id,
@@ -360,7 +361,7 @@ export function startTurn(
     stderrPump,
     recorder,
     adapters,
-  ));
+  ), { recoverable: true });
 }
 
 /**

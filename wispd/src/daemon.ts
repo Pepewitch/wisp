@@ -442,6 +442,20 @@ function terminalUpgrade(
   return undefined;
 }
 
+const exitStops = new WeakMap<Bun.Server<TerminalSocketData>, () => Promise<void>>();
+
+/**
+ * The stop for a daemon PROCESS that is about to exit (SIGTERM, SIGINT).
+ * Unlike server.stop(), which an in-process hand-off uses and which waits for
+ * every turn to settle, this leaves running turns for boot recovery, closes
+ * open connections, and releases ownership once the rest has settled.
+ */
+export function stopForExit(server: Bun.Server<TerminalSocketData>): Promise<void> {
+  const stop = exitStops.get(server);
+  if (!stop) throw new Error("stopForExit: not a server from serve()");
+  return stop();
+}
+
 export interface ServeOptions {
   /** Test-only listener override. Persisted user configuration remains unchanged. */
   port?: number;
@@ -723,7 +737,7 @@ async function serveOwned(
   limitsRefresh.start();
   const stopServer = server.stop.bind(server);
   let stopPromise: Promise<void> | undefined;
-  server.stop = (closeActiveConnections?: boolean): Promise<void> => {
+  const stopDaemon = (closeActiveConnections: boolean | undefined, exiting: boolean): Promise<void> => {
     return stopPromise ??= (async () => {
       stopping = true;
       lifetime.draining = true;
@@ -736,11 +750,15 @@ async function serveOwned(
       // Stop admitting requests first, but keep ownership through handlers and
       // detached work. Closing a socket does not cancel its task launch/hook.
       const stopped = stopServer(closeActiveConnections);
+      // a read-only cache refresh: abandoned, never waited on
+      modelCache.stop();
       await processLoop.stop();
       await workflows.stop();
       await autopilot.stop();
       await limitsRefresh.stop();
-      await lifetime.drain();
+      // An exiting process does not wait for running turns: their harnesses
+      // keep running, and the next boot re-adopts them.
+      await lifetime.drain({ exiting });
       // Bun can leave a closed WebSocket's stop promise pending indefinitely.
       // Admission is closed and all stateful work has settled, so socket drain
       // alone must not retain ownership. Its callbacks also refuse new work.
@@ -748,6 +766,8 @@ async function serveOwned(
       await stopped;
     })();
   };
+  server.stop = (closeActiveConnections?: boolean): Promise<void> => stopDaemon(closeActiveConnections, false);
+  exitStops.set(server, () => stopDaemon(true, true));
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
   void backgroundPass("model discovery", () => modelCache.refreshIfStale());

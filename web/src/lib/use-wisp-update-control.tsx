@@ -4,6 +4,7 @@ import {
   UpdateCenter,
   WispUpdateControl,
 } from "@/components/update-control"
+import { UpdateInterruptDialog } from "@/components/update-interrupt-dialog"
 import { useInstallUpdate, useRefreshUpdateStatus } from "@/hooks/mutations"
 import { useUpdateStatus } from "@/hooks/queries"
 import { SUPPORTED_DESKTOP_API_PROTOCOL_VERSIONS } from "@/lib/desktop-bridge"
@@ -19,6 +20,7 @@ import {
   waitForUpdatedDaemon,
   type DaemonUpdateOperation,
 } from "@/lib/update"
+import { tasksInterruptedByUpdate } from "@/lib/update-refusal"
 
 /** Binds browser updates to one runtime and Desktop updates to app-global Local. */
 export function useWispUpdateControl() {
@@ -41,6 +43,7 @@ export function useWispUpdateControl() {
   const updateQuery = useUpdateStatus(updateRuntime)
   const installUpdate = useInstallUpdate(updateRuntime)
   const refreshUpdate = useRefreshUpdateStatus(updateRuntime)
+  const interrupt = useInterruptQuestion(updateRuntime.connectionId)
   const [browserUpdateError, setBrowserUpdateError] = useState<{
     connectionId: string
     message: string
@@ -80,7 +83,7 @@ export function useWispUpdateControl() {
     ? desktopUpdateBlocksDaemon(desktopUpdater.status, desktopUpdater.pending)
     : false
 
-  const updateWisp = async (version: string) => {
+  const updateWisp = async (version: string, force = false) => {
     if (
       operationRef.current ||
       desktopOperationRef.current ||
@@ -99,7 +102,7 @@ export function useWispUpdateControl() {
     setOperation(installing)
     clearUpdateError(initiatingRuntime.connectionId)
     try {
-      await installUpdate.mutateAsync(version)
+      await installUpdate.mutateAsync(force ? { version, force } : { version })
       const restarting = { ...installing, phase: "restarting" as const }
       operationRef.current = restarting
       setOperation(restarting)
@@ -108,6 +111,15 @@ export function useWispUpdateControl() {
       })
       await initiatingRuntime.recoverAfterUpdate()
     } catch (error) {
+      const running = force ? null : tasksInterruptedByUpdate(error)
+      if (running !== null) {
+        interrupt.ask({
+          connectionId: initiatingRuntime.connectionId,
+          version,
+          running,
+        })
+        return
+      }
       recordUpdateError(
         initiatingRuntime.connectionId,
         error instanceof Error ? error.message : String(error)
@@ -198,5 +210,37 @@ export function useWispUpdateControl() {
   return {
     desktop: render(false),
     mobile: render(true),
+    // rendered once by the app, whichever layout shows the control
+    dialog: (
+      <UpdateInterruptDialog
+        running={interrupt.question?.running ?? null}
+        onCancel={interrupt.dismiss}
+        onConfirm={() => interrupt.confirm((v) => void updateWisp(v, true))}
+      />
+    ),
+  }
+}
+
+interface InterruptQuestion {
+  connectionId: string
+  version: string
+  running: number
+}
+
+/**
+ * The daemon refused because turns are running: ask before forcing it. The
+ * question belongs to the connection it was asked about.
+ */
+function useInterruptQuestion(connectionId: string) {
+  const [asking, setAsking] = useState<InterruptQuestion | null>(null)
+  const question = asking?.connectionId === connectionId ? asking : null
+  return {
+    question,
+    ask: setAsking,
+    dismiss: () => setAsking(null),
+    confirm: (updateAnyway: (version: string) => void) => {
+      setAsking(null)
+      if (question) updateAnyway(question.version)
+    },
   }
 }

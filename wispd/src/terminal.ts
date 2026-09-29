@@ -836,7 +836,7 @@ export async function killForTask(taskId: string): Promise<void> {
   stopSweepIfEmpty();
 }
 
-/** Kill every shell during daemon shutdown. */
+/** Kill every shell during daemon shutdown (shutdown.ts, after the graceful stop). */
 export async function killAll(): Promise<void> {
   const entries = ownedShells("");
   await Promise.all(
@@ -854,16 +854,3 @@ export async function killAll(): Promise<void> {
   forgetAllTabs();
   stopSweepIfEmpty();
 }
-
-let shuttingDown = false;
-function handleShutdown(signal: "SIGTERM" | "SIGINT"): void {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  void killAll().finally(() => {
-    console.error(`[wisp] ${signal}: terminal shells stopped`);
-    process.exit(signal === "SIGTERM" ? 143 : 130);
-  });
-}
-
-process.once("SIGTERM", () => handleShutdown("SIGTERM"));
-process.once("SIGINT", () => handleShutdown("SIGINT"));

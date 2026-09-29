@@ -102,6 +102,27 @@ interface Installation {
 
 export type CommandResult = SpawnResult;
 
+/**
+ * An update restarts the daemon, which interrupts every running turn. Without
+ * `force`, start() refuses while any task has one, and says how many, so the
+ * web UI and the CLI can ask the same question before interrupting them.
+ */
+export class UpdateInterruptsTasksError extends Error {
+  constructor(readonly running: number) {
+    super(
+      `${running} ${running === 1 ? "task has a running turn" : "tasks have a running turn"} that restarting Wisp would interrupt; retry with force to update anyway`,
+    );
+    this.name = "UpdateInterruptsTasksError";
+  }
+}
+
+export interface UpdateStartOptions {
+  /** Update even though running turns will be interrupted. */
+  force?: boolean;
+  /** How many tasks have a running turn; checked only without `force`. */
+  runningTasks?: () => number;
+}
+
 export interface UpdateManagerOptions {
   fetch?: typeof fetch;
   run?: (cmd: string[]) => Promise<CommandResult>;
@@ -435,7 +456,7 @@ export class UpdateManager {
     return this.readStatus(true);
   }
 
-  async start(expectedVersion: unknown): Promise<UpdateStatus> {
+  async start(expectedVersion: unknown, options: UpdateStartOptions = {}): Promise<UpdateStatus> {
     if (this.operation || this.starting || this.state === "restarting") {
       throw new Error("an update is already in progress");
     }
@@ -462,6 +483,9 @@ export class UpdateManager {
       if (installation.method === "unsupported" || !installation.supervised) {
         throw new Error(installation.reason ?? "this installation cannot update automatically");
       }
+      // Last, so the question is only asked about an update that would run.
+      const running = options.force ? 0 : (options.runningTasks?.() ?? 0);
+      if (running > 0) throw new UpdateInterruptsTasksError(running);
       this.target = this.release;
       this.state = "installing";
       this.message = null;

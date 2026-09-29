@@ -29,10 +29,18 @@ try {
     if (positional.length) throw new Error("doctor --storage does not take positional arguments");
     await doctorCommand(flags);
   } else if (args[0] === "serve") {
-    const [{ installDaemonCrashGuards }, { serve }] = await Promise.all([import("./crash-guard"), import("./daemon")]);
+    const [{ installDaemonCrashGuards }, { installShutdownSignals }, { serve, stopForExit }] = await Promise.all([
+      import("./crash-guard"),
+      import("./shutdown"),
+      import("./daemon"),
+    ]);
     // Before serve(): recovery starts detached work too.
     installDaemonCrashGuards();
-    await serve();
+    // SIGTERM (a service manager, self-update) and SIGINT go through the
+    // daemon's graceful stop, bounded, then stop the terminal shells and exit.
+    const setGracefulStop = installShutdownSignals();
+    const server = await serve();
+    setGracefulStop(() => stopForExit(server));
   } else if (args[0] === "version" || args[0] === "--version") {
     // Keep identity inspection pure. Importing the full CLI initializes
     // WISP_HOME through config.ts, which made `wisp version` fail in a
