@@ -228,6 +228,36 @@ DELETE FROM schema_migrations WHERE id = 13;
     db.close();
   });
 
+  test("upgrading lets history name a PR and a commit, and the SQL guards write the history they skipped", () => {
+    const db = freshDatabase("history-trail");
+    // a profile at schema 16: no pr or sha on history, and guards that write none
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of MIGRATIONS.filter((entry) => entry.id <= 16)) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, 'fixture')").run(migration.id, migration.name);
+    }
+    expect(columns(db, "workflow_history")).not.toContain("sha");
+    db.query("INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES ('tfixture', 'fixture', '/fixture', 'codex', 'done', 'now', 'now')").run();
+    db.query(
+      `INSERT INTO workflows (id, task_id, type, version, params_json, checkpoint_json, state, reason, revision, context_n, next_check_at, expires_at, created_at, updated_at)
+       VALUES ('wfixture', 'tfixture', 'pr-autopilot', '1', '{}', '{"pr":7}', 'active', 'watching', 1, 1, 'later', 'later', 'then', 'then')`,
+    ).run();
+
+    expect(migrate(db).applied).toEqual([17]);
+    expect(columns(db, "workflow_history")).toEqual(expect.arrayContaining(["pr", "sha"]));
+    const history = () => db.query("SELECT kind, detail, pr FROM workflow_history WHERE workflow_id = 'wfixture' ORDER BY id").all();
+    db.query("UPDATE tasks SET model = 'another' WHERE id = 'tfixture'").run();
+    expect(history()).toEqual([{ kind: "paused", detail: "Task agent or context changed; review and resume", pr: 7 }]);
+    db.query("UPDATE workflows SET state = 'active' WHERE id = 'wfixture'").run();
+    db.query("UPDATE tasks SET archived = 1 WHERE id = 'tfixture'").run();
+    expect(history()).toEqual([
+      { kind: "paused", detail: "Task agent or context changed; review and resume", pr: 7 },
+      { kind: "completed", detail: "Task archived", pr: 7 },
+    ]);
+    expect((db.query("SELECT updated_at FROM workflows WHERE id = 'wfixture'").get() as { updated_at: string }).updated_at).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);

@@ -214,8 +214,33 @@ function undecidedComment(comment: PrComment, pr: PrSnapshot): boolean {
   return paired || parseVerdict(comment.body) !== "blocking"
 }
 
-function commentItem(comment: PrComment, input: FeedbackInput): FeedbackItem | null {
-  if (!words(comment, input)) return null
+/** Whether `text` mentions `@login` (a bot's login is its app slug; a mention may carry `[bot]`). */
+function mentions(text: string, login: string): boolean {
+  const lower = text.toLowerCase(), at = `@${login.toLowerCase()}`
+  for (let index = lower.indexOf(at); index >= 0; index = lower.indexOf(at, index + 1)) {
+    if (!/[a-z0-9_-]/.test(lower[index + at.length] ?? "")) return true
+  }
+  return false
+}
+
+/**
+ * A bot's conversation comment answering someone untrusted (a chat-style bot
+ * that replies to @-mentions) only relays them, as in a thread. The person it
+ * answers is the nearest earlier comment by someone that mentions the bot, or
+ * failing that the nearest earlier comment by someone — past other bot posts,
+ * hidden comments, thank-yous, and the agent's own.
+ */
+function relaysStranger(comments: PrComment[], index: number, input: FeedbackInput): boolean {
+  const comment = comments[index]!
+  if (!comment.bot || comment.author === null) return false
+  const people = comments.slice(0, index).reverse().filter((before) =>
+    !before.bot && !before.hidden && !input.self(before) && !acknowledgement(before.body))
+  const asker = people.find((before) => mentions(before.body, comment.author!)) ?? people[0]
+  return asker !== undefined && !input.trusts(asker)
+}
+
+function commentItem(comment: PrComment, index: number, input: FeedbackInput): FeedbackItem | null {
+  if (!words(comment, input) || relaysStranger(input.pr.comments, index, input)) return null
   const id = `comment:${comment.id}`
   const red = comment.bot ? redCheckOf(comment, input.pr) : null
   if (red) {
@@ -267,7 +292,7 @@ export function feedbackItems(input: FeedbackInput): FeedbackItem[] {
   const items = [
     ...pr.threads.map((thread) => threadItem(thread, input)),
     ...pr.reviews.map((review) => reviewItem(review, input)),
-    ...pr.comments.map((comment) => commentItem(comment, input)),
+    ...pr.comments.map((comment, index) => commentItem(comment, index, input)),
   ].filter((item): item is FeedbackItem => item !== null)
   return items.sort((a, b) => a.at.localeCompare(b.at))
 }

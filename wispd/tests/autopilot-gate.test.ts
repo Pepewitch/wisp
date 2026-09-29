@@ -195,6 +195,12 @@ describe("the merge gate", () => {
       .toEqual({ kind: "needs-you", reason: "Changes requested by @review-bot" });
   });
 
+  test("more reviews than one page holds is never read as nothing blocking", () => {
+    // the change request that still stands may be older than the newest page
+    expect(gate({ pr: pr({ reviewsTruncated: true, reviews: [review({ body: "Verdict: APPROVE" })] }) }))
+      .toEqual({ kind: "needs-you", reason: "Too many reviews on this PR to verify them all" });
+  });
+
   test("the worktree is checked last, and its reason is shown as is", () => {
     expect(gate({ published: { ok: false, reason: "Worktree has unpushed commits" } }))
       .toEqual({ kind: "needs-you", reason: "Worktree has unpushed commits" });
@@ -248,6 +254,12 @@ describe("reading GitHub", () => {
     const commit = (base.data.repository.pullRequest as { commits: { nodes: { commit: Record<string, unknown> }[] } }).commits.nodes[0]!.commit;
     (commit.statusCheckRollup as { contexts: Record<string, unknown> }).contexts.pageInfo = { hasNextPage: true };
     expect(() => parseSnapshot(base)).toThrow("Too many checks");
+  });
+
+  test("more reviews than one page holds are flagged, so the gate can refuse", () => {
+    expect(parseSnapshot(raw()).reviewsTruncated).toBe(false);
+    const reviews = { pageInfo: { hasPreviousPage: true }, nodes: [] };
+    expect(parseSnapshot(raw({ reviews })).reviewsTruncated).toBe(true);
   });
 
   test("more review threads than one page holds are flagged, not fatal: merging and closing still read", () => {

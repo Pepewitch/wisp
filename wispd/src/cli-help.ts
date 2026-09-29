@@ -48,8 +48,8 @@ const COMMAND_USAGE = {
   interrupt: `  ${COMMAND} interrupt <task>                        stop the running turn (session survives)`,
   workflow: `  ${COMMAND} workflow <command>                      task automations: types, start, list, show, set, pause, resume, complete
                                                     (${COMMAND} workflow --help lists their parameters)`,
-  pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | resume | send-now | skip] [--json]
-                                                    auto-merge and auto-fix for the task's PR`,
+  pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | resume | send-now | skip | history] [--json]
+                                                    auto-merge and auto-fix for the task's PR (history: what it did)`,
   brief: `  ${COMMAND} brief show [task] [--json]              the agent's latest task brief, its turn, and how current it is
   ${COMMAND} brief enable|disable [task]             ask each turn's agent for a short brief (off by default;
                                                     enabling starts with the next turn and never starts one)

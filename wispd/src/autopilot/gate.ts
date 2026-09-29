@@ -104,6 +104,8 @@ function signalOf(review: PrReview): Signal | null {
  * spoken, a timer would ship a fix nobody looked at.
  */
 function reviewGate(pr: PrSnapshot): GateResult | null {
+  // A block older than the newest page could be the one still standing: never merge past what was not read.
+  if (pr.reviewsTruncated) return { kind: "needs-you", reason: "Too many reviews on this PR to verify them all" }
   const byAuthor = new Map<string, { signal: Signal; review: PrReview }[]>()
   for (const review of pr.reviews) {
     if (!trusted(review)) continue
@@ -222,6 +224,22 @@ export function sameReviewState(a: PrSnapshot, b: PrSnapshot): boolean {
     pr.checks.map((check) => [check.name, check.status, check.conclusion]),
   ])
   return state(a) === state(b)
+}
+
+/**
+ * What a merge went on, for its history entry: the checks that counted, who
+ * approved this very head, and whether the review judge was consulted. Short
+ * enough for one history line; the head itself is recorded beside it.
+ */
+export function mergeEvidence(pr: PrSnapshot, requiredNames: ReadonlySet<string>, judged: boolean): string {
+  const counted = countingChecks(pr.checks, requiredNames)
+  const checks = counted.length === 0 ? "no checks" : `${counted.length} ${requiredNames.size > 0 ? "required " : ""}check${counted.length === 1 ? "" : "s"} passed (${names(counted)})`
+  const approvers = [...new Set(pr.reviews
+    .filter((review) => trusted(review) && review.commit === pr.head && signalOf(review) === "approve")
+    .map((review) => `@${review.author}`))]
+  const approvals = approvers.length === 0 ? "no approval of this head"
+    : `approved at this head by ${approvers.slice(0, 3).join(", ")}${approvers.length > 3 ? ` and ${approvers.length - 3} more` : ""}`
+  return [checks, approvals, judged ? "review judge: no open findings" : null].filter(Boolean).join(" · ")
 }
 
 export function mergeGate(input: GateInput): GateResult {

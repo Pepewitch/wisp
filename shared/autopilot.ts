@@ -63,6 +63,28 @@ export interface AutopilotStatus {
   updatedAt: string | null
 }
 
+/**
+ * One thing auto-merge or auto-fix did or saw for a task, from
+ * `GET /api/tasks/:id/autopilot/history` (newest first, across every time the
+ * switches were on): the newest 100 entries, and every merge record.
+ */
+export interface AutopilotHistoryEntry {
+  at: string
+  /**
+   * armed, configured, bound, wait, blocked, rerun, judged, judge-unavailable,
+   * wake (a round sent), skipped, held, resumed, merging, merged,
+   * merge-failed, and the row's own active, paused and completed
+   */
+  kind: string
+  detail: string
+  /** the pull request it is about, when there was one */
+  pr: number | null
+  /** the commit: the head merged, or the head a merge, rerun or round was about */
+  sha: string | null
+  /** the task message an auto-fix round queued */
+  messageId: string | null
+}
+
 export interface AutopilotUpdate {
   autoMerge?: boolean
   autoFix?: boolean

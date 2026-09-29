@@ -77,7 +77,10 @@ export interface PrSnapshot {
   actionsSuitesPending: number
   /** of those, the ones held for a person (an environment's required reviewers) */
   actionsSuitesWaiting: number
+  /** the newest 100 reviews, oldest first */
   reviews: PrReview[]
+  /** more than 100 reviews exist: an older block may be out of sight, so the merge gate refuses to decide */
+  reviewsTruncated?: boolean
   threads: PrThread[]
   /** more than 100 review threads exist: auto-fix read the newest 100 */
   threadsTruncated: boolean
@@ -173,7 +176,7 @@ query($owner: String!, $name: String!, $number: Int!) {
         starter: comments(first: 1) { nodes { author { login __typename } body } }
         recent: comments(last: 30) { nodes { ...comment } }
       } }
-      reviews(last: 50) { nodes { id state body submittedAt lastEditedAt url authorAssociation author { login __typename } commit { oid } } }
+      reviews(last: 100) { pageInfo { hasPreviousPage } nodes { id state body submittedAt lastEditedAt url authorAssociation author { login __typename } commit { oid } } }
       comments(last: 100) { nodes { ...comment } }
       commits(last: 1) { nodes { commit { oid committedDate
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
@@ -285,6 +288,7 @@ function prFields(pr: Record<string, unknown>, repo: Record<string, unknown>, da
     unresolvedThreads: nodes(pr.reviewThreads).filter((thread) => thread.isResolved !== true).length,
     mergeMethod: mergeMethod(repo),
     reviews: nodes(pr.reviews).map(parseReview),
+    reviewsTruncated: isRecord(pr.reviews) && isRecord(pr.reviews.pageInfo) && pr.reviews.pageInfo.hasPreviousPage === true,
     threads: nodes(pr.reviewThreads).map(parseThread),
     threadsTruncated: isRecord(pr.reviewThreads) && isRecord(pr.reviewThreads.pageInfo) && pr.reviewThreads.pageInfo.hasPreviousPage === true,
     comments: nodes(pr.comments).map(parseComment),
@@ -423,6 +427,36 @@ export function parseRequiredChecks(branch: unknown, rules: unknown): string[] {
   return [...names].sort()
 }
 
+/**
+ * The open PRs whose head has one of these branch names. `headRefName` matches
+ * forks' branches of the same name too, oldest first: a full page, so
+ * strangers' fork PRs cannot crowd the task's own out (choosePull drops them).
+ */
+export function openPullsQuery(branches: string[]): string {
+  const selections = branches.map((branch, index) => `
+    b${index}: pullRequests(first: 100, headRefName: ${JSON.stringify(branch)}, states: [OPEN], orderBy: { field: CREATED_AT, direction: ASC }) {
+      nodes { number headRefName baseRefName createdAt isCrossRepository author { login } }
+    }`).join("\n")
+  return `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
+}
+
+export function parseOpenPulls(raw: unknown, branches: string[]): { defaultBranch: string; viewer: string; pulls: OpenPullRequest[] } {
+  const repo = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.repository) ? raw.data.repository : null
+  if (!repo) throw new Error("GitHub returned no repository")
+  const pulls: OpenPullRequest[] = []
+  for (let index = 0; index < branches.length; index++) {
+    for (const node of nodes(repo[`b${index}`])) {
+      pulls.push({
+        number: Number(node.number), headRefName: str(node.headRefName), baseRefName: str(node.baseRefName),
+        createdAt: str(node.createdAt), isCrossRepository: node.isCrossRepository === true,
+        author: isRecord(node.author) ? str(node.author.login) || null : null,
+      })
+    }
+  }
+  const viewer = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.viewer) ? str(raw.data.viewer.login) : ""
+  return { defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "", viewer, pulls }
+}
+
 export const ghAutopilot: AutopilotGitHub = {
   async snapshot(repository, number, cwd, signal) {
     const [owner, name] = split(repository)
@@ -431,26 +465,8 @@ export const ghAutopilot: AutopilotGitHub = {
   },
   async openPullRequests(repository, branches, cwd, signal) {
     const [owner, name] = split(repository)
-    const selections = branches.map((branch, index) => `
-      b${index}: pullRequests(first: 5, headRefName: ${JSON.stringify(branch)}, states: [OPEN], orderBy: { field: CREATED_AT, direction: ASC }) {
-        nodes { number headRefName baseRefName createdAt isCrossRepository author { login } }
-      }`).join("\n")
-    const query = `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
-    const raw = await ghJson(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${query}`], cwd, signal)
-    const repo = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.repository) ? raw.data.repository : null
-    if (!repo) throw new Error("GitHub returned no repository")
-    const pulls: OpenPullRequest[] = []
-    for (let index = 0; index < branches.length; index++) {
-      for (const node of nodes(repo[`b${index}`])) {
-        pulls.push({
-          number: Number(node.number), headRefName: str(node.headRefName), baseRefName: str(node.baseRefName),
-          createdAt: str(node.createdAt), isCrossRepository: node.isCrossRepository === true,
-          author: isRecord(node.author) ? str(node.author.login) || null : null,
-        })
-      }
-    }
-    const viewer = isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.viewer) ? str(raw.data.viewer.login) : ""
-    return { defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "", viewer, pulls }
+    const raw = await ghJson(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${openPullsQuery(branches)}`], cwd, signal)
+    return parseOpenPulls(raw, branches)
   },
   async requiredChecks(repository, base, cwd, signal) {
     const path = `repos/${repository}`

@@ -18,6 +18,7 @@ wisp pr <task> fix on        # or: fix off
 wisp pr <task> send-now      # send a waiting auto-fix round at once
 wisp pr <task> skip          # never send that round
 wisp pr <task> resume        # after a pause, or to release a Stop hold early
+wisp pr <task> history       # what it did: when, what, which PR and commit, and why
 ```
 
 A task with either switch on carries a thin rail on its sidebar row, so one
@@ -68,7 +69,9 @@ the next PR starts with a fresh five-round budget. The status reads
 `#271 merged by Wisp · Waiting for the task's next PR` until it binds. A turn
 ending looks for it at once (and twice more over the next ten minutes, in case
 GitHub's list is slow); after that it looks hourly, so a PR you open by hand
-may take up to an hour to be picked up.
+may take up to an hour to be picked up. A stranger's fork PR from a branch
+with the same name as the task's is never taken for the task's own, and
+cannot hide it.
 
 ## When Wisp merges
 
@@ -99,10 +102,14 @@ words are read (and, with the review judge, judged) before anything merges.
   (`> Verdict: …`) is ignored, and when a review has several, the least
   approving one wins. Only the repository owner,
   collaborators, organization members, and installed apps count as reviewers.
+  A PR with more than 100 reviews needs you: Wisp reads the newest 100, and a
+  block older than those could still stand.
 - **GitHub agrees.** Conflicts, an out-of-date branch, and unresolved
   conversations all wait, and the reason names which.
 - **The task is idle:** settled `done`, with nothing queued, stopping, or still
-  running in the background. Wisp never merges mid-turn.
+  running in the background, and no turn started since the check began (one
+  that ran and finished meanwhile may have committed work the check never
+  saw, so the next check looks again). Wisp never merges mid-turn.
 - **Nothing is left behind.** No local branch, and not the worktree's HEAD, holds
   commits built on the PR that exist on no remote; there are no uncommitted
   changes to tracked files and no rebase or merge in progress. A stacked child
@@ -114,7 +121,10 @@ only method it allows. It runs `gh pr merge --match-head-commit <sha>`, so a
 push in the last moment makes the merge refuse instead of merging something
 unchecked. It never uses `--admin` and never deletes the branch (the task's
 worktree is on it). New turns wait while the merge runs, and the first one
-after it hears how the merge ended.
+after it hears how the merge ended. A turn is told the PR merged only while
+the merge runs or once `gh` has said it merged: after a daemon restart in the
+middle of a merge, nobody knows yet, so the turn gets the usual note until
+Wisp's next look finds out.
 
 ## Stop, agent changes, archive
 
@@ -205,7 +215,9 @@ running.
     count: it can mean read access.
   - Everyone else's feedback still blocks the merge where GitHub says so, but
     it never instructs the agent. Neither does a bot that is only answering
-    them in a thread.
+    them, in a thread or in the conversation: in the conversation, the person
+    a bot answers is the last one before it who mentioned it, or else whoever
+    spoke just before it.
 - **Not noise.**
   - An approval is a merge signal, not something to fix. With the
     [review judge](#the-review-judge-optional) and auto-fix on, an approval
@@ -250,8 +262,8 @@ running.
   agent that finds the PR must not merge as it is converts it to a draft and
   says why, which holds the merge for you.
 - **Big PRs.** Wisp reads the newest 100 review threads, the newest 30
-  comments in each, and the newest 100 conversation comments; the evidence
-  says when there were more.
+  comments in each, the newest 100 reviews, and the newest 100 conversation
+  comments; the evidence says when there were more threads.
 
 ## The review judge (optional)
 
@@ -314,8 +326,8 @@ owner's 26 real approving reviews, "lists findings or not" matched every one.
 - **When it fails:** a version the judge could not answer is asked again after
   1, 2, 4 … up to 30 minutes, on its own, so one body the service rejects
   never slows the others. Auto-merge waits on a version through three
-  failures, then stops waiting for it (the workflow history says so) and reads
-  it as it would without a key; the judge keeps retrying on its backoff.
+  failures, then stops waiting for it (its [history](#history) says so) and
+  reads it as it would without a key; the judge keeps retrying on its backoff.
   Auto-fix never waits: an unjudged comment is just not sent yet. With no key,
   nothing is judged and no stored answer counts.
 - **The key:** paste it in **Settings → Review judge**, which also tests it,
@@ -334,7 +346,7 @@ owner's 26 real approving reviews, "lists findings or not" matched every one.
 - **The log:** every call, with the text sent and the answer or the error, is
   appended to `tasks/<task>/autopilot/<row>/judge.jsonl` beside the round
   evidence (mode 0600; the previous 2 MB is kept as `judge.1.jsonl`).
-  A needs-changes answer also appears in the workflow history. A monthly
+  A needs-changes answer also appears in its [history](#history). A monthly
   count of calls, errors and tokens, probes included (`judge-usage.json`),
   is reported as `reviewJudge.usage` by `GET /api/settings`.
 
@@ -375,6 +387,27 @@ Each is something only a person can move:
 
 Waiting on CI, on a fresh head, on the task's turn, or on your reviewer agents'
 next pass is not one of these: the rail stays blue.
+
+## History
+
+`wisp pr <task> history` prints what auto-merge and auto-fix did for the task,
+newest first, one line each: the time, what happened, the PR, the commit, and
+the reason. `--json` gives the same entries, and so does
+`GET /api/tasks/<task>/autopilot/history`. It covers every time the switches
+were on for the task, not only the current one.
+
+- **Merges.** `merging` names the head it merged (`--match-head-commit`), the
+  base, the method, and what the merge went on: the checks that counted,
+  who approved that very head, and whether the review judge was consulted.
+  `merged` and `merge-failed` follow it. The newest 200 merge entries are
+  always kept.
+- **Everything else,** the newest 100 entries: switched on or changed,
+  the PR it bound to, each change of what it waits for or needs you for,
+  reruns, rounds sent or skipped, the review judge's needs-changes answers
+  and its give-ups, Stop holds, resumes, pauses, and the end (switched off,
+  PR closed, task archived, or paused by an agent change).
+
+Deleting a task deletes its history.
 
 ## How often it checks
 

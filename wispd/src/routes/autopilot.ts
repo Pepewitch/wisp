@@ -4,14 +4,15 @@
  * POST /api/tasks/:id/autopilot/resume      resume a pause, or release a Stop hold
  * POST /api/tasks/:id/autopilot/send-now    send a pending auto-fix round without its delay
  * POST /api/tasks/:id/autopilot/skip        never send the pending round's evidence
+ * GET  /api/tasks/:id/autopilot/history     what it did, newest first: { history: AutopilotHistoryEntry[] }
  */
 import type { AutopilotUpdate } from "../../../shared/autopilot"
-import { AutopilotError, autopilotStatus, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
+import { AutopilotError, autopilotHistory, autopilotStatus, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
 import { getTask } from "../store"
 import { typeName } from "../validate"
 import { err, json, jsonObjectBody } from "./http"
 
-export const AUTOPILOT_PATH = /^\/api\/tasks\/([a-z0-9]+)\/autopilot(?:\/(resume|send-now|skip))?$/
+export const AUTOPILOT_PATH = /^\/api\/tasks\/([a-z0-9]+)\/autopilot(?:\/(resume|send-now|skip|history))?$/
 
 export function autopilotUpdateError(body: Record<string, unknown>): string | null {
   for (const key of Object.keys(body)) if (key !== "autoMerge" && key !== "autoFix") return `unknown field '${key}'`
@@ -26,6 +27,7 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
   const taskId = match[1]!
   if (!getTask(taskId)) return err("Task not found", 404)
   try {
+    if (match[2] === "history") return req.method === "GET" ? json({ history: autopilotHistory(taskId) }) : err("Method not allowed", 405)
     if (match[2]) {
       if (req.method !== "POST") return err("Method not allowed", 405)
       const act = { resume: resumeAutopilot, "send-now": sendPendingFix, skip: skipPendingFix }[match[2] as "resume" | "send-now" | "skip"]

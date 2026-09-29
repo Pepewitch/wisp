@@ -256,6 +256,33 @@ test("restart restores an unacknowledged wake before checking fresh evidence", a
   expect(getWorkflow(item.id)?.wake_count).toBe(1);
 });
 
+test("an uncertain delivery pauses once; resuming answers it, and its evidence is still never resent", async () => {
+  const item = arm(watch.definition.id), row = getWorkflow(item.id)!;
+  const decision = wake("attempt-1");
+  const message = reserveWorkflowWake(row, decision, decision.message!, base)!;
+  // a crash during the wake: nobody knows whether the agent saw it
+  db.run("UPDATE task_messages SET status = 'cancelled', delivery_uncertain = 1 WHERE id = ?", [message]);
+  decide(decision);
+  let now = new Date(base.getTime() + 6 * 60_000);
+  const run = () => new WorkflowRuntime(loadConfig(), {}, { now: () => now, lookup, dispatch }).tick();
+  await run();
+  expect(getWorkflow(item.id)).toMatchObject({ state: "paused", reason: expect.stringContaining("prior delivery is uncertain") });
+  changeWorkflowState(item.id, "active", "Resumed; waiting for a fresh check", now);
+  now = new Date(now.getTime() + 6 * 60_000);
+  await run();
+  expect(getWorkflow(item.id)).toMatchObject({ state: "active", reason: "Already delivered this evidence; waiting for a change" });
+  expect(messagesFor(item.taskId)).toHaveLength(1);
+  // a later uncertain delivery still pauses it
+  decide(wake("attempt-2"));
+  now = new Date(now.getTime() + 6 * 60_000);
+  await run();
+  const second = messagesFor(item.taskId).find((m) => m.id !== message)!;
+  db.run("UPDATE task_messages SET delivery_uncertain = 1 WHERE id = ?", [second.id]);
+  now = new Date(now.getTime() + 6 * 60_000);
+  await run();
+  expect(getWorkflow(item.id)?.state).toBe("paused");
+});
+
 test("generated instructions cannot be edited and cancellation pauses their workflow", async () => {
   const { taskMessageRoute } = await import("../src/routes/task-messages");
   const item = arm(), row = getWorkflow(item.id)!;
