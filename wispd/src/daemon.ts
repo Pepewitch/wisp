@@ -208,8 +208,9 @@ function openTerminal(ws: TerminalSocket, cfg: WispConfig): void {
     void attachTerminal(ws, cfg);
     return;
   }
+  // 1013 is "try again later", and the client retries on it. No error frame:
+  // one that arrives before hello is a refusal the client will not retry past.
   if (terminalAuthDeadlines.size >= MAX_PENDING_TERMINAL_SOCKETS) {
-    wsError(ws, "too many terminal sockets are waiting to authenticate; retry shortly");
     ws.close(1013, "too many unauthenticated terminal sockets");
     return;
   }

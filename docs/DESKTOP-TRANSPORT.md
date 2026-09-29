@@ -200,6 +200,9 @@ ready:
 15. Send every response with `X-Content-Type-Options: nosniff` and
     `Content-Security-Policy: sandbox; default-src 'none'`, replacing upstream
     values, so daemon bytes never run as a document on the proxy origin.
+    Drop the daemon's `Cross-Origin-Resource-Policy: same-origin`: the webview
+    is on another origin and loads attachment URLs directly into media
+    elements, which that header would block.
 
 ## Client state that must be scoped
 

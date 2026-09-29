@@ -71,9 +71,14 @@ pub(super) const REQUEST_HEADER_DENYLIST: &[&str] = &[
 /// exchange, and a daemon cookie in the shared webview would be ambient
 /// authority for every connection at once.
 /// `location`: a redirect must not be able to select a new target.
+/// `cross-origin-resource-policy`: the daemon sends `same-origin`, which is
+/// right for a browser page it serves itself. The webview is not on the
+/// proxy's origin, and it puts attachment URLs straight into `<img>` and
+/// `<video>`, so relaying the header would block every attachment.
 pub(super) const RESPONSE_HEADER_DENYLIST: &[&str] = &[
     "set-cookie",
     "location",
+    "cross-origin-resource-policy",
     "x-wisp-proxy-error",
     "x-wisp-proxy-redirect",
     "connection",

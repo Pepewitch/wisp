@@ -304,9 +304,10 @@ describe("SEC-02 — terminal WebSocket upgrades", () => {
         }),
       ),
     );
-    // One more is refused while they wait; it never hears auth_required.
+    // One more is turned away while they wait, with "try again later" and no
+    // frame at all: an error frame before hello would stop the client retrying.
     const refused = await upgradeOutcome(url, { headers: { origin } });
-    expect(refused.frames.some((frame) => frame.type === "auth_required")).toBe(false);
+    expect(refused.frames).toEqual([]);
     expect(refused.closed).toBe(1013);
 
     // The deadline closes every one that never answered, and frees the slots.

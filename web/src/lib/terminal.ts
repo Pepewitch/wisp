@@ -225,6 +225,17 @@ export async function terminalOriginRefusal(transport: {
   return report?.verdict === "foreign" && typeof report.reason === "string" ? report.reason : null;
 }
 
+/**
+ * 1013 ("try again later") is the daemon turning a socket away because too
+ * many were already waiting to authenticate. Nothing is wrong with this one,
+ * so the pane retries it within its usual budget, on a jittered delay so that
+ * tabs turned away together do not all come back at the same moment.
+ */
+export const TRY_AGAIN_LATER = 1013;
+export function tryAgainLaterDelayMs(random: number = Math.random()): number {
+  return 300 + Math.round(random * 1200);
+}
+
 // WebSocket readyState constants, mirrored so tests need no DOM constants.
 const WS_OPEN = 1;
 const WS_CLOSING = 2;

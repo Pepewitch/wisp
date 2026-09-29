@@ -400,6 +400,11 @@ async fn attachment(
         [
             (http::header::CONTENT_TYPE, "image/png"),
             (http::header::CACHE_CONTROL, "private, max-age=60"),
+            // What the daemon sends on every response.
+            (
+                http::HeaderName::from_static("cross-origin-resource-policy"),
+                "same-origin",
+            ),
         ],
         Bytes::from(attachment_bytes(&state.label)),
     )
