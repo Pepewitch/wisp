@@ -239,6 +239,47 @@ describe("the worktree file viewer", () => {
     await waitFor(() => expect(viewer.querySelector(".hljs-keyword")).not.toBeNull())
   })
 
+  /** DEBT-01: a daemon-shaped `diff` too malformed to render must not blank the
+   * whole viewer — the tab strip and footer are its siblings, not its parent. */
+  it("degrades only its own content when the diff it was handed cannot be rendered", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    const request = vi.fn().mockResolvedValue({
+      ...PLAN,
+      path: "src/a.ts",
+      text: "const only = 1\n",
+    })
+    const diff = parseDiff(`diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,1 @@
+-const only = 0
++const only = 1
+`).files[0]!
+    // A real response would never do this; a harness-shaped `Record<string, any>`
+    // upstream (see wispd/src/adapters/activity.ts) could still hand the UI
+    // something this broken.
+    const brokenDiff = { ...diff, hunks: null as unknown as typeof diff.hunks }
+    withTransport(
+      <FileViewer taskId="tk9zdy" path="src/a.ts" onClose={() => {}} diff={brokenDiff} />,
+      request,
+    )
+    const viewer = await screen.findByTestId("file-viewer")
+    await waitFor(() => expect(viewer).toHaveTextContent("const only = 1"))
+
+    fireEvent.click(screen.getByRole("tab", { name: "Diff" }))
+    expect(await screen.findByText("Something went wrong showing this file.")).toBeInTheDocument()
+    // the tab strip and the footer are outside the boundary, so they survive
+    expect(screen.getByRole("tab", { name: "File" })).toBeInTheDocument()
+    expect(screen.getByTestId("file-viewer-path")).toHaveTextContent("src/a.ts")
+
+    // back to the mode that works, then reset the boundary — the pane recovers
+    fireEvent.click(screen.getByRole("tab", { name: "File" }))
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }))
+    expect(screen.queryByText("Something went wrong showing this file.")).toBeNull()
+    expect(viewer).toHaveTextContent("const only = 1")
+    consoleError.mockRestore()
+  })
+
   it("labels both safety caps and skips expensive highlighting", async () => {
     const text = "export const value = 1\n".repeat(
       Math.ceil((STATIC_PROSE_HIGHLIGHT_LIMIT + 1) / 23),

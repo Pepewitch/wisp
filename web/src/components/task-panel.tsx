@@ -1,6 +1,7 @@
 import { useState } from "react"
 
 import { ChangesPane } from "@/components/changes-pane"
+import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Tab } from "@/components/primitives"
 import { BriefPane } from "@/components/task-brief"
 import { WorkflowsPane } from "@/components/workflows-pane"
@@ -109,14 +110,18 @@ export function TaskPanel({
           touch={touch}
         />
       )}
-      <ChangesPane
-        taskId={taskId}
-        archived={archived}
-        onRefresh={onRefresh}
-        header={view === "changes" ? strip : undefined}
-        hidden={view !== "changes"}
-        touch={touch}
-      />
+      {/* Keyed like its siblings: a diff that broke rendering one task must not
+          still show that fallback once the panel points at another. */}
+      <PaneErrorBoundary key={`changes:${connectionId}:${taskId ?? ""}`} label="the changes">
+        <ChangesPane
+          taskId={taskId}
+          archived={archived}
+          onRefresh={onRefresh}
+          header={view === "changes" ? strip : undefined}
+          hidden={view !== "changes"}
+          touch={touch}
+        />
+      </PaneErrorBoundary>
       {workflowsSupported && (
         <WorkflowsPane
           // a drill-down belongs to ONE task on ONE daemon: switching either

@@ -1,6 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog"
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
+import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Prose } from "@/components/prose"
 import { Tab } from "@/components/primitives"
 import { formatBytes } from "@/lib/attachments"
@@ -103,17 +104,21 @@ export function FileViewer({
             </div>
           )}
           <div className="scroll-slim min-h-0 flex-1 overflow-auto rounded-md border border-border bg-code px-4 py-3">
-            <ViewerContent
-              pending={query.isPending}
-              error={query.isError ? query.error : null}
-              file={file}
-              mode={effectiveMode}
-              diff={diff}
-              diffTruncated={diffTruncated}
-              onOpen={onOpen}
-              line={line}
-              endLine={endLine}
-            />
+            {/* Keyed by task: an error reading one task's file must not still be
+                on screen once a different task's viewer opens. */}
+            <PaneErrorBoundary key={taskId ?? "none"} label="this file" fill={false}>
+              <ViewerContent
+                pending={query.isPending}
+                error={query.isError ? query.error : null}
+                file={file}
+                mode={effectiveMode}
+                diff={diff}
+                diffTruncated={diffTruncated}
+                onOpen={onOpen}
+                line={line}
+                endLine={endLine}
+              />
+            </PaneErrorBoundary>
           </div>
           <ViewerFooter
             path={fileLocation(file?.path ?? path, line, endLine)}

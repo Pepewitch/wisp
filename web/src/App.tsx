@@ -17,6 +17,7 @@ import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
+import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
@@ -113,7 +114,13 @@ type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" 
 /** The log follow lives down here, so a frame re-renders the transcript and not the app shell. */
 function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
   const stream = useLogStream(taskId, "activity", generation)
-  return <Conversation {...props} stream={stream} note={stream.note} />
+  return (
+    // Keyed by task: a bad turn in one task must not leave the next task's
+    // conversation stuck showing the previous one's fallback.
+    <PaneErrorBoundary key={taskId ?? "none"} label="the conversation">
+      <Conversation {...props} stream={stream} note={stream.note} />
+    </PaneErrorBoundary>
+  )
 }
 
 function useConnectionTaskSelection(connectionId: string) {
