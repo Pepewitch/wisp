@@ -219,12 +219,31 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
  * result after the completion means that in-flight call consumed it instead and
  * no separate cycle will start. The result count bounds the wait, so an
  * unfamiliar stream cannot hold a turn open forever.
+ *
+ * A resumed session can also answer a notification BEFORE the prompt. When the
+ * previous process exited with background work still running, the CLI replays
+ * those `stopped` notifications first and emits a result for them, marked
+ * `origin.kind: "task-notification"`, ahead of the prompt's own cycle:
+ *
+ *   task_notification status=stopped   <- tasks of the previous process
+ *   system/init
+ *   result "" num_turns=0 origin=task-notification
+ *   system/init                        <- the prompt's cycle
+ *   result "…"                         <- the prompt's answer, no origin
+ *
+ * Nothing is active yet at that first result, so closing on it shut stdin
+ * before the prompt ran. The CLI then treated the turn as a print-mode run,
+ * gave the background agents the prompt started a 600 s grace, and killed them.
+ * Until the prompt's own result has arrived, a notification's result that made
+ * no model call is not it. A CLI that sends no `origin` or `num_turns` makes its
+ * first result the answer, as before.
  */
 function createBackgroundFollowUp(): {
   observe(event: Record<string, unknown>): void;
-  closesTurn(): boolean;
+  closesTurn(result: Record<string, unknown>): boolean;
 } {
   const active = new Set<string>();
+  let answered = false;
   let pending = false;
   let followUpStarted = false;
   let consumed = false;
@@ -267,7 +286,11 @@ function createBackgroundFollowUp(): {
         consumed = true;
       }
     },
-    closesTurn(): boolean {
+    closesTurn(result: Record<string, unknown>): boolean {
+      if (!answered) {
+        if (replayedNotification(result)) return false;
+        answered = true;
+      }
       if (active.size > 0) return false;
       if (!pending) return true;
       resultsSince += 1;
@@ -276,6 +299,19 @@ function createBackgroundFollowUp(): {
       return true;
     },
   };
+}
+
+/**
+ * A notification's result that made no model call. Only `num_turns: 0` is
+ * safe to skip: the CLI can fold a queued prompt into a notification cycle
+ * that does call the model, and that cycle's result is then the prompt's
+ * answer even though its origin says task-notification.
+ */
+function replayedNotification(result: Record<string, unknown>): boolean {
+  const origin = result.origin;
+  const fromNotification =
+    typeof origin === "object" && origin !== null && (origin as Record<string, unknown>).kind === "task-notification";
+  return fromNotification && result.num_turns === 0;
 }
 
 async function pumpClaude(
@@ -295,7 +331,7 @@ async function pumpClaude(
     try {
       const event = JSON.parse(line) as Record<string, unknown>;
       followUp.observe(event);
-      if (event.type === "result" && followUp.closesTurn()) void closeLiveInput(taskId, turnId);
+      if (event.type === "result" && followUp.closesTurn(event)) void closeLiveInput(taskId, turnId);
     } catch {
       // Plain notes and partial/unknown future events are still logged.
     }

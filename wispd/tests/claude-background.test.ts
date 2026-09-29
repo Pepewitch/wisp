@@ -43,6 +43,11 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
+function settled(taskId: string): boolean {
+  const status = turnsFor(taskId)[0]?.status;
+  return status !== undefined && status !== "running";
+}
+
 describe("Claude background follow-up", () => {
   test("keeps stdin open until background work reports its follow-up result", async () => {
     const script = [
@@ -234,6 +239,103 @@ describe("Claude background follow-up", () => {
     await until(() => turnsFor(task.id)[0]?.status === "done");
 
     expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "READY" });
+  });
+
+  // Captured from claude-code resuming a session whose previous process exited
+  // with background agents still running: it replays their `stopped`
+  // notifications and answers them with an empty result BEFORE the prompt's
+  // own cycle. Closing stdin there made the CLI kill every background agent
+  // the prompt went on to start, 600 s after its answer.
+  test("a resumed session's replayed notifications do not close the turn before the prompt runs", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"old-agent","status":"stopped"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-resume"}'`,
+      `printf '%s\\n' '{"type":"result","subtype":"success","result":"","num_turns":0,"origin":{"kind":"task-notification"},"session_id":"session-resume"}'`,
+      "exec 3<&0",
+      'IFS= read -r unexpected <&3 & reader="$!"',
+      "sleep 0.2",
+      'kill -0 "$reader" 2>/dev/null || exit 9',
+      'kill "$reader" 2>/dev/null || true',
+      'wait "$reader" 2>/dev/null || true',
+      "exec 3<&-",
+      `printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-resume"}'`,
+      `printf '%s\\n' '{"type":"result","subtype":"success","result":"PROMPT_ANSWER","num_turns":3,"session_id":"session-resume"}'`,
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "continue", def, cfg);
+    await until(() => settled(task.id), 4000);
+
+    // exit_code 9 means the fake harness saw stdin close at the replayed result.
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "PROMPT_ANSWER" });
+  });
+
+  // The CLI can fold a queued prompt into a notification cycle that calls the
+  // model, and that cycle's result is the prompt's answer despite its origin.
+  // Skipping it would hold the turn open with nothing left to arrive.
+  test("a notification cycle that answered the prompt still closes the turn", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"old-agent","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-folded"}'`,
+      `printf '%s\\n' '{"type":"result","subtype":"success","result":"FOLDED_ANSWER","num_turns":4,"origin":{"kind":"task-notification"},"session_id":"session-folded"}'`,
+      "exec 3<&0",
+      'IFS= read -r unexpected <&3 & reader="$!"',
+      "sleep 0.2",
+      'if kill -0 "$reader" 2>/dev/null; then kill "$reader" 2>/dev/null; exit 9; fi',
+      "exec 3<&-",
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "continue", def, cfg);
+    await until(() => settled(task.id), 4000);
+
+    // exit_code 9 means stdin stayed open after the only answer that will come.
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "FOLDED_ANSWER" });
+  });
+
+  // Once the prompt has its answer, notification-driven results are the normal
+  // follow-up cycles the tests above cover, and one still closes the turn.
+  test("a notification's result after the prompt's answer still closes the turn", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"agent","task_type":"local_agent"}]}'`,
+      `printf '%s\\n' '{"type":"result","result":"started","session_id":"session-after"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"background_tasks_changed","tasks":[]}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"agent","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-after"}'`,
+      `printf '%s\\n' '{"type":"result","result":"AGENT_DONE","origin":{"kind":"task-notification"},"session_id":"session-after"}'`,
+      "exec 3<&0",
+      'IFS= read -r unexpected <&3 & reader="$!"',
+      "sleep 0.2",
+      'if kill -0 "$reader" 2>/dev/null; then kill "$reader" 2>/dev/null; exit 9; fi',
+      "exec 3<&-",
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "start an agent", def, cfg);
+    await until(() => settled(task.id), 4000);
+
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "AGENT_DONE" });
   });
 
   test("the task preamble points delayed follow-up at durable workflows", () => {
