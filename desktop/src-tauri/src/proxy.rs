@@ -27,7 +27,7 @@ mod http_forward;
 mod route;
 mod websocket_forward;
 
-pub use header_policy::packaged_app_origins;
+pub use header_policy::{packaged_app_origins, PACKAGED_APP_ORIGIN};
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -43,7 +43,7 @@ use crate::capability::Capability;
 use crate::registry::{ConnectionKind, Identity, Registry, RegistryError, Target};
 use crate::urls::join_upstream;
 
-use header_policy::{bearer, preflight, refuse, with_cors};
+use header_policy::{addressed_to, bearer, preflight, refuse, with_content_protection, with_cors};
 use http_forward::{is_streaming_upload, proxy_http, send_upstream};
 use route::ProxyRoute;
 use websocket_forward::{is_websocket_upgrade, proxy_websocket};
@@ -57,6 +57,9 @@ const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 /// the response/socket: once headers arrive, response bodies and WebSocket
 /// frames may stream for as long as their callers keep them open.
 const UPSTREAM_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Whole-exchange budget for the Local update-compatibility read.
+const UPDATE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyStartError {
     #[error("could not build the upstream HTTP client: {0}")]
@@ -80,6 +83,13 @@ impl ProxyState {
         allowed_origins: Vec<String>,
     ) -> Result<Self, ProxyStartError> {
         let client = reqwest::Client::builder()
+            // Never route through a system or environment HTTP proxy. Plain
+            // HTTP is allowed only to loopback, so a proxy would receive every
+            // daemon bearer token in cleartext, and it would be the proxy — not
+            // the saved address — that chose which machine answered. macOS
+            // proxy settings are read without their bypass list, so loopback
+            // is not exempt by default.
+            .no_proxy()
             // No redirect is ever followed, so no redirect can receive the
             // Authorization header or choose a new upstream.
             .redirect(reqwest::redirect::Policy::none())
@@ -112,9 +122,9 @@ impl ProxyState {
         &self.registry
     }
 
-    /// The one upstream HTTP client: no redirects, no cookie jar, system trust
-    /// roots. Handshakes and health probes share it so they cannot accidentally
-    /// be built with weaker settings than the proxy itself.
+    /// The one upstream HTTP client: no HTTP proxy, no redirects, no cookie
+    /// jar, system trust roots. Handshakes and health probes share it so they
+    /// cannot accidentally be built with weaker settings than the proxy itself.
     pub fn client(&self) -> &reqwest::Client {
         &self.client
     }
@@ -153,9 +163,13 @@ pub async fn start(state: Arc<ProxyState>) -> Result<ProxyHandle, ProxyStartErro
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let port = listener.local_addr()?.port();
     let base = format!("http://127.0.0.1:{port}/{}", state.capability.expose());
+    let listener_state = Listener {
+        state,
+        host: format!("127.0.0.1:{port}").into(),
+    };
     // One fallback rather than declared routes: the path is parsed by hand so
     // the suffix keeps its original percent-encoding.
-    let app = Router::new().fallback(handle).with_state(state);
+    let app = Router::new().fallback(handle).with_state(listener_state);
     let (shutdown, wait) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = axum::serve(listener, app)
@@ -171,7 +185,31 @@ pub async fn start(state: Arc<ProxyState>) -> Result<ProxyHandle, ProxyStartErro
     })
 }
 
-async fn handle(State(state): State<Arc<ProxyState>>, request: Request) -> Response {
+/// Proxy state plus the one `Host` this listener answers to.
+#[derive(Clone)]
+struct Listener {
+    state: Arc<ProxyState>,
+    host: Arc<str>,
+}
+
+async fn handle(State(listener): State<Listener>, request: Request) -> Response {
+    // Every response leaves with the same content protection: refusals,
+    // preflights, relayed daemon bytes, and upgrade rejections alike.
+    with_content_protection(handle_addressed(listener, request).await)
+}
+
+async fn handle_addressed(listener: Listener, request: Request) -> Response {
+    // A page on another hostname that resolves to loopback (DNS rebinding)
+    // reaches this port with its own name in `Host`. The capability already
+    // stops it; refusing the name as well means it learns nothing at all.
+    if !addressed_to(request.headers(), request.uri(), &listener.host) {
+        return refuse(
+            StatusCode::FORBIDDEN,
+            "host",
+            "this proxy only answers requests addressed to its loopback listener",
+        );
+    }
+    let state = listener.state;
     let origin = match state.cors_origin(request.headers()) {
         Ok(origin) => origin,
         Err(()) => {
@@ -401,13 +439,25 @@ async fn ensure_pinned_identity(
             ),
         )));
     }
-    let body: serde_json::Value = response.json().await.map_err(|error| {
+    // The header wait above is bounded; the body needs its own bound, in bytes
+    // and in time, or an endless identity answer holds this request (and its
+    // memory) open for as long as the peer keeps sending.
+    let unreadable = |error: String| {
         Box::new(refuse(
             StatusCode::BAD_GATEWAY,
             "identity-unreadable",
             format!("could not read the daemon's identity: {error}"),
         ))
-    })?;
+    };
+    let body = crate::probe::read_capped(
+        response,
+        crate::probe::MAX_IDENTITY_BODY_BYTES,
+        tokio::time::Instant::now() + state.upstream_handshake_timeout,
+    )
+    .await
+    .map_err(|error| unreadable(error.to_string()))?;
+    let body: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|error| unreadable(error.to_string()))?;
     let seen_protocol = body
         .get("apiProtocolVersion")
         .and_then(serde_json::Value::as_u64);
@@ -470,7 +520,7 @@ async fn ensure_compatible_daemon_update(
         .client
         .get(url)
         .header(AUTHORIZATION, bearer(&checked_credential))
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(UPDATE_CHECK_TIMEOUT)
         .send()
         .await
         .map_err(|error| {
@@ -502,7 +552,7 @@ async fn ensure_compatible_daemon_update(
             .client
             .get(retry_url)
             .header(AUTHORIZATION, bearer(&checked_credential))
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(UPDATE_CHECK_TIMEOUT)
             .send()
             .await
             .map_err(|error| {
@@ -533,13 +583,22 @@ async fn ensure_compatible_daemon_update(
             ),
         )));
     }
-    let compatibility: UpdateCompatibility = response.json().await.map_err(|error| {
+    let unreadable = |error: String| {
         Box::new(refuse(
             StatusCode::BAD_GATEWAY,
             "update-check-unreadable",
             format!("could not read update compatibility: {error}"),
         ))
-    })?;
+    };
+    let body = crate::probe::read_capped(
+        response,
+        crate::probe::MAX_IDENTITY_BODY_BYTES,
+        tokio::time::Instant::now() + UPDATE_CHECK_TIMEOUT,
+    )
+    .await
+    .map_err(|error| unreadable(error.to_string()))?;
+    let compatibility: UpdateCompatibility =
+        serde_json::from_slice(&body).map_err(|error| unreadable(error.to_string()))?;
     if !crate::probe::supports_api_protocol(compatibility.current_api_protocol_version)
         || !compatibility
             .latest_api_protocol_version

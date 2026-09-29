@@ -1,7 +1,7 @@
 //! Non-secret registry persistence and metadata validation.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -212,11 +212,14 @@ pub(super) fn ensure_label_available(
     Ok(())
 }
 
-/// A genuinely absent file is a fresh registry. Existing metadata fails closed
-/// if it cannot be read or decoded, so corruption never silently orphans the
-/// corresponding Keychain credentials.
+/// A genuinely absent file is a fresh registry. Existing metadata that cannot
+/// be read fails closed. Contents that cannot be decoded are a `Decode` error,
+/// which `Registry::open` sets aside and reports — never a silent reset, so a
+/// corrupt file cannot quietly orphan the Keychain credentials it names.
 pub(super) fn read_file(path: &Path) -> Result<RegistryFile, RegistryError> {
-    let raw = match std::fs::read_to_string(path) {
+    // Bytes, not a string: a file that is not UTF-8 has corrupt contents,
+    // which is a decode failure rather than an I/O failure.
+    let raw = match std::fs::read(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(RegistryFile::default());
@@ -228,10 +231,39 @@ pub(super) fn read_file(path: &Path) -> Result<RegistryFile, RegistryError> {
             });
         }
     };
-    serde_json::from_str(&raw).map_err(|source| RegistryError::Decode {
+    serde_json::from_slice(&raw).map_err(|source| RegistryError::Decode {
         path: path.to_path_buf(),
         source,
     })
+}
+
+/// Rename an unusable registry file out of the way, next to where it was, and
+/// return its new path. An earlier backup is never overwritten.
+pub(super) fn set_aside(path: &Path) -> std::io::Result<PathBuf> {
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("connections");
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    for attempt in 0..100u32 {
+        let name = if attempt == 0 {
+            format!("{stem}.unreadable-{stamp}.json")
+        } else {
+            format!("{stem}.unreadable-{stamp}-{attempt}.json")
+        };
+        let backup = path.with_file_name(name);
+        if backup.symlink_metadata().is_ok() {
+            continue;
+        }
+        std::fs::rename(path, &backup)?;
+        return Ok(backup);
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "too many earlier backups of the connection registry",
+    ))
 }
 
 pub(super) fn validate_file(path: &Path, file: &RegistryFile) -> Result<(), RegistryError> {

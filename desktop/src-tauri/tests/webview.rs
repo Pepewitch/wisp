@@ -148,17 +148,153 @@ fn the_webview_has_no_direct_native_update_or_system_authority() {
     }
 }
 
+/// The exact Tauri core commands the shared UI reaches, and why:
+///
+/// * `listen` from `@tauri-apps/api/event` (task-focus and update-status
+///   events) invokes `plugin:event|listen`, and its unlisten function
+///   `plugin:event|unlisten`.
+/// * `getCurrentWebview().setZoom` invokes `plugin:webview|set_webview_zoom`.
+/// * Tauri's drag-region script, for the `data-tauri-drag-region` header,
+///   invokes `plugin:window|internal_toggle_maximize` on a double click.
+///
+/// `invoke` of the app's own commands needs no core permission, and `isTauri`
+/// performs no IPC at all.
+const GRANTED_CORE_COMMANDS: &[&str] = &[
+    "plugin:event|listen",
+    "plugin:event|unlisten",
+    "plugin:webview|set_webview_zoom",
+    "plugin:window|internal_toggle_maximize",
+];
+
 /// Zoom changes presentation only. Keep it as the sole direct webview setter;
 /// every stateful or outward action still crosses a purpose-built Rust command.
 #[test]
-fn the_webview_only_gets_direct_zoom_authority() {
+fn the_webview_only_gets_the_core_permissions_it_uses() {
     let capability: serde_json::Value =
         serde_json::from_str(include_str!("../capabilities/default.json"))
             .expect("valid capability");
     assert_eq!(
         capability["permissions"],
-        serde_json::json!(["core:default", "core:webview:allow-set-webview-zoom"])
+        serde_json::json!([
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
+            "core:webview:allow-set-webview-zoom",
+            "core:window:allow-internal-toggle-maximize"
+        ])
     );
+}
+
+/// Asserted against the ACL Tauri actually resolved at compile time, not the
+/// JSON: every command the UI uses is reachable from the main webview, and a
+/// sample of what `core:default` used to add on top is not.
+#[test]
+fn the_resolved_acl_grants_exactly_what_the_shared_ui_calls() {
+    let mut context = wisp_desktop::context();
+    let authority = context.runtime_authority_mut();
+    let allowed = |command: &str| {
+        authority
+            .resolve_access(command, "main", "main", &tauri::ipc::Origin::Local)
+            .is_some()
+    };
+    for command in GRANTED_CORE_COMMANDS {
+        assert!(allowed(command), "{command} must stay reachable");
+    }
+    for command in [
+        "plugin:event|emit",
+        "plugin:event|emit_to",
+        "plugin:window|close",
+        "plugin:window|title",
+        "plugin:window|get_all_windows",
+        "plugin:window|start_dragging",
+        "plugin:webview|get_all_webviews",
+        "plugin:webview|internal_toggle_devtools",
+        "plugin:app|version",
+        "plugin:app|app_hide",
+        "plugin:path|resolve_directory",
+        "plugin:image|new",
+        "plugin:menu|new",
+        "plugin:tray|new",
+        "plugin:resources|close",
+        "plugin:dialog|open",
+        "plugin:updater|check",
+    ] {
+        assert!(!allowed(command), "{command} must not be granted");
+    }
+}
+
+/// Every place the shared UI touches the Tauri JavaScript API, so a new
+/// import fails here instead of failing silently in the packaged app with a
+/// refused IPC call. Adding one means adding its permission above.
+#[test]
+fn the_shared_ui_uses_only_the_tauri_apis_the_capability_grants() {
+    fn sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("read web/src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                sources(&path, out);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "ts" || extension == "tsx")
+            {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/src");
+    let mut files = Vec::new();
+    sources(&root, &mut files);
+    assert!(!files.is_empty(), "no sources under {}", root.display());
+
+    let allowed = [
+        ("@tauri-apps/api/core", ["invoke", "isTauri"].as_slice()),
+        ("@tauri-apps/api/event", ["listen"].as_slice()),
+        ("@tauri-apps/api/webview", ["getCurrentWebview"].as_slice()),
+    ];
+    for file in files {
+        let name = file.display().to_string();
+        if name.contains(".test.") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&file).expect("source");
+        assert!(
+            !text.contains("__TAURI"),
+            "{name} reaches Tauri internals directly"
+        );
+        for line in text.lines().filter(|line| line.contains("@tauri-apps/")) {
+            let (module, names) = allowed
+                .iter()
+                .find(|(module, _)| line.contains(&format!("\"{module}\"")))
+                .unwrap_or_else(|| panic!("{name} imports an ungranted Tauri API: {line}"));
+            let imported = line
+                .split_once('{')
+                .and_then(|(_, rest)| rest.split_once('}'))
+                .map(|(inside, _)| inside)
+                .unwrap_or_else(|| panic!("{name}: expected a named import of {module}: {line}"));
+            for item in imported.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                let item = item
+                    .trim_start_matches("type ")
+                    .split(" as ")
+                    .next()
+                    .unwrap_or(item);
+                assert!(
+                    names.contains(&item),
+                    "{name} uses {item} from {module}; grant its permission first"
+                );
+            }
+        }
+        if text.contains("getCurrentWebview") {
+            assert!(
+                !text.contains("getCurrentWebview()") || {
+                    let calls: Vec<&str> = text
+                        .match_indices("getCurrentWebview().")
+                        .map(|(at, _)| &text[at + "getCurrentWebview().".len()..])
+                        .collect();
+                    calls.iter().all(|rest| rest.starts_with("setZoom("))
+                },
+                "{name} calls a webview method other than setZoom"
+            );
+        }
+    }
 }
 
 /// Tauri deserializes plugin configuration before the updater builder can

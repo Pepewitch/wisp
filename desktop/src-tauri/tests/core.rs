@@ -166,6 +166,33 @@ async fn revealing_a_file_is_refused_for_anything_but_the_selected_local() {
         .is_err());
 }
 
+/// An absolute `path` is not a file in the worktree, however it is spelled:
+/// joining it onto the worktree would simply replace the worktree. (The
+/// target does not exist, so even a regression launches no Finder window.)
+#[tokio::test]
+async fn revealing_confines_the_path_to_the_named_worktree() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let app = app(Some(&local)).await;
+    app.core.select_connection("local").expect("select local");
+    let worktree = tempfile::tempdir().expect("worktree");
+    std::fs::write(worktree.path().join("PLAN.md"), "plan").expect("file");
+    let root = worktree.path().to_str().expect("utf-8 path");
+    let elsewhere = format!("/{}/PLAN.md", "wisp-synthetic-nonexistent-worktree");
+
+    for path in [elsewhere.as_str(), "/PLAN.md"] {
+        let refused = app.core.reveal_local_file("local", root, path);
+        assert!(
+            matches!(
+                refused,
+                Err(wisp_desktop::core::CoreError::External(
+                    wisp_desktop::external::ExternalError::NotInWorktree
+                ))
+            ),
+            "{path}: {refused:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_remote_is_saved_only_after_an_authenticated_capability_check() {
     let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
@@ -731,4 +758,74 @@ async fn local_setup_refuses_when_the_confirmed_plan_is_stale() {
         .await
         .expect_err("the machine does not match the confirmed ready state");
     assert!(error.to_string().contains("changed after it was diagnosed"));
+}
+
+/// Previewing an address reads a size-capped identity. An endless answer is
+/// "not a Wisp daemon" well inside the probe's time budget, rather than every
+/// byte the address can send in that budget.
+#[tokio::test]
+async fn an_endless_identity_answer_is_not_a_daemon() {
+    let remote = MockDaemon::start("bravo", REMOTE_TOKEN, "wisp-instance-bravo").await;
+    remote.stream_endless_capabilities();
+    let app = app(None).await;
+
+    let started = std::time::Instant::now();
+    let result = app
+        .core
+        .probe_remote(remote.url().as_str(), REMOTE_TOKEN)
+        .await;
+    assert!(
+        matches!(
+            result,
+            Err(wisp_desktop::core::CoreError::Probe(
+                wisp_desktop::probe::ProbeError::Malformed
+            ))
+        ),
+        "{result:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+}
+
+/// A registry file this build cannot use no longer stops the app: the core
+/// starts with Local only and says where the old file went.
+#[tokio::test]
+async fn an_unreadable_connection_file_is_reported_not_fatal() {
+    let local = MockDaemon::start("alpha", LOCAL_TOKEN, "wisp-instance-alpha").await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wisp_home = dir.path().join("wisp-home");
+    std::fs::create_dir_all(&wisp_home).expect("home");
+    std::fs::write(
+        wisp_home.join("config.json"),
+        serde_json::json!({
+            "instanceId": local.instance_id(),
+            "port": local.port,
+            "host": "127.0.0.1",
+            "token": local.token,
+        })
+        .to_string(),
+    )
+    .expect("config.json");
+    let registry_path = dir.path().join("connections.json");
+    std::fs::write(&registry_path, b"{\"version\":1,\"connections\":[").expect("truncated file");
+
+    let core = DesktopCore::start(
+        registry_path.clone(),
+        Arc::new(MemorySecretStore::new()),
+        wisp_home,
+        packaged_app_origins(),
+    )
+    .await
+    .expect("the core still starts");
+
+    let recovery = core.registry().recovery().expect("the reset is reported");
+    assert!(recovery.backup.exists());
+    assert_ne!(recovery.backup, registry_path);
+    let bootstrap = core.bootstrap();
+    assert_eq!(bootstrap.connections.len(), 1);
+    assert_eq!(bootstrap.connections[0].id, "local");
+    assert!(bootstrap.connections[0].ready);
 }

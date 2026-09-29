@@ -205,8 +205,17 @@ impl DesktopCore {
 
     /// Ask Finder to select one file in a Local task's worktree.
     ///
-    /// The join happens here rather than in the webview so `..` is refused on
-    /// a settled path. Nothing is opened — see `external::reveal`.
+    /// The resolution happens here rather than in the webview: `path` must be
+    /// worktree-relative, and the canonical file must still be inside the
+    /// canonical worktree (`external::worktree_file`). Nothing is opened — see
+    /// `external::reveal`.
+    ///
+    /// `worktree_path` is the webview's copy of the daemon's task record. It is
+    /// not re-read from the daemon here: a webview able to lie about it can
+    /// already drive the same Local daemon through the proxy, terminals
+    /// included, so a second lookup would guard nothing. What this does
+    /// guarantee is that an agent-written link cannot walk out of the
+    /// worktree the UI named.
     pub fn reveal_local_file(
         &self,
         connection_id: &str,
@@ -214,8 +223,8 @@ impl DesktopCore {
         path: &str,
     ) -> Result<(), CoreError> {
         self.require_local(connection_id)?;
-        let joined = std::path::Path::new(worktree_path).join(path);
-        Ok(crate::external::reveal(&joined.to_string_lossy())?)
+        let file = crate::external::worktree_file(worktree_path, path)?;
+        Ok(crate::external::reveal(&file)?)
     }
 
     pub fn finish_local_picker(&self, generation: u64) -> Result<(), CoreError> {

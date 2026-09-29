@@ -28,7 +28,9 @@ use serde::Serialize;
 
 use crate::local::{LocalError, LocalProfile, LocalStatus, LOCAL_CONNECTION_ID};
 use crate::secrets::{SecretError, SecretStore};
-use persistence::{clean_label, read_file, validate_file, write_file, StoredLocalTarget};
+use persistence::{
+    clean_label, read_file, set_aside, validate_file, write_file, RegistryFile, StoredLocalTarget,
+};
 
 /// Product limit, including the built-in Local connection.
 pub const MAX_CONNECTIONS: usize = 8;
@@ -83,6 +85,31 @@ pub enum RegistryError {
     InvalidFile { path: PathBuf, reason: &'static str },
 }
 
+impl RegistryError {
+    /// The file exists and was read, but its contents are not a registry this
+    /// build understands: undecodable, invalid, or a different schema version
+    /// (for example after installing an older Desktop). Distinct from an I/O
+    /// failure, which says nothing about the contents and is never discarded.
+    fn is_unreadable_contents(&self) -> bool {
+        matches!(
+            self,
+            RegistryError::Decode { .. } | RegistryError::InvalidFile { .. }
+        )
+    }
+}
+
+/// A launch that found `connections.json` unusable and started without it.
+///
+/// The file is renamed, never deleted, and nothing in the Keychain is touched:
+/// moving the backup back restores every saved connection and its credential.
+#[derive(Debug, Clone)]
+pub struct RegistryRecovery {
+    /// Where the unusable file now is.
+    pub backup: PathBuf,
+    /// Why it could not be used, as a sentence.
+    pub reason: String,
+}
+
 /// What the webview is allowed to know about a connection.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -130,6 +157,7 @@ pub struct Registry {
     /// Serializes metadata/Keychain transactions without blocking proxy reads.
     mutations: Mutex<()>,
     state: Mutex<State>,
+    recovery: Option<RegistryRecovery>,
     #[cfg(test)]
     persist_failure_countdown: Mutex<Option<usize>>,
 }
@@ -137,14 +165,34 @@ pub struct Registry {
 impl Registry {
     /// Open the registry, replay any interrupted removal, and warm the
     /// credential cache. Blocking: call it off the async runtime.
+    ///
+    /// A file whose contents cannot be used is set aside rather than fatal:
+    /// otherwise one bad write, or a downgrade to a build with an older
+    /// schema, stops the app on every launch until someone finds the file by
+    /// hand. [`Registry::recovery`] says what happened so the shell can tell
+    /// the user. A file that cannot be *read* still fails the launch.
     pub fn open(
         path: PathBuf,
         secrets: Arc<dyn SecretStore>,
         local_home: PathBuf,
         local: Result<LocalProfile, LocalError>,
     ) -> Result<Self, RegistryError> {
-        let mut file = read_file(&path)?;
-        validate_file(&path, &file)?;
+        let (mut file, recovery) =
+            match read_file(&path).and_then(|file| validate_file(&path, &file).map(|()| file)) {
+                Ok(file) => (file, None),
+                Err(error) if error.is_unreadable_contents() => {
+                    let backup = set_aside(&path).map_err(|source| RegistryError::Persist {
+                        path: path.clone(),
+                        source,
+                    })?;
+                    let recovery = RegistryRecovery {
+                        backup,
+                        reason: error.to_string(),
+                    };
+                    (RegistryFile::default(), Some(recovery))
+                }
+                Err(error) => return Err(error),
+            };
         let (local_profile, local_error) = match local {
             Ok(profile) => (Some(profile), None),
             Err(error) => (None, Some(error.to_string())),
@@ -188,12 +236,19 @@ impl Registry {
                 local_target: file.local_target,
                 local_route_revision: file.local_route_revision,
             }),
+            recovery,
             #[cfg(test)]
             persist_failure_countdown: Mutex::new(None),
         };
         registry.finish_pending_removals()?;
         registry.warm_credentials();
         Ok(registry)
+    }
+
+    /// Set when this launch found the saved connections unusable and started
+    /// without them.
+    pub fn recovery(&self) -> Option<&RegistryRecovery> {
+        self.recovery.as_ref()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
