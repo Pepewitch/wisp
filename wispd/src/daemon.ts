@@ -250,7 +250,18 @@ async function attachTerminal(ws: TerminalSocket, cfg: WispConfig): Promise<void
     );
     const client: TerminalClient = {
       isOpen: () => ws.readyState === 1,
-      sendOutput: (data) => ws.send(JSON.stringify({ type: "out", data })),
+      sendOutput: (data) => {
+        const sent = ws.send(JSON.stringify({ type: "out", data }));
+        // -1: queued behind output the client has not read yet. Hold the
+        // shell until the socket drains rather than queueing without limit.
+        if (sent === -1) session.holdOutput(client);
+        // 0 on an open socket: the frame was DROPPED at the backpressure
+        // limit, so this pane no longer shows the shell's screen. Closing
+        // says so; reconnecting sends a fresh snapshot of it. With output
+        // held at the first -1 this needs a client that stopped reading
+        // mid-burst from a shell that cannot be held (the piped fallback).
+        else if (sent === 0 && ws.readyState === 1) ws.close(1011, "terminal output fell behind; reconnect");
+      },
       sendError: (message) => wsError(ws, message),
       sendExit: (code) => ws.send(JSON.stringify({ type: "exit", code })),
     };
@@ -558,6 +569,11 @@ async function serveOwned(
         message(ws, message) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
           terminalMessage(ws, message, cfg);
+        },
+        // the client has read what was queued for it; see holdOutput
+        drain(ws) {
+          const binding = terminalBindings.get(ws);
+          if (binding) binding.session.releaseOutput(binding.client);
         },
         close(ws) {
           clearTerminalAuthDeadline(ws);

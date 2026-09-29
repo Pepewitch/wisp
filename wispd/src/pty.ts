@@ -39,7 +39,7 @@
  * in `ps` output to run `stty -f` against its tty. Both are gone.
  */
 import { CString, dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
-import { createReadStream, readFileSync, write as fsWrite, type ReadStream } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 /** The hidden subcommand this module spawns as its own child half. */
@@ -73,8 +73,14 @@ const TIOCSWINSZ = DARWIN ? 0x80087467n : 0x5414n;
 const TIOCGWINSZ = DARWIN ? 0x40087468n : 0x5413n;
 const TIOCSCTTY = DARWIN ? 0x20007461n : 0x540en;
 const FIOCLEX = DARWIN ? 0x20006601n : 0x5451n;
+const FIONBIO = DARWIN ? 0x8004667en : 0x5421n;
 const O_RDWR = 2;
 const O_NOCTTY = DARWIN ? 0x00020000 : 0o400;
+const O_NONBLOCK = DARWIN ? 0x4 : 0o4000;
+const F_GETFL = 3;
+/** tcflow(3) actions: suspend and restart output, as ^S and ^Q do. */
+const TCOOFF = DARWIN ? 1 : 0;
+const TCOON = DARWIN ? 2 : 1;
 
 /**
  * Only POSIX-standard symbols, so one declaration covers both platforms.
@@ -113,6 +119,10 @@ const SYMBOLS = {
   dup2: { args: [FFIType.int, FFIType.int], returns: FFIType.int },
   execve: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
   tcgetpgrp: { args: [FFIType.int], returns: FFIType.int },
+  tcflow: { args: [FFIType.int, FFIType.int], returns: FFIType.int },
+  // Variadic, so only ever called with a command that reads no third
+  // argument (F_GETFL); see IOCTL_SYMBOLS for what goes wrong otherwise.
+  fcntl: { args: [FFIType.int, FFIType.int, FFIType.int], returns: FFIType.int },
 } as const;
 
 type LibcSymbols = ReturnType<typeof dlopen<typeof SYMBOLS>>["symbols"];
@@ -196,6 +206,23 @@ function closeOnExec(fd: number): void {
   if (ioctl()(fd, FIOCLEX, 0) !== 0) fail("ioctl(FIOCLEX)");
 }
 
+/**
+ * Put the master in non-blocking mode, which is what lets it be read and
+ * written without holding a thread (see `readPty`). The flag belongs to the
+ * open file, so every duplicate of the master shares it, while the slave, a
+ * separate open of the device, stays blocking for the shell.
+ *
+ * FIONBIO takes a pointer, and on the fallback `ioctl` Darwin's variadic ABI
+ * would hand the kernel a garbage one (see IOCTL_SYMBOLS), so the flag is read
+ * back rather than trusted.
+ */
+function nonBlocking(fd: number): void {
+  if (ioctl()(fd, FIONBIO, ptr(new Int32Array([1]))) !== 0) fail("ioctl(FIONBIO)");
+  const flags = libc().fcntl(fd, F_GETFL, 0);
+  if (flags < 0) fail("fcntl(F_GETFL)");
+  if ((flags & O_NONBLOCK) === 0) throw new Error("pty: the master did not become non-blocking");
+}
+
 /** A NUL-terminated C string; the Buffer must outlive the call that reads it. */
 function cstr(value: string): Buffer {
   return Buffer.from(`${value}\0`, "utf8");
@@ -232,6 +259,7 @@ export function openPty(size: PtySize): PtyHandle {
   const handle: PtyHandle = { masterFd, slaveFd: -1, slavePath: "" };
   try {
     closeOnExec(masterFd);
+    nonBlocking(masterFd);
     if (c.grantpt(masterFd) !== 0) fail("grantpt");
     if (c.unlockpt(masterFd) !== 0) fail("unlockpt");
     const namePtr = c.ptsname(masterFd);
@@ -320,38 +348,106 @@ export function closePty(handle: PtyHandle): void {
   handle.masterFd = -1;
 }
 
+/** A running pump from one pty master; see `readPty`. */
+export interface PtyReader {
+  /** The reader's own duplicate of the master: its number until `ended` settles, then free. */
+  readonly fd: number;
+  /** Settles, never rejects, once the pty has reported its end or `close()` has run. */
+  readonly ended: Promise<void>;
+  /** Stop reading and release the duplicate. Safe to call more than once. */
+  close(): Promise<void>;
+}
+
 /**
- * Stream the master. `node:fs` read streams are the only pump that works
- * here: `Bun.file(fd).stream()` yields nothing at all on a character device,
- * measured repeatedly, and a synchronous read would block the daemon.
+ * Stream the master without holding a thread while the shell is quiet.
  *
- * The stream reads its OWN duplicate of the master and is that duplicate's
- * only closer. `autoClose: false` does not make a stream leave its fd alone:
- * `destroy()` still closes it (Node semantics, and Bun's), asynchronously and,
- * with a read in flight, only once that read returns. Sharing `masterFd` with
- * `closePty` therefore closed one number twice, and whichever close came
- * second landed on whatever the process had opened in between — the next
- * shell's master, a socket, a spawn pipe. CI saw exactly those: `Bun.spawnSync`
- * failing with EBADF, a new shell's child unable to open its slave, a terminal
- * socket erroring on attach.
+ * A `node:fs` read stream on this fd, the previous pump, parks one of the
+ * runtime's file I/O workers in read(2) until output arrives. Idle shells
+ * never produce any, so each one held a worker indefinitely, and once there
+ * were as many shells as workers (about one per CPU) every asynchronous
+ * `node:fs` call in the daemon queued behind them: turns never finalized, log
+ * streams and archive hung, and keystrokes, written through the same pool,
+ * could not reach the shell to make it print. `Bun.file(fd).stream()` on a
+ * NON-BLOCKING descriptor instead waits in the event loop's poller (kqueue,
+ * epoll), which is why `openPty` makes the master non-blocking. On a blocking
+ * one it delivers nothing at all (measured), which is why a read stream was
+ * used before.
+ *
+ * The stream reads its OWN duplicate of the master, and this function is that
+ * duplicate's only closer, once the stream has finished with it. Bun does not
+ * close a descriptor it was handed, and sharing `masterFd` with `closePty`
+ * would make the order of two closes of one number matter: whichever came
+ * second landed on whatever the process had opened in between, which is how
+ * the old stream-based reader took out the next shell's master, a socket, a
+ * spawn pipe.
  */
 export function readPty(
   masterFd: number,
-  onData: (chunk: Buffer) => void,
+  onData: (chunk: Uint8Array) => void,
   onError: (error: Error) => void,
-): ReadStream {
-  const readerFd = dupMaster(masterFd);
-  const stream = createReadStream("", { fd: readerFd, autoClose: true });
-  stream.on("data", (chunk) => onData(chunk as Buffer));
-  stream.on("error", (error) => {
-    // Both of these mean "this pty is finished", not "something went wrong":
-    // EIO is how the kernel reports the last slave closing, i.e. the shell
-    // exited, and EBADF is a read issued as the stream tears itself down.
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EIO" || code === "EBADF") return;
-    onError(error);
-  });
-  return stream;
+): PtyReader {
+  const fd = dupMaster(masterFd);
+  let reader: ReadableStreamDefaultReader<Uint8Array>;
+  try {
+    reader = Bun.file(fd).stream().getReader();
+  } catch (error) {
+    libc().close(fd);
+    throw error;
+  }
+  let closing = false;
+  const ended = (async () => {
+    try {
+      while (true) {
+        const next = await reader.read();
+        if (next.done || closing) return;
+        if (next.value.byteLength > 0) onData(next.value);
+      }
+    } catch (error) {
+      // EIO is how Linux reports the last slave closing, i.e. the shell
+      // exited (Darwin reports a plain end of file), and EBADF is a read
+      // racing the stream's own teardown. Neither is a failure.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (closing || code === "EIO" || code === "EBADF") return;
+      onError(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      reader.releaseLock();
+      libc().close(fd);
+    }
+  })();
+  return {
+    fd,
+    ended,
+    close: async () => {
+      if (!closing) {
+        closing = true;
+        await reader.cancel().catch(() => undefined);
+      }
+      await ended;
+    },
+  };
+}
+
+/**
+ * Suspend the pty's output, exactly as ^S does, until `startPtyOutput`.
+ *
+ * The daemon reads the master as fast as the shell writes, so a client that
+ * cannot keep up would otherwise have the difference queued for it without
+ * limit. Suspended, the kernel stops handing output to the master and the
+ * shell's own writes block once its buffer fills — the flow control a slow
+ * SSH connection applies. Input is unaffected, so Ctrl-C still gets through.
+ *
+ * Asked of the SLAVE, which the daemon holds open for the session and which
+ * is not its controlling terminal, so no job-control check applies. Returns
+ * whether the kernel accepted it; a pty whose slave is already released has
+ * nothing left to hold.
+ */
+export function stopPtyOutput(handle: PtyHandle): boolean {
+  return handle.slaveFd >= 0 && libc().tcflow(handle.slaveFd, TCOOFF) === 0;
+}
+
+/** Undo `stopPtyOutput`. Harmless on a pty whose output was never stopped. */
+export function startPtyOutput(handle: PtyHandle): boolean {
+  return handle.slaveFd >= 0 && libc().tcflow(handle.slaveFd, TCOON) === 0;
 }
 
 /**
@@ -423,45 +519,58 @@ function dupMaster(masterFd: number): number {
   return fd;
 }
 
+/** The longest a write waits before asking a full pty for room again. */
+const WRITE_RETRY_MAX_MS = 16;
+
 /**
  * Write to the master. Async so a large paste cannot block the event loop.
  *
- * Each chunk is written through its own duplicate of the master, closed when
- * that write returns. `fs.write` makes the syscall later, on a worker thread,
- * with the number it was handed; handed `masterFd` itself, a chunk queued
- * before `closePty` would land in whatever was opened next under that number.
- * The handle is still checked before every chunk, so a paste that is going
- * when the shell exits stops at `closePty`.
+ * The master is non-blocking, so each write(2) happens right here, on the
+ * event loop, and takes what the pty's input buffer has room for. When it has
+ * none (EAGAIN: a paste bigger than the buffer, into a program that is not
+ * reading yet) the rest waits on a short timer and is offered again. A
+ * worker-thread `fs.write` used to do this blocking, and so held a worker for
+ * as long as the program did not read — the same starvation `readPty`
+ * describes.
+ *
+ * The syscall runs synchronously with the handle's check, so it can never
+ * reach a number `closePty` has released and something else has claimed. A
+ * paste that is waiting for room when the shell exits stops at `closePty`.
  */
 export function writePty(handle: PtyHandle, data: string | Uint8Array): Promise<void> {
   const buffer = typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
   return new Promise((resolve, reject) => {
-    const step = (offset: number): void => {
-      if (offset >= buffer.length) {
-        resolve();
-        return;
-      }
-      if (handle.masterFd < 0) {
-        reject(new Error("pty: write after the pty was closed"));
-        return;
-      }
-      let fd: number;
-      try {
-        fd = dupMaster(handle.masterFd);
-      } catch (error) {
-        reject(error);
-        return;
-      }
-      fsWrite(fd, buffer, offset, buffer.length - offset, null, (error, written) => {
-        libc().close(fd);
-        if (error) {
-          reject(error);
+    let offset = 0;
+    let wait = 0;
+    const step = (): void => {
+      while (offset < buffer.length) {
+        if (handle.masterFd < 0) {
+          reject(new Error("pty: write after the pty was closed"));
           return;
         }
-        step(offset + written);
-      });
+        let written = 0;
+        try {
+          written = writeSync(handle.masterFd, buffer, offset, buffer.length - offset);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "EINTR") continue;
+          if (code !== "EAGAIN" && code !== "EWOULDBLOCK") {
+            reject(error);
+            return;
+          }
+        }
+        if (written > 0) {
+          offset += written;
+          wait = 0;
+          continue;
+        }
+        wait = Math.min(WRITE_RETRY_MAX_MS, Math.max(1, wait * 2));
+        setTimeout(step, wait);
+        return;
+      }
+      resolve();
     };
-    step(0);
+    step();
   });
 }
 
