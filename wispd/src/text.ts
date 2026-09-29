@@ -40,3 +40,31 @@ export function elideMiddle(s: string, n: number): string {
   const removed = s.length - n;
   return `${s.slice(0, head)}\n… ${removed} characters elided …\n${s.slice(s.length - tail)}`;
 }
+
+/**
+ * A thrown value as the daemon log should show it: the stack when there is
+ * one (its first line is the message), else the value itself. Pass the
+ * error, never the request or input that caused it.
+ */
+export function errorDetail(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : safeString(error);
+}
+
+/**
+ * `String(value)` that cannot throw. `String()` and template literals call a
+ * value's own `toString`, which an object parsed from JSON can shadow with a
+ * non-function (`{"toString":1}`); JSON text is used instead.
+ */
+export function safeString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || typeof value !== "object") return String(value);
+  try {
+    return String(value);
+  } catch {
+    try {
+      return JSON.stringify(value) ?? "[unprintable value]";
+    } catch {
+      return "[unprintable value]";
+    }
+  }
+}

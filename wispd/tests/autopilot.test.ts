@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1147,6 +1147,28 @@ describe("auto-fix", () => {
     await until(() => existsSync(file), "the fix round");
     expect(state.reruns).toEqual([5]);
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("a rerun that fails outright is a refused rerun whose reason reaches the daemon log", async () => {
+    const { task, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [{ ...RED, required: false }] }) });
+    state.required = [];
+    github.rerunRun = () => Promise.reject(new Error("gh: HTTP 403: Resource not accessible by integration"));
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id).reason).toBe("Could not rerun test");
+      expect(logged.mock.calls.map((call) => String(call[0]))).toContain(
+        "[wisp] autopilot: could not rerun workflow run 5 of o/r: gh: HTTP 403: Resource not accessible by integration",
+      );
+    } finally {
+      logged.mockRestore();
+      await rt.stop();
+    }
   });
 
   test("GitHub's own auto-merge pauses as auto-merge's, even when auto-fix spoke last", async () => {

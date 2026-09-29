@@ -1,8 +1,10 @@
 import { createActivityFormatter, createEventFormatter, type ActivityEvent, type AdapterDef } from "../adapters";
 import { subscribe } from "../events";
-import { readSlice } from "../fsutil";
+import { readSlice, sliceDecoder } from "../fsutil";
 import { subscribeTurnBroker, type BrokerGap, type TurnBrokerSubscription } from "../recording/broker";
 import { latestTurnForTask, turnForTask } from "../store";
+import { logFailure } from "../failure-log";
+import { trunc } from "../text";
 import { acquireTranscriptRead, TRANSCRIPT_EVICTED_NOTICE } from "../transcript-access";
 import type { Task, Turn } from "../types";
 import { BUILD_INFO } from "../version";
@@ -39,6 +41,33 @@ let activeEventStreams = 0;
 const MAX_LOG_STREAMS = 32;
 let activeLogStreams = 0;
 
+const HEARTBEAT_FRAME = new TextEncoder().encode(": hb\n\n");
+
+/** End a stream from the daemon's side; a client that already left has nothing to close. */
+function closeQuietly(controller: ReadableStreamDefaultController<Uint8Array>): void {
+  try {
+    controller.close();
+  } catch {
+    // already closed or cancelled
+  }
+}
+
+/** The comment frame that keeps an idle stream under Bun's idle timeout. */
+function sseHeartbeat(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  isClosed: () => boolean,
+  cleanup: () => void,
+): ReturnType<typeof setInterval> {
+  return setInterval(() => {
+    if (isClosed()) return;
+    try {
+      controller.enqueue(HEARTBEAT_FRAME);
+    } catch {
+      cleanup();
+    }
+  }, SSE_HEARTBEAT_MS);
+}
+
 /** GET /api/events: every emitted WispEvent as one SSE `data:` frame. */
 export function eventStream(): Response {
   if (activeEventStreams >= MAX_EVENT_STREAMS) return err("too many event stream subscribers", 503);
@@ -64,14 +93,7 @@ export function eventStream(): Response {
           cleanup(); // the client vanished between cancel() and an in-flight emit
         }
       });
-      hb = setInterval(() => {
-        if (closed) return;
-        try {
-          controller.enqueue(enc.encode(": hb\n\n"));
-        } catch {
-          cleanup();
-        }
-      }, SSE_HEARTBEAT_MS);
+      hb = sseHeartbeat(controller, () => closed, cleanup);
     },
     cancel() {
       cleanup();
@@ -97,29 +119,48 @@ function evictedTranscript(format: LogFormat, turnId: number): RenderedChunk {
 }
 
 /** Snapshot the primary prefix once; the broker owns any records after its offset. */
-function turnBacklog(turn: Turn, snapshotEnd: number | undefined): Promise<{ text: string; size: number }> {
+function turnBacklog(turn: Turn, snapshotEnd: number | undefined, decoder: TextDecoder): Promise<{ text: string; size: number }> {
   const firstReadBytes = snapshotEnd === undefined
     ? LOG_BACKLOG_BYTES
     : Math.min(LOG_BACKLOG_BYTES, snapshotEnd);
-  return readSlice(turn.log_file, 0, firstReadBytes);
+  return readSlice(turn.log_file, 0, firstReadBytes, decoder);
 }
 
-function subscribeLogEvents(taskId: string, send: (event: string, data: unknown) => void, tick: () => Promise<void>): () => void {
+function subscribeLogEvents(taskId: string, send: (event: string, data: unknown) => void, kick: () => void): () => void {
   return subscribe(evt => {
     if (evt.type === "task" && evt.taskId === taskId) {
       send("state", { state: evt.state, state_detail: evt.stateDetail });
     } else if ((evt.type === "turn" || evt.type === "message") && evt.taskId === taskId) {
-      void tick();
+      kick();
     }
   });
 }
 
+/**
+ * Renders one turn's log lines for one stream.
+ *
+ * Every line goes through the adapter's formatter inside its own try, and a
+ * line the formatter cannot render is shown as the raw line. The builtin
+ * formatters are fuzzed never to throw (tests/formatter-fuzz.test.ts), so
+ * this is the last line of defence, and it matters: a formatter throw used to
+ * escape the stream's fire-and-forget tick as an unhandled rejection, which
+ * ends a Bun process. One odd line in a turn log took the daemon down every
+ * time anyone opened that task.
+ */
 class TurnStreamRenderer {
+  /**
+   * Decodes this turn's log bytes. Every read of a turn continues where the
+   * last one stopped, so one streaming decoder across them turns a character
+   * split between two reads back into that character, not two U+FFFD.
+   */
+  readonly bytes = sliceDecoder();
   private leftover = "";
   private formatLine: ReturnType<typeof createEventFormatter>;
   private activityLine: ReturnType<typeof createActivityFormatter>;
+  private unrendered = 0;
+  private reported = false;
 
-  constructor(readonly format: LogFormat, private readonly def?: AdapterDef) {
+  constructor(readonly format: LogFormat, private readonly def: AdapterDef | undefined, private readonly label: string) {
     this.formatLine = createEventFormatter(def);
     this.activityLine = createActivityFormatter(def);
   }
@@ -135,16 +176,46 @@ class TurnStreamRenderer {
     const lines = (this.leftover + chunk).split("\n");
     this.leftover = lines.pop() ?? "";
     if (this.format === "activity") {
-      return { kind: "activity", activity: lines.flatMap((line) => this.activityLine(line)) };
+      return { kind: "activity", activity: lines.flatMap((line) => this.activityOf(line)) };
     }
-    return { kind: "text", text: lines.map((line) => this.formatLine(line)).filter((line) => line !== null).join("\n") };
+    return { kind: "text", text: lines.map((line) => this.textOf(line)).filter((line) => line !== null).join("\n") };
   }
 
   record(line: string, sequence: number): RenderedChunk {
     if (this.format === "activity") {
-      return { kind: "activity", activity: this.activityLine(line, sequence) };
+      return { kind: "activity", activity: this.activityOf(line, sequence) };
     }
-    return { kind: "text", text: this.formatLine(line) ?? "" };
+    return { kind: "text", text: this.textOf(line) ?? "" };
+  }
+
+  private textOf(line: string): string | null {
+    try {
+      return this.formatLine(line);
+    } catch (error) {
+      this.report(error);
+      const raw = line.trim();
+      return raw ? trunc(raw, 200) : null;
+    }
+  }
+
+  private activityOf(line: string, sequence?: number): ActivityEvent[] {
+    try {
+      return this.activityLine(line, sequence);
+    } catch (error) {
+      this.report(error);
+      const raw = line.trim();
+      return raw ? [{ kind: "text", id: `unrendered-${++this.unrendered}`, parentId: null, text: trunc(raw, 4_000) }] : [];
+    }
+  }
+
+  /**
+   * Once per turn and stream, and summarized across streams: a log full of
+   * odd lines, or a pane reopening it, must not flood the daemon log.
+   */
+  private report(error: unknown): void {
+    if (this.reported) return;
+    this.reported = true;
+    logFailure(`log stream (${this.label}): the ${this.format} formatter threw on a line, which is shown raw instead`, error);
   }
 
   gap(gap: BrokerGap): RenderedChunk {
@@ -236,7 +307,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   let resumeDrain: (() => void) | null = null;
   let brokerSubscription: TurnBrokerSubscription | null = null;
   let brokerPump: Promise<void> | null = null;
-  let renderer = new TurnStreamRenderer(format, adapters[task.harness]);
+  let renderer = new TurnStreamRenderer(format, adapters[task.harness], `task ${task.id}`);
   let releaseTranscript: (() => void) | null = null;
   let evicted = false;
 
@@ -276,7 +347,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
 
   const drainPrimaryTo = async (turn: number, target: number): Promise<void> => {
     while (offset < target) {
-      const slice = await readSlice(logFile, offset, Math.min(LOG_STREAM_SLICE, target - offset));
+      const slice = await readSlice(logFile, offset, Math.min(LOG_STREAM_SLICE, target - offset), renderer.bytes);
       if (slice.size === offset) return;
       offset = slice.size;
       await waitForCapacity();
@@ -297,7 +368,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     brokerPump = null;
     // Formatter state, lifecycle correlation, and adapter semantics belong to
     // exactly one turn. A task may cross a harness boundary between turns.
-    renderer = new TurnStreamRenderer(format, adapters[turn.harness]);
+    renderer = new TurnStreamRenderer(format, adapters[turn.harness], `task ${task.id} turn ${turn.n}`);
     if (evicted) {
       offset = 0;
       sendRendered("backlog", turn.n, evictedTranscript(format, turn.id), turn.prompt);
@@ -307,7 +378,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     // exactly where the backlog stopped (no gap, no overlap). Anything past the
     // first-read budget is picked up by the ordinary append loop.
     const snapshotEnd = brokerSubscription?.primaryOffset;
-    const backlog = await turnBacklog(turn, snapshotEnd);
+    const backlog = await turnBacklog(turn, snapshotEnd, renderer.bytes);
     offset = backlog.size;
     // the turn row stores the user's actual message (the wisp preamble lives
     // only in the spawned argv), so the stream pane can show each turn's prompt
@@ -318,6 +389,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     if (snapshotEnd !== undefined) {
       await drainPrimaryTo(turn.n, snapshotEnd);
       if (closed) return;
+      // Stored and awaited only at turn end, so it carries its own catch: a
+      // rejection before then has no handler, and that ends the process.
       brokerPump = pumpTurnBroker(
         turn.n,
         brokerSubscription!,
@@ -325,7 +398,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
         () => !closed && currentN === turn.n,
         waitForCapacity,
         sendRendered,
-      );
+      ).catch(failStream);
     }
   };
 
@@ -339,13 +412,16 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
       brokerSubscription = null;
     } else if (!evicted) {
       for (;;) {
-        const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
+        const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE, renderer.bytes);
         if (slice.size === offset) break; // no new bytes
         offset = slice.size;
         await waitForCapacity();
         if (closed) return;
         sendRendered("append", n, renderer.chunk(slice.text));
       }
+      // the bytes of a character the log never finished, now shown as U+FFFD
+      const held = renderer.bytes.decode();
+      if (held) sendRendered("append", n, renderer.chunk(held));
     }
     const final = renderer.flush();
     if (final) {
@@ -380,7 +456,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
           return;
         }
         if (!brokerPump && !evicted) {
-          const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE);
+          const slice = await readSlice(logFile, offset, LOG_STREAM_SLICE, renderer.bytes);
           if (slice.size !== offset) {
             offset = slice.size;
             await waitForCapacity();
@@ -400,6 +476,23 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
     }
   };
 
+  /**
+   * A tick that fails part-way may have moved the offset past bytes it never
+   * sent, so the stream can no longer promise a gapless transcript. End it:
+   * the client reconnects and gets the turn again from byte zero. Before this,
+   * the failure escaped as an unhandled rejection and ended the daemon.
+   */
+  function failStream(error: unknown): void {
+    if (closed) return;
+    // the client reconnects every few seconds, so a recurring failure is summarized
+    logFailure(`log stream for task ${task.id} failed and was closed`, error);
+    cleanup();
+    closeQuietly(controller);
+  }
+
+  /** Ticks are fire-and-forget, so each one carries its own catch. */
+  const kick = (): void => void tick().catch(failStream);
+
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
       controller = c;
@@ -407,17 +500,10 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
       // clients can identify the daemon precisely if a later frame violates
       // the stream contract.
       send("hello", { version: BUILD_INFO.version });
-      unsubscribe = subscribeLogEvents(task.id, send, tick);
-      poll = setInterval(() => void tick(), LOG_STREAM_POLL_MS);
-      hb = setInterval(() => {
-        if (closed) return;
-        try {
-          controller.enqueue(enc.encode(": hb\n\n"));
-        } catch {
-          cleanup();
-        }
-      }, SSE_HEARTBEAT_MS);
-      void tick(); // the initial backlog
+      unsubscribe = subscribeLogEvents(task.id, send, kick);
+      poll = setInterval(kick, LOG_STREAM_POLL_MS);
+      hb = sseHeartbeat(controller, () => closed, cleanup);
+      kick(); // the initial backlog
     },
     cancel() {
       cleanup();

@@ -1,4 +1,4 @@
-import { trackHomeWork } from "./home-lifetime";
+import { backgroundPass } from "./home-lifetime";
 import type { WispConfig } from "./config";
 import { getTask, markAttempt, markDelivered, pendingOutbox } from "./store";
 
@@ -60,7 +60,7 @@ export function startOutboxLoop(cfg: WispConfig): ReturnType<typeof setInterval>
     if (running) return; // don't overlap slow deliveries
     running = true;
     try {
-      await trackHomeWork(deliverOutbox(cfg));
+      await backgroundPass("webhook delivery", () => deliverOutbox(cfg));
     } finally {
       running = false;
     }

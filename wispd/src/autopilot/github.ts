@@ -466,7 +466,14 @@ export const ghAutopilot: AutopilotGitHub = {
     // it re-evaluates the aggregator against the old results, and a second
     // job's rerun is refused while the first is going.
     const result = await gh(["api", "-X", "POST", `repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`], cwd, signal)
-    return result.exitCode === 0 && !result.timedOut && !result.cancelled
+    if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return true
+    // A refusal is an answer ("Could not rerun"), not an error; its reason is
+    // only in gh's stderr, so the daemon log keeps it. A shutdown's abort is not news.
+    if (!result.cancelled) {
+      const detail = result.timedOut ? "timed out" : (result.err.trim().split("\n").pop() ?? "").slice(0, 200)
+      console.error(`[wisp] autopilot: GitHub did not rerun workflow run ${runId} of ${repository}${detail ? `: ${detail}` : ""}`)
+    }
+    return false
   },
   async jobLogTail(repository, jobId, cwd, signal) {
     // A job log can be many megabytes and the bounded runner keeps its START;

@@ -29,7 +29,9 @@ try {
     if (positional.length) throw new Error("doctor --storage does not take positional arguments");
     await doctorCommand(flags);
   } else if (args[0] === "serve") {
-    const { serve } = await import("./daemon");
+    const [{ installDaemonCrashGuards }, { serve }] = await Promise.all([import("./crash-guard"), import("./daemon")]);
+    // Before serve(): recovery starts detached work too.
+    installDaemonCrashGuards();
     await serve();
   } else if (args[0] === "version" || args[0] === "--version") {
     // Keep identity inspection pure. Importing the full CLI initializes

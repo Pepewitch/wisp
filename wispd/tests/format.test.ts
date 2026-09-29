@@ -4,6 +4,7 @@ import {
   createEventFormatter,
   EVENT_FORMATTERS,
   formatEvent,
+  rawOnThrow,
   type AdapterDef,
 } from "../src/adapters";
 import { fixture, fixtureLine } from "./fixtures";
@@ -306,6 +307,16 @@ describe("formatEvent", () => {
     expect(() => formatEvent(`{"type":"result","result":"done"}`, bad)).toThrow(
       `adapter events 'nope' is not a known event formatter (known: ${Object.keys(EVENT_FORMATTERS).join(", ")})`,
     );
+  });
+
+  test("rawOnThrow shows a line the formatter throws on as the raw line, so `wisp log` keeps printing", () => {
+    const bad: AdapterDef = { bin: "x", exec: [], parse: { format: "json" }, events: "nope" };
+    const render = rawOnThrow(createEventFormatter(bad));
+    expect(render(`  {"type":"result","result":"done"}  `)).toBe(`{"type":"result","result":"done"}`);
+    expect(render(`{"type":"x","pad":"${"y".repeat(300)}"}`)).toHaveLength(201); // truncated, with its ellipsis
+    expect(render("")).toBeNull();
+    // a formatter that does not throw is untouched
+    expect(rawOnThrow(createEventFormatter(droid))(`{"type":"completion","finalText":"done"}`)).toBe("✓ turn complete");
   });
 
   test("no event formatter (text harness, unknown adapter): json passes through raw", () => {
