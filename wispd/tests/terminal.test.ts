@@ -475,8 +475,10 @@ ws.onmessage = (event) => {
       process.exit(0);
     }, 20000);
   }
-  tail = (tail + message.data).slice(-100);
-  if (tail.includes("FLOOD-42")) {
+  // Search before trimming: the marker can share a frame with a long prompt.
+  const seen = tail + message.data;
+  tail = seen.slice(-100);
+  if (seen.includes("FLOOD-42")) {
     console.log(JSON.stringify({ held, longest, finished: true }));
     process.exit(0);
   }
