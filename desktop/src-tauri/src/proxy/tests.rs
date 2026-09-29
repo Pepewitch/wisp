@@ -90,6 +90,29 @@ fn the_injected_credential_is_marked_sensitive_so_it_cannot_be_logged() {
 }
 
 #[test]
+fn only_this_machine_bypasses_the_http_proxy() {
+    let loopback = |raw: &str| super::is_loopback_target(&url::Url::parse(raw).expect("url"));
+    for raw in [
+        "http://127.0.0.1:8710/",
+        "http://127.8.9.10:1/",
+        "http://[::1]:8710/",
+        "https://localhost/",
+        "https://LOCALHOST./",
+        "https://wisp.localhost/",
+    ] {
+        assert!(loopback(raw), "{raw}");
+    }
+    for raw in [
+        "https://wisp.example.com/",
+        "https://10.0.0.2/",
+        "https://[::2]/",
+        "https://localhost.example.com/",
+    ] {
+        assert!(!loopback(raw), "{raw}");
+    }
+}
+
+#[test]
 fn the_denylists_cover_the_credential_carrying_headers() {
     assert!(REQUEST_HEADER_DENYLIST.contains(&"authorization"));
     assert!(REQUEST_HEADER_DENYLIST.contains(&"cookie"));

@@ -238,7 +238,9 @@ pub(super) fn upstream_request(
     upstream: Url,
     credential: &str,
 ) -> reqwest::RequestBuilder {
-    let mut builder = state.client.request(parts.method.clone(), upstream);
+    let mut builder = state
+        .client_for(&upstream)
+        .request(parts.method.clone(), upstream);
     for (name, value) in parts.headers.iter() {
         if REQUEST_HEADER_DENYLIST.contains(&name.as_str()) {
             continue;

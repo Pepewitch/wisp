@@ -71,9 +71,39 @@ pub enum ProxyStartError {
 pub struct ProxyState {
     capability: Capability,
     registry: Arc<Registry>,
+    /// Remote (non-loopback) targets: honours the system/environment proxy,
+    /// which only ever sees a CONNECT tunnel — HTTPS is the only scheme a
+    /// non-loopback remote may use, and TLS authenticates the daemon.
     client: reqwest::Client,
+    /// Loopback targets (Local and user-managed tunnels): never proxied.
+    loopback_client: reqwest::Client,
     allowed_origins: Vec<String>,
     upstream_handshake_timeout: std::time::Duration,
+}
+
+/// The shared upstream client settings.
+fn upstream_client() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        // No redirect is ever followed, so no redirect can receive the
+        // Authorization header or choose a new upstream.
+        .redirect(reqwest::redirect::Policy::none())
+        .referer(false)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .user_agent(concat!("wisp-desktop/", env!("CARGO_PKG_VERSION")))
+}
+
+/// Whether `url` names this machine: a loopback address or a `localhost`
+/// name, which every resolver here maps to loopback.
+pub fn is_loopback_target(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            name == "localhost" || name.ends_with(".localhost")
+        }
+        None => false,
+    }
 }
 
 impl ProxyState {
@@ -82,25 +112,18 @@ impl ProxyState {
         registry: Arc<Registry>,
         allowed_origins: Vec<String>,
     ) -> Result<Self, ProxyStartError> {
-        let client = reqwest::Client::builder()
-            // Never route through a system or environment HTTP proxy. Plain
-            // HTTP is allowed only to loopback, so a proxy would receive every
-            // daemon bearer token in cleartext, and it would be the proxy — not
-            // the saved address — that chose which machine answered. macOS
-            // proxy settings are read without their bypass list, so loopback
-            // is not exempt by default.
-            .no_proxy()
-            // No redirect is ever followed, so no redirect can receive the
-            // Authorization header or choose a new upstream.
-            .redirect(reqwest::redirect::Policy::none())
-            .referer(false)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .user_agent(concat!("wisp-desktop/", env!("CARGO_PKG_VERSION")))
-            .build()?;
+        let client = upstream_client().build()?;
+        // Loopback never goes through a system or environment HTTP proxy.
+        // Plain HTTP is allowed only there, so a proxy would receive the
+        // daemon bearer token in cleartext and would choose which machine
+        // answered. macOS proxy settings are read without their bypass list,
+        // so loopback is not exempt by default.
+        let loopback_client = upstream_client().no_proxy().build()?;
         Ok(Self {
             capability,
             registry,
             client,
+            loopback_client,
             allowed_origins,
             upstream_handshake_timeout: UPSTREAM_HANDSHAKE_TIMEOUT,
         })
@@ -122,11 +145,16 @@ impl ProxyState {
         &self.registry
     }
 
-    /// The one upstream HTTP client: no HTTP proxy, no redirects, no cookie
-    /// jar, system trust roots. Handshakes and health probes share it so they
-    /// cannot accidentally be built with weaker settings than the proxy itself.
-    pub fn client(&self) -> &reqwest::Client {
-        &self.client
+    /// The upstream HTTP client for `url`: no redirects, no cookie jar, system
+    /// trust roots, and no HTTP proxy for a loopback target. Handshakes and
+    /// health probes use it too, so they cannot accidentally be built with
+    /// weaker settings than the proxy itself.
+    pub fn client_for(&self, url: &url::Url) -> &reqwest::Client {
+        if is_loopback_target(url) {
+            &self.loopback_client
+        } else {
+            &self.client
+        }
     }
 }
 
@@ -385,7 +413,7 @@ async fn ensure_pinned_identity(
     let mut response = send_upstream(
         state,
         state
-            .client
+            .client_for(&target.base)
             .get(url)
             .header(AUTHORIZATION, bearer(&checked_credential)),
     )
@@ -412,7 +440,7 @@ async fn ensure_pinned_identity(
         response = send_upstream(
             state,
             state
-                .client
+                .client_for(&target.base)
                 .get(retry_url)
                 .header(AUTHORIZATION, bearer(&checked_credential)),
         )
@@ -517,7 +545,7 @@ async fn ensure_compatible_daemon_update(
         .map_err(|error| Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string())))?;
     let mut checked_credential = credential.to_string();
     let mut response = state
-        .client
+        .client_for(&target.base)
         .get(url)
         .header(AUTHORIZATION, bearer(&checked_credential))
         .timeout(UPDATE_CHECK_TIMEOUT)
@@ -549,7 +577,7 @@ async fn ensure_compatible_daemon_update(
             Box::new(refuse(StatusCode::BAD_REQUEST, "path", error.to_string()))
         })?;
         response = state
-            .client
+            .client_for(&target.base)
             .get(retry_url)
             .header(AUTHORIZATION, bearer(&checked_credential))
             .timeout(UPDATE_CHECK_TIMEOUT)

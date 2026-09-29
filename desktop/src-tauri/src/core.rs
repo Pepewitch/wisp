@@ -261,7 +261,7 @@ impl DesktopCore {
         token: &str,
     ) -> Result<probe::DaemonIdentity, CoreError> {
         let (url, token) = check(url, token)?;
-        Ok(probe::probe(self.state.client(), &url, &token).await?)
+        Ok(probe::probe(self.state.client_for(&url), &url, &token).await?)
     }
 
     pub async fn add_remote_checked(
@@ -272,7 +272,7 @@ impl DesktopCore {
         expected_instance_id: Option<&str>,
     ) -> Result<ConnectionInfo, CoreError> {
         let (url, token) = check(url, token)?;
-        let identity = probe::probe(self.state.client(), &url, &token).await?;
+        let identity = probe::probe(self.state.client_for(&url), &url, &token).await?;
         if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
             return Err(CoreError::RemoteIdentityChanged);
         }
@@ -311,7 +311,7 @@ impl DesktopCore {
             None => target.base.clone(),
         };
         let next_token = self.reconnect_token(&target, &next_url, token)?;
-        Ok(probe::probe(self.state.client(), &next_url, &next_token).await?)
+        Ok(probe::probe(self.state.client_for(&next_url), &next_url, &next_token).await?)
     }
 
     pub async fn reconnect_checked(
@@ -325,8 +325,12 @@ impl DesktopCore {
         // daemon replacement may all have happened since app launch.
         if connection_id == local::LOCAL_CONNECTION_ID {
             let profile = local::load(&self.wisp_home)?;
-            let identity =
-                probe::probe(self.state.client(), profile.base(), profile.token()).await?;
+            let identity = probe::probe(
+                self.state.client_for(profile.base()),
+                profile.base(),
+                profile.token(),
+            )
+            .await?;
             if identity.instance_id != profile.instance_id() {
                 return Err(CoreError::LocalIdentityMismatch);
             }
@@ -344,7 +348,8 @@ impl DesktopCore {
         };
         let next_token = self.reconnect_token(&target, &next_url, token)?;
 
-        let identity = probe::probe(self.state.client(), &next_url, &next_token).await?;
+        let identity =
+            probe::probe(self.state.client_for(&next_url), &next_url, &next_token).await?;
         if expected_instance_id.is_some_and(|expected| expected != identity.instance_id) {
             return Err(CoreError::RemoteIdentityChanged);
         }
@@ -422,7 +427,13 @@ impl DesktopCore {
         let cli = setup::find_wisp_cli(std::env::var_os("HOME").map(PathBuf::from).as_deref());
         let reachable = match &profile {
             Ok(profile) => {
-                match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                match probe::probe(
+                    self.state.client_for(profile.base()),
+                    profile.base(),
+                    profile.token(),
+                )
+                .await
+                {
                     Ok(identity) if identity.instance_id == profile.instance_id() => {
                         self.registry.refresh_local(profile.clone())?;
                         true
@@ -456,7 +467,13 @@ impl DesktopCore {
         for _ in 0..120 {
             match local::load(&self.wisp_home) {
                 Ok(profile) => {
-                    match probe::probe(self.state.client(), profile.base(), profile.token()).await {
+                    match probe::probe(
+                        self.state.client_for(profile.base()),
+                        profile.base(),
+                        profile.token(),
+                    )
+                    .await
+                    {
                         Ok(identity) => {
                             if identity.instance_id != profile.instance_id() {
                                 return Err(CoreError::LocalIdentityMismatch);

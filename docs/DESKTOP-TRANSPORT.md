@@ -191,9 +191,11 @@ ready:
 12. Refuse a saved remote's `POST /api/update` before any upstream request.
     Wisp Desktop owns only the built-in Local daemon's package-manager action;
     the daemon-served browser remains a one-daemon client and is unaffected.
-13. Never route an upstream request through a system or environment HTTP
-    proxy. A proxy would see loopback bearer tokens in cleartext and would
-    choose which machine answers.
+13. Never route a loopback target (`127.0.0.0/8`, `::1`, `localhost`) through
+    a system or environment HTTP proxy: it would see the bearer token in
+    cleartext and would choose which machine answers. HTTPS remotes keep the
+    configured proxy, which sees only a CONNECT tunnel, so networks with a
+    mandatory proxy still reach them.
 14. Read identity and compatibility answers with a size cap and a deadline.
 15. Send every response with `X-Content-Type-Options: nosniff` and
     `Content-Security-Policy: sandbox; default-src 'none'`, replacing upstream

@@ -116,9 +116,10 @@ Rules the proxy enforces, each with a test in `src-tauri/tests/proxy.rs`:
 12. `POST /api/update` is accepted only for the built-in Local connection.
     Saved remotes are updated on their host, not through this app-global
     package-manager surface.
-13. No upstream request uses a system or environment HTTP proxy (tested in
+13. Loopback targets never use a system or environment HTTP proxy (tested in
     `src-tauri/tests/proxy_env.rs`): plain HTTP goes only to loopback, and a
-    proxy would receive its bearer token in cleartext.
+    proxy would receive its bearer token in cleartext. HTTPS remotes still
+    honour the configured proxy through a CONNECT tunnel.
 14. Identity and update-compatibility answers are read with a 64 KiB cap and a
     deadline, so an endless body is a refusal, not an allocation.
 15. Every response carries `X-Content-Type-Options: nosniff` and
