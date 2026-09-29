@@ -273,7 +273,7 @@ function transitionBody(
   // Compare-and-set: the decision was made from an older read of this task.
   if (expectedSeq !== undefined && task.seq !== expectedSeq) return null;
   const seq = task.seq + 1;
-  db.run(`UPDATE tasks SET state = ?, state_detail = ?, seq = ?, updated_at = ? WHERE id = ? AND seq = ?`, [
+  const updated = db.run(`UPDATE tasks SET state = ?, state_detail = ?, seq = ?, updated_at = ? WHERE id = ? AND seq = ?`, [
     state,
     detail ?? null,
     seq,
@@ -281,6 +281,8 @@ function transitionBody(
     id,
     task.seq,
   ]);
+  // No row moved: queue no webhook and emit nothing for a write that did not happen.
+  if (updated.changes === 0) return null;
   if (notify && NOTIFY_STATES.includes(state)) {
     const payload = JSON.stringify({
       task_id: id,

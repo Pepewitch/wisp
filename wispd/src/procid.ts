@@ -136,6 +136,50 @@ export function compareStartTimes(recorded: string, current: string, launchedAt?
   return compareLegacy(r, Date.parse(c), launchedAt);
 }
 
+/** process → its `lstart` text in this daemon's own environment, keyed by pid AND canonical start. */
+const ownLocaleText = new Map<string, Promise<string | null>>();
+const OWN_LOCALE_LIMIT = 256;
+
+/**
+ * `ps -o lstart=` exactly as an older Wisp ran it: in the daemon's own zone and
+ * locale. Memoized per process, because a process's rendering never changes
+ * and Stop refreshes groups every 50 ms; keying on the canonical start means a
+ * reused pid can never read another process's entry. A failed read is not
+ * cached, so the next check asks again.
+ */
+function ownLocaleLstart(pid: number, current: string): Promise<string | null> {
+  const key = `${pid}@${current}`;
+  const cached = ownLocaleText.get(key);
+  if (cached) return cached;
+  const read = (async (): Promise<string | null> => {
+    try {
+      const proc = Bun.spawn({ cmd: ["ps", "-o", "lstart=", "-p", String(pid)], env: { ...process.env }, stdout: "pipe", stderr: "ignore" });
+      const [out, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      return exitCode === 0 ? out.trim() || null : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (ownLocaleText.size >= OWN_LOCALE_LIMIT) ownLocaleText.delete(ownLocaleText.keys().next().value!);
+  ownLocaleText.set(key, read);
+  void read.then((text) => { if (text === null) ownLocaleText.delete(key); });
+  return read;
+}
+
+/**
+ * `compareStartTimes`, plus the one check it cannot make synchronously. An
+ * older Wisp's token in a locale other than C (`Tue 29 Sep …` in en_GB,
+ * `mar. 29 sept. …` in fr_FR) is unreadable here, but a daemon restarted in
+ * the same zone and locale renders its own process identically, which is what
+ * the old verbatim comparison relied on. Canonical tokens never reach `ps`.
+ */
+export async function matchStartTime(pid: number, recorded: string, current: string, launchedAt?: string | null): Promise<StartMatch> {
+  const match = compareStartTimes(recorded, current, launchedAt);
+  if (match !== "uncertain") return match;
+  const own = await ownLocaleLstart(pid, current);
+  return own !== null && own.replace(/\s+/g, " ") === recorded.trim().replace(/\s+/g, " ") ? "same" : "uncertain";
+}
+
 /** A process's canonical start token from the `lstart=` text a `psTimeEnv()` ps printed. */
 function tokenFromLstart(text: string): string | null {
   const at = lstartWallClock(text);

@@ -22,7 +22,7 @@ import * as procid from "../src/procid";
 import { compareStartTimes, lstartWallClock, processStartTime, readProcessStartTime } from "../src/procid";
 import { signalProcessGroup } from "../src/process-tree";
 import { pidIdentity } from "../src/process-watch";
-import { interruptTurn, recoverOrphanedTurns } from "../src/runner";
+import { interruptTurn, killTurnForArchive, recoverOrphanedTurns } from "../src/runner";
 import { createTask, createTurn, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
 import { backgroundWork, recordProcessGroup, refreshProcessGroups } from "../src/task-processes";
 
@@ -276,15 +276,92 @@ describe("restart recovery keeps a live harness across a timezone change", () =>
   }, 20_000);
 });
 
-describe("background groups keep their owner across a timezone change", () => {
-  function finishedTurnWithGroup(pid: number, token: string): { taskId: string; turnId: number } {
-    const task = createTask({ id: newTaskId(), title: "group identity", repo_path: "/tmp/repo", harness: "fake", model: null, slot: freeSlot() });
-    const turnId = createTurn(task.id, 1, "old turn", pid, "/dev/null", token);
-    recordProcessGroup(turnId);
-    finishTurn(turnId, "done", 0, "result");
-    transition(task.id, "done", "result");
-    return { taskId: task.id, turnId };
+test("force-archive refuses an unverifiable turn before marking it killed for archive", async () => {
+  const child = sleeper();
+  const taskId = orphanedTurn(child.pid, processStartTime(child.pid));
+  const read = spyOn(procid, "readProcessStartTime").mockResolvedValue({ kind: "unavailable" });
+  try {
+    await recoverOrphanedTurns({ fake: jsonAdapter }, cfg);
+    await expect(killTurnForArchive(taskId, 50)).rejects.toThrow("could not verify");
+    // Nothing was signalled and nothing claims the turn was killed for archive.
+    expect(alive(child.pid)).toBe(true);
+    expect(turnsFor(taskId)[0]!.interrupt_detail).toBeNull();
+  } finally {
+    read.mockRestore();
   }
+  // When the harness exits on its own it is finalized from its log, not as force-archived.
+  child.kill("SIGKILL");
+  await child.exited;
+  await until(() => turnsFor(taskId)[0]!.status !== "running");
+  expect(turnsFor(taskId)[0]!.status).toBe("done");
+}, 15_000);
+
+function finishedTurnWithGroup(pid: number, token: string): { taskId: string; turnId: number } {
+  const task = createTask({ id: newTaskId(), title: "group identity", repo_path: "/tmp/repo", harness: "fake", model: null, slot: freeSlot() });
+  const turnId = createTurn(task.id, 1, "old turn", pid, "/dev/null", token);
+  recordProcessGroup(turnId);
+  finishTurn(turnId, "done", 0, "result");
+  transition(task.id, "done", "result");
+  return { taskId: task.id, turnId };
+}
+
+describe.skipIf(onLinux)("older identities recorded in a non-C locale", () => {
+  /** Run `work` as a daemon started in this zone and locale. */
+  async function asDaemonIn<T>(tz: string, locale: string, work: () => Promise<T>): Promise<T> {
+    const saved = { TZ: process.env.TZ, LC_ALL: process.env.LC_ALL };
+    process.env.TZ = tz;
+    process.env.LC_ALL = locale;
+    try {
+      return await work();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+  /** What an older Wisp in the current zone and locale stored: the raw `lstart` text. */
+  const ownLocaleToken = (pid: number) =>
+    Bun.spawnSync({ cmd: ["ps", "-o", "lstart=", "-p", String(pid)], env: { ...process.env } }).stdout.toString().trim();
+  const ownLocaleReads = (spawn: { mock: { calls: unknown[][] } }) =>
+    spawn.mock.calls.filter(([options]) => ((options as { cmd?: string[] }).cmd ?? []).join(" ").startsWith("ps -o lstart= -p")).length;
+
+  for (const locale of ["en_GB.UTF-8", "fr_FR.UTF-8"]) {
+    test(`${locale}: a daemon restarted in the same zone and locale still owns its process and group`, async () => {
+      await asDaemonIn(foreignZone(), locale, async () => {
+        const child = sleeper(true);
+        const token = ownLocaleToken(child.pid);
+        // Not the C format, so only the daemon's own rendering can confirm it.
+        expect(lstartWallClock(token)).toBeNull();
+        const { taskId } = finishedTurnWithGroup(child.pid, token);
+        const spawn = spyOn(Bun, "spawn");
+        try {
+          for (let i = 0; i < 5; i++) await refreshProcessGroups(taskId);
+          // One own-locale read for the process, however often Stop refreshes.
+          expect(ownLocaleReads(spawn)).toBe(1);
+        } finally {
+          spawn.mockRestore();
+        }
+        expect(backgroundWork(taskId).state).toBe("running");
+        expect(await pidIdentity(child.pid, token, new Date().toISOString())).toBe("alive");
+        await interruptTurn(taskId, 200);
+        await child.exited;
+        expect(backgroundWork(taskId).state).toBe("none");
+      });
+    }, 15_000);
+  }
+
+  test("a daemon in another locale cannot confirm such a token, and does not guess", async () => {
+    const child = sleeper();
+    const token = await asDaemonIn(foreignZone(), "fr_FR.UTF-8", async () => ownLocaleToken(child.pid));
+    const launchedAt = new Date().toISOString();
+    await asDaemonIn(foreignZone(), "C", async () => {
+      expect(await pidIdentity(child.pid, token, launchedAt)).toBe("unknown");
+    });
+  });
+});
+
+describe("background groups keep their owner across a timezone change", () => {
 
   test("a group recorded in another timezone stays owned, so Stop can stop it", async () => {
     const child = sleeper(true);

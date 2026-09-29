@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 
-import { compareStartTimes, lstartWallClock, psTimeEnv, readProcessStartTime, startToken } from "./procid";
+import { compareStartTimes, lstartWallClock, matchStartTime, psTimeEnv, readProcessStartTime, startToken } from "./procid";
 
 export interface ProcessMember { pid: number; started: string | null }
 export interface GroupMember extends ProcessMember {
@@ -18,6 +18,12 @@ export interface GroupMember extends ProcessMember {
 export function sameProcess(recorded: ProcessMember, current: ProcessMember, launchedAt?: string | null): boolean {
   return recorded.pid === current.pid && recorded.started !== null && current.started !== null &&
     compareStartTimes(recorded.started, current.started, launchedAt) === "same";
+}
+
+/** `sameProcess`, also confirming an older Wisp's token that only this daemon's own locale can read. */
+export async function sameProcessConfirmed(recorded: ProcessMember, current: ProcessMember, launchedAt?: string | null): Promise<boolean> {
+  return recorded.pid === current.pid && recorded.started !== null && current.started !== null &&
+    (await matchStartTime(current.pid, recorded.started, current.started, launchedAt)) === "same";
 }
 
 /**

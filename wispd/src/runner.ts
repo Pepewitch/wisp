@@ -751,6 +751,12 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     await assertTaskProcessesEnded(taskId);
     return;
   }
+  // Nothing below may run on a pid that cannot be proven ours: it would signal
+  // nothing, then mark a turn that is still running as killed for archive.
+  if (!liveChildren.has(turn.id) && turn.pid &&
+    (await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)) === "unknown") {
+    throw new Error(`could not verify pid ${turn.pid} is still turn ${turn.n}'s process; refusing to archive`);
+  }
   markInterrupted(turn.id, FORCE_ARCHIVE_DETAIL);
   await closeLiveInput(taskId, turn.id);
   await signalTurn(turn, "SIGTERM");

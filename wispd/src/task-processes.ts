@@ -1,7 +1,7 @@
 import { PROCESS_BOOT_ID } from "./process-boot";
 import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
-import { processNames, processSnapshot, sameProcess, type GroupMember, type ProcessMember } from "./process-snapshot";
+import { processNames, processSnapshot, sameProcessConfirmed, type GroupMember, type ProcessMember } from "./process-snapshot";
 import type { BackgroundGroup, BackgroundWork } from "./types";
 
 interface GroupRow {
@@ -64,17 +64,15 @@ function groupLeaderReplacedAfterTurn(leader: GroupMember, turn: NonNullable<Ret
   return leader.observedStartedAt > endedAt;
 }
 
-function historicalGroupIdentity(
+async function historicalGroupIdentity(
   row: Pick<GroupRow, "boot_id" | "pgid">,
   leader: GroupMember | undefined,
   turn: ReturnType<typeof getTurn>,
-): { reused: boolean; ended: boolean } {
+): Promise<{ reused: boolean; ended: boolean }> {
   // Not proven to be the turn's own leader: a different start, or one that
   // cannot be confirmed. The turn row's launch time pins an older token's zone.
-  const reused = Boolean(
-    leader?.started && turn?.pid_start_time &&
-      !sameProcess({ pid: row.pgid, started: turn.pid_start_time }, leader, turn.started_at),
-  );
+  const reused = Boolean(leader?.started && turn?.pid_start_time) &&
+    !(await sameProcessConfirmed({ pid: row.pgid, started: turn!.pid_start_time }, leader!, turn!.started_at));
   return {
     reused,
     ended: Boolean(row.boot_id === null && reused && leader && turn && groupLeaderReplacedAfterTurn(leader, turn)),
@@ -183,23 +181,29 @@ async function nameGroups(groups: { turnId: number; pids: number[] }[]): Promise
 }
 
 /** What one inventory says about one recorded group. Ownership lives here alone. */
-function groupState(
+async function groupState(
   row: GroupRow,
   members: GroupMember[],
   turn: ReturnType<typeof getTurn>,
   exitedTurnId?: number,
-): GroupRow["state"] {
+): Promise<GroupRow["state"]> {
   const leader = members.find(member => member.pid === row.pgid);
   // Never adopt a group whose leader has a different or unconfirmable
   // identity; preserve files instead of assuming the old work ended.
-  const identity = historicalGroupIdentity(row, leader, turn);
+  const identity = await historicalGroupIdentity(row, leader, turn);
   const sameBoot = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id === PROCESS_BOOT_ID;
   const rebooted = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id !== PROCESS_BOOT_ID;
   if (!members.length || rebooted || identity.ended) return "none";
   if (identity.reused || !sameBoot) return "unknown";
   // Only the leader's launch is known, so only its entry gets the anchor.
-  const recognized = knownMembers(row.members_json).some(old =>
-    members.some(member => sameProcess(old, member, old.pid === row.pgid ? turn?.started_at : null)));
+  let recognized = false;
+  for (const old of knownMembers(row.members_json)) {
+    const member = members.find(candidate => candidate.pid === old.pid);
+    if (member && await sameProcessConfirmed(old, member, old.pid === row.pgid ? turn?.started_at : null)) {
+      recognized = true;
+      break;
+    }
+  }
   return recognized || (row.turn_id === exitedTurnId && localGroups.has(row.turn_id)) ? "running" : "unknown";
 }
 
@@ -224,7 +228,7 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
     for (const row of pending) {
       const members = inventory.filter(member => member.pgid === row.pgid);
       const original = getTurn(row.turn_id);
-      const state = groupState(row, members, original, exitedTurnId);
+      const state = await groupState(row, members, original, exitedTurnId);
       if (state === "none" || row.turn_id === exitedTurnId) localGroups.delete(row.turn_id);
       const identities = state === "running" ? JSON.stringify(members.map(({ pid, started }) => ({ pid, started }))) : row.members_json;
       if (state !== row.state || identities !== row.members_json) {

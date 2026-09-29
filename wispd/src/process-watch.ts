@@ -1,7 +1,7 @@
 import { trackHomeWork } from "./home-lifetime";
 import { closeSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { compareStartTimes, readProcessStartTime } from "./procid";
+import { matchStartTime, readProcessStartTime } from "./procid";
 import { signalProcessTree } from "./process-tree";
 
 /**
@@ -34,7 +34,7 @@ export async function pidIdentity(pid: number, expectedStart: string | null, lau
   const actual = await readProcessStartTime(pid);
   if (actual.kind === "absent") return "dead";
   if (actual.kind === "unavailable") return "unknown";
-  const match = compareStartTimes(expectedStart, actual.token, launchedAt);
+  const match = await matchStartTime(pid, expectedStart, actual.token, launchedAt);
   return match === "same" ? "alive" : match === "different" ? "gone" : "unknown";
 }
 
