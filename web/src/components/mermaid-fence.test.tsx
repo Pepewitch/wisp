@@ -12,7 +12,8 @@ const getDiagramFromText = vi.hoisted(() => vi.fn())
 vi.mock("@streamdown/mermaid", () => ({
   mermaid: { name: "mermaid", type: "diagram", language: "mermaid", getMermaid },
 }))
-vi.mock("mermaid", () => ({ default: { mermaidAPI: { getDiagramFromText } } }))
+const parseDiagram = vi.hoisted(() => vi.fn())
+vi.mock("mermaid", () => ({ default: { mermaidAPI: { getDiagramFromText, parse: parseDiagram } } }))
 // the real sanitizer, spied so one test can let an anchor through to the viewer
 vi.mock("@/lib/mermaid-safety", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/mermaid-safety")>()
@@ -33,6 +34,8 @@ describe("a hostile mermaid fence", () => {
     getMermaid.mockImplementation(() => ({ render: renderDiagram }))
     getDiagramFromText.mockReset()
     getDiagramFromText.mockResolvedValue({ db: {} })
+    parseDiagram.mockReset()
+    parseDiagram.mockResolvedValue({ diagramType: "flowchart-v2", config: {} })
     vi.mocked(safety.sanitizeMermaidSvg).mockClear()
     localStorage.clear()
     themeStore.set(DEFAULT_THEME_PREFERENCE)
@@ -78,7 +81,20 @@ describe("a hostile mermaid fence", () => {
     expect(screen.queryByRole("application", { name: "Mermaid diagram" })).toBeNull()
     expect(container.querySelector("pre")?.textContent).toContain("a --> b")
     fireEvent.click(screen.getByRole("button", { name: "Render diagram" }))
-    expect(await screen.findByText(/loads an image from the network/)).toBeInTheDocument()
+    expect(await screen.findByText(/from the network/)).toBeInTheDocument()
+  })
+
+  /** Class and state diagrams apply `style`/`classDef` CSS themselves, during layout. */
+  it.each([
+    ["a class style", `classDiagram\n  class K1\n  style K1 fill:url(${EVIL}/classstyle)`],
+    ["a state classDef", `stateDiagram-v2\n  [*] --> S1\n  classDef bad background-image:url(${EVIL}/s.png)\n  class S1 bad`],
+  ])("leaves a diagram with %s that loads a URL as its source", async (_, diagram) => {
+    renderDiagram.mockResolvedValue({ svg: "<svg></svg>" })
+    const { container } = render(<Prose text={"```mermaid\n" + diagram + "\n```"} />)
+
+    await waitFor(() => expect(parseDiagram).toHaveBeenCalled())
+    expect(renderDiagram).not.toHaveBeenCalled()
+    expect(container.querySelector("pre")?.textContent).toContain("url(")
   })
 
   /** The second line: an anchor that got past the sanitizer still cannot navigate. */

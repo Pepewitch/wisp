@@ -5,6 +5,7 @@ import {
   MERMAID_SAFE_CONFIG,
   neutralizeCss,
   refuseRemoteDiagramImages,
+  refuseRemoteDiagramStyles,
   sanitizeMermaidSvg,
 } from "./mermaid-safety"
 
@@ -131,6 +132,40 @@ describe("MERMAID_SAFE_CONFIG", () => {
     for (const tag of ["img", "image", "a", "form", "input", "button", "select", "textarea", "style"]) {
       expect(MERMAID_SAFE_CONFIG.dompurifyConfig.FORBID_TAGS).toContain(tag)
     }
+  })
+})
+
+describe("refuseRemoteDiagramStyles", () => {
+  const PARSED = { diagramType: "flowchart-v2", config: {} }
+
+  /** Each of these made Chrome request its URL during mermaid's layout. */
+  it.each([
+    ["a class diagram style", `classDiagram\n  class K1\n  style K1 fill:url(${EVIL}/classstyle),background-image:url(${EVIL}/classstyle2)`],
+    ["a state diagram classDef", `stateDiagram-v2\n  [*] --> S1\n  classDef bad background-image:url(${EVIL}/stateclassdef.png)\n  class S1 bad`],
+    ["a flowchart linkStyle", `flowchart TD\n  A --> B\n  linkStyle 0 stroke:url(${EVIL}/link.svg#p)`],
+    ["a relative themeVariables url()", `%%{init:{"themeVariables":{"nodeBorder":"url(x)"}}}%%\nflowchart TD\n  A --> B`],
+    ["an escaped url()", `classDiagram\n  class K1\n  style K1 fill:u\\72 l(${EVIL}/escaped)`],
+    ["an image-set()", `classDiagram\n  class K1\n  style K1 background:image-set("${EVIL}/set.png" 1x)`],
+  ])("refuses %s", (_, source) => {
+    expect(() => refuseRemoteDiagramStyles(source, PARSED)).toThrow(/network/)
+  })
+
+  it("refuses a url() that only appears once the directive's JSON is decoded", () => {
+    const source = '%%{init:{"themeVariables":{"nodeBorder":"url\\u0028x)"}}}%%\nflowchart TD\n  A --> B'
+    expect(source).toContain("url\\u0028x)")
+    expect(() => refuseRemoteDiagramStyles(source, PARSED)).not.toThrow()
+    const decoded = { ...PARSED, config: { themeVariables: { nodeBorder: "url(x)" } } }
+    expect(() => refuseRemoteDiagramStyles(source, decoded)).toThrow(/network/)
+  })
+
+  /** Theming, colours and local marker references keep working. */
+  it("lets ordinary styling through", () => {
+    const source =
+      `%%{init:{"themeVariables":{"primaryColor":"#ff0000"}}}%%\nflowchart TD\n  A --> B\n` +
+      "  classDef hot fill:#f96,stroke:#333,stroke-width:2px\n  class A hot\n  style B fill:#bbf\n  linkStyle 0 stroke:#f00"
+    const parsed = { ...PARSED, config: { themeVariables: { primaryColor: "#ff0000" } } }
+    expect(() => refuseRemoteDiagramStyles(source, parsed)).not.toThrow()
+    expect(() => refuseRemoteDiagramStyles("flowchart TD\n  A --> B\n  style A fill:url(#pattern)", PARSED)).not.toThrow()
   })
 })
 

@@ -34,6 +34,13 @@ export const HOSTILE_PROSE = [
     "```",
   // an image shape, which mermaid loads during layout: it must stay source
   "```mermaid\nflowchart TD\n" + `  S@{ img: "${BEACON}/shape.png", label: "image shape fixture" }\n` + "```",
+  // class and state diagrams apply style/classDef CSS during layout, outside any
+  // sanitizer, and themeVariables accept a relative url(): all must stay source
+  "```mermaid\nclassDiagram\n  class K1\n" +
+    `  style K1 fill:url(${BEACON}/classstyle),background-image:url(${BEACON}/classstyle2)\n` + "```",
+  "```mermaid\nstateDiagram-v2\n  [*] --> S1\n" +
+    `  classDef bad background-image:url(${BEACON}/stateclassdef.png)\n  class S1 bad\n` + "```",
+  '```mermaid\n%%{init:{"themeVariables":{"nodeBorder":"url(wisp-mermaid-beacon-theme)"}}}%%\nflowchart TD\n  T1 --> T2\n```',
   // and diagrams that must still render as they always have
   "```mermaid\nflowchart LR\n  N1[\"first line<br>second line\"] --> N2\n  subgraph G [Grouped fixture]\n    N3 --> N4\n  end\n```",
   "```mermaid\nsequenceDiagram\n  Alice->>Bob: Sequence fixture\n  Bob-->>Alice: Reply\n```",
@@ -41,7 +48,7 @@ export const HOSTILE_PROSE = [
   // DOM clobbering: an agent id that shadows the app's own runtime check
   '<div id="isTauri">clobber fixture</div>\n\n[External link fixture](https://example.invalid/wisp-link-fixture)',
 ];
-/** Diagrams in HOSTILE_PROSE that render: all but the image shape, plus `A --> B`. */
+/** Diagrams in HOSTILE_PROSE that render (not the image shape or url() styles), plus `A --> B`. */
 const RENDERED_DIAGRAMS = 5;
 
 /**
@@ -63,9 +70,10 @@ export async function checkHostileContent(page: HostilePage, { check, waitInPage
     ["first line", "second line", "Grouped fixture", "Sequence fixture", "ClassFixture", "Session expired"].every(part => text.includes(part)),
     text.slice(0, 500));
   const count = Number(await page.evaluate(`${diagrams}.length`));
-  const shapeSource = await page.evaluate(`Array.from(document.querySelectorAll('pre')).some(pre => pre.textContent.includes('image shape fixture'))`);
-  check("a diagram with a remote image shape stays source", count === RENDERED_DIAGRAMS && shapeSource === true,
-    `${count} diagrams rendered; image-shape source visible: ${String(shapeSource)}`);
+  const shapeSource = await page.evaluate(`['image shape fixture', 'classstyle2', 'stateclassdef', 'beacon-theme'].every(part =>
+    Array.from(document.querySelectorAll('pre')).some(pre => pre.textContent.includes(part)))`);
+  check("diagrams with a remote image shape or url() styles stay source", count === RENDERED_DIAGRAMS && shapeSource === true,
+    `${count} diagrams rendered; every refused fence visible as source: ${String(shapeSource)}`);
   const surviving = await page.evaluate(`${diagrams}.flatMap(svg => Array.from(svg.querySelectorAll('a, form, input, button, select, textarea, img'))).map(e => e.outerHTML.slice(0, 160))`) as string[];
   check("no link, form, or image element survives in a diagram", surviving.length === 0, surviving.join("; "));
   check("no diagram references the remote origin", await page.evaluate(`${diagrams}.every(svg => !svg.outerHTML.includes('wisp-mermaid-beacon'))`) === true, "a beacon URL is in the rendered SVG");

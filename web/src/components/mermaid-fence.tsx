@@ -158,6 +158,7 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
           })
           // An agent's diagram must not fetch anything nobody asked for; see
           // `mermaid-safety.ts` for why this takes a parse, a config and a pass.
+          safety.refuseRemoteDiagramStyles(settled, await core.mermaidAPI.parse(settled))
           safety.refuseRemoteDiagramImages(await core.mermaidAPI.getDiagramFromText(settled))
           const { svg } = await mermaid.render(nextMermaidId(), settled)
           return safety.sanitizeMermaidSvg(svg)

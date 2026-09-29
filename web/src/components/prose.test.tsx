@@ -23,7 +23,12 @@ vi.mock("@streamdown/mermaid", () => ({
 }))
 // the fence parses before it renders, to refuse remote image shapes
 vi.mock("mermaid", () => ({
-  default: { mermaidAPI: { getDiagramFromText: vi.fn(async () => ({ db: {} })) } },
+  default: {
+    mermaidAPI: {
+      parse: vi.fn(async () => ({ diagramType: "flowchart-v2", config: {} })),
+      getDiagramFromText: vi.fn(async () => ({ db: {} })),
+    },
+  },
 }))
 
 /**

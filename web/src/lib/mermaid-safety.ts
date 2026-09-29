@@ -20,9 +20,11 @@ import type { MermaidConfig } from "mermaid"
  * 1. `MERMAID_SAFE_CONFIG` — label HTML is purified before mermaid measures it,
  *    and a diagram's own `%%{init}%%` or front-matter cannot turn that off,
  *    re-enable HTML labels, or inject CSS.
- * 2. `refuseRemoteDiagramImages` — an image shape (`A@{ img: … }`) is loaded
- *    by mermaid during layout, before anything returns, so a diagram that
- *    names a remote one is not rendered at all and stays source.
+ * 2. `refuseRemoteDiagramImages` and `refuseRemoteDiagramStyles` — an image
+ *    shape (`A@{ img: … }`) is loaded by mermaid during layout, and class and
+ *    state diagrams apply `style`/`classDef` CSS themselves, outside any
+ *    sanitizer; `themeVariables` accept `url(x)` too. A diagram that names
+ *    one of those is not rendered at all and stays source.
  * 3. `sanitizeMermaidSvg` — what reaches `dangerouslySetInnerHTML` has no
  *    remote reference and nothing to click or submit.
  */
@@ -132,9 +134,34 @@ export function refuseRemoteDiagramImages(diagram: unknown): void {
   for (const vertex of list) {
     const img = (vertex as { img?: unknown } | null)?.img
     if (typeof img === "string" && img.trim() !== "" && !isInlineImage(img)) {
-      throw new Error("This diagram loads an image from the network, so it is shown as source.")
+      throw new Error(NETWORK_REFUSAL)
     }
   }
+}
+
+const NETWORK_REFUSAL = "This diagram would load something from the network, so it is shown as source."
+
+/**
+ * Refuse, before rendering, a diagram whose CSS could make a request.
+ *
+ * `source` is checked whole rather than line by line: `style`, `classDef` and
+ * `linkStyle` values, directives and front matter can all carry a `url()`,
+ * and a label that merely mentions one is rare enough to show as source.
+ * `parsed` is what `mermaidAPI.parse` returns; its `config` is the directive
+ * after JSON or YAML decoding, which is where an escaped `(` becomes the
+ * `(` of a `themeVariables` `url(x)`.
+ */
+export function refuseRemoteDiagramStyles(source: string, parsed: unknown): void {
+  const config = (parsed as { config?: unknown } | null)?.config
+  if (cssRequestsSomething(source) || (config !== undefined && cssRequestsSomething(JSON.stringify(config) ?? ""))) {
+    throw new Error(NETWORK_REFUSAL)
+  }
+}
+
+/** A request-making `url()` or `image-set()`. `@import` cannot occur in a declaration. */
+function cssRequestsSomething(text: string): boolean {
+  const plain = plainCss(text)
+  return REMOTE_URL.test(plain) || /image-set\(/i.test(plain)
 }
 
 /** CSS with its escapes decoded and comments dropped: what a browser reads. */

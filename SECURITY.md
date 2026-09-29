@@ -136,9 +136,10 @@ requests. Wisp does not proxy arbitrary image URLs through the daemon.
 
 Mermaid diagrams in agent output render without that prompt, so they may not
 load anything: labels are stripped of images, links, forms and CSS `url()`
-before Mermaid lays them out, a diagram whose image shape names a remote URL
-stays as source, and the returned SVG is sanitized again so no remote reference
-or anchor reaches the page. Diagram directives cannot re-enable HTML labels or
+before Mermaid lays them out; a diagram whose image shape names a URL, or whose
+styles, class definitions, directives or front matter contain a `url()` or
+`image-set()`, stays as source; and the returned SVG is sanitized again so no
+remote reference or anchor reaches the page. Diagram directives cannot re-enable HTML labels or
 inject CSS. The Desktop webview policy also sets `object-src`, `base-uri` and
 `form-action` to `'none'`.
 
