@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { Drawer } from "@base-ui/react/drawer"
 import { CleanupPanel } from "./cleanup-panel"
 
@@ -7,12 +7,22 @@ import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { Meta, StateDot, Tab } from "@/components/primitives"
 import { formatTokens } from "@/lib/format"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 
-type MobileTab = "chat" | "changes" | "workflows" | "terminal"
+type MobileTab = "chat" | "brief" | "changes" | "workflows" | "terminal"
+
+const TAB_LABEL: Record<MobileTab, string> = {
+  chat: "Chat",
+  brief: "Brief",
+  changes: "Changes",
+  workflows: "Workflows",
+  terminal: "Terminal",
+}
 
 /**
  * Below the `md` breakpoint (useIsMobile). The three-pane grid does not shrink
@@ -45,7 +55,7 @@ type MobileTab = "chat" | "changes" | "workflows" | "terminal"
  *
  *  - drawer task rows are the TWO-LINE touch variant. The desktop row defers
  *    branch and state to a hover card, and a finger cannot hover.
- *  - the composer is pinned on Chat, Changes, and Workflows but NOT on
+ *  - the composer is pinned on Chat, Brief, Changes, and Workflows but NOT on
  *    Terminal, where the shell itself is the input and a second one would
  *    fight the keyboard.
  *
@@ -58,6 +68,7 @@ export function MobileShell({
   sidebar,
   conversation,
   changes,
+  brief,
   workflows,
   terminal,
   composer,
@@ -72,6 +83,12 @@ export function MobileShell({
   sidebar: (dismiss: () => void) => ReactNode
   conversation: ReactNode
   changes: ReactNode
+  /**
+   * The task brief, a surface level with Changes. Absent when the connected
+   * daemon has no briefs. It is handed a way back to the chat because "Show
+   * in conversation" must land on a transcript that is on screen.
+   */
+  brief?: (showChat: () => void) => ReactNode
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
   terminal: ReactNode
@@ -94,9 +111,8 @@ export function MobileShell({
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
-  const tabs: MobileTab[] = workflows === undefined
-    ? ["chat", "changes", "terminal"]
-    : ["chat", "changes", "workflows", "terminal"]
+  const tabs = surfaceTabs(brief !== undefined, workflows !== undefined)
+  useChatOnFind(setTab)
 
   // a task switch is always about reading the conversation next
   const [seenTask, setSeenTask] = useState(task?.id)
@@ -223,8 +239,8 @@ export function MobileShell({
         className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-1.5"
       >
         {tabs.map((t) => (
-          <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 justify-center">
-            {t === "chat" ? "Chat" : t === "changes" ? "Changes" : t === "workflows" ? "Workflows" : "Terminal"}
+          <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 basis-auto justify-center px-1">
+            {TAB_LABEL[t]}
           </Tab>
         ))}
       </div>
@@ -235,6 +251,7 @@ export function MobileShell({
             conversation's scroll position or tear down a live shell */}
         {firstRun}
         {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
+        {!firstRun && brief && <Pane show={tab === "brief"}>{brief(() => setTab("chat"))}</Pane>}
         {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
         {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
         {!firstRun && (
@@ -264,6 +281,32 @@ export function MobileShell({
       </Drawer.Root>
     </div>
   )
+}
+
+function surfaceTabs(brief: boolean, workflows: boolean): MobileTab[] {
+  return [
+    "chat",
+    ...(brief ? (["brief"] as const) : []),
+    "changes",
+    ...(workflows ? (["workflows"] as const) : []),
+    "terminal",
+  ]
+}
+
+/**
+ * Find-in-task searches the transcript, which the Brief tab hides: a find
+ * from anywhere (the task menu, ⌘F) gives the chat back first.
+ */
+function useChatOnFind(setTab: (update: (current: MobileTab) => MobileTab) => void) {
+  const { connectionId } = useDaemonRuntime()
+  const intents = uiIntentsFor(connectionId)
+  const findSeq = useSyncExternalStore(intents.subscribe, () => intents.findRequest()?.seq ?? 0)
+  const seenFind = useRef(findSeq)
+  useEffect(() => {
+    if (findSeq === seenFind.current) return
+    seenFind.current = findSeq
+    setTab((current) => (current === "brief" ? "chat" : current))
+  }, [findSeq, setTab])
 }
 
 /** Kept mounted, hidden when inactive — see the note in MobileShell. */

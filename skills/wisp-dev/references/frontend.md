@@ -1227,54 +1227,61 @@ naming whose filesystem the path is on). The disabled button it replaced meant
 the web UI could not be taken from zero to one project without a terminal, on
 the one surface — a phone — where that costs the most.
 
-## 5k. The task brief — the header's second band
+## 5k. The task brief — a tab of the task panel
 
-`components/task-brief.tsx`. When a task's briefs are on, the reading column
-gets one more band directly under the task header. The header says **which
-task this is**; the brief says **where it stands**. That is the banded-header
-rule (§6b) applied to the pointer shell as well. It is not a tab in the task
-panel: a tab is invisible at the moment of return, which is the moment the
-brief exists for.
+`components/task-brief.tsx` (`BriefPane`). The brief is the first tab of the
+task panel, beside Changes and Workflows, and the tab the panel opens on. The
+header says **which task this is**; the brief says **where it stands**.
 
+It used to be a band under the task header. That took a strip of height from
+the one column you read in, on every task, open or not, and moved the text
+under your eyes whenever a report changed. A tab costs nothing until you look.
+Do not put it back above the conversation.
+
+- **A tab, not a band.** `TaskPanel` builds the strip from the daemon's
+  features: `Brief` (`taskBriefs`) · `Changes` · `Workflows`
+  (`taskWorkflows`). All panes stay mounted, so a scroll position and an open
+  comparison survive a look at the diff. The opening choice is `Brief`; a
+  person's own pick wins after that, and a daemon without briefs opens on
+  Changes with no strip. On touch it is its own surface in the mobile shell's
+  tab strip, level with Changes (`Chat · Brief · Changes · Workflows ·
+  Terminal`); a task still opens on Chat.
+- **One switch, on the tab.** A `role="switch"` row at the top turns briefs on
+  and off for the task (`useBriefSwitch`, shared with the task menu's
+  `Task brief` item, so the two cannot disagree). Its note says what
+  switching does, and that it starts with the NEXT turn, because nothing
+  visible happens on click. An archived task has no switch but keeps the
+  report it has; a harness without `hasBriefs` cannot be switched on and is
+  named as unable.
 - **Two voices, split where the speaker changes.** Your latest words come
   first, exact and in quotes, with a caption of Wisp's own facts (`sent
   mid-turn 4`, `queued for the next turn`, `may not have arrived`). Then a
   labelled divider, `The agent's report`, and below it Goal, Result,
   Remaining, Decision and Scope. The divider borrows the context divider's
   register and carries why the report may be older (`— written before your
-  latest input`). Recorded facts and agent claims never share a sentence.
-- **Collapsed, it is one line.** It shows the decision if one is waiting,
-  otherwise the result, and ONE freshness fact on the right edge. The fact is
-  chosen by priority in `lib/brief.ts`; the best state is a time. No state
-  says "complete", "verified" or "up to date". An empty remaining list reads
-  `Nothing the agent knows of.`, never "Done".
+  latest input`). Recorded facts and agent claims never share a sentence. One
+  freshness line (`turn 4 · 2m ago`) sits above both, chosen by priority in
+  `lib/brief.ts`; the best state is a time. No state says "complete",
+  "verified" or "up to date". An empty remaining list reads `Nothing the agent
+  knows of.`, never "Done".
+- **Always open.** There is nothing to collapse: the tab scrolls within
+  itself. (`lib/brief-open.ts` and its stored preference are gone.)
 - **No accent, no chips.** Send stays the one primary. "Recommended" is a
   check glyph and a muted word, and it marks an option only when the
   recommendation plainly starts with that option's label: the payload names
   its recommendation in prose, and a marker on the wrong option is worse than
-  none. Sentence-case `Brief`, not an eyebrow; the centre pane has none.
-- **Bounded, with one exception to §5 stated plainly.** The band is capped at
-  60% of the column and scrolls within itself only when a long input and an
-  open comparison meet a short window. The conversation remains the one
-  scroller of the conversation. On touch, an open brief REPLACES the
-  transcript (hidden, still mounted) rather than squeezing it, and a find in
-  the task closes it so the match it scrolls to is on screen. The collapsed
-  touch row is its label line plus up to two lines of text.
-- **Open or closed is presentation.** `lib/brief-open.ts` is global and
-  client-local like the theme, defaulting to open on a pointer and closed on
-  touch. It is never sent anywhere: collapsing a brief cannot change whether
-  one is generated.
-- **Reading never writes.** Expanding, Compare, Show all and Show in
-  conversation are local. Show in conversation hands the words to find-in-task
+  none.
+- **Reading never writes.** Compare, Show all and Show in conversation are
+  local. Show in conversation hands the words to find-in-task
   (`openFind(query, turn)`), which already knows how to load pages until a
-  turn is mounted. The task menu's `Task brief` switch (`MenuCheckboxItem`,
-  like Auto-merge) is the band feature's only mutation, and its note says the
-  switch starts with the NEXT turn, because nothing visible happens on click.
-- **Honest absence.** Off, or a daemon without `features.taskBriefs`, renders
-  nothing. On with no report is one line that never guesses why (`Turn 5
-  ended without one.`). A harness without `hasBriefs` is named as unable, and
-  the create composer offers its glyph toggle (§5c-ii's shape, on the scoping
-  row beside the PR picker) only where the harness can publish.
+  turn is mounted. On touch the transcript is another tab, so the shell brings
+  Chat forward first (`onShowConversation`), and any find from elsewhere (the
+  task menu, ⌘F) does the same when the Brief tab is showing. The switch is
+  the tab's only mutation.
+- **Honest absence.** A daemon without `features.taskBriefs` has no tab. On
+  with no report is one line that never guesses why (`Turn 5 ended without
+  one.`). The create composer offers its glyph toggle (§5c-ii's shape, on the
+  scoping row beside the PR picker) only where the harness can publish.
 
 The gallery's *Task brief* section draws every state from real models.
 

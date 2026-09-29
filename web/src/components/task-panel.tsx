@@ -2,15 +2,21 @@ import { useState } from "react"
 
 import { ChangesPane } from "@/components/changes-pane"
 import { Tab } from "@/components/primitives"
+import { BriefPane } from "@/components/task-brief"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
 import { changedFileCount, parseDiff } from "@/lib/diff"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 
+type PanelTab = "brief" | "changes" | "workflows"
+
+const LABEL: Record<PanelTab, string> = { brief: "Brief", changes: "Changes", workflows: "Workflows" }
+
 /**
- * The right column's upper panel. Two views of the same task's durable state:
- * **Changes**, and the **Workflows** watching it.
+ * The right column's upper panel. Three views of the same task's durable state:
+ * the **Brief** (where it stands), its **Changes**, and the **Workflows**
+ * watching it.
  *
  * The frontend reference said Changes "keeps a tab's shape so Checks can slot
  * in beside it later". Workflows is the sibling that arrived first. It belongs
@@ -18,11 +24,16 @@ import type { ApiTask } from "@/lib/types"
  * workflow is standing state you want to SEE: the button only said how many
  * were active, and "what is it waiting for?" cost a modal over the whole app.
  *
- * Both panes stay mounted. Switching to Workflows and back must not close the
+ * The brief joined them for the same reason. As a band above the conversation
+ * it took height from the one column you read in, on every task, whether or
+ * not you wanted it. Here it costs nothing until you look, and it is the tab
+ * the panel opens on: it is the answer to "where did this leave off?".
+ *
+ * All panes stay mounted. Switching to Workflows and back must not close the
  * diff you had open — the same rule the mobile shell's tabs already follow.
  *
- * An older daemon without `taskWorkflows` gets no strip at all: one pane, its
- * own label, exactly as before.
+ * A daemon with neither `taskBriefs` nor `taskWorkflows` gets no strip at
+ * all: one pane, its own label, exactly as before.
  */
 export function TaskPanel({
   task,
@@ -39,22 +50,30 @@ export function TaskPanel({
 }) {
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
-  const supported = Boolean(features.data?.taskWorkflows)
-  const [tab, setTab] = useState<"changes" | "workflows">("changes")
-  const view = supported ? tab : "changes"
+  const workflowsSupported = Boolean(features.data?.taskWorkflows)
+  const briefsSupported = Boolean(features.data?.taskBriefs)
+  const tabs: PanelTab[] = [
+    ...(briefsSupported ? (["brief"] as const) : []),
+    "changes",
+    ...(workflowsSupported ? (["workflows"] as const) : []),
+  ]
+  // What the person last asked for; the Brief is the opening choice. Features
+  // load after first paint, so the choice is held even while it is unavailable.
+  const [tab, setTab] = useState<PanelTab>("brief")
+  const view = tabs.includes(tab) ? tab : "changes"
 
   // Both counts belong to the strip, so it reads the same from either tab.
   // Each is the query the pane below already makes — one key, one request.
   const diff = useDiff(taskId, archived).data
   const changes = diff?.kind === "ok" ? changedFileCount(parseDiff(diff.diff).files, diff.untracked) : undefined
-  const workflows = useTaskWorkflows(taskId, supported).data
+  const workflows = useTaskWorkflows(taskId, workflowsSupported).data
   const attached = workflows?.filter((w) => w.state !== "completed").length ?? 0
 
   // Handed to the VISIBLE pane only: the hidden one keeps its own plain label,
   // so there is never a second tablist in the tree.
-  const strip = supported ? (
+  const strip = tabs.length > 1 ? (
     <div role="tablist" aria-label="Task panel" className="flex items-center gap-0.5">
-      {(["changes", "workflows"] as const).map((name) => (
+      {tabs.map((name) => (
         <Tab
           key={name}
           role="tab"
@@ -64,7 +83,7 @@ export function TaskPanel({
           count={name === "changes" ? changes : attached || undefined}
           onClick={() => setTab(name)}
         >
-          {name === "changes" ? "Changes" : "Workflows"}
+          {LABEL[name]}
         </Tab>
       ))}
     </div>
@@ -74,6 +93,16 @@ export function TaskPanel({
     // h-full AND flex-1: this root fills a resizable panel (which sets a
     // height) as well as a flex column (which does not) — frontend reference §6b
     <div className="flex h-full min-h-0 flex-1 flex-col">
+      {briefsSupported && (
+        <BriefPane
+          // a task's brief belongs to ONE task on ONE daemon
+          key={`${connectionId}:${taskId ?? ""}`}
+          task={task}
+          header={view === "brief" ? strip : undefined}
+          hidden={view !== "brief"}
+          touch={touch}
+        />
+      )}
       <ChangesPane
         taskId={taskId}
         archived={archived}
@@ -82,7 +111,7 @@ export function TaskPanel({
         hidden={view !== "changes"}
         touch={touch}
       />
-      {supported && (
+      {workflowsSupported && (
         <WorkflowsPane
           // a drill-down belongs to ONE task on ONE daemon: switching either
           // must not leave a half-filled form pointing at the wrong place

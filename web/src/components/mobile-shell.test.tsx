@@ -84,6 +84,34 @@ describe("the mobile header", () => {
     expect(screen.getByText("Workflow content").parentElement).not.toHaveAttribute("aria-hidden", "true")
   })
 
+  it("puts the Brief level with Changes, and keeps the chat first", () => {
+    mount({ brief: () => <div>Brief content</div>, workflows: <div /> })
+
+    const tabs = screen.getAllByRole("button", { name: /^(Chat|Brief|Changes|Workflows|Terminal)$/ })
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Brief", "Changes", "Workflows", "Terminal"])
+    for (const tab of tabs) expect(tab.className).toContain("flex-1")
+    // the chat is still where a task opens
+    expect(screen.getByText("Brief content").parentElement).toHaveAttribute("aria-hidden", "true")
+
+    fireEvent.click(screen.getByRole("button", { name: "Brief" }))
+    expect(screen.getByText("Brief content").parentElement).not.toHaveAttribute("aria-hidden", "true")
+  })
+
+  it("hands the Brief a way back to the chat", () => {
+    mount({ brief: (showChat) => <button onClick={showChat}>Back to chat</button>, conversation: <div>Transcript</div> })
+
+    fireEvent.click(screen.getByRole("button", { name: "Brief" }))
+    expect(screen.getByText("Transcript").parentElement).toHaveAttribute("aria-hidden", "true")
+    fireEvent.click(screen.getByRole("button", { name: "Back to chat" }))
+    expect(screen.getByText("Transcript").parentElement).not.toHaveAttribute("aria-hidden", "true")
+  })
+
+  it("omits the Brief when the connected daemon has none", () => {
+    mount()
+
+    expect(screen.queryByRole("button", { name: "Brief" })).not.toBeInTheDocument()
+  })
+
   it("omits Workflows when the connected daemon does not support it", () => {
     mount()
 

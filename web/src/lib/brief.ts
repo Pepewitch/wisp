@@ -1,5 +1,5 @@
 /**
- * The task brief band's words, derived from `GET /api/tasks/:id/brief` and
+ * The task brief's words, derived from `GET /api/tasks/:id/brief` and
  * nothing else — so every sentence the band can say is testable here, away
  * from layout (skills/wisp-dev/references/frontend.md §5k).
  *

@@ -16,7 +16,6 @@ import { AuthDialog } from "@/components/auth-dialog"
 import { DesktopConnectionChrome } from "@/components/connection-chrome"
 import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
-import { BriefedConversation } from "@/components/task-brief"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { Gallery } from "@/components/gallery"
 import { MobileShell } from "@/components/mobile-shell"
@@ -101,31 +100,12 @@ function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
   return <MainView key={runtimeKey} updateControls={updateControls} />
 }
 
-/**
- * Live append frames update the transcript without re-rendering the app shell.
- * The task brief rides with it as the header's second band: above it on a
- * pointer, in place of it on touch while open (task-brief.tsx).
- */
-function StreamedConversation({
-  briefTask,
-  ...props
-}: LiveConversationProps & {
-  /** the header's task row, which carries the brief switch */
-  briefTask: ApiTask | null
-}) {
-  return (
-    <BriefedConversation task={briefTask} touch={props.touch ?? false}>
-      <LiveConversation {...props} />
-    </BriefedConversation>
-  )
-}
-
 type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {
   taskId: string | null
   generation: number
 }
 
-/** The log follow lives down here, so a frame re-renders the transcript and not the brief above it. */
+/** The log follow lives down here, so a frame re-renders the transcript and not the app shell. */
 function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
   const stream = useLogStream(taskId, "activity", generation)
   return <Conversation {...props} stream={stream} note={stream.note} />
@@ -384,10 +364,9 @@ function MainView({
     />
   )
   const conversationNode = (
-    <StreamedConversation
+    <LiveConversation
       taskId={selectedId}
       generation={logGeneration + reconnectRequests}
-      briefTask={header}
       task={detailQuery.data ?? null}
       touch={isMobile}
       hasOlderTurns={detailQuery.hasOlderTurns}
@@ -410,8 +389,10 @@ function MainView({
   const taskSurfaces = buildTaskSurfaces({
     mobile: isMobile,
     workflowsSupported: searchFeature.data?.taskWorkflows === true,
+    briefsSupported: searchFeature.data?.taskBriefs === true,
     connectionId: runtime.connectionId,
-    task,
+    // the header's row: it carries the brief switch, and the list row alone can lag the detail
+    task: header,
     taskId: selectedId,
     archived,
     onRefresh: refreshDiff,
@@ -452,6 +433,7 @@ function MainView({
       sidebar={sidebarNode}
       conversation={conversationNode}
       changes={taskSurfaces.changes}
+      brief={taskSurfaces.brief}
       workflows={taskSurfaces.workflows}
       terminal={taskSurfaces.terminal}
       composer={composerNode}
@@ -478,6 +460,7 @@ function AppShell({
   sidebar,
   conversation,
   changes,
+  brief,
   workflows,
   terminal,
   composer,
@@ -497,6 +480,7 @@ function AppShell({
   }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
+  brief?: (showConversation: () => void) => ReactNode
   workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode
@@ -520,6 +504,7 @@ function AppShell({
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
           changes={changes}
+          brief={brief}
           workflows={workflows}
           terminal={terminal}
           composer={composer}

@@ -1,15 +1,15 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { BriefView } from "../../../shared/task-brief"
 import { api } from "@/lib/api"
-import { resetBriefOpenForTests } from "@/lib/brief-open"
 import type { ApiTask } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { BriefedConversation } from "./task-brief"
+import { BriefPane } from "./task-brief"
+import { TaskPanel } from "./task-panel"
 
 const CONNECTION = "brief-connection"
 
@@ -71,78 +71,89 @@ const VIEW: BriefView = {
   reasons: [],
 }
 
-function stub(brief: BriefView | null, features: Record<string, boolean> = { taskBriefs: true }): string[] {
-  const paths: string[] = []
-  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+interface Call { path: string; method: string; body: unknown }
+
+function stub(brief: BriefView | null, features: Record<string, boolean> = { taskBriefs: true }, hasBriefs = true): Call[] {
+  const calls: Call[] = []
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
-    paths.push(path)
+    calls.push({ path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined })
     const body = path.endsWith("/api/harnesses")
-      ? { harnesses: [], features }
-      : path.endsWith("/brief") ? brief : {}
+      ? { harnesses: [{ name: "codex", hasBriefs }], features }
+      : path.endsWith("/brief") ? brief
+      : path.endsWith("/brief-settings") ? { enabled: !(brief?.enabled ?? false), activation: "next-turn", turnRunning: false }
+      : path.endsWith("/diff") ? { diff: "", untracked: [], base: null, worktreeReason: null }
+      : {}
     return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
   }))
-  return paths
+  return calls
 }
 
-function mount(task: ApiTask, touch = false) {
+const asked = (calls: Call[], suffix: string) => calls.some((c) => c.path.endsWith(suffix))
+
+function mount(task: ApiTask, props: Partial<Parameters<typeof BriefPane>[0]> = {}) {
   const wrapper = runtimeWrapper(fakeDaemonTransport(CONNECTION, { request: api }))
-  return render(
-    <BriefedConversation task={task} touch={touch}>
-      <div data-testid="conversation">the transcript</div>
-    </BriefedConversation>,
-    { wrapper: wrapper as (props: { children: ReactNode }) => ReactNode },
-  )
+  return render(<BriefPane task={task} {...props} />, { wrapper: wrapper as (props: { children: ReactNode }) => ReactNode })
 }
 
-beforeEach(() => resetBriefOpenForTests())
 afterEach(() => vi.unstubAllGlobals())
 
-describe("the task brief band", () => {
-  it("a task with briefs off shows nothing and asks for nothing", async () => {
-    const paths = stub(VIEW)
+describe("the task brief tab", () => {
+  it("a task with briefs off offers the switch and what it does, and asks for no report", async () => {
+    const calls = stub({ ...VIEW, enabled: false })
     mount({ ...TASK, briefEnabled: false })
-    await waitFor(() => expect(paths.some((p) => p.endsWith("/api/harnesses"))).toBe(true))
-    expect(screen.queryByRole("region", { name: "Task brief" })).toBeNull()
-    expect(paths.some((p) => p.endsWith("/brief"))).toBe(false)
-    expect(screen.getByTestId("conversation")).toBeVisible()
+    const toggle = await screen.findByRole("switch", { name: "Task brief" })
+    expect(toggle).toHaveAttribute("aria-checked", "false")
+    expect(await screen.findByText(/the agent saves a short report/)).toBeInTheDocument()
+    expect(asked(calls, "/brief")).toBe(false)
   })
 
-  it("an older daemon without the feature shows nothing", async () => {
-    const paths = stub(VIEW, {})
+  it("an older daemon without the feature shows no switch and asks for nothing", async () => {
+    const calls = stub(VIEW, {})
     mount(TASK)
-    await waitFor(() => expect(paths.some((p) => p.endsWith("/api/harnesses"))).toBe(true))
+    await waitFor(() => expect(asked(calls, "/api/harnesses")).toBe(true))
     // let the features answer land before judging absence
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(screen.queryByRole("region", { name: "Task brief" })).toBeNull()
-    expect(paths.some((p) => p.endsWith("/brief"))).toBe(false)
+    expect(screen.queryByRole("switch")).toBeNull()
+    expect(asked(calls, "/brief")).toBe(false)
   })
 
-  it("opens on a pointer with your words first, then the agent's report under its own divider", async () => {
+  it("switching off writes the task's brief setting, and only that", async () => {
+    const calls = stub(VIEW)
+    mount(TASK)
+    const toggle = await screen.findByRole("switch", { name: "Task brief" })
+    expect(toggle).toHaveAttribute("aria-checked", "true")
+    fireEvent.click(toggle)
+    await waitFor(() => expect(calls.find((c) => c.path.endsWith("/brief-settings"))).toMatchObject({
+      path: `/api/tasks/${TASK.id}/brief-settings`, method: "PUT", body: { enabled: false },
+    }))
+  })
+
+  it("cannot switch on for a harness that cannot write briefs", async () => {
+    stub({ ...VIEW, enabled: false, supported: false }, { taskBriefs: true }, false)
+    mount({ ...TASK, briefEnabled: false })
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Task brief" })).toBeDisabled())
+    expect(screen.getByText("codex can't write briefs through Wisp yet.")).toBeInTheDocument()
+  })
+
+  it("has no switch on an archived task, but still reads the report it has", async () => {
+    stub(VIEW)
+    mount({ ...TASK, archived: true })
+    expect(await screen.findByText("Stop the editor saving twice.")).toBeInTheDocument()
+    expect(screen.queryByRole("switch")).toBeNull()
+  })
+
+  it("shows your words first, then the agent's report under its own divider, with nothing to collapse", async () => {
     stub(VIEW)
     mount(TASK)
-    const band = await screen.findByRole("region", { name: "Task brief" })
-    expect(within(band).getByRole("button", { expanded: true })).toHaveTextContent("Brief")
-    const text = band.textContent ?? ""
+    const pane = await screen.findByRole("region", { name: "Task brief" })
+    await within(pane).findByText("Stop the editor saving twice.")
+    const text = pane.textContent ?? ""
     expect(text.indexOf("You asked")).toBeLessThan(text.indexOf("The agent's report"))
     expect(text.indexOf("The agent's report")).toBeLessThan(text.indexOf("Goal"))
-    expect(within(band).getByText("“Also check autosave, but keep the API.”")).toBeInTheDocument()
-    expect(within(band).getByText("Stop the editor saving twice.")).toBeInTheDocument()
-    expect(within(band).getByText("Guard autosave.")).toBeInTheDocument()
-  })
-
-  it("collapses to one line, remembers that, and never writes to the daemon", async () => {
-    const paths = stub(VIEW)
-    const { unmount } = mount(TASK)
-    const band = await screen.findByRole("region", { name: "Task brief" })
-    const toggle = within(band).getByRole("button", { expanded: true })
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute("aria-expanded", "false")
-    expect(within(band).queryByText("Goal")).toBeNull()
-    expect(toggle).toHaveTextContent("Decision · Where should the guard live?")
-    unmount()
-    mount(TASK)
-    expect(await screen.findByRole("button", { expanded: false })).toBeInTheDocument()
-    expect(paths.every((p) => !p.includes("brief-settings"))).toBe(true)
+    expect(within(pane).getByText("“Also check autosave, but keep the API.”")).toBeInTheDocument()
+    expect(within(pane).getByText("Guard autosave.")).toBeInTheDocument()
+    expect(within(pane).queryByRole("button", { expanded: true })).toBeNull()
   })
 
   it("compares options in place, marking the recommended one", async () => {
@@ -165,41 +176,62 @@ describe("the task brief band", () => {
     expect(uiIntentsFor(CONNECTION).findRequest()).toMatchObject({ query: "Also check autosave, but keep the API.", turn: 4 })
   })
 
-  it("on touch, Show in conversation first gives the transcript back, then finds the words there", async () => {
+  it("on touch, Show in conversation first brings the chat forward, then finds the words there", async () => {
     stub(VIEW)
-    mount(TASK, true)
-    fireEvent.click(await screen.findByRole("button", { expanded: false }))
-    expect(screen.getByTestId("conversation")).not.toBeVisible()
+    const showChat = vi.fn()
+    mount(TASK, { touch: true, onShowConversation: showChat })
     const before = uiIntentsFor(CONNECTION).findRequest()?.seq ?? 0
-    fireEvent.click(screen.getByRole("button", { name: "Show in conversation" }))
-    expect(screen.getByTestId("conversation")).toBeVisible()
+    fireEvent.click(await screen.findByRole("button", { name: "Show in conversation" }))
+    expect(showChat).toHaveBeenCalledOnce()
     await waitFor(() => expect(uiIntentsFor(CONNECTION).findRequest()?.seq ?? 0).toBeGreaterThan(before))
     expect(uiIntentsFor(CONNECTION).findRequest()).toMatchObject({ query: "Also check autosave, but keep the API.", turn: 4 })
-  })
-
-  it("a find from elsewhere (the task menu, ⌘F) closes a touch takeover so the transcript can answer it", async () => {
-    stub(VIEW)
-    mount(TASK, true)
-    fireEvent.click(await screen.findByRole("button", { expanded: false }))
-    expect(screen.getByTestId("conversation")).not.toBeVisible()
-    act(() => uiIntentsFor(CONNECTION).openFind("anything", null))
-    await waitFor(() => expect(screen.getByTestId("conversation")).toBeVisible())
-  })
-
-  it("on touch it starts closed; open, it replaces the transcript instead of squeezing it", async () => {
-    stub(VIEW)
-    mount(TASK, true)
-    const toggle = await screen.findByRole("button", { expanded: false })
-    expect(screen.getByTestId("conversation")).toBeVisible()
-    fireEvent.click(toggle)
-    expect(screen.getByTestId("conversation")).not.toBeVisible()
   })
 
   it("with no report yet it is one honest line", async () => {
     stub({ ...VIEW, report: null, latestEligibleTurn: null, reasons: ["no-report"] })
     mount(TASK)
-    const band = await screen.findByRole("region", { name: "Task brief" })
-    expect(band).toHaveTextContent("Starts with the next turn.")
-    expect(within(band).queryByRole("button")).toBeNull()
+    expect(await screen.findByText("Starts with the next turn.")).toBeInTheDocument()
+    expect(screen.queryByText("Goal")).toBeNull()
+  })
+
+  it("stays mounted but hidden when another tab shows", async () => {
+    stub(VIEW)
+    mount(TASK, { hidden: true })
+    const pane = (await screen.findByText("Stop the editor saving twice.", {}, { timeout: 2000 })).closest("[aria-hidden]")
+    expect(pane).toHaveAttribute("aria-hidden", "true")
+  })
+})
+
+describe("the task panel", () => {
+  const panel = () => {
+    const wrapper = runtimeWrapper(fakeDaemonTransport(CONNECTION, { request: api }))
+    return render(<TaskPanel task={TASK} taskId={TASK.id} archived={false} />, { wrapper: wrapper as (props: { children: ReactNode }) => ReactNode })
+  }
+
+  it("opens on the Brief, first in the strip", async () => {
+    stub(VIEW)
+    panel()
+    const tabs = await screen.findByRole("tablist", { name: "Task panel" })
+    expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Brief", "Changes0"])
+    expect(within(tabs).getByRole("tab", { name: "Brief" })).toHaveAttribute("aria-selected", "true")
+    expect((await screen.findByText("Stop the editor saving twice.")).closest("[aria-hidden='true']")).toBeNull()
+  })
+
+  it("keeps the report mounted while Changes shows, and comes back to it", async () => {
+    stub(VIEW)
+    panel()
+    const report = await screen.findByText("Stop the editor saving twice.")
+    fireEvent.click(screen.getByRole("tab", { name: /Changes/ }))
+    expect(report.closest("[aria-hidden='true']")).not.toBeNull()
+    fireEvent.click(screen.getByRole("tab", { name: "Brief" }))
+    expect(report.closest("[aria-hidden='true']")).toBeNull()
+  })
+
+  it("opens on Changes, with no strip, when the daemon has no briefs", async () => {
+    const calls = stub(VIEW, {})
+    panel()
+    await waitFor(() => expect(asked(calls, "/api/harnesses")).toBe(true))
+    await waitFor(() => expect(screen.queryByRole("tablist", { name: "Task panel" })).toBeNull())
+    expect(screen.queryByRole("region", { name: "Task brief" })).toBeNull()
   })
 })
