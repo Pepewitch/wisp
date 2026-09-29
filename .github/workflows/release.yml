@@ -30,6 +30,16 @@ env:
 permissions:
   contents: read
 
+# No job here restores an Actions cache. A tag run can read cache entries
+# written by any run on main, and setup-bun and rust-cache restore executables
+# from them (the bun binary, ~/.cargo/bin). Every job below either holds a
+# release credential or produces bytes that ship (or witness what ships), so
+# each installs its toolchain fresh: setup-bun with `no-cache: true`, and no
+# rust-cache at all. Tag runs never hit rust-cache anyway, because no job of
+# the same name runs on main; they only paid to save it. Checkouts keep no
+# credential, since no job pushes with the checkout token. `workflows:check`
+# enforces all three.
+
 jobs:
   # This credential-free gate owns source identity, history scanning, and the
   # canonical web and Desktop UI bytes. Every platform build starts only after it succeeds.
@@ -45,6 +55,7 @@ jobs:
         with:
           fetch-depth: 0 # full history for Gitleaks and --require-tag
           fetch-tags: true
+          persist-credentials: false
       # checkout resolves a tag event to github.sha and can leave the local
       # tag ref lightweight. Restore the actual remote tag object so the
       # release scripts can prove that the maintainer pushed an annotated tag.
@@ -56,6 +67,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
 
       # releasing.md: never tag an unmerged branch.
@@ -156,6 +168,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - name: restore and verify the annotated release tag
         run: |
           git fetch --force origin \
@@ -164,6 +177,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
       - name: collect the canonical UI bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -220,6 +234,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - name: restore and verify the annotated release tag
         run: |
           git fetch --force origin \
@@ -228,15 +243,12 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: desktop/src-tauri
-          cache-targets: false
       - name: collect the canonical UI bundles
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -266,7 +278,10 @@ jobs:
   # Secrets are isolated to the one job that needs them. It Developer ID signs,
   # notarizes, and staples the daemon app, then signs, notarizes,
   # staples, updater-signs, and negatively tests Desktop in parallel with the
-  # credential-free builders.
+  # credential-free builders. Within the job each secret reaches only the step
+  # that uses it: the certificate its import, the Apple signing identity and
+  # notarization key the build, and the updater key a signing step that
+  # compiles nothing.
   macos-trusted:
     needs: release-source
     if: github.event_name == 'push'
@@ -277,6 +292,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - name: restore and verify the annotated release tag
         run: |
           git fetch --force origin \
@@ -285,31 +301,36 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: desktop/src-tauri
-          cache-targets: false
+      # Presence only: this step reads no signing value except the
+      # notarization key, which it writes to a private file for the build.
       - name: require trusted macOS release credentials
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          HAVE_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          HAVE_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+          HAVE_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+          HAVE_APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER != '' }}
+          HAVE_TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAVE_TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           for name in \
             APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
-            APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY \
-            TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            APPLE_API_ISSUER TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
           do
+            flag="HAVE_$name"
+            test "${!flag}" = true || {
+              echo "missing required macOS release secret: $name" >&2
+              exit 1
+            }
+          done
+          for name in APPLE_API_KEY APPLE_API_PRIVATE_KEY; do
             test -n "${!name}" || {
               echo "missing required macOS release secret: $name" >&2
               exit 1
@@ -331,38 +352,62 @@ jobs:
           test -s "$RUNNER_TEMP/release-ui/web-dist/.vite/manifest.json"
           rm -rf web/ui-dist web/web-dist
           cp -R "$RUNNER_TEMP/release-ui/ui-dist" "$RUNNER_TEMP/release-ui/web-dist" web/
-      - name: build and verify the trusted macOS releases
+      # Its own step, so the certificate and its password never reach the
+      # environment of the build below. The keychain outlives the step; the
+      # build step and the final cleanup delete it.
+      - name: import the Developer ID certificate into a temporary keychain
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           certificate="$RUNNER_TEMP/release-certificate.p12"
           keychain="$RUNNER_TEMP/release-signing.keychain-db"
+          trap 'rm -f "$certificate"' EXIT
+          echo "RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           keychain_password="$(openssl rand -hex 32)"
+          install -m 600 /dev/null "$certificate"
           printf '%s' "$APPLE_CERTIFICATE" | /usr/bin/base64 -D > "$certificate"
-          chmod 0600 "$certificate"
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$certificate" -k "$keychain" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # security(1) takes an import passphrase only as an argument, which
+          # every process on the runner can read. Its interactive mode reads
+          # the same command from stdin instead, and exits non-zero on failure.
+          quote() { local value="${1//\\/\\\\}"; printf '"%s"' "${value//\"/\\\"}"; }
+          printf 'import %s -k %s -f pkcs12 -P %s -T /usr/bin/codesign\n' \
+            "$(quote "$certificate")" "$(quote "$keychain")" \
+            "$(quote "$APPLE_CERTIFICATE_PASSWORD")" | security -q -i
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: -s \
             -k "$keychain_password" "$keychain"
           security list-keychains -d user -s "$keychain"
           security default-keychain -d user -s "$keychain"
-          trap 'security delete-keychain "$keychain" >/dev/null 2>&1 || true; rm -f "$certificate"' EXIT
-          unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD
-
+      # No updater key here: every build script can read this environment.
+      # release-desktop.ts refuses to build if the key is present.
+      - name: build, sign, and notarize the trusted macOS releases
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          # Notarization ends with this step, so its key and the signing
+          # keychain go with it.
+          trap 'rm -f "$APPLE_API_KEY_PATH"; security delete-keychain "$RELEASE_KEYCHAIN" >/dev/null 2>&1 || true' EXIT
           bun run wispd/scripts/release-macos.ts --require-tag --signed
-          target="$RUNNER_TEMP/wisp-desktop-release-signed"
-          WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$target" \
+          WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
             bun run scripts/release-desktop.ts --require-tag --signed
+      # The only step that holds the updater key. It compiles nothing: it signs
+      # the archive the build left, then runs the verifier the build compiled.
+      - name: updater-sign the Desktop archive
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
+            bun run scripts/release-desktop.ts --require-tag --sign-updater
+      - name: verify the updater signature and stage the verifier
+        run: |
+          target="$RUNNER_TEMP/wisp-desktop-release-signed"
           dir="dist/release/$GITHUB_REF_NAME"
           artifact="$dir/wisp-desktop-${GITHUB_REF_NAME}-darwin-arm64.tar.gz"
           signature="$artifact.sig"
@@ -380,6 +425,14 @@ jobs:
           cp "$verifier" "$RUNNER_TEMP/release-verifier/verify-update-signature"
           (cd "$RUNNER_TEMP/release-verifier" &&
             shasum -a 256 verify-update-signature > SHA256SUMS)
+      # A cancelled or timed-out step never runs its trap. This runs anyway.
+      - name: remove signing material
+        if: always()
+        run: |
+          rm -f "${APPLE_API_KEY_PATH:-}" "$RUNNER_TEMP"/AuthKey_*.p8 "$RUNNER_TEMP/release-certificate.p12"
+          if [ -n "${RELEASE_KEYCHAIN:-}" ]; then
+            security delete-keychain "$RELEASE_KEYCHAIN" >/dev/null 2>&1 || true
+          fi
       - name: stage trusted macOS assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -410,6 +463,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - name: restore and verify the annotated release tag
         run: |
           git fetch --force origin \
@@ -418,6 +472,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
       - name: collect release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -525,6 +580,8 @@ jobs:
       # Render from the locally verified manifests and prove both recipes load
       # before the public release exists. Online URL audits follow publication.
       - name: prepare and audit the Homebrew Formula and Cask offline
+        env:
+          RELEASE_NOTES: ${{ steps.version.outputs.notes }}
         run: |
           tap="$GITHUB_WORKSPACE/homebrew-tap"
           git -C "$tap" fetch origin main
@@ -539,7 +596,7 @@ jobs:
             --output "$tap/Casks/wisp-desktop.rb"
           bun run scripts/render-desktop-update-channel.ts \
             --manifest "dist/release/$GITHUB_REF_NAME/release-manifest-desktop-darwin-arm64.json" \
-            --notes "${{ steps.version.outputs.notes }}" \
+            --notes "$RELEASE_NOTES" \
             --output "$tap/updates/wisp-desktop-alpha.json"
           bun run scripts/render-daemon-update-channel.ts \
             --manifest "dist/release/$GITHUB_REF_NAME/release-manifest.json" \
@@ -737,6 +794,7 @@ jobs:
           # branch; a separate checkout below supplies immutable tag inputs.
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - name: require main for manual recovery
         if: github.event_name == 'workflow_dispatch'
         run: test "$GITHUB_REF" = refs/heads/main
@@ -747,6 +805,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
           path: release-source
       - name: restore and verify the annotated release tag
         run: |
@@ -760,16 +819,13 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.3.14
+          no-cache: true
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         if: github.event_name == 'workflow_dispatch'
         with:
           toolchain: 1.96.1
           targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: github.event_name == 'workflow_dispatch'
-        with:
-          workspaces: desktop/src-tauri
       - name: collect updater verifier
         if: github.event_name == 'push'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -783,18 +839,23 @@ jobs:
             shasum -a 256 -c SHA256SUMS &&
             chmod 0755 verify-update-signature)
           echo "WISP_UPDATE_VERIFIER=$RUNNER_TEMP/release-verifier/verify-update-signature" >> "$GITHUB_ENV"
+      # The tap is public, so the checkout needs no credential. The write token
+      # goes to the promotion step only, and the promotion hands it to its
+      # final `git push` alone: never to .git/config, and never to Homebrew,
+      # curl, or the verifier build that run before it.
       - name: checkout the Homebrew tap
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Pepewitch/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           ref: main
           fetch-depth: 0
           path: homebrew-tap
+          persist-credentials: false
       - name: promote the verified public release
         env:
           GH_TOKEN: ${{ github.token }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+          WISP_TAP_PUSH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -o pipefail
           mkdir -p dist/promotion

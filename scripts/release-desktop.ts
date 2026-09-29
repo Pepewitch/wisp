@@ -323,14 +323,49 @@ export function releaseCertificateSource(
   return hasCertificate ? "environment" : "keychain";
 }
 
-function requireReleaseEnvironment(root: string): string {
+/**
+ * The updater signing key. It forges the one signature designed to survive a
+ * GitHub or tap compromise, so it is never in the environment of a build:
+ * every crate's `build.rs` and proc-macro, and every npm build tool, can read
+ * that. `--signed` refuses to build while it is present, and `--sign-updater`
+ * is the separate pass that receives it.
+ */
+export const UPDATER_SIGNING_KEYS = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"] as const;
+
+/** `environment` without the updater signing key, for every child that is not the signer. */
+export function withoutUpdaterSigningKey(
+  environment: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const scrubbed = { ...environment };
+  for (const name of UPDATER_SIGNING_KEYS) delete scrubbed[name];
+  return scrubbed;
+}
+
+export function assertNoUpdaterSigningKey(environment: Record<string, string | undefined>): void {
+  const present = UPDATER_SIGNING_KEYS.filter((name) => environment[name] !== undefined);
+  if (present.length > 0) {
+    throw new Error(
+      `${present.join(" and ")} must not be in the build environment, where every build script can read it; ` +
+        "build with --signed, then updater-sign the archive with --sign-updater in a separate step",
+    );
+  }
+}
+
+function updaterPublicKey(root: string): string {
+  const publicKey = readFileSync(resolve(root, "desktop/src-tauri/updater-public.key"), "utf8").trim();
+  if (!publicKey || publicKey === "UNCONFIGURED") {
+    throw new Error("signed desktop release requires a committed updater public key");
+  }
+  return publicKey;
+}
+
+function requireReleaseEnvironment(root: string): void {
+  assertNoUpdaterSigningKey(process.env);
   for (const name of [
     "APPLE_SIGNING_IDENTITY",
     "APPLE_API_ISSUER",
     "APPLE_API_KEY",
     "APPLE_API_KEY_PATH",
-    "TAURI_SIGNING_PRIVATE_KEY",
-    "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
   ]) {
     if (!process.env[name]) throw new Error(`signed desktop release requires ${name}`);
   }
@@ -340,11 +375,9 @@ function requireReleaseEnvironment(root: string): string {
       throw new Error("signed desktop release requires APPLE_SIGNING_IDENTITY in the login Keychain");
     }
   }
-  const publicKey = readFileSync(resolve(root, "desktop/src-tauri/updater-public.key"), "utf8").trim();
-  if (!publicKey || publicKey === "UNCONFIGURED") {
-    throw new Error("signed desktop release requires a committed updater public key");
-  }
-  return publicKey;
+  // Checked before the build rather than after it, so a missing key costs
+  // seconds rather than a notarized build.
+  updaterPublicKey(root);
 }
 
 function annotatedTagDate(root: string): string {
@@ -355,20 +388,17 @@ function annotatedTagDate(root: string): string {
   return parsed.toISOString();
 }
 
-function signUpdaterArtifact(
-  root: string,
-  artifactPath: string,
-  publicKey: string,
-  targetDir: string,
-): DesktopReleaseManifest["updater"] {
-  run(["bun", "run", "tauri", "signer", "sign", artifactPath], root, process.env);
-  const signaturePath = `${artifactPath}.sig`;
-  const signature = readFileSync(signaturePath, "utf8").trim();
-  if (!signature) throw new Error("Tauri signer produced an empty updater signature");
+/** Where the build pass leaves the independent verifier the signing pass runs. */
+export function updateVerifierPath(targetDir: string): string {
+  return resolve(targetDir, "aarch64-apple-darwin/release/verify-update-signature");
+}
+
+/** Built in the build pass, so the signing pass compiles nothing while it holds the key. */
+function buildUpdateVerifier(root: string, targetDir: string): void {
   run(
     [
       "cargo",
-      "run",
+      "build",
       "--quiet",
       "--locked",
       "--release",
@@ -378,23 +408,96 @@ function signUpdaterArtifact(
       "scripts/update-verifier/Cargo.toml",
       "--bin",
       "verify-update-signature",
-      "--",
-      artifactPath,
-      signaturePath,
-      "desktop/src-tauri/updater-public.key",
     ],
     root,
-    {
-      ...process.env,
-      CARGO_TARGET_DIR: targetDir,
-    },
+    { ...withoutUpdaterSigningKey(process.env), CARGO_TARGET_DIR: targetDir },
   );
-  return {
-    algorithm: "minisign-ed25519",
-    signatureFile: basename(signaturePath),
-    signature,
-    publicKeySha256: createHash("sha256").update(publicKey).digest("hex"),
+}
+
+/** The manifest, then the checksum set that binds it, the archive, and any signature. */
+function writeDesktopRelease(outDir: string, manifest: DesktopReleaseManifest): void {
+  const manifestPath = resolve(outDir, DESKTOP_MANIFEST);
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
+  const updater = manifest.updater;
+  writeFileSync(
+    resolve(outDir, DESKTOP_CHECKSUMS),
+    `${manifest.artifact.sha256}  ${manifest.artifact.file}\n${updater ? `${sha256File(resolve(outDir, updater.signatureFile))}  ${updater.signatureFile}\n` : ""}${sha256File(manifestPath)}  ${DESKTOP_MANIFEST}\n`,
+    { mode: 0o644 },
+  );
+}
+
+export interface SignDesktopUpdateOptions {
+  root?: string;
+  outDir?: string;
+  targetDir?: string;
+  requireTag?: boolean;
+  environment?: Record<string, string | undefined>;
+  /** Writes `<archive>.sig`. The default runs the pinned `tauri signer sign`. */
+  sign?: (archive: string, environment: Record<string, string | undefined>) => void;
+  /** Throws unless the signature verifies. The default runs the built verifier. */
+  verify?: (archive: string, signature: string, publicKey: string) => void;
+}
+
+/**
+ * The second pass of a signed Desktop release: updater-sign the archive the
+ * build pass produced, verify the signature independently, and bind it into
+ * the manifest and checksums. It holds the updater key and builds nothing.
+ */
+export function signDesktopUpdate(options: SignDesktopUpdateOptions = {}): DesktopReleaseManifest {
+  const root = options.root ?? SCRIPT_ROOT;
+  const environment = options.environment ?? process.env;
+  for (const name of UPDATER_SIGNING_KEYS) {
+    if (!environment[name]) throw new Error(`updater signing requires ${name}`);
+  }
+  const publicKey = updaterPublicKey(root);
+  const identity = sourceIdentity(root);
+  assertMacReleaseSource(root, identity, options.requireTag ?? false);
+  const outDir = resolve(root, options.outDir ?? `dist/release/v${VERSION}`);
+  const manifest = JSON.parse(readFileSync(resolve(outDir, DESKTOP_MANIFEST), "utf8")) as DesktopReleaseManifest;
+  const artifactName = `wisp-desktop-v${VERSION}-${DESKTOP_TARGET}.tar.gz`;
+  if (manifest.product !== "wisp-desktop" || manifest.version !== VERSION || manifest.artifact?.file !== artifactName) {
+    throw new Error(`the Desktop manifest does not describe ${artifactName}`);
+  }
+  if (manifest.commit !== identity.commit) {
+    throw new Error(`the Desktop archive was built from ${manifest.commit}, not ${identity.commit}`);
+  }
+  if (manifest.signing?.kind !== "developer-id" || !manifest.signing.notarized) {
+    throw new Error("only a Developer ID signed and notarized Desktop archive is updater-signed");
+  }
+  if (manifest.updater !== null) throw new Error("the Desktop archive is already updater-signed");
+  const artifactPath = resolve(outDir, artifactName);
+  if (statSync(artifactPath).size !== manifest.artifact.size || sha256File(artifactPath) !== manifest.artifact.sha256) {
+    throw new Error("the Desktop archive changed after the build pass; refusing to sign it");
+  }
+  const signaturePath = `${artifactPath}.sig`;
+  rmSync(signaturePath, { force: true });
+  const sign =
+    options.sign ??
+    ((archive: string, env: Record<string, string | undefined>) => {
+      run(["bun", "run", "tauri", "signer", "sign", archive], root, env);
+    });
+  sign(artifactPath, environment);
+  const signature = readFileSync(signaturePath, "utf8").trim();
+  if (!signature) throw new Error("Tauri signer produced an empty updater signature");
+  const publicKeyPath = resolve(root, "desktop/src-tauri/updater-public.key");
+  const verify =
+    options.verify ??
+    ((archive: string, signatureFile: string, key: string) => {
+      const verifier = updateVerifierPath(desktopTargetDir(root, options.targetDir ?? environment.CARGO_TARGET_DIR));
+      run([verifier, archive, signatureFile, key], root, withoutUpdaterSigningKey(environment));
+    });
+  verify(artifactPath, signaturePath, publicKeyPath);
+  const signed: DesktopReleaseManifest = {
+    ...manifest,
+    updater: {
+      algorithm: "minisign-ed25519",
+      signatureFile: basename(signaturePath),
+      signature,
+      publicKeySha256: createHash("sha256").update(publicKey).digest("hex"),
+    },
   };
+  writeDesktopRelease(outDir, signed);
+  return signed;
 }
 
 export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopReleaseManifest {
@@ -406,7 +509,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
   if (signed && !(options.requireTag ?? false)) {
     throw new Error("a signed desktop release requires --require-tag");
   }
-  const updaterPublicKey = signed ? requireReleaseEnvironment(root) : null;
+  if (signed) requireReleaseEnvironment(root);
   const identity = options.identity ?? sourceIdentity(root);
   assertMacReleaseSource(root, identity, options.requireTag ?? false);
   const cargoVersion = desktopPackageVersion(root);
@@ -415,7 +518,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
   }
   const targetDir = desktopTargetDir(root);
   run(["/bin/bash", "scripts/desktop/build-macos.sh", "--app-only"], root, {
-    ...process.env,
+    ...withoutUpdaterSigningKey(process.env),
     CARGO_TARGET_DIR: targetDir,
   });
   const afterBuild = sourceIdentity(root);
@@ -430,7 +533,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
   const artifactName = `wisp-desktop-v${VERSION}-${DESKTOP_TARGET}.tar.gz`;
   const artifactPath = resolve(outDir, artifactName);
   writeFileSync(artifactPath, deterministicAppTarGz(app), { mode: 0o644 });
-  const updater = signed ? signUpdaterArtifact(root, artifactPath, updaterPublicKey!, targetDir) : null;
+  if (signed) buildUpdateVerifier(root, targetDir);
 
   const temp = mkdtempSync(join(tmpdir(), "wisp-desktop-release-"));
   try {
@@ -454,7 +557,8 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
     minimumSystemVersion: DESKTOP_MINIMUM_SYSTEM_VERSION,
     signing,
     publishedAt: signed ? annotatedTagDate(root) : null,
-    updater,
+    // Filled in by the separate --sign-updater pass, which holds the key.
+    updater: null,
     bundle: { directory: "Wisp.app", identifier: DESKTOP_BUNDLE_ID },
     artifact: {
       file: artifactName,
@@ -469,24 +573,22 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
       },
     },
   };
-  const manifestPath = resolve(outDir, DESKTOP_MANIFEST);
-  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 });
-  writeFileSync(
-    resolve(outDir, DESKTOP_CHECKSUMS),
-    `${manifest.artifact.sha256}  ${artifactName}\n${updater ? `${sha256File(resolve(outDir, updater.signatureFile))}  ${updater.signatureFile}\n` : ""}${sha256File(manifestPath)}  ${DESKTOP_MANIFEST}\n`,
-    { mode: 0o644 },
-  );
+  writeDesktopRelease(outDir, manifest);
   return manifest;
 }
 
 if (import.meta.main) {
   try {
-    const requireTag = process.argv.slice(2).includes("--require-tag");
-    const signed = process.argv.slice(2).includes("--signed");
-    const unknown = process.argv.slice(2).filter((arg) => arg !== "--require-tag" && arg !== "--signed");
+    const args = process.argv.slice(2);
+    const requireTag = args.includes("--require-tag");
+    const signed = args.includes("--signed");
+    const signUpdater = args.includes("--sign-updater");
+    const unknown = args.filter((arg) => !["--require-tag", "--signed", "--sign-updater"].includes(arg));
     if (unknown.length > 0) throw new Error(`unknown argument: ${unknown[0]}`);
-    const manifest = releaseDesktop({ requireTag, signed });
-    console.log(`released ${manifest.artifact.file} (${manifest.artifact.sha256}) from ${manifest.commit}`);
+    if (signed && signUpdater) throw new Error("--signed and --sign-updater are separate passes; run them as separate steps");
+    if (signUpdater && !requireTag) throw new Error("updater signing requires --require-tag");
+    const manifest = signUpdater ? signDesktopUpdate({ requireTag }) : releaseDesktop({ requireTag, signed });
+    console.log(`${signUpdater ? "updater-signed" : "released"} ${manifest.artifact.file} (${manifest.artifact.sha256}) from ${manifest.commit}`);
   } catch (error) {
     console.error(`release-desktop: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);

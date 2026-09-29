@@ -23,6 +23,8 @@ import {
   renderTapFiles,
   type ReleaseMetadata,
   TAP_FILES,
+  takeTapPushToken,
+  tapPushEnvironment,
   validateReleaseMetadata,
 } from "./release-promotion";
 
@@ -407,7 +409,7 @@ function auditBeforePromotion(auditDir: string): void {
   ]);
 }
 
-function publishTap(tapDir: string, state: "prepared" | "already-promoted"): string {
+function publishTap(tapDir: string, state: "prepared" | "already-promoted", pushToken: string | undefined): string {
   run(["git", "-C", tapDir, "fetch", "origin", "main"]);
   const head = run(["git", "-C", tapDir, "rev-parse", "HEAD"], { quiet: true });
   const remote = run(["git", "-C", tapDir, "rev-parse", "origin/main"], { quiet: true });
@@ -438,7 +440,7 @@ function publishTap(tapDir: string, state: "prepared" | "already-promoted"): str
     const version = readFileSync(join(tapDir, "Casks/wisp-desktop.rb"), "utf8").match(/version "([^"]+)"/)?.[1];
     if (!version) throw new Error("rendered Cask has no version");
     run(["git", "-C", tapDir, "commit", "-m", `release: update Wisp to ${version}`]);
-    run(["git", "-C", tapDir, "push", "origin", "HEAD:main"]);
+    run(["git", "-C", tapDir, "push", "origin", "HEAD:main"], { env: tapPushEnvironment(pushToken) });
   }
   return run(["git", "-C", tapDir, "rev-parse", "HEAD"], { quiet: true });
 }
@@ -525,6 +527,8 @@ function appendStepSummary(receipt: PromotionReceipt): void {
 }
 
 export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): PromotionReceipt {
+  // First, before any child process can inherit it.
+  const pushToken = takeTapPushToken();
   if (process.platform !== "darwin" || arch() !== "arm64") {
     throw new Error(`release promotion requires a disposable Apple Silicon macOS host, got ${process.platform} ${arch()}`);
   }
@@ -602,7 +606,7 @@ export function promoteRelease(args: PromotionArgs, root = SCRIPT_ROOT): Promoti
       appendStepSummary(receipt);
       return receipt;
     }
-    const tapCommit = stage("publish Homebrew tap", () => publishTap(args.tapDir, tapState));
+    const tapCommit = stage("publish Homebrew tap", () => publishTap(args.tapDir, tapState, pushToken));
     stage("wait for and audit public channel", () => {
       waitForPublicChannels(args.tapDir, workDir);
       auditAfterPromotion();
