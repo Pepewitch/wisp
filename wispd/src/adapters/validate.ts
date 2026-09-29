@@ -40,6 +40,7 @@ const ADAPTER_KEYS = [
   "imageDelivery",
   "liveInput",
   "allowEmptyResult",
+  "endOfOptions",
   "parse",
   "events",
   "activity",
@@ -218,6 +219,12 @@ function applyCoreFields(
       throw new Error(`${label}.allowEmptyResult must be a boolean, got ${typeName(raw.allowEmptyResult)}`);
     }
     merged.allowEmptyResult = raw.allowEmptyResult;
+  }
+  if (raw.endOfOptions !== undefined) {
+    if (typeof raw.endOfOptions !== "boolean") {
+      throw new Error(`${label}.endOfOptions must be a boolean, got ${typeName(raw.endOfOptions)}`);
+    }
+    merged.endOfOptions = raw.endOfOptions;
   }
 }
 

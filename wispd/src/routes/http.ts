@@ -119,11 +119,100 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
   };
 }
 
+/**
+ * The serialized body of each response `json()` built. `finishResponse` reads
+ * it to compress without draining the response's stream back into memory.
+ */
+const jsonBodies = new WeakMap<Response, string>();
+
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(data), {
+  const text = JSON.stringify(data);
+  const response = new Response(text, {
     status,
     headers: { "content-type": "application/json", ...headers },
   });
+  if (typeof text === "string") jsonBodies.set(response, text);
+  return response;
+}
+
+/**
+ * Headers every daemon response carries, whichever route built it: API JSON,
+ * the event and log streams, the diagnostic download and errors included.
+ * `nosniff` stops a browser reading a body as anything but its declared type,
+ * and `same-origin` stops another site embedding one (`<script src>`, `<img>`).
+ * Neither affects the app: it reads the API with `fetch`, which CORP does not
+ * govern, and Desktop's proxy answers its webview with its own CORS headers.
+ */
+export const BASELINE_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
+  "x-content-type-options": "nosniff",
+  "cross-origin-resource-policy": "same-origin",
+};
+
+/**
+ * JSON at least this long is gzipped for a client that accepts it. Smaller
+ * bodies are most responses, and would gain a few hundred bytes at best.
+ */
+export const JSON_GZIP_MIN_CHARS = 8 * 1024;
+
+/** Prefer the supported gzip representation only when the client accepts it. */
+export function acceptsGzip(header: string | null): boolean {
+  if (!header) return false;
+  const qualities = new Map<string, number>();
+  for (const entry of header.split(",")) {
+    const [coding, ...parameters] = entry.split(";");
+    const name = coding?.trim().toLowerCase();
+    if (!name) continue;
+    let quality = 1;
+    for (const parameter of parameters) {
+      const match = parameter.trim().match(/^q\s*=\s*(.*)$/i);
+      if (!match) continue;
+      const parsed = Number(match[1]);
+      quality = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
+    }
+    qualities.set(name, quality);
+  }
+  return (qualities.get("gzip") ?? qualities.get("*") ?? 0) > 0;
+}
+
+/**
+ * Every response on its way out of the daemon: the baseline headers, and gzip
+ * for a large `json()` body when the request accepts it.
+ *
+ * Only `json()` bodies are compressed. Their bytes are one string in memory
+ * already. An SSE or ndjson stream must reach the client as it is produced,
+ * the page and its chunks are compressed once at startup, and attachments
+ * are served as stored. A route's own header wins over a baseline one.
+ */
+export function finishResponse(req: Request, response: Response): Response {
+  let finished = response;
+  const text = jsonBodies.get(response);
+  if (text !== undefined && text.length >= JSON_GZIP_MIN_CHARS && !response.headers.has("content-encoding")) {
+    const headers = new Headers(response.headers);
+    // Either representation may be served for this URL, so a cache must key on it.
+    headers.append("vary", "Accept-Encoding");
+    const gzip = req.method !== "HEAD" && acceptsGzip(req.headers.get("accept-encoding"));
+    if (gzip) {
+      headers.set("content-encoding", "gzip");
+      headers.delete("content-length");
+    }
+    finished = new Response(gzip ? Bun.gzipSync(text, { level: 5 }) : text, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  const missing = Object.entries(BASELINE_RESPONSE_HEADERS).filter(([name]) => !finished.headers.has(name));
+  if (missing.length === 0) return finished;
+  try {
+    for (const [name, value] of missing) finished.headers.set(name, value);
+    return finished;
+  } catch {
+    // A response with immutable headers (Response.redirect, a relayed fetch):
+    // copy it rather than send it without them.
+    const headers = new Headers(finished.headers);
+    for (const [name, value] of missing) headers.set(name, value);
+    return new Response(finished.body, { status: finished.status, statusText: finished.statusText, headers });
+  }
 }
 
 export function err(message: string, status: number): Response {

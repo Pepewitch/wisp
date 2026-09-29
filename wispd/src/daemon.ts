@@ -43,11 +43,12 @@ import {
   postSession,
   tokenAuthorizes,
 } from "./routes/auth";
-import { err, json, routeFailure } from "./routes/http";
+import { acceptsGzip, err, finishResponse, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
 import type { PtySize } from "./pty";
 import { DEFAULT_PTY_SIZE, MAX_SHELLS_PER_TASK, openSession, type TerminalClient } from "./terminal";
+import { TERMINAL_MAX_FRAME_BYTES } from "../../shared/terminal-protocol";
 import { BUILD_INFO } from "./version";
 import { UpdateManager } from "./update";
 import { pullRequestTitleSync } from "./task-update";
@@ -116,29 +117,9 @@ function webAssetResponse(request: Request, web: BundledWeb): Response | null {
   });
 }
 
-/** Prefer the supported gzip representation only when the client accepts it. */
-export function acceptsGzip(header: string | null): boolean {
-  if (!header) return false;
-  const qualities = new Map<string, number>();
-  for (const entry of header.split(",")) {
-    const [coding, ...parameters] = entry.split(";");
-    const name = coding?.trim().toLowerCase();
-    if (!name) continue;
-    let quality = 1;
-    for (const parameter of parameters) {
-      const match = parameter.trim().match(/^q\s*=\s*(.*)$/i);
-      if (!match) continue;
-      const parsed = Number(match[1]);
-      quality = Number.isFinite(parsed) && parsed >= 0 && parsed <= 1 ? parsed : 0;
-    }
-    qualities.set(name, quality);
-  }
-  return (qualities.get("gzip") ?? qualities.get("*") ?? 0) > 0;
-}
-
 // The route handlers live in ./routes now, but tests and the CLI import these
 // names from "./daemon" — the entrypoint's public surface is unchanged.
-export { authorized, postSession, route };
+export { acceptsGzip, authorized, postSession, route };
 
 type TerminalSocketData = {
   taskId: string;
@@ -196,10 +177,21 @@ const JSON_ENVELOPE_HEADROOM_BYTES = 2 * 1024 * 1024;
 export const MAX_REQUEST_BODY_BYTES = MAX_TURN_BASE64_CHARS + JSON_ENVELOPE_HEADROOM_BYTES;
 
 const terminalBindings = new WeakMap<TerminalSocket, { session: ReturnType<typeof openSession>; client: TerminalClient }>();
-/** Deadline timers for sockets still waiting to authenticate, so an unauthenticated one cannot linger. */
-const terminalAuthDeadlines = new WeakMap<TerminalSocket, ReturnType<typeof setTimeout>>();
+/**
+ * Sockets still waiting to authenticate, each with the deadline that closes
+ * it, so an unauthenticated one can neither linger nor multiply.
+ */
+const terminalAuthDeadlines = new Map<TerminalSocket, ReturnType<typeof setTimeout>>();
 /** How long a browser socket has to send its `auth` frame before the daemon closes it. */
-const TERMINAL_AUTH_TIMEOUT_MS = 10_000;
+export const TERMINAL_AUTH_TIMEOUT_MS = 5_000;
+/**
+ * How many sockets may wait for their `auth` frame at once. A page opens one
+ * per shell tab (at most MAX_SHELLS_PER_TASK) and answers on open, so only
+ * something that is not a Wisp page holds more than this.
+ */
+export const MAX_PENDING_TERMINAL_SOCKETS = 16;
+/** `{"type":"auth","token":…}` is the one frame an unauthenticated socket may send. */
+export const TERMINAL_AUTH_FRAME_MAX_BYTES = 4096;
 
 function wsError(ws: TerminalSocket, message: string): void {
   if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", message }));
@@ -214,6 +206,12 @@ function wsError(ws: TerminalSocket, message: string): void {
 function openTerminal(ws: TerminalSocket, cfg: WispConfig): void {
   if (ws.data.authenticated) {
     void attachTerminal(ws, cfg);
+    return;
+  }
+  // 1013 is "try again later", and the client retries on it. No error frame:
+  // one that arrives before hello is a refusal the client will not retry past.
+  if (terminalAuthDeadlines.size >= MAX_PENDING_TERMINAL_SOCKETS) {
+    ws.close(1013, "too many unauthenticated terminal sockets");
     return;
   }
   ws.send(JSON.stringify({ type: "auth_required" }));
@@ -283,6 +281,15 @@ async function attachTerminal(ws: TerminalSocket, cfg: WispConfig): Promise<void
 }
 
 function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffer>, cfg: WispConfig): void {
+  // Checked before parsing: until it authenticates, a socket is anyone's.
+  if (!ws.data.authenticated) {
+    const bytes = typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
+    if (bytes > TERMINAL_AUTH_FRAME_MAX_BYTES) {
+      wsError(ws, "terminal protocol: the auth frame is too large");
+      ws.close(1009, "auth frame too large");
+      return;
+    }
+  }
   let body: unknown;
   try {
     body = JSON.parse(String(message));
@@ -367,6 +374,72 @@ function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffe
     return;
   }
   wsError(ws, `terminal protocol: unknown message type '${String(value.type)}'`);
+}
+
+/**
+ * `GET /api/tasks/:id/terminal`: the upgrade to a terminal socket, or the
+ * response that refuses it. Undefined means the socket was upgraded.
+ */
+function terminalUpgrade(
+  req: Request,
+  url: URL,
+  taskId: string,
+  server: Bun.Server<TerminalSocketData>,
+  cfg: WispConfig,
+): Response | undefined {
+  // A terminal upgrade is command execution, so it is the one route
+  // that must not settle for "the request looked fine". Two gates:
+  //
+  //   Origin — a browser cannot forge it, so a page on another origin
+  //   (another port on this same host included) is refused outright,
+  //   before any lookup. `absent` means no browser sent it: the CLI,
+  //   or the desktop app's native proxy, and those must carry a bearer
+  //   token.
+  //
+  //   Credential — a browser handshake cannot carry a header, so a
+  //   same-origin socket may upgrade unauthenticated and prove itself
+  //   in its first frame instead. It attaches to nothing and spawns
+  //   nothing until it does.
+  const credentialed = authorized(req, cfg);
+  const origin = originVerdict(req, url);
+  if (origin === "foreign") {
+    // Logged as well as answered. The 403 body is the only artifact
+    // that explains this refusal, and a browser never shows a failed
+    // upgrade's body to the page, so without this line the operator's
+    // whole evidence is "the terminal does not open" (#139). The log
+    // is a trusted reader, so it gets the configured set too; the 403
+    // does not, being answered before any credential.
+    const sent = req.headers.get("origin");
+    console.warn(`[wisp] refused terminal upgrade: ${foreignOriginMessage(sent, url.origin, allowedOrigins())}`);
+    return err(foreignOriginMessage(sent, url.origin), 403);
+  }
+  if (!credentialed && origin === "absent") return err("unauthorized", 401);
+  // Whether a task exists is only answered to a caller that already
+  // proved itself; an unauthenticated socket hears it after the
+  // handshake, over the socket, from attachTerminal.
+  if (credentialed) {
+    const task = getTask(taskId);
+    if (!task) return err(`no such task: ${taskId}`, 404);
+    if (task.archived) return err(`task ${taskId} is archived — worktree removed`, 409);
+    if (!task.worktree_path) return err(`task ${taskId} has no worktree_path`, 409);
+  }
+  // ?shell=N addresses one of the pane's tabs; absent means the first,
+  // which is what every pre-tabs client sent
+  const shellParam = url.searchParams.get("shell");
+  const shellId = shellParam === null ? 0 : Number(shellParam);
+  if (!Number.isInteger(shellId) || shellId < 0 || shellId >= MAX_SHELLS_PER_TASK) {
+    return err(`shell must be an integer from 0 to ${MAX_SHELLS_PER_TASK - 1}, got ${JSON.stringify(shellParam)}`, 400);
+  }
+  // ?cols/?rows is the pane's measured geometry. It arrives with the
+  // upgrade so a NEW shell is born at the size that will display it:
+  // the first prompt is drawn once, correctly, instead of being drawn
+  // at a default width and then redrawn when the client reports in.
+  const size = parseTerminalSize(url.searchParams);
+  if (typeof size === "string") return err(size, 400);
+  if (!server.upgrade(req, { data: { taskId, shellId, size, authenticated: credentialed } })) {
+    return err("websocket upgrade failed", 500);
+  }
+  return undefined;
 }
 
 export interface ServeOptions {
@@ -562,6 +635,9 @@ async function serveOwned(
       maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
       websocket: {
         data: {} as TerminalSocketData,
+        // Bun's default is 16 MB, for any socket, before the daemon has read
+        // a byte of it. The web client splits pastes to stay under this.
+        maxPayloadLength: TERMINAL_MAX_FRAME_BYTES,
         open(ws) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
           openTerminal(ws, cfg);
@@ -584,90 +660,11 @@ async function serveOwned(
         },
       },
       fetch(req: Request, server: Bun.Server<TerminalSocketData>): Response | Promise<Response> | undefined {
-        if (stopping) return err("Wisp is shutting down; retry after it restarts.", 503);
-        const url = new URL(req.url);
-        const path = url.pathname;
-        if (path === "/" || path === "/index.html") {
-          const compressed = acceptsGzip(req.headers.get("accept-encoding"));
-          return new Response(compressed ? appGzip : web.html, {
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-              "cache-control": "no-store",
-              "vary": "Accept-Encoding",
-              ...(compressed ? { "content-encoding": "gzip" } : {}),
-              ...pageSecurityHeaders(securityPolicy, url.origin),
-            },
-          });
-        }
-        const webAsset = webAssetResponse(req, web);
-        if (webAsset) return webAsset;
-        const pwa = pwaResponse(req);
-        if (pwa) return pwa;
-        if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
-        // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
-        if (path === "/api/session" && req.method === "POST") return postSession(req, cfg);
-        if (!path.startsWith("/api/")) return err("not found", 404);
-        const terminalMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/terminal$/);
-        if (terminalMatch && req.method === "GET") {
-          const taskId = terminalMatch[1]!;
-          // A terminal upgrade is command execution, so it is the one route
-          // that must not settle for "the request looked fine". Two gates:
-          //
-          //   Origin — a browser cannot forge it, so a page on another origin
-          //   (another port on this same host included) is refused outright,
-          //   before any lookup. `absent` means no browser sent it: the CLI,
-          //   or the desktop app's native proxy, and those must carry a bearer
-          //   token.
-          //
-          //   Credential — a browser handshake cannot carry a header, so a
-          //   same-origin socket may upgrade unauthenticated and prove itself
-          //   in its first frame instead. It attaches to nothing and spawns
-          //   nothing until it does.
-          const credentialed = authorized(req, cfg);
-          const origin = originVerdict(req, url);
-          if (origin === "foreign") {
-            // Logged as well as answered. The 403 body is the only artifact
-            // that explains this refusal, and a browser never shows a failed
-            // upgrade's body to the page, so without this line the operator's
-            // whole evidence is "the terminal does not open" (#139). The log
-            // is a trusted reader, so it gets the configured set too; the 403
-            // does not, being answered before any credential.
-            const sent = req.headers.get("origin");
-            console.warn(`[wisp] refused terminal upgrade: ${foreignOriginMessage(sent, url.origin, allowedOrigins())}`);
-            return err(foreignOriginMessage(sent, url.origin), 403);
-          }
-          if (!credentialed && origin === "absent") return err("unauthorized", 401);
-          // Whether a task exists is only answered to a caller that already
-          // proved itself; an unauthenticated socket hears it after the
-          // handshake, over the socket, from attachTerminal.
-          if (credentialed) {
-            const task = getTask(taskId);
-            if (!task) return err(`no such task: ${taskId}`, 404);
-            if (task.archived) return err(`task ${taskId} is archived — worktree removed`, 409);
-            if (!task.worktree_path) return err(`task ${taskId} has no worktree_path`, 409);
-          }
-          // ?shell=N addresses one of the pane's tabs; absent means the first,
-          // which is what every pre-tabs client sent
-          const shellParam = url.searchParams.get("shell");
-          const shellId = shellParam === null ? 0 : Number(shellParam);
-          if (!Number.isInteger(shellId) || shellId < 0 || shellId >= MAX_SHELLS_PER_TASK) {
-            return err(`shell must be an integer from 0 to ${MAX_SHELLS_PER_TASK - 1}, got ${JSON.stringify(shellParam)}`, 400);
-          }
-          // ?cols/?rows is the pane's measured geometry. It arrives with the
-          // upgrade so a NEW shell is born at the size that will display it:
-          // the first prompt is drawn once, correctly, instead of being drawn
-          // at a default width and then redrawn when the client reports in.
-          const size = parseTerminalSize(url.searchParams);
-          if (typeof size === "string") return err(size, 400);
-          if (!server.upgrade(req, { data: { taskId, shellId, size, authenticated: credentialed } })) {
-            return err("websocket upgrade failed", 500);
-          }
-          return undefined;
-        }
-        if (!authorized(req, cfg)) return err("unauthorized", 401);
-        return lifetime.run(() => lifetime.track(Promise.resolve()
-          .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
-          .catch((e: unknown) => routeFailure(req.method, path, e))));
+        const response = respond(req, server);
+        if (response === undefined) return undefined; // upgraded to a WebSocket
+        return response instanceof Promise
+          ? response.then((finished) => finishResponse(req, finished))
+          : finishResponse(req, response);
       },
     });
   } catch (error) {
@@ -675,6 +672,39 @@ async function serveOwned(
       throw new Error(await portConflictMessage(hostname, port), { cause: error });
     }
     throw error;
+  }
+
+  /** Every route, before `finishResponse` adds the headers and encoding all of them share. */
+  function respond(req: Request, server: Bun.Server<TerminalSocketData>): Response | Promise<Response> | undefined {
+    if (stopping) return err("Wisp is shutting down; retry after it restarts.", 503);
+    const url = new URL(req.url);
+    const path = url.pathname;
+    if (path === "/" || path === "/index.html") {
+      const compressed = acceptsGzip(req.headers.get("accept-encoding"));
+      return new Response(compressed ? appGzip : web.html, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+          "vary": "Accept-Encoding",
+          ...(compressed ? { "content-encoding": "gzip" } : {}),
+          ...pageSecurityHeaders(securityPolicy, url.origin),
+        },
+      });
+    }
+    const webAsset = webAssetResponse(req, web);
+    if (webAsset) return webAsset;
+    const pwa = pwaResponse(req);
+    if (pwa) return pwa;
+    if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
+    // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
+    if (path === "/api/session" && req.method === "POST") return postSession(req, cfg);
+    if (!path.startsWith("/api/")) return err("not found", 404);
+    const terminalMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/terminal$/);
+    if (terminalMatch && req.method === "GET") return terminalUpgrade(req, url, terminalMatch[1]!, server, cfg);
+    if (!authorized(req, cfg)) return err("unauthorized", 401);
+    return lifetime.run(() => lifetime.track(Promise.resolve()
+      .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
+      .catch((e: unknown) => routeFailure(req.method, path, e))));
   }
   const outboxTimer = startOutboxLoop(cfg);
   const stuckTimer = startStuckLoop(cfg);

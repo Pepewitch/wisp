@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { WispConfig } from "../config";
-import { err, json, jsonObjectBody } from "./http";
+import { boundedJsonObjectBody, err, json } from "./http";
 
 /**
  * Constant-time token comparison. Both sides are hashed first, so the
@@ -183,12 +183,21 @@ export function terminalOriginRoute(req: Request, url: URL): Response {
  */
 export const RETIRED_COOKIE = "wisp_token=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict";
 
+/**
+ * The most `POST /api/session` reads. The body is `{"token": "..."}`, so this
+ * is generous; the daemon-wide ceiling is sized for attachments and is far
+ * too much to buffer for a route that any web page can reach.
+ */
+export const SESSION_BODY_MAX_BYTES = 4096;
+
 export async function postSession(req: Request, cfg: WispConfig): Promise<Response> {
   // The same body contract as every mutating route (ENG-09), so `null`, an
   // array, and unparseable bytes are named 400s rather than "unauthorized" —
   // a wrong token and a wrong body are different mistakes, and this was the
-  // last `req.json()` left in the daemon (a review's note).
-  const body = await jsonObjectBody(req);
+  // last `req.json()` left in the daemon (a review's note). It is also the one
+  // unauthenticated body the daemon reads, and a cross-site page can send it
+  // without a preflight, so an oversized one is refused before it is buffered.
+  const body = await boundedJsonObjectBody(req, SESSION_BODY_MAX_BYTES);
   if (body instanceof Response) return body;
   if (!tokenAuthorizes(body.token, cfg)) return err("unauthorized", 401);
   return json({ ok: true }, 200, { "set-cookie": RETIRED_COOKIE });

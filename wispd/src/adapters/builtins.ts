@@ -305,6 +305,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // isolated worktree and no human at the keyboard mid-turn. --trust keeps
     // the workspace-trust prompt from stalling a headless run.
     exec: ["-p", "--output-format", "stream-json", "-f", "--trust"],
+    // Commander stops at `--`: verified without a turn on 2026.09.28, where
+    // `status -- --help` answers "too many arguments" instead of printing
+    // status's help, so the prompt after it is always an operand.
+    endOfOptions: true,
     resume: ["--resume", "{session}"],
     model: ["--model", "{model}"],
     // No effort template: cursor's effort is a bracket override ON the model
@@ -388,6 +392,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // run mode also hard-denies the `question` permission, so an opencode
     // turn cannot stop to ask — which is why parse reports needsInput false.
     exec: ["run", "--format", "json", "--thinking", "--auto"],
+    // The image template's `--` below is the live proof: the message after it
+    // is delivered as the message, not parsed.
+    endOfOptions: true,
     resume: ["-s", "{session}"],
     // ids are `provider/model` (e.g. google/gemini-3.6-flash), not bare names
     model: ["-m", "{model}"],

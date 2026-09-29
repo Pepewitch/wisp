@@ -80,7 +80,13 @@ export function buildArgv(
     }
     argv.push(...strategy.argv);
   }
-  if (!inputStrategy) argv.push(opts.prompt);
+  if (!inputStrategy) {
+    // The prompt is text, never flags: past `--` a prompt such as "--help" or
+    // "-c foo" cannot change the invocation. An image template may already
+    // end in one, and a second `--` would become part of the message.
+    if (def.endOfOptions && argv[argv.length - 1] !== "--") argv.push("--");
+    argv.push(opts.prompt);
+  }
   return argv;
 }
 

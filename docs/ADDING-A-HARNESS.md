@@ -50,6 +50,7 @@ If a surface can't be probed, it is **absent** — see §4.
 cursor: {
   bin: "cursor-agent",
   exec: ["-p", "--output-format", "stream-json", "-f", "--trust"],
+  endOfOptions: true,
   resume: ["--resume", "{session}"],
   model: ["--model", "{model}"],
   parse: { format: "json", strategy: "cursor-stream-json" },
@@ -64,6 +65,10 @@ The fields, and what getting each one costs:
 - **`bin` / `exec`** — how to run one turn. The prompt is appended as the
   final positional. Missing the bypass flag (`-f`/`--dangerously-…`) costs
   you a turn that hangs forever on a permission prompt nothing can answer.
+- **`endOfOptions`** — `true` when the CLI takes everything after `--` as
+  operands; the prompt is then passed after one, so a message that starts
+  with `-` is never parsed as flags. Verify it without a turn, for example a
+  zero-token subcommand given `-- --help` must not print help.
 - **`resume`** — appended when the task has a stored session. Without it
   every turn is a fresh session and follow-ups lose all context. Verify with
   two turns: ask a word in turn 1, ask it back in turn 2.

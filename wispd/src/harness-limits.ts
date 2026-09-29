@@ -9,8 +9,8 @@
  * backoff so a broken or slow harness cannot be spawned on every poll.
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import {
   LIMIT_STRATEGIES,
   LimitsError,
@@ -22,7 +22,7 @@ import {
   type ProbeSpawnFn,
   type RpcFactory,
 } from "./adapters";
-import type { WispConfig } from "./config";
+import { PROBE_SCRATCH_DIR, type WispConfig } from "./config";
 import { bunProbeSpawn, bunRpcFactory } from "./probes";
 
 /**
@@ -104,6 +104,18 @@ function fingerprint(secret: string): string {
   return createHash("sha256").update(secret).digest("hex").slice(0, 16);
 }
 
+/**
+ * The cwd for a probe that belongs to no task, created and re-tightened to
+ * 0700 on each use. `os.tmpdir()` used to be this, and under systemd that is
+ * a world-writable `/tmp` where another account can plant the project
+ * settings claude loads from its cwd. WISP_HOME is itself 0700.
+ */
+export function privateScratchDir(dir: string = PROBE_SCRATCH_DIR): string {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return dir;
+}
+
 export class HarnessLimitsCache {
   private readonly entries = new Map<string, CachedLimitsEntry>();
   private readonly inFlight = new Map<string, Promise<HarnessLimitsEntry>>();
@@ -125,7 +137,11 @@ export class HarnessLimitsCache {
       fetch: options.fetch ?? ((url, init) => fetch(url, init)),
       readFile: options.readFile ?? readTextFile,
       homeDir: options.homeDir ?? homedir(),
-      scratchDir: options.scratchDir ?? tmpdir(),
+      // A getter, so a scratch directory removed while the daemon runs is
+      // recreated before the next probe instead of failing it.
+      get scratchDir() {
+        return options.scratchDir ?? privateScratchDir();
+      },
     };
     this.which = options.which ?? ((bin) => Bun.which(bin));
     this.env = options.env ?? process.env;

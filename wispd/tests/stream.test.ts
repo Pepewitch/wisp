@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { authorized, postSession, route } from "../src/daemon";
-import { ALLOWED_ORIGINS_ENV, originVerdict } from "../src/routes/auth";
+import { ALLOWED_ORIGINS_ENV, originVerdict, SESSION_BODY_MAX_BYTES } from "../src/routes/auth";
 import { closeTurnBroker, openTurnBroker, TurnBroker } from "../src/recording/broker";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
 import { formatSteerNote } from "../src/turn-notes";
@@ -102,6 +102,59 @@ describe("POST /api/session (token verification for the browser auth dialog)", (
       expect(response.status).toBe(400);
       expect(((await response.json()) as { error: string }).error).toContain("must be a JSON object");
     }
+  });
+
+  /**
+   * The one unauthenticated body the daemon reads is small by contract. An
+   * oversized one is refused on its declared length before a byte is read,
+   * and an undeclared one is cut off as it streams, instead of being
+   * buffered whole under the attachment-sized daemon-wide ceiling.
+   */
+  test("an oversized body is a 413 before it is buffered, declared or streamed", async () => {
+    const declared = await postSession(
+      new Request("http://wisp.test/api/session", {
+        method: "POST",
+        headers: { "content-length": String(60 * 1024 * 1024) },
+        body: JSON.stringify({ token: "testtoken" }),
+      }),
+      cfg,
+    );
+    expect(declared.status).toBe(413);
+
+    let pulled = 0;
+    const chunk = new TextEncoder().encode(" ".repeat(1024));
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(chunk);
+      },
+    });
+    const streamed = await postSession(
+      new Request("http://wisp.test/api/session", { method: "POST", body: endless }),
+      cfg,
+    );
+    expect(streamed.status).toBe(413);
+    expect(pulled).toBeLessThan(64);
+
+    const padded = await postSession(
+      new Request("http://wisp.test/api/session", {
+        method: "POST",
+        body: JSON.stringify({ token: "testtoken", pad: "x".repeat(SESSION_BODY_MAX_BYTES) }),
+      }),
+      cfg,
+    );
+    expect(padded.status).toBe(413);
+
+    // a real dialog's body is nowhere near the cap
+    const ok = await postSession(
+      new Request("http://wisp.test/api/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "testtoken" }),
+      }),
+      cfg,
+    );
+    expect(ok.status).toBe(200);
   });
 
   /** An empty body still means "no token given", which is unauthorized. */

@@ -37,6 +37,7 @@
  * wrapper is unit-testable in jsdom with a mock transport.
  */
 
+import { terminalInputChunks } from "../../../shared/terminal-protocol";
 import { readConnectionStorage, writeConnectionStorage } from "./connection-storage";
 import type { DaemonRequestOptions, DaemonTransport } from "./transport";
 import type { ShellInfo } from "./types";
@@ -224,6 +225,17 @@ export async function terminalOriginRefusal(transport: {
   return report?.verdict === "foreign" && typeof report.reason === "string" ? report.reason : null;
 }
 
+/**
+ * 1013 ("try again later") is the daemon turning a socket away because too
+ * many were already waiting to authenticate. Nothing is wrong with this one,
+ * so the pane retries it within its usual budget, on a jittered delay so that
+ * tabs turned away together do not all come back at the same moment.
+ */
+export const TRY_AGAIN_LATER = 1013;
+export function tryAgainLaterDelayMs(random: number = Math.random()): number {
+  return 300 + Math.round(random * 1200);
+}
+
 // WebSocket readyState constants, mirrored so tests need no DOM constants.
 const WS_OPEN = 1;
 const WS_CLOSING = 2;
@@ -327,10 +339,14 @@ export class TerminalConnection {
     };
   }
 
-  /** Send terminal input; no-op when stale or not yet open. */
+  /**
+   * Send terminal input; no-op when stale or not yet open. A large paste goes
+   * as several frames, in order, because the daemon closes a socket whose
+   * frame is over its ceiling.
+   */
   sendInput(data: string): void {
     if (!this.active() || !this.socket || this.socket.readyState !== WS_OPEN) return;
-    this.socket.send(JSON.stringify({ type: "in", data }));
+    for (const chunk of terminalInputChunks(data)) this.socket.send(JSON.stringify({ type: "in", data: chunk }));
   }
 
   /**

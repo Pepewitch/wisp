@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   BUILTIN_ADAPTERS,
   FACTORY_API,
@@ -23,7 +25,7 @@ import {
   factoryKey,
 } from "../src/harness-limits";
 import { route } from "../src/routes";
-import type { WispConfig } from "../src/config";
+import { PROBE_SCRATCH_DIR, WISP_HOME, type WispConfig } from "../src/config";
 import { limitsLines, resetsIn } from "../src/cli-limits";
 
 const claude = BUILTIN_ADAPTERS.claude!;
@@ -161,7 +163,7 @@ describe("claude /usage", () => {
     expect(error).toMatchObject({ status: "unavailable", message: "claude reports no plan limits: You are using an API key." });
   });
 
-  test("runs claude in print mode, in UTC, off the user's session history", async () => {
+  test("runs claude in print mode, in UTC, off the user's session history, with user settings only", async () => {
     const calls: { cmd: string[]; opts: unknown }[] = [];
     const io = ioOf({
       spawnOnce: (cmd, opts) => {
@@ -171,7 +173,16 @@ describe("claude /usage", () => {
     });
     const limits = await runLimits(claude, { now: NOW, credential: null }, io);
     expect(limits.windows.map((w) => w.label)).toEqual(["5h", "7d", "Opus"]);
-    expect(calls[0]!.cmd).toEqual([claude.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence"]);
+    expect(calls[0]!.cmd).toEqual([
+      claude.bin,
+      "-p",
+      "/usage",
+      "--output-format",
+      "json",
+      "--no-session-persistence",
+      "--setting-sources",
+      "user",
+    ]);
     expect(calls[0]!.opts).toMatchObject({ cwd: "/tmp/scratch", env: { TZ: "UTC" } });
   });
 
@@ -330,6 +341,32 @@ describe("HarnessLimitsCache", () => {
     };
     return { spawnOnce, reads: () => reads, failNext: (v: boolean) => (fail = v) };
   }
+
+  test("runs the claude read from a private directory under the Wisp home, never the shared temp dir", async () => {
+    // Loosen a leftover directory first: each probe must tighten it again.
+    mkdirSync(PROBE_SCRATCH_DIR, { recursive: true });
+    chmodSync(PROBE_SCRATCH_DIR, 0o777);
+    const cwds: (string | undefined)[] = [];
+    const cache = new HarnessLimitsCache({
+      spawnOnce: (_cmd, opts) => {
+        cwds.push(opts.cwd);
+        return { exitCode: 0, stdout: JSON.stringify({ result: CLAUDE_REPORT }), stderr: "" };
+      },
+      which: (bin) => bin,
+      env: {},
+    });
+    await cache.read({}, { claude });
+    expect(cwds).toEqual([PROBE_SCRATCH_DIR]);
+    expect(PROBE_SCRATCH_DIR.startsWith(`${WISP_HOME}/`)).toBe(true);
+    expect(cwds[0]).not.toBe(tmpdir());
+    expect(statSync(PROBE_SCRATCH_DIR).mode & 0o777).toBe(0o700);
+
+    // A directory removed while the daemon runs is recreated, not a spawn failure.
+    rmSync(PROBE_SCRATCH_DIR, { recursive: true, force: true });
+    await cache.readNow("claude", claude, {});
+    expect(cwds).toEqual([PROBE_SCRATCH_DIR, PROBE_SCRATCH_DIR]);
+    expect(statSync(PROBE_SCRATCH_DIR).mode & 0o777).toBe(0o700);
+  });
 
   test("lists only harnesses that declare a read, and serves a second poll from the cache", async () => {
     const c = counting();

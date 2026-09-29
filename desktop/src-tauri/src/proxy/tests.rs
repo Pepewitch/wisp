@@ -120,4 +120,5 @@ fn the_denylists_cover_the_credential_carrying_headers() {
     assert!(RESPONSE_HEADER_DENYLIST.contains(&"location"));
     assert!(RESPONSE_HEADER_DENYLIST.contains(&"x-wisp-proxy-error"));
     assert!(RESPONSE_HEADER_DENYLIST.contains(&"x-wisp-proxy-redirect"));
+    assert!(RESPONSE_HEADER_DENYLIST.contains(&"cross-origin-resource-policy"));
 }

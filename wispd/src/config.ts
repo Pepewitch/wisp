@@ -209,6 +209,13 @@ export const ADAPTERS_PATH = join(WISP_HOME, "adapters.json");
 export const SUFFIX_PROMPTS_PATH = join(WISP_HOME, "suffix-prompts.json");
 /** Last successful model discovery, served immediately while the daemon refreshes it. */
 export const MODEL_PROBE_CACHE_PATH = join(WISP_HOME, "model-probes.json");
+/**
+ * The working directory for harness probes that run outside any task, such as
+ * claude's `/usage` read. It must be a directory only this user can write:
+ * claude loads `.claude/settings.json` from its cwd, hooks included, so a
+ * shared `/tmp` would let another account on the host run code as this one.
+ */
+export const PROBE_SCRATCH_DIR = join(WISP_HOME, "scratch");
 
 mkdirSync(WISP_HOME, { recursive: true, mode: 0o700 });
 chmodSync(WISP_HOME, 0o700);

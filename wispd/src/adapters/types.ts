@@ -162,6 +162,14 @@ export interface AdapterDef {
   /** A verified long-lived input protocol. Omitted means durable next-turn fallback. */
   liveInput?: "claude-stream-json" | "droid-jsonrpc" | "codex-app-server" | null;
   /**
+   * The CLI honors `--` as the end of its options, so the prompt positional
+   * is passed after one. Without it a prompt that begins with `-` (`-c foo`,
+   * `--help`) is parsed as flags and silently changes the invocation. Set it
+   * only for a parser verified to take everything after `--` as operands; an
+   * `image` template that already ends in `--` is not given a second one.
+   */
+  endOfOptions?: boolean;
+  /**
    * For json adapters, exit 0 with no parsed result payload is a FAILURE
    * (spawn contract: done needs a positive signal — orca's bug was trusting
    * bare exit 0). Set true only for a harness that legitimately exits 0

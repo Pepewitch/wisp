@@ -1049,6 +1049,12 @@ async fn attachment_bytes_pass_through_verbatim_from_the_right_daemon() {
         );
         // No credential is in the URL and none comes back in a header.
         assert!(response.headers().get("set-cookie").is_none());
+        // The webview is on another origin and loads this straight into an
+        // <img>, so the daemon's same-origin CORP must not reach it.
+        assert!(response
+            .headers()
+            .get("cross-origin-resource-policy")
+            .is_none());
         let bytes = response.bytes().await.expect("bytes");
         assert_eq!(bytes.as_ref(), attachment_bytes(label).as_slice());
     }

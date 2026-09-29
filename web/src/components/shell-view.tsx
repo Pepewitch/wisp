@@ -5,7 +5,14 @@ import { Terminal, type ITheme } from "@xterm/xterm"
 import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
 import { TerminalFindBar } from "@/components/terminal-find-bar"
-import { isClearChord, isFindChord, terminalOriginRefusal, TerminalConnection } from "@/lib/terminal"
+import {
+  isClearChord,
+  isFindChord,
+  terminalOriginRefusal,
+  TerminalConnection,
+  TRY_AGAIN_LATER,
+  tryAgainLaterDelayMs,
+} from "@/lib/terminal"
 import { cellHeightOf, TouchScrollGesture } from "@/lib/terminal-touch"
 import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
@@ -379,6 +386,19 @@ function useShellConnection({
     const measured = measure()
     if (measured) sentSize.current = measured
 
+    /** Open a fresh socket after `delay`, or report once the budget is spent. */
+    const retry = (code: number, delay: number): void => {
+      if (retries.current >= RETRY_LIMIT) {
+        setPhase("error")
+        setDetail(`could not open a shell (${code}) — ${RETRY_LIMIT} attempts`)
+        return
+      }
+      retries.current += 1
+      setPhase("connecting")
+      setDetail(null)
+      retryTimer = setTimeout(() => setAttempt((n) => n + 1), delay)
+    }
+
     const c = new TerminalConnection(
       taskId,
       shellId,
@@ -422,6 +442,11 @@ function useShellConnection({
             setDetail("the daemon refused the connection")
             return
           }
+          // The reason is known, so there is no origin question to ask.
+          if (code === TRY_AGAIN_LATER) {
+            retry(code, tryAgainLaterDelayMs())
+            return
+          }
           // The daemon answered, and said no. Keep its words.
           if (refusal !== null) {
             setPhase("error")
@@ -443,16 +468,7 @@ function useShellConnection({
             setPhase("error")
             setDetail(reason)
           })
-          if (retries.current >= RETRY_LIMIT) {
-            setPhase("error")
-            setDetail(`could not open a shell (${code}) — ${RETRY_LIMIT} attempts`)
-            return
-          }
-          const delay = RETRY_DELAYS_MS[retries.current] ?? 3000
-          retries.current += 1
-          setPhase("connecting")
-          setDetail(null)
-          retryTimer = setTimeout(() => setAttempt((n) => n + 1), delay)
+          retry(code, RETRY_DELAYS_MS[retries.current] ?? 3000)
         },
       },
       transport,
