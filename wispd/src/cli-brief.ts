@@ -18,7 +18,8 @@ import type { Flags } from "./cli-args"
 import { CliApiError, daemonRequest, exitApi } from "./cli-api"
 import { briefSetUsage, briefUsage } from "./cli-brief-help"
 import { wispCommand } from "./command"
-import { controlFree, terminalJson } from "./control-free"
+import { print, printError, printJson } from "./cli-print"
+import { controlFree } from "./control-free"
 import { BRIEF_RUN_ENV } from "./turn-input"
 
 /** A daemon that takes longer than this must not hold an agent's handoff up. */
@@ -76,7 +77,7 @@ function boundedStdin(limit: number, idleMs: number): Promise<Uint8Array | null 
 
 /** One line to the agent, made terminal-safe (a field error can quote a key the agent chose), then exit. */
 function say(line: string, exit: number): never {
-  ;(exit === 0 ? console.log : console.error)(controlFree(line))
+  ;(exit === 0 ? print : printError)(line)
   process.exit(exit)
 }
 
@@ -240,7 +241,8 @@ export async function briefCommand(positional: string[], flags: Flags): Promise<
     if (sub === "show") {
       const task = taskArgument(positional)
       const view = await daemonRequest(`/api/tasks/${task}/brief`) as BriefView
-      console.log(flags.json ? terminalJson(view) : formatView(task, view))
+      if (flags.json) printJson(view)
+      else print(formatView(task, view))
       return
     }
     if (sub === "enable" || sub === "disable") {
@@ -250,14 +252,15 @@ export async function briefCommand(positional: string[], flags: Flags): Promise<
         "PUT",
         JSON.stringify({ enabled: sub === "enable" }),
       ) as BriefSettings
-      console.log(flags.json ? terminalJson(settings) : settingsLine(task, settings))
+      if (flags.json) printJson(settings)
+      else print(settingsLine(task, settings))
       return
     }
     throw new BriefUsageError(sub ? `unknown brief command: ${controlFree(sub)}` : "")
   } catch (error) {
     if (error instanceof BriefUsageError) {
-      if (error.message) console.error(`error: ${error.message}`)
-      console.error(briefUsage())
+      if (error.message) printError(`error: ${error.message}`)
+      printError(briefUsage())
       process.exit(1)
     }
     exitApi(error)

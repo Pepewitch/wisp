@@ -1,4 +1,5 @@
 import type { LimitWindow } from "./adapters";
+import { print, printJson } from "./cli-print";
 import type { HarnessLimitsEntry } from "./harness-limits";
 
 /**
@@ -67,8 +68,8 @@ export async function limitsCommand(
 ): Promise<void> {
   const response = (await request(`/api/harness-limits${flags.refresh === true ? "?refresh=1" : ""}`)) as HarnessLimitsResponse;
   if (flags.json === true) {
-    console.log(JSON.stringify(response, null, 2));
+    printJson(response);
     return;
   }
-  for (const line of limitsLines(response, new Date())) console.log(line);
+  for (const line of limitsLines(response, new Date())) print(line);
 }

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { print } from "./cli-print";
 
 export async function doctorCommand(flags: Record<string, unknown>): Promise<void> {
   if (flags.storage !== undefined) {
@@ -9,7 +10,7 @@ export async function doctorCommand(flags: Record<string, unknown>): Promise<voi
     const { storageReport, formatStorageReport } = await import("./storage-report");
     const before = flags["archived-before"];
     if (before !== undefined && typeof before !== "string") throw new Error("--archived-before requires a value");
-    console.log(formatStorageReport(await storageReport(process.env.WISP_HOME ?? join(homedir(), ".wisp"), before)));
+    print(formatStorageReport(await storageReport(process.env.WISP_HOME ?? join(homedir(), ".wisp"), before)));
     return;
   }
   const { checkDatabase, runDoctor } = await import("./doctor");
@@ -18,7 +19,7 @@ export async function doctorCommand(flags: Record<string, unknown>): Promise<voi
       throw new Error("Use 'doctor --database' without --harness or a value.");
     }
     const check = checkDatabase();
-    console.log(`${check.status.padEnd(4)} ${check.name}: ${check.message}`);
+    print(`${check.status.padEnd(4)} ${check.name}: ${check.message}`);
     if (check.status === "fail") process.exit(1);
     return;
   }
@@ -29,7 +30,7 @@ export async function doctorCommand(flags: Record<string, unknown>): Promise<voi
   for (const check of await runDoctor({
     selectedHarness: typeof flags.harness === "string" ? flags.harness : undefined,
   })) {
-    console.log(`${check.status.padEnd(4)} ${check.name}: ${check.message}`);
+    print(`${check.status.padEnd(4)} ${check.name}: ${check.message}`);
     if (check.status === "fail") failed = true;
   }
   if (failed) process.exit(1);

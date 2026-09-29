@@ -1,3 +1,4 @@
+import { print, printJson } from "./cli-print";
 import { wispCommand } from "./command";
 import {
   STATE_ICON,
@@ -107,10 +108,10 @@ export async function searchCommand(
   if (query === "") throw new Error(`usage: ${command} search <text> [-a] [--json]`);
   const response = (await request(`/api/search?q=${encodeURIComponent(query)}`)) as SearchResponse;
   if (flags.json === true) {
-    console.log(JSON.stringify(response, null, 2));
+    printJson(response);
     return;
   }
   for (const line of searchLines(response, { all: flags.all === true || flags.a === true })) {
-    console.log(line);
+    print(line);
   }
 }

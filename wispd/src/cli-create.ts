@@ -2,6 +2,7 @@
 import { discardAttachment, daemonRequest, exitApi, uploadAttachment } from "./cli-api";
 import type { Flags } from "./cli-args";
 import { discardAttachmentPayloads, readAttachmentFlags } from "./cli-attach";
+import { print, printError } from "./cli-print";
 import { wispCommand } from "./command";
 import type { StagedAttachmentPayload } from "./attachments";
 import { resolve } from "node:path";
@@ -16,22 +17,22 @@ export async function createCommand(positional: string[], flags: Flags): Promise
   } else if (positional.length === 1) {
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
-    console.error(
+    printError(
       `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…`,
     );
     process.exit(1);
   }
   const harness = flags.harness;
   if (typeof harness !== "string") {
-    console.error("--harness is required (e.g. --harness droid)");
+    printError("--harness is required (e.g. --harness droid)");
     process.exit(1);
   }
   if (flags.effort !== undefined && typeof flags.effort !== "string") {
-    console.error("--effort requires a value");
+    printError("--effort requires a value");
     process.exit(1);
   }
   if (flags.base !== undefined && typeof flags.base !== "string") {
-    console.error("--base requires a value (e.g. --base origin/develop)");
+    printError("--base requires a value (e.g. --base origin/develop)");
     process.exit(1);
   }
   let attachments: StagedAttachmentPayload[] | undefined;
@@ -70,8 +71,8 @@ function reportCreated(task: ApiTask, flags: Flags): void {
   const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean } }).autopilot;
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix"].filter(Boolean).join("");
   const brief = task.briefEnabled === true ? ", brief" : "";
-  console.log(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}${brief}) — ${task.title}`);
+  print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}${brief}) — ${task.title}`);
   const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
-  if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) console.error("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
-  if (flags.brief === true && task.briefEnabled !== true) console.error("warning: this daemon did not turn briefs on (it may be older than this CLI)");
+  if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
+  if (flags.brief === true && task.briefEnabled !== true) printError("warning: this daemon did not turn briefs on (it may be older than this CLI)");
 }

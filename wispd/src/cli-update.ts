@@ -1,3 +1,4 @@
+import { print } from "./cli-print";
 import { wispCommand } from "./command";
 import { compareVersions, type UpdateStatus } from "./update";
 
@@ -50,7 +51,7 @@ function blockedUpdateMessage(status: UpdateStatus): string {
 export async function updateCommand(
   positional: string[],
   request: Request,
-  write: (line: string) => void = console.log,
+  write: (line: string) => void = print,
 ): Promise<void> {
   const command = wispCommand();
   if (positional.length > 0) {

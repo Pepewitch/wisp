@@ -7,7 +7,14 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 ## Runtime map
 
 - `wispd/src/index.ts` selects daemon mode for `wisp serve`; every other command
-  enters `wispd/src/cli.ts`.
+  enters `wispd/src/cli.ts`. Before either, it answers help, usage and unknown
+  commands from `wispd/src/cli-help.ts`, which imports nothing that touches the
+  home: `<command> --help` must never run the command. The dispatcher table in
+  `cli.ts` is typed against that file's command list, so a command cannot ship
+  without its usage.
+- CLI output goes through `wispd/src/cli-print.ts` (lint enforces it for
+  `cli*.ts`), which strips terminal control sequences from text an agent,
+  harness or repository wrote.
 - `wispd/src/cli.ts` is primarily a bearer-authenticated HTTP client. Business logic
   belongs behind the API, not in a CLI-only path.
 - `wispd/src/daemon.ts` takes exclusive ownership of the Wisp home, loads config

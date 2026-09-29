@@ -41,7 +41,15 @@ export WISP_HOME=$DEV_HOME
 export WISP_COMMAND_NAME=wisp-dev
 
 command_name=${1:-}
-if [ "$command_name" = "serve" ]; then
+# `<command> --help` only prints usage (cli-help offlineAnswer), so it needs
+# neither a web build nor a home
+asks_help=no
+for arg in "$@"; do
+  case "$arg" in
+    --help|-h) asks_help=yes ;;
+  esac
+done
+if [ "$command_name" = "serve" ] && [ "$asks_help" = no ]; then
   # web-dist is intentionally absent from Git. Keep the direct development
   # daemon command as reliable as `bun run dev:server` on a fresh checkout.
   (cd "$ROOT" && bun run build:web)
@@ -63,6 +71,7 @@ elif [ ! -f "$DEV_HOME/config.json" ]; then
   case "$command_name" in
     ""|help|-h|--help|version|--version) needs_init=no ;;
   esac
+  [ "$asks_help" = no ] || needs_init=no
   if [ "$command_name" = "brief" ]; then
     brief_sub=${2:-}
     brief_help=no

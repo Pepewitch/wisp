@@ -1,4 +1,5 @@
-import { HELP } from "./cli-help";
+import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-help";
+import { print, printError, printRaw } from "./cli-print";
 import {
   api,
   daemonRequest,
@@ -96,7 +97,7 @@ function formatTokens(n: number): string {
 
 function printTasks(tasks: ListedTask[]): void {
   if (tasks.length === 0) {
-    console.log("no tasks");
+    print("no tasks");
     return;
   }
   for (const t of tasks) {
@@ -108,7 +109,7 @@ function printTasks(tasks: ListedTask[]): void {
     // the model the LATEST turn actually ran on; "(requested)" when the
     // harness never reported one — the distinction P5b exists for
     const model = t.latest_turn_model ?? (t.model ? `${t.model} (requested)` : null);
-    console.log(
+    print(
       `${t.id}  ${icon} ${word.padEnd(11)} ${t.harness.padEnd(7)} ${model ? `${model} ` : ""}turn ${String(t.turn_count).padEnd(2)} ${ago(t.updated_at).padEnd(4)} ${t.title.slice(0, 50)}${detail}`,
     );
   }
@@ -121,11 +122,11 @@ async function resultCommand(positional: string[]): Promise<void> {
     ? task.turns.find((candidate) => candidate.n === n)
     : [...task.turns].reverse().find((candidate) => candidate.result) ?? task.turns[task.turns.length - 1];
   if (!turn) {
-    console.error("no turns yet");
+    printError("no turns yet");
     process.exit(1);
   }
-  console.log(`── you (turn ${turn.n}) ──\n${turn.prompt}\n── agent ──`);
-  console.log(turn.result ?? `(turn ${turn.n} is ${turn.status}, no result text)`);
+  print(`── you (turn ${turn.n}) ──\n${turn.prompt}\n── agent ──`);
+  print(turn.result ?? `(turn ${turn.n} is ${turn.status}, no result text)`);
 }
 
 async function showCommand(positional: string[]): Promise<void> {
@@ -141,21 +142,21 @@ async function showCommand(positional: string[]): Promise<void> {
     latest?.exit_code ?? null,
     latest !== undefined && latest.result !== null,
   );
-  console.log(`${task.id}  ${word}${backgroundSummary(task)}${task.state_detail ? ` (${task.state_detail})` : ""}`);
-  console.log(
+  print(`${task.id}  ${word}${backgroundSummary(task)}${task.state_detail ? ` (${task.state_detail})` : ""}`);
+  print(
     `harness: ${task.harness}${task.model ? ` (${task.model})` : ""}   session: ${task.session_id ?? "-"}`,
   );
-  if (task.effort) console.log(`effort: ${task.effort}`);
-  if (task.fast) console.log(`fast mode: on`);
-  console.log(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
-  if (task.worktreeReason) console.log(task.worktreeReason);
+  if (task.effort) print(`effort: ${task.effort}`);
+  if (task.fast) print(`fast mode: on`);
+  print(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
+  if (task.worktreeReason) print(task.worktreeReason);
   printBackground(task);
   for (const turn of task.turns) printTurn(task, turn);
   for (const message of task.messages ?? []) {
     const summary = taskMessageSummary(message, task.archived);
-    if (summary) console.log(`\n${summary}`);
+    if (summary) print(`\n${summary}`);
   }
-  if (task.diffstat) console.log(`\ndiff:\n${task.diffstat}`);
+  if (task.diffstat) print(`\ndiff:\n${task.diffstat}`);
 }
 
 /**
@@ -170,7 +171,7 @@ function printBackground(task: ApiTask): void {
   const background = task.background;
   if (!background || background.state === "none") return;
   const groups = background.details.length || background.groups;
-  console.log(`\nbackground: ${background.state} · ${groups} ${groups === 1 ? "group" : "groups"}`);
+  print(`\nbackground: ${background.state} · ${groups} ${groups === 1 ? "group" : "groups"}`);
   for (const group of background.details) {
     const age = group.since ? ago(group.since) : null;
     const parts = [
@@ -181,7 +182,7 @@ function printBackground(task: ApiTask): void {
     ];
     if (group.state === "unknown") parts.push("ownership unverified — Stop will refuse");
     if (group.stopRequested) parts.push("stop requested");
-    console.log(`  ${parts.join(" · ")}`);
+    print(`  ${parts.join(" · ")}`);
   }
 }
 
@@ -190,15 +191,15 @@ function printTurn(
   turn: Turn & { attachments: { name: string; size: number }[]; usage: UsageSummary | null },
 ): void {
   const model = turn.model ?? (turn.requested_model ? `${turn.requested_model} (requested)` : null);
-  console.log(
+  print(
     `\n— turn ${turn.n} [${turn.status}]${model ? ` · ${model}` : ""} you: ${turn.prompt.slice(0, 120).replaceAll("\n", " ")}`,
   );
   if (turn.attachments?.length) {
     const files = turn.attachments.map((attachment) => `${attachment.name} (${formatBytes(attachment.size)})`).join(", ");
-    console.log(`  attached: ${files}${task.archived && !task.attachmentsRetained ? " — removed when this task was archived" : ""}`);
+    print(`  attached: ${files}${task.archived && !task.attachmentsRetained ? " — removed when this task was archived" : ""}`);
   }
-  if (turn.usage) console.log(`  usage: ${usageLine(turn.usage)}`);
-  if (turn.result) console.log(`  agent: ${turn.result.slice(0, 400)}`);
+  if (turn.usage) print(`  usage: ${usageLine(turn.usage)}`);
+  if (turn.result) print(`  agent: ${turn.result.slice(0, 400)}`);
 }
 
 async function logCommand(positional: string[], flags: Flags): Promise<void> {
@@ -207,7 +208,7 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
   const adapters = flags.raw ? null : loadAdapters();
   if (!flags.follow && !flags.f) {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}`);
-    if (data.capture_state === "evicted") { console.log(data.notice); return; }
+    if (data.capture_state === "evicted") { print(data.notice); return; }
     const def = adapters?.[data.harness as string];
     const formatLine = flags.raw ? null : createEventFormatter(def);
     const pretty = formatLine
@@ -216,33 +217,31 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
           .map(formatLine)
           .filter((line): line is string => line !== null)
       : null;
-    console.log(pretty ? pretty.join("\n") : data.out);
-    if (data.err) console.error(data.err);
+    if (pretty) print(pretty.join("\n"));
+    else printRaw(data.out);
+    if (data.err) {
+      if (flags.raw) printRaw(data.err, "err");
+      else printError(data.err);
+    }
     return;
   }
   if (!flags.raw) {
     await followHumanLog(id, turnQuery);
     return;
   }
+  // `--raw -f`: the retained harness stream as it grows
   let offset = 0;
   let leftover = "";
-  let formatLine: ReturnType<typeof createEventFormatter> | null = null;
   for (;;) {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}offset=${offset}`);
-    if (data.capture_state === "evicted") { console.log(data.notice); return; }
-    const def = adapters?.[data.harness as string];
-    if (!flags.raw) formatLine ??= createEventFormatter(def);
+    if (data.capture_state === "evicted") { print(data.notice); return; }
     offset = data.size;
     const lines = (leftover + (data.out as string)).split("\n");
     leftover = lines.pop() ?? "";
-    for (const line of lines) {
-      const rendered = flags.raw ? line : formatLine!(line);
-      if (rendered) console.log(rendered);
-    }
+    for (const line of lines) if (line) printRaw(line);
     if (data.status !== "running" && data.out === "") {
-      const last = flags.raw ? leftover : formatLine!(leftover);
-      if (last) console.log(last);
-      console.log(`— turn ${data.turn} ${data.status} —`);
+      if (leftover) printRaw(leftover);
+      print(`— turn ${data.turn} ${data.status} —`);
       return;
     }
     if (data.out === "") await Bun.sleep(1000);
@@ -252,13 +251,13 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
 async function waitCommand(positional: string[], flags: Flags): Promise<void> {
   const id = positional[0];
   if (!id) {
-    console.error(`usage: ${COMMAND} wait <task> [--timeout <sec>]`);
+    printError(`usage: ${COMMAND} wait <task> [--timeout <sec>]`);
     process.exit(1);
   }
   const rawTimeout = flags.timeout;
   const timeoutSec = rawTimeout === undefined ? WAIT_DEFAULT_TIMEOUT_SEC : Number(rawTimeout);
   if (typeof rawTimeout === "boolean" || !Number.isFinite(timeoutSec) || timeoutSec <= 0) {
-    console.error(`--timeout must be a positive number of seconds (got: ${String(rawTimeout)})`);
+    printError(`--timeout must be a positive number of seconds (got: ${String(rawTimeout)})`);
     process.exit(1);
   }
   const deadline = Date.now() + timeoutSec * 1000;
@@ -267,11 +266,11 @@ async function waitCommand(positional: string[], flags: Flags): Promise<void> {
     const line = `${task.id}  ${task.state}${task.state_detail ? ` — ${task.state_detail}` : ""}`;
     const code = WAIT_EXIT[task.state];
     if (code !== undefined) {
-      console.log(line);
+      print(line);
       process.exit(code);
     }
     if (Date.now() >= deadline) {
-      console.log(`${line}  (timeout after ${timeoutSec}s)`);
+      print(`${line}  (timeout after ${timeoutSec}s)`);
       process.exit(3);
     }
     await Bun.sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
@@ -285,33 +284,33 @@ async function projectCommand(positional: string[], flags: Flags): Promise<void>
   if (action === "ls" || action === "list") return listProjects();
   if (action === "show") return showProject(path);
   if (action === "set") return setProject(path, flags);
-  console.error(`usage: ${COMMAND} project add <path> [--name <name>] | rm <path> | ls|list | show <path> | set <path> [flags]`);
+  printError(`usage: ${COMMAND} project add <path> [--name <name>] | rm <path> | ls|list | show <path> | set <path> [flags]`);
   process.exit(1);
 }
 
 async function addProject(path: string | undefined, flags: Flags): Promise<void> {
   if (!path) {
-    console.error(`usage: ${COMMAND} project add <path> [--name <name>]`);
+    printError(`usage: ${COMMAND} project add <path> [--name <name>]`);
     process.exit(1);
   }
   if (flags.name !== undefined && typeof flags.name !== "string") {
-    console.error("--name requires a value");
+    printError("--name requires a value");
     process.exit(1);
   }
   const project = await api("/api/projects", "POST", {
     path: resolve(path),
     name: typeof flags.name === "string" ? flags.name : undefined,
   });
-  console.log(`project ${project.name ? `'${project.name}' ` : ""}added: ${project.path}`);
+  print(`project ${project.name ? `'${project.name}' ` : ""}added: ${project.path}`);
 }
 
 async function removeProject(path: string | undefined): Promise<void> {
   if (!path) {
-    console.error(`usage: ${COMMAND} project rm <path>`);
+    printError(`usage: ${COMMAND} project rm <path>`);
     process.exit(1);
   }
   const project = await api("/api/projects", "DELETE", { path: resolve(path) });
-  console.log(`project removed: ${project.path}`);
+  print(`project removed: ${project.path}`);
 }
 
 async function listProjects(): Promise<void> {
@@ -319,17 +318,17 @@ async function listProjects(): Promise<void> {
     repos: { path: string; name: string | null; exists: boolean }[];
   };
   if (data.repos.length === 0) {
-    console.log("no projects");
+    print("no projects");
     return;
   }
   for (const repo of data.repos) {
-    console.log(`${repo.name ?? "-"}  ${repo.path}${repo.exists ? "" : "  (missing)"}`);
+    print(`${repo.name ?? "-"}  ${repo.path}${repo.exists ? "" : "  (missing)"}`);
   }
 }
 
 async function showProject(path: string | undefined): Promise<void> {
   if (!path) {
-    console.error(`usage: ${COMMAND} project show <path>`);
+    printError(`usage: ${COMMAND} project show <path>`);
     process.exit(1);
   }
   const resolved = resolve(path);
@@ -346,23 +345,23 @@ async function showProject(path: string | undefined): Promise<void> {
   };
   const repo = data.repos.find((candidate) => candidate.path === resolved);
   if (!repo) {
-    console.error(`project not found: ${resolved}`);
+    printError(`project not found: ${resolved}`);
     process.exit(1);
   }
-  console.log(`name: ${repo.name}`);
-  console.log(`path: ${repo.path}`);
-  console.log(`exists: ${repo.exists ? "yes" : "no (missing)"}`);
-  console.log(`setup: ${repo.setupScript || "-"}`);
-  console.log(`archive: ${repo.archiveScript || "-"}`);
+  print(`name: ${repo.name}`);
+  print(`path: ${repo.path}`);
+  print(`exists: ${repo.exists ? "yes" : "no (missing)"}`);
+  print(`setup: ${repo.setupScript || "-"}`);
+  print(`archive: ${repo.archiveScript || "-"}`);
   // "-" here is not "unset and broken": an empty base means Wisp resolves the
   // remote default itself, which is the right answer for almost every project
-  console.log(`base: ${repo.baseBranch || "- (origin/HEAD)"}`);
-  console.log(`copy: ${repo.copyFiles.length > 0 ? repo.copyFiles.join(", ") : "-"}`);
+  print(`base: ${repo.baseBranch || "- (origin/HEAD)"}`);
+  print(`copy: ${repo.copyFiles.length > 0 ? repo.copyFiles.join(", ") : "-"}`);
 }
 
 async function setProject(path: string | undefined, flags: Flags): Promise<void> {
   if (!path) {
-    console.error(
+    printError(
       `usage: ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]… ` +
         `[--clear-setup] [--clear-archive] [--clear-base] [--clear-copy]`,
     );
@@ -370,12 +369,12 @@ async function setProject(path: string | undefined, flags: Flags): Promise<void>
   }
   for (const key of ["name", "setup", "archive", "base"] as const) {
     if (flags[key] !== undefined && typeof flags[key] !== "string") {
-      console.error(`--${key} requires a value`);
+      printError(`--${key} requires a value`);
       process.exit(1);
     }
   }
   if (flags.copy !== undefined && !Array.isArray(flags.copy)) {
-    console.error("--copy requires a value (e.g. --copy .env)");
+    printError("--copy requires a value (e.g. --copy .env)");
     process.exit(1);
   }
   const body: Record<string, unknown> = { path: resolve(path) };
@@ -386,221 +385,182 @@ async function setProject(path: string | undefined, flags: Flags): Promise<void>
     ["base", "baseBranch", "clear-base"],
   ] as const) {
     if (typeof flags[flag] === "string" && flags[clear] === true) {
-      console.error(`--${flag} and --${clear} are mutually exclusive`);
+      printError(`--${flag} and --${clear} are mutually exclusive`);
       process.exit(1);
     }
     if (typeof flags[flag] === "string") body[field] = flags[flag];
     if (flags[clear] === true) body[field] = "";
   }
   if (Array.isArray(flags.copy) && flags["clear-copy"] === true) {
-    console.error("--copy and --clear-copy are mutually exclusive");
+    printError("--copy and --clear-copy are mutually exclusive");
     process.exit(1);
   }
   if (Array.isArray(flags.copy)) body.copyFiles = flags.copy;
   if (flags["clear-copy"] === true) body.copyFiles = [];
   const project = (await api("/api/projects", "POST", body)) as { name: string | null; path: string };
-  console.log(`project ${project.name ? `'${project.name}' ` : ""}updated: ${project.path}`);
+  print(`project ${project.name ? `'${project.name}' ` : ""}updated: ${project.path}`);
 }
 
-export async function cli(args: string[]): Promise<void> {
-  const [cmd, ...rest] = args;
-  const { positional, flags } = parseArgs(rest);
-
-  switch (cmd) {
-    case "workflow":
-      await workflowCommand(positional, flags, api);
-      break;
-    case "brief":
-      await briefCommand(positional, flags);
-      break;
-    case "pr":
-      try {
-        await prCommand(positional, flags, api);
-      } catch (error) {
-        if (error instanceof Error && error.message === PR_USAGE) { console.error(PR_USAGE); process.exit(1); }
-        exitApi(error);
+function tokenCommand(flags: Flags): void {
+  const rotated = flags.rotate === true;
+  let cfg: ReturnType<typeof loadConfig>;
+  if (rotated) {
+    let ownership;
+    try {
+      ownership = acquireHomeOwnership();
+    } catch (error) {
+      if (error instanceof HomeBusyError) {
+        throw new Error(
+          `cannot rotate the token while the daemon is running; stop it first, rerun '${COMMAND} token --rotate', then start it again`,
+          { cause: error },
+        );
       }
-      break;
-    case "version":
-    case "--version":
-      console.log(flags.json ? JSON.stringify(BUILD_INFO) : versionLine());
-      break;
-    case "new": {
-      await createCommand(positional, flags);
-      break;
+      throw error;
     }
-    case "ls":
-    case "list": {
-      printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ListedTask[]);
-      break;
+    try {
+      cfg = rotateToken();
+    } finally {
+      ownership.release();
     }
-    case "search": {
-      await searchCommand(positional, flags, api);
-      break;
-    }
-    case "limits": {
-      await limitsCommand(flags, api);
-      break;
-    }
-    case "result": {
-      await resultCommand(positional);
-      break;
-    }
-    case "show": {
-      await showCommand(positional);
-      break;
-    }
-    case "log": {
-      await logCommand(positional, flags);
-      break;
-    }
-    case "wait": {
-      await waitCommand(positional, flags);
-      break;
-    }
-    case "send": {
-      await sendCommand({
-        positional,
-        attachmentFlags: flags,
-        commandName: COMMAND,
-        readAttachments: (attachmentFlags) =>
-          readAttachmentFlags(attachmentFlags, uploadAttachment, discardAttachment),
-        discardAttachment,
-        requestError: exitApi,
-        request: (path, method, body) =>
-          daemonRequest(path, method, body === undefined ? undefined : JSON.stringify(body)),
-      });
-      break;
-    }
-    case "interrupt": {
-      await api(`/api/tasks/${positional[0]}/interrupt`, "POST", {});
-      console.log(`interrupted — session kept; steer with: ${COMMAND} send`);
-      break;
-    }
-    case "fresh": {
-      await api(`/api/tasks/${positional[0]}/fresh-session`, "POST", {});
-      console.log("fresh session armed — next turn starts cold");
-      break;
-    }
-    case "push": {
-      const data = await api(`/api/tasks/${positional[0]}/push`, "POST", {});
-      console.log(data.output || "pushed");
-      break;
-    }
-    case "update":
-      await updateCommand(positional, api);
-      break;
-    case "cleanup":
-      await cleanupCommand(positional[0], flags, api);
-      break;
-    case "export":
-    case "purge":
-      await retentionCommand(cmd, positional[0], flags, api);
-      break;
-    case "archive": {
-      const data = await api(`/api/tasks/${positional[0]}/archive`, "POST", {
-        force: flags.force === true || flags.f === true,
-      });
-      console.log(`archived (branch ${data.branch} kept); cleanup continues in the background. Check: ${COMMAND} cleanup ${positional[0]}`);
-      // the teardown finishes in the background, so anything it decided NOT to
-      // delete has to be said here — the user needs to know where their files are
-      if (data.note) console.log(data.note);
-      break;
-    }
-    case "project": {
-      await projectCommand(positional, flags);
-      break;
-    }
-    case "attach": {
-      const data = await api(`/api/tasks/${positional[0]}/attach`);
-      if (!data.argv) {
-        console.log(data.message ?? "cannot attach");
-        break;
-      }
-      Bun.spawnSync({
-        cmd: data.argv,
-        cwd: data.cwd ?? process.cwd(),
-        stdin: "inherit",
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-      break;
-    }
-    case "token": {
-      const rotated = flags.rotate === true;
-      let cfg: ReturnType<typeof loadConfig>;
-      if (rotated) {
-        let ownership;
-        try {
-          ownership = acquireHomeOwnership();
-        } catch (error) {
-          if (error instanceof HomeBusyError) {
-            throw new Error(
-              `cannot rotate the token while the daemon is running; stop it first, rerun '${COMMAND} token --rotate', then start it again`,
-              { cause: error },
-            );
-          }
-          throw error;
-        }
-        try {
-          cfg = rotateToken();
-        } finally {
-          ownership.release();
-        }
-      } else {
-        cfg = loadConfig();
-      }
-      console.log(`url:   http://${cfg.host}:${cfg.port}`);
-      console.log(`token: ${cfg.token}`);
-      if (rotated) {
-        console.log(`\nToken rotated in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json. Start the Wisp daemon again now.`);
-        console.log("The old token is invalid after startup.");
-        console.log("Update every browser and saved Desktop connection with the new token.");
-      }
-      break;
-    }
-    case "init": {
-      const rawPort = flags.port;
-      if (rawPort !== undefined && typeof rawPort !== "string") {
-        console.error("--port requires an integer");
-        process.exit(1);
-      }
-      const initialPort = rawPort === undefined ? undefined : Number(rawPort);
-      if (
-        initialPort !== undefined &&
-        (!Number.isInteger(initialPort) || initialPort < MIN_CONFIGURED_PORT || initialPort > MAX_CONFIGURED_PORT)
-      ) {
-        console.error(`--port must be an integer from ${MIN_CONFIGURED_PORT} to ${MAX_CONFIGURED_PORT}`);
-        process.exit(1);
-      }
-      const cfg = loadConfig({ initialPort });
-      console.log(`Wisp home ready: ${process.env.WISP_HOME ?? "~/.wisp"}`);
-      console.log(`daemon URL: http://${cfg.host}:${cfg.port}`);
-      if (initialPort !== undefined && cfg.port !== initialPort) {
-        console.log(`existing config kept port ${cfg.port}; --port applies only to a new Wisp home`);
-      }
-      console.log(
-        `next: register a repository with '${COMMAND} project add /path/to/repo', then run '${COMMAND} doctor'`,
-      );
-      break;
-    }
-    case "models": {
-      // local-only command (like doctor): all harness knowledge sits in the
-      // adapters' discovery strategies; here it's one generic call
-      console.log((await modelsReport(loadAdapters(), loadConfig().harnessDefaults, bunSpawn)).join("\n"));
-      break;
-    }
-    case "doctor":
-      await doctorCommand(flags);
-      break;
-    case undefined:
-    case "help":
-    case "--help":
-    case "-h":
-      console.log(HELP);
-      break;
-    default:
-      console.error(`unknown command: ${cmd}\n\n${HELP}`);
-      process.exit(1);
+  } else {
+    cfg = loadConfig();
   }
+  print(`url:   http://${cfg.host}:${cfg.port}`);
+  print(`token: ${cfg.token}`);
+  if (rotated) {
+    print(`\nToken rotated in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json. Start the Wisp daemon again now.`);
+    print("The old token is invalid after startup.");
+    print("Update every browser and saved Desktop connection with the new token.");
+  }
+}
+
+function initCommand(flags: Flags): void {
+  const rawPort = flags.port;
+  if (rawPort !== undefined && typeof rawPort !== "string") {
+    printError("--port requires an integer");
+    process.exit(1);
+  }
+  const initialPort = rawPort === undefined ? undefined : Number(rawPort);
+  if (
+    initialPort !== undefined &&
+    (!Number.isInteger(initialPort) || initialPort < MIN_CONFIGURED_PORT || initialPort > MAX_CONFIGURED_PORT)
+  ) {
+    printError(`--port must be an integer from ${MIN_CONFIGURED_PORT} to ${MAX_CONFIGURED_PORT}`);
+    process.exit(1);
+  }
+  const cfg = loadConfig({ initialPort });
+  print(`Wisp home ready: ${process.env.WISP_HOME ?? "~/.wisp"}`);
+  print(`daemon URL: http://${cfg.host}:${cfg.port}`);
+  if (initialPort !== undefined && cfg.port !== initialPort) {
+    print(`existing config kept port ${cfg.port}; --port applies only to a new Wisp home`);
+  }
+  print(`next: register a repository with '${COMMAND} project add /path/to/repo', then run '${COMMAND} doctor'`);
+}
+
+async function archiveCommand(id: string | undefined, flags: Flags): Promise<void> {
+  const data = await api(`/api/tasks/${id}/archive`, "POST", {
+    force: flags.force === true || flags.f === true,
+  });
+  print(`archived (branch ${data.branch} kept); cleanup continues in the background. Check: ${COMMAND} cleanup ${id}`);
+  // the teardown finishes in the background, so anything it decided NOT to
+  // delete has to be said here — the user needs to know where their files are
+  if (data.note) print(data.note);
+}
+
+async function attachCommand(id: string | undefined): Promise<void> {
+  const data = await api(`/api/tasks/${id}/attach`);
+  if (!data.argv) {
+    print(data.message ?? "cannot attach");
+    return;
+  }
+  Bun.spawnSync({
+    cmd: data.argv,
+    cwd: data.cwd ?? process.cwd(),
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+}
+
+type CommandHandler = (positional: string[], flags: Flags) => Promise<void> | void;
+
+/**
+ * The dispatcher: one handler per command in cli-help.ts, checked by the
+ * compiler in both directions, so a command cannot exist without its usage
+ * (tests/cli-help.test.ts runs `--help` on every key here). index.ts answers
+ * `serve`, `version` and `doctor --storage` before this module loads, to keep
+ * them free of the CLI's imports; their entries here are what they would do.
+ */
+export const COMMANDS = {
+  serve: async () => {
+    await (await import("./daemon")).serve();
+  },
+  new: (positional, flags) => createCommand(positional, flags),
+  ls: async (_positional, flags) => {
+    printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ListedTask[]);
+  },
+  show: (positional) => showCommand(positional),
+  result: (positional) => resultCommand(positional),
+  log: (positional, flags) => logCommand(positional, flags),
+  search: (positional, flags) => searchCommand(positional, flags, api),
+  wait: (positional, flags) => waitCommand(positional, flags),
+  send: (positional, flags) =>
+    sendCommand({
+      positional,
+      attachmentFlags: flags,
+      commandName: COMMAND,
+      readAttachments: (attachmentFlags) => readAttachmentFlags(attachmentFlags, uploadAttachment, discardAttachment),
+      discardAttachment,
+      requestError: exitApi,
+      request: (path, method, body) => daemonRequest(path, method, body === undefined ? undefined : JSON.stringify(body)),
+    }),
+  interrupt: async (positional) => {
+    await api(`/api/tasks/${positional[0]}/interrupt`, "POST", {});
+    print(`interrupted — session kept; steer with: ${COMMAND} send`);
+  },
+  workflow: (positional, flags) => workflowCommand(positional, flags, api),
+  pr: async (positional, flags) => {
+    try {
+      await prCommand(positional, flags, api);
+    } catch (error) {
+      if (error instanceof Error && error.message === PR_USAGE) { printError(PR_USAGE); process.exit(1); }
+      exitApi(error);
+    }
+  },
+  brief: (positional, flags) => briefCommand(positional, flags),
+  fresh: async (positional) => {
+    await api(`/api/tasks/${positional[0]}/fresh-session`, "POST", {});
+    print("fresh session armed — next turn starts cold");
+  },
+  push: async (positional) => {
+    const data = await api(`/api/tasks/${positional[0]}/push`, "POST", {});
+    print(data.output || "pushed");
+  },
+  update: (positional) => updateCommand(positional, api),
+  cleanup: (positional, flags) => cleanupCommand(positional[0], flags, api),
+  archive: (positional, flags) => archiveCommand(positional[0], flags),
+  export: (positional, flags) => retentionCommand("export", positional[0], flags, api),
+  purge: (positional, flags) => retentionCommand("purge", positional[0], flags, api),
+  project: (positional, flags) => projectCommand(positional, flags),
+  attach: (positional) => attachCommand(positional[0]),
+  token: (_positional, flags) => tokenCommand(flags),
+  init: (_positional, flags) => initCommand(flags),
+  models: async () => {
+    // local-only command (like doctor): all harness knowledge sits in the
+    // adapters' discovery strategies; here it's one generic call
+    print((await modelsReport(loadAdapters(), loadConfig().harnessDefaults, bunSpawn)).join("\n"));
+  },
+  limits: (_positional, flags) => limitsCommand(flags, api),
+  version: (_positional, flags) => print(flags.json ? JSON.stringify(BUILD_INFO) : versionLine()),
+  doctor: (_positional, flags) => doctorCommand(flags),
+} satisfies Record<CommandName, CommandHandler>;
+
+export async function cli(args: string[]): Promise<void> {
+  // help, usage and unknown commands never reach a handler (index.ts answers them first)
+  const answer = offlineAnswer(args);
+  if (answer) respond(answer);
+  const [name = "", ...rest] = args;
+  const command = resolveCommand(name)!;
+  const { positional, flags } = parseArgs(rest);
+  await COMMANDS[command](positional, flags);
 }

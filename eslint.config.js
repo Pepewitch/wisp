@@ -39,6 +39,15 @@ export default defineConfig([
     },
   },
   {
+    // What the CLI prints is mostly text Wisp did not write — an agent's
+    // answer, a harness's stderr, a branch name — so it goes out through
+    // cli-print.ts, which strips the terminal control sequences such text can
+    // carry. cli-help.ts prints only Wisp's own words.
+    files: ["wispd/src/cli*.ts"],
+    ignores: ["wispd/src/cli-print.ts", "wispd/src/cli-help.ts"],
+    rules: { "no-console": "error" },
+  },
+  {
     files: ["{tests,wispd/tests}/**/*.ts"],
     rules: {
       // A suite is an executable specification. Keep a generous ceiling that

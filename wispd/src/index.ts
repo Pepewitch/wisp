@@ -1,13 +1,12 @@
 #!/usr/bin/env bun
 import { wispCommand } from "./command";
+import { controlFree } from "./control-free";
 
 export {};
 
 const args = process.argv.slice(2);
 
 try {
-  // `wisp brief` help and usage are answered from a module that imports nothing.
-  const briefAnswer = args[0] === "brief" ? (await import("./cli-brief-help")).briefOfflineAnswer(args.slice(1)) : null;
   if (args[0] === "__pty-exec") {
     // The child half of src/pty.ts, and deliberately the FIRST branch: this
     // process exists only to take a pty as its controlling terminal and
@@ -15,18 +14,20 @@ try {
     // would run daemon code inside what is about to become the shell.
     const { runPtyExec } = await import("./pty");
     runPtyExec(args.slice(1));
-  } else if (args[0] === "doctor" && args.includes("--storage")) {
+  }
+  // Help, usage and unknown commands are answered before config: importing
+  // config.ts creates a home, and `<command> --help` must never run the
+  // command — `update --help` would install, `serve --help` would serve.
+  const help = await import("./cli-help");
+  const answer = help.offlineAnswer(args);
+  if (answer) help.respond(answer);
+  if (args[0] === "doctor" && args.includes("--storage")) {
     // Bypass CLI/config imports: this diagnostic must not initialize a home.
     const { parseArgs } = await import("./cli-args");
     const { doctorCommand } = await import("./cli-doctor");
     const { positional, flags } = parseArgs(args.slice(1));
     if (positional.length) throw new Error("doctor --storage does not take positional arguments");
     await doctorCommand(flags);
-  } else if (briefAnswer) {
-    // Before config: an agent reads this help with no daemon, no token, and
-    // possibly no writable home, and importing config.ts would create one.
-    (briefAnswer.stream === "out" ? console.log : console.error)(briefAnswer.text.trimEnd());
-    process.exit(briefAnswer.exit);
   } else if (args[0] === "serve") {
     const { serve } = await import("./daemon");
     await serve();
@@ -42,7 +43,8 @@ try {
   }
 } catch (e) {
   // config/adapters validation throws here at boot (a prior audit): the message
-  // already names the file and field — print it, don't bury it in a stack trace
-  console.error(`${wispCommand()}: ${e instanceof Error ? e.message : e}`);
+  // already names the file and field — print it, don't bury it in a stack trace.
+  // It can also carry the daemon's words, so it is made terminal-safe.
+  console.error(controlFree(`${wispCommand()}: ${e instanceof Error ? e.message : e}`));
   process.exit(1);
 }
