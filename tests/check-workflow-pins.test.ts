@@ -40,7 +40,7 @@ describe("what the policy refuses", () => {
   test("a third-party action pinned to a mutable tag", () => {
     const problems = checkWorkflow(
       "tagged.yml",
-      `${PINNED_HEADER}      - uses: actions/checkout@v4\n`,
+      `${PINNED_HEADER}      - uses: actions/setup-node@v4\n`,
     );
     expect(problems).toHaveLength(1);
     expect(problems[0]!.problem).toContain("must be pinned to a 40-character commit SHA");
@@ -73,6 +73,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 `,
     );
     expect(problems.map((problem) => problem.problem)).toEqual([
@@ -95,6 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 `,
     );
     expect(problems).toHaveLength(2);
@@ -142,6 +146,8 @@ jobs:
     container: node:22
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 `,
       ),
     ).toHaveLength(1);
@@ -162,6 +168,8 @@ jobs:
     permissions: write-all
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 `,
     );
     expect(problems).toHaveLength(1);
@@ -178,7 +186,126 @@ jobs:
   });
 });
 
+const SETUP_BUN = "      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0\n        with:\n          bun-version: 1.3.14\n";
+const RUST_CACHE = "      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2\n";
+
+describe("what the policy refuses to run next to credentials", () => {
+  test("an expression spliced into a run: script, block or inline", () => {
+    const problems = checkWorkflow(
+      "splice.yml",
+      `${PINNED_HEADER}      - run: |\n          echo start\n          render --notes "\${{ steps.version.outputs.notes }}"\n      - run: echo \${{ github.head_ref }}\n`,
+    );
+    expect(problems.map((problem) => problem.line)).toEqual([13, 14]);
+    expect(problems[0]!.problem).toContain("pass it through env:");
+  });
+
+  test("an expression passed through env: is fine, and so is one in a step name", () => {
+    expect(
+      checkWorkflow(
+        "env.yml",
+        `${PINNED_HEADER}      - name: shard \${{ matrix.shard }}\n        env:\n          NOTES: \${{ steps.version.outputs.notes }}\n        run: |\n          render --notes "$NOTES"\n`,
+      ),
+    ).toEqual([]);
+  });
+
+  test("a checkout that leaves its token in .git/config", () => {
+    const problems = checkWorkflow(
+      "persist.yml",
+      `${PINNED_HEADER}      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n        with:\n          fetch-depth: 0\n      - run: echo later step\n        # persist-credentials: false belongs to no step here\n`,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.problem).toContain("persist-credentials: false");
+  });
+
+  test("a job with a secret that restores the bun executable or ~/.cargo/bin from a cache", () => {
+    const problems = checkWorkflow(
+      "secret-cache.yml",
+      `${PINNED_HEADER}${SETUP_BUN}${RUST_CACHE}      - env:\n          KEY: \${{ secrets.SIGNING_KEY }}\n        run: sign\n`,
+    );
+    expect(problems.map((problem) => problem.problem)).toEqual([
+      expect.stringContaining("job build restores an Actions cache through setup-bun"),
+      expect.stringContaining("through rust-cache"),
+    ]);
+    expect(problems[0]!.problem).toContain("it can read a secret");
+  });
+
+  test("a job with a write-scoped token that restores a cache", () => {
+    const problems = checkWorkflow(
+      "write-cache.yml",
+      `name: example
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+${SETUP_BUN}      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+`,
+    );
+    expect(problems).toHaveLength(2);
+    expect(problems[0]!.problem).toContain("it holds a write-scoped token");
+  });
+
+  test("every job of a tag-triggered workflow, credential or not", () => {
+    const problems = checkWorkflow(
+      "release.yml",
+      `name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+${SETUP_BUN}`,
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.problem).toContain("it runs on a release tag");
+  });
+
+  test("the release workflow as it stood: caches in its signing and publishing jobs", () => {
+    const before = `name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  macos-trusted:
+    runs-on: macos-15
+    steps:
+${SETUP_BUN}${RUST_CACHE}        with:
+          workspaces: desktop/src-tauri
+          cache-targets: false
+      - name: build and verify the trusted macOS releases
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: \${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: bun run scripts/release-desktop.ts --require-tag --signed
+`;
+    expect(checkWorkflow("release.yml", before)).toHaveLength(2);
+    const after = before
+      .replace("bun-version: 1.3.14\n", "bun-version: 1.3.14\n          no-cache: true\n")
+      .replace(`${RUST_CACHE}        with:\n          workspaces: desktop/src-tauri\n          cache-targets: false\n`, "");
+    expect(checkWorkflow("release.yml", after)).toEqual([]);
+  });
+});
+
 describe("what the policy allows", () => {
+  test("a credential-free branch job may cache its toolchain", () => {
+    expect(checkWorkflow("ci.yml", `${PINNED_HEADER}${SETUP_BUN}${RUST_CACHE}      - run: bun test\n`)).toEqual([]);
+  });
+
   test("a pinned action, a digest-pinned container, and a job-level write scope", () => {
     expect(
       checkWorkflow(
@@ -197,6 +324,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/local-thing
       - run: |
           docker run --rm \\
@@ -224,6 +353,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 `,
       ),
     ).toEqual([]);
@@ -231,7 +362,7 @@ jobs:
 
   test("a directory of clean workflows", () => {
     const dir = workflowDir("clean", {
-      "one.yml": `${PINNED_HEADER}      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n`,
+      "one.yml": `${PINNED_HEADER}      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0\n        with:\n          persist-credentials: false\n`,
       "notes.md": "not a workflow",
     });
     expect(checkAllWorkflows(dir)).toEqual([]);

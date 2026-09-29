@@ -430,6 +430,89 @@ describe("embedded web terminal", () => {
     },
   );
 
+  test(
+    "a client that stops reading holds its shell instead of having output queued without limit",
+    { timeout: 60_000 },
+    async () => {
+      // A slow phone or tunnel: the socket stops taking frames. Before, the
+      // daemon read on at the shell's speed, queued every frame for it, and
+      // past Bun's 16 MB limit silently dropped them, which cut escape
+      // sequences apart and left the pane garbled. Now the shell waits.
+      //
+      // The client is its own process because only a blocked event loop
+      // stops reading a socket; the daemon here shares this one.
+      const { task } = terminalFixture("backpressure");
+      server = await serve({ port: 0 });
+      const root = mkdtempSync(join(tmpdir(), "wisp-terminal-slow-client-"));
+      const done = join(root, "flood-done");
+      const script = join(root, "slow-client.ts");
+      const floodBytes = 24_000_000;
+      writeFileSync(
+        script,
+        `
+import { existsSync } from "node:fs";
+const [url, token, done, floodBytes] = process.argv.slice(2);
+// $((…)) so the marker is only in the output, never in the echoed command
+const flood = "head -c " + floodBytes + " /dev/zero | tr '\\\\0' Z; : > " + done + "; echo FLOOD-$((40+2))\\n";
+const ws = new WebSocket(url, { headers: { authorization: "Bearer " + token } });
+let run = 0, longest = 0, blocked = false, held = null, tail = "";
+ws.onmessage = (event) => {
+  const message = JSON.parse(String(event.data));
+  if (message.type === "hello") return ws.send(JSON.stringify({ type: "in", data: flood }));
+  if (message.type !== "out") return;
+  for (const piece of String(message.data).split(/([^Z]+)/)) {
+    if (piece === "") continue;
+    if (piece[0] === "Z") longest = Math.max(longest, (run += piece.length));
+    else run = 0;
+  }
+  if (!blocked && run > 1000) {
+    blocked = true;
+    Bun.sleepSync(3000); // this socket is not read at all meanwhile
+    held = !existsSync(done);
+    // a dropped frame can be the one carrying the end marker
+    setTimeout(() => {
+      console.log(JSON.stringify({ held, longest, finished: false }));
+      process.exit(0);
+    }, 20000);
+  }
+  // Search before trimming: the marker can share a frame with a long prompt.
+  const seen = tail + message.data;
+  tail = seen.slice(-100);
+  if (seen.includes("FLOOD-42")) {
+    console.log(JSON.stringify({ held, longest, finished: true }));
+    process.exit(0);
+  }
+};
+ws.onerror = () => { console.log(JSON.stringify({ error: "socket error" })); process.exit(1); };
+`,
+      );
+      const client = Bun.spawn(
+        [
+          process.execPath,
+          script,
+          `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=80&rows=24`,
+          token,
+          done,
+          String(floodBytes),
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const code = await waitFor(client.exited, 50_000);
+      const stdout = await new Response(client.stdout).text();
+      expect(code, await new Response(client.stderr).text()).toBe(0);
+      const result = JSON.parse(stdout.trim().split("\n").pop()!) as {
+        held: boolean;
+        longest: number;
+        finished: boolean;
+      };
+      // while the client read nothing the shell could not finish printing
+      expect(result.held).toBe(true);
+      // and once it read again, all of it arrived: nothing was dropped
+      expect(result.finished).toBe(true);
+      expect(result.longest).toBe(floodBytes);
+    },
+  );
+
   test("rejects a shell id outside the per-task range instead of upgrading", async () => {
       const { task } = terminalFixture("shellid");
 
@@ -744,6 +827,23 @@ describe("shell tabs", () => {
 
     await session.clear(client);
     expect(await session.scrollback()).not.toContain("clear-me-2");
+  }, 30_000);
+
+  test("a character split across two reads reaches the client and the screen whole", async () => {
+    // Reads end wherever the kernel's buffer did. Each chunk used to be
+    // decoded alone, so a character split between two became two U+FFFD in
+    // the pane and in the snapshot a reattaching client is sent.
+    const { task, worktree } = terminalFixture("utf8");
+    const session = openSession(task.id, 0, worktree);
+    const client = recordingClient();
+    session.attach(client);
+    // é is C3 A9: its first byte, a pause long enough to be its own read, then the second
+    await session.write(client, "printf 'split-\\303'; sleep 0.3; printf '\\251-joined\\n'\n");
+    // the echoed command has a literal \n there; only the output ends the line
+    await until(() => client.output().includes("-joined\r\n"));
+    expect(client.output()).toContain("split-é-joined");
+    expect(client.output()).not.toContain("�");
+    expect(await session.scrollback()).toContain("split-é-joined");
   }, 30_000);
 
   test("a title a program sets is kept to a bounded length", () => {

@@ -95,22 +95,24 @@ signs its GitHub posts so Wisp never feeds them back. See
 ## Tasks
 
 ```
-wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--local]
-         [--base <ref>] [--auto-merge] [--auto-fix] [--image <path>]…
+wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local]
+         [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.
 `--model`/`--effort` fall back to `harnessDefaults` in `~/.wisp/config.json`,
-then to the harness's own default. `--local` runs in the repo checkout itself
-instead of a worktree. `--base` forks this task's worktree from `<ref>`
-instead of the project's base branch — any commit-ish (`origin/release-2.1`,
-a local branch to stack on, a tag, a SHA), taken literally, and the create
-fails if it does not resolve. It is rejected for `--local`, which adopts the
-branch the checkout is already on. `--auto-merge` merges the task's PR once it
-is ready (below). `--image` repeats (see images.md). Prints
-`created <id> (<harness>[, <model>][, local][, auto-merge]) — <title>`; the model is shown
-when Wisp received an explicit or configured choice, and omitted when the
-harness will choose its own default.
+then to the harness's own default. `--fast` runs the same model in the
+harness's faster lane; a harness without one refuses it. `--local` runs in
+the repo checkout itself instead of a worktree. `--base` forks this task's
+worktree from `<ref>` instead of the project's base branch — any commit-ish
+(`origin/release-2.1`, a local branch to stack on, a tag, a SHA), taken
+literally, and the create fails if it does not resolve. It is rejected for
+`--local`, which adopts the branch the checkout is already on. `--auto-merge`
+merges the task's PR once it is ready (below). `--attach` repeats (see
+images.md; `--image` is the old name and still works). Prints
+`created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, brief]) — <title>`;
+the model is shown when Wisp received an explicit or configured choice, and
+omitted when the harness will choose its own default.
 
 ```
 wisp ls [-a]
@@ -164,7 +166,7 @@ timeout (default ≈ 1 day). Waits through `stuck`. Client-side 2-second poll,
 so a daemon restart mid-wait costs one poll.
 
 ```
-wisp send <task> "message" [--image <path>]…
+wisp send <task> "message" [--attach <path>]…
 wisp interrupt <task>
 wisp fresh <task>
 ```
@@ -202,7 +204,7 @@ message at least once.
 
 There is no CLI verb for changing an existing task's harness, model, or
 effort. That is a composer control in the browser and Desktop app, and a
-`POST /tasks/<id>/send` field set (`harness`, `model`, `effort`,
+`POST /api/tasks/<id>/send` field set (`harness`, `model`, `effort`,
 `startFreshContext`) on the API. Changing harness requires both an explicit
 `model` (`400` without it) and `startFreshContext: true` (`409` without it,
 because the new harness cannot inherit the previous provider session). A
@@ -232,8 +234,7 @@ its effects and `--log`, then use `--confirm-complete` to skip that script or
 scripts and their children stopped and add `--verified-stopped`. See
 [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md). Archiving a `--local` task is bookkeeping only —
 nothing is removed. `attach` opens the harness's own interactive UI on the
-task's session (claude/codex/cursor/opencode; droid declares no attach
-command).
+task's session (claude/codex/cursor/opencode/droid).
 
 The web header observes pull requests separately from pushing. `/push` remains
 available in its slash palette. For a worktree task, Wisp can link a
@@ -313,6 +314,8 @@ wisp limits [--refresh] [--json]
                     plan usage per harness, the same answer as the web top
                     bar's usage popover; --refresh skips the five-minute cache
 wisp version        print the Wisp version
+wisp update         check for a newer release and install it when this
+                    installation can auto-update, else print how to enable that
 ```
 
 `wisp limits` reads each harness's own plan windows: claude-code through

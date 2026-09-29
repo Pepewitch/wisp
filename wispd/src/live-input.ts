@@ -5,6 +5,7 @@ import { liveCommand } from "./adapters/live/command";
 import { DroidLiveDriver, type DroidLiveImage, type QuestionAnswer } from "./adapters/live/droid";
 import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
+import { pipeReader } from "./pipe-drain";
 import {
   formatAttachNote,
   parseAttachmentManifest,
@@ -352,7 +353,7 @@ async function pumpClaude(
 ): Promise<void> {
   const stdout = child.stdout;
   if (!stdout || typeof stdout === "number") return;
-  const reader = (stdout as ReadableStream<Uint8Array>).getReader();
+  const reader = pipeReader(stdout as ReadableStream<Uint8Array>);
   const decoder = new TextDecoder();
   const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
   const followUp = createBackgroundFollowUp();
@@ -530,7 +531,7 @@ async function pumpJsonLines(
 ): Promise<void> {
   const stdout = child.stdout;
   if (!stdout || typeof stdout === "number") return;
-  const reader = (stdout as ReadableStream<Uint8Array>).getReader();
+  const reader = pipeReader(stdout as ReadableStream<Uint8Array>);
   const decoder = new TextDecoder();
   const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
   const consume = (line: string): void => {

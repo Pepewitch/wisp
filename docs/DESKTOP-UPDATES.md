@@ -225,6 +225,6 @@ changes rather than treating this historical pass as permanent coverage.
 Alpha.17's publication, public channel, and package audits have passed, but do
 not describe alpha.16-to-alpha.17 as qualified until that human-observed
 replacement, relaunch, state-preservation, Apple trust, and Homebrew receipt
-reconciliation record exists. Record the sanitized result in the
-[v0.5 qualification ledger](v0.5/QUALIFICATION.md); keep raw machine evidence
-private.
+reconciliation record exists. Record the sanitized result in the current
+release's qualification ledger ([v0.6](v0.6/QUALIFICATION.md), or its
+successor); keep raw machine evidence private.

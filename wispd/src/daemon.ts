@@ -26,12 +26,13 @@ import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests"
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
+import { settleStrandedTasks } from "./turn-finalize";
 import { startArchiveCleanupLoop } from "./routes/archive";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
-import { HomeLifetime } from "./home-lifetime";
+import { backgroundPass, HomeLifetime } from "./home-lifetime";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import {
   ALLOWED_ORIGINS_ENV,
@@ -42,7 +43,7 @@ import {
   postSession,
   tokenAuthorizes,
 } from "./routes/auth";
-import { err, json } from "./routes/http";
+import { err, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
 import type { PtySize } from "./pty";
@@ -249,7 +250,18 @@ async function attachTerminal(ws: TerminalSocket, cfg: WispConfig): Promise<void
     );
     const client: TerminalClient = {
       isOpen: () => ws.readyState === 1,
-      sendOutput: (data) => ws.send(JSON.stringify({ type: "out", data })),
+      sendOutput: (data) => {
+        const sent = ws.send(JSON.stringify({ type: "out", data }));
+        // -1: queued behind output the client has not read yet. Hold the
+        // shell until the socket drains rather than queueing without limit.
+        if (sent === -1) session.holdOutput(client);
+        // 0 on an open socket: the frame was DROPPED at the backpressure
+        // limit, so this pane no longer shows the shell's screen. Closing
+        // says so; reconnecting sends a fresh snapshot of it. With output
+        // held at the first -1 this needs a client that stopped reading
+        // mid-burst from a shell that cannot be held (the piped fallback).
+        else if (sent === 0 && ws.readyState === 1) ws.close(1011, "terminal output fell behind; reconnect");
+      },
       sendError: (message) => wsError(ws, message),
       sendExit: (code) => ws.send(JSON.stringify({ type: "exit", code })),
     };
@@ -530,6 +542,7 @@ async function serveOwned(
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
+  settleStrandedTasks(); // a 'running'/'stuck' task with no running turn left is settled from its latest turn
   recoverCleanupProgress(); // classify interrupted scripts; slow work starts after listening
 
   // The bundle is immutable for this daemon lifetime. Compress once, before
@@ -556,6 +569,11 @@ async function serveOwned(
         message(ws, message) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
           terminalMessage(ws, message, cfg);
+        },
+        // the client has read what was queued for it; see holdOutput
+        drain(ws) {
+          const binding = terminalBindings.get(ws);
+          if (binding) binding.session.releaseOutput(binding.client);
         },
         close(ws) {
           clearTerminalAuthDeadline(ws);
@@ -649,7 +667,7 @@ async function serveOwned(
         if (!authorized(req, cfg)) return err("unauthorized", 401);
         return lifetime.run(() => lifetime.track(Promise.resolve()
           .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
-          .catch((e) => err(String(e instanceof Error ? e.message : e), 500))));
+          .catch((e: unknown) => routeFailure(req.method, path, e))));
       },
     });
   } catch (error) {
@@ -702,7 +720,7 @@ async function serveOwned(
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
-  void lifetime.track(modelCache.refreshIfStale());
+  void backgroundPass("model discovery", () => modelCache.refreshIfStale());
   console.log(
     `wispd listening on http://${hostname}:${server.port} (token in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json)`,
   );

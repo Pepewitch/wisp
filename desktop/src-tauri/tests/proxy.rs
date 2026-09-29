@@ -1655,3 +1655,188 @@ async fn no_proxy_response_and_no_metadata_carries_a_daemon_token() {
 
     let _ = (alpha, bravo);
 }
+
+/* ── content protection, origin and host ─────────────────────────────────── */
+
+fn assert_protected(response: &reqwest::Response) {
+    let header = |name: &str| {
+        response
+            .headers()
+            .get_all(name)
+            .iter()
+            .map(|value| value.to_str().unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(header("x-content-type-options"), vec!["nosniff"]);
+    assert_eq!(
+        header("content-security-policy"),
+        vec!["sandbox; default-src 'none'"]
+    );
+}
+
+fn proxy_error(response: &reqwest::Response) -> Option<&str> {
+    response
+        .headers()
+        .get("x-wisp-proxy-error")
+        .and_then(|value| value.to_str().ok())
+}
+
+/// A relayed body is data, never a document on the proxy origin. The headers
+/// are ours, not the upstream's, and they change nothing a `fetch`, stream or
+/// `<img>` sees: the bytes and the content type pass through untouched.
+#[tokio::test]
+async fn every_response_is_unsniffable_and_sandboxed_without_changing_its_bytes() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+
+    // A hostile document can neither relax the policy nor keep its own.
+    let page = harness
+        .client
+        .get(harness.route("local", "api/page"))
+        .send()
+        .await
+        .expect("page");
+    assert!(page.status().is_success());
+    assert_protected(&page);
+    assert_eq!(
+        page.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+
+    // API JSON and attachment bytes are exactly what the daemon sent.
+    let task = harness
+        .client
+        .get(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}")))
+        .header("origin", "tauri://localhost")
+        .send()
+        .await
+        .expect("task");
+    assert_protected(&task);
+    let body: serde_json::Value = task.json().await.expect("json");
+    assert_eq!(body["daemon"], "alpha");
+
+    let image = harness
+        .client
+        .get(harness.route(
+            "local",
+            &format!("api/tasks/{SHARED_TASK_ID}/attachments/shot.png"),
+        ))
+        .send()
+        .await
+        .expect("image");
+    assert_protected(&image);
+    assert_eq!(
+        image
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
+    assert_eq!(
+        image.bytes().await.expect("bytes").as_ref(),
+        attachment_bytes("alpha").as_slice()
+    );
+
+    // Proxy refusals carry the same protection.
+    let refused = harness
+        .client
+        .get(harness.route("c-unknown", "api/tasks"))
+        .send()
+        .await
+        .expect("refusal");
+    assert_eq!(refused.status().as_u16(), 404);
+    assert_protected(&refused);
+}
+
+/// `http(s)://tauri.localhost` is the Windows and Android webview origin. On
+/// macOS it is an ordinary hostname, and browsers resolve every `*.localhost`
+/// name to loopback, so it must not pass for the app.
+#[tokio::test]
+async fn only_the_packaged_macos_origin_is_accepted() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    assert_eq!(proxy::packaged_app_origins(), vec!["tauri://localhost"]);
+
+    for origin in ["http://tauri.localhost", "https://tauri.localhost"] {
+        let response = harness
+            .client
+            .get(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}")))
+            .header("origin", origin)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status().as_u16(), 403, "{origin}");
+        assert_eq!(proxy_error(&response), Some("origin"));
+    }
+    assert!(alpha.seen().is_empty());
+}
+
+/// A page on another name that resolves to loopback arrives with that name in
+/// `Host`. Even holding the capability, it is refused before routing.
+#[tokio::test]
+async fn a_request_addressed_to_another_host_is_refused() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    let port = harness.proxy.port();
+
+    for host in [
+        format!("localhost:{port}"),
+        format!("rebound.example:{port}"),
+        "127.0.0.1".to_string(),
+        format!("127.0.0.1:{}", port.wrapping_add(1)),
+    ] {
+        let response = harness
+            .client
+            .get(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}")))
+            .header("host", &host)
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(response.status().as_u16(), 403, "{host}");
+        assert_eq!(proxy_error(&response), Some("host"), "{host}");
+    }
+    assert!(alpha.seen().is_empty());
+
+    let exact = harness
+        .client
+        .get(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}")))
+        .send()
+        .await
+        .expect("request");
+    assert!(exact.status().is_success());
+}
+
+/* ── bounded identity reads ──────────────────────────────────────────────── */
+
+/// The identity check before a write reads a size-capped body. An address
+/// that answers with an endless document is refused promptly instead of being
+/// buffered for as long as it keeps sending.
+#[tokio::test]
+async fn an_endless_identity_answer_is_refused_before_a_write() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+    alpha.stream_endless_capabilities();
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(10),
+        harness
+            .client
+            .post(harness.route("local", &format!("api/tasks/{SHARED_TASK_ID}/action")))
+            .json(&serde_json::json!({ "action": "synthetic" }))
+            .send(),
+    )
+    .await
+    .expect("the identity check must not read forever")
+    .expect("response");
+    assert_eq!(response.status().as_u16(), 502);
+    assert_eq!(proxy_error(&response), Some("identity-unreadable"));
+    assert!(
+        !alpha
+            .seen_paths()
+            .iter()
+            .any(|path| path.ends_with("/action")),
+        "the write must not be forwarded"
+    );
+}

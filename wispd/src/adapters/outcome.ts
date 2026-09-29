@@ -116,16 +116,34 @@ export class IncrementalOutcomeReducer {
     if (checkpoint) this.restore(checkpoint);
   }
 
-  pushStdoutLine(line: string): void {
-    const ordinal = this.stdoutLines++;
+  pushStdoutLine(line: string): boolean {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) return;
-    let event: Record<string, any>;
-    try {
-      event = JSON.parse(trimmed) as Record<string, any>;
-    } catch {
-      return;
+    let event: Record<string, any> | null = null;
+    if (trimmed.startsWith("{")) {
+      try {
+        event = JSON.parse(trimmed) as Record<string, any>;
+      } catch {
+        // Not an event; it still counts as a line.
+      }
     }
+    return this.pushStdoutEvent(event);
+  }
+
+  /**
+   * One stdout record, already parsed; null for a line that is not an event.
+   * The event is read as it arrived — the reducer bounds every fact it keeps
+   * itself — so a caller must never hand it a transcript-bounded copy.
+   *
+   * Returns true when this record revealed the session, model or skills for
+   * the first time: facts a restart must not lose, so a recorder checkpoints
+   * them at once rather than on its usual cadence.
+   */
+  pushStdoutEvent(event: Record<string, any> | null): boolean {
+    const ordinal = this.stdoutLines++;
+    if (!event) return false;
+    const knownSession = this.earlySession;
+    const knownModel = this.earlyModel;
+    const knownSkills = this.earlySkills;
 
     if (ordinal < 10) {
       const sessionField = this.def.parse.session;
@@ -162,6 +180,7 @@ export class IncrementalOutcomeReducer {
     else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
     this.pushErrorEvent(event);
+    return this.earlySession !== knownSession || this.earlyModel !== knownModel || this.earlySkills !== knownSkills;
   }
 
   pushStderrLine(line: string): void {
@@ -538,7 +557,11 @@ export class IncrementalOutcomeReducer {
   private resultFields(event: Record<string, unknown>, fields: Array<string | undefined>): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const field of new Set(fields.filter((value): value is string => Boolean(value)))) {
-      if (event[field] !== undefined) result[field] = this.factValue(event[field]);
+      const value = event[field];
+      if (value === undefined) continue;
+      // A string field (the result above all) gets the whole fact bound, not
+      // the per-string share of a structured value's.
+      result[field] = typeof value === "string" ? this.factString(value) : this.factValue(value);
     }
     return result;
   }

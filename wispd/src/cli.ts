@@ -18,7 +18,7 @@ import { cleanupCommand } from "./cli-cleanup";
 import { doctorCommand } from "./cli-doctor";
 import { updateCommand } from "./cli-update";
 import { resolve } from "node:path";
-import { createEventFormatter, loadAdapters, type UsageSummary } from "./adapters";
+import { createEventFormatter, loadAdapters, rawOnThrow, type UsageSummary } from "./adapters";
 import { formatBytes } from "./attachments";
 import { readAttachmentFlags } from "./cli-attach";
 import { searchCommand } from "./cli-search";
@@ -210,7 +210,7 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
     const data = await api(`/api/tasks/${id}/log?${turnQuery}`);
     if (data.capture_state === "evicted") { print(data.notice); return; }
     const def = adapters?.[data.harness as string];
-    const formatLine = flags.raw ? null : createEventFormatter(def);
+    const formatLine = flags.raw ? null : rawOnThrow(createEventFormatter(def));
     const pretty = formatLine
       ? (data.out as string)
           .split("\n")

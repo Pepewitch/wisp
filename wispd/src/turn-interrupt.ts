@@ -90,10 +90,16 @@ async function stopTurnProcesses(
     setTurnInterrupt(turn.id, INTERRUPTED);
     return;
   }
-  const identity = await pidIdentity(pid, turn.pid_start_time);
+  const identity = await pidIdentity(pid, turn.pid_start_time, turn.started_at);
+  // A live child handle is proof on its own: Bun has not reaped it, so its pid
+  // cannot have been reused. Without one, an unverified pid gets no signal and
+  // no verdict — the turn stays running for a retry to settle.
+  if (identity === "unknown" && !child) {
+    throw new Error(`could not verify that pid ${pid} is still turn ${turn.n}'s process, so nothing was signaled; retry Stop`);
+  }
   // An old numeric PID alone conveys no authority. Once its leader is gone,
   // require a verified descendant in the durable registry or an empty group.
-  if (identity !== "alive" && !child) {
+  if (identity !== "alive" && identity !== "unknown" && !child) {
     if (identity === "dead" && hasRecordedGroup(turn.id)) {
       // A previous daemon may have recorded a surviving descendant before the
       // leader exited. The durable registry revalidates that living identity.
@@ -117,22 +123,31 @@ async function stopTurnProcesses(
   // continues to exist after leader exit; escalation must keep targeting it.
   const grouped = processGroupAlive(pid);
   const signal = async (sig: "SIGTERM" | "SIGKILL"): Promise<void> => {
-    const current = await pidIdentity(pid, turn.pid_start_time);
+    const current = await pidIdentity(pid, turn.pid_start_time, turn.started_at);
     if (current === "gone") throw new Error(`pid ${pid} changed identity; refusing to signal it`);
+    if (current === "unknown" && !(child && child.exitCode === null && child.signalCode === null)) {
+      throw new Error(`could not verify pid ${pid}'s identity; refusing to signal it`);
+    }
     if (grouped) signalProcessGroup(pid, sig);
-    else if (current === "alive") {
+    // Left: alive, dead, or unknown while our unreaped child still holds the pid.
+    else if (current !== "dead") {
       if (child) child.kill(sig);
       else process.kill(pid, sig);
     }
+  };
+  // Only an answer ends the wait: an unverified pid may still be running.
+  const exited = async (): Promise<boolean> => {
+    const current = await pidIdentity(pid, turn.pid_start_time, turn.started_at);
+    return current === "dead" || current === "gone";
   };
   const ended = async (ms: number): Promise<boolean> => {
     if (grouped) return processGroupEnded(pid, ms);
     const deadline = Date.now() + ms;
     do {
-      if ((await pidIdentity(pid, turn.pid_start_time)) !== "alive") return true;
+      if (await exited()) return true;
       await Bun.sleep(50);
     } while (Date.now() < deadline);
-    return (await pidIdentity(pid, turn.pid_start_time)) !== "alive";
+    return exited();
   };
   setTurnInterrupt(turn.id, STOPPING);
   transition(turn.task_id, "running", STOPPING);

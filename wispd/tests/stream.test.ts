@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -704,6 +704,117 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
       expect(JSON.parse(backlog.data)).toEqual({ turn: 1, prompt: "go", text: "first breath" });
     } finally {
       await reader.cancel();
+    }
+  });
+});
+
+describe("GET /api/tasks/:id/log/stream with input it cannot render cleanly", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wisp-stream-odd-"));
+
+  /**
+   * A character split across two reads used to be decoded half by half, so
+   * each half became U+FFFD, at the same byte offsets on every reload.
+   */
+  test("a multibyte character split across two reads arrives whole", async () => {
+    const log = join(dir, "split-character.out.log");
+    // "é" is two bytes; the first lands on the last byte of the first read
+    const raw = `${"a".repeat(1_048_575)}é\n漢字 and 🙂\n`;
+    writeFileSync(log, raw);
+    const task = makeTask();
+    const turnId = createTurn(task.id, 1, "split", null, log);
+    finishTurn(turnId, "done", 0, "ok");
+
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=raw&turn=1`);
+    const reader = res.body!.getReader();
+    const sse = sseReader(reader);
+    let rebuilt = "";
+    try {
+      for (;;) {
+        const frame = await sse.nextFrame();
+        if (frame.event === "turn-end") break;
+        rebuilt += (JSON.parse(frame.data) as { text: string }).text;
+      }
+      expect(rebuilt).not.toContain("�");
+      expect(rebuilt).toBe(raw);
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  /**
+   * A formatter that throws on a line must cost that line its formatting,
+   * never the stream, and never the daemon: the throw used to escape the
+   * stream's fire-and-forget tick as an unhandled rejection, which ends a Bun
+   * process. A code-built adapter naming an unknown formatter throws on every
+   * JSON line, which makes it the one reliable way to reach this fallback now
+   * that the builtin formatters are fuzzed not to throw.
+   */
+  test("a line the formatter throws on is shown raw and the stream keeps following", async () => {
+    const throwing: AdapterDef = { bin: "fake", exec: [], parse: { format: "json" }, events: "nope" };
+    const log = join(dir, "formatter-throws.out.log");
+    const first = `{"type":"message","text":"first"}`;
+    writeFileSync(log, `${first}\n`);
+    const task = makeTask();
+    createTurn(task.id, 1, "go", null, log);
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    try {
+      const url = (format: string) => new URL(`http://wisp.test/api/tasks/${task.id}/log/stream?format=${format}&turn=1`);
+      const open = async (format: string) => {
+        const res = await route(new Request(url(format)), url(format), url(format).pathname, cfg, { fake: throwing });
+        const reader = res.body!.getReader();
+        readers.push(reader);
+        return sseReader(reader);
+      };
+      const human = await open("human");
+      const activity = await open("activity");
+      expect(JSON.parse((await human.nextFrame()).data)).toEqual({ turn: 1, prompt: "go", text: first });
+      const activityBacklog = JSON.parse((await activity.nextFrame()).data) as { activity: { kind: string; text: string }[] };
+      expect(activityBacklog.activity).toEqual([expect.objectContaining({ kind: "text", text: first })]);
+
+      // both streams are still following the turn
+      const second = `{"type":"message","text":"second"}`;
+      appendFileSync(log, `${second}\n`);
+      expect(JSON.parse((await human.nextFrame()).data)).toEqual({ turn: 1, text: second });
+      const activityAppend = JSON.parse((await activity.nextFrame()).data) as { activity: { kind: string; text: string }[] };
+      expect(activityAppend.activity).toEqual([expect.objectContaining({ kind: "text", text: second })]);
+
+      // reported, once per stream rather than once per line
+      const reports = logged.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("formatter threw"));
+      expect(reports).toHaveLength(2);
+      expect(reports[0]).toContain(`task ${task.id} turn 1`);
+      expect(reports[0]).toContain("is not a known event formatter");
+    } finally {
+      for (const reader of readers) await reader.cancel();
+      logged.mockRestore();
+    }
+  });
+
+  test("a turn the stream cannot open closes that stream, not the daemon", async () => {
+    // the task's own harness is fine; its turn ran under one this stream cannot render
+    const broken: AdapterDef = { bin: "fake", exec: [], parse: { format: "json" }, events: "claude-stream-json", activity: "nope" };
+    const log = join(dir, "unrenderable-turn.out.log");
+    writeFileSync(log, `{"type":"message","text":"hi"}\n`);
+    const task = makeTask();
+    createTurn(task.id, 1, "go", null, log, null, null, null, { context_n: 1, harness: "broken", model: null, effort: null, fast: false });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const url = new URL(`http://wisp.test/api/tasks/${task.id}/log/stream?format=activity&turn=1`);
+      const res = await route(new Request(url), url, url.pathname, cfg, { fake: FAKE_DEF, broken });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      let ended = false;
+      for (let reads = 0; reads < 10 && !ended; reads++) ended = (await reader.read()).done;
+      expect(ended).toBe(true);
+      const report = logged.mock.calls.map((call) => String(call[0])).find((line) => line.includes("failed and was closed"));
+      expect(report).toContain(`log stream for task ${task.id}`);
+      expect(report).toContain("is not a known activity normalizer");
+      // and its subscriber slot came back
+      const again = await call(`/api/tasks/${task.id}/log/stream?format=raw`);
+      expect(again.status).toBe(200);
+      await again.body!.getReader().cancel();
+    } finally {
+      logged.mockRestore();
     }
   });
 });

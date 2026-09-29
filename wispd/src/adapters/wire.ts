@@ -45,6 +45,19 @@ export function createEventLineDecoder(
   };
 }
 
+/**
+ * The content blocks of a Messages-style `message` (claude and cursor
+ * stream-json). The Messages API also allows `content` to be a plain string,
+ * and nothing on the wire guarantees an array of records, so anything but an
+ * array reads as no blocks (as `outcome.ts` reads it) and a block that is not
+ * a record is skipped. A display formatter that iterated the raw value threw
+ * on the first odd line, inside a log stream, and took the daemon with it.
+ */
+export function messageContent(message: unknown): Record<string, any>[] {
+  const content = isRecord(message) ? message.content : undefined;
+  return Array.isArray(content) ? content.filter(isRecord) : [];
+}
+
 export function cursorToolCall(event: Record<string, any>): {
   key: string | null;
   name: string;

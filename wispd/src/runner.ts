@@ -1,6 +1,6 @@
 import { assertTaskCapacity } from "./task-admission";
 import { pauseTaskWorkflows } from "./workflows/store";
-import { homeIsDraining, trackHomeWork } from "./home-lifetime";
+import { backgroundPass, homeIsDraining } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -33,13 +33,13 @@ import { assertTaskNotStopping, interruptForMessage, interruptTaskTurn, isTaskSt
 import { assertTaskProcessesEnded, backgroundWork, processStop, processStopPending, recordProcessGroup, recordedGroupRebooted, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { signalProcessTree } from "./process-tree";
+import { settlePipes } from "./pipe-drain";
 import { processStartTime } from "./procid";
 import {
   db,
   createTurn,
   claimTaskMessageForStart,
   creatingTasks,
-  finishTurn,
   getTask,
   getTaskContext,
   getTaskMessage,
@@ -56,6 +56,7 @@ import {
   setTaskFields,
   setTurnInterrupt,
   setTurnKillDetail,
+  settleTurn,
   transition,
   turnForTask,
   type TaskAgentSelection,
@@ -88,6 +89,8 @@ export { taskEnv } from "./turn-input";
 const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
 /** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
 const KILL_GRACE_MS = 5000;
+/** How long a turn's output pipes may stay open after the harness exits (see settlePipes). */
+const PIPE_DRAIN_GRACE_MS = 2000;
 /** Interrupt details written by force-archive, and the only reading of them. */
 const FORCE_ARCHIVE_DETAIL = "turn interrupted by force-archive";
 const FORCE_ARCHIVE_ESCALATED_DETAIL = `${FORCE_ARCHIVE_DETAIL} (escalated to SIGKILL after SIGTERM was trapped)`;
@@ -266,9 +269,14 @@ export function startTurn(
       null,
       { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
     );
-    finishTurn(turnId, "failed", null, null);
     setTaskFields(task.id, { turn_count: n });
-    transition(task.id, "failed", `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
+    settleTurn(
+      turnId,
+      { status: "failed", exitCode: null, result: null },
+      task.id,
+      "failed",
+      `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`,
+    );
     return;
   }
   autopilot?.delivered();
@@ -336,7 +344,9 @@ export function startTurn(
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, def, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
-  void trackHomeWork(watchTurn(
+  // Detached: the turn settles on its own. A watcher that fails must still
+  // leave a trace, and must never reject unhandled.
+  void backgroundPass(`turn watcher for task ${task.id} turn ${n}`, () => watchTurn(
     child,
     task.id,
     turnId,
@@ -564,7 +574,7 @@ async function watchTurn(
     }
   };
   // detached tick, same idiom as `void watchTurn`: interval callbacks can't be awaited
-  const capTimer = recorder ? null : setInterval(() => void trackHomeWork(capTick()), 5000);
+  const capTimer = recorder ? null : setInterval(() => void backgroundPass(`log cap check for task ${taskId}`, capTick), 5000);
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   await refreshProcessGroups(taskId, turnId);
@@ -573,8 +583,12 @@ async function watchTurn(
   forgetLiveTurn(taskId, turnId);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
-  await outputPump.catch(() => {});
-  await stderrPump.catch(() => {});
+  // Bounded: a process the harness left behind can hold its pipes open for as
+  // long as it lives, and the turn must not wait on it to settle.
+  if (await settlePipes([child.stdout, child.stderr], [outputPump, stderrPump], PIPE_DRAIN_GRACE_MS)) {
+    console.error(`[wisp] task ${taskId}: turn ${turnId} settled without waiting for a process that still holds its output open`);
+    recorder?.recordNote("· the harness exited while a process it started still held its output open; the turn settled without waiting for it");
+  }
   const recorderOutcome = recorder?.finish();
   for (const fd of fds) {
     closeDescriptors([fd]);
@@ -607,16 +621,26 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
     const def = adapters[turn.harness];
     const errPath = turn.log_file.replace(/\.out\.log$/, ".err.log");
     if (!def) {
-      finishTurn(turn.id, "failed", null, null);
-      transition(task.id, "failed", `unknown harness after restart: ${turn.harness}`);
+      settleTurn(turn.id, { status: "failed", exitCode: null, result: null }, task.id, "failed", `unknown harness after restart: ${turn.harness}`);
       continue;
     }
-    const identity = turn.pid && !recordedGroupRebooted(turn.id) ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";
-    if (identity === "alive") {
-      console.error(`[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`);
+    const identity = turn.pid && !recordedGroupRebooted(turn.id)
+      ? await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)
+      : "dead";
+    // `unknown` is a process with this pid that could not be proven ours or
+    // someone else's. Finalizing would fail a turn that may still be running
+    // and let the next send start a second harness in the same worktree, so
+    // wait on it like a live one; the poll signals only a verified identity.
+    if (identity === "alive" || identity === "unknown") {
+      console.error(
+        identity === "alive"
+          ? `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`
+          : `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} is running but its identity could not be verified — waiting for it, never signaling it)`,
+      );
       startReAdoptionPoll({
         pid: turn.pid!,
         pidStartTime: turn.pid_start_time,
+        launchedAt: turn.started_at,
         paths: [turn.log_file, errPath],
         maxBytes: turn.capture_mode === "recorder-v1" ? null : transcriptBudgetBytes(cfg),
         killGraceMs: KILL_GRACE_MS,
@@ -711,7 +735,7 @@ async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void>
   const child = liveChildren.get(turn.id);
   if (child) {
     killChildTree(child, sig);
-  } else if (turn.pid && (await pidIdentity(turn.pid, turn.pid_start_time)) === "alive") {
+  } else if (turn.pid && (await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)) === "alive") {
     // A re-adopted turn: identity-checked above, then the same group-first
     // signal. A turn started before groups were owned leads none, so the
     // group attempt reports `gone` and the pid signal below is what runs.
@@ -773,6 +797,12 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     await stopRecordedGroups(taskId, graceMs);
     await assertTaskProcessesEnded(taskId);
     return;
+  }
+  // Nothing below may run on a pid that cannot be proven ours: it would signal
+  // nothing, then mark a turn that is still running as killed for archive.
+  if (!liveChildren.has(turn.id) && turn.pid &&
+    (await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)) === "unknown") {
+    throw new Error(`could not verify pid ${turn.pid} is still turn ${turn.n}'s process; refusing to archive`);
   }
   markInterrupted(turn.id, FORCE_ARCHIVE_DETAIL);
   await closeLiveInput(taskId, turn.id);

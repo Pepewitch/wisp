@@ -53,6 +53,28 @@ function jsonResponse(value: unknown, status = 200, headers: Record<string, stri
   });
 }
 
+/** GitHub redirects release downloads here; a real fetch reports it as `response.url`. */
+const ASSET_HOST = "https://release-assets.githubusercontent.com";
+
+/** A constructed Response has no final URL; give it the one a real fetch would report. */
+function servedFrom(url: string, response: Response): Response {
+  Object.defineProperty(response, "url", { value: url });
+  return response;
+}
+
+function linuxManifest(commit: string, sha256: string, size: number): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    product: "wisp",
+    version: "0.4.0-alpha.8",
+    apiProtocolVersion: 1,
+    commit,
+    dirty: false,
+    target: { os: "linux", arch: "x86_64", libc: "glibc" },
+    artifact: { file: "wisp-v0.4.0-alpha.8-linux-x86_64", sha256, size },
+  };
+}
+
 async function waitFor(manager: UpdateManager, state: UpdateStatus["state"]): Promise<UpdateStatus> {
   for (let attempt = 0; attempt < 100; attempt++) {
     const status = await manager.getStatus();
@@ -406,22 +428,9 @@ describe("UpdateManager", () => {
           return jsonResponse(daemonChannel("0.4.0-alpha.8"));
         }
         if (url.endsWith("/release-manifest.json")) {
-          return jsonResponse({
-            schemaVersion: 1,
-            product: "wisp",
-            version: "0.4.0-alpha.8",
-            apiProtocolVersion: 1,
-            commit,
-            dirty: false,
-            target: { os: "linux", arch: "x86_64", libc: "glibc" },
-            artifact: {
-              file: "wisp-v0.4.0-alpha.8-linux-x86_64",
-              sha256: checksum,
-              size: artifact.byteLength,
-            },
-          });
+          return servedFrom(url, jsonResponse(linuxManifest(commit, checksum, artifact.byteLength)));
         }
-        return new Response(artifact);
+        return servedFrom(`${ASSET_HOST}/artifact`, new Response(artifact));
       },
       run: async (_cmd) => ({
         exitCode: 0,
@@ -446,6 +455,98 @@ describe("UpdateManager", () => {
     expect(readlinkSync(join(root, "current"))).toBe(installed);
     expect(readFileSync(oldBinary, "utf8")).toBe("old");
     expect(probe.count()).toBe(1);
+  });
+
+  describe("refuses a managed Linux release download that", () => {
+    const artifact = new TextEncoder().encode("verified executable");
+    const checksum = new Bun.CryptoHasher("sha256").update(artifact).digest("hex");
+    const commit = "c".repeat(40);
+
+    /** Runs one update; `respond` may replace the manifest or artifact response. */
+    async function attempt(respond: (url: string, standard: () => Response) => Response) {
+      const root = mkdtempSync(join(tmpdir(), "wisp-update-"));
+      homes.push(root);
+      const oldBinary = join(root, "versions/0.4.0-alpha.6/wisp");
+      mkdirSync(join(root, "versions/0.4.0-alpha.6"), { recursive: true });
+      writeFileSync(join(root, ".managed-by-wisp"), "wisp-managed-install-v1\n");
+      writeFileSync(oldBinary, "old");
+      symlinkSync(oldBinary, join(root, "current"));
+      const executed: string[][] = [];
+      const manager = new UpdateManager({
+        currentVersion: "0.4.0-alpha.6",
+        executablePath: oldBinary,
+        dirty: false,
+        fetch: async (input) => {
+          const url = String(input);
+          if (url.includes("wisp-daemon.json")) return jsonResponse(daemonChannel("0.4.0-alpha.8"));
+          return respond(url, () =>
+            url.endsWith("/release-manifest.json")
+              ? servedFrom(url, jsonResponse(linuxManifest(commit, checksum, artifact.byteLength)))
+              : servedFrom(`${ASSET_HOST}/artifact`, new Response(artifact)),
+          );
+        },
+        run: async (cmd) => {
+          executed.push(cmd);
+          return { exitCode: 0, stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit, dirty: false }), stderr: "" };
+        },
+        detectInstallation: () => ({ method: "managed-linux", supervised: true, reason: null, installRoot: root }),
+        restart: () => {},
+        restartDelayMs: 0,
+      });
+      await manager.start("0.4.0-alpha.8");
+      const status = await waitFor(manager, "failed");
+      expect(executed).toEqual([]);
+      expect(readlinkSync(join(root, "current"))).toBe(oldBinary);
+      return status.message;
+    }
+
+    test("was redirected off GitHub's release hosts", async () => {
+      expect(
+        await attempt((url, standard) =>
+          url.endsWith("/release-manifest.json")
+            ? servedFrom(
+              "https://mirror.example.invalid/release-manifest.json",
+              jsonResponse(linuxManifest(commit, checksum, artifact.byteLength)),
+            )
+            : standard(),
+        ),
+      ).toContain("release manifest was served from https://mirror.example.invalid");
+      expect(
+        await attempt((url, standard) =>
+          url.endsWith("/release-manifest.json")
+            ? standard()
+            : servedFrom("http://release-assets.githubusercontent.com/artifact", new Response(artifact)),
+        ),
+      ).toContain("release artifact was served from http://release-assets.githubusercontent.com");
+    });
+
+    test("has no final URL at all", async () => {
+      expect(
+        await attempt((url, standard) =>
+          url.endsWith("/release-manifest.json") ? jsonResponse(linuxManifest(commit, checksum, artifact.byteLength)) : standard(),
+        ),
+      ).toContain("release manifest response has no final URL");
+    });
+
+    test("serves a manifest larger than any real one, advertised or streamed", async () => {
+      const huge = `{"padding":"${"x".repeat(80 * 1024)}"}`;
+      const streamed = () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(huge));
+              controller.close();
+            },
+          }),
+        );
+      for (const body of [() => new Response(huge), streamed]) {
+        expect(
+          await attempt((url, standard) =>
+            url.endsWith("/release-manifest.json") ? servedFrom(url, body()) : standard(),
+          ),
+        ).toContain("release manifest is too large");
+      }
+    });
   });
 });
 

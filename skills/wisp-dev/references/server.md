@@ -214,9 +214,21 @@ WISP_DEV_PORT=18711 \
 bun run dev
 ```
 
+The `wisp-dev` launcher itself (installed by `bun run dev:install-cli`) has
+three more environment overrides, mostly for the installer and its own tests:
+`WISP_DEV_ROOT` pins the source checkout it execs into instead of
+autodetecting one; `WISP_DEV_BIN_DIR` moves where the launcher script is
+installed (default `~/.local/bin`); `WISP_PRODUCTION_HOME` overrides what it
+treats as the production home it refuses to run against (default `~/.wisp`).
+
 Daemon tests isolate `WISP_HOME` through `wispd/tests/setup.ts`; server and smoke tests
 use dynamically allocated ports so they can run while the installed daemon
-remains active.
+remains active. That preload only runs when Bun reads it from `wispd`'s own
+`bunfig.toml` — `bun test wispd/tests/...` from the repository root does not.
+`config.ts`'s `resolveWispHome` closes that gap: under `NODE_ENV=test` (which
+`bun test` sets) with no `WISP_HOME` in the environment, it throws instead of
+falling back to `~/.wisp`. Always invoke the daemon suite as `bun run --cwd
+wispd test` (or `bun run test:wispd`) so the preload runs in the first place.
 
 ### The test suite may not launch a real harness
 
@@ -263,7 +275,8 @@ cannot tell you a browser stopped attaching a credential.
 | Task/API behavior | `wispd/src/routes/` |
 | Persistence and state transitions | `wispd/src/store.ts` |
 | Harness process lifecycle | `wispd/src/runner.ts` |
-| Worktrees, git, setup/archive hooks | `wispd/src/worktree.ts` |
+| Worktrees, git, setup hooks | `wispd/src/worktree.ts` |
+| Archive hooks and teardown | `wispd/src/archive-hooks.ts`, `wispd/src/archive-worker.ts` |
 | Harness definitions and wire formats | `wispd/src/adapters/` |
 | Realtime streams | `wispd/src/events.ts`, `wispd/src/routes/stream.ts` |
 | Webhook delivery | `wispd/src/outbox.ts` |

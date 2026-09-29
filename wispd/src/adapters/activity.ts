@@ -6,7 +6,7 @@ import { boundedInput, number, record, string, text, timestamp } from "./activit
 import { formatParsedEvent } from "./format";
 import { parseQuestionnaire } from "./questionnaire";
 import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
-import { createEventLineDecoder, cursorToolCall } from "./wire";
+import { createEventLineDecoder, cursorToolCall, messageContent } from "./wire";
 
 type ActivityNormalizer = (event: Record<string, any>, context: NormalizeContext) => ActivityEvent[];
 
@@ -95,8 +95,7 @@ function claudeAssistant(event: Record<string, any>, context: NormalizeContext):
   const parentId = string(event.parent_tool_use_id);
   const at = timestamp(event);
   const out: ActivityEvent[] = claudeChildModel(event, parentId, context);
-  for (const content of event.message?.content ?? []) {
-    const item = record(content);
+  for (const item of messageContent(event.message)) {
     if (item.type === "text" && string(item.text)) {
       out.push({
         kind: "text",
@@ -143,8 +142,7 @@ function claudeUser(event: Record<string, any>, context: NormalizeContext): Acti
   const parentId = string(event.parent_tool_use_id);
   const at = timestamp(event);
   const out: ActivityEvent[] = [];
-  for (const content of event.message?.content ?? []) {
-    const item = record(content);
+  for (const item of messageContent(event.message)) {
     if (item.type !== "tool_result") continue;
     const id = eventId(item.tool_use_id, context, "tool");
     const result = text(item.content);
@@ -443,8 +441,7 @@ function cursorTaskResult(value: unknown): {
 function cursor(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const at = timestamp(event);
   if (event.type === "assistant") {
-    return (event.message?.content ?? []).flatMap((raw: unknown) => {
-      const item = record(raw);
+    return messageContent(event.message).flatMap((item) => {
       const value = string(item.text);
       return item.type === "text" && value
         ? [{ kind: "text" as const, id: eventId(item.id, context, "text"), parentId: null, timestamp: at, text: trunc(value, 4_000) }]

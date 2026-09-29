@@ -11,6 +11,55 @@ use crate::urls::join_upstream;
 
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// The most bytes read from an identity or compatibility answer.
+///
+/// A daemon's `/api/capabilities` is a few hundred bytes. The address being
+/// probed is not trusted yet, so an endless body must not become an endless
+/// allocation: past this size the answer is not a Wisp daemon identity.
+pub const MAX_IDENTITY_BODY_BYTES: usize = 64 * 1024;
+
+/// Why a bounded body read stopped before the body ended.
+#[derive(Debug, thiserror::Error)]
+pub enum BodyReadError {
+    #[error("the response is larger than {MAX_IDENTITY_BODY_BYTES} bytes")]
+    TooLarge,
+    #[error("the response did not finish in time")]
+    TimedOut,
+    #[error("the response could not be read: {0}")]
+    Read(#[from] reqwest::Error),
+}
+
+/// Read at most `limit` bytes of `response`, and stop at `deadline`.
+///
+/// `Response::json` buffers whatever arrives for as long as it keeps
+/// arriving. This stops at whichever comes first: the end of the body, the
+/// byte limit, or the deadline.
+pub async fn read_capped(
+    mut response: reqwest::Response,
+    limit: usize,
+    deadline: tokio::time::Instant,
+) -> Result<Vec<u8>, BodyReadError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(BodyReadError::TooLarge);
+    }
+    let mut body = Vec::new();
+    loop {
+        let chunk = tokio::time::timeout_at(deadline, response.chunk())
+            .await
+            .map_err(|_| BodyReadError::TimedOut)??;
+        let Some(chunk) = chunk else {
+            return Ok(body);
+        };
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(BodyReadError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+}
+
 /// Native shell/daemon contracts this Desktop build actually implements.
 ///
 /// Keep this as a set even while it contains one value: a protocol transition
@@ -100,6 +149,8 @@ pub async fn probe(
 ) -> Result<DaemonIdentity, ProbeError> {
     let url = join_upstream(base, "api/capabilities", None)
         .map_err(|error| ProbeError::Unreachable(error.to_string()))?;
+    // One budget for the whole exchange, body included.
+    let deadline = tokio::time::Instant::now() + PROBE_TIMEOUT;
     let response = client
         .get(url)
         .header(
@@ -117,7 +168,11 @@ pub async fn probe(
         other => return Err(ProbeError::Refused(other)),
     }
 
-    let identity: DaemonIdentity = response.json().await.map_err(|_| ProbeError::Malformed)?;
+    let body = read_capped(response, MAX_IDENTITY_BODY_BYTES, deadline)
+        .await
+        .map_err(|_| ProbeError::Malformed)?;
+    let identity: DaemonIdentity =
+        serde_json::from_slice(&body).map_err(|_| ProbeError::Malformed)?;
     if !is_instance_id(&identity.instance_id) || !is_version(&identity.version) {
         return Err(ProbeError::Malformed);
     }

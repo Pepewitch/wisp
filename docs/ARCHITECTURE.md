@@ -62,8 +62,11 @@ Turn transcripts are size-capped. Recorder-capable drivers keep draining
 activity and checkpoint the result independently of retained history.
 The capped transcript leaves out what no reader of it uses (for Claude, the
 encrypted signature on an empty thinking block and the running
-`thinking_tokens` estimate); the diagnostic archive keeps every line as it
-arrived. Past the budget, the recorder holds the turn's most recent activity
+`thinking_tokens` estimate); the diagnostic archive keeps every line, in
+the same structurally bounded form (16 KiB per string) as the transcript,
+while the outcome reducer reads each event as it arrived. After the harness
+exits, its output pipes get 2 s to reach EOF; a process it left holding them
+open is not waited on. Past the budget, the recorder holds the turn's most recent activity
 in a bounded in-memory window (40% of the budget, at most 8 MiB) and appends it
 when the turn ends, so only the middle of an overflowing turn is lost; a
 daemon crash before then loses the window, never the diagnostic archive.

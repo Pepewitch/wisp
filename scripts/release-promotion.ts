@@ -284,3 +284,32 @@ export function parsePromotionArgs(args: string[]): PromotionArgs {
     receipt: receipt ? resolve(receipt) : undefined,
   };
 }
+
+/**
+ * The tap write token, when CI supplies one. It is removed from this process's
+ * environment before any child starts, so Homebrew, its gems, curl, and the
+ * verifier build never inherit it; only the final `git push` receives it.
+ * Without it, the push uses the operator's own Git credentials, which is the
+ * manual path in releasing.md.
+ */
+export const TAP_PUSH_TOKEN = "WISP_TAP_PUSH_TOKEN";
+
+export function takeTapPushToken(environment: Record<string, string | undefined> = process.env): string | undefined {
+  const token = environment[TAP_PUSH_TOKEN] || undefined;
+  delete environment[TAP_PUSH_TOKEN];
+  return token;
+}
+
+/**
+ * The credential for one git process, in the form actions/checkout itself
+ * writes to .git/config, supplied through git's environment config instead so
+ * it never lands on disk or on a command line.
+ */
+export function tapPushEnvironment(token: string | undefined): Record<string, string> {
+  if (!token) return {};
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
+    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`,
+  };
+}

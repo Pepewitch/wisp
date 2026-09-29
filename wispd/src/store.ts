@@ -261,18 +261,29 @@ export function setTaskContextFields(
  * publish it to the event bus AFTER commit (an event for a rolled-back
  * transition would be a lie).
  */
-function transitionBody(id: string, state: TaskState, detail?: string | null): number {
+function transitionBody(
+  id: string,
+  state: TaskState,
+  detail: string | null | undefined,
+  expectedSeq: number | undefined,
+  notify = true,
+): number | null {
   const task = getTask(id);
   if (!task) throw new Error(`transition on unknown task ${id}`);
+  // Compare-and-set: the decision was made from an older read of this task.
+  if (expectedSeq !== undefined && task.seq !== expectedSeq) return null;
   const seq = task.seq + 1;
-  db.run(`UPDATE tasks SET state = ?, state_detail = ?, seq = ?, updated_at = ? WHERE id = ?`, [
+  const updated = db.run(`UPDATE tasks SET state = ?, state_detail = ?, seq = ?, updated_at = ? WHERE id = ? AND seq = ?`, [
     state,
     detail ?? null,
     seq,
     now(),
     id,
+    task.seq,
   ]);
-  if (NOTIFY_STATES.includes(state)) {
+  // No row moved: queue no webhook and emit nothing for a write that did not happen.
+  if (updated.changes === 0) return null;
+  if (notify && NOTIFY_STATES.includes(state)) {
     const payload = JSON.stringify({
       task_id: id,
       seq,
@@ -294,10 +305,27 @@ function transitionBody(id: string, state: TaskState, detail?: string | null): n
  * outbox row in the same transaction (the at-least-once delivery guarantee).
  * The event bus (src/events.ts, the SSE layer's source) is fed after commit
  * for EVERY state — NOTIFY_STATES only gates the webhook outbox.
+ *
+ * `expectedSeq` makes it a compare-and-set for callers that decided from a
+ * read taken before an await (background ticks): if anything transitioned
+ * the task since, nothing is written or emitted and this returns false.
  */
-export function transition(id: string, state: TaskState, detail?: string | null): void {
-  const seq = db.transaction(transitionBody)(id, state, detail);
+export function transition(id: string, state: TaskState, detail?: string | null, expectedSeq?: number): boolean {
+  const seq = db.transaction(transitionBody)(id, state, detail, expectedSeq);
+  if (seq === null) return false;
   emit({ type: "task", taskId: id, state, stateDetail: detail ?? null, seq });
+  return true;
+}
+
+/**
+ * A correction of a task's state rather than news: its seq advances and
+ * clients hear about it, but no webhook fires. For state that went stale
+ * long ago (boot reconciliation), where a notification would arrive late.
+ */
+export function reconcileTaskState(id: string, state: TaskState, detail: string | null): void {
+  const seq = db.transaction(transitionBody)(id, state, detail, undefined, false);
+  if (seq === null) return;
+  emit({ type: "task", taskId: id, state, stateDetail: detail, seq });
 }
 
 export function createTurn(
@@ -353,7 +381,7 @@ export function createTurn(
   return Number(res.lastInsertRowid);
 }
 
-export function finishTurn(id: number, status: TurnStatus, exit_code: number | null, result: string | null): void {
+function finishTurnRow(id: number, status: TurnStatus, exit_code: number | null, result: string | null): void {
   db.run(`UPDATE turns SET status = ?, exit_code = ?, result = ?, ended_at = ? WHERE id = ?`, [
     status,
     exit_code,
@@ -361,9 +389,38 @@ export function finishTurn(id: number, status: TurnStatus, exit_code: number | n
     now(),
     id,
   ]);
+}
+
+function emitTurnFinished(id: number, status: TurnStatus): void {
   // keyed by row id, so the bus event's task_id/n come from the updated row
   const turn = getTurn(id);
   if (turn) emit({ type: "turn", taskId: turn.task_id, n: turn.n, status });
+}
+
+export function finishTurn(id: number, status: TurnStatus, exit_code: number | null, result: string | null): void {
+  finishTurnRow(id, status, exit_code, result);
+  emitTurnFinished(id, status);
+}
+
+/**
+ * Settle a finished turn and move its task on, in one transaction. Written
+ * separately, a daemon that died between the two left a settled turn under a
+ * task that still read `running`, which no recovery pass looks at: it only
+ * visits running turns. Events go out after the commit, as transition()'s do.
+ */
+export function settleTurn(
+  turnId: number,
+  turn: { status: TurnStatus; exitCode: number | null; result: string | null },
+  taskId: string,
+  state: TaskState,
+  detail: string | null,
+): void {
+  const seq = db.transaction((): number | null => {
+    finishTurnRow(turnId, turn.status, turn.exitCode, turn.result);
+    return transitionBody(taskId, state, detail, undefined);
+  })();
+  emitTurnFinished(turnId, turn.status);
+  if (seq !== null) emit({ type: "task", taskId, state, stateDetail: detail, seq });
 }
 
 export function getTurn(id: number): Turn | null {

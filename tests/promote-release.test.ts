@@ -27,6 +27,7 @@ import {
   validateReleaseMetadata,
 } from "../scripts/release-promotion";
 import { updateVerifierInvocation } from "../scripts/promote-release";
+import { TAP_PUSH_TOKEN, takeTapPushToken, tapPushEnvironment } from "../scripts/release-promotion";
 import { API_PROTOCOL_VERSION, VERSION } from "../wispd/src/version";
 
 const tag = `v${VERSION}`;
@@ -302,6 +303,37 @@ describe("release promotion", () => {
     expect(dryRun).toContain("--release-root");
     expect(dryRun).not.toContain("--publish");
     expect(packageJson.scripts["release:promote"]).toBe("bun run scripts/promote-release.ts");
+  });
+
+  // The tap token used to sit in the tap checkout's .git/config for the whole
+  // promotion, readable by Homebrew's gems, curl, and the verifier build.
+  test("hands the tap write token to the final git push alone", () => {
+    const environment: Record<string, string | undefined> = { [TAP_PUSH_TOKEN]: "synthetic-token", PATH: "/usr/bin" };
+    expect(takeTapPushToken(environment)).toBe("synthetic-token");
+    expect(environment).toEqual({ PATH: "/usr/bin" });
+    expect(takeTapPushToken(environment)).toBeUndefined();
+    expect(tapPushEnvironment(undefined)).toEqual({});
+
+    // git itself reads the credential from its environment, exactly as
+    // actions/checkout would have written it to .git/config.
+    const read = Bun.spawnSync({
+      cmd: ["git", "config", "--get", "http.https://github.com/.extraheader"],
+      env: { ...process.env, ...tapPushEnvironment("synthetic-token") },
+      stdout: "pipe",
+    });
+    expect(read.stdout.toString().trim()).toBe(
+      `AUTHORIZATION: basic ${Buffer.from("x-access-token:synthetic-token").toString("base64")}`,
+    );
+
+    const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+    const steps = workflow.split(/\n(?= {6}- )/);
+    const tapCheckout = steps.find((step) => step.includes("name: checkout the Homebrew tap"))!;
+    expect(tapCheckout).toContain("persist-credentials: false");
+    expect(tapCheckout).not.toContain("token:");
+    const holders = steps.filter((step) => step.includes("secrets.HOMEBREW_TAP_TOKEN"));
+    expect(holders).toHaveLength(1);
+    expect(holders[0]).toContain("name: promote the verified public release");
+    expect(holders[0]).toContain(`${TAP_PUSH_TOKEN}: \${{ secrets.HOMEBREW_TAP_TOKEN }}`);
   });
 
   test("uses a transferred verifier for tag promotion and keeps recovery source-buildable", () => {

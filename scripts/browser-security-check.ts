@@ -32,6 +32,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startHostRewritingProxy, startOtherLocalService } from "./browser-security-servers";
+import { DaemonExitedError, exitDescription, waitInPage, watchDaemon } from "./browser-security-wait";
 
 /** Where a browser lives, in the order worth trying. `CHROME_PATH` wins. */
 const BROWSER_CANDIDATES = [
@@ -260,19 +261,6 @@ async function attachToBrowser(chrome: Bun.Subprocess, profile: string, token: s
   };
 }
 
-/**
- * Wait for a page to satisfy `predicate` (a JS expression), instead of
- * sleeping at it. The old fixed sleeps were fine while CI was fast and are
- * exactly what makes a check like this flake later (a review's note).
- */
-async function waitInPage(page: Page, predicate: string, what: string, ms = 20_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  for (;;) {
-    if ((await page.evaluate(predicate)) === true) return;
-    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
-    await sleep(100);
-  }
-}
 
 /** 1: the app loads and renders under the content policy, with a clean console. */
 async function checkTheAppLoads(page: Page, origin: string): Promise<void> {
@@ -533,9 +521,10 @@ async function reportAbort(daemon: Bun.Subprocess | null, log: string): Promise<
   for (const name of passes) console.error(`  ok   ${name}`);
   for (const { check: name, detail } of failures) console.error(`  FAIL ${name}: ${detail}`);
   if (!daemon) console.error("the scratch daemon had not come up yet");
-  else if (daemon.exitCode !== null || daemon.signalCode !== null) {
+  else if (exitDescription(daemon)) {
     console.error(`the scratch daemon had already exited (code ${daemon.exitCode}, signal ${daemon.signalCode})`);
   } else console.error("the scratch daemon was still running");
+  if (process.env.WISP_BROWSER_LOGS) console.error(`full daemon log: ${log}`);
   const output = await readFile(log, "utf8").catch(() => "");
   const tail = output.trimEnd().split("\n").slice(-80).join("\n");
   console.error(tail ? `--- last daemon output ---\n${tail}\n---` : "(the daemon wrote nothing)");
@@ -544,7 +533,11 @@ async function reportAbort(daemon: Bun.Subprocess | null, log: string): Promise<
 async function main(): Promise<void> {
   const home = await mkdtemp(join(tmpdir(), "wisp-browser-check-home-"));
   const profile = await mkdtemp(join(tmpdir(), "wisp-browser-check-chrome-"));
-  const logs = await mkdtemp(join(tmpdir(), "wisp-browser-check-log-"));
+  // WISP_BROWSER_LOGS keeps the full daemon log (CI uploads it when a run
+  // fails); otherwise it lives in a scratch directory removed at the end.
+  const keptLogs = process.env.WISP_BROWSER_LOGS;
+  if (keptLogs) await mkdir(keptLogs, { recursive: true });
+  const logs = keptLogs || (await mkdtemp(join(tmpdir(), "wisp-browser-check-log-")));
   const daemonLog = join(logs, "daemon.log");
   const entry = join(import.meta.dir, "..", "wispd", "src", "index.ts");
   const mermaidPath = mermaidChunkPath();
@@ -557,6 +550,7 @@ async function main(): Promise<void> {
   try {
     const started = await startDaemon(home, entry, daemonLog);
     daemon = started.daemon;
+    watchDaemon(daemon);
     const attackerOrigin = `http://127.0.0.1:${started.port + 1}`;
     attacker = startOtherLocalService(started.port + 1, started.origin);
     const browser = await startBrowser(profile, started.token);
@@ -596,9 +590,22 @@ async function main(): Promise<void> {
     const proxyViolations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
     check("the app renders through a Host-rewriting proxy without a script violation", proxyViolations.length === 0, proxyViolations.join("; "));
   } catch (error) {
+    if (page) await screenshot(page, "abort").catch(() => {});
+    // A fetch refused by a daemon that just crashed can throw before Bun has
+    // reaped the process; give the exit a moment to land so it is named.
+    if (daemon && !exitDescription(daemon)) await Promise.race([daemon.exited, sleep(1000)]);
     await reportAbort(daemon, daemonLog);
+    const exit = daemon && exitDescription(daemon);
+    if (exit && !(error instanceof DaemonExitedError)) {
+      throw new DaemonExitedError(
+        `the scratch daemon exited (${exit}); the run then failed with: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
     throw error;
   } finally {
+    // Teardown kills the daemon on purpose; that is not a crash to report.
+    watchDaemon(null);
     page?.client.close();
     if (chrome) {
       chrome.kill();
@@ -612,7 +619,7 @@ async function main(): Promise<void> {
     }
     await rm(profile, { recursive: true, force: true });
     await rm(home, { recursive: true, force: true });
-    await rm(logs, { recursive: true, force: true });
+    if (!keptLogs) await rm(logs, { recursive: true, force: true });
   }
 
   for (const name of passes) console.log(`  ok   ${name}`);
