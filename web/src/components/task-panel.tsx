@@ -80,7 +80,7 @@ export function TaskPanel({
           size={touch ? "lg" : "sm"}
           active={view === name}
           aria-selected={view === name}
-          count={name === "changes" ? changes : attached || undefined}
+          count={name === "changes" ? changes : name === "workflows" ? attached || undefined : undefined}
           onClick={() => setTab(name)}
         >
           {LABEL[name]}
@@ -88,6 +88,11 @@ export function TaskPanel({
       ))}
     </div>
   ) : undefined
+
+  // The strip depends on which surfaces the daemon has. Painting before that
+  // is known opens on Changes, then jumps to the Brief when features arrive.
+  // A failed features read falls through to Changes, as it always did.
+  if (features.isPending) return <div className="h-full min-h-0 flex-1" />
 
   return (
     // h-full AND flex-1: this root fills a resizable panel (which sets a

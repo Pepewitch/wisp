@@ -1248,7 +1248,8 @@ Do not put it back above the conversation.
   Terminal`); a task still opens on Chat.
 - **One switch, on the tab.** A `role="switch"` row at the top turns briefs on
   and off for the task (`useBriefSwitch`, shared with the task menu's
-  `Task brief` item, so the two cannot disagree). Its note says what
+  `Task brief` item, so both read the same task row; a pending write or its
+  error shows only on the control that sent it). Its note says what
   switching does, and that it starts with the NEXT turn, because nothing
   visible happens on click. An archived task has no switch but keeps the
   report it has; a harness without `hasBriefs` cannot be switched on and is

@@ -6,8 +6,11 @@ import type { ApiTask } from "@/lib/types"
 
 /**
  * The one task-brief switch, for every surface that draws it (the Brief tab
- * and the task menu), so they cannot disagree about whether briefs are on or
- * what switching them does.
+ * and the task menu). Whether briefs are on, and what switching them does, are
+ * read from the same task row and the same brief query, so the two agree.
+ *
+ * Each caller owns its own write: `pending` and `error` belong to the control
+ * that sent it, and do not show on the other.
  *
  * `available` is whether the daemon has briefs at all; `switchable` adds that
  * the task is live. An archived task can still be READ, never switched.

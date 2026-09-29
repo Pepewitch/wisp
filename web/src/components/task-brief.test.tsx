@@ -202,6 +202,8 @@ describe("the task brief tab", () => {
   })
 })
 
+const ago = "2026-09-28T10:00:00Z"
+
 describe("the task panel", () => {
   const panel = () => {
     const wrapper = runtimeWrapper(fakeDaemonTransport(CONNECTION, { request: api }))
@@ -225,6 +227,35 @@ describe("the task panel", () => {
     expect(report.closest("[aria-hidden='true']")).not.toBeNull()
     fireEvent.click(screen.getByRole("tab", { name: "Brief" }))
     expect(report.closest("[aria-hidden='true']")).toBeNull()
+  })
+
+  it("puts the workflow count on Workflows only, never on the Brief", async () => {
+    const workflow = {
+      id: "wfixture", taskId: TASK.id, type: "heartbeat", version: "1", params: {}, state: "active",
+      reason: "Waiting", revision: 1, contextN: 1, wakeCount: 0, checkCount: 0,
+      lastCheckedAt: null, nextCheckAt: null, expiresAt: "2026-12-01T00:00:00Z", createdAt: ago, updatedAt: ago,
+    }
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input)
+      const body = path.endsWith("/api/harnesses") ? { harnesses: [], features: { taskBriefs: true, taskWorkflows: true } }
+        : path.endsWith("/brief") ? VIEW
+        : path.endsWith("/diff") ? { diff: "", untracked: [], base: null, worktreeReason: null }
+        : path.endsWith("/workflows") ? [workflow]
+        : []
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
+    }))
+    panel()
+    const tabs = await screen.findByRole("tablist", { name: "Task panel" })
+    await waitFor(() => expect(within(tabs).getByRole("tab", { name: /Workflows/ })).toHaveTextContent("1"))
+    expect(within(tabs).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Brief", "Changes0", "Workflows1"])
+  })
+
+  it("paints nothing until it knows which tabs the daemon has, so it never opens on Changes and jumps", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})))
+    panel()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.queryByRole("tablist", { name: "Task panel" })).toBeNull()
+    expect(screen.queryByText("Changes")).toBeNull()
   })
 
   it("opens on Changes, with no strip, when the daemon has no briefs", async () => {

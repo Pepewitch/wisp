@@ -1,8 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
 import { TASKS } from "@/lib/fixtures"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { MobileShell } from "./mobile-shell"
@@ -104,6 +105,33 @@ describe("the mobile header", () => {
     expect(screen.getByText("Transcript").parentElement).toHaveAttribute("aria-hidden", "true")
     fireEvent.click(screen.getByRole("button", { name: "Back to chat" }))
     expect(screen.getByText("Transcript").parentElement).not.toHaveAttribute("aria-hidden", "true")
+  })
+
+  it("brings the chat forward for a find from elsewhere, and asks again once it is on screen", async () => {
+    mount({ brief: () => <div>Brief content</div>, conversation: <div>Transcript</div> })
+    const intents = uiIntentsFor("test-connection")
+
+    fireEvent.click(screen.getByRole("button", { name: "Brief" }))
+    const before = intents.findRequest()?.seq ?? 0
+    act(() => intents.openFind("autosave", 4))
+
+    await waitFor(() => expect(screen.getByText("Transcript").parentElement).not.toHaveAttribute("aria-hidden", "true"))
+    // the first ask ran against a hidden transcript, where nothing can scroll
+    await waitFor(() => expect(intents.findRequest()?.seq ?? 0).toBe(before + 2))
+    expect(intents.findRequest()).toMatchObject({ query: "autosave", turn: 4 })
+  })
+
+  it("leaves other tabs alone when a find arrives", async () => {
+    mount({ brief: () => <div>Brief content</div>, conversation: <div>Transcript</div> })
+    const intents = uiIntentsFor("test-connection")
+
+    fireEvent.click(screen.getByRole("button", { name: "Changes" }))
+    const before = intents.findRequest()?.seq ?? 0
+    act(() => intents.openFind("autosave", 4))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(screen.getByText("Transcript").parentElement).toHaveAttribute("aria-hidden", "true")
+    expect(intents.findRequest()?.seq ?? 0).toBe(before + 1)
   })
 
   it("omits the Brief when the connected daemon has none", () => {

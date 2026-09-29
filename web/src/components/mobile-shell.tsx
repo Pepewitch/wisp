@@ -112,7 +112,7 @@ export function MobileShell({
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
   const tabs = surfaceTabs(brief !== undefined, workflows !== undefined)
-  useChatOnFind(setTab)
+  useChatOnFind(tab, setTab)
 
   // a task switch is always about reading the conversation next
   const [seenTask, setSeenTask] = useState(task?.id)
@@ -295,9 +295,12 @@ function surfaceTabs(brief: boolean, workflows: boolean): MobileTab[] {
 
 /**
  * Find-in-task searches the transcript, which the Brief tab hides: a find
- * from anywhere (the task menu, ⌘F) gives the chat back first.
+ * from anywhere (the task menu, ⌘F) gives the chat back first. The find has
+ * already run against a hidden transcript by then, where nothing can scroll,
+ * so it is asked again once the chat is on screen — the same frame the
+ * Brief's own "Show in conversation" waits.
  */
-function useChatOnFind(setTab: (update: (current: MobileTab) => MobileTab) => void) {
+function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
   const { connectionId } = useDaemonRuntime()
   const intents = uiIntentsFor(connectionId)
   const findSeq = useSyncExternalStore(intents.subscribe, () => intents.findRequest()?.seq ?? 0)
@@ -305,8 +308,11 @@ function useChatOnFind(setTab: (update: (current: MobileTab) => MobileTab) => vo
   useEffect(() => {
     if (findSeq === seenFind.current) return
     seenFind.current = findSeq
-    setTab((current) => (current === "brief" ? "chat" : current))
-  }, [findSeq, setTab])
+    if (tab !== "brief") return
+    const request = intents.findRequest()
+    setTab("chat")
+    if (request) requestAnimationFrame(() => intents.openFind(request.query, request.turn))
+  }, [findSeq, tab, setTab, intents])
 }
 
 /** Kept mounted, hidden when inactive — see the note in MobileShell. */
