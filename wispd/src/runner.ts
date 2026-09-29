@@ -39,7 +39,6 @@ import {
   createTurn,
   claimTaskMessageForStart,
   creatingTasks,
-  finishTurn,
   getTask,
   getTaskContext,
   getTaskMessage,
@@ -55,6 +54,7 @@ import {
   setTaskFields,
   setTurnInterrupt,
   setTurnKillDetail,
+  settleTurn,
   transition,
   turnForTask,
   type TaskAgentSelection,
@@ -267,9 +267,14 @@ export function startTurn(
       null,
       { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
     );
-    finishTurn(turnId, "failed", null, null);
     setTaskFields(task.id, { turn_count: n });
-    transition(task.id, "failed", `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
+    settleTurn(
+      turnId,
+      { status: "failed", exitCode: null, result: null },
+      task.id,
+      "failed",
+      `spawn failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`,
+    );
     return;
   }
   autopilot?.delivered();
@@ -569,8 +574,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
     const def = adapters[turn.harness];
     const errPath = turn.log_file.replace(/\.out\.log$/, ".err.log");
     if (!def) {
-      finishTurn(turn.id, "failed", null, null);
-      transition(task.id, "failed", `unknown harness after restart: ${turn.harness}`);
+      settleTurn(turn.id, { status: "failed", exitCode: null, result: null }, task.id, "failed", `unknown harness after restart: ${turn.harness}`);
       continue;
     }
     const identity = turn.pid && !recordedGroupRebooted(turn.id) ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";

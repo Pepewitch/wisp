@@ -261,7 +261,7 @@ export function setTaskContextFields(
  * publish it to the event bus AFTER commit (an event for a rolled-back
  * transition would be a lie).
  */
-function transitionBody(id: string, state: TaskState, detail?: string | null): number {
+function transitionBody(id: string, state: TaskState, detail?: string | null, notify = true): number {
   const task = getTask(id);
   if (!task) throw new Error(`transition on unknown task ${id}`);
   const seq = task.seq + 1;
@@ -272,7 +272,7 @@ function transitionBody(id: string, state: TaskState, detail?: string | null): n
     now(),
     id,
   ]);
-  if (NOTIFY_STATES.includes(state)) {
+  if (notify && NOTIFY_STATES.includes(state)) {
     const payload = JSON.stringify({
       task_id: id,
       seq,
@@ -298,6 +298,16 @@ function transitionBody(id: string, state: TaskState, detail?: string | null): n
 export function transition(id: string, state: TaskState, detail?: string | null): void {
   const seq = db.transaction(transitionBody)(id, state, detail);
   emit({ type: "task", taskId: id, state, stateDetail: detail ?? null, seq });
+}
+
+/**
+ * A correction of a task's state rather than news: its seq advances and
+ * clients hear about it, but no webhook fires. For state that went stale
+ * long ago (boot reconciliation), where a notification would arrive late.
+ */
+export function reconcileTaskState(id: string, state: TaskState, detail: string | null): void {
+  const seq = db.transaction(transitionBody)(id, state, detail, false);
+  emit({ type: "task", taskId: id, state, stateDetail: detail, seq });
 }
 
 export function createTurn(

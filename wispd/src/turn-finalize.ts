@@ -16,8 +16,8 @@ import {
   setTaskContextFields,
   setTurnModel,
   setTurnUsage,
+  reconcileTaskState,
   settleTurn,
-  transition,
 } from "./store";
 import { summarize } from "./text";
 import { INTERRUPTED, isUnresolvedInterrupt } from "./interrupt-state";
@@ -329,6 +329,8 @@ export function settleStrandedTasks(): void {
     console.error(
       `[wisp] task ${task.id}: '${task.state}' with no running turn at startup; settling it from turn ${turn.n} (${turn.status})`,
     );
-    transition(task.id, settled.state, settled.detail);
+    // The turn settled long ago, possibly days: correct the task, but do not
+    // send a webhook about it now.
+    reconcileTaskState(task.id, settled.state, settled.detail);
   }
 }

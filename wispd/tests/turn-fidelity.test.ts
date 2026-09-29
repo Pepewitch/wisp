@@ -21,6 +21,7 @@ import {
   setTurnInterrupt,
   transition,
   turnsFor,
+  undeliveredOutbox,
 } from "../src/store";
 import { settleStrandedTasks } from "../src/turn-finalize";
 
@@ -291,8 +292,17 @@ describe("a turn and its task settle together", () => {
     transition(live.id, "running", "turn 1");
     createTurn(live.id, 1, "prompt", null, "/nonexistent/turn.out.log");
 
+    const stranded = [done, failed, interrupted, stopRetry];
+    const outboxRows = () => undeliveredOutbox().filter((row) => stranded.includes(row.task_id)).map((row) => row.id);
+    const rowsBefore = outboxRows();
+    const seqBefore = getTask(done)!.seq;
+
     settleStrandedTasks();
 
+    // A correction of stale state, not news: no webhook fires, days late.
+    expect(outboxRows()).toEqual(rowsBefore);
+    // Clients still hear about it through the task's own sequence.
+    expect(getTask(done)!.seq).toBe(seqBefore + 1);
     expect(getTask(done)).toMatchObject({ state: "done", state_detail: "the answer" });
     expect(getTask(failed)!.state).toBe("failed");
     expect(getTask(interrupted)).toMatchObject({ state: "needs-input", state_detail: "turn interrupted — session kept" });
