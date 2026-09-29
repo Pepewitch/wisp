@@ -8,14 +8,19 @@ import {
   checkAdaptersFile,
   checkConfigFile,
   checkDaemon,
+  checkDaemonDiagnostics,
+  checkGh,
   checkGitBinary,
   checkGitIdentity,
   checkHarness,
   checkHarnessAuth,
+  checkLastUpdate,
   checkPlatform,
   checkProject,
+  checkRestarts,
   checkSupervisor,
   checkTerminalOrigins,
+  checkToken,
   parseVersion,
   runDoctor,
   type SpawnFn,
@@ -470,5 +475,179 @@ describe("activation receipt", () => {
     expect(receipt.status).toBe("fail");
     expect(receipt.message).toContain("harness claude");
     expect(receipt.message).toContain("wisp doctor --harness claude");
+  });
+});
+
+describe("GitHub CLI", () => {
+  test("missing gh is a warning, and its auth is not probed", () => {
+    const seen: string[][] = [];
+    const checks = checkGh((cmd) => {
+      seen.push(cmd);
+      throw new Error("ENOENT");
+    });
+    expect(checks).toEqual([expect.objectContaining({ name: "gh", status: "warn" })]);
+    expect(seen).toEqual([["gh", "--version"]]);
+  });
+
+  test("a logged-out gh warns with the fix; a logged-in one is ok, read-only either way", () => {
+    const answer = (loggedIn: boolean): SpawnFn => (cmd) =>
+      cmd[1] === "--version"
+        ? { exitCode: 0, stdout: "gh version 2.63.0 (2026-01-01)", stderr: "" }
+        : loggedIn
+          ? { exitCode: 0, stdout: "github.com\n  Logged in", stderr: "" }
+          : { exitCode: 1, stdout: "", stderr: "You are not logged into any GitHub hosts." };
+    const out = checkGh(answer(false));
+    expect(out[0]).toMatchObject({ name: "gh", status: "ok", message: "gh 2.63.0" });
+    expect(out[1]).toMatchObject({ name: "gh auth", status: "warn" });
+    expect(out[1]!.message).toContain("gh auth login");
+    expect(checkGh(answer(true))[1]).toMatchObject({ name: "gh auth", status: "ok" });
+
+    const seen: string[][] = [];
+    checkGh((cmd) => { seen.push(cmd); return answer(true)(cmd); });
+    expect(seen).toEqual([["gh", "--version"], ["gh", "auth", "status"]]);
+  });
+});
+
+describe("token strength", () => {
+  test("a short hand-set token warns and names the rotation; a minted one is fine", () => {
+    expect(checkToken({ token: "test" })).toMatchObject({ status: "warn" });
+    expect(checkToken({ token: "test" }).message).toContain("wisp token --rotate");
+    expect(checkToken({ token: crypto.randomUUID() }).status).toBe("ok");
+  });
+});
+
+describe("every project is checked", () => {
+  test("a broken project next to a healthy one warns; the healthy one is the handoff", async () => {
+    const healthy = mkdtempSync(join(tmpdir(), "wisp-project-"));
+    const missing = "/definitely/missing/wisp-project";
+    const cfg = { ...config(missing), repos: [missing, healthy] };
+    const checks = await runDoctor({
+      spawn: goodSpawn,
+      fetchFn: healthyFetch,
+      configPath: tempFile("config.json", JSON.stringify(cfg)),
+      adaptersPath: missingFile("adapters.json"),
+      config: cfg,
+      adapters: { droid: DROID },
+      selectedHarness: "droid",
+      currentPlatform: "linux",
+      currentArch: "x64",
+    });
+    const projects = checks.filter((check) => check.name === "project");
+    expect(projects.map((check) => check.status)).toEqual(["warn", "ok"]);
+    expect(projects[0]!.message).toContain(missing);
+    expect(checks.find((check) => check.name === "activation")).toMatchObject({ status: "ok" });
+    expect(checks.find((check) => check.name === "activation")!.message).toContain(healthy);
+  });
+
+  test("with no healthy project, the first finding is still the blocker", async () => {
+    const cfg = { ...config("/definitely/missing/one"), repos: ["/definitely/missing/one", "/definitely/missing/two"] };
+    const checks = await runDoctor({
+      spawn: goodSpawn,
+      fetchFn: healthyFetch,
+      configPath: tempFile("config.json", JSON.stringify(cfg)),
+      adaptersPath: missingFile("adapters.json"),
+      config: cfg,
+      adapters: { droid: DROID },
+      selectedHarness: "droid",
+      currentPlatform: "linux",
+      currentArch: "x64",
+    });
+    expect(checks.filter((check) => check.name === "project").map((check) => check.status)).toEqual(["fail", "fail"]);
+    expect(checks.at(-1)).toMatchObject({ name: "activation", status: "fail" });
+  });
+});
+
+describe("restarts and self-updates the daemon recorded", () => {
+  const now = new Date("2026-09-01T12:00:00Z");
+  const exit = (minutesAgo: number) => ({
+    pid: 100 + minutesAgo,
+    startedAt: "2026-09-01T00:00:00.000Z",
+    version: "0.6.0",
+    detectedAt: new Date(now.getTime() - minutesAgo * 60_000).toISOString(),
+  });
+
+  test("two unclean exits within the hour is a crash loop; one, or old ones, is not", () => {
+    expect(checkRestarts(missingFile("daemon-exits.json"), now)).toMatchObject({ status: "ok", message: "no unclean daemon exit recorded" });
+    const one = tempFile("daemon-exits.json", JSON.stringify({ exits: [exit(300), exit(10)] }));
+    expect(checkRestarts(one, now).status).toBe("ok");
+    const loop = tempFile("daemon-exits.json", JSON.stringify({ exits: [exit(50), exit(20), exit(5)] }));
+    const finding = checkRestarts(loop, now, "darwin");
+    expect(finding.status).toBe("warn");
+    expect(finding.message).toContain("3 unclean daemon exits in the last hour");
+    expect(finding.message).toContain("var/log/wisp.log");
+    expect(checkRestarts(loop, now, "linux").message).toContain("journalctl --user -u wisp.service");
+  });
+
+  test("the last self-update is reported only when one was recorded, and a failure warns with its error", () => {
+    expect(checkLastUpdate(missingFile("update-last.json"), now)).toBeNull();
+    const attempt = {
+      fromVersion: "0.6.0",
+      toVersion: "0.6.1",
+      method: "homebrew",
+      startedAt: "2026-09-01T11:00:00.000Z",
+      finishedAt: "2026-09-01T11:02:00.000Z",
+      outcome: "failed",
+      error: "brew upgrade Pepewitch/tap/wisp exited 1: Error: tap unavailable",
+    };
+    const failed = checkLastUpdate(tempFile("update-last.json", JSON.stringify(attempt)), now)!;
+    expect(failed.status).toBe("warn");
+    expect(failed.message).toContain("0.6.0 → 0.6.1 failed");
+    expect(failed.message).toContain("tap unavailable");
+    const installed = checkLastUpdate(tempFile("update-last.json", JSON.stringify({ ...attempt, outcome: "installed", error: null })), now)!;
+    expect(installed.status).toBe("ok");
+    const stranded = checkLastUpdate(tempFile("update-last.json", JSON.stringify({ ...attempt, outcome: "installing", finishedAt: null })), now)!;
+    expect(stranded).toMatchObject({ status: "warn" });
+    expect(stranded.message).toContain("never finished");
+  });
+});
+
+describe("background work, as the running daemon reports it", () => {
+  const cfg = { host: "127.0.0.1", port: 8710, token: "test" };
+  const now = new Date("2026-09-01T12:00:00Z");
+  const ago = (seconds: number) => new Date(now.getTime() - seconds * 1000).toISOString();
+  const answering = (status: number, body: unknown) =>
+    (async () => ({ ok: status >= 200 && status < 300, status, json: async () => body })) as unknown as typeof fetch;
+  const healthyLoop = (name: string) => ({ name, lastSuccessAt: ago(5), lastFailureAt: null, lastError: null, consecutiveFailures: 0 });
+  const noWebhookTrouble = { failing: 0, dead: 0, oldestAt: null, lastError: null };
+
+  test("healthy loops and no failing webhooks are two ok lines", async () => {
+    const checks = await checkDaemonDiagnostics(
+      cfg,
+      answering(200, { pid: 1, startedAt: ago(600), uptimeSeconds: 600, loops: [healthyLoop("webhook delivery")], webhooks: noWebhookTrouble }),
+      now,
+    );
+    expect(checks.map((check) => [check.name, check.status])).toEqual([["background loops", "ok"], ["webhooks", "ok"]]);
+    expect(checks[0]!.message).toContain("webhook delivery 5 s ago");
+  });
+
+  test("a failing loop, a stalled loop and undelivered webhooks each warn", async () => {
+    const checks = await checkDaemonDiagnostics(
+      cfg,
+      answering(200, {
+        pid: 1,
+        startedAt: ago(7200),
+        uptimeSeconds: 7200,
+        loops: [
+          { name: "autopilot check", lastSuccessAt: ago(100), lastFailureAt: ago(5), lastError: "gh: not logged in", consecutiveFailures: 4 },
+          { name: "stuck detection", lastSuccessAt: ago(3600), lastFailureAt: null, lastError: null, consecutiveFailures: 0 },
+        ],
+        webhooks: { failing: 2, dead: 1, oldestAt: ago(3600), lastError: "webhook 1 (https://hooks.example.com/…): HTTP 500" },
+      }),
+      now,
+    );
+    expect(checks[0]).toMatchObject({ name: "background loops", status: "warn" });
+    expect(checks[0]!.message).toContain("autopilot check failed 4 passes in a row: gh: not logged in");
+    expect(checks[0]!.message).toContain("stalled: stuck detection (last success 60 min ago)");
+    expect(checks[1]).toMatchObject({ name: "webhooks", status: "warn" });
+    expect(checks[1]!.message).toContain("2 failing and still retried, 1 given up on");
+    expect(checks[1]!.message).toContain("HTTP 500");
+  });
+
+  test("an older daemon, an error and an unreachable one warn rather than guess", async () => {
+    expect((await checkDaemonDiagnostics(cfg, answering(404, {}), now))[0]!.message).toContain("restart it");
+    expect((await checkDaemonDiagnostics(cfg, answering(500, {}), now))[0]!.status).toBe("warn");
+    expect((await checkDaemonDiagnostics(cfg, answering(200, { ok: true }), now))[0]!.status).toBe("warn");
+    const down = (async () => { throw new Error("fetch failed"); }) as unknown as typeof fetch;
+    expect((await checkDaemonDiagnostics(cfg, down, now))[0]!.status).toBe("warn");
   });
 });

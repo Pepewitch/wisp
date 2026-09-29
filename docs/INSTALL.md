@@ -227,7 +227,8 @@ URL. If the initial range is full, run `wisp init --port <unused-port>`.
 | Git identity or project check fails | Configure Git's name/email and register an existing Git working tree. |
 | CLI and daemon versions differ | Restart the managed daemon after installation. |
 | Database startup fails | Run `wisp doctor --database` against the same `WISP_HOME`; preserve files before repair or restore. |
-| Need the daemon's own log | `journalctl --user -u wisp.service` under systemd; `wisp serve` in a terminal prints directly to it. |
+| Need the daemon's own log | `journalctl --user -u wisp.service` under systemd; `wisp serve` in a terminal prints directly to it. Each line starts with an ISO-8601 UTC timestamp. |
+| Doctor warns about unclean restarts | The daemon is crashing and its supervisor restarts it. Read the log around the listed start times. |
 
 Database diagnosis is read-only and does not probe harnesses. Wisp takes
 exclusive home ownership before migrations; a rejected second start does not

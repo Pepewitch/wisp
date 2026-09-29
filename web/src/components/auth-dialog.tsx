@@ -12,7 +12,16 @@ import { cn } from "@/lib/utils"
  */
 export function AuthDialog() {
   const auth = useSyncExternalStore(authStore.subscribe, authStore.snapshot)
-  return auth.open ? <OpenAuthDialog /> : null
+  if (auth.open) return <OpenAuthDialog />
+  // The saved token is being retried, not doubted: say why nothing loads yet.
+  return auth.notice ? (
+    <p
+      role="status"
+      className={cn(POPOVER_SURFACE, "fixed bottom-4 left-1/2 z-(--z-modal) -translate-x-1/2 rounded-md px-3 py-1.5 text-[12px] text-muted-foreground shadow-modal")}
+    >
+      {auth.notice}
+    </p>
+  ) : null
 }
 
 function OpenAuthDialog() {

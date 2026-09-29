@@ -134,6 +134,35 @@ describe("the same-origin web transport", () => {
     })
   })
 
+  it("keeps a saved token the daemon is only throttling, says so, and retries after retry-after", async () => {
+    vi.useFakeTimers()
+    try {
+      localStorage.setItem("wisp_token", "synthetic-browser-token")
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ error: "too many failed authentication attempts; retry in 2 s" }), {
+            status: 429,
+            headers: { "retry-after": "2" },
+          })
+        )
+        .mockResolvedValueOnce(new Response(null, { status: 204 }))
+
+      const pending = sameOriginWebTransport.ensureReady()
+      await vi.waitFor(() => expect(authStore.snapshot().notice).toContain("retrying in 2 s"))
+      expect(authStore.snapshot().open).toBe(false)
+      expect(localStorage.getItem("wisp_token")).toBe("synthetic-browser-token")
+      await vi.advanceTimersByTimeAsync(2_000)
+      await pending
+
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(authStore.snapshot()).toEqual({ open: false, notice: null })
+      expect(localStorage.getItem("wisp_token")).toBe("synthetic-browser-token")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   /**
    * SEC-01. There used to be a headerless probe here, because the daemon's
    * HttpOnly cookie could outlive localStorage and prove that streams and

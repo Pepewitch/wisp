@@ -81,7 +81,7 @@ export class WorkflowRuntime {
   }
   start(): void {
     retireWorkflowTypes(RETIRED_WORKFLOWS, this.now());
-    const kick = (): void => { void backgroundPass("workflow scheduler", () => this.tick()); };
+    const kick = (): void => { void backgroundPass("workflow scheduler", () => this.tick(), { loop: true }); };
     this.timer = setInterval(kick, 10_000);
     this.timer.unref?.();
     kick();

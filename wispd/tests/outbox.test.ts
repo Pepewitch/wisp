@@ -1,7 +1,7 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import type { WispConfig } from "../src/config";
-import { deliverOutbox } from "../src/outbox";
-import { createTask, db, freeSlot, newTaskId, transition, undeliveredOutbox } from "../src/store";
+import { deliverOutbox, redactWebhookUrl, WEBHOOK_MAX_AGE_MS, WEBHOOK_MAX_ATTEMPTS } from "../src/outbox";
+import { createTask, db, freeSlot, newTaskId, outboxSummary, pendingOutbox, transition, undeliveredOutbox } from "../src/store";
 import type { OutboxRow, TaskState } from "../src/types";
 
 const baseCfg: WispConfig = {
@@ -76,6 +76,13 @@ function forceDue(id: number): void {
   db.run(`UPDATE outbox SET next_attempt_at = ? WHERE id = ?`, [new Date(Date.now() - 60_000).toISOString(), id]);
 }
 
+/** Silence and collect the daemon log; restoring a spy also clears its calls, so they are copied out. */
+function captureErrors(): { lines: string[]; restore(): void } {
+  const lines: string[] = [];
+  const spy = spyOn(console, "error").mockImplementation((...args: unknown[]) => { lines.push(args.join(" ")); });
+  return { lines, restore: () => spy.mockRestore() };
+}
+
 /** Seconds until the row's next scheduled attempt, measured from right now. */
 function retryInSec(row: OutboxRow): number {
   return (new Date(row.next_attempt_at).getTime() - Date.now()) / 1000;
@@ -126,7 +133,8 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     const after = rowById(row.id)!;
     expect(after).toBeDefined(); // still pending
     expect(after.attempts).toBe(1);
-    expect(after.last_error).toContain(bad.url);
+    expect(after.last_error).toContain(`webhook 1 (${new URL(bad.url).origin}/…)`); // redacted, never the full URL
+    expect(after.last_error).not.toContain(bad.url);
     expect(after.last_error).toContain("HTTP 500");
     // first backoff: 2^1 * 5 = 10s
     expect(retryInSec(after)).toBeGreaterThan(8);
@@ -197,7 +205,150 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
 
     const after = rowById(row.id)!;
     expect(after.attempts).toBe(1);
-    expect(after.last_error).toContain(url);
+    expect(after.last_error).toContain(new URL(url).origin);
+    expect(after.last_error).not.toContain(url);
     expect(after.last_error).not.toContain("HTTP"); // a connection error, not a status line
+  });
+
+  test("a redirect is refused, not followed, so the payload never reaches the Location", async () => {
+    const elsewhere = stubWebhook();
+    const redirecting = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(null, { status: 307, headers: { location: elsewhere.url } }),
+    });
+    servers.push(redirecting);
+    const row = makeRow();
+
+    await deliverOutbox({ ...baseCfg, webhooks: [`http://127.0.0.1:${redirecting.port}/hook`] }, row.task_id);
+
+    expect(elsewhere.received).toEqual([]);
+    const after = rowById(row.id)!;
+    expect(after.attempts).toBe(1);
+    expect(after.last_error).toContain("HTTP 307 redirect refused");
+  });
+
+  test("a URL's secrets never reach last_error or the log", async () => {
+    const bad = stubWebhook();
+    bad.setStatus(500);
+    const port = new URL(bad.url).port;
+    const secretUrl = `http://someone:hunter2@127.0.0.1:${port}/services/T0/B0/pathsecret?token=querysecret`;
+    const row = makeRow();
+    const logged = captureErrors();
+    try {
+      await deliverOutbox({ ...baseCfg, webhooks: [secretUrl] }, row.task_id);
+    } finally {
+      logged.restore();
+    }
+    const lines = logged.lines;
+    const stored = rowById(row.id)!.last_error!;
+    for (const text of [stored, ...lines]) {
+      for (const secret of ["hunter2", "someone", "pathsecret", "querysecret"]) expect(text).not.toContain(secret);
+    }
+    expect(stored).toContain(`http://127.0.0.1:${port}/…`);
+    expect(lines.some((line) => line.includes("[wisp] webhook delivery") && line.includes("HTTP 500"))).toBe(true);
+  });
+
+  test("a URL that keeps failing is logged once, not once per attempt", async () => {
+    const bad = stubWebhook();
+    bad.setStatus(502);
+    const row = makeRow();
+    const cfg = { ...baseCfg, webhooks: [bad.url] };
+    const logged = captureErrors();
+    try {
+      await deliverOutbox(cfg, row.task_id);
+      forceDue(row.id);
+      await deliverOutbox(cfg, row.task_id);
+    } finally {
+      logged.restore();
+    }
+    expect(bad.received.length).toBe(2);
+    const reports = logged.lines.filter((line) => line.includes(new URL(bad.url).origin));
+    expect(reports.length).toBe(1);
+  });
+
+  test("delivery gives up after the attempt limit, marks the event dead, and never retries it", async () => {
+    const bad = stubWebhook();
+    bad.setStatus(500);
+    const row = makeRow();
+    const cfg = { ...baseCfg, webhooks: [bad.url] };
+    db.run(`UPDATE outbox SET attempts = ? WHERE id = ?`, [WEBHOOK_MAX_ATTEMPTS - 1, row.id]);
+    forceDue(row.id);
+    const logged = captureErrors();
+    try {
+      await deliverOutbox(cfg, row.task_id);
+    } finally {
+      logged.restore();
+    }
+
+    const dead = rowById(row.id)!; // still listed as undelivered, for inspection
+    expect(dead.attempts).toBe(WEBHOOK_MAX_ATTEMPTS);
+    expect(dead.dead_at).not.toBeNull();
+    expect(dead.last_error).toContain("HTTP 500");
+    expect(logged.lines.some((line) => line.includes("webhook delivery gave up on an event"))).toBe(true);
+    expect(pendingOutbox(row.task_id)).toEqual([]);
+
+    forceDue(row.id);
+    await deliverOutbox(cfg, row.task_id);
+    expect(bad.received.length).toBe(1); // never again
+    const summary = outboxSummary();
+    expect(summary.dead).toBeGreaterThanOrEqual(1);
+    expect(summary.lastError).not.toBeNull();
+  });
+
+  test("the age limit runs from the first failure, not from when the event was queued", async () => {
+    const bad = stubWebhook();
+    bad.setStatus(500);
+    const row = makeRow();
+    const cfg = { ...baseCfg, webhooks: [bad.url] };
+    const longAgo = new Date(Date.now() - WEBHOOK_MAX_AGE_MS - 60_000).toISOString();
+    // queued before a long sleep: its first failure on waking must not kill it
+    db.run(`UPDATE outbox SET created_at = ? WHERE id = ?`, [longAgo, row.id]);
+    const logged = captureErrors();
+    try {
+      await deliverOutbox(cfg, row.task_id);
+      const first = rowById(row.id)!;
+      expect(first.dead_at).toBeNull();
+      expect(first.first_failed_at).not.toBeNull();
+
+      // failing for longer than the limit since its first failure: given up
+      db.run(`UPDATE outbox SET first_failed_at = ? WHERE id = ?`, [longAgo, row.id]);
+      forceDue(row.id);
+      await deliverOutbox(cfg, row.task_id);
+    } finally {
+      logged.restore();
+    }
+    expect(rowById(row.id)!.attempts).toBe(2);
+    expect(rowById(row.id)!.dead_at).not.toBeNull();
+    // the give-up line names the event
+    expect(logged.lines.some((line) => line.includes("gave up") && line.includes(`task ${row.task_id} seq ${row.seq}`))).toBe(true);
+  });
+
+  test("a failing event is counted for doctor until it is delivered", async () => {
+    const bad = stubWebhook();
+    bad.setStatus(500);
+    const row = makeRow();
+    const cfg = { ...baseCfg, webhooks: [bad.url] };
+    const before = outboxSummary().failing;
+    const logged = captureErrors();
+    try {
+      await deliverOutbox(cfg, row.task_id);
+      expect(outboxSummary().failing).toBe(before + 1);
+      bad.setStatus(200);
+      forceDue(row.id);
+      await deliverOutbox(cfg, row.task_id);
+    } finally {
+      logged.restore();
+    }
+    expect(outboxSummary().failing).toBe(before);
+  });
+});
+
+describe("redactWebhookUrl", () => {
+  test("keeps the origin and drops the path, query, fragment and userinfo", () => {
+    expect(redactWebhookUrl("https://hooks.example.com/services/T0/B0/secret")).toBe("https://hooks.example.com/…");
+    expect(redactWebhookUrl("https://user:pass@example.com:8443/?key=secret#frag")).toBe("https://example.com:8443/…");
+    expect(redactWebhookUrl("https://example.com")).toBe("https://example.com");
+    expect(redactWebhookUrl("not a url")).toBe("(an invalid URL)");
   });
 });

@@ -24,8 +24,10 @@ import {
   readBoundedText,
 } from "./update-download";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
+import { errorTail, readUpdateAttempt, recordUpdateAttempt, UPDATE_RECORD_PATH, type UpdateAttempt } from "./update-record";
 
 export { compareVersions } from "../../shared/release-version";
+export type { UpdateAttempt } from "./update-record";
 export {
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
@@ -57,6 +59,8 @@ export interface UpdateStatus {
   canAutoUpdate: boolean;
   message: string | null;
   checkedAt: string | null;
+  /** The last self-update this home ran, from any daemon run; null before the first. */
+  lastAttempt: UpdateAttempt | null;
 }
 
 export interface ReleaseInfo {
@@ -134,6 +138,9 @@ export interface UpdateManagerOptions {
   dirty?: boolean;
   releaseCacheMs?: number;
   restartDelayMs?: number;
+  /** Where the last attempt is recorded; defaults to UPDATE_RECORD_PATH. */
+  recordPath?: string;
+  log?: (line: string) => void;
 }
 
 function output(bytes: Uint8Array): string {
@@ -151,7 +158,9 @@ export async function runUpdateCommand(cmd: string[]): Promise<CommandResult> {
 
 function commandFailure(cmd: string[], result: CommandResult): Error {
   const detail = result.stderr || result.stdout;
-  return new Error(`${cmd.join(" ")} exited ${result.exitCode}${detail ? `: ${detail.slice(0, 300)}` : ""}`);
+  // the tail: a package manager prints its error last, after its progress
+  const tail = detail.length > 300 ? `…${detail.slice(-300)}` : detail;
+  return new Error(`${cmd.join(" ")} exited ${result.exitCode}${tail ? `: ${tail}` : ""}`);
 }
 
 function runSync(cmd: string[]): CommandResult {
@@ -308,6 +317,8 @@ export class UpdateManager {
   private readonly dirty: boolean;
   private readonly releaseCacheMs: number;
   private readonly restartDelayMs: number;
+  private readonly recordPath: string;
+  private readonly log: (line: string) => void;
   private release: ReleaseInfo | null = null;
   private checkedAt: Date | null = null;
   private etag: string | null = null;
@@ -331,6 +342,8 @@ export class UpdateManager {
     this.dirty = options.dirty ?? BUILD_DIRTY;
     this.releaseCacheMs = options.releaseCacheMs ?? RELEASE_CACHE_MS;
     this.restartDelayMs = options.restartDelayMs ?? RESTART_DELAY_MS;
+    this.recordPath = options.recordPath ?? UPDATE_RECORD_PATH;
+    this.log = options.log ?? ((line) => console.error(line));
   }
 
   private status(installation: Installation): UpdateStatus {
@@ -359,6 +372,7 @@ export class UpdateManager {
       canAutoUpdate,
       message,
       checkedAt: this.checkedAt?.toISOString() ?? null,
+      lastAttempt: readUpdateAttempt(this.recordPath),
     };
   }
 
@@ -489,7 +503,17 @@ export class UpdateManager {
       this.target = this.release;
       this.state = "installing";
       this.message = null;
-      this.operation = this.installAndRestart(installation, this.target).finally(() => {
+      const attempt: UpdateAttempt = {
+        fromVersion: this.currentVersion,
+        toVersion: this.target.version,
+        method: installation.method,
+        startedAt: this.now().toISOString(),
+        finishedAt: null,
+        outcome: "installing",
+        error: null,
+      };
+      recordUpdateAttempt(this.recordPath, attempt, this.log);
+      this.operation = this.installAndRestart(installation, this.target, attempt).finally(() => {
         this.operation = null;
       });
       return this.status(installation);
@@ -498,7 +522,7 @@ export class UpdateManager {
     }
   }
 
-  private async installAndRestart(installation: Installation, release: ReleaseInfo): Promise<void> {
+  private async installAndRestart(installation: Installation, release: ReleaseInfo, attempt: UpdateAttempt): Promise<void> {
     try {
       if (installation.method === "homebrew") await this.installHomebrew(release);
       else if (installation.method === "managed-linux" && installation.installRoot) {
@@ -506,13 +530,18 @@ export class UpdateManager {
       } else {
         throw new Error("the installation changed before the update started");
       }
+      const finishedAt = this.now().toISOString();
+      recordUpdateAttempt(this.recordPath, { ...attempt, outcome: "installed", finishedAt }, this.log);
       this.state = "restarting";
       this.message = null;
       await Bun.sleep(this.restartDelayMs);
       this.restart();
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      const failed: UpdateAttempt = { ...attempt, outcome: "failed", finishedAt: this.now().toISOString(), error: errorTail(detail) };
+      recordUpdateAttempt(this.recordPath, failed, this.log);
       this.state = "failed";
-      this.message = `update failed: ${error instanceof Error ? error.message : String(error)}`;
+      this.message = `update failed: ${detail}`;
     }
   }
 

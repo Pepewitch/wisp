@@ -199,7 +199,7 @@ export class AutopilotRuntime {
   }
 
   start(): void {
-    const kick = (): void => { void backgroundPass("autopilot check", () => this.tick()) }
+    const kick = (): void => { void backgroundPass("autopilot check", () => this.tick(), { loop: true }) }
     this.timer = setInterval(kick, 10_000)
     this.timer.unref?.()
     // A task that settles is the moment auto-merge usually has something to do.

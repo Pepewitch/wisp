@@ -307,7 +307,9 @@ Scripts never run for `--local` tasks.
 wisp init [--port <port>]
 wisp serve          run the daemon (foreground; supervise it — see setup.md)
 wisp doctor --database  read-only database diagnosis; no migrations or harness probes
-wisp doctor         self-check: harness CLIs, git, config files, daemon; exit 1 on failure
+wisp doctor         self-check: harness CLIs, git, every project, gh, config files, token
+                    length, daemon, unclean restarts, last update, background loops,
+                    webhook delivery; exit 1 on failure
 wisp token [--rotate]
                     print the API URL + bearer token (also what the web page needs);
                     stop the daemon before --rotate replaces it in config.json,

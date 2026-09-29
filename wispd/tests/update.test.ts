@@ -35,6 +35,13 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
+/** A private place for one manager's update record, so no test reads another's. */
+function recordPath(): string {
+  const home = mkdtempSync(join(tmpdir(), "wisp-update-record-"));
+  homes.push(home);
+  return join(home, "update-last.json");
+}
+
 function daemonChannel(
   version: string,
   apiProtocolVersion: unknown = API_PROTOCOL_VERSION,
@@ -228,6 +235,7 @@ describe("UpdateManager", () => {
         supervised: false,
         reason: "run the platform installer manually",
       }),
+      recordPath: recordPath(),
     });
 
     expect(await manager.getStatus()).toEqual({
@@ -240,6 +248,7 @@ describe("UpdateManager", () => {
       canAutoUpdate: false,
       message: "run the platform installer manually",
       checkedAt: expect.any(String),
+      lastAttempt: null,
     });
     await manager.getStatus();
     expect(requests).toBe(1);
@@ -358,6 +367,8 @@ describe("UpdateManager", () => {
       }
       return { exitCode: 0, stdout: "", stderr: "" };
     };
+    const record = recordPath();
+    const lines: string[] = [];
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
@@ -366,6 +377,8 @@ describe("UpdateManager", () => {
       detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
       restart: probe.restart,
       restartDelayMs: 0,
+      recordPath: record,
+      log: (line) => lines.push(line),
     });
 
     expect(await manager.start("0.4.0-alpha.8")).toMatchObject({
@@ -373,6 +386,7 @@ describe("UpdateManager", () => {
       canAutoUpdate: true,
       installMethod: "homebrew",
       latestApiProtocolVersion: API_PROTOCOL_VERSION,
+      lastAttempt: { fromVersion: "0.4.0-alpha.6", toVersion: "0.4.0-alpha.8", outcome: "installing", finishedAt: null },
     });
     await waitFor(manager, "restarting");
     await probe.called;
@@ -383,28 +397,55 @@ describe("UpdateManager", () => {
       ["/opt/homebrew/opt/wisp/bin/wisp", "version", "--json"],
     ]);
     expect(probe.count()).toBe(1);
+    // durable: the record outlives the process the restart ends
+    expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({
+      fromVersion: "0.4.0-alpha.6",
+      toVersion: "0.4.0-alpha.8",
+      method: "homebrew",
+      outcome: "installed",
+      finishedAt: expect.any(String),
+      error: null,
+    });
+    expect(lines).toEqual([
+      "[wisp] self-update 0.4.0-alpha.6 → 0.4.0-alpha.8 (homebrew): installing",
+      "[wisp] self-update 0.4.0-alpha.6 → 0.4.0-alpha.8 (homebrew): installed; restarting",
+    ]);
   });
 
-  test("reports a package-manager failure without restarting", async () => {
+  test("reports a package-manager failure without restarting, and records it with the end of its output", async () => {
     let restarted = false;
-    const manager = new UpdateManager({
+    const record = recordPath();
+    const lines: string[] = [];
+    const progress = "==> Fetching downloads\n".repeat(40);
+    const options = {
       currentVersion: "0.4.0-alpha.6",
       dirty: false,
       fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
-      run: async () => ({ exitCode: 1, stdout: "", stderr: "tap unavailable" }),
-      detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
+      run: async () => ({ exitCode: 1, stdout: "", stderr: `${progress}Error: tap unavailable` }),
+      detectInstallation: () => ({ method: "homebrew" as const, supervised: true, reason: null }),
       restart: () => {
         restarted = true;
       },
       restartDelayMs: 0,
-    });
+      recordPath: record,
+      log: (line: string) => lines.push(line),
+    };
+    const manager = new UpdateManager(options);
 
     await manager.start("0.4.0-alpha.8");
-    expect(await waitFor(manager, "failed")).toMatchObject({
-      latestVersion: "0.4.0-alpha.8",
-      message: "update failed: brew update exited 1: tap unavailable",
-    });
+    const failed = await waitFor(manager, "failed");
+    expect(failed).toMatchObject({ latestVersion: "0.4.0-alpha.8" });
+    expect(failed.message).toStartWith("update failed: brew update exited 1: …");
+    expect(failed.message).toEndWith("Error: tap unavailable");
     expect(restarted).toBe(false);
+    expect(lines.at(-1)).toContain("self-update 0.4.0-alpha.6 → 0.4.0-alpha.8 (homebrew): failed: brew update exited 1");
+    // a later daemon, with nothing in memory, still reports what happened
+    const later = new UpdateManager({ ...options, fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")) });
+    expect((await later.getStatus()).lastAttempt).toMatchObject({
+      outcome: "failed",
+      toVersion: "0.4.0-alpha.8",
+      error: expect.stringContaining("Error: tap unavailable"),
+    });
   });
 
   test("verifies and atomically activates a managed Linux release", async () => {

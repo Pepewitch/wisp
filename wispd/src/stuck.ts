@@ -37,7 +37,7 @@ export async function stuckTick(cfg: WispConfig, nowMs = Date.now()): Promise<vo
 }
 
 export function startStuckLoop(cfg: WispConfig): ReturnType<typeof setInterval> {
-  const timer = setInterval(() => void backgroundPass("stuck detection", () => stuckTick(cfg)), 60_000);
+  const timer = setInterval(() => void backgroundPass("stuck detection", () => stuckTick(cfg), { loop: true }), 60_000);
   timer.unref?.();
   return timer;
 }
