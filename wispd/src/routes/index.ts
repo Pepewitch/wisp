@@ -160,7 +160,7 @@ function projectRoutes(
   method: string,
   cfg: WispConfig,
 ): Response | Promise<Response> | null {
-  if (path === "/api/status" && method === "GET") return statusRoute();
+  if (path === "/api/status" && method === "GET") return statusRoute(req);
   if (path === "/api/repos" && method === "GET") return reposRoute(cfg);
   if (path === "/api/projects" && method === "POST") return addProjectRoute(req, cfg);
   if (path === "/api/projects/copy-preview" && method === "POST") return copyPreviewRoute(req);

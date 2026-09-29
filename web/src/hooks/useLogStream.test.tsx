@@ -19,7 +19,7 @@ describe("useLogStream", () => {
     const { result, unmount } = renderHook(() => useLogStream("task-1", "activity", 0), {
       wrapper: runtimeWrapper(transport),
     })
-    expect(url).toBe("/api/tasks/task-1/log/stream?format=activity")
+    expect(url).toBe("/api/tasks/task-1/log/stream?format=activity&follow=live")
 
     act(() => {
       fake.emit("hello", { version: "0.5.7-test" })
@@ -61,6 +61,36 @@ describe("useLogStream", () => {
 
     unmount()
     expect(fake.isClosed()).toBe(true)
+  })
+
+  /**
+   * The daemon answers a finished task's live-only follow with the turn-end
+   * alone, never its transcript. That frame must still end "connecting…" and
+   * leave the pane exactly as the full replay used to: nothing cached.
+   */
+  it("settles to an empty pane from a lone turn-end, as it did after a full replay", async () => {
+    const fake = createFakeSse()
+    const transport = fakeDaemonTransport("connection-settled-log", {
+      openEventStream: () => fake.source,
+    })
+    const { result } = renderHook(() => useLogStream("task-1", "activity", 0), {
+      wrapper: runtimeWrapper(transport),
+    })
+    expect(result.current.note).toBe("connecting…")
+
+    act(() => {
+      fake.source.onopen?.()
+      fake.emit("hello", { version: "0.6.5-test" })
+      fake.emit("turn-end", { turn: 3, status: "done" })
+    })
+    await waitFor(() => expect(result.current.note).toBeNull())
+    expect(result.current).toEqual({ blocks: [], currentTurn: 0, note: null })
+
+    // the next turn still streams from its start
+    act(() => {
+      fake.emit("backlog", { turn: 4, prompt: "next", activity: [{ kind: "text", id: "t1", parentId: null, text: "hi" }] })
+    })
+    await waitFor(() => expect(result.current.currentTurn).toBe(4))
   })
 
   it("keeps the stream open and renders questionnaire activity", async () => {

@@ -741,6 +741,95 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
       }
     },
   );
+});
+
+describe("GET /api/tasks/:id/log/stream: which turns a viewer is sent, and how fast", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wisp-stream-follow-"));
+
+  /**
+   * The web pane keeps only the turn in progress: at turn-end it drops that
+   * turn's structured activity. Replaying a finished turn's whole log for it
+   * made every click on a finished task cost the full transcript.
+   */
+  test("follow=live answers a settled turn with its turn-end alone, then streams the next turn whole", async () => {
+    const log = join(dir, "settled-live-only.out.log");
+    const line = `{"type":"message","role":"assistant","text":"${"y".repeat(1_000)}"}\n`;
+    writeFileSync(log, line.repeat(2_048)); // about 2 MiB
+    const task = makeTask();
+    const turnId = createTurn(task.id, 1, "first", null, log);
+    finishTurn(turnId, "done", 0, "ok");
+
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=activity&follow=live`);
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    let bytes = 0;
+    try {
+      while (!received.includes("event: turn-end")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("stream ended before turn-end");
+        bytes += value.byteLength;
+        received += decoder.decode(value, { stream: true });
+      }
+      // compared as a list so a regression reports frame names, not megabytes
+      expect(received.match(/^event: .+$/gm)).toEqual(["event: hello", "event: turn-end"]);
+      expect(bytes).toBeLessThan(1_024);
+      expect(received.includes(`data: {"turn":1,"status":"done"}`)).toBe(true);
+
+      const next = join(dir, "settled-live-only-2.out.log");
+      writeFileSync(next, `{"type":"message","role":"assistant","text":"second turn from its start"}\n`);
+      createTurn(task.id, 2, "second", null, next);
+      const sse = sseReader(reader);
+      const backlog = await sse.nextFrame();
+      expect(backlog.event).toBe("backlog");
+      const data = JSON.parse(backlog.data) as { turn: number; prompt: string; activity: { text?: string }[] };
+      expect(data.turn).toBe(2);
+      expect(data.prompt).toBe("second");
+      expect(JSON.stringify(data.activity)).toContain("second turn from its start");
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  test("a follow value other than live is a 400 naming the parameter", async () => {
+    const task = makeTask();
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=activity&follow=all`);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain("follow must be live");
+  });
+
+  /**
+   * A turn with no live broker (a harness without the recorder, or one
+   * re-adopted after a restart) used to catch up one 256 KiB slice per 500 ms
+   * poll, so opening a 4 MiB turn mid-run took at least six seconds to reach
+   * live. It now drains what is there in the first tick.
+   */
+  test("opening a running turn without a broker catches up at once, not a slice per poll", async () => {
+    const log = join(dir, "running-no-broker.out.log");
+    const raw = `start:${"z".repeat(4 * 1_048_576)}:end`;
+    writeFileSync(log, raw);
+    const task = makeTask();
+    createTurn(task.id, 1, "long", null, log); // stays running
+
+    const started = performance.now();
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=raw&turn=1`);
+    const reader = res.body!.getReader();
+    const sse = sseReader(reader);
+    let rebuilt = "";
+    // the old pace has a floor of twelve 500 ms polls; this is a fraction of it
+    const deadline = started + 2_500;
+    try {
+      while (rebuilt.length < raw.length && performance.now() < deadline) {
+        const frame = await sse.nextFrame(Math.max(1, deadline - performance.now()));
+        rebuilt += (JSON.parse(frame.data) as { text: string }).text;
+      }
+      expect(rebuilt.length).toBe(raw.length);
+      expect(rebuilt === raw).toBe(true);
+    } finally {
+      await reader.cancel();
+    }
+  });
 
   test("a task with no turns yet idles until turn 1 starts, then backlogs it", async () => {
     const task = makeTask(); // state 'creating', zero turns

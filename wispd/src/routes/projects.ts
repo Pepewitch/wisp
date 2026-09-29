@@ -1,11 +1,11 @@
 import { basename, isAbsolute, resolve } from "node:path";
 import { patchConfig, type RepoConfig, type WispConfig } from "../config";
-import { emit } from "../events";
+import { emit, subscribe } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
 import { beginProjectRemoval } from "../project-removals";
 import { listTasks } from "../store";
-import { Coalescer, Semaphore } from "../subprocess";
-import { taskMode } from "../types";
+import { Semaphore } from "../subprocess";
+import { taskMode, type Task } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
@@ -32,53 +32,107 @@ export function persistRepos(cfg: WispConfig, repos: RepoEntry[]): void {
 const REASON_CAP = 200;
 
 /**
- * GET /api/status
+ * GET /api/status[?fresh=<taskId>]
  *
  * Every live task with a worktree gets an entry, always. A task whose worktree
  * git can no longer read carries its BRANCH AND THE REASON and no counts (D1):
  * omitting the row or reporting zeros are the two ways this endpoint used to lie
  * about a broken worktree, and the sidebar believed it.
+ *
+ * Each entry is several git processes, and clients ask again on every task and
+ * turn event of ANY task: at fifty live worktrees that was 350 spawns and about
+ * two seconds per event. So entries are cached per task, and a task's own task
+ * or turn event drops only its entry. `fresh` names a task (the one a client
+ * is showing) that is probed again regardless; the age bound covers what
+ * changes outside Wisp for the rest, such as a commit made in a terminal.
  */
 /**
  * Bounds on the fan-out. Each task's entry is several git processes, so an
  * unbounded `Promise.all` over every live task is a process storm on one
- * developer machine — and two clients polling (or an SSE invalidation landing
- * while the previous request is still running) used to start a second one on
- * top of the first (ENG-05).
+ * developer machine (ENG-05).
  */
 const STATUS_PROBE_CONCURRENCY = 4;
 const statusProbes = new Semaphore(STATUS_PROBE_CONCURRENCY);
-const statusFanOut = new Coalescer<Record<string, unknown>>();
+/** How long an entry nothing has invalidated is served before git is asked again. */
+export const STATUS_CACHE_MAX_AGE_MS = 30_000;
 
-export function statusRoute(): Promise<Response> {
-  return (async () => {
-    return json({ tasks: await statusFanOut.run(collectStatus) });
-  })();
+interface CachedStatus {
+  /** What the entry describes: a task whose worktree, branch, base or seq moved is probed again. */
+  key: string;
+  startedAt: number;
+  /** Shared while in flight too, so overlapping requests never probe one task twice. */
+  entry: Promise<unknown>;
 }
 
-async function collectStatus(): Promise<Record<string, unknown>> {
+const statusCache = new Map<string, CachedStatus>();
+let statusInvalidation: (() => void) | null = null;
+
+/** Only the task an event names can have moved; every other entry stays. */
+function watchStatusEvents(): void {
+  statusInvalidation ??= subscribe((evt) => {
+    if (evt.type === "task" || evt.type === "turn") statusCache.delete(evt.taskId);
+  });
+}
+
+/** For what moves a task's git state without a task event, such as a push from the API. */
+export function invalidateStatus(taskId: string): void {
+  statusCache.delete(taskId);
+}
+
+export function statusRoute(req: Request): Promise<Response> {
+  const fresh = new Set(new URL(req.url).searchParams.getAll("fresh"));
+  return (async () => json({ tasks: await collectStatus(fresh) }))();
+}
+
+async function collectStatus(fresh: ReadonlySet<string>): Promise<Record<string, unknown>> {
+  watchStatusEvents();
   // per-task probes run CONCURRENTLY — one unreadable worktree must never 500
   // the rest, and must never cost another task its marks — but only
   // STATUS_PROBE_CONCURRENCY of them at a time
   const live = listTasks().filter((t) => t.worktree_path !== null && t.branch !== null);
+  const liveIds = new Set(live.map((t) => t.id));
+  for (const id of statusCache.keys()) if (!liveIds.has(id)) statusCache.delete(id);
+  const now = Date.now();
   const rows = await Promise.all(
-      live.map(async (t): Promise<[string, unknown]> => statusProbes.run(async () => {
-        try {
-          const health = await worktreeHealth(t.worktree_path!);
-          if (!health.ok) return [t.id, { branch: t.branch, worktreeReason: health.reason }];
-          // local: no base (see the diff route) — "ahead" would otherwise
-          // count the human's own commits on their own branch
-          const base = taskMode(t) === "local" ? null : t.base_commit;
-          const summary = await statusSummary(t.worktree_path!, t.branch!, base);
-          return [t.id, { branch: t.branch, ...summary, worktreeReason: null }];
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          console.warn(`[wisp] /api/status: task ${t.id} (${t.worktree_path}): ${message}`);
-          return [t.id, { branch: t.branch, worktreeReason: `Git could not read this worktree — ${message}`.slice(0, REASON_CAP) }];
-        }
-      })),
+    live.map(async (t): Promise<[string, unknown]> => [t.id, await cachedTaskStatus(t, fresh.has(t.id), now)]),
   );
   return Object.fromEntries(rows);
+}
+
+function cachedTaskStatus(t: Task, fresh: boolean, now: number): Promise<unknown> {
+  // local: no base (see the diff route) — "ahead" would otherwise count the
+  // human's own commits on their own branch
+  const base = taskMode(t) === "local" ? null : t.base_commit;
+  const key = JSON.stringify([t.worktree_path, t.branch, base, t.seq]);
+  const cached = statusCache.get(t.id);
+  // an entry from the future (the clock moved back) counts as stale
+  const age = cached ? now - cached.startedAt : -1;
+  if (!fresh && cached?.key === key && age >= 0 && age < STATUS_CACHE_MAX_AGE_MS) return cached.entry;
+  const probe: CachedStatus = { key, startedAt: now, entry: Promise.resolve(null) };
+  // A failure answers this request only, and the next one asks git again: a
+  // health check that timed out under load must not show the row broken for
+  // the whole age bound.
+  const forget = (): void => {
+    if (statusCache.get(t.id) === probe) statusCache.delete(t.id);
+  };
+  probe.entry = statusProbes.run(async () => {
+    try {
+      const health = await worktreeHealth(t.worktree_path!);
+      if (!health.ok) {
+        forget();
+        return { branch: t.branch, worktreeReason: health.reason };
+      }
+      const summary = await statusSummary(t.worktree_path!, t.branch!, base);
+      return { branch: t.branch, ...summary, worktreeReason: null };
+    } catch (e) {
+      forget();
+      const message = e instanceof Error ? e.message : String(e);
+      console.warn(`[wisp] /api/status: task ${t.id} (${t.worktree_path}): ${message}`);
+      return { branch: t.branch, worktreeReason: `Git could not read this worktree — ${message}`.slice(0, REASON_CAP) };
+    }
+  });
+  statusCache.set(t.id, probe);
+  return probe.entry;
 }
 
 /** GET /api/repos */

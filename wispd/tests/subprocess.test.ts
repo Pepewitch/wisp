@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Coalescer, runBounded, Semaphore } from "../src/subprocess";
+import { runBounded, Semaphore } from "../src/subprocess";
 
 describe("runBounded", () => {
   test("returns output, exit code, and stderr for an ordinary command", async () => {
@@ -148,31 +148,5 @@ describe("Semaphore", () => {
     const gate = new Semaphore(1);
     await expect(gate.run(() => Promise.reject(new Error("boom")))).rejects.toThrow("boom");
     expect(await gate.run(() => Promise.resolve("after"))).toBe("after");
-  });
-});
-
-describe("Coalescer", () => {
-  test("overlapping callers share one run; a later caller starts a new one", async () => {
-    const coalescer = new Coalescer<number>();
-    let runs = 0;
-    const work = async (): Promise<number> => {
-      runs += 1;
-      await Bun.sleep(20);
-      return runs;
-    };
-
-    const [first, second] = await Promise.all([coalescer.run(work), coalescer.run(work)]);
-    expect(first).toBe(1);
-    expect(second).toBe(1);
-    expect(runs).toBe(1);
-
-    expect(await coalescer.run(work)).toBe(2);
-    expect(runs).toBe(2);
-  });
-
-  test("a failed run is not cached", async () => {
-    const coalescer = new Coalescer<string>();
-    await expect(coalescer.run(() => Promise.reject(new Error("nope")))).rejects.toThrow("nope");
-    expect(await coalescer.run(() => Promise.resolve("fresh"))).toBe("fresh");
   });
 });

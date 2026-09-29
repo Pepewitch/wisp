@@ -241,24 +241,3 @@ export class Semaphore {
     }
   }
 }
-
-/**
- * Collapse overlapping identical work.
- *
- * Two clients polling `/api/status`, or one client whose SSE invalidation
- * arrives while its previous request is still running, ask the same question
- * twice. The second caller joins the answer already being computed instead of
- * starting a second fan-out.
- */
-export class Coalescer<T> {
-  private inFlight: Promise<T> | null = null;
-
-  run(work: () => Promise<T>): Promise<T> {
-    if (this.inFlight) return this.inFlight;
-    const pending = work().finally(() => {
-      if (this.inFlight === pending) this.inFlight = null;
-    });
-    this.inFlight = pending;
-    return pending;
-  }
-}

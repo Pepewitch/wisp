@@ -16,6 +16,7 @@ import {
   usePullRequestOverview,
   usePullRequests,
   usePullRequestStatus,
+  useStatus,
   useTaskSearch,
   useDiff,
   useWorktreeFile,
@@ -510,5 +511,34 @@ describe("useUpdateStatus", () => {
     await waitFor(() => expect(mocks.request).toHaveBeenCalled())
 
     expect(client.getQueryCache().getAll()[0]?.queryKey[0]).toBe("connection-two")
+  })
+})
+
+describe("useStatus", () => {
+  beforeEach(() => mocks.request.mockReset())
+
+  it("asks for the task on screen fresh, keeps the last answer across a switch, and still answers a status invalidation", async () => {
+    mocks.request.mockImplementation((path: string) =>
+      Promise.resolve({ tasks: { [path]: { branch: "wisp/x", worktreeReason: null } } }),
+    )
+    const { client, wrapper } = harness()
+    const qk = createConnectionQueryKeys("local")
+    const view = renderHook(({ id }) => useStatus(id), {
+      wrapper,
+      initialProps: { id: "ta1" as string | null },
+    })
+    await waitFor(() => expect(view.result.current.data).toHaveProperty(["/api/status?fresh=ta1"]))
+
+    view.rerender({ id: "tb2" })
+    // the previous answer covers every task, so the sidebar never blanks
+    expect(view.result.current.data).toHaveProperty(["/api/status?fresh=ta1"])
+    await waitFor(() => expect(view.result.current.data).toHaveProperty(["/api/status?fresh=tb2"]))
+
+    mocks.request.mockClear()
+    await act(() => client.invalidateQueries({ queryKey: qk.status }))
+    expect(mocks.request).toHaveBeenCalledWith("/api/status?fresh=tb2")
+
+    view.rerender({ id: null })
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/status"))
   })
 })
