@@ -52,7 +52,10 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   a semaphore and serves each task's entry from a per-task cache, because each
   entry is several git processes and clients ask again on every event of any
   task: only the task an event names is probed again, plus the one a client
-  names as `fresh` (the task on screen).
+  names as `fresh` (the task on screen). Every other entry is served for at
+  most 30 s (`STATUS_CACHE_MAX_AGE_MS`), which bounds changes made outside
+  Wisp; a failed probe is never cached, and a git change Wisp makes without a
+  task event (an API push) calls `invalidateStatus`.
 - `wispd/src/adapters/` is the only home for harness argv, machine-output parsing,
   capabilities, and named wire strategies.
 - `wispd/src/events.ts` feeds realtime clients. `wispd/src/outbox.ts` delivers durable

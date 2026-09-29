@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { route } from "../src/daemon";
 import { type WispConfig } from "../src/config";
 import { emit } from "../src/events";
-import { STATUS_CACHE_MAX_AGE_MS } from "../src/routes/projects";
+import { invalidateStatus, STATUS_CACHE_MAX_AGE_MS } from "../src/routes/projects";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import * as subprocess from "../src/subprocess";
 import { createWorktree } from "../src/worktree";
@@ -236,7 +236,41 @@ describe("GET /api/status re-probes only what an event names", () => {
       expect((await body<Status>(call("/api/status"))).tasks[task.id]?.dirtyFiles).toBe(1);
     } finally {
       clock.mockRestore();
+      invalidateStatus(task.id);
     }
+  });
+
+  test("a health check git failed is not cached: the next ask probes again", async () => {
+    const task = await healthyTask();
+    const real = subprocess.runBounded;
+    const hiccup = spyOn(subprocess, "runBounded").mockImplementation((options) =>
+      options.cwd === task.worktree && options.cmd.includes("--git-dir")
+        ? Promise.resolve({ exitCode: 128, out: "", err: "fatal: index busy", truncated: false, timedOut: false, cancelled: false })
+        : real(options),
+    );
+    try {
+      expect((await body<{ tasks: Record<string, { worktreeReason: string | null }> }>(call("/api/status"))).tasks[task.id]?.worktreeReason)
+        .toContain("Git no longer tracks this worktree");
+    } finally {
+      hiccup.mockRestore();
+    }
+    expect((await body<Status>(call("/api/status"))).tasks[task.id]).toMatchObject({ dirtyFiles: 0, worktreeReason: null });
+  });
+
+  test("a push through the API refreshes the task's unpushed mark, though it emits no event", async () => {
+    const task = await healthyTask();
+    const origin = mkdtempSync(join(tmpdir(), "wisp-health-origin-"));
+    sh(["git", "init", "-q", "--bare"], origin);
+    sh(["git", "remote", "add", "origin", origin], task.repo);
+    writeFileSync(join(task.worktree, "work.txt"), "work\n");
+    sh(["git", "add", "."], task.worktree);
+    sh(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "work"], task.worktree);
+    type Marks = { tasks: Record<string, { unpushed?: boolean }> };
+    expect((await body<Marks>(call(`/api/status?fresh=${task.id}`))).tasks[task.id]?.unpushed).toBe(true);
+
+    const pushed = await call(`/api/tasks/${task.id}/push`, { method: "POST", body: "{}" });
+    expect(pushed.status).toBe(200);
+    expect((await body<Marks>(call("/api/status"))).tasks[task.id]?.unpushed).toBe(false);
   });
 
   test("overlapping requests share one probe per task", async () => {

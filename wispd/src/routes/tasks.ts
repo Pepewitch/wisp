@@ -41,6 +41,7 @@ import { taskIdsWithAttachedWorkflows } from "../workflows/store";
 import { autopilotStatus, autopilotStatuses, setAutopilot } from "../autopilot/store";
 import { autopilotUpdateError } from "./autopilot";
 import { archiveTaskRows } from "./archive";
+import { invalidateStatus } from "./projects";
 import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 import {
@@ -413,8 +414,12 @@ function basicTaskAction(
     return (async () => {
       if (task.archived) return err("task is archived — archived tasks are read-only", 409);
       if (!task.worktree_path || !task.branch) return err("task has no worktree/branch", 409);
-      const out = await pushBranch(task.worktree_path, task.branch);
-      return json({ ok: true, output: out });
+      try {
+        return json({ ok: true, output: await pushBranch(task.worktree_path, task.branch) });
+      } finally {
+        // a push emits no task event, yet it is exactly what moves `unpushed`
+        invalidateStatus(task.id);
+      }
     })();
   }
   if (action === "attach" && method === "GET") {

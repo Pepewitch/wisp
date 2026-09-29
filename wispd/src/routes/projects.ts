@@ -74,6 +74,11 @@ function watchStatusEvents(): void {
   });
 }
 
+/** For what moves a task's git state without a task event, such as a push from the API. */
+export function invalidateStatus(taskId: string): void {
+  statusCache.delete(taskId);
+}
+
 export function statusRoute(req: Request): Promise<Response> {
   const fresh = new Set(new URL(req.url).searchParams.getAll("fresh"));
   return (async () => json({ tasks: await collectStatus(fresh) }))();
@@ -100,17 +105,27 @@ function cachedTaskStatus(t: Task, fresh: boolean, now: number): Promise<unknown
   const base = taskMode(t) === "local" ? null : t.base_commit;
   const key = JSON.stringify([t.worktree_path, t.branch, base, t.seq]);
   const cached = statusCache.get(t.id);
-  if (!fresh && cached?.key === key && now - cached.startedAt < STATUS_CACHE_MAX_AGE_MS) return cached.entry;
+  // an entry from the future (the clock moved back) counts as stale
+  const age = cached ? now - cached.startedAt : -1;
+  if (!fresh && cached?.key === key && age >= 0 && age < STATUS_CACHE_MAX_AGE_MS) return cached.entry;
   const probe: CachedStatus = { key, startedAt: now, entry: Promise.resolve(null) };
+  // A failure answers this request only, and the next one asks git again: a
+  // health check that timed out under load must not show the row broken for
+  // the whole age bound.
+  const forget = (): void => {
+    if (statusCache.get(t.id) === probe) statusCache.delete(t.id);
+  };
   probe.entry = statusProbes.run(async () => {
     try {
       const health = await worktreeHealth(t.worktree_path!);
-      if (!health.ok) return { branch: t.branch, worktreeReason: health.reason };
+      if (!health.ok) {
+        forget();
+        return { branch: t.branch, worktreeReason: health.reason };
+      }
       const summary = await statusSummary(t.worktree_path!, t.branch!, base);
       return { branch: t.branch, ...summary, worktreeReason: null };
     } catch (e) {
-      // a failure answers this request only: the next one asks git again
-      if (statusCache.get(t.id) === probe) statusCache.delete(t.id);
+      forget();
       const message = e instanceof Error ? e.message : String(e);
       console.warn(`[wisp] /api/status: task ${t.id} (${t.worktree_path}): ${message}`);
       return { branch: t.branch, worktreeReason: `Git could not read this worktree — ${message}`.slice(0, REASON_CAP) };
