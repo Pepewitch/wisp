@@ -300,7 +300,9 @@ describe("a failing stage stops the sequence", () => {
       timeout_minutes: 5,
     });
 
-    await resumeArchiveCleanups();
+    // The turn can never finalize, so the stop waits out the kill grace
+    // before giving up; nothing here needs the production 5 s of it.
+    await resumeArchiveCleanups({ killGraceMs: 100 });
 
     const job = archiveCleanup(fixture.id);
     expect(job).not.toBeNull();

@@ -26,9 +26,15 @@ async function prepareHooks(job: ArchiveCleanupJob, p: CleanupProgress): Promise
   updateProgress(job.task_id, { repo_script: exists ? await file.text() : null, prepared: 1 });
 }
 
-async function stage(job: ArchiveCleanupJob, p: CleanupProgress): Promise<void> {
+/** Injection for tests; production always stops a turn with the runner's default grace. */
+export interface CleanupOptions {
+  /** SIGTERM-to-SIGKILL grace for a turn this cleanup stops */
+  killGraceMs?: number;
+}
+
+async function stage(job: ArchiveCleanupJob, p: CleanupProgress, options: CleanupOptions): Promise<void> {
   if (p.phase === "stop-turn") {
-    if (job.force || !job.stop_turn) await killTurnForArchive(job.task_id);
+    if (job.force || !job.stop_turn) await killTurnForArchive(job.task_id, options.killGraceMs);
   } else if (p.phase === "stop-shells") await killForTask(job.task_id);
   else if (p.phase === "save-work") await prepareHooks(job, p);
   else {
@@ -58,7 +64,7 @@ function failed(job: ArchiveCleanupJob, p: CleanupProgress, error: unknown): voi
     next_retry_at: attention ? null : new Date(Date.now() + Math.min(CLEANUP_RETRY_MS * 2 ** job.attempts, 15 * 60_000)).toISOString() });
 }
 
-async function runJob(id: string): Promise<void> {
+async function runJob(id: string, options: CleanupOptions): Promise<void> {
   for (;;) {
     if (homeIsDraining()) return;
     const job = archiveCleanup(id), p = cleanupProgress(id);
@@ -66,7 +72,7 @@ async function runJob(id: string): Promise<void> {
     if (p.phase === "legacy-hooks") { updateProgress(id, { status: "needs-attention" }); return; }
     updateProgress(id, { status: "running", next_retry_at: null });
     try {
-      await stage(job, p);
+      await stage(job, p, options);
       const next = CLEANUP_PHASES[CLEANUP_PHASES.indexOf(p.phase) + 1];
       if (!next) {
         clearArchiveCleanup(id);
@@ -87,7 +93,7 @@ async function runJob(id: string): Promise<void> {
 }
 
 /** Two workers maximum. A slow script never blocks daemon health or task APIs. */
-export function resumeArchiveCleanups(): Promise<void> {
+export function resumeArchiveCleanups(options: CleanupOptions = {}): Promise<void> {
   if (working) return working;
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -97,7 +103,7 @@ export function resumeArchiveCleanups(): Promise<void> {
         return p?.status === "pending" && (!p.next_retry_at || p.next_retry_at <= new Date().toISOString());
       });
       if (!ready) return;
-      await runJob(ready.task_id);
+      await runJob(ready.task_id, options);
     }
   };
   working = Promise.all([worker(), worker()]).then(() => {}).finally(() => { working = null; });

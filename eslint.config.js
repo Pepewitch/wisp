@@ -12,7 +12,7 @@ import { productionMaintainabilityRules, testMaintainabilityRules } from "./esli
 export default defineConfig([
   globalIgnores(["dist", "web", "node_modules", "coverage", ".worktrees"]),
   {
-    files: ["{scripts,tests,wispd/src,wispd/tests,wispd/scripts}/**/*.ts"],
+    files: ["{bench,scripts,tests,wispd/src,wispd/tests,wispd/scripts}/**/*.ts"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.node, Bun: "readonly" },
