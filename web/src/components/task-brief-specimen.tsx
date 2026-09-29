@@ -102,7 +102,7 @@ function Panel({ children, height, touch = false, note }: { children: ReactNode;
           <span className="text-[12.5px] font-medium text-foreground">Brief on</span>
           <SwitchTrack checked />
         </div>
-        {note && <p className="px-3.5 pb-2.5 text-[11.5px] leading-relaxed text-muted-foreground">{note}</p>}
+        {note && <p className="px-3.5 pt-3 pb-3.5 text-[11.5px] leading-relaxed text-muted-foreground">{note}</p>}
       </div>
       <div className="scroll-slim @container min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>

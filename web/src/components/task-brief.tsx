@@ -136,7 +136,7 @@ function BriefSwitch({
         <SwitchTrack checked={enabled} />
       </button>
       {(note || error) && (
-        <p className="px-3.5 pb-2.5 text-[11.5px] leading-relaxed text-muted-foreground">{error ?? note}</p>
+        <p className="px-3.5 pt-3 pb-3.5 text-[11.5px] leading-relaxed text-muted-foreground">{error ?? note}</p>
       )}
     </div>
   )
