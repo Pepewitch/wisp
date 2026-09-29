@@ -11,11 +11,11 @@ import { cleanupProgress } from "../src/archive-progress";
  * job resumed from any stage must converge without destroying anything else.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { WispConfig } from "../src/config";
+import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
 import { resumeArchiveCleanups } from "../src/routes/archive";
 import { autopilotRow, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
@@ -182,6 +182,34 @@ describe("archive asks before it stops auto-merge or auto-fix", () => {
     const removed = await call("/api/projects", { method: "DELETE", body: JSON.stringify({ path: fixture.repo, archiveTasks: true }) }, repos);
     expect(removed.status).toBe(200);
     expect(getTask(fixture.id)!.archived).toBe(1);
+    await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
+  }, 20_000);
+
+  test("project changes made while a removal waits on git survive it", async () => {
+    const fixture = await finishedTask();
+    const [kept, added] = [makeRepo(), makeRepo()];
+    // Hold the removal inside its git preflight until the other requests are
+    // done: `git status` runs the fsmonitor hook and waits for it.
+    const gate = join(fixture.repo, ".git", "release-status");
+    const hook = join(fixture.repo, ".git", "slow-fsmonitor");
+    writeFileSync(hook, `#!/bin/sh\nwhile [ ! -e '${gate}' ]; do sleep 0.02; done\nexit 1\n`, { mode: 0o755 });
+    sh(["git", "config", "core.fsmonitor", hook], fixture.repo);
+    const shared = cfg([fixture.repo, kept]);
+    const send = (method: string, body: unknown) => {
+      const url = new URL("http://wisp.test/api/projects");
+      const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+      return route(new Request(url, { method, headers, body: JSON.stringify(body) }), url, url.pathname, shared, {});
+    };
+
+    const removal = send("DELETE", { path: fixture.repo, archiveTasks: true });
+    expect((await send("POST", { path: added })).status).toBe(201);
+    expect((await send("DELETE", { path: kept })).status).toBe(200);
+    writeFileSync(gate, "");
+    expect((await removal).status).toBe(200);
+
+    expect(shared.repos.map((entry) => (typeof entry === "string" ? entry : entry.path))).toEqual([added]);
+    const persisted = (JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: unknown[] }).repos;
+    expect(persisted).toEqual(shared.repos);
     await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
   }, 20_000);
 });

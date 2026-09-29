@@ -245,8 +245,8 @@ export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Respo
       return err(`archiveTasks must be a boolean, got ${typeName(body.archiveTasks)}`, 400);
     }
     const resolved = resolve(body.path);
-    const next = cfg.repos.filter((entry) => resolve(repoEntryPath(entry)) !== resolved);
-    if (next.length === cfg.repos.length) {
+    const without = (): RepoEntry[] => cfg.repos.filter((entry) => resolve(repoEntryPath(entry)) !== resolved);
+    if (without().length === cfg.repos.length) {
       const historical = listTasks(true).some((task) => resolve(task.repo_path) === resolved);
       if (historical) return err(`project '${resolved}' exists only in task history and is not configured`, 404);
       return err(`project not found in config repos: ${resolved}`, 404);
@@ -263,7 +263,10 @@ export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Respo
         }
         archivedTaskCount = result.archived.length;
       }
-      persistRepos(cfg, next);
+      // Filter the list as it is NOW, not as it was before the archive above
+      // awaited git for every task: a project added, edited or removed in the
+      // meantime is in cfg.repos, and a stale snapshot would undo it.
+      persistRepos(cfg, without());
       emit({ type: "project", action: "remove", path: resolved });
       return json({ ok: true, path: resolved, archivedTaskCount });
     } finally {
