@@ -1,5 +1,6 @@
 import type { AutopilotStatus } from "../../shared/autopilot"
 import type { Flags } from "./cli-args"
+import { print, printJson } from "./cli-print"
 import { wispCommand } from "./command"
 
 type Api = (path: string, method?: string, body?: unknown) => Promise<unknown>
@@ -28,5 +29,6 @@ export async function prCommand(positional: string[], flags: Flags, api: Api): P
   else if (action === "fix" && (value === "on" || value === "off")) status = await api(path, "PUT", { autoFix: value === "on" }) as AutopilotStatus
   else if ((action === "resume" || action === "send-now" || action === "skip") && value === undefined) status = await api(`${path}/${action}`, "POST", {}) as AutopilotStatus
   else throw new Error(PR_USAGE)
-  console.log(flags.json ? JSON.stringify(status, null, 2) : formatAutopilot(status))
+  if (flags.json) printJson(status)
+  else print(formatAutopilot(status))
 }

@@ -4,7 +4,11 @@ Every command the CLI owns. Task, project, and lifecycle operations are thin
 HTTP clients of the daemon. Setup and diagnostic commands such as `init`,
 `token`, `version`, and `doctor` also inspect the active local profile or
 installation. Task ids are short strings like `tq2szu`; `wisp --help` prints
-the same list.
+the same list. `wisp <command> --help` (or `-h` anywhere on the line, or
+`wisp help <command>`) prints that command's usage, exits 0, and does nothing
+else: it never contacts the daemon, starts one, installs an update, or creates
+the local home. That includes a flag value that is exactly `-h` or `--help`:
+`--prompt -h` is a request for help, not a prompt.
 
 `wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` is strictly
 read-only, works without a daemon, and never initializes the local home.
@@ -31,6 +35,9 @@ wisp workflow pause <workflow-id>
 wisp workflow resume <workflow-id>
 wisp workflow complete <workflow-id>
 ```
+
+A bare `wisp workflow` prints this usage and its parameters; an unknown verb
+is refused with exit 1.
 
 Workflows persist in the daemon and wake settled tasks between turns. Stop
 pauses them; archive completes them. Configure prompts, timers, limits, and
@@ -335,6 +342,13 @@ number of turns in a task.
   message, don't guess from the exit code alone.
 - Short flags are always boolean (`-a`, `-f`); value flags are always long
   (`--timeout 900`, never `-t`).
+- Text that came from an agent, a harness, or a repository (answers, logs,
+  search snippets, branch names, script output, refusals) is printed with
+  terminal control sequences removed, so it cannot set your clipboard or
+  repaint your screen; newlines and tabs are kept. `--json` stays lossless,
+  with C1 controls escaped. `log --raw` and `log --diagnostic` keep the exact
+  bytes when stdout is a pipe or a file, and are cleaned the same way on a
+  terminal.
 
 Archived task conversations and attachments are retained. After cleanup finishes,
 `wisp export <task>` writes a portable JSON snapshot to stdout (use a private

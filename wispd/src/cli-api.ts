@@ -1,5 +1,6 @@
 import type { StagedAttachmentPayload } from "./attachments";
 import { wispCommand } from "./command";
+import { printError } from "./cli-print";
 import { loadConfig, type WispConfig } from "./config";
 
 export class CliApiError extends Error {
@@ -96,11 +97,11 @@ export async function discardAttachment(uploadId: string): Promise<void> {
 
 export function exitApi(error: unknown): never {
   if (error instanceof CliApiError && error.unreachable) {
-    console.error(
+    printError(
       `cannot reach wispd at ${error.url} — is it running? start it with: ${wispCommand()} serve`,
     );
   } else {
-    console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    printError(`error: ${error instanceof Error ? error.message : String(error)}`);
   }
   process.exit(1);
 }

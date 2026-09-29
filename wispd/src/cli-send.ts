@@ -4,6 +4,7 @@ import {
   discardAttachmentPayloads,
   type AttachmentFlags,
 } from "./cli-attach";
+import { print, printError } from "./cli-print";
 import type { ApiTask, SendResult, TaskMessage } from "./types";
 
 interface SendCommandOptions {
@@ -20,7 +21,7 @@ interface SendCommandOptions {
 export async function sendCommand(options: SendCommandOptions): Promise<void> {
   const [id, ...message] = options.positional;
   if (!id || message.length === 0) {
-    console.error(`usage: ${options.commandName} send <task> "message" [--attach <path>]…`);
+    printError(`usage: ${options.commandName} send <task> "message" [--attach <path>]…`);
     process.exit(1);
   }
   let attachments: StagedAttachmentPayload[] | undefined;
@@ -44,11 +45,11 @@ export async function sendCommand(options: SendCommandOptions): Promise<void> {
     ? " (prior delivery may already have succeeded)"
     : "";
   if (result.disposition === "steered") {
-    console.log(`${result.id} message ${result.message.id} sent to running turn ${result.message.turn_n}${uncertain}`);
+    print(`${result.id} message ${result.message.id} sent to running turn ${result.message.turn_n}${uncertain}`);
   } else if (result.disposition === "queued-next") {
-    console.log(`${result.id} message ${result.message.id} queued for the next turn${uncertain}`);
+    print(`${result.id} message ${result.message.id} queued for the next turn${uncertain}`);
   } else {
-    console.log(`${result.id} turn ${result.message.turn_n ?? result.turn_count} running${uncertain}`);
+    print(`${result.id} turn ${result.message.turn_n ?? result.turn_count} running${uncertain}`);
   }
 }
 

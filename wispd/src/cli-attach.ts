@@ -11,6 +11,7 @@ import {
   SUPPORTED_ATTACHMENTS,
   type StagedAttachmentPayload,
 } from "./attachments";
+import { printError } from "./cli-print";
 
 /** The two flags that name files; `--image` is what `--attach` used to be called. */
 export interface AttachmentFlags {
@@ -21,7 +22,7 @@ export interface AttachmentFlags {
 function flagPaths(raw: string | boolean | string[] | undefined, flag: string): string[] {
   if (raw === undefined) return [];
   if (raw === true) {
-    console.error(`${flag} requires a path (e.g. ${flag} ./notes.csv)`);
+    printError(`${flag} requires a path (e.g. ${flag} ./notes.csv)`);
     process.exit(1);
   }
   return Array.isArray(raw) ? raw : [String(raw)];
@@ -64,7 +65,7 @@ export async function readAttachmentFlags(
   ];
   if (named.length === 0) return undefined;
   if (named.length > MAX_ATTACHMENTS_PER_TURN) {
-    console.error(`at most ${MAX_ATTACHMENTS_PER_TURN} attachments per turn, got ${named.length}`);
+    printError(`at most ${MAX_ATTACHMENTS_PER_TURN} attachments per turn, got ${named.length}`);
     process.exit(1);
   }
   const validated: Array<{ path: string; name: string }> = [];
@@ -72,23 +73,23 @@ export async function readAttachmentFlags(
   for (const [flag, p] of named) {
     const file = Bun.file(resolve(p));
     if (!(await file.exists())) {
-      console.error(`${flag} ${p}: no such file`);
+      printError(`${flag} ${p}: no such file`);
       process.exit(1);
     }
     if (file.size > MAX_ATTACHMENT_BYTES) {
-      console.error(`${flag} ${p}: ${formatBytes(file.size)} exceeds the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit`);
+      printError(`${flag} ${p}: ${formatBytes(file.size)} exceeds the ${formatBytes(MAX_ATTACHMENT_BYTES)} per-file limit`);
       process.exit(1);
     }
     const head = new Uint8Array(await file.slice(0, SNIFF_WINDOW_BYTES).arrayBuffer());
     const mediaType = sniffAttachmentHeader(head);
     if (!mediaType) {
-      console.error(`${flag} ${p}: not a supported attachment (magic-byte sniff) — wisp takes ${SUPPORTED_ATTACHMENTS}`);
+      printError(`${flag} ${p}: not a supported attachment (magic-byte sniff) — wisp takes ${SUPPORTED_ATTACHMENTS}`);
       process.exit(1);
     }
     const kind = attachmentKind(mediaType);
     const limit = ATTACHMENT_KIND_LIMITS[kind];
     if (file.size > limit) {
-      console.error(
+      printError(
         `${flag} ${p}: ${formatBytes(file.size)} exceeds the ${formatBytes(limit)} limit for ${kind} attachments`,
       );
       process.exit(1);
@@ -97,7 +98,7 @@ export async function readAttachmentFlags(
     // The turn's budget is checked before upload, so several individually
     // legal files cannot spend bandwidth only to be rejected as a group.
     if (total > MAX_TURN_ATTACHMENT_BYTES) {
-      console.error(
+      printError(
         `${flag} ${p}: these attachments total ${formatBytes(total)}, over the ${formatBytes(MAX_TURN_ATTACHMENT_BYTES)} limit for one turn`,
       );
       process.exit(1);

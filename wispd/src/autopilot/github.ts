@@ -342,7 +342,8 @@ export { controlFree }
  * the failure. Timestamps and terminal escapes are dropped; nobody reads those.
  */
 export function tidyLog(raw: string, maxLines = 400, maxBytes = 64_000): string {
-  const all = raw.split("\n").map((line) => controlFree(line).replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
+  // a CRLF ending is one line; a progress bar's lone \r splits into its states
+  const all = raw.split(/\r?\n/).flatMap((line) => controlFree(line).split("\n")).map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z /, ""))
   const teardown = (line: string) => /^(?:Post job cleanup|Cleaning up orphan processes|##\[group\]Post )/.test(line)
   const error = all.findLastIndex((line) => line.includes("##[error]"))
   let end = all.length
