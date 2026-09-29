@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { TERMINAL_INPUT_CHUNK_UNITS, TERMINAL_MAX_FRAME_BYTES, terminalInputChunks } from "../../../shared/terminal-protocol";
 import { connectionStorageKey } from "./connection-storage";
 import {
   DEFAULT_SHELL_TABS,
@@ -247,6 +248,31 @@ describe("TerminalConnection framing", () => {
     expect(JSON.parse(socket().sent[0]!)).toEqual({ type: "in", data: "ls -la\r" });
     expect(JSON.parse(socket().sent[1]!)).toEqual({ type: "in", data: "\u007f" });
     expect(JSON.parse(socket().sent[2]!)).toEqual({ type: "resize", cols: 120, rows: 40 });
+  });
+
+  it("splits a paste into in-order frames under the daemon's frame ceiling", () => {
+    const { conn, socket } = setup();
+    conn.connect();
+    socket().open();
+
+    // Control characters are the worst case: JSON writes each as six bytes.
+    const paste = "\u001b".repeat(TERMINAL_INPUT_CHUNK_UNITS) + "tail\r" + "\u{1F600}".repeat(4);
+    conn.sendInput(paste);
+
+    const frames = socket().sent.map((frame) => JSON.parse(frame) as { type: string; data: string });
+    expect(frames.length).toBe(2);
+    expect(frames.every((frame) => frame.type === "in")).toBe(true);
+    expect(frames.map((frame) => frame.data).join("")).toBe(paste);
+    for (const frame of socket().sent) expect(new TextEncoder().encode(frame).byteLength).toBeLessThan(TERMINAL_MAX_FRAME_BYTES);
+  });
+
+  it("never cuts a paste inside a surrogate pair", () => {
+    const text = "a" + "\u{1F600}".repeat(5);
+    const chunks = terminalInputChunks(text, 4);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("")).toBe(text);
+    // a lone surrogate would not survive UTF-8, which is how the frame travels
+    for (const chunk of chunks) expect(new TextDecoder().decode(new TextEncoder().encode(chunk))).toBe(chunk);
   });
 
   it("sends {type:'clear'} so the daemon drops its copy of the screen too", () => {

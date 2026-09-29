@@ -110,6 +110,15 @@ caller, because a browser cannot read a failed upgrade's response body. The
 `403` itself names only the rejected and the expected origin: it is answered
 before any credential is checked, so it never echoes the configured set.
 
+What an unauthenticated caller can make the daemon hold is bounded. A
+terminal socket that upgraded without a credential may send one frame of at
+most 4 KiB, must send it within five seconds, and at most 16 such sockets
+wait at once; every terminal frame is capped at 1 MiB, and the web client
+splits large pastes to fit. `POST /api/session`, the one unauthenticated
+request body the daemon reads, is refused over 4 KiB before it is buffered.
+Every daemon response carries `X-Content-Type-Options: nosniff` and
+`Cross-Origin-Resource-Policy: same-origin`.
+
 Tokens in URL query parameters are not accepted. Treat any script running in
 the Wisp origin as able to read the bearer token; the self-contained bundle and
 private encrypted transport remain part of the security boundary.

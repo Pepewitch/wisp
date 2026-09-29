@@ -37,6 +37,7 @@
  * wrapper is unit-testable in jsdom with a mock transport.
  */
 
+import { terminalInputChunks } from "../../../shared/terminal-protocol";
 import { readConnectionStorage, writeConnectionStorage } from "./connection-storage";
 import type { DaemonRequestOptions, DaemonTransport } from "./transport";
 import type { ShellInfo } from "./types";
@@ -327,10 +328,14 @@ export class TerminalConnection {
     };
   }
 
-  /** Send terminal input; no-op when stale or not yet open. */
+  /**
+   * Send terminal input; no-op when stale or not yet open. A large paste goes
+   * as several frames, in order, because the daemon closes a socket whose
+   * frame is over its ceiling.
+   */
   sendInput(data: string): void {
     if (!this.active() || !this.socket || this.socket.readyState !== WS_OPEN) return;
-    this.socket.send(JSON.stringify({ type: "in", data }));
+    for (const chunk of terminalInputChunks(data)) this.socket.send(JSON.stringify({ type: "in", data: chunk }));
   }
 
   /**

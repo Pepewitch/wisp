@@ -17,7 +17,13 @@ import { join } from "node:path";
 
 import { ALLOWED_ORIGINS_ENV } from "../src/routes/auth";
 import { CONFIG_PATH } from "../src/config";
-import { serve } from "../src/daemon";
+import {
+  MAX_PENDING_TERMINAL_SOCKETS,
+  serve,
+  TERMINAL_AUTH_FRAME_MAX_BYTES,
+  TERMINAL_AUTH_TIMEOUT_MS,
+} from "../src/daemon";
+import { TERMINAL_MAX_FRAME_BYTES } from "../../shared/terminal-protocol";
 import { killAll } from "../src/terminal";
 import { createTask, freeSlot, newTaskId, setTaskFields } from "../src/store";
 
@@ -254,6 +260,62 @@ describe("SEC-02 — terminal WebSocket upgrades", () => {
     });
     expect(response.status).toBe(401);
   });
+
+  /**
+   * Before its first frame a socket is anyone's: any local process, or a page
+   * that rebinds a hostname to loopback, can open one. It must be cheap to
+   * hold: a small auth frame, a short deadline, and a bounded count.
+   */
+  test("unauthenticated sockets are bounded in frame size, number and lifetime", async () => {
+    writeConfig();
+    const taskId = taskWithWorktree("bounded");
+    server = await serve({ port: 0 });
+    const origin = `http://127.0.0.1:${server.port}`;
+    const url = `ws://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`;
+
+    // An auth frame is a token, not a payload; one this big is refused unparsed.
+    const oversizedAuth = await upgradeOutcome(url, {
+      headers: { origin },
+      send: { type: "auth", token: "x".repeat(TERMINAL_AUTH_FRAME_MAX_BYTES) },
+    });
+    expect(oversizedAuth.frames.some((frame) => frame.type === "hello")).toBe(false);
+    expect(oversizedAuth.closed).toBe(1009);
+
+    // Past the socket-wide ceiling the frame is refused before it is buffered.
+    const oversizedFrame = await upgradeOutcome(url, {
+      headers: { origin },
+      send: { type: "in", data: "x".repeat(TERMINAL_MAX_FRAME_BYTES) },
+    });
+    expect(oversizedFrame.frames.some((frame) => frame.type === "hello")).toBe(false);
+    expect(oversizedFrame.closed).not.toBeNull();
+    expect(oversizedFrame.closed).not.toBe(1000);
+
+    // Hold the most sockets that may wait at once, each told to authenticate.
+    const started = Date.now();
+    const pending = await Promise.all(
+      Array.from({ length: MAX_PENDING_TERMINAL_SOCKETS }, () =>
+        new Promise<{ closed: Promise<number> }>((resolve, reject) => {
+          const socket = new WebSocket(url, { headers: { origin } });
+          const closed = new Promise<number>((settle) => (socket.onclose = (event) => settle(event.code)));
+          socket.onmessage = (event) => {
+            if ((JSON.parse(String(event.data)) as { type: string }).type === "auth_required") resolve({ closed });
+          };
+          socket.onerror = () => reject(new Error("pending socket failed"));
+        }),
+      ),
+    );
+    // One more is refused while they wait; it never hears auth_required.
+    const refused = await upgradeOutcome(url, { headers: { origin } });
+    expect(refused.frames.some((frame) => frame.type === "auth_required")).toBe(false);
+    expect(refused.closed).toBe(1013);
+
+    // The deadline closes every one that never answered, and frees the slots.
+    const codes = await Promise.all(pending.map((socket) => socket.closed));
+    expect(new Set(codes)).toEqual(new Set([1008]));
+    expect(Date.now() - started).toBeLessThan(TERMINAL_AUTH_TIMEOUT_MS + 3_000);
+    const authenticated = await upgradeOutcome(url, { headers: { origin }, send: { type: "auth", token: TOKEN } });
+    expect(authenticated.frames.some((frame) => frame.type === "hello")).toBe(true);
+  }, 30_000);
 
   /**
    * An unauthenticated upgrade may not answer "does this task exist?" — that

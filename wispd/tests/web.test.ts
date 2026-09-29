@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import { acceptsGzip, route, serve } from "../src/daemon";
+import { finishResponse, json, JSON_GZIP_MIN_CHARS } from "../src/routes/http";
 import {
   createTask,
   createTurn,
@@ -258,6 +259,95 @@ async function readStreamUntil(reader: ReadableStreamDefaultReader<Uint8Array>, 
   if (!buf.includes(needle)) throw new Error(`timed out waiting for ${needle} (buffered: ${JSON.stringify(buf)})`);
   return buf;
 }
+
+describe("every daemon response", () => {
+  test("carries nosniff and same-origin CORP, whichever route built it", async () => {
+    writeConfig();
+    server = await serve({ port: 0 });
+    const base = `http://127.0.0.1:${server.port}`;
+    const requests: [string, RequestInit?][] = [
+      ["/api/health"],
+      ["/api/tasks"], // 401, before any route runs
+      ["/api/nothing-here", auth()],
+      ["/api/capabilities", auth()],
+      ["/api/session", { method: "POST", body: "{" }],
+      ["/"],
+    ];
+    for (const [path, init] of requests) {
+      const response = await fetch(`${base}${path}`, init);
+      await response.arrayBuffer();
+      expect([path, response.headers.get("x-content-type-options")]).toEqual([path, "nosniff"]);
+      expect([path, response.headers.get("cross-origin-resource-policy")]).toEqual([path, "same-origin"]);
+    }
+
+    // The event stream is never compressed: it must arrive as it is produced.
+    // route() directly, because a real-socket fetch of an SSE endpoint waits
+    // for its first frame (see the archiving test below).
+    const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as WispConfig;
+    const eventsUrl = new URL("http://wisp.test/api/events");
+    const gzipRequest = new Request(eventsUrl, { headers: { ...auth().headers, "accept-encoding": "gzip" } });
+    const stream = finishResponse(gzipRequest, await route(gzipRequest, eventsUrl, eventsUrl.pathname, cfg, {}));
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    expect(stream.headers.get("content-encoding")).toBeNull();
+    expect(stream.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(stream.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    await stream.body?.cancel();
+  });
+
+  test("large JSON is gzipped only for a client that accepts it, and decodes to the same body", async () => {
+    writeConfig();
+    server = await serve({ port: 0 });
+    const base = `http://127.0.0.1:${server.port}`;
+    const task = createTask({
+      id: newTaskId(),
+      title: `compression probe ${"lorem ipsum ".repeat(2_000)}`,
+      repo_path: "/tmp/repo",
+      harness: "fake",
+      model: null,
+      slot: freeSlot(),
+    });
+    setTaskFields(task.id, { archived: 1 });
+    const url = `${base}/api/tasks?archived=1`;
+    const plain = await fetch(url, { headers: { ...auth().headers, "accept-encoding": "identity" } });
+    const zipped = await fetch(url, { headers: { ...auth().headers, "accept-encoding": "gzip" } });
+    const raw = await fetch(url, { headers: { ...auth().headers, "accept-encoding": "gzip" }, decompress: false });
+
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(zipped.headers.get("content-encoding")).toBe("gzip");
+    for (const response of [plain, zipped]) {
+      expect(response.headers.get("content-type")).toBe("application/json");
+      expect(response.headers.get("vary")).toContain("Accept-Encoding");
+    }
+    const identity = await plain.text();
+    expect(identity.length).toBeGreaterThan(JSON_GZIP_MIN_CHARS);
+    expect(await zipped.text()).toBe(identity);
+    const wire = new Uint8Array(await raw.arrayBuffer());
+    expect(wire.byteLength).toBeLessThan(identity.length / 4);
+    expect(new TextDecoder().decode(Bun.gunzipSync(wire))).toBe(identity);
+    expect((JSON.parse(identity) as { id: string }[]).some((row) => row.id === task.id)).toBe(true);
+
+    // a small body is not worth the header, even for a client that accepts gzip
+    const small = await fetch(`${base}/api/capabilities`, { headers: { ...auth().headers, "accept-encoding": "gzip" } });
+    expect(small.headers.get("content-encoding")).toBeNull();
+    await small.arrayBuffer();
+  });
+
+  test("only json() bodies are compressed, a route's own header wins, and immutable responses still get the baseline", () => {
+    const gzip = new Request("http://wisp.test/api/x", { headers: { "accept-encoding": "gzip" } });
+    const big = { rows: "x".repeat(JSON_GZIP_MIN_CHARS) };
+    expect(finishResponse(gzip, json(big)).headers.get("content-encoding")).toBe("gzip");
+    const head = new Request("http://wisp.test/api/x", { method: "HEAD", headers: { "accept-encoding": "gzip" } });
+    expect(finishResponse(head, json(big)).headers.get("content-encoding")).toBeNull();
+    const stream = new Response(JSON.stringify(big), { headers: { "content-type": "application/x-ndjson" } });
+    expect(finishResponse(gzip, stream).headers.get("content-encoding")).toBeNull();
+    const framed = finishResponse(gzip, new Response("x", { headers: { "cross-origin-resource-policy": "same-site" } }));
+    expect(framed.headers.get("cross-origin-resource-policy")).toBe("same-site");
+    const redirect = finishResponse(gzip, Response.redirect("http://wisp.test/elsewhere", 302));
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get("location")).toBe("http://wisp.test/elsewhere");
+    expect(redirect.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
 
 describe("S1 create-modal and project APIs", () => {
   test("task effort is explicit-over-config, persisted, and unsupported effort is rejected", async () => {
