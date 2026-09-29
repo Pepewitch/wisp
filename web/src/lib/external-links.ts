@@ -78,6 +78,25 @@ export function openExternalLink(href: string): void {
 }
 
 /**
+ * A capture-phase click handler for a surface whose markup nobody wrote as
+ * app code — a Mermaid diagram's SVG. No anchor inside it may navigate the
+ * Wisp window (or the Desktop window, which has no address bar to get back
+ * with). A primary click on an http(s) link leaves through `openExternalLink`
+ * like any other; every other activation of an anchor is simply cancelled.
+ */
+export function containAnchorClick(event: MouseEvent<Element>): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  const anchor = target.closest("a")
+  if (!anchor || !event.currentTarget.contains(anchor)) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.type !== "click" || event.button !== 0) return
+  const href = anchor.getAttribute("href") ?? anchor.getAttribute("xlink:href")
+  if (href) openExternalLink(href)
+}
+
+/**
  * A handler that reveals one of a task's worktree files, or `undefined` when
  * this client cannot — which is most of the time, and deliberately visible as
  * an absent button rather than one that fails.

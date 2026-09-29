@@ -18,6 +18,8 @@
  *      cross-origin, and cannot upgrade a terminal socket (SEC-01/SEC-02);
  *   6. the app refuses to be framed (SEC-04).
  *   7. Mermaid stays lazy and a missing chunk can be recovered explicitly.
+ *   8. hostile agent output (Mermaid labels, image shapes, click links, and
+ *      clobbering ids in prose) fetches nothing and navigates nowhere.
  *
  * It is deliberately a script rather than a `bun test` file: it needs a real
  * browser, a real listener, and a throwaway profile, and none of those belong
@@ -31,6 +33,7 @@ import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { checkHostileContent, HOSTILE_PROSE } from "./browser-security-hostile";
 import { startHostRewritingProxy, startOtherLocalService } from "./browser-security-servers";
 import { DaemonExitedError, exitDescription, waitInPage, watchDaemon } from "./browser-security-wait";
 
@@ -144,6 +147,7 @@ async function startDaemon(home: string, entry: string, log: string): Promise<{ 
   const fixtureOutput = [
     `![External fixture](https://example.invalid/wisp-image-fixture.png)\n\n![Local fixture](http://127.0.0.1:${port + 1}/wisp-image-fixture.png)\n\n![Internal fixture](http://10.0.0.1/wisp-image-fixture.png)`,
     "```mermaid\nflowchart TD\n  A --> B\n```",
+    ...HOSTILE_PROSE,
   ].join("\n\n");
   const seed = Bun.spawnSync([process.execPath, join(import.meta.dir, "../wispd/tests/helpers/seed-transport-daemon.ts"), "browser", checkout,
     fixtureOutput], {
@@ -560,6 +564,7 @@ async function main(): Promise<void> {
     await checkTerminalHandshake(page, started.origin, home);
     await checkImageConsent(page, started.origin, mermaidPath);
     await checkMermaidRecovery(page, started.origin, mermaidPath);
+    await checkHostileContent(page, { check, waitInPage });
     await checkPwa(page, started.origin);
     // Reset this fixture's selection before the clean-app navigation below.
     await page.evaluate(`Object.keys(localStorage).filter(key => key !== 'wisp_token').forEach(key => localStorage.removeItem(key))`);

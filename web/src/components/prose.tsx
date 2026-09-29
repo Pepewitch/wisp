@@ -64,7 +64,23 @@ const PROSE_REMARK_PLUGINS = [...Object.values(defaultRemarkPlugins), remarkBrea
  */
 const PROSE_REHYPE_BASE = Object.entries(defaultRehypePlugins)
   .filter(([name]) => name !== "harden")
-  .map(([, plugin]) => plugin)
+  .map(([name, plugin]) => (name === "sanitize" ? prefixedSanitize(plugin) : plugin))
+
+/**
+ * Streamdown's `sanitize` with the id prefix put back.
+ *
+ * Its schema sets `clobberPrefix: ""`, so an agent's raw `<div id="isTauri">`
+ * became `window.isTauri` — enough to make a browser tab think it is the
+ * Desktop app and cancel every link — and `<span id="wisp-xterm-css">` stopped
+ * the terminal's stylesheet from ever being injected. `user-content-` is the
+ * sanitizer's own default. Nothing in the app looks prose up by id, and
+ * in-page `#` links are not links here (see `ProseLink`), so no anchor breaks.
+ */
+function prefixedSanitize(plugin: unknown): unknown {
+  if (!Array.isArray(plugin)) return plugin
+  const [transform, schema] = plugin as [unknown, Record<string, unknown> | undefined]
+  return [transform, { ...schema, clobberPrefix: "user-content-" }]
+}
 
 const PROSE_REHYPE_PLUGINS = [
   ...PROSE_REHYPE_BASE,
