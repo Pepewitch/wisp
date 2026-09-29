@@ -11,7 +11,7 @@ not a public issue.
 
 ## Run locally
 
-Install Git and **Bun 1.3.14**, then run these commands from a Wisp checkout:
+Install Git and **Bun 1.4.2**, then run these commands from a Wisp checkout:
 
 ```sh
 bun install --frozen-lockfile
