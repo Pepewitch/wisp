@@ -416,6 +416,8 @@ export interface OutboxRow {
   delivered_at: string | null;
   last_error: string | null;
   created_at: string;
+  /** When delivery of this event first failed; the give-up age is counted from here. */
+  first_failed_at: string | null;
   /** When delivery gave up on this event; it is never retried after that. */
   dead_at: string | null;
 }

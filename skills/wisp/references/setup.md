@@ -15,9 +15,9 @@ unsupervised daemon dies with its shell or container. Any of:
 - systemd: `ExecStart=/usr/local/bin/wisp serve`, `Restart=always`
 - Homebrew on macOS: `brew services start wisp` (launchd)
 
-Liveness: `GET /api/health`, which also reports `startedAt` and
-`uptimeSeconds`, so a restart shows even to a poller that never saw the daemon
-go away. `wisp doctor` is the full self-check (harness CLIs and their auth, git
+Liveness: `GET /api/health`. The authenticated `GET /api/diagnostics` also
+reports the running daemon's `pid`, `startedAt` and `uptimeSeconds`, so a
+restart shows even to a poller that never saw the daemon go away. `wisp doctor` is the full self-check (harness CLIs and their auth, git
 identity, every registered project, `gh` and `gh auth status`, config files
 and token length, daemon reachability, terminal origins, unclean restarts, the
 last self-update, background loops and webhook delivery) and exits 1 naming
@@ -249,16 +249,17 @@ unique id if you only want the models you declared.
 unauthenticated. `POST /api/session` accepts `{token}` and answers whether it is
 the right one, so the browser's dialog can refuse a wrong token before storing
 it; it mints no credential. Every other API route requires
-`authorization: Bearer <token>`. After 10 wrong tokens from one address
-(bearer, `/api/session` or the terminal handshake), every credential from that
-address waits, 1 s at first and doubling to 30 s, answered `429` with
-`retry-after`; the count lives in memory and resets 15 minutes after the
-address's last failure. The web UI is served at `/`.
+`authorization: Bearer <token>`. After 10 distinct wrong tokens from one
+address (bearer, `/api/session` or the terminal handshake), every credential
+from that address waits, 1 s at first and doubling to 30 s, answered `429`
+with `retry-after`. A client repeating the same wrong token is refused but
+never counted. The count lives in memory and resets 15 minutes after the
+address's last new wrong token. The web UI is served at `/`.
 
-- `GET /api/health` — liveness, build identity, `startedAt`, `uptimeSeconds`
-- `GET /api/diagnostics` — what `wisp doctor` asks: each background loop's
-  last success and failure in this run, and the webhook outbox's failing and
-  given-up counts
+- `GET /api/health` — liveness
+- `GET /api/diagnostics` — what `wisp doctor` asks: this run's `pid`,
+  `startedAt` and `uptimeSeconds`, each background loop's last success and
+  failure in this run, and the webhook outbox's failing and given-up counts
 - `GET /api/capabilities` — authenticated stable instance identity, Wisp build,
   integer API protocol version, and implemented API feature flags. Flags mean
   an API surface exists; runtime readiness such as automatic-update support is

@@ -139,34 +139,47 @@ describe("the failed-authentication throttle", () => {
   test("free failures, then a wait that doubles to its ceiling, forgotten after a quiet spell", () => {
     let now = 0;
     const throttle = new AuthThrottle({ freeFailures: 3, baseDelayMs: 1_000, maxDelayMs: 4_000, forgetMs: 60_000, now: () => now });
-    throttle.failed("a");
-    throttle.failed("a");
+    throttle.failed("a", `guess-1`);
+    throttle.failed("a", `guess-2`);
     expect(throttle.retryAfterMs("a")).toBe(0);
-    throttle.failed("a");
+    throttle.failed("a", `guess-3`);
     expect(throttle.retryAfterMs("a")).toBe(1_000);
     expect(throttle.retryAfterMs("b")).toBe(0); // per address
     now += 1_000;
-    throttle.failed("a");
+    throttle.failed("a", `guess-4`);
     expect(throttle.retryAfterMs("a")).toBe(2_000);
     now += 2_000;
-    throttle.failed("a");
+    throttle.failed("a", `guess-5`);
     expect(throttle.retryAfterMs("a")).toBe(4_000);
     now += 4_000;
-    throttle.failed("a");
+    throttle.failed("a", `guess-6`);
     expect(throttle.retryAfterMs("a")).toBe(4_000); // the ceiling
     now += 60_000;
     expect(throttle.retryAfterMs("a")).toBe(0);
-    throttle.failed("a"); // forgotten: a fresh allowance
+    throttle.failed("a", `guess-7`); // forgotten: a fresh allowance
     expect(throttle.retryAfterMs("a")).toBe(0);
   });
 
   test("remembers a bounded number of addresses", () => {
     const throttle = new AuthThrottle({ freeFailures: 1, maxAddresses: 2, now: () => 0 });
-    throttle.failed("a");
-    throttle.failed("b");
-    throttle.failed("c"); // forgets "a", the least recently failed
+    throttle.failed("a", `guess-8`);
+    throttle.failed("b", `guess-9`);
+    throttle.failed("c", `guess-10`); // forgets "a", the least recently failed
     expect(throttle.retryAfterMs("a")).toBe(0);
     expect(throttle.retryAfterMs("b")).toBeGreaterThan(0);
     expect(throttle.retryAfterMs("c")).toBeGreaterThan(0);
+  });
+
+  test("a stale client repeating one wrong token never trips it; distinct guesses do", () => {
+    let now = 0;
+    const throttle = new AuthThrottle({ freeFailures: 3, maxTokensPerAddress: 2, now: () => now });
+    for (let attempt = 0; attempt < 120; attempt++) {
+      throttle.failed("local", "an-old-token");
+      now += 5_000;
+    }
+    expect(throttle.retryAfterMs("local")).toBe(0);
+    throttle.failed("local", "guess-a");
+    throttle.failed("local", "guess-b"); // past the remembered bound: still counted
+    expect(throttle.retryAfterMs("local")).toBeGreaterThan(0);
   });
 });

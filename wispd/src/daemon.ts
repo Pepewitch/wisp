@@ -39,7 +39,7 @@ import {
   ALLOWED_ORIGINS_ENV, allowedOrigins, AuthThrottle, type AuthThrottleOptions, authorized, bearerToken, credentialRefusal,
   foreignOriginMessage, judgeCredential, originVerdict, postSession, remoteAddress, throttledMessage, throttledResponse,
 } from "./routes/auth";
-import { beginDaemonRun, endDaemonRun, runTimes, type DaemonRun } from "./daemon-run";
+import { beginDaemonRun, endDaemonRun, type DaemonRun } from "./daemon-run";
 import { acceptsGzip, err, finishResponse, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
@@ -725,7 +725,7 @@ async function serveOwned(
     if (webAsset) return webAsset;
     const pwa = pwaResponse(req);
     if (pwa) return pwa;
-    if (path === "/api/health") return json({ ok: true, ...BUILD_INFO, ...runTimes(run) });
+    if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
     // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
     if (path === "/api/session" && req.method === "POST") return postSession(req, cfg, authThrottle, remoteAddress(req, server));
     if (!path.startsWith("/api/")) return err("not found", 404);

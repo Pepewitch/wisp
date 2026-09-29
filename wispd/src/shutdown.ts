@@ -1,3 +1,4 @@
+import { currentDaemonRun, endDaemonRun } from "./daemon-run";
 import { killAll } from "./terminal";
 import { errorDetail } from "./text";
 
@@ -18,6 +19,13 @@ export interface ShutdownSteps {
   exit?: (code: number) => void;
   deadlineMs?: number;
   log?: (line: string) => void;
+  /** Mark this run's exit clean; defaults to removing the daemon's run marker. */
+  endRun?: () => void;
+}
+
+function endCurrentRun(): void {
+  const run = currentDaemonRun();
+  if (run) endDaemonRun(run);
 }
 
 /**
@@ -47,6 +55,9 @@ export async function shutDown(signal: ShutdownSignal, steps: ShutdownSteps): Pr
     await (steps.killShells ?? killAll)();
     log(`[wisp] ${signal}: terminal shells stopped`);
   } finally {
+    // A signal is an exit that was asked for, even one that arrives during
+    // boot, before there is a graceful stop to run: not a crash to report.
+    (steps.endRun ?? endCurrentRun)();
     (steps.exit ?? ((code: number) => process.exit(code)))(signal === "SIGTERM" ? 143 : 130);
   }
 }

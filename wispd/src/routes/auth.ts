@@ -63,16 +63,26 @@ export function bearerToken(req: Request): string | null {
 export const MIN_TOKEN_LENGTH = 32;
 
 export interface AuthThrottleOptions {
-  /** Wrong credentials an address may present before it has to wait. */
+  /** Distinct wrong credentials an address may present before it has to wait. */
   freeFailures?: number;
-  /** The first wait; each further failure doubles it, up to `maxDelayMs`. */
+  /** The first wait; each further distinct failure doubles it, up to `maxDelayMs`. */
   baseDelayMs?: number;
   maxDelayMs?: number;
-  /** An address with no failure for this long starts over. */
+  /** An address with no new wrong credential for this long starts over. */
   forgetMs?: number;
   /** Addresses remembered at once; the oldest is forgotten first. */
   maxAddresses?: number;
+  /** Wrong credentials remembered per address, so a repeat is recognized. */
+  maxTokensPerAddress?: number;
   now?: () => number;
+}
+
+interface ThrottleEntry {
+  /** Distinct wrong credentials seen, including any no longer remembered. */
+  failures: number;
+  seen: Set<string>;
+  lastFailureAt: number;
+  lockedUntil: number;
 }
 
 /**
@@ -81,16 +91,20 @@ export interface AuthThrottleOptions {
  * A minted token (a random UUID) cannot be guessed at any rate, but config.json
  * accepts any string, and a short hand-set token can be brute-forced by anything
  * that reaches the port: a local process, or a web page through DNS rebinding.
- * So after `freeFailures` wrong credentials an address must wait before the
- * daemon evaluates another one from it, 1 s at first and doubling to 30 s. The
- * wait refuses the right token too; otherwise the answer would still tell a
- * guess apart. A success does not reset the count, because everything behind a
- * local reverse proxy shares one address and a legitimate client's steady
- * successes would hand an attacker there a fresh allowance each time; the count
- * is forgotten `forgetMs` after the address's last failure instead. The cost,
- * accepted: a client sharing an address with a guesser can be kept waiting up
- * to the ceiling. A request that presents no credential at all is not a guess
- * and is never counted.
+ *
+ * What counts is DISTINCT wrong credentials. Everything local shares one
+ * address (the desktop app, the CLI, agents calling `wisp` inside tasks, other
+ * browser tabs, a reverse proxy), and a stale client re-sending the one old
+ * token it has must never lock the others out; a guesser, by definition, sends
+ * a different token each time. So a wrong token already seen from an address
+ * is refused (401) without counting, and after `freeFailures` new ones the
+ * address waits, 1 s at first and doubling to 30 s, before any credential from
+ * it is compared again. The wait refuses the right token too: compared during
+ * the wait, it would answer "right" while every guess answered "wait", which is
+ * the full-speed oracle the wait exists to deny. That wait falls only on an
+ * address something is actively guessing from. Only the fingerprint of a wrong
+ * token is kept, and only a bounded number of them. A request that presents no
+ * credential at all is not a guess and is never counted.
  */
 export class AuthThrottle {
   private readonly freeFailures: number;
@@ -98,19 +112,21 @@ export class AuthThrottle {
   private readonly maxDelayMs: number;
   private readonly forgetMs: number;
   private readonly maxAddresses: number;
+  private readonly maxTokens: number;
   private readonly now: () => number;
-  private readonly entries = new Map<string, { failures: number; lastFailureAt: number; lockedUntil: number }>();
+  private readonly entries = new Map<string, ThrottleEntry>();
 
   constructor(options: AuthThrottleOptions = {}) {
     this.freeFailures = options.freeFailures ?? 10;
     this.baseDelayMs = options.baseDelayMs ?? 1_000;
     this.maxDelayMs = options.maxDelayMs ?? 30_000;
     this.forgetMs = options.forgetMs ?? 15 * 60_000;
-    this.maxAddresses = options.maxAddresses ?? 4096;
+    this.maxAddresses = options.maxAddresses ?? 1024;
+    this.maxTokens = options.maxTokensPerAddress ?? 32;
     this.now = options.now ?? Date.now;
   }
 
-  private entry(address: string) {
+  private entry(address: string): ThrottleEntry | undefined {
     const entry = this.entries.get(address);
     if (entry && this.now() - entry.lastFailureAt >= this.forgetMs) {
       this.entries.delete(address);
@@ -125,9 +141,15 @@ export class AuthThrottle {
     return entry ? Math.max(0, entry.lockedUntil - this.now()) : 0;
   }
 
-  failed(address: string): void {
+  /** A wrong credential from this address. One it already presented changes nothing. */
+  failed(address: string, token: string): void {
     const now = this.now();
-    const entry = this.entry(address) ?? { failures: 0, lastFailureAt: now, lockedUntil: 0 };
+    const fingerprint = createHash("sha256").update(token).digest("base64").slice(0, 16);
+    const entry = this.entry(address) ?? { failures: 0, seen: new Set<string>(), lastFailureAt: now, lockedUntil: 0 };
+    if (entry.seen.has(fingerprint)) return;
+    // Past the bound a new token still counts; it is only not remembered, and
+    // the bound is reached only by something presenting many distinct tokens.
+    if (entry.seen.size < this.maxTokens) entry.seen.add(fingerprint);
     entry.failures++;
     entry.lastFailureAt = now;
     if (entry.failures >= this.freeFailures) {
@@ -156,7 +178,7 @@ export function judgeCredential(
   if (typeof token !== "string" || token === "") return "absent";
   if (throttle && throttle.retryAfterMs(address) > 0) return "throttled";
   if (tokenMatches(token, cfg.token)) return "valid";
-  throttle?.failed(address);
+  throttle?.failed(address, token);
   return "invalid";
 }
 

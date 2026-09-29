@@ -529,15 +529,25 @@ describe("failed authentication is throttled per address", () => {
     const base = `http://127.0.0.1:${server.port}`;
     const url = `ws://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`;
 
-    const wrongSession = () =>
+    const wrongSession = (token: string) =>
       fetch(`${base}/api/session`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token: "wrong" }),
+        body: JSON.stringify({ token }),
       });
-    expect((await wrongSession()).status).toBe(401);
-    expect((await wrongSession()).status).toBe(401);
-    expect((await upgradeOutcome(url, { headers: { origin: base }, send: { type: "auth", token: "wrong" } })).closed).toBe(1008);
+    expect((await wrongSession("wrong-1")).status).toBe(401);
+    expect((await wrongSession("wrong-2")).status).toBe(401);
+    expect((await upgradeOutcome(url, { headers: { origin: base }, send: { type: "auth", token: "wrong-3" } })).closed).toBe(1008);
     expect((await fetch(`${base}/api/tasks`, bearer(TOKEN))).status).toBe(429);
   }, 30_000);
+
+  test("a stale client re-sending one old token never locks the right one out", async () => {
+    writeConfig();
+    server = await serve({ port: 0, authThrottle: LIMITS });
+    const base = `http://127.0.0.1:${server.port}`;
+    for (let attempt = 0; attempt < LIMITS.freeFailures * 5; attempt++) {
+      expect((await fetch(`${base}/api/tasks`, bearer("an-old-token"))).status).toBe(401);
+      expect((await fetch(`${base}/api/tasks`, bearer(TOKEN))).status).toBe(200);
+    }
+  });
 });

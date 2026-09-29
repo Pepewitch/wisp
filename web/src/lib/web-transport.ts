@@ -61,9 +61,11 @@ function authHeaders(): Record<string, string> {
 
 export interface AuthState {
   open: boolean
+  /** Why the saved token is being retried rather than asked for again; null when it is not. */
+  notice: string | null
 }
 
-let authState: AuthState = { open: false }
+let authState: AuthState = { open: false, notice: null }
 const authListeners = new Set<() => void>()
 let gate: Promise<void> | null = null
 let resolveGate: (() => void) | null = null
@@ -107,6 +109,17 @@ export async function verifyToken(token: string): Promise<void> {
   }).catch(() => null)
   if (!response)
     throw new ApiError("daemon unreachable — is wisp serve running?", 0)
+  if (response.status === 429) {
+    // Refused before it was compared: the daemon is making this address wait
+    // after repeated wrong tokens. It says nothing about this token.
+    const seconds = retryAfterSeconds(response)
+    throw new ApiError(
+      `too many failed attempts — try again in ${seconds} s`,
+      429,
+      "throttled",
+      { retryAfterSeconds: seconds }
+    )
+  }
   if (!response.ok) {
     throw new ApiError(
       response.status === 401
@@ -115,6 +128,11 @@ export async function verifyToken(token: string): Promise<void> {
       response.status
     )
   }
+}
+
+function retryAfterSeconds(response: Response): number {
+  const seconds = Number(response.headers.get("retry-after"))
+  return Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : 1
 }
 
 /** A minted session: remember the token, close the modal, and release parked requests. */
@@ -202,17 +220,28 @@ async function upload<T>(path: string, body: Blob, signal?: AbortSignal): Promis
 }
 
 async function ensureReady(): Promise<void> {
-  const token = getToken()
-  if (token) {
+  for (let token = getToken(); token; token = getToken()) {
     try {
       await verifyToken(token)
+      setAuthState({ notice: null })
       return
     } catch (error) {
+      // A 429 is the daemon making this address wait after wrong tokens from
+      // something else on it; the saved token may well be right, so it is
+      // kept and tried again rather than asked for.
+      if (error instanceof ApiError && error.status === 429) {
+        const seconds = Number(error.data.retryAfterSeconds) || 1
+        setAuthState({ notice: `Too many failed attempts reached the daemon — retrying in ${seconds} s` })
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+        continue
+      }
       // the stored token is stale — drop it before the modal asks again
       if (error instanceof ApiError && error.status === 401)
         localStorage.removeItem(TOKEN_KEY)
+      break
     }
   }
+  setAuthState({ notice: null })
   await requireAuth()
 }
 

@@ -296,19 +296,32 @@ describe("deliverOutbox against a stub server (the outbox regression case)", () 
     expect(summary.lastError).not.toBeNull();
   });
 
-  test("delivery gives up on an event older than the age limit, whatever its attempt count", async () => {
+  test("the age limit runs from the first failure, not from when the event was queued", async () => {
     const bad = stubWebhook();
     bad.setStatus(500);
     const row = makeRow();
-    db.run(`UPDATE outbox SET created_at = ? WHERE id = ?`, [new Date(Date.now() - WEBHOOK_MAX_AGE_MS - 60_000).toISOString(), row.id]);
+    const cfg = { ...baseCfg, webhooks: [bad.url] };
+    const longAgo = new Date(Date.now() - WEBHOOK_MAX_AGE_MS - 60_000).toISOString();
+    // queued before a long sleep: its first failure on waking must not kill it
+    db.run(`UPDATE outbox SET created_at = ? WHERE id = ?`, [longAgo, row.id]);
     const logged = captureErrors();
     try {
-      await deliverOutbox({ ...baseCfg, webhooks: [bad.url] }, row.task_id);
+      await deliverOutbox(cfg, row.task_id);
+      const first = rowById(row.id)!;
+      expect(first.dead_at).toBeNull();
+      expect(first.first_failed_at).not.toBeNull();
+
+      // failing for longer than the limit since its first failure: given up
+      db.run(`UPDATE outbox SET first_failed_at = ? WHERE id = ?`, [longAgo, row.id]);
+      forceDue(row.id);
+      await deliverOutbox(cfg, row.task_id);
     } finally {
       logged.restore();
     }
-    expect(rowById(row.id)!.attempts).toBe(1);
+    expect(rowById(row.id)!.attempts).toBe(2);
     expect(rowById(row.id)!.dead_at).not.toBeNull();
+    // the give-up line names the event
+    expect(logged.lines.some((line) => line.includes("gave up") && line.includes(`task ${row.task_id} seq ${row.seq}`))).toBe(true);
   });
 
   test("a failing event is counted for doctor until it is delivered", async () => {

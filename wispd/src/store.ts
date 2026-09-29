@@ -729,17 +729,19 @@ export function markDelivered(id: number): void {
 
 /** A failed attempt that delivery gave up after: the row stays, undelivered, and is never retried. */
 export function markDead(id: number, attempts: number, err: string): void {
-  db.run(`UPDATE outbox SET attempts = ?, last_error = ?, dead_at = ? WHERE id = ?`, [attempts, err.slice(0, 500), now(), id]);
+  const at = now();
+  db.run(
+    `UPDATE outbox SET attempts = ?, last_error = ?, first_failed_at = COALESCE(first_failed_at, ?), dead_at = ? WHERE id = ?`,
+    [attempts, err.slice(0, 500), at, at, id],
+  );
 }
 
 /** Exponential backoff, 10 s after the first failure, doubling to a 15-minute ceiling. */
 export function markAttempt(id: number, attempts: number, err: string): void {
   const backoffSec = Math.min(2 ** attempts * 5, 900);
   const next = new Date(Date.now() + backoffSec * 1000).toISOString();
-  db.run(`UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?`, [
-    attempts,
-    next,
-    err.slice(0, 500),
-    id,
-  ]);
+  db.run(
+    `UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ?, first_failed_at = COALESCE(first_failed_at, ?) WHERE id = ?`,
+    [attempts, next, err.slice(0, 500), now(), id],
+  );
 }

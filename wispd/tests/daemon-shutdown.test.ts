@@ -60,11 +60,13 @@ async function startDaemon(existingHome?: string) {
 const ISO_PREFIX = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /;
 
 describe("a daemon's run is visible afterwards", () => {
-  test("health reports when this run started, and a graceful stop leaves no marker", async () => {
+  test("diagnostics report when this run started, and a graceful stop leaves no marker", async () => {
     const daemon = await startDaemon();
-    const health = (await (await fetch(`${daemon.base}/api/health`)).json()) as { startedAt: string; uptimeSeconds: number };
-    expect(Date.parse(health.startedAt)).toBeGreaterThan(Date.now() - 60_000);
-    expect(health.uptimeSeconds).toBeGreaterThanOrEqual(0);
+    const response = await fetch(`${daemon.base}/api/diagnostics`, { headers: { authorization: `Bearer ${daemon.token}` } });
+    const report = (await response.json()) as { pid: number; startedAt: string; uptimeSeconds: number };
+    expect(report.pid).toBe(daemon.proc.pid);
+    expect(Date.parse(report.startedAt)).toBeGreaterThan(Date.now() - 60_000);
+    expect(report.uptimeSeconds).toBeGreaterThanOrEqual(0);
     expect(existsSync(join(daemon.home, "daemon-run.json"))).toBe(true);
     daemon.proc.kill("SIGTERM");
     await daemon.proc.exited;
@@ -129,6 +131,18 @@ describe("a signalled daemon", () => {
 });
 
 describe("the shutdown sequence", () => {
+  test("a signal during boot, before there is a stop to run, still marks the exit clean", async () => {
+    const steps: string[] = [];
+    await shutDown("SIGTERM", {
+      stop: null,
+      killShells: async () => { steps.push("shells"); },
+      endRun: () => { steps.push("run ended"); },
+      exit: (exitCode) => { steps.push(`exit ${exitCode}`); },
+      log: () => {},
+    });
+    expect(steps).toEqual(["shells", "run ended", "exit 143"]);
+  });
+
   test("a graceful stop that hangs is cut off at the deadline, and the shells still stop", async () => {
     const lines: string[] = [];
     const steps: string[] = [];

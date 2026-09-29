@@ -273,7 +273,12 @@ DELETE FROM schema_migrations WHERE id = 13;
     ).run();
 
     expect(migrate(db).applied).toContain(19);
-    expect(db.query("SELECT attempts, last_error, dead_at FROM outbox").get()).toEqual({ attempts: 3, last_error: "HTTP 500", dead_at: null });
+    expect(db.query("SELECT attempts, last_error, first_failed_at, dead_at FROM outbox").get()).toEqual({
+      attempts: 3,
+      last_error: "HTTP 500",
+      first_failed_at: null,
+      dead_at: null,
+    });
     expect(migrate(db).applied).toEqual([]);
     db.close();
   });

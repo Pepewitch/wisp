@@ -71,9 +71,14 @@ async function post(url: string, index: number, payload: string): Promise<string
   }
 }
 
+/**
+ * The age limit runs from the event's FIRST FAILURE, not its creation: a
+ * laptop that slept past the limit must not retire every event it queued on
+ * its first attempt after waking.
+ */
 function givesUp(row: OutboxRow, attempts: number, nowMs: number): boolean {
-  const created = Date.parse(row.created_at);
-  return attempts >= WEBHOOK_MAX_ATTEMPTS || (Number.isFinite(created) && nowMs - created >= WEBHOOK_MAX_AGE_MS);
+  const firstFailed = row.first_failed_at === null ? nowMs : Date.parse(row.first_failed_at);
+  return attempts >= WEBHOOK_MAX_ATTEMPTS || (Number.isFinite(firstFailed) && nowMs - firstFailed >= WEBHOOK_MAX_AGE_MS);
 }
 
 /**
@@ -113,8 +118,10 @@ export async function deliverOutbox(cfg: WispConfig, onlyTaskId?: string): Promi
       if (givesUp(row, attempts, Date.now())) {
         markDead(row.id, attempts, lastErr);
         logFailure(
-          `webhook delivery gave up on an event after ${WEBHOOK_MAX_ATTEMPTS} attempts or ${WEBHOOK_MAX_AGE_MS / 3_600_000} h; it stays in GET /api/outbox`,
+          `webhook delivery gave up on an event after ${WEBHOOK_MAX_ATTEMPTS} attempts or ${WEBHOOK_MAX_AGE_MS / 3_600_000} h of failing; it stays in GET /api/outbox`,
           lastErr,
+          Date.now(),
+          `task ${row.task_id} seq ${row.seq}, attempt ${attempts}`,
         );
       } else markAttempt(row.id, attempts, lastErr);
     } finally { activeTasks.delete(row.task_id); }
