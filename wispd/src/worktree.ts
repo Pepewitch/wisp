@@ -937,7 +937,7 @@ export async function archivePreflight(
     const why = error instanceof Error ? error.message : String(error);
     return {
       health,
-      refusal: `Git could not read this worktree's status (${why}), so archive cannot tell whether it holds uncommitted work; repair the repository, then archive again`,
+      refusal: `Git could not read this worktree's status (${why}), so archive cannot tell whether it holds uncommitted work, even with force; repair the repository, or move the worktree directory (${worktree}) somewhere else, and archive then clears the task`,
       leftBehind: null,
     };
   }

@@ -653,6 +653,8 @@ export interface LoadConfigOptions {
   initialPort?: number;
   /** Test seam for deterministic first-run selection. */
   portAvailable?: PortAvailable;
+  /** Where config warnings go; by default stderr, once per process. */
+  warn?: (message: string) => void;
 }
 
 function persistConfig(value: Record<string, unknown>): void {
@@ -735,7 +737,7 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
   const configExists = existsSync(CONFIG_PATH);
   if (configExists) {
     const raw = readUserJson(CONFIG_PATH);
-    stored = validateConfig(raw);
+    stored = validateConfig(raw, options.warn);
     // validateConfig has already established this shape. Retain unknown
     // top-level keys when a migration writes the file so an older Wisp does
     // not erase configuration owned by a newer one.

@@ -17,17 +17,23 @@ export function isInstanceId(value: string): boolean {
  * The sidecar is written whole into a temp file first and then linked into
  * place, which is atomic and still fails with EEXIST for the loser of a race:
  * a kill or a full disk can no longer leave an empty file behind.
+ *
+ * An existing sidecar is only READ: every CLI call and daemon boot comes
+ * through here, and a write on each one would fail them all on a full disk.
  */
 export function loadOrCreateInstanceId(path: string, configured: string | undefined): string {
-  placeInstanceId(path, configured ?? crypto.randomUUID(), (temporary) => {
-    try {
-      linkSync(temporary, path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-  });
-  chmodSync(path, 0o600);
   let sidecar = readInstanceIdFile(path);
+  if (sidecar === null) {
+    placeInstanceId(path, configured ?? crypto.randomUUID(), (temporary) => {
+      try {
+        linkSync(temporary, path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    });
+    sidecar = mustReadInstanceIdFile(path);
+  }
+  if ((sidecar.stat.mode & 0o777n) !== 0o600n) chmodSync(path, 0o600);
   if (!isInstanceId(sidecar.value)) {
     // Not an identity. Older releases created the file and wrote it in two
     // steps, so an interrupted first start left it empty, and every start
@@ -39,7 +45,7 @@ export function loadOrCreateInstanceId(path: string, configured: string | undefi
       `[wisp] ${path} held no valid identity; ${configured === undefined ? "created a new one" : "restored it from config.json"}`,
     );
     placeInstanceId(path, repaired, (temporary) => renameSync(temporary, path));
-    sidecar = readInstanceIdFile(path);
+    sidecar = mustReadInstanceIdFile(path);
     if (!isInstanceId(sidecar.value)) throw new Error(`instance-id: ${path} must hold a UUID`);
   }
   if (configured !== undefined && sidecar.value !== configured) {
@@ -69,11 +75,24 @@ interface SidecarFile {
   dev: bigint;
   ino: bigint;
   birthtimeNs: bigint;
+  mode: bigint;
 }
 
-/** The sidecar's value and the file it came from, read through one descriptor. */
-function readInstanceIdFile(path: string): { value: string; stat: SidecarFile } {
-  const fd = openSync(path, "r");
+function mustReadInstanceIdFile(path: string): { value: string; stat: SidecarFile } {
+  const sidecar = readInstanceIdFile(path);
+  if (sidecar === null) throw new Error(`instance-id: ${path} disappeared while it was being created`);
+  return sidecar;
+}
+
+/** The sidecar's value and the file it came from, read through one descriptor; null when there is none. */
+function readInstanceIdFile(path: string): { value: string; stat: SidecarFile } | null {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
   try {
     return { stat: fstatSync(fd, { bigint: true }), value: readFileSync(fd, "utf8").trim() };
   } finally {

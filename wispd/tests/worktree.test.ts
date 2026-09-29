@@ -168,6 +168,7 @@ describe("worktree lifecycle", () => {
     for (const force of [false, true]) {
       const pre = await archivePreflight(wt.path, wt.branch, wt.base_commit, force);
       expect(pre.refusal).toMatch(/could not read this worktree's status/);
+      expect(pre.refusal).toContain(`repair the repository, or move the worktree directory (${wt.path}) somewhere else`);
     }
     // the background removal fails closed too, before it deletes anything
     await expect(removeWorktree(repo, wt.path, wt.branch, true)).rejects.toThrow(/git status failed/);

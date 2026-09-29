@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
@@ -18,6 +18,7 @@ import {
   validateConfig,
   type WispConfig,
 } from "../src/config";
+import { loadOrCreateInstanceId } from "../src/instance-id";
 
 /** Exact-message assertions for the fail-at-boot errors (a prior audit). */
 function thrownMessage(fn: () => unknown): string {
@@ -396,6 +397,22 @@ describe("loadConfig", () => {
       } finally {
         rmSync(home, { recursive: true, force: true });
       }
+    }
+  });
+
+  test("a valid instance-id is only read: loading it writes nothing, so a full disk cannot fail it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-config-ro-id-"));
+    const path = join(dir, "instance-id");
+    const instanceId = "123e4567-e89b-42d3-a456-426614174000";
+    writeFileSync(path, `${instanceId}\n`, { mode: 0o600 });
+    chmodSync(dir, 0o500); // any file created beside the sidecar now fails
+    try {
+      expect(loadOrCreateInstanceId(path, instanceId)).toBe(instanceId);
+      expect(loadOrCreateInstanceId(path, undefined)).toBe(instanceId);
+      expect(readdirSync(dir)).toEqual(["instance-id"]);
+    } finally {
+      chmodSync(dir, 0o700);
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

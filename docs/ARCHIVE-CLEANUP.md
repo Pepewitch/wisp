@@ -5,7 +5,11 @@ task processes and terminals, saves uncommitted work on the kept branch, runs th
 repository cleanup script followed by the configured project archive script,
 removes the worktree, and preserves the conversation and attachments. Local tasks skip worktree scripts
 and worktree removal. The existing archive preflight and process checks still
-protect files; a cleanup failure leaves the remaining files in place.
+protect files; a cleanup failure leaves the remaining files in place. When Git
+cannot read a worktree's status (a corrupt index, a bad object), archive refuses
+even when forced, because it cannot tell what would be lost. Repair the
+repository, or move the worktree directory somewhere else; archive then clears
+the task, and removing a project with its tasks works again.
 
 Pending jobs do not delay daemon startup. Two workers process them in the
 background. In the browser and Desktop, unfinished archives appear in the

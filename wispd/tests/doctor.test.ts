@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AdapterDef } from "../src/adapters";
-import type { WispConfig } from "../src/config";
+import { CONFIG_PATH, type WispConfig } from "../src/config";
 import {
   checkAdaptersFile,
   checkConfigFile,
@@ -243,7 +243,9 @@ describe("configuration", () => {
   test("an out-of-range value is a warning that names the field, the value and the range", () => {
     const result = checkConfigFile(tempFile("config.json", '{"setupTimeoutMinutes":0}'));
     expect(result.status).toBe("warn");
-    expect(result.message).toContain("setupTimeoutMinutes is 0 but must be a number of minutes above 0 and at most 35791");
+    // once, and with no second config.json prefix after the check's own name
+    expect(result.message).toStartWith("setupTimeoutMinutes is 0 but must be a number of minutes above 0 and at most 35791");
+    expect(checkConfigFile(tempFile("config.json", '{"port":"x"}')).message).toBe("port must be a number, got string");
   });
 
   test("missing adapters file means the builtins, not a failure", () => {
@@ -365,6 +367,27 @@ describe("terminal origins (#139)", () => {
     });
     expect(checks.find((check) => check.name === "daemon")?.status).toBe("fail");
     expect(checks.some((check) => check.name === "terminal origins")).toBe(false);
+  });
+
+  test("an ignored config value is reported once, in the report, not also on stderr", async () => {
+    writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", setupTimeoutMinutes: -7 }));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const checks = await runDoctor({
+        spawn: goodSpawn,
+        fetchFn: healthyFetch,
+        adaptersPath: missingFile("adapters.json"),
+        adapters: { droid: DROID },
+        selectedHarness: "droid",
+        currentPlatform: "linux",
+        currentArch: "x64",
+      });
+      expect(checks.find((check) => check.name === "config.json")?.message).toContain("setupTimeoutMinutes is -7");
+      expect(warn.mock.calls.filter(([message]) => String(message).includes("setupTimeoutMinutes is -7"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      rmSync(CONFIG_PATH, { force: true });
+    }
   });
 
   test("a healthy daemon reports its origins in the activation output", async () => {
