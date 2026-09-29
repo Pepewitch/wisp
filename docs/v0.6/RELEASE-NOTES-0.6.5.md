@@ -147,7 +147,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 Back up task state **and the original Git repositories** before upgrading.
 Follow [backup and restore](https://github.com/Pepewitch/wisp/blob/v0.6.5/docs/INSTALL.md#back-up-and-restore-a-wisp-home); copying `.wisp`
 alone does not preserve linked worktrees or unpublished Git objects.
-This release adds database migration 16, so a 0.6.4 daemon cannot reopen a profile that 0.6.5 has opened.
+This release adds database migrations 16–19, so a 0.6.4 daemon cannot reopen a profile that 0.6.5 has opened.
 
 ## Scope and known limits
 
