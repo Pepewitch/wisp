@@ -1,17 +1,23 @@
 import { basename } from "node:path";
 
-import { processStartTimeAsync } from "./procid";
+import { compareStartTimes, lstartWallClock, psTimeEnv, readProcessStartTime, startToken } from "./procid";
 
 export interface ProcessMember { pid: number; started: string | null }
 export interface GroupMember extends ProcessMember {
   pgid: number;
-  /** Current wall-clock interpretation of ps(1)'s lstart column. */
+  /** When the process started (epoch ms), from ps(1)'s lstart column read in UTC. */
   observedStartedAt: number | null;
 }
 
-export function sameProcess(a: ProcessMember, b: ProcessMember): boolean {
-  return a.pid === b.pid && a.started !== null && b.started !== null &&
-    a.started.trim().replace(/\s+/g, " ") === b.started.trim().replace(/\s+/g, " ");
+/**
+ * True only when `current` is provably the process `recorded` describes. An
+ * identity that cannot be confirmed — an older Wisp's token whose timezone is
+ * ambiguous — is not the same process, so nothing is adopted or signalled on
+ * it. `launchedAt` is when Wisp launched the recorded process, when known.
+ */
+export function sameProcess(recorded: ProcessMember, current: ProcessMember, launchedAt?: string | null): boolean {
+  return recorded.pid === current.pid && recorded.started !== null && current.started !== null &&
+    compareStartTimes(recorded.started, current.started, launchedAt) === "same";
 }
 
 /**
@@ -21,7 +27,8 @@ export function sameProcess(a: ProcessMember, b: ProcessMember): boolean {
  */
 export async function processSnapshot(groups: Set<number>): Promise<GroupMember[]> {
   if (groups.size === 0) return [];
-  const child = Bun.spawn({ cmd: ["ps", "-axo", "pid=,pgid=,stat=,lstart="], stdout: "pipe", stderr: "ignore" });
+  // UTC in the C locale, so the start column reads the same in every daemon.
+  const child = Bun.spawn({ cmd: ["ps", "-axo", "pid=,pgid=,stat=,lstart="], env: psTimeEnv(), stdout: "pipe", stderr: "ignore" });
   // ps is a single trusted system executable. Bound its own pipe and lifetime
   // without depending on Git's subprocess runner or a descendant's EOF.
   const reader = child.stdout.getReader();
@@ -47,9 +54,16 @@ export async function processSnapshot(groups: Set<number>): Promise<GroupMember[
       const pid = Number(match[1]); const pgid = Number(match[2]);
       // Zombies have exited and cannot write files, even before they are reaped.
       if (!groups.has(pgid) || match[3]!.startsWith("Z")) continue;
-      const observedStartedAt = pid === pgid ? Date.parse(match[4]!) : Number.NaN;
-      const started = process.platform === "linux" ? await processStartTimeAsync(pid) : match[4]!;
-      members.push({ pid, pgid, started, observedStartedAt: Number.isNaN(observedStartedAt) ? null : observedStartedAt });
+      const observedStartedAt = lstartWallClock(match[4]!);
+      let started: string | null;
+      if (process.platform === "linux") {
+        const read = await readProcessStartTime(pid);
+        started = read.kind === "found" ? read.token : null;
+      } else {
+        // An unreadable start is an unconfirmed identity, never a guessed one.
+        started = observedStartedAt === null ? null : startToken(observedStartedAt);
+      }
+      members.push({ pid, pgid, started, observedStartedAt });
     }
     return members;
   } finally {

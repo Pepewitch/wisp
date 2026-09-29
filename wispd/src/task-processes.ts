@@ -49,9 +49,9 @@ function notify(taskId: string): void {
 /**
  * A pre-registry migration row has no boot identity. If its old numeric group
  * id now has a new leader, preserve that process unless chronology proves the
- * old group ended first. lstart is rendered in the daemon's current timezone,
- * so compare its parsed instant with the ISO turn timestamps instead of the
- * old timezone-sensitive identity token.
+ * old group ended first: compare the leader's start instant with the ISO turn
+ * timestamps, which holds even when the stored token is an older Wisp's
+ * local-time text that cannot be read unambiguously.
  */
 function groupLeaderReplacedAfterTurn(leader: GroupMember, turn: NonNullable<ReturnType<typeof getTurn>>): boolean {
   if (leader.observedStartedAt === null || turn.ended_at === null) return false;
@@ -69,8 +69,11 @@ function historicalGroupIdentity(
   leader: GroupMember | undefined,
   turn: ReturnType<typeof getTurn>,
 ): { reused: boolean; ended: boolean } {
+  // Not proven to be the turn's own leader: a different start, or one that
+  // cannot be confirmed. The turn row's launch time pins an older token's zone.
   const reused = Boolean(
-    leader?.started && turn?.pid_start_time && !sameProcess(leader, { pid: row.pgid, started: turn.pid_start_time }),
+    leader?.started && turn?.pid_start_time &&
+      !sameProcess({ pid: row.pgid, started: turn.pid_start_time }, leader, turn.started_at),
   );
   return {
     reused,
@@ -187,15 +190,16 @@ function groupState(
   exitedTurnId?: number,
 ): GroupRow["state"] {
   const leader = members.find(member => member.pid === row.pgid);
-  // Never adopt a group whose leader has a different identity. Even an
-  // apparent start-time mismatch can be a locale/timezone change in old ps
-  // timestamps, so preserve files instead of assuming the old work ended.
+  // Never adopt a group whose leader has a different or unconfirmable
+  // identity; preserve files instead of assuming the old work ended.
   const identity = historicalGroupIdentity(row, leader, turn);
   const sameBoot = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id === PROCESS_BOOT_ID;
   const rebooted = row.boot_id !== null && PROCESS_BOOT_ID !== null && row.boot_id !== PROCESS_BOOT_ID;
   if (!members.length || rebooted || identity.ended) return "none";
   if (identity.reused || !sameBoot) return "unknown";
-  const recognized = knownMembers(row.members_json).some(old => members.some(member => sameProcess(old, member)));
+  // Only the leader's launch is known, so only its entry gets the anchor.
+  const recognized = knownMembers(row.members_json).some(old =>
+    members.some(member => sameProcess(old, member, old.pid === row.pgid ? turn?.started_at : null)));
   return recognized || (row.turn_id === exitedTurnId && localGroups.has(row.turn_id)) ? "running" : "unknown";
 }
 

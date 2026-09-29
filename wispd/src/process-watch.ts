@@ -1,16 +1,27 @@
 import { trackHomeWork } from "./home-lifetime";
 import { closeSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { processStartTimeAsync } from "./procid";
+import { compareStartTimes, readProcessStartTime } from "./procid";
 import { signalProcessTree } from "./process-tree";
 
-export type PidIdentity = "alive" | "dead" | "gone";
+/**
+ * - `alive`: our process, still running.
+ * - `dead`: no process has this pid.
+ * - `gone`: the pid belongs to a different process now (reused).
+ * - `unknown`: a process has this pid, but whether it is ours could not be
+ *   decided — `ps` failed to run, or an older Wisp stored a start time this
+ *   daemon cannot read unambiguously. It proves neither liveness nor exit:
+ *   never signal on it, and never finalize a turn on it.
+ */
+export type PidIdentity = "alive" | "dead" | "gone" | "unknown";
 
 /**
  * Validate a persisted pid before believing or signaling it. A mismatched
- * start time means the pid was reused by a different process.
+ * start time means the pid was reused by a different process. `launchedAt`
+ * (the turn's ISO start) lets an older Wisp's local-time token be compared
+ * exactly; see `compareStartTimes`.
  */
-export async function pidIdentity(pid: number, expectedStart: string | null): Promise<PidIdentity> {
+export async function pidIdentity(pid: number, expectedStart: string | null, launchedAt?: string | null): Promise<PidIdentity> {
   let exists: boolean;
   try {
     process.kill(pid, 0);
@@ -20,9 +31,11 @@ export async function pidIdentity(pid: number, expectedStart: string | null): Pr
   }
   if (!exists) return "dead";
   if (expectedStart === null) return "alive";
-  const actual = await processStartTimeAsync(pid);
-  if (actual === null) return "dead";
-  return actual === expectedStart ? "alive" : "gone";
+  const actual = await readProcessStartTime(pid);
+  if (actual.kind === "absent") return "dead";
+  if (actual.kind === "unavailable") return "unknown";
+  const match = compareStartTimes(expectedStart, actual.token, launchedAt);
+  return match === "same" ? "alive" : match === "different" ? "gone" : "unknown";
 }
 
 export async function fileOverCap(paths: string[], maxBytes: number): Promise<string | null> {
@@ -49,6 +62,8 @@ export function closeDescriptors(fds: number[]): void {
 interface ReAdoptionPollOptions {
   pid: number;
   pidStartTime: string | null;
+  /** When Wisp launched it (the turn's `started_at`). */
+  launchedAt: string | null;
   paths: string[];
   /** null for a turn whose bounded recorder already owns primary storage. */
   maxBytes: number | null;
@@ -71,7 +86,11 @@ export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
     if (polling || settled) return;
     polling = true;
     try {
-      if ((await pidIdentity(options.pid, options.pidStartTime)) !== "alive") {
+      const identity = await pidIdentity(options.pid, options.pidStartTime, options.launchedAt);
+      // Unverified is not ended: keep waiting, and signal nothing, until an
+      // answer says the process exited or is no longer ours.
+      if (identity === "unknown") return;
+      if (identity !== "alive") {
         settled = true;
         clearInterval(timer);
         try { await options.onEnded(); } finally { finish(); }
@@ -89,7 +108,7 @@ export function startReAdoptionPoll(options: ReAdoptionPollOptions): void {
       // stat() yielded after the first identity check. Revalidate immediately
       // before signaling so a process that exited meanwhile cannot hand its
       // recycled pid to an unrelated process.
-      if ((await pidIdentity(options.pid, options.pidStartTime)) !== "alive") return;
+      if ((await pidIdentity(options.pid, options.pidStartTime, options.launchedAt)) !== "alive") return;
       try {
         // The whole group, so a cap kill does not leave the harness's own
         // children writing into the log it just exceeded (ENG-03).
