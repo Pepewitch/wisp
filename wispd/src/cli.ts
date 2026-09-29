@@ -2,6 +2,7 @@ import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-
 import { print, printError, printRaw } from "./cli-print";
 import {
   api,
+  CliApiError,
   daemonRequest,
   discardAttachment,
   exitApi,
@@ -536,7 +537,20 @@ export const COMMANDS = {
     const data = await api(`/api/tasks/${positional[0]}/push`, "POST", {});
     print(data.output || "pushed");
   },
-  update: (positional) => updateCommand(positional, api),
+  update: async (positional, flags) => {
+    try {
+      // daemonRequest, not api: a refusal over running turns is a question to ask, not an exit
+      await updateCommand(
+        positional,
+        (path, method, body) => daemonRequest(path, method, body === undefined ? undefined : JSON.stringify(body)),
+        print,
+        { yes: flags.yes === true || flags.y === true },
+      );
+    } catch (error) {
+      if (error instanceof CliApiError) exitApi(error);
+      throw error;
+    }
+  },
   cleanup: (positional, flags) => cleanupCommand(positional[0], flags, api),
   archive: (positional, flags) => archiveCommand(positional[0], flags),
   export: (positional, flags) => retentionCommand("export", positional[0], flags, api),

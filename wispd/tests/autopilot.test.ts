@@ -513,6 +513,45 @@ describe("binding and the edges of a merge", () => {
     expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", lastMerged: { pr: 7, byWisp: true }, reason: "#7 merged by Wisp · Waiting for the task's next PR" });
   });
 
+  test("a daemon stopping mid-merge lets gh finish instead of recording a failed merge", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    let cancelled = false;
+    // like runBounded: a cancelled gh is killed, and reports a failed merge
+    github.merge = async (input, _cwd, signal) => {
+      state.merges.push({ number: input.number, method: input.method, head: input.head });
+      const aborted = new Promise<"aborted">((resolve) => {
+        if (signal.aborted) resolve("aborted");
+        signal.addEventListener("abort", () => resolve("aborted"), { once: true });
+      });
+      if ((await Promise.race([finished.then(() => "merged" as const), aborted])) === "aborted") {
+        cancelled = true;
+        return { ok: false, detail: "gh was cancelled" };
+      }
+      state.pr = { ...state.pr, state: "MERGED", mergedBy: "owner" };
+      return { ok: true, detail: "" };
+    };
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    const passing = pass(rt, task.id, clock);
+    await until(() => state.merges.length === 1, "gh pr merge to start");
+
+    const stopping = rt.stop();
+    await Bun.sleep(20);
+    expect(cancelled).toBe(false);
+    finish();
+    await stopping;
+    await passing;
+
+    expect(cancelled).toBe(false);
+    expect(autopilotStatus(task.id)).toMatchObject({ lastMerged: { pr: 7, byWisp: true } });
+    expect(autopilotStatus(task.id).reason).not.toContain("Merge failed");
+  });
+
   test("a paused row still notices that its PR was merged", async () => {
     const task = doneTask();
     const clock = { now: START };

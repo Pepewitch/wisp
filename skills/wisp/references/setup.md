@@ -283,7 +283,10 @@ it; it mints no credential. Every other API route requires
 - `GET|POST /api/update` — daemon update status/action. `GET` with `refresh=1`
   bypasses the release cache for an explicit check. Status reports current and
   latest API protocol versions; latest is `null` when legacy, malformed, or
-  unreachable release metadata cannot establish it.
+  unreachable release metadata cannot establish it. `POST` takes
+  `{"version": …}` and refuses with `409` and `running: N` while N tasks have
+  a running turn the restart would interrupt; add `"force": true` to update
+  anyway.
 - `GET /api/tasks/:id/terminal` — WebSocket. A bearer handshake attaches
   immediately; a browser handshake (which cannot set a header) upgrades
   unauthenticated, is asked for the token in an `auth_required` frame, and

@@ -697,10 +697,13 @@ export class AutopilotRuntime {
     if (!writeAutopilotCheckpoint(row, attempt, now, merging)) return
     recordWorkflow(row.id, "merging", merging, now.toISOString())
     // The merge has its own deadline, not the check's: a slow read before it
-    // must never be what kills `gh pr merge` halfway.
+    // must never be what kills `gh pr merge` halfway. Nor does stop(): a
+    // daemon shutting down lets a started merge finish and record how it
+    // ended. Cancelled, gh reports a failure, and the row would say "Merge
+    // failed, retrying" and forget the attempt. If the process exits first,
+    // the attempt stays in the checkpoint for the next look to confirm.
     const controller = new AbortController()
     const abort = (): void => controller.abort()
-    this.controller.signal.addEventListener("abort", abort, { once: true })
     const deadline = setTimeout(abort, 120_000)
     try {
       // Settle INSIDE the guard: a message that queued during the merge starts
@@ -713,7 +716,6 @@ export class AutopilotRuntime {
       }, () => { startNextQueuedMessage(task.id, this.adapters, this.cfg) })
     } finally {
       clearTimeout(deadline)
-      this.controller.signal.removeEventListener("abort", abort)
     }
   }
 

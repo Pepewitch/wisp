@@ -97,7 +97,12 @@ export default function App() {
 /** Keeps app chrome mounted while MainView resets its connection-owned state. */
 function ConnectedApp({ runtimeKey }: { runtimeKey: string }) {
   const updateControls = useWispUpdateControl()
-  return <MainView key={runtimeKey} updateControls={updateControls} />
+  return (
+    <>
+      <MainView key={runtimeKey} updateControls={updateControls} />
+      {updateControls.dialog}
+    </>
+  )
 }
 
 type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" | "note"> & {

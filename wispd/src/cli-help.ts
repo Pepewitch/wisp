@@ -57,7 +57,8 @@ const COMMAND_USAGE = {
                                                     what an agent runs to save its brief (${COMMAND} brief --help)`,
   fresh: `  ${COMMAND} fresh <task>                            next turn starts a fresh harness session (the web palette's /fresh)`,
   push: `  ${COMMAND} push <task>                             push the task branch to origin`,
-  update: `  ${COMMAND} update                                  check for and install the latest Wisp daemon`,
+  update: `  ${COMMAND} update [--yes]                          check for and install the latest Wisp daemon;
+                                                    asks first when tasks are running (--yes: interrupt them)`,
   cleanup: `  ${COMMAND} cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopped]
                                                inspect or resolve cleanup; --verified-stopped confirms
                                                the cleanup scripts and their children have stopped`,

@@ -12,12 +12,20 @@ export interface DaemonRequestOptions {
 export class ApiError extends Error {
   readonly status: number
   readonly code: string | null
+  /** The daemon's JSON error envelope, for refusals that carry more than a message. */
+  readonly data: Record<string, unknown>
 
-  constructor(message: string, status: number, code: string | null = null) {
+  constructor(
+    message: string,
+    status: number,
+    code: string | null = null,
+    data: Record<string, unknown> = {}
+  ) {
     super(message)
     this.name = "ApiError"
     this.status = status
     this.code = code
+    this.data = data
   }
 }
 
@@ -36,6 +44,7 @@ export async function daemonJsonResponse<T>(response: Response): Promise<T> {
         : `${response.status} ${response.statusText}`,
       response.status,
       response.headers.get("x-wisp-proxy-error"),
+      data
     )
   }
   return data as T
