@@ -37,7 +37,7 @@ describe("opencode argv (opencode 1.18.29)", () => {
   test("opencode: run subcommand with --auto bypass, resume via -s, effort via --variant", () => {
     const opencode = BUILTIN_ADAPTERS.opencode!;
     expect(buildArgv(opencode, { prompt: "do it" })).toEqual([
-      "opencode", "run", "--format", "json", "--thinking", "--auto", "do it",
+      "opencode", "run", "--format", "json", "--thinking", "--auto", "--", "do it",
     ]);
     expect(
       buildArgv(opencode, {
@@ -48,7 +48,7 @@ describe("opencode argv (opencode 1.18.29)", () => {
       }),
     ).toEqual([
       "opencode", "run", "--format", "json", "--thinking", "--auto",
-      "-s", "ses_abc", "-m", "google/gemini-3.6-flash", "--variant", "high", "next",
+      "-s", "ses_abc", "-m", "google/gemini-3.6-flash", "--variant", "high", "--", "next",
     ]);
   });
 

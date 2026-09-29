@@ -79,11 +79,11 @@ describe("buildArgv", () => {
   test("cursor: print-mode stream-json with force + trust, model via --model, resume via --resume", () => {
     const cursor = BUILTIN_ADAPTERS.cursor!;
     expect(buildArgv(cursor, { prompt: "do it" })).toEqual([
-      "cursor-agent", "-p", "--output-format", "stream-json", "-f", "--trust", "do it",
+      "cursor-agent", "-p", "--output-format", "stream-json", "-f", "--trust", "--", "do it",
     ]);
     expect(buildArgv(cursor, { prompt: "next", session: "chat-1", model: "cursor-grok-4.6-high" })).toEqual([
       "cursor-agent", "-p", "--output-format", "stream-json", "-f", "--trust",
-      "--resume", "chat-1", "--model", "cursor-grok-4.6-high", "next",
+      "--resume", "chat-1", "--model", "cursor-grok-4.6-high", "--", "next",
     ]);
     // an effort set in config is recorded but never reaches the harness (P5b's warning names it)
     const argv = buildArgv(cursor, { prompt: "go", effort: "high" });
@@ -1096,7 +1096,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, briefs, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, limits, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, briefs, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, endOfOptions, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, limits, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });
