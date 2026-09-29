@@ -186,9 +186,9 @@ export function autopilotStatuses(): Map<string, AutopilotStatus> {
 /**
  * What auto-merge and auto-fix did for a task, newest first, across every row
  * it has had (each switch-on after a switch-off is a new one): the newest
- * `limit` entries, and every merge record however old.
+ * `limit` entries and the merge records, at most `cap` in all.
  */
-export function autopilotHistory(taskId: string, limit = 100): AutopilotHistoryEntry[] {
+export function autopilotHistory(taskId: string, limit = 100, cap = 500): AutopilotHistoryEntry[] {
   // constants, not input: safe to inline
   const durable = DURABLE_HISTORY_KINDS.map((kind) => `'${kind}'`).join(", ")
   return db.query(`SELECT h.at, h.kind, h.detail, h.pr, h.sha, h.message_id AS messageId
@@ -196,7 +196,7 @@ export function autopilotHistory(taskId: string, limit = 100): AutopilotHistoryE
     WHERE w.task_id = ?1 AND w.type = ?2 AND (h.kind IN (${durable}) OR h.id IN (
       SELECT h2.id FROM workflow_history h2 JOIN workflows w2 ON w2.id = h2.workflow_id
       WHERE w2.task_id = ?1 AND w2.type = ?2 ORDER BY h2.id DESC LIMIT ?3))
-    ORDER BY h.id DESC`).all(taskId, AUTOPILOT_TYPE, limit) as AutopilotHistoryEntry[]
+    ORDER BY h.id DESC LIMIT ?4`).all(taskId, AUTOPILOT_TYPE, limit, cap) as AutopilotHistoryEntry[]
 }
 
 export class AutopilotError extends Error {

@@ -66,7 +66,7 @@ export interface AutopilotStatus {
 /**
  * One thing auto-merge or auto-fix did or saw for a task, from
  * `GET /api/tasks/:id/autopilot/history` (newest first, across every time the
- * switches were on): the newest 100 entries, and every merge record.
+ * switches were on): the newest 100 entries and the merge records, at most 500.
  */
 export interface AutopilotHistoryEntry {
   at: string

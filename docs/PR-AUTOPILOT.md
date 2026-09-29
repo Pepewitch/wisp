@@ -215,9 +215,18 @@ running.
     count: it can mean read access.
   - Everyone else's feedback still blocks the merge where GitHub says so, but
     it never instructs the agent. Neither does a bot that is only answering
-    them, in a thread or in the conversation: in the conversation, the person
-    a bot answers is the last one before it who mentioned it, or else whoever
-    spoke just before it.
+    them, in a thread or in the conversation. A bot is taken to answer
+    someone untrusted when it @-mentions them; in a thread, when they spoke
+    last before it; in the conversation, when anyone who @-mentioned it since
+    its previous comment is untrusted, or, with no mention, when it names or
+    quotes the person just before it. A hidden comment counts as untrusted,
+    whoever wrote it. Such a reply never instructs the agent, and one that
+    asks for changes (a blocking verdict, its own red check, or the review
+    judge's reading) holds the merge for you instead: hide it on GitHub to
+    let the merge go. Wisp cannot see a request that was deleted, so a bot
+    answering one without naming its author looks like it is answering the
+    person before it; nor can it tell which of two questions a bot answers
+    when a trusted one came after the untrusted one in a thread.
 - **Not noise.**
   - An approval is a merge signal, not something to fix. With the
     [review judge](#the-review-judge-optional) and auto-fix on, an approval
@@ -394,7 +403,7 @@ next pass is not one of these: the rail stays blue.
 newest first, one line each: the time, what happened, the PR, the commit, and
 the reason. `--json` gives the same entries, and so does
 `GET /api/tasks/<task>/autopilot/history`. It covers every time the switches
-were on for the task, not only the current one.
+were on for the task, not only the current one, up to 500 entries.
 
 - **Merges.** `merging` names the head it merged (`--match-head-commit`), the
   base, the method, and what the merge went on: the checks that counted,

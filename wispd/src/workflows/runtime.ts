@@ -42,8 +42,10 @@ function canWakeHeartbeat(task: Task): boolean {
 function canWakeWorkflow(row: WorkflowRow, task: Task): boolean {
   return row.type === "heartbeat" ? canWakeHeartbeat(task) : canWake(task);
 }
+/** A delivery nobody can confirm, that the owner has not acknowledged by resuming (store.ts changeWorkflowState). */
 function uncertainDelivery(id: string): boolean {
-  return Boolean(db.query("SELECT 1 FROM task_messages WHERE workflow_id = ? AND delivery_uncertain = 1 LIMIT 1").get(id));
+  return Boolean(db.query(`SELECT 1 FROM task_messages m WHERE m.workflow_id = ? AND m.delivery_uncertain = 1 AND NOT EXISTS (
+    SELECT 1 FROM workflow_history h WHERE h.workflow_id = m.workflow_id AND h.kind = 'acknowledged' AND h.message_id = m.id) LIMIT 1`).get(id));
 }
 function workflowPrompt(row: WorkflowRow, result: WorkflowDecision): string {
   if (row.type === "schedule-steer") return result.message!;

@@ -26,7 +26,9 @@ import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
+import {
+  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, withDelivered, type FeedbackItem,
+} from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { planFix, type FixPlan } from "./fix"
 import {
@@ -405,7 +407,7 @@ export class AutopilotRuntime {
       return null
     }
     const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
-    const items = await this.feedbackFor(ctx)
+    const { items, relayed } = await this.feedbackFor(ctx)
     // A bot's verdict check beside the sticky comment being sent is the review flow's.
     const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
     const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
@@ -434,7 +436,15 @@ export class AutopilotRuntime {
     // Only a countdown for this very evidence keeps a pending round, or a Send now.
     if (checkpoint.pending?.key !== key) forgetPending(checkpoint)
     if (checkpoint.logMisses && checkpoint.logMisses.key !== key) delete checkpoint.logMisses
-    if (!key) return this.nothingToSend(plan, checkpoint, say)
+    if (!key) {
+      // Words that would ask for changes, relayed from someone the agent does
+      // not take instructions from: never sent, and never merged past either.
+      if (plan.kind === "none" && relayed.length > 0) {
+        const bots = [...new Set(relayed.map((comment) => `@${comment.author}`))].slice(0, 2).join(" and ")
+        return say("needs-you", `${bots} relayed a blocking comment from someone Wisp takes no instructions from`, WAITING_ON_YOU_MS)
+      }
+      return this.nothingToSend(plan, checkpoint, say)
+    }
     const summary = [ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     const rounds = checkpoint.rounds ?? 0
     if (rounds >= MAX_ROUNDS) {
@@ -467,7 +477,7 @@ export class AutopilotRuntime {
   }
 
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
-  private async feedbackFor(ctx: FixContext): Promise<FeedbackItem[]> {
+  private async feedbackFor(ctx: FixContext): Promise<{ items: FeedbackItem[]; relayed: PrComment[] }> {
     const { pr, task, row, checkpoint } = ctx
     const trusts = await this.trustsFor(pr, ctx.repository, task, ctx.signal)
     // Turns that began before auto-fix was armed were never asked to mark
@@ -477,7 +487,8 @@ export class AutopilotRuntime {
       const at = Date.parse(comment.createdAt)
       return at >= Date.parse(turn.started_at) && at <= (turn.ended_at ? Date.parse(turn.ended_at) : Infinity)
     }))
-    return feedbackItems({ pr, trusts, self, delivered: checkpoint.delivered ?? {}, judged: ctx.judged })
+    const input = { pr, trusts, self, delivered: checkpoint.delivered ?? {}, judged: ctx.judged }
+    return { items: feedbackItems(input), relayed: relayedBlocks(input) }
   }
 
   /**

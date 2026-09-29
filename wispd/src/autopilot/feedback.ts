@@ -117,6 +117,64 @@ function words(comment: PrComment, input: Pick<FeedbackInput, "trusts" | "self">
   return comment.body.trim() !== "" && !comment.hidden && input.trusts(comment) && !input.self(comment) && !acknowledgement(comment.body)
 }
 
+/** Whether `text` mentions `@login` (a bot's login is its app slug; a mention may carry `[bot]`). */
+function mentions(text: string, login: string): boolean {
+  const lower = text.toLowerCase(), at = `@${login.toLowerCase()}`
+  for (let index = lower.indexOf(at); index >= 0; index = lower.indexOf(at, index + 1)) {
+    if (!/[a-z0-9_-]/.test(lower[index + at.length] ?? "") && !/[a-z0-9_.-]/.test(lower[index - 1] ?? "")) return true
+  }
+  return false
+}
+
+/**
+ * The logins a text @-mentions, outside code: a scoped package (`@types/node`)
+ * or a team (`@org/team`) is not a person, and neither is an email address.
+ */
+function mentionedLogins(text: string): string[] {
+  const prose = text.replace(/(```|~~~)[\s\S]*?(?:\1|$)/g, " ").replace(/`[^`\n]*`/g, " ")
+  return [...prose.matchAll(/(?<![\w.@/-])@([a-z\d](?:[a-z\d-]{0,38}))(?![\w/-])/gi)].map((match) => match[1]!)
+}
+
+/** Whether a bot's reply quotes some of `from`'s words (`> …`). */
+function quotes(reply: string, from: string): boolean {
+  return reply.split(/\r?\n/).some((line) => {
+    const text = line.trimStart()
+    if (!text.startsWith(">")) return false
+    const quoted = text.replace(/^(?:>\s*)+/, "").trim()
+    return quoted.length >= 8 && from.includes(quoted)
+  })
+}
+
+/**
+ * Someone Wisp takes no instructions from as the person a bot answers. A
+ * hidden comment counts as one whoever wrote it: hiding a stranger's request
+ * does not make the bot's answer to it the owner's.
+ */
+const untrustedAsker = (asker: PrComment, input: FeedbackInput): boolean => asker.hidden || !input.trusts(asker)
+
+/**
+ * A bot that addresses someone Wisp takes no instructions from (`@stranger,
+ * sure: …`) is answering them, whoever else asked it anything. Logins are
+ * matched to the PR's participants case-insensitively; one nobody here wrote
+ * as is a stranger.
+ */
+function addressesStranger(comment: PrComment, input: FeedbackInput): boolean {
+  const known = new Map<string, string>()
+  for (const words of [...input.pr.reviews, ...input.pr.comments, ...input.pr.threads.flatMap((thread) => thread.comments)]) {
+    if (words.author) known.set(words.author.toLowerCase(), words.author)
+  }
+  if (input.pr.viewer) known.set(input.pr.viewer.toLowerCase(), input.pr.viewer)
+  const self = comment.author?.toLowerCase()
+  return mentionedLogins(comment.body).some((login) => {
+    const lower = login.toLowerCase()
+    return lower !== self && !input.trusts({ author: known.get(lower) ?? login, bot: false })
+  })
+}
+
+/** Someone who may have asked a bot something: not a bot, not the agent, not a thank-you. */
+const person = (before: PrComment, input: FeedbackInput): boolean =>
+  !before.bot && !input.self(before) && !acknowledgement(before.body)
+
 /**
  * The thread's words that may instruct the agent. A bot answering someone
  * untrusted in the thread (a chat-style reviewer) only relays them, so its
@@ -126,11 +184,11 @@ function threadWords(thread: PrThread, input: FeedbackInput): PrComment[] {
   return thread.comments.filter((comment, index) => {
     if (!words(comment, input)) return false
     if (!comment.bot) return true
+    if (addressesStranger(comment, input)) return false
     // the person the bot is answering: the nearest earlier comment by someone, past other bot
-    // posts, hidden comments, thank-yous, and the agent's own replies
-    const asker = thread.comments.slice(0, index).reverse().find((before) =>
-      !before.bot && !before.hidden && !input.self(before) && !acknowledgement(before.body))
-    return !asker || input.trusts(asker)
+    // posts, thank-yous, and the agent's own replies
+    const asker = thread.comments.slice(0, index).reverse().find((before) => person(before, input))
+    return !asker || !untrustedAsker(asker, input)
   })
 }
 
@@ -214,33 +272,49 @@ function undecidedComment(comment: PrComment, pr: PrSnapshot): boolean {
   return paired || parseVerdict(comment.body) !== "blocking"
 }
 
-/** Whether `text` mentions `@login` (a bot's login is its app slug; a mention may carry `[bot]`). */
-function mentions(text: string, login: string): boolean {
-  const lower = text.toLowerCase(), at = `@${login.toLowerCase()}`
-  for (let index = lower.indexOf(at); index >= 0; index = lower.indexOf(at, index + 1)) {
-    if (!/[a-z0-9_-]/.test(lower[index + at.length] ?? "")) return true
-  }
-  return false
-}
-
 /**
  * A bot's conversation comment answering someone untrusted (a chat-style bot
- * that replies to @-mentions) only relays them, as in a thread. The person it
- * answers is the nearest earlier comment by someone that mentions the bot, or
- * failing that the nearest earlier comment by someone — past other bot posts,
- * hidden comments, thank-yous, and the agent's own.
+ * that replies to @-mentions) only relays them, as in a thread:
+ *
+ * - it addresses someone Wisp takes no instructions from; or
+ * - anyone who @-mentioned it since its previous comment is such a person (a
+ *   hidden comment always is); or
+ * - nobody did, and it names or quotes the person just before it, who is.
+ *
+ * A bot posting on its own after an unrelated remark is not answering it.
  */
 function relaysStranger(comments: PrComment[], index: number, input: FeedbackInput): boolean {
   const comment = comments[index]!
   if (!comment.bot || comment.author === null) return false
-  const people = comments.slice(0, index).reverse().filter((before) =>
-    !before.bot && !before.hidden && !input.self(before) && !acknowledgement(before.body))
-  const asker = people.find((before) => mentions(before.body, comment.author!)) ?? people[0]
-  return asker !== undefined && !input.trusts(asker)
+  if (addressesStranger(comment, input)) return true
+  const bot = comment.author
+  const since = comments.slice(0, index).findLastIndex((before) => before.author === bot) + 1
+  const people = comments.slice(since, index).filter((before) => person(before, input))
+  const askers = people.filter((before) => mentions(before.body, bot))
+  if (askers.length > 0) return askers.some((asker) => untrustedAsker(asker, input))
+  const nearest = people.at(-1)
+  return nearest !== undefined && untrustedAsker(nearest, input) &&
+    ((nearest.author !== null && mentions(comment.body, nearest.author)) || quotes(comment.body, nearest.body))
 }
 
 function commentItem(comment: PrComment, index: number, input: FeedbackInput): FeedbackItem | null {
   if (!words(comment, input) || relaysStranger(input.pr.comments, index, input)) return null
+  return commentSignal(comment, input)
+}
+
+/**
+ * Bot conversation comments left out as relays that would otherwise ask for
+ * changes: a red check of the bot's own, a blocking verdict, or the review
+ * judge's reading. They never instruct the agent, but they must not be what
+ * lets a merge through either: auto-fix holds on them for a person.
+ */
+export function relayedBlocks(input: FeedbackInput): PrComment[] {
+  return input.pr.comments.filter((comment, index) =>
+    words(comment, input) && relaysStranger(input.pr.comments, index, input) && commentSignal(comment, input) !== null)
+}
+
+/** What a trusted conversation comment asks for, if anything, and has not been sent. */
+function commentSignal(comment: PrComment, input: FeedbackInput): FeedbackItem | null {
   const id = `comment:${comment.id}`
   const red = comment.bot ? redCheckOf(comment, input.pr) : null
   if (red) {

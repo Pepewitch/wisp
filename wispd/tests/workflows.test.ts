@@ -272,6 +272,8 @@ test("an uncertain delivery pauses once; resuming answers it, and its evidence i
   await run();
   expect(getWorkflow(item.id)).toMatchObject({ state: "active", reason: "Already delivered this evidence; waiting for a change" });
   expect(messagesFor(item.taskId)).toHaveLength(1);
+  // still the workflow's, so the wake-up budget still counts it
+  expect(messagesFor(item.taskId)[0]?.workflow_id).toBe(item.id);
   // a later uncertain delivery still pauses it
   decide(wake("attempt-2"));
   now = new Date(now.getTime() + 6 * 60_000);

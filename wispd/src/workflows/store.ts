@@ -40,11 +40,12 @@ export function workflowHistory(id: string): WorkflowHistory[] {
   return db.query("SELECT id, at, kind, detail, message_id AS messageId FROM workflow_history WHERE workflow_id = ? ORDER BY id DESC LIMIT 100").all(id) as WorkflowHistory[];
 }
 /**
- * Merge records, kept in a bucket of their own: a long-lived autopilot row
- * writes a wait on every change of reason, and that churn must never push out
- * the record of what Wisp merged on the owner's behalf.
+ * Records kept in a bucket of their own: a long-lived autopilot row writes a
+ * wait on every change of reason, and that churn must never push out what
+ * Wisp merged on the owner's behalf, or which uncertain deliveries the owner
+ * acknowledged (runtime.ts uncertainDelivery reads those).
  */
-export const DURABLE_HISTORY_KINDS = ["merging", "merged", "merge-failed"] as const;
+export const DURABLE_HISTORY_KINDS = ["merging", "merged", "merge-failed", "acknowledged"] as const;
 const HISTORY_LIMIT = 100, DURABLE_HISTORY_LIMIT = 200;
 const DURABLE_IN = `(${DURABLE_HISTORY_KINDS.map(kind => `'${kind}'`).join(", ")})`;
 
@@ -112,15 +113,16 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
       : at;
     cancelWorkflowMessages(id);
     // Resuming after "prior delivery is uncertain" is the owner's answer to
-    // it: those messages stop holding the workflow paused (runtime.ts
-    // uncertainDelivery). Detached, not forgotten: the wake ledger still
-    // counts them as delivered, so their evidence is never sent again.
-    const acknowledged = state === "active" && row.state === "paused" && row.type !== AUTOPILOT_TYPE
-      ? db.run("UPDATE task_messages SET workflow_id = NULL WHERE workflow_id = ? AND delivery_uncertain = 1 AND status != 'queued'", [id]).changes
-      : 0;
+    // it: each such message is acknowledged in the history (runtime.ts
+    // uncertainDelivery skips those) and stays linked, so the wake ledger
+    // still counts it as delivered and the wake-up budget still counts it.
+    const uncertain = state === "active" && row.state === "paused" && row.type !== AUTOPILOT_TYPE
+      ? db.query(`SELECT id FROM task_messages m WHERE workflow_id = ? AND delivery_uncertain = 1 AND status != 'queued' AND NOT EXISTS (
+          SELECT 1 FROM workflow_history h WHERE h.workflow_id = m.workflow_id AND h.kind = 'acknowledged' AND h.message_id = m.id)`).all(id) as { id: string }[]
+      : [];
     db.run("UPDATE workflows SET state = ?, reason = ?, revision = revision + 1, context_n = ?, next_check_at = ?, updated_at = ?, failures = 0 WHERE id = ?",
       [state, reason, task?.context_n ?? row.context_n, next, at, id]);
-    if (acknowledged > 0) recordWorkflow(id, "acknowledged", `${acknowledged} uncertain deliver${acknowledged === 1 ? "y" : "ies"} acknowledged on resume`, at);
+    for (const message of uncertain) recordWorkflow(id, "acknowledged", "An uncertain delivery was acknowledged on resume", at, message.id);
     recordWorkflow(id, state, reason, at);
     return workflow(getWorkflow(id)!);
   })();
