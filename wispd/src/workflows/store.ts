@@ -39,9 +39,28 @@ export function taskIdsWithAttachedWorkflows(): Set<string> {
 export function workflowHistory(id: string): WorkflowHistory[] {
   return db.query("SELECT id, at, kind, detail, message_id AS messageId FROM workflow_history WHERE workflow_id = ? ORDER BY id DESC LIMIT 100").all(id) as WorkflowHistory[];
 }
-export function recordWorkflow(id: string, kind: string, detail: string, at: string, messageId: string | null = null): void {
-  db.run("INSERT INTO workflow_history(workflow_id, at, kind, detail, message_id) VALUES (?, ?, ?, ?, ?)", [id, at, kind, detail.slice(0, 1000), messageId]);
-  db.run("DELETE FROM workflow_history WHERE workflow_id = ? AND id NOT IN (SELECT id FROM workflow_history WHERE workflow_id = ? ORDER BY id DESC LIMIT 100)", [id, id]);
+/**
+ * Records kept in a bucket of their own: a long-lived autopilot row writes a
+ * wait on every change of reason, and that churn must never push out what
+ * Wisp merged on the owner's behalf, or which uncertain deliveries the owner
+ * acknowledged (runtime.ts uncertainDelivery reads those).
+ */
+export const DURABLE_HISTORY_KINDS = ["merging", "merged", "merge-failed", "acknowledged"] as const;
+const HISTORY_LIMIT = 100, DURABLE_HISTORY_LIMIT = 200;
+const DURABLE_IN = `(${DURABLE_HISTORY_KINDS.map(kind => `'${kind}'`).join(", ")})`;
+
+/** What an entry is about: the pull request (an autopilot row's bound PR when not given) and a commit. */
+export interface HistoryRef { pr?: number | null; sha?: string | null }
+
+export function recordWorkflow(id: string, kind: string, detail: string, at: string, messageId: string | null = null, ref: HistoryRef = {}): void {
+  db.run(`INSERT INTO workflow_history(workflow_id, at, kind, detail, message_id, pr, sha) VALUES (?, ?, ?, ?, ?,
+    COALESCE(?, (SELECT CASE WHEN type = ? AND json_valid(checkpoint_json) THEN json_extract(checkpoint_json, '$.pr') END FROM workflows WHERE id = ?)), ?)`,
+  [id, at, kind, detail.slice(0, 1000), messageId, ref.pr ?? null, AUTOPILOT_TYPE, id, ref.sha ?? null]);
+  // each bucket keeps its own newest entries
+  const bucket = (DURABLE_HISTORY_KINDS as readonly string[]).includes(kind) ? `IN ${DURABLE_IN}` : `NOT IN ${DURABLE_IN}`;
+  db.run(`DELETE FROM workflow_history WHERE workflow_id = ? AND kind ${bucket} AND id NOT IN (
+    SELECT id FROM workflow_history WHERE workflow_id = ? AND kind ${bucket} ORDER BY id DESC LIMIT ?)`,
+  [id, id, bucket.startsWith("IN") ? DURABLE_HISTORY_LIMIT : HISTORY_LIMIT]);
 }
 export function announceWorkflow(taskId: string): void { emit({ type: "workflow", taskId }); }
 
@@ -93,8 +112,17 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
       ? new Date(Math.max(now.getTime(), Date.parse(String(item.params.scheduledAt)))).toISOString()
       : at;
     cancelWorkflowMessages(id);
+    // Resuming after "prior delivery is uncertain" is the owner's answer to
+    // it: each such message is acknowledged in the history (runtime.ts
+    // uncertainDelivery skips those) and stays linked, so the wake ledger
+    // still counts it as delivered and the wake-up budget still counts it.
+    const uncertain = state === "active" && row.state === "paused" && row.type !== AUTOPILOT_TYPE
+      ? db.query(`SELECT id FROM task_messages m WHERE workflow_id = ? AND delivery_uncertain = 1 AND status != 'queued' AND NOT EXISTS (
+          SELECT 1 FROM workflow_history h WHERE h.workflow_id = m.workflow_id AND h.kind = 'acknowledged' AND h.message_id = m.id)`).all(id) as { id: string }[]
+      : [];
     db.run("UPDATE workflows SET state = ?, reason = ?, revision = revision + 1, context_n = ?, next_check_at = ?, updated_at = ?, failures = 0 WHERE id = ?",
       [state, reason, task?.context_n ?? row.context_n, next, at, id]);
+    for (const message of uncertain) recordWorkflow(id, "acknowledged", "An uncertain delivery was acknowledged on resume", at, message.id);
     recordWorkflow(id, state, reason, at);
     return workflow(getWorkflow(id)!);
   })();

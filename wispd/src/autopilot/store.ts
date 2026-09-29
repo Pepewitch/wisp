@@ -4,14 +4,17 @@
  * on); everything that evolves — the bound PR, heads seen, a Stop hold, a merge
  * attempt — lives in the checkpoint, so a toggle is never an edit to evidence.
  */
-import type { AutopilotBy, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
+import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import { keyParts, markerOf, withDelivered } from "./feedback"
 import { taskIsIdle } from "./idle"
+import { isTaskMerging } from "./merging"
 import type { Judged, JudgeMiss } from "./judge"
-import { announceWorkflow, cancelWorkflowMessages, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
+import {
+  announceWorkflow, cancelWorkflowMessages, changeWorkflowState, DURABLE_HISTORY_KINDS, getWorkflow, recordWorkflow, seenWake, type WorkflowRow,
+} from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 
 export interface AutopilotCheckpoint {
@@ -22,8 +25,11 @@ export interface AutopilotCheckpoint {
   heads?: Record<string, string>
   /** when the PR was first seen out of draft: marking it ready restarts the floor */
   readySince?: string
-  /** written BEFORE `gh pr merge` runs, so a crash after it still reads as Wisp's merge */
-  mergeAttempt?: { head: string; at: string }
+  /**
+   * written BEFORE `gh pr merge` runs, so a crash after it still reads as
+   * Wisp's merge; `reported` once gh said it merged (the read-back may lag)
+   */
+  mergeAttempt?: { head: string; at: string; reported?: boolean }
   mergeFailures?: { head: string; count: number }
   /** the semantic state of an active row */
   state?: AutopilotState
@@ -177,6 +183,22 @@ export function autopilotStatuses(): Map<string, AutopilotStatus> {
   return new Map([...latest].map(([taskId, row]) => [taskId, statusOf(row)]))
 }
 
+/**
+ * What auto-merge and auto-fix did for a task, newest first, across every row
+ * it has had (each switch-on after a switch-off is a new one): the newest
+ * `limit` entries and the merge records, at most `cap` in all.
+ */
+export function autopilotHistory(taskId: string, limit = 100, cap = 500): AutopilotHistoryEntry[] {
+  // constants, not input: safe to inline
+  const durable = DURABLE_HISTORY_KINDS.map((kind) => `'${kind}'`).join(", ")
+  return db.query(`SELECT h.at, h.kind, h.detail, h.pr, h.sha, h.message_id AS messageId
+    FROM workflow_history h JOIN workflows w ON w.id = h.workflow_id
+    WHERE w.task_id = ?1 AND w.type = ?2 AND (h.kind IN (${durable}) OR h.id IN (
+      SELECT h2.id FROM workflow_history h2 JOIN workflows w2 ON w2.id = h2.workflow_id
+      WHERE w2.task_id = ?1 AND w2.type = ?2 ORDER BY h2.id DESC LIMIT ?3))
+    ORDER BY h.id DESC LIMIT ?4`).all(taskId, AUTOPILOT_TYPE, limit, cap) as AutopilotHistoryEntry[]
+}
+
 export class AutopilotError extends Error {
   constructor(message: string, readonly status = 400) { super(message) }
 }
@@ -316,6 +338,9 @@ export function writeAutopilotCheckpoint(row: WorkflowRow, checkpoint: Autopilot
   return result.changes === 1
 }
 
+const mergedDetail = (merged: { pr: number; base: string; byWisp: boolean }): string =>
+  merged.byWisp ? `Merged #${merged.pr} into ${merged.base}` : `#${merged.pr} was merged into ${merged.base}`
+
 /**
  * The bound PR merged and the switches stay on: forget everything about that
  * PR (its heads, rounds, feedback ledger, reruns), keep what belongs to the
@@ -323,7 +348,7 @@ export function writeAutopilotCheckpoint(row: WorkflowRow, checkpoint: Autopilot
  * look for the task's next PR. Always active again: a pause was about the PR
  * that is now merged.
  */
-export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: string; byWisp: boolean }, now: Date): void {
+export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: string; byWisp: boolean }, now: Date, head?: string): void {
   const at = now.toISOString()
   db.transaction(() => {
     const current = getWorkflow(row.id)
@@ -336,6 +361,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
     if (current.state === "completed" || !task || task.archived) {
       if (previous.lastMerged?.pr === merged.pr) return
       db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...previous, lastMerged: { ...merged, noted: false } }), row.id])
+      recordWorkflow(row.id, "merged", mergedDetail(merged), at, null, { pr: merged.pr, sha: head ?? null })
       return
     }
     const checkpoint: AutopilotCheckpoint = {
@@ -348,9 +374,27 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
     const reason = `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · Waiting for the task's next PR`
     db.run(`UPDATE workflows SET checkpoint_json = ?, state = 'active', reason = ?, revision = revision + 1, failures = 0,
       next_check_at = ?, updated_at = ? WHERE id = ? AND state != 'completed'`, [JSON.stringify(checkpoint), reason, at, at, row.id])
-    recordWorkflow(row.id, "merged", merged.byWisp ? `Merged #${merged.pr}` : `#${merged.pr} was merged`, at)
+    recordWorkflow(row.id, "merged", mergedDetail(merged), at, null, { pr: merged.pr, sha: head ?? null })
   })()
   announceWorkflow(row.task_id)
+}
+
+/**
+ * A merge attempt that ended after the row stopped being active (paused, or
+ * switched off): say how it ended, so no later turn is told the PR merged
+ * when gh said it did not, and a paused row still knows a reported merge was Wisp's.
+ */
+export function endMergeAttempt(row: WorkflowRow, reported: boolean): void {
+  const current = getWorkflow(row.id)
+  if (!current || current.state === "completed") return
+  const checkpoint = checkpointOf(current)
+  if (!checkpoint.mergeAttempt) return
+  if (reported) checkpoint.mergeAttempt = { ...checkpoint.mergeAttempt, reported: true }
+  else {
+    delete checkpoint.mergeAttempt
+    if (checkpoint.state === "merging") checkpoint.state = "waiting"
+  }
+  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), row.id])
 }
 
 export function finishAutopilot(row: WorkflowRow, outcome: "merged" | "closed", reason: string, now: Date, merged?: { base: string; byWisp: boolean }): void {
@@ -418,11 +462,19 @@ function signNote(taskId: string, which: string): string {
   return `Auto-fix is on for this task: Wisp sends you red CI and review feedback on ${which}. End every comment, review or reply you post on GitHub with: — ${getTask(taskId)?.harness ?? "agent"} via Wisp ${markerOf(taskId)}`
 }
 
+/**
+ * A merge is running now, or gh said it merged and Wisp is confirming it. A
+ * `merging` state alone is not that: a daemon that died mid-merge leaves it
+ * behind, and nobody knows then whether the PR merged.
+ */
+function mergeUnderWay(taskId: string, checkpoint: AutopilotCheckpoint): boolean {
+  return checkpoint.state === "merging" && (isTaskMerging(taskId) || checkpoint.mergeAttempt?.reported === true)
+}
+
 export function autopilotTurnNotes(taskId: string): TurnNotes {
   const row = autopilotRow(taskId)
-  if (row && paramsOf(row).autoMerge && checkpointOf(row).state === "merging") {
-    // gh said it merged and Wisp is confirming: the one thing a turn must not
-    // do now is push to that branch.
+  if (row && paramsOf(row).autoMerge && mergeUnderWay(taskId, checkpointOf(row))) {
+    // the one thing a turn must not do now is push to that branch
     const notes = [`Wisp has just merged PR #${checkpointOf(row).pr} and is confirming it. Do not push to its branch; start any further change on a new branch from the base branch.`]
     if (paramsOf(row).autoFix) notes.push(signNote(taskId, `PR #${checkpointOf(row).pr}`))
     return { notes, marked: paramsOf(row).autoFix, delivered() {} }

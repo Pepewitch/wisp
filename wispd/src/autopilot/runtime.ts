@@ -20,17 +20,19 @@ import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
-import { conversationsBlock, mergeGate, sameReviewState, type PublishedWork } from "./gate"
+import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
 import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, withDelivered, type FeedbackItem } from "./feedback"
+import {
+  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, withDelivered, type FeedbackItem,
+} from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { planFix, type FixPlan } from "./fix"
 import {
-  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
+  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
@@ -389,7 +391,7 @@ export class AutopilotRuntime {
     // this look judged and gated are looked at (and judged) first, not merged over.
     const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(() => null)
     if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
-    await this.merge(row, checkpoint, pr, repository)
+    await this.merge(row, checkpoint, pr, repository, { turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null) })
   }
 
   /**
@@ -405,7 +407,7 @@ export class AutopilotRuntime {
       return null
     }
     const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
-    const items = await this.feedbackFor(ctx)
+    const { items, relayed } = await this.feedbackFor(ctx)
     // A bot's verdict check beside the sticky comment being sent is the review flow's.
     const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
     const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
@@ -423,7 +425,7 @@ export class AutopilotRuntime {
       // Tried is tried: a refused rerun is not asked for again, and the next look moves on.
       checkpoint.rerun = { head: pr.head, runs: [...rerun, ...plan.runs] }
       const reason = accepted.some(Boolean) ? plan.reason : plan.reason.replace(/^Rerunning/, "Could not rerun")
-      recordWorkflow(row.id, "rerun", reason, now.toISOString())
+      recordWorkflow(row.id, "rerun", reason, now.toISOString(), null, { pr: pr.number, sha: pr.head })
       return say("waiting", reason, MOVING_MS)
     }
     // CI's part, unless that evidence already went out (alone, or in a round
@@ -434,7 +436,15 @@ export class AutopilotRuntime {
     // Only a countdown for this very evidence keeps a pending round, or a Send now.
     if (checkpoint.pending?.key !== key) forgetPending(checkpoint)
     if (checkpoint.logMisses && checkpoint.logMisses.key !== key) delete checkpoint.logMisses
-    if (!key) return this.nothingToSend(plan, checkpoint, say)
+    if (!key) {
+      // Words that would ask for changes, relayed from someone the agent does
+      // not take instructions from: never sent, and never merged past either.
+      if (plan.kind === "none" && relayed.length > 0) {
+        const bots = [...new Set(relayed.map((comment) => `@${comment.author}`))].slice(0, 2).join(" and ")
+        return say("needs-you", `${bots} relayed a blocking comment from someone Wisp takes no instructions from`, WAITING_ON_YOU_MS)
+      }
+      return this.nothingToSend(plan, checkpoint, say)
+    }
     const summary = [ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     const rounds = checkpoint.rounds ?? 0
     if (rounds >= MAX_ROUNDS) {
@@ -467,7 +477,7 @@ export class AutopilotRuntime {
   }
 
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
-  private async feedbackFor(ctx: FixContext): Promise<FeedbackItem[]> {
+  private async feedbackFor(ctx: FixContext): Promise<{ items: FeedbackItem[]; relayed: PrComment[] }> {
     const { pr, task, row, checkpoint } = ctx
     const trusts = await this.trustsFor(pr, ctx.repository, task, ctx.signal)
     // Turns that began before auto-fix was armed were never asked to mark
@@ -477,7 +487,8 @@ export class AutopilotRuntime {
       const at = Date.parse(comment.createdAt)
       return at >= Date.parse(turn.started_at) && at <= (turn.ended_at ? Date.parse(turn.ended_at) : Infinity)
     }))
-    return feedbackItems({ pr, trusts, self, delivered: checkpoint.delivered ?? {}, judged: ctx.judged })
+    const input = { pr, trusts, self, delivered: checkpoint.delivered ?? {}, judged: ctx.judged }
+    return { items: feedbackItems(input), relayed: relayedBlocks(input) }
   }
 
   /**
@@ -642,7 +653,7 @@ export class AutopilotRuntime {
       const skipped = skippedPull(pulls, task, viewer, mergedPr)
       return skipped ? `Waiting for this task's own PR (${skipped})` : "Waiting for a PR"
     }
-    recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, this.now().toISOString())
+    recordWorkflow(row.id, "bound", `Watching PR #${pick.number}`, this.now().toISOString(), null, { pr: pick.number })
     return { number: pick.number }
   }
 
@@ -655,7 +666,7 @@ export class AutopilotRuntime {
     const now = this.now()
     if (pr.state === "MERGED") {
       const ours = checkpoint.mergeAttempt?.head === pr.head
-      rebindAfterMerge(row, { pr: pr.number, base: pr.baseRefName, byWisp: ours }, now)
+      rebindAfterMerge(row, { pr: pr.number, base: pr.baseRefName, byWisp: ours }, now, pr.head)
       return
     }
     // Closing a PR is how its owner abandons an approach: never move on to another.
@@ -685,17 +696,23 @@ export class AutopilotRuntime {
     deferAutopilot(row, new Date(this.now().getTime() + BUSY_MS))
   }
 
-  private async merge(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, repository: string): Promise<void> {
+  private async merge(
+    row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, repository: string,
+    look: { turnCount: number; evidence: string },
+  ): Promise<void> {
     const now = this.now()
     // Pre-flight, with no await between it and the merging guard: a toggle,
-    // a Stop, or a turn that started during the check all win.
+    // a Stop, or a turn that started during the check all win — even one that
+    // has already finished (it may have committed work the check never saw).
     const task = getTask(row.task_id)
-    if (!task || !taskIsIdle(task)) return
+    if (!task || !taskIsIdle(task) || task.turn_count !== look.turnCount) return
     const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging", about: "pr", by: "auto-merge" }
     delete attempt.done
     const merging = `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`
     if (!writeAutopilotCheckpoint(row, attempt, now, merging)) return
-    recordWorkflow(row.id, "merging", merging, now.toISOString())
+    // the durable record of a merge on the owner's behalf: which head, into what, and on what evidence
+    recordWorkflow(row.id, "merging", `Merging #${pr.number} at ${pr.head.slice(0, 7)} into ${pr.baseRefName} (${pr.mergeMethod.toLowerCase()}) · ${look.evidence}`,
+      now.toISOString(), null, { pr: pr.number, sha: pr.head })
     // The merge has its own deadline, not the check's: a slow read before it
     // must never be what kills `gh pr merge` halfway.
     const controller = new AbortController()
@@ -719,10 +736,15 @@ export class AutopilotRuntime {
 
   private afterMerge(row: WorkflowRow, started: AutopilotCheckpoint, pr: PrSnapshot, result: { ok: boolean; detail: string }, after: PrSnapshot | null): void {
     const current = getWorkflow(row.id)
+    if (!result.ok && after?.state !== "MERGED" && current) {
+      recordWorkflow(current.id, "merge-failed", `Merge of #${pr.number} at ${pr.head.slice(0, 7)} failed: ${result.detail || "gh pr merge did not merge"}`,
+        this.now().toISOString(), null, { pr: pr.number, sha: pr.head })
+    }
     // Switched off (or archived) while gh ran, and it merged: still record
     // whose merge it was. rebindAfterMerge never re-arms a finished row.
     if (current && current.state !== "active" && after?.state === "MERGED") { this.settle(current, started, after); return }
-    if (!current || current.state !== "active") return
+    if (!current) return
+    if (current.state !== "active") { endMergeAttempt(current, result.ok); return }
     // What changed about the task while gh ran (a Stop hold, auto-fix armed,
     // an unsigned turn) is kept: only the merge's own fields come from before.
     const fresh = checkpointOf(current)
@@ -739,7 +761,8 @@ export class AutopilotRuntime {
       // gh said it merged but the read disagrees or failed (read-after-write
       // lag, a timeout): not a failure. Keep the attempt, so the next look
       // records it as Wisp's merge, and look again soon.
-      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: attempt, delayMs: 15_000, about: "pr" }, this.now())
+      const confirming: AutopilotCheckpoint = { ...attempt, mergeAttempt: { ...attempt.mergeAttempt!, reported: true } }
+      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: confirming, delayMs: 15_000, about: "pr" }, this.now())
       return
     }
     const failures = attempt.mergeFailures?.head === pr.head ? attempt.mergeFailures.count + 1 : 1

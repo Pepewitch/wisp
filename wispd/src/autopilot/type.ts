@@ -7,5 +7,5 @@
  */
 export const AUTOPILOT_TYPE = "pr-autopilot"
 
-/** What the SQL trigger writes when a task's agent or context changes (migration 13). */
+/** What the SQL trigger writes when a task's agent or context changes (migrations 13 and 17). */
 export const CONTEXT_CHANGE_PAUSE = "Task agent or context changed; review and resume"

@@ -81,6 +81,7 @@ wisp pr <task> fix on|off      # auto-fix
 wisp pr <task> send-now        # send a waiting auto-fix round at once
 wisp pr <task> skip            # never send that round
 wisp pr <task> resume          # after a pause, or to release a Stop hold early
+wisp pr <task> history         # what it did: when, what, which PR and commit, and why
 ```
 
 With auto-merge on, Wisp merges the task's open PR once its checks pass, a

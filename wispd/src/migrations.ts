@@ -21,6 +21,7 @@
  * ledger, and must be written as an ordered, transactional step.
  */
 import type { Database } from "bun:sqlite";
+import { WORKFLOW_HISTORY_TRAIL } from "./migration-history-trail";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -705,6 +706,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
       addColumn(db, "task_messages", "deferred", "INTEGER NOT NULL DEFAULT 0");
     },
   },
+  WORKFLOW_HISTORY_TRAIL,
 ];
 
 /** The newest schema this build knows how to run. */

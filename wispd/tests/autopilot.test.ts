@@ -3,16 +3,16 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config";
-import type { PrSnapshot } from "../src/autopilot/github";
+import { openPullsQuery, parseOpenPulls, type PrSnapshot } from "../src/autopilot/github";
 import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AFTER_MERGE_MS, choosePull, SEND_DELAY_MS, WAITING_ON_YOU_MS } from "../src/autopilot/runtime";
 import {
-  autopilotArchiveWarning, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
+  autopilotArchiveWarning, autopilotHistory, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot,
   skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint,
 } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
-import { formatAutopilot, prCommand } from "../src/cli-pr";
+import { formatAutopilot, formatAutopilotHistory, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
@@ -20,7 +20,8 @@ import { workflowRoute } from "../src/routes/workflows";
 import { db, getTask, setTaskFields, transition } from "../src/store";
 import { taskPreambleLines, wispSection } from "../src/turn-input";
 import type { Task } from "../src/types";
-import { pauseTaskWorkflows } from "../src/workflows/store";
+import { pauseTaskWorkflows, recordWorkflow } from "../src/workflows/store";
+import type { AutopilotHistoryEntry } from "../../shared/autopilot";
 import { HEAD, START, forgetTasks, doneTask, snapshot, pull, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -409,6 +410,19 @@ describe("the loop", () => {
     expect(autopilotStatus(task.id).autoMerge).toBe(false);
   });
 
+  test("the SQL guards that pause or complete it say so in its history", () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoMerge: true });
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7 }, new Date(START));
+    const armedAt = autopilotRow(task.id)!.updated_at;
+    db.run("UPDATE tasks SET model = 'another-model' WHERE id = ?", [task.id]);
+    expect(autopilotHistory(task.id)[0]).toMatchObject({ kind: "paused", detail: "Task agent or context changed; review and resume", pr: 7 });
+    setTaskFields(task.id, { archived: 1 });
+    expect(autopilotHistory(task.id)[0]).toMatchObject({ kind: "completed", detail: "Task archived", pr: 7 });
+    // the status's "when the reason last changed" moved with it
+    expect(autopilotStatus(task.id).updatedAt! > armedAt).toBe(true);
+  });
+
   test("a closed PR turns auto-merge off rather than moving on to another", async () => {
     const task = doneTask();
     const clock = { now: START };
@@ -430,6 +444,35 @@ describe("the loop", () => {
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(0);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", lastMerged: { pr: 7, byWisp: true }, reason: "#7 merged by Wisp · Waiting for the task's next PR" });
+  });
+
+  test("a merge's history says which head it merged, on what evidence, and outlives any churn after it", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({
+      pr: snapshot({ reviews: [{ id: "PRR_1", author: "colleague", association: "MEMBER", bot: false, state: "APPROVED", body: "", commit: HEAD, submittedAt: new Date(START).toISOString(), editedAt: null, url: "" }] }),
+    });
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    state.mergeResult = { ok: false, detail: "Base branch was modified" };
+    await pass(rt, task.id, clock);
+    state.mergeResult = { ok: true, detail: "" };
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(2);
+    const row = autopilotRow(task.id)!;
+    // a long-lived row's wait churn cannot push the merge records out
+    for (let n = 0; n < 150; n++) recordWorkflow(row.id, "wait", `Waiting ${n}`, new Date(clock.now + n).toISOString());
+    const history = autopilotHistory(task.id);
+    const merges = history.filter((entry) => entry.kind.startsWith("merg"));
+    expect(merges.map((entry) => [entry.kind, entry.pr, entry.sha])).toEqual([
+      ["merged", 7, HEAD], ["merging", 7, HEAD], ["merge-failed", 7, HEAD], ["merging", 7, HEAD],
+    ]);
+    expect(merges[1]!.detail).toBe("Merging #7 at ccccccc into main (squash) · 1 required check passed (test) · approved at this head by @colleague");
+    expect(merges[2]!.detail).toBe("Merge of #7 at ccccccc failed: Base branch was modified");
+    expect(merges[0]!.detail).toBe("Merged #7 into main");
+    // everything else keeps its newest hundred
+    expect(history.filter((entry) => !entry.kind.startsWith("merg"))).toHaveLength(100);
   });
 
   test("merge failures retry, then pause for Resume; GitHub's own auto-merge also pauses", async () => {
@@ -461,6 +504,27 @@ describe("the loop", () => {
     state.onSnapshot = () => { setAutopilot(task.id, { autoMerge: false }); };
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(0);
+  });
+
+  test("a turn that started and finished while the check ran wins: that look does not merge", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    let turnDuringCheck = true;
+    // an owner turn ("commit, don't push yet") runs and settles while the worktree is checked
+    const published = async (checked: { id: string; turn_count: number }) => {
+      if (turnDuringCheck) setTaskFields(checked.id, { turn_count: checked.turn_count + 1 });
+      turnDuringCheck = false;
+      return { ok: true } as const;
+    };
+    const rt = runtime(github, clock, {}, loadConfig(), undefined, { published });
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(0);
+    // the next look sees the task as it is now, and merges
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
   });
 
   test("no new turn can start while the merge runs, and the queue drains when it ends", async () => {
@@ -495,6 +559,20 @@ describe("binding and the edges of a merge", () => {
     // the task's own branch name wins over an older PR from another checkout
     const own = pull({ number: 8, headRefName: task.branch!, createdAt: new Date(Date.parse(later) + 60_000).toISOString() });
     expect(choosePull([pull({ number: 7, headRefName: "wisp/other", createdAt: later }), own], task, "owner", bases)?.number).toBe(8);
+  });
+
+  test("strangers' fork PRs named like the task's branch cannot crowd its own PR out", () => {
+    const task = doneTask();
+    const at = (minutes: number) => new Date(Date.parse(task.created_at) + minutes * 60_000).toISOString();
+    const node = (number: number, fork: boolean, minutes: number) => ({
+      number, headRefName: task.branch, baseRefName: "main", createdAt: at(minutes), isCrossRepository: fork, author: { login: fork ? "stranger" : "owner" },
+    });
+    // a GitHub that honours the page size it is asked for, oldest first, forks and all
+    const all = [...[1, 2, 3, 4, 5, 6].map((n) => node(100 + n, true, n)), node(120, false, 10)];
+    const first = Number(/b0: pullRequests\(first: (\d+)/.exec(openPullsQuery([task.branch!]))![1]);
+    const raw = { data: { viewer: { login: "owner" }, repository: { defaultBranchRef: { name: "main" }, b0: { nodes: all.slice(0, first) } } } };
+    const { pulls, viewer } = parseOpenPulls(raw, [task.branch!]);
+    expect(choosePull(pulls, task, viewer, new Set(["main"]))?.number).toBe(120);
   });
 
   test("a gh merge whose read-back lags is confirmed on the next look, not counted as a failure", async () => {
@@ -592,7 +670,7 @@ describe("binding and the edges of a merge", () => {
     const task = doneTask();
     const clock = { now: START + 10 * 60_000 };
     setAutopilot(task.id, { autoMerge: true });
-    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString() }, state: "merging" });
+    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString(), reported: true }, state: "merging" });
     expect(autopilotTurnNotes(task.id).notes[0]).toContain("Do not push to its branch");
     // the merge queue ejected it and a check failed: the agent must be free to push the fix
     const { state, github } = fakeGitHub({ pr: snapshot({ checks: [{ name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "" }] }) });
@@ -603,6 +681,41 @@ describe("binding and the edges of a merge", () => {
     expect(checkpointOf(autopilotRow(task.id)!).mergeAttempt).toBeUndefined();
     expect(autopilotTurnNotes(task.id).notes[0]).toContain("push the branch");
     expect(state.merges).toHaveLength(0);
+  });
+
+  test("a merge a crash cut short is not news: the next turn is not told the PR merged", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    setAutopilot(task.id, { autoMerge: true });
+    // written before gh ran; the daemon died before it could say how the merge ended
+    seed(task.id, clock, { mergeAttempt: { head: HEAD, at: new Date(START).toISOString() }, state: "merging" });
+    const notes = autopilotTurnNotes(task.id).notes;
+    expect(notes.join("\n")).not.toContain("has just merged");
+    expect(notes[0]).toContain("Auto-merge is on for this task");
+    // while gh really runs, a turn is told
+    const { state, github } = fakeGitHub();
+    let during: string[] = [];
+    state.onMerge = () => { during = autopilotTurnNotes(task.id).notes; };
+    await pass(runtime(github, clock), task.id, clock);
+    expect(during[0]).toContain("Do not push to its branch");
+  });
+
+  test("a merge that fails after the row was paused leaves no merging state behind", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    state.mergeResult = { ok: false, detail: "Base branch was modified" };
+    // an agent change while gh runs pauses the row through the trigger
+    state.onMerge = () => { db.run("UPDATE tasks SET model = 'another-model' WHERE id = ?", [task.id]); };
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+    const checkpoint = checkpointOf(autopilotRow(task.id)!);
+    expect(checkpoint.state).not.toBe("merging");
+    expect(checkpoint.mergeAttempt).toBeUndefined();
+    expect(autopilotTurnNotes(task.id).notes.join("\n")).not.toContain("has just merged");
   });
 
   test("GitHub's own auto-merge turning on during the merge pauses without telling turns not to push", async () => {
@@ -811,6 +924,32 @@ describe("API and CLI", () => {
     expect(await (await call(task.id, "PUT", { autoMerge: true })).json()).toMatchObject({ autoMerge: true });
     expect(await (await call(task.id, "GET")).json()).toMatchObject({ autoMerge: true, state: "waiting" });
     expect((await call("tnope1", "GET")).status).toBe(404);
+  });
+
+  test("its history is readable: the route spans every row, and wisp pr history prints it", async () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoMerge: true });
+    writeAutopilotCheckpoint(autopilotRow(task.id)!, { pr: 7 }, new Date(START));
+    setAutopilot(task.id, { autoMerge: false });
+    // switched on again: a new row, the same task's history
+    setAutopilot(task.id, { autoFix: true });
+    const response = await call(task.id, "GET", undefined, "/history");
+    expect(response.status).toBe(200);
+    const { history } = await response.json() as { history: AutopilotHistoryEntry[] };
+    expect(history.map((entry) => [entry.kind, entry.detail, entry.pr])).toEqual([
+      ["armed", "Auto-fix on", null], ["completed", "Auto-merge off", 7], ["armed", "Auto-merge on", null],
+    ]);
+    expect((await call(task.id, "POST", {}, "/history")).status).toBe(405);
+    const printed: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line: unknown) => { printed.push(String(line)); });
+    try {
+      await prCommand([task.id, "history"], {}, async (path) => (await call(task.id, "GET", undefined, path.endsWith("/history") ? "/history" : "")).json());
+    } finally { log.mockRestore(); }
+    const lines = printed.join("\n").split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ {2}completed {5}#7 {6}- {8}Auto-merge off$/);
+    expect(formatAutopilotHistory([{ at: "2026-09-23T12:00:00.000Z", kind: "merging", detail: "Merging #7 at ccccccc", pr: 7, sha: HEAD, messageId: null }]))
+      .toBe("2026-09-23T12:00:00Z  merging       #7      ccccccc  Merging #7 at ccccccc");
   });
 
   test("wisp pr prints one line and drives the same route", async () => {

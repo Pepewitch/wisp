@@ -46,7 +46,8 @@ const noCurrentBranch: SpawnResult = { exitCode: 1, stdout: "", stderr: "" };
  * The daemon asks git two things before it asks the provider anything: which
  * repository this is, and which branches this task made (`wisp/<id>-…`). A
  * stub that answers every `git` the same way hands a remote URL back as a
- * branch name, so the two are answered separately.
+ * branch name, so the two are answered separately. GitHub's answer honours
+ * the page size the query asks for, forks and all, newest first.
  */
 function githubRun(
   rows: unknown[],
@@ -63,26 +64,14 @@ function githubRun(
       if (cmd[1] === "symbolic-ref") {
         return Promise.resolve(currentBranch === null ? noCurrentBranch : ok(currentBranch));
       }
-      return Promise.resolve(
-        cmd[0] === "git"
-          ? ok(origin)
-          : graphQlResponse(
-              [rows.filter((candidate) =>
-                typeof candidate === "object" &&
-                candidate !== null &&
-                "state" in candidate &&
-                String(candidate.state).toUpperCase() === "OPEN"
-              )],
-              [rows.filter((candidate) =>
-                !(
-                  typeof candidate === "object" &&
-                  candidate !== null &&
-                  "state" in candidate &&
-                  String(candidate.state).toUpperCase() === "OPEN"
-                )
-              )],
-            ),
-      );
+      if (cmd[0] === "git") return Promise.resolve(ok(origin));
+      const query = cmd.find((arg) => arg.startsWith("query=")) ?? "";
+      const page = (alias: string) => Number(new RegExp(`${alias}: pullRequests\\(\\s*first: (\\d+)`).exec(query)?.[1] ?? 0);
+      const open = (candidate: unknown) => String((candidate as { state?: unknown } | null)?.state).toUpperCase() === "OPEN";
+      return Promise.resolve(graphQlResponse(
+        [rows.filter(open).slice(0, page("b0"))],
+        [rows.filter((candidate) => !open(candidate)).slice(0, page("t0"))],
+      ));
     },
   };
 }
@@ -321,6 +310,15 @@ describe("PullRequestCache", () => {
       kind: "unavailable",
       provider: "github",
     });
+  });
+
+  test("a stranger's fork PR with the task's branch name hides neither its open PR nor its merged one", async () => {
+    // newer than the task's own PR, so first in GitHub's answer
+    const fork = (over: Record<string, unknown>) => row({ number: 90, url: "https://github.com/stranger/widgets/pull/90", isCrossRepository: true, ...over });
+    const open = githubRun([fork({}), row()]);
+    expect(await new PullRequestCache({ run: open.run }).status(task())).toMatchObject({ kind: "found", pullRequest: { number: 42, lifecycle: "open" } });
+    const merged = githubRun([fork({ state: "CLOSED" }), row({ state: "MERGED", mergedAt: "2026-09-04T12:00:00Z" })]);
+    expect(await new PullRequestCache({ run: merged.run }).status(task())).toMatchObject({ kind: "found", pullRequest: { number: 42, lifecycle: "merged" } });
   });
 
   test("does not attribute the current checkout of a local task to Wisp", async () => {

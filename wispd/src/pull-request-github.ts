@@ -34,6 +34,9 @@ export async function githubPullRequest(
   );
 }
 
+/** PRs read per branch name and state: forks with the same branch name are among them. */
+export const SAME_BRANCH_PAGE = 20;
+
 export async function githubPullRequestBatch(
   repository: string,
   branches: string[],
@@ -44,11 +47,14 @@ export async function githubPullRequestBatch(
   const [owner, name] = repository.split("/");
   if (!owner || !name) return unavailableBranches(branches);
   const nodeSelection = "nodes { ...PullRequestFields }";
+  // headRefName matches a fork's branch of the same name too: a page, not one
+  // row, so a stranger's fork PR named like the task's branch cannot stand in
+  // for (and hide) the task's own PR. Cross-repository rows are dropped below.
   const selections = branches
     .map(
       (branch, index) => `
         b${index}: pullRequests(
-          first: 1
+          first: ${SAME_BRANCH_PAGE}
           headRefName: ${JSON.stringify(branch)}
           states: [OPEN]
           orderBy: { field: CREATED_AT, direction: DESC }
@@ -56,7 +62,7 @@ export async function githubPullRequestBatch(
           ${nodeSelection}
         }
         t${index}: pullRequests(
-          first: 1
+          first: ${SAME_BRANCH_PAGE}
           headRefName: ${JSON.stringify(branch)}
           states: [CLOSED, MERGED]
           orderBy: { field: CREATED_AT, direction: DESC }

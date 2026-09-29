@@ -117,7 +117,9 @@ archive the task or stop a turn that already received an instruction.
   teardown. Changing the agent configuration or context pauses them for review.
 - Local observations and message identities are durable. An uncertain process
   delivery pauses automation for inspection rather than promising exactly-once
-  external effects. Start a new instance after resolving uncertainty.
+  external effects. Resuming after you have checked acknowledges it: the
+  workflow carries on, and that delivery's evidence still counts as sent, so
+  it is not sent again.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
   custom plugins run as your OS user, and workflow turns have the same tool
   access as other turns on their task. Review objectives and only use trusted
