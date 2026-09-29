@@ -26,6 +26,7 @@ import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests"
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
+import { settleStrandedTasks } from "./turn-finalize";
 import { startArchiveCleanupLoop } from "./routes/archive";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
@@ -530,6 +531,7 @@ async function serveOwned(
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
+  settleStrandedTasks(); // a 'running'/'stuck' task with no running turn left is settled from its latest turn
   recoverCleanupProgress(); // classify interrupted scripts; slow work starts after listening
 
   // The bundle is immutable for this daemon lifetime. Compress once, before

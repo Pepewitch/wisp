@@ -2,10 +2,10 @@ import type { AdapterDef } from "../adapters";
 
 /**
  * What the primary transcript keeps of one parsed event: the event itself
- * (unchanged), a smaller copy, or `null` for nothing at all. The diagnostic
- * archive and the outcome reducer always see the event as it arrived; only
- * the budgeted primary transcript, and the live broker that mirrors it, see
- * the compacted form.
+ * (unchanged), a smaller copy, or `null` for nothing at all. The outcome
+ * reducer always sees the event as it arrived and the diagnostic archive its
+ * bounded copy; only the budgeted primary transcript, and the live broker
+ * that mirrors it, see the compacted form.
  *
  * A compactor may drop only what no reader of the primary transcript uses.
  */
