@@ -134,6 +134,14 @@ loopback, and internal-network URLs in both browser and Desktop. Consented image
 use `referrerPolicy="no-referrer"`; static image CSP permits their HTTP(S)
 requests. Wisp does not proxy arbitrary image URLs through the daemon.
 
+Mermaid diagrams in agent output render without that prompt, so they may not
+load anything: labels are stripped of images, links, forms and CSS `url()`
+before Mermaid lays them out, a diagram whose image shape names a remote URL
+stays as source, and the returned SVG is sanitized again so no remote reference
+or anchor reaches the page. Diagram directives cannot re-enable HTML labels or
+inject CSS. The Desktop webview policy also sets `object-src`, `base-uri` and
+`form-action` to `'none'`.
+
 Attachment blob caches are scoped by connection and path. Task/message changes,
 reconnection, and browser credential changes invalidate affected entries and
 prevent old pending responses from repopulating them. Unmounted entries are

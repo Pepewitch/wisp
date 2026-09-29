@@ -17,6 +17,7 @@ import {
   readDiagramHeight,
   writeDiagramHeight,
 } from "@/lib/diagram-height"
+import { containAnchorClick } from "@/lib/external-links"
 import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -47,6 +48,18 @@ const SETTLE_MS = 200
 /** Mermaid requires a fresh id per render; collisions leak stale SVGs. */
 let MERMAID_SEQ = 0
 const nextMermaidId = () => `wisp-mermaid-${(MERMAID_SEQ += 1)}`
+
+/**
+ * Mermaid's config and directives are module-global, and its own queue covers
+ * `render` but not the parse or `initialize` before it. Two fences settling
+ * together could otherwise read each other's theme or directives.
+ */
+let MERMAID_QUEUE: Promise<unknown> = Promise.resolve()
+function oneRenderAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const run = MERMAID_QUEUE.then(work, work)
+  MERMAID_QUEUE = run.catch(() => undefined)
+  return run
+}
 
 /** The fence, with its corner switch. `children` is the code surface. */
 export function MermaidFence({ code, children }: { code: string; children: ReactNode }) {
@@ -129,18 +142,26 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
         // Dynamic, and the only reference to the plugin: its module loads the
         // mermaid package eagerly, so a static import here would evaluate the
         // whole library on every app start.
-        const { mermaid: plugin } = await import("@streamdown/mermaid")
+        const [{ mermaid: plugin }, { default: core }, safety] = await Promise.all([
+          import("@streamdown/mermaid"),
+          import("mermaid"),
+          import("@/lib/mermaid-safety"),
+        ])
         moduleLoaded = true
-        const mermaid = plugin.getMermaid({
-          startOnLoad: false,
-          securityLevel: "strict",
-          suppressErrorRendering: true,
-          // `base` is mermaid's "derive it from what I give you"; the stock
-          // themes are palettes to fight rather than extend.
-          theme: "base",
-          themeVariables: mermaidThemeVariables(theme),
+        const svg = await oneRenderAtATime(async () => {
+          const mermaid = plugin.getMermaid({
+            ...safety.MERMAID_SAFE_CONFIG,
+            // `base` is mermaid's "derive it from what I give you"; the stock
+            // themes are palettes to fight rather than extend.
+            theme: "base",
+            themeVariables: mermaidThemeVariables(theme),
+          })
+          // An agent's diagram must not fetch anything nobody asked for; see
+          // `mermaid-safety.ts` for why this takes a parse, a config and a pass.
+          safety.refuseRemoteDiagramImages(await core.mermaidAPI.getDiagramFromText(settled))
+          const { svg } = await mermaid.render(nextMermaidId(), settled)
+          return safety.sanitizeMermaidSvg(svg)
         })
-        const { svg } = await mermaid.render(nextMermaidId(), settled)
         if (!cancelled) setDone({ key, code: settled, svg })
       } catch (error) {
         // A web page kept open across a daemon upgrade can ask for a chunk the
@@ -426,6 +447,10 @@ function PanZoom({ svg }: { svg: string }) {
         drag.current = null
         setDragging(false)
       }}
+      // The SVG is sanitised to have no anchors; this is the second line, in
+      // case one ever survives.
+      onClickCapture={containAnchorClick}
+      onAuxClickCapture={containAnchorClick}
       style={{ cursor: dragging ? "grabbing" : "grab" }}
       className={cn("relative h-full touch-none overflow-hidden rounded-md border border-border bg-code", "select-none")}
     >

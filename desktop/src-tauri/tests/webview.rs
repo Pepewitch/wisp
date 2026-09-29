@@ -73,6 +73,29 @@ fn inline_stylesheets_stay_allowed_for_the_terminal_renderer() {
     );
 }
 
+/// `form-action`, `base-uri` and `object-src` do not fall back to
+/// `default-src`, so leaving them out allows them everywhere. Agent-rendered
+/// markup (a Mermaid label, say) must never submit a form off-site, retarget
+/// relative URLs, or load a plugin — the daemon's page policy says the same.
+#[test]
+fn directives_without_a_default_src_fallback_are_closed() {
+    let context = wisp_desktop::context();
+    let csp = context
+        .config()
+        .app
+        .security
+        .csp
+        .as_ref()
+        .expect("the packaged app declares a content policy")
+        .to_string();
+    for directive in ["form-action 'none'", "base-uri 'none'", "object-src 'none'"] {
+        assert!(
+            csp.contains(directive),
+            "the packaged CSP must set {directive}: {csp}"
+        );
+    }
+}
+
 /// The negative half of the same rule, and the one that regressed: a nonce or
 /// hash anywhere in `style-src` makes CSP ignore `'unsafe-inline'`, so Tauri
 /// stamping stylesheets with a nonce would quietly refuse every stylesheet

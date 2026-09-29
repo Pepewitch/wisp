@@ -28,7 +28,10 @@
         "media-src": "'self' data: blob: http://127.0.0.1:*",
         "font-src": "'self' data:",
         "style-src": "'self' 'unsafe-inline'",
-        "script-src": "'self'"
+        "script-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
       },
       "dangerousDisableAssetCspModification": ["style-src"]
     }

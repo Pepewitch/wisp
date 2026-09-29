@@ -21,6 +21,10 @@ vi.mock("@streamdown/mermaid", () => ({
     getMermaid,
   },
 }))
+// the fence parses before it renders, to refuse remote image shapes
+vi.mock("mermaid", () => ({
+  default: { mermaidAPI: { getDiagramFromText: vi.fn(async () => ({ db: {} })) } },
+}))
 
 /**
  * The three things agents emit that a hand-rolled inline parser could not do:
@@ -199,6 +203,29 @@ describe("Prose", () => {
     )
     expect(container.querySelector("button")).toBeNull()
     expect(open).not.toHaveBeenCalled()
+  })
+
+  /**
+   * DOM clobbering. An unprefixed `id="isTauri"` became `window.isTauri`,
+   * which made a browser tab believe it was the Desktop app and cancel every
+   * link, and `id="wisp-xterm-css"` stopped the terminal's stylesheet from
+   * ever being injected. Agent ids and names are namespaced instead.
+   */
+  it("namespaces the ids and names agent HTML brings, so none can shadow the app's", () => {
+    const { container } = render(
+      <Prose
+        mode="static"
+        text={'<div id="isTauri">a</div> <span id="wisp-xterm-css">b</span> <a name="root">c</a>\n\n## Heading\n\ntext'}
+      />
+    )
+    expect(document.getElementById("isTauri")).toBeNull()
+    expect(document.getElementById("wisp-xterm-css")).toBeNull()
+    expect(document.getElementsByName("root")).toHaveLength(0)
+    expect(container.querySelector("#user-content-isTauri")?.textContent).toBe("a")
+    expect(container.querySelector("#user-content-wisp-xterm-css")?.textContent).toBe("b")
+    expect("isTauri" in window).toBe(false)
+    // headings are unaffected: they never carried ids here
+    expect(container.querySelector("h2")?.textContent).toBe("Heading")
   })
 
   /**
