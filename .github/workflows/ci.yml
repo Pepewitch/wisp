@@ -54,6 +54,9 @@ jobs:
   # it splits well. Each shard is an ordinary `bun test` process with its own
   # preload and throwaway home, exactly as a full local run is. `--parallel`
   # is not usable: its per-file isolation drops the preload's store handle.
+  # Files are split by recorded duration (scripts/test-shards.ts), not by
+  # name: the slow files sort next to each other, and `--shard` gave one
+  # shard twice the others' time.
   daemon:
     name: daemon (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
@@ -74,10 +77,9 @@ jobs:
       # inspect the Desktop bundle to check the two runtime paths.
       - run: bun run build:all-ui
       - name: daemon tests, shard ${{ matrix.shard }} of 6
-        working-directory: wispd
         env:
           SHARD: ${{ matrix.shard }}
-        run: bun test --shard="$SHARD/6"
+        run: bun scripts/test-shards.ts --run "$SHARD/6"
 
   web:
     name: web (${{ matrix.shard }}/2)
