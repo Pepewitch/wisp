@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../src/daemon";
 import { type WispConfig } from "../src/config";
+import { emit } from "../src/events";
+import { STATUS_CACHE_MAX_AGE_MS } from "../src/routes/projects";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import * as subprocess from "../src/subprocess";
 import { createWorktree } from "../src/worktree";
@@ -164,6 +166,86 @@ describe("the three read routes on a worktree git has forgotten", () => {
     setTaskFields(id, { archived: 1 });
     const detail = await body<{ worktreeReason: string | null }>(call(`/api/tasks/${id}`));
     expect(detail.worktreeReason).toBeNull();
+  });
+});
+
+/**
+ * Clients ask for /api/status on every task and turn event of ANY task. Each
+ * entry is several git processes, so re-probing every live worktree per event
+ * was 350 spawns and about two seconds at fifty tasks.
+ */
+describe("GET /api/status re-probes only what an event names", () => {
+  type Status = { tasks: Record<string, { dirtyFiles?: number }> };
+
+  /** git spawns per worktree, for these worktrees only: other files' tasks share the database. */
+  async function spawnsDuring(worktrees: string[], work: () => Promise<unknown>): Promise<Map<string, number>> {
+    const run = spyOn(subprocess, "runBounded");
+    try {
+      await work();
+      const counts = new Map(worktrees.map((wt) => [wt, 0]));
+      for (const [options] of run.mock.calls) {
+        if (options.cwd !== undefined && counts.has(options.cwd)) counts.set(options.cwd, counts.get(options.cwd)! + 1);
+      }
+      return counts;
+    } finally {
+      run.mockRestore();
+    }
+  }
+
+  test("an event re-probes its own task, fresh names the task on screen, and nothing else spawns git", async () => {
+    const [a, b, c] = await Promise.all([healthyTask(), healthyTask(), healthyTask()]);
+    const worktrees = [a.worktree, b.worktree, c.worktree];
+    await body<Status>(call("/api/status")); // warm
+
+    const idle = await spawnsDuring(worktrees, () => body<Status>(call("/api/status")));
+    expect([...idle.values()]).toEqual([0, 0, 0]);
+
+    // a change git can see but no event announced is served from the cache...
+    writeFileSync(join(a.worktree, "made-by-the-agent.txt"), "new\n");
+    expect((await body<Status>(call("/api/status"))).tasks[a.id]?.dirtyFiles).toBe(0);
+
+    // ...until that task's own event, which costs one task's probe and no other's
+    emit({ type: "turn", taskId: a.id, n: 1, status: "done" });
+    let after: Status | null = null;
+    const perEvent = await spawnsDuring(worktrees, async () => {
+      after = await body<Status>(call("/api/status"));
+    });
+    expect(after!.tasks[a.id]?.dirtyFiles).toBe(1);
+    expect(perEvent.get(a.worktree)).toBeGreaterThan(0);
+    expect(perEvent.get(a.worktree)).toBeLessThanOrEqual(12);
+    expect([perEvent.get(b.worktree), perEvent.get(c.worktree)]).toEqual([0, 0]);
+
+    // the task a client is showing is probed on every ask, still alone
+    writeFileSync(join(b.worktree, "made-in-a-terminal.txt"), "new\n");
+    let fresh: Status | null = null;
+    const shown = await spawnsDuring(worktrees, async () => {
+      fresh = await body<Status>(call(`/api/status?fresh=${b.id}`));
+    });
+    expect(fresh!.tasks[b.id]?.dirtyFiles).toBe(1);
+    expect(shown.get(b.worktree)).toBeGreaterThan(0);
+    expect([shown.get(a.worktree), shown.get(c.worktree)]).toEqual([0, 0]);
+  });
+
+  test("an entry nothing invalidated is probed again once it is older than the age bound", async () => {
+    const task = await healthyTask();
+    await body<Status>(call("/api/status"));
+    writeFileSync(join(task.worktree, "made-outside-wisp.txt"), "new\n");
+    const later = Date.now() + STATUS_CACHE_MAX_AGE_MS + 1_000;
+    const clock = spyOn(Date, "now").mockImplementation(() => later);
+    try {
+      expect((await body<Status>(call("/api/status"))).tasks[task.id]?.dirtyFiles).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("overlapping requests share one probe per task", async () => {
+    const task = await healthyTask();
+    const counts = await spawnsDuring([task.worktree], () =>
+      Promise.all([body<Status>(call("/api/status")), body<Status>(call("/api/status"))]),
+    );
+    const single = await spawnsDuring([task.worktree], () => body<Status>(call(`/api/status?fresh=${task.id}`)));
+    expect(counts.get(task.worktree)).toBe(single.get(task.worktree));
   });
 });
 

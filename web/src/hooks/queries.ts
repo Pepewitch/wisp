@@ -60,12 +60,23 @@ export function useTaskSearch(query: string) {
   });
 }
 
-/** GET /api/status — sidebar git badges; covers live tasks only. */
-export function useStatus() {
+/**
+ * GET /api/status — sidebar git badges; covers live tasks only.
+ *
+ * The daemon serves every task from its per-task cache except the ones an
+ * event invalidated, so this can be asked on every task event. `fresh` names
+ * the task on screen, whose marks must not wait on the cache: a commit made
+ * outside Wisp fires no event. Selecting a task therefore asks once more; the
+ * key extends `qk.status`, so every existing invalidation still reaches it,
+ * and the previous answer stays up meanwhile (it covers every task).
+ */
+export function useStatus(selectedId: string | null) {
   const { transport, qk } = useDaemonRuntime();
+  const path = selectedId ? `/api/status?fresh=${encodeURIComponent(selectedId)}` : "/api/status";
   return useQuery({
-    queryKey: qk.status,
-    queryFn: () => transport.request<{ tasks: Record<string, StatusEntry> }>("/api/status"),
+    queryKey: [...qk.status, selectedId],
+    queryFn: () => transport.request<{ tasks: Record<string, StatusEntry> }>(path),
+    placeholderData: (previous) => previous,
     select: (data) => data.tasks,
   });
 }

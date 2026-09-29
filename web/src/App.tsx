@@ -248,7 +248,7 @@ function MainView({
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const tasksQuery = useTasks(showArchived)
-  const statusQuery = useStatus()
+  const statusQuery = useStatus(selectedId)
   const reposQuery = useRepos()
   const detailQuery = useTaskDetail(selectedId)
   useTaskSwitchPerformance(selectedId, detailQuery.data?.id, detailQuery.dataUpdatedAt)

@@ -49,8 +49,10 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   `wispd/src/subprocess.ts`, which enforces a byte budget WHILE reading and a
   deadline: read probes get a short one, mutating calls (worktree add/remove,
   the archive commit, push) get the write budget. `/api/status` fans out behind
-  a semaphore and a coalescer, because each task's entry is several git
-  processes.
+  a semaphore and serves each task's entry from a per-task cache, because each
+  entry is several git processes and clients ask again on every event of any
+  task: only the task an event names is probed again, plus the one a client
+  names as `fresh` (the task on screen).
 - `wispd/src/adapters/` is the only home for harness argv, machine-output parsing,
   capabilities, and named wire strategies.
 - `wispd/src/events.ts` feeds realtime clients. `wispd/src/outbox.ts` delivers durable
