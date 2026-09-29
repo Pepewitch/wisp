@@ -240,6 +240,12 @@ describe("configuration", () => {
     expect(checkConfigFile(tempFile("config.json", '{"prot":9000}')).status).toBe("warn");
   });
 
+  test("an out-of-range value is a warning that names the field, the value and the range", () => {
+    const result = checkConfigFile(tempFile("config.json", '{"setupTimeoutMinutes":0}'));
+    expect(result.status).toBe("warn");
+    expect(result.message).toContain("setupTimeoutMinutes is 0 but must be a number of minutes above 0 and at most 35791");
+  });
+
   test("missing adapters file means the builtins, not a failure", () => {
     const result = checkAdaptersFile(missingFile("adapters.json"));
     expect(result.status).toBe("ok");

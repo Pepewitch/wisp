@@ -4,7 +4,6 @@ import {
   constants,
   existsSync,
   mkdirSync,
-  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -14,6 +13,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
+import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
 
 /** Per-harness turn defaults (P5b): applied at task creation when the request passes no explicit value. */
@@ -356,13 +356,44 @@ export function selectInitialPort(
 }
 
 /**
+ * setTimeout's largest delay, in whole minutes. A setup or archive-hook timeout
+ * past it does not wait longer: the timer overflows and fires after 1 ms, so
+ * every script is killed at once. A stuck threshold or byte budget of 0 or less
+ * is the same trap (a task flapping stuck every minute, every turn killed for
+ * its log cap), so those are range-checked too.
+ *
+ * An out-of-range value falls back to its default with a warning, and is NOT
+ * refused: every CLI call and every daemon boot loads config, and under
+ * launchd a refused boot is a crash loop. The file is left as written.
+ */
+const MAX_SETUP_TIMEOUT_MINUTES = Math.floor((2 ** 31 - 1) / 60_000);
+const RANGE_CHECKED = ["stuckMinutes", "setupTimeoutMinutes", "turnTranscriptBytes", "logMaxBytes"] as const;
+
+/** The allowed range a value falls outside, or null when it is in range. */
+function outOfRange(key: (typeof RANGE_CHECKED)[number], v: number): string | null {
+  if (key === "stuckMinutes") return v > 0 ? null : "a number of minutes above 0";
+  if (key === "setupTimeoutMinutes") {
+    return v > 0 && v <= MAX_SETUP_TIMEOUT_MINUTES ? null : `a number of minutes above 0 and at most ${MAX_SETUP_TIMEOUT_MINUTES}`;
+  }
+  return Number.isSafeInteger(v) && v > 0 ? null : "a positive integer";
+}
+
+/** Config warnings reach stderr (and the daemon log) once per process, however often config is loaded. */
+const printedWarnings = new Set<string>();
+function warnOnce(message: string): void {
+  if (printedWarnings.has(message)) return;
+  printedWarnings.add(message);
+  console.warn(message);
+}
+
+/**
  * Shape-check config.json at load (a prior audit): a wrong-typed value must
  * throw at boot with a named field ("config.json: port must be a number, got
  * string"), not surface deep in a request. Unknown keys warn — a typo'd key
  * silently falling back to its default is the same class of silent failure.
  * Returns only the recognized keys, ready to spread over DEFAULTS.
  */
-export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) => console.warn(m)): Partial<WispConfig> {
+export function validateConfig(raw: unknown, warn: (msg: string) => void = warnOnce): Partial<WispConfig> {
   if (!isRecord(raw)) throw new Error(`config.json: top level must be an object, got ${typeName(raw)}`);
   for (const key of Object.keys(raw)) {
     if (!(CONFIG_KEYS as readonly string[]).includes(key)) {
@@ -386,6 +417,13 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = (m) =
     if (v === undefined) return;
     if (typeof v !== "number") throw new Error(`config.json: ${key} must be a number, got ${typeName(v)}`);
     if (key === "port") assertPort(v);
+    const range = (RANGE_CHECKED as readonly string[]).includes(key)
+      ? outOfRange(key as (typeof RANGE_CHECKED)[number], v)
+      : null;
+    if (range !== null) {
+      warn(`config.json: ${key} is ${JSON.stringify(v)} but must be ${range} — ignoring it and using the default (${DEFAULTS[key]})`);
+      return;
+    }
     out[key] = v;
   };
   const str = (key: "instanceId" | "host" | "token" | "terminalShell" | "jevApiKey" | "factoryApiKey"): void => {
@@ -617,34 +655,6 @@ export interface LoadConfigOptions {
   portAvailable?: PortAvailable;
 }
 
-const INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function isInstanceId(value: string): boolean {
-  return INSTANCE_ID.test(value);
-}
-
-/**
- * The create-exclusive sidecar serializes the one migration loadConfig cannot
- * serialize itself: two daemons starting against a legacy config at once.
- * config.json remains the human-visible mirror, and disagreement is corruption
- * rather than permission to rotate an identity clients may have pinned.
- */
-function loadOrCreateInstanceId(configured: string | undefined): string {
-  const candidate = configured ?? crypto.randomUUID();
-  try {
-    writeFileSync(INSTANCE_ID_PATH, `${candidate}\n`, { mode: 0o600, flag: "wx" });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  chmodSync(INSTANCE_ID_PATH, 0o600);
-  const persisted = readFileSync(INSTANCE_ID_PATH, "utf8").trim();
-  if (!isInstanceId(persisted)) throw new Error("instance-id: value must be a UUID");
-  if (configured !== undefined && persisted !== configured) {
-    throw new Error("config.json: instanceId does not match the Wisp home identity");
-  }
-  return persisted;
-}
-
 function persistConfig(value: Record<string, unknown>): void {
   const temporary = `${CONFIG_PATH}.${process.pid}.${crypto.randomUUID()}.tmp`;
   try {
@@ -747,7 +757,7 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     cfg.port = selectInitialPort(options.initialPort, options.portAvailable);
   }
   const configuredInstanceId = stored.instanceId;
-  cfg.instanceId = loadOrCreateInstanceId(configuredInstanceId);
+  cfg.instanceId = loadOrCreateInstanceId(INSTANCE_ID_PATH, configuredInstanceId);
   if (configuredInstanceId === undefined) {
     mustPersist = true;
   }
@@ -762,6 +772,9 @@ export function loadConfig(options: LoadConfigOptions = {}): WispConfig {
     // rewritten merely to rename a setting, so downgrades remain safe.
     const { logMaxBytes: _legacyAlias, ...canonical } = cfg;
     const persisted: Record<string, unknown> = { ...storedRaw, ...canonical };
+    // An ignored out-of-range value stays as written, so it keeps warning
+    // rather than quietly becoming a pinned default.
+    for (const key of RANGE_CHECKED) if (storedRaw[key] !== undefined && stored[key] === undefined) persisted[key] = storedRaw[key];
     // Persisting for another reason must not turn an old default into a pin.
     if (storedTranscriptBytes === PREVIOUS_TRANSCRIPT_DEFAULT) {
       if (storedRaw.turnTranscriptBytes !== undefined) persisted.turnTranscriptBytes = PREVIOUS_TRANSCRIPT_DEFAULT;
