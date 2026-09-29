@@ -577,12 +577,23 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
       settleTurn(turn.id, { status: "failed", exitCode: null, result: null }, task.id, "failed", `unknown harness after restart: ${turn.harness}`);
       continue;
     }
-    const identity = turn.pid && !recordedGroupRebooted(turn.id) ? await pidIdentity(turn.pid, turn.pid_start_time) : "dead";
-    if (identity === "alive") {
-      console.error(`[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`);
+    const identity = turn.pid && !recordedGroupRebooted(turn.id)
+      ? await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)
+      : "dead";
+    // `unknown` is a process with this pid that could not be proven ours or
+    // someone else's. Finalizing would fail a turn that may still be running
+    // and let the next send start a second harness in the same worktree, so
+    // wait on it like a live one; the poll signals only a verified identity.
+    if (identity === "alive" || identity === "unknown") {
+      console.error(
+        identity === "alive"
+          ? `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`
+          : `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} is running but its identity could not be verified — waiting for it, never signaling it)`,
+      );
       startReAdoptionPoll({
         pid: turn.pid!,
         pidStartTime: turn.pid_start_time,
+        launchedAt: turn.started_at,
         paths: [turn.log_file, errPath],
         maxBytes: turn.capture_mode === "recorder-v1" ? null : transcriptBudgetBytes(cfg),
         killGraceMs: KILL_GRACE_MS,
@@ -677,7 +688,7 @@ async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void>
   const child = liveChildren.get(turn.id);
   if (child) {
     killChildTree(child, sig);
-  } else if (turn.pid && (await pidIdentity(turn.pid, turn.pid_start_time)) === "alive") {
+  } else if (turn.pid && (await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)) === "alive") {
     // A re-adopted turn: identity-checked above, then the same group-first
     // signal. A turn started before groups were owned leads none, so the
     // group attempt reports `gone` and the pid signal below is what runs.
@@ -739,6 +750,12 @@ export async function killTurnForArchive(taskId: string, graceMs = KILL_GRACE_MS
     await stopRecordedGroups(taskId, graceMs);
     await assertTaskProcessesEnded(taskId);
     return;
+  }
+  // Nothing below may run on a pid that cannot be proven ours: it would signal
+  // nothing, then mark a turn that is still running as killed for archive.
+  if (!liveChildren.has(turn.id) && turn.pid &&
+    (await pidIdentity(turn.pid, turn.pid_start_time, turn.started_at)) === "unknown") {
+    throw new Error(`could not verify pid ${turn.pid} is still turn ${turn.n}'s process; refusing to archive`);
   }
   markInterrupted(turn.id, FORCE_ARCHIVE_DETAIL);
   await closeLiveInput(taskId, turn.id);
