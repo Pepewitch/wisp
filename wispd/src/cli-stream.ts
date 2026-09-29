@@ -41,21 +41,47 @@ export async function exportDiagnosticLog(taskId: string | undefined, turnQuery:
     printError(`warning: diagnostic history is partial — ${decoded}`);
   }
   if (!res.body) throw new Error("diagnostic export returned no body");
-  const terminal = process.stdout.isTTY ? new TextDecoder() : null;
+  const terminal = process.stdout.isTTY ? terminalText() : null;
   const reader = res.body.getReader();
   try {
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) return;
-      // the decoder keeps a character split across chunks until its last byte arrives
-      const chunk = terminal ? controlFree(terminal.decode(value, { stream: true })) : value;
-      if (!process.stdout.write(chunk)) {
-        await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+      if (done) {
+        const tail = terminal?.(undefined);
+        if (tail) await write(tail);
+        return;
       }
+      await write(terminal ? terminal(value) : value);
     }
   } finally {
     reader.releaseLock();
   }
+}
+
+async function write(chunk: string | Uint8Array): Promise<void> {
+  if (!process.stdout.write(chunk)) {
+    await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
+  }
+}
+
+/**
+ * Chunks of a byte stream as terminal-safe text; `undefined` flushes the end.
+ * A character split across chunks waits in the decoder for its last byte, and
+ * a trailing `\r` waits for the next chunk, so a CRLF split in two is still
+ * one line break.
+ */
+export function terminalText(): (bytes: Uint8Array | undefined) => string {
+  const decoder = new TextDecoder();
+  let held = "";
+  return (bytes) => {
+    let text = held + (bytes ? decoder.decode(bytes, { stream: true }) : decoder.decode());
+    held = "";
+    if (bytes && text.endsWith("\r")) {
+      held = "\r";
+      text = text.slice(0, -1);
+    }
+    return controlFree(text);
+  };
 }
 
 /** Follow the daemon's human SSE projection, including post-capture live activity. */

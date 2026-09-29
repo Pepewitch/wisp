@@ -4,13 +4,18 @@
  * whole, then every remaining control character except tab and newline. An
  * OSC 52 sequence in a stored brief would otherwise write to the reader's
  * clipboard, and CSI could repaint their screen, whenever someone printed it.
+ *
+ * A carriage return becomes a line break (CRLF one break), so a progress line
+ * that redrew itself (`50%\r100%`) reads as its states, not glued together.
  */
 export function controlFree(line: string): string {
   return line
+    .replace(/\r\n?/g, "\n")
     // eslint-disable-next-line no-control-regex
     .replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+    // CSI: parameter bytes 0x30–0x3F (digits and : ; < = > ?), intermediates, final byte
     // eslint-disable-next-line no-control-regex
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
 }

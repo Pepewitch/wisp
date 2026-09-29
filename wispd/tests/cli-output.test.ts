@@ -1,8 +1,10 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { print, printRaw } from "../src/cli-print";
+import { terminalText } from "../src/cli-stream";
+import { controlFree } from "../src/control-free";
 
 /**
  * Agent and repository text must not drive the reader's terminal. Everything
@@ -81,11 +83,13 @@ function sse(frames: [string, unknown][]): Response {
 }
 
 describe("agent text printed by the CLI", () => {
+  let scratch: string;
   let home: string;
   let server: ReturnType<typeof Bun.serve>;
 
   beforeAll(async () => {
-    home = join(mkdtempSync(join(tmpdir(), "wisp-cli-output-")), "home");
+    scratch = mkdtempSync(join(tmpdir(), "wisp-cli-output-"));
+    home = join(scratch, "home");
     const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const port = probe.port;
     probe.stop(true);
@@ -108,7 +112,10 @@ describe("agent text printed by the CLI", () => {
     });
   });
 
-  afterAll(() => server.stop(true));
+  afterAll(() => {
+    server.stop(true);
+    rmSync(scratch, { recursive: true, force: true });
+  });
 
   test.each([
     [["show", "tabcde"], ["answer and more", "detail and more", "wisp/branch and more", "shot.png and more", "file.ts | 2 +-"]],
@@ -144,6 +151,35 @@ describe("agent text printed by the CLI", () => {
     expect(r.exit).toBe(0);
     expect(r.out).toBe(`${claudeLine(hostile("said"))}\n\n`);
     expect(r.err).toBe(`${hostile("stderr")}\n`);
+  });
+});
+
+describe("controlFree", () => {
+  test("a carriage return is a line break, and CRLF is one", () => {
+    expect(controlFree("Counting: 50%\rCounting: 100%")).toBe("Counting: 50%\nCounting: 100%");
+    expect(controlFree("one\r\ntwo\r\n")).toBe("one\ntwo\n");
+  });
+
+  test("CSI with any parameter byte is removed whole", () => {
+    // device attributes (`>`), colon-separated SGR (`:`), private modes (`?`)
+    expect(controlFree("a\u001b[>0cb\u001b[4:3mc\u001b[?25ld\u001b[=1;2<pe")).toBe("abcde");
+  });
+});
+
+describe("the --diagnostic stream on a terminal", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+
+  test("a CRLF or a character split across chunks survives, and the end is flushed", () => {
+    const decode = terminalText();
+    const snowman = bytes("☃");
+    const parts = [decode(bytes("a\r")), decode(bytes("\nb")), decode(snowman.slice(0, 1)), decode(snowman.slice(1)), decode(bytes("\r"))];
+    expect(parts.join("") + decode(undefined)).toBe("a\nb☃\n");
+    expect(parts).toEqual(["a", "\nb", "", "☃", ""]);
+  });
+
+  test("control sequences are removed", () => {
+    const decode = terminalText();
+    expect(decode(bytes(`{"text":"x${OSC52}"}\n`)) + decode(undefined)).toBe(`{"text":"x"}\n`);
   });
 });
 

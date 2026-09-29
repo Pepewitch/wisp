@@ -7,7 +7,8 @@ installation. Task ids are short strings like `tq2szu`; `wisp --help` prints
 the same list. `wisp <command> --help` (or `-h` anywhere on the line, or
 `wisp help <command>`) prints that command's usage, exits 0, and does nothing
 else: it never contacts the daemon, starts one, installs an update, or creates
-the local home.
+the local home. That includes a flag value that is exactly `-h` or `--help`:
+`--prompt -h` is a request for help, not a prompt.
 
 `wisp doctor --storage [--archived-before <30d|YYYY-MM-DD>]` is strictly
 read-only, works without a daemon, and never initializes the local home.

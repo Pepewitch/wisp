@@ -147,7 +147,7 @@ export function offlineAnswer(args: readonly string[]): OfflineAnswer | null {
   if (first === undefined || HELP_FLAGS.has(first)) return { text: HELP, exit: 0, stream: "out" };
   if (first === "help") {
     const topic = rest.find((arg) => !HELP_FLAGS.has(arg));
-    if (topic === undefined) return { text: HELP, exit: 0, stream: "out" };
+    if (topic === undefined || topic === "help") return { text: HELP, exit: 0, stream: "out" };
     const command = resolveCommand(topic);
     return command ? { text: commandHelp(command), exit: 0, stream: "out" } : unknownCommand(topic);
   }

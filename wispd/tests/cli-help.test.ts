@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -11,6 +11,17 @@ const WISPD = resolve(import.meta.dir, "..");
 
 /** Every name the dispatcher answers to, taken from the dispatcher itself. */
 const NAMES = [...Object.keys(COMMANDS), ...Object.keys(COMMAND_ALIASES)];
+
+/** Every temporary directory this file makes, removed when it ends. */
+const scratch: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  scratch.push(dir);
+  return dir;
+}
+afterAll(() => {
+  for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
+});
 
 async function run(args: string[], home: string) {
   // this suite may run inside a Wisp turn, or under wisp-dev: none of that may leak in
@@ -53,7 +64,7 @@ describe("--help runs nothing", () => {
   let before: Record<string, string>;
 
   beforeAll(async () => {
-    home = join(mkdtempSync(join(tmpdir(), "wisp-cli-help-")), "home");
+    home = join(tempDir("wisp-cli-help-"), "home");
     // init refuses a port something already listens on, so reserve one, init, then serve it
     const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const port = probe.port;
@@ -82,7 +93,7 @@ describe("--help runs nothing", () => {
 
   test.each(NAMES)("%s --help prints its usage and exits 0 without a home, a daemon, or a write", async (name) => {
     // before the home exists: nothing may create it
-    const absent = join(mkdtempSync(join(tmpdir(), "wisp-cli-help-absent-")), "home");
+    const absent = join(tempDir("wisp-cli-help-absent-"), "home");
     const bare = await run([name, "--help"], absent);
     expect(bare).toEqual({ exit: 0, out: `${expectedHelp(name, [name, "--help"]).trimEnd()}\n`, err: "" });
     expect(existsSync(absent)).toBe(false);
@@ -103,6 +114,7 @@ describe("--help runs nothing", () => {
       expect(offlineAnswer(["help", name])).toEqual({ text: commandHelp(command), exit: 0, stream: "out" });
     }
     expect(offlineAnswer(["help"])).toEqual({ text: HELP, exit: 0, stream: "out" });
+    expect(offlineAnswer(["help", "help"])).toEqual({ text: HELP, exit: 0, stream: "out" });
     expect(offlineAnswer([])).toEqual({ text: HELP, exit: 0, stream: "out" });
     expect(offlineAnswer(["-h"])).toEqual({ text: HELP, exit: 0, stream: "out" });
     const unknown = await run(["help", "nope"], home);
