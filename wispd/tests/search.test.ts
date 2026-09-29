@@ -11,6 +11,7 @@ import {
   createTask,
   createTaskMessage,
   createTurn,
+  db,
   finishTurn,
   freeSlot,
   markTaskMessageDelivered,
@@ -46,7 +47,7 @@ function message(taskId: string, text: string): string {
 
 /** A hit for `id`, or a failure that names what the search actually returned. */
 function hit(query: string, id: string) {
-  const result = searchTasks(query);
+  const result = searchTasks(query, db);
   const found = result.tasks.find((candidate) => candidate.id === id);
   expect(found, `no hit for ${id} in ${JSON.stringify(result.tasks.map((t) => t.id))}`).toBeDefined();
   return found!;
@@ -75,7 +76,7 @@ describe("searchTasks", () => {
     const id = task("Reducer");
     turn(id, 1, "the REDUCER kept its tail", null);
     expect(hit("reducer", id).matches).toBe(2);
-    expect(searchTasks("reduce r").tasks.some((candidate) => candidate.id === id)).toBe(false);
+    expect(searchTasks("reduce r", db).tasks.some((candidate) => candidate.id === id)).toBe(false);
   });
 
   test("keeps searching a task after it is archived, and says so on the hit", () => {
@@ -104,7 +105,7 @@ describe("searchTasks", () => {
     const newLive = task("bucket-needle new live");
     setTaskFields(archived, { archived: 1 });
 
-    expect(searchTasks("bucket-needle").tasks.map((candidate) => candidate.id)).toEqual([
+    expect(searchTasks("bucket-needle", db).tasks.map((candidate) => candidate.id)).toEqual([
       newLive,
       oldLive,
       archived,
@@ -121,7 +122,7 @@ describe("searchTasks", () => {
       archived.push(id);
     }
 
-    const answer = searchTasks("cap-needle");
+    const answer = searchTasks("cap-needle", db);
     const shown = answer.tasks;
     expect(shown.filter((candidate) => !candidate.archived)).toHaveLength(SEARCH_LIVE_LIMIT);
     expect(shown.filter((candidate) => candidate.archived)).toHaveLength(SEARCH_ARCHIVED_LIMIT);
@@ -134,10 +135,10 @@ describe("searchTasks", () => {
     const underscore = task("snake_case matters");
     task("plain words only");
 
-    expect(searchTasks("100%").tasks.map((candidate) => candidate.id)).toEqual([percent]);
-    expect(searchTasks("e_c").tasks.map((candidate) => candidate.id)).toEqual([underscore]);
+    expect(searchTasks("100%", db).tasks.map((candidate) => candidate.id)).toEqual([percent]);
+    expect(searchTasks("e_c", db).tasks.map((candidate) => candidate.id)).toEqual([underscore]);
     // `_` as a wildcard would match "100% done"; escaped, it matches nothing.
-    expect(searchTasks("100_").tasks).toEqual([]);
+    expect(searchTasks("100_", db).tasks).toEqual([]);
   });
 
   test("does not count a delivered message twice with its turn prompt", () => {
@@ -157,13 +158,13 @@ describe("searchTasks", () => {
     // millisecond tie, and a tie is not what this test is about.
     Bun.sleepSync(2);
     const newer = task("needle newer");
-    const ordered = searchTasks("needle").tasks.map((candidate) => candidate.id);
+    const ordered = searchTasks("needle", db).tasks.map((candidate) => candidate.id);
     expect(ordered.indexOf(newer)).toBeLessThan(ordered.indexOf(older));
   });
 
   test("an unmatched query answers with no tasks rather than everything", () => {
     task("nothing to see");
-    expect(searchTasks("zzzz-no-such-text").tasks).toEqual([]);
+    expect(searchTasks("zzzz-no-such-text", db).tasks).toEqual([]);
   });
 });
 
@@ -297,6 +298,42 @@ describe("GET /api/search", () => {
       indexing?: { remainingTurns: number };
     };
     expect(caught.indexing).toBeUndefined();
+  });
+
+  test("answers exactly what the in-process search does", async () => {
+    const base = await startServer();
+    const id = task("parity-needle in a title");
+    turn(id, 1, "a prompt holding parity-needle", "and a result holding parity-needle");
+    message(id, "a queued parity-needle message");
+
+    const body = (await (await get(base, "/api/search?q=parity-needle")).json()) as Record<string, unknown>;
+    delete body.indexing;
+    expect(body).toEqual(searchTasks("parity-needle", db) as unknown as Record<string, unknown>);
+  });
+
+  test("a slow search does not hold up the daemon's other requests", async () => {
+    const base = await startServer();
+    const id = task("slow search fixture");
+    // LIKE retries the needle at every position of a run of one letter when
+    // the needle is that letter repeated and then another, so this one row
+    // costs the search hundreds of milliseconds — the time a long history
+    // costs any search.
+    turn(id, 1, "a".repeat(2 * 1024 * 1024), null);
+    try {
+      let searched = false;
+      const search = get(base, `/api/search?q=${"a".repeat(199)}b`).then((response) => {
+        searched = true;
+        return response;
+      });
+      await Bun.sleep(100);
+      const health = await get(base, "/api/health");
+      expect(health.status).toBe(200);
+      // Run on the request thread, the scan answered first and health waited behind it.
+      expect(searched).toBe(false);
+      expect((await search).status).toBe(200);
+    } finally {
+      db.run("DELETE FROM turns WHERE task_id = ?", [id]);
+    }
   });
 
   test("advertises itself, so a client can tell an older daemon apart", async () => {

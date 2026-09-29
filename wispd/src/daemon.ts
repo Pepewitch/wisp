@@ -30,6 +30,7 @@ import { settleStrandedTasks } from "./turn-finalize";
 import { startArchiveCleanupLoop } from "./routes/archive";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
+import { stopSearch } from "./search-runner";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
 import { backgroundPass, HomeLifetime } from "./home-lifetime";
@@ -759,6 +760,8 @@ async function serveOwned(
       // An exiting process does not wait for running turns: their harnesses
       // keep running, and the next boot re-adopts them.
       await lifetime.drain({ exiting });
+      // Requests have drained, so no search is waiting on its worker.
+      stopSearch();
       // Bun can leave a closed WebSocket's stop promise pending indefinitely.
       // Admission is closed and all stateful work has settled, so socket drain
       // alone must not retain ownership. Its callbacks also refuse new work.

@@ -22,6 +22,7 @@
  */
 import type { Database } from "bun:sqlite";
 import { WORKFLOW_HISTORY_TRAIL } from "./migration-history-trail";
+import { LIVE_ROW_INDEXES } from "./migration-live-row-indexes";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -707,6 +708,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
     },
   },
   WORKFLOW_HISTORY_TRAIL,
+  LIVE_ROW_INDEXES,
 ];
 
 /** The newest schema this build knows how to run. */
@@ -766,35 +768,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     ran.push(migration.id);
   }
   return { applied: ran, version: SCHEMA_VERSION };
-}
-
-/**
- * Turn on foreign-key enforcement, but only after asking whether this profile
- * can survive it.
- *
- * `task_messages` has always DECLARED `REFERENCES tasks(id) ON DELETE
- * CASCADE`, and SQLite has always ignored it, because `PRAGMA foreign_keys`
- * defaults to off and nothing turned it on. Enabling it on a profile that
- * accumulated orphan rows while it was off would start rejecting ordinary
- * writes, so the existing rows are checked first: a clean profile gets
- * enforcement, and a profile with violations keeps the old behavior and says
- * so, loudly, instead of failing a user's next message.
- *
- * `turns` still has no declared foreign key. Adding one to a live table means
- * rebuilding it. Permanent deletion explicitly removes dependent rows in one
- * transaction, including on older profiles without foreign-key enforcement.
- */
-export function enforceForeignKeys(db: Database): { enabled: boolean; violations: number } {
-  const violations = (db.query("PRAGMA foreign_key_check").all() as unknown[]).length;
-  if (violations > 0) {
-    console.warn(
-      `[wisp] foreign-key enforcement stayed OFF: this profile has ${violations} row(s) that would violate it. ` +
-        `Nothing is broken by leaving it off — it is what every previous release did — but the rows are worth a look.`,
-    );
-    return { enabled: false, violations };
-  }
-  db.exec("PRAGMA foreign_keys = ON");
-  return { enabled: true, violations: 0 };
 }
 
 /**

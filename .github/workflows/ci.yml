@@ -38,8 +38,12 @@ jobs:
         run: bun run brand:check
       - name: build (the compiled binary must embed the generated UI)
         run: bun run build
+      - name: the compiled binary searches off its request thread
+        run: bun run wispd/scripts/check-binary-search.ts dist/wisp
       - name: build linux-x64 deploy artifact
-        run: bun build --compile --target=bun-linux-x64 wispd/src/index.ts --outfile dist/wisp-linux-x64
+        # Through the build script, so the artifact carries the same entry
+        # points (the search worker) as a release binary.
+        run: bun run wispd/scripts/build-binary.ts --target linux-x64 --outfile dist/wisp-linux-x64
       # The documented glibc floor is a property of the pinned Bun runtime, so
       # a toolchain bump that raises it fails here rather than in a published
       # install guide.

@@ -55,7 +55,7 @@ test("TTL evicts entire archived turns, preserves metadata/prose and declares le
   expect(getTurnText(old.turnId)?.text).toBe("searchable elderberry");
   await indexTurnProse({ taskId: old.id, turnId: old.turnId, logFile: old.log, result: turn.result, def: undefined });
   expect(getTurnText(old.turnId)?.text).toBe("searchable elderberry");
-  expect(searchTasks("elderberry").tasks.some(t => t.id === old.id)).toBe(true);
+  expect(searchTasks("elderberry", db).tasks.some(t => t.id === old.id)).toBe(true);
 });
 
 test("no live logs or missing, partial, unavailable prose rows are eligible at any age or quota", async () => {
@@ -136,6 +136,36 @@ test("routine scans skip fully evicted history while reconciliation finds restor
   expect((await retainTurnLogs(cfg, now, true)).evicted).toBe(1);
   expect(existsSync(f.log)).toBe(false);
   expect(existsSync(f.err)).toBe(false);
+});
+
+test("a routine pass with nothing changed reads nothing; an archive change makes the next one read again", async () => {
+  const f = fixture({ age: 2 });
+  await retainTurnLogs(cfg, now);
+  // Aged outside Wisp: only a pass that stats the files again can notice.
+  const stamp = (now - 120 * day) / 1000;
+  utimesSync(f.log, stamp, stamp); utimesSync(f.err, stamp, stamp);
+  expect((await retainTurnLogs(cfg, now, false)).evicted).toBe(0);
+  expect(existsSync(f.log)).toBe(true);
+
+  setTaskFields(f.id, { turn_count: f.n });
+  await retainTurnLogs(cfg, now, false);
+  expect(existsSync(f.log)).toBe(false);
+  expect(turnForTask(f.id, f.n)?.capture_state).toBe("evicted");
+});
+
+test("a skipped pass still runs when the oldest retained log reaches its age, or the settings change", async () => {
+  const f = fixture({ age: 80 });
+  await retainTurnLogs(cfg, now);
+  await retainTurnLogs(cfg, now + day, false);
+  expect(existsSync(f.log)).toBe(true);
+  // Ten days on, the 90-day limit has passed for it.
+  await retainTurnLogs(cfg, now + 11 * day, false);
+  expect(existsSync(f.log)).toBe(false);
+
+  const g = fixture({ age: 5 });
+  await retainTurnLogs(cfg, now);
+  await retainTurnLogs({ ...cfg, turnLogRetentionDays: 3 }, now, false);
+  expect(existsSync(g.log)).toBe(false);
 });
 
 test("disabled retention and draining homes delete nothing; config budgets are distinct", async () => {

@@ -256,7 +256,7 @@ export function route(
   const suffixPromptResponse = suffixPromptRoutes(req, path, m);
   if (suffixPromptResponse !== null) return suffixPromptResponse;
 
-  const searchResponse = searchRoute(url, m);
+  const searchResponse = searchRoute(req, url, m);
   if (searchResponse !== null) return searchResponse;
 
   const harnessResponse = harnessRoutes(url, path, m, cfg, adapters, models, limits);
