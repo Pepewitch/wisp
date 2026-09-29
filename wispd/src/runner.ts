@@ -22,6 +22,7 @@ import {
   closeLiveInput,
   configureLiveTurn,
   forgetLiveTurn,
+  legacyLiveOutput,
   liveCommand,
   LiveTransportError,
   pendingDelivery,
@@ -691,20 +692,6 @@ export function hasRunningTurn(taskId: string): Turn | null { return runningTurn
 
 function childRunning(child: ReturnType<typeof Bun.spawn>): boolean {
   return child.exitCode === null && child.signalCode === null;
-}
-
-/** Compatibility sink for live transports whose parser is not recorder-capable. */
-function legacyLiveOutput(outFd: number): LiveOutputSink {
-  const line = (value: string): void => {
-    writeSync(outFd, `${value}\n`);
-  };
-  return {
-    recordEvent: (event) => line(JSON.stringify(event)),
-    recordStdoutLine: line,
-    recordNote: line,
-    recordFrameDrop: (_source, chars) =>
-      line(`· dropped an oversized live protocol frame (${chars} characters); the turn continues`),
-  };
 }
 
 /** Kill a live turn whose transport broke, naming the half that failed (LiveTransportError). */

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import type { AdapterDef, ImageInputStrategy } from "./adapters";
 import { CodexLiveDriver, type CodexLiveInput } from "./adapters/live/codex";
 import { liveCommand } from "./adapters/live/command";
@@ -107,6 +107,20 @@ export async function closeLiveInput(taskId: string, turnId: number): Promise<vo
   if (live?.turnId !== turnId) return;
   liveInputs.delete(taskId);
   await live.close().catch(() => {});
+}
+
+/** Compatibility sink for live transports whose parser is not recorder-capable. */
+export function legacyLiveOutput(outFd: number): LiveOutputSink {
+  const line = (value: string): void => {
+    writeSync(outFd, `${value}\n`);
+  };
+  return {
+    recordEvent: (event) => line(JSON.stringify(event)),
+    recordStdoutLine: line,
+    recordNote: line,
+    recordFrameDrop: (_source, chars) =>
+      line(`· dropped an oversized live protocol frame (${chars} characters); the turn continues`),
+  };
 }
 
 export { liveCommand };
