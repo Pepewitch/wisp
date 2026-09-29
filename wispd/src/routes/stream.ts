@@ -3,7 +3,8 @@ import { subscribe } from "../events";
 import { readSlice, sliceDecoder } from "../fsutil";
 import { subscribeTurnBroker, type BrokerGap, type TurnBrokerSubscription } from "../recording/broker";
 import { latestTurnForTask, turnForTask } from "../store";
-import { errorDetail, trunc } from "../text";
+import { logFailure } from "../failure-log";
+import { trunc } from "../text";
 import { acquireTranscriptRead, TRANSCRIPT_EVICTED_NOTICE } from "../transcript-access";
 import type { Task, Turn } from "../types";
 import { BUILD_INFO } from "../version";
@@ -207,11 +208,14 @@ class TurnStreamRenderer {
     }
   }
 
-  /** Once per turn and stream: a log full of odd lines must not flood the daemon log. */
+  /**
+   * Once per turn and stream, and summarized across streams: a log full of
+   * odd lines, or a pane reopening it, must not flood the daemon log.
+   */
   private report(error: unknown): void {
     if (this.reported) return;
     this.reported = true;
-    console.error(`[wisp] log stream (${this.label}): the ${this.format} formatter threw on a line, which is shown raw instead: ${errorDetail(error)}`);
+    logFailure(`log stream (${this.label}): the ${this.format} formatter threw on a line, which is shown raw instead`, error);
   }
 
   gap(gap: BrokerGap): RenderedChunk {
@@ -480,7 +484,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
    */
   function failStream(error: unknown): void {
     if (closed) return;
-    console.error(`[wisp] log stream for task ${task.id} failed and was closed: ${errorDetail(error)}`);
+    // the client reconnects every few seconds, so a recurring failure is summarized
+    logFailure(`log stream for task ${task.id} failed and was closed`, error);
     cleanup();
     closeQuietly(controller);
   }

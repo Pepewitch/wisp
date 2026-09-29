@@ -38,7 +38,7 @@ export type {
 } from "./types";
 export { BUILTIN_ADAPTERS } from "./builtins";
 export { ACTIVITY_NORMALIZERS, createActivityFormatter } from "./activity";
-export { createEventFormatter, EVENT_FORMATTERS, formatEvent } from "./format";
+export { createEventFormatter, EVENT_FORMATTERS, formatEvent, rawOnThrow } from "./format";
 export { PARSE_STRATEGIES, parseOutput } from "./parse";
 export {
   createIncrementalOutcomeReducer,

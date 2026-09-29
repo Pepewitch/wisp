@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-import { errorDetail } from "./text";
+import { logFailure } from "./failure-log";
 
 const current = new AsyncLocalStorage<HomeLifetime>();
 
@@ -30,8 +30,9 @@ export function trackHomeWork<T>(work: Promise<T>): Promise<T> {
 }
 
 /**
- * One pass of a background loop, tracked as home work, whose failure is
- * logged with its stack instead of vanishing. `track` marks a rejection as
+ * One pass of a background loop, or any detached chain, tracked as home work,
+ * whose failure is logged (via logFailure, so a recurring one is summarized)
+ * instead of vanishing. `track` marks a rejection as
  * handled for the lifetime's own bookkeeping, so a loop that only tracked its
  * pass lost every error without a trace (stuck detection and webhook delivery
  * both did), and one that did not track it would end the process on the
@@ -40,7 +41,7 @@ export function trackHomeWork<T>(work: Promise<T>): Promise<T> {
 export function backgroundPass(label: string, work: () => Promise<unknown>): Promise<void> {
   // async, so a synchronous throw from `work` becomes this pass's rejection too
   return trackHomeWork((async () => { await work(); })()).catch((error: unknown) => {
-    console.error(`[wisp] ${label} failed: ${errorDetail(error)}`);
+    logFailure(`${label} failed`, error);
   });
 }
 

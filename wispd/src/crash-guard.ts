@@ -1,3 +1,4 @@
+import { logFailure } from "./failure-log";
 import { errorDetail } from "./text";
 
 /**
@@ -5,17 +6,19 @@ import { errorDetail } from "./text";
  * them; tests call serve() in-process without them, so a stray rejection in
  * a test still fails the run instead of being logged away.
  *
- * **An unhandled rejection is logged and the daemon keeps serving.** Bun ends
- * the process on one, and for the daemon that is the wrong trade: the process
- * owns every live terminal, live-input channel and in-flight request, and one
- * fire-and-forget chain without a `.catch` (a log stream's tick, a background
- * pass) took all of that down, and took it down again after the restart when
- * the trigger was a line in a turn log. By the time a rejection is reported
- * unhandled, the async function that threw has already unwound through its own
- * finally blocks, so nothing it was guarding is left half-written. The
- * failure stays confined to that one chain, and the log line (with its stack)
- * is the bug report. Each known chain catches for itself; this is the net
- * under the one nobody has found yet.
+ * **An unhandled rejection is logged and the daemon keeps serving.** This is
+ * a trade-off, not a guarantee. Bun ends the process on one, which takes down
+ * every live terminal, live-input channel and in-flight request with the one
+ * chain that forgot its `.catch`, and takes them down again after the restart
+ * when the trigger is still there (a line in a turn log was). Keeping the
+ * process gives up the one thing a crash is sure to do: discard whatever
+ * state that chain left behind. The async function that threw has run its
+ * own finally blocks by then, but it may still have stopped between two
+ * updates it meant to make together (a turn left `running`, a slot never
+ * released). We accept that risk because such a chain is one task's work,
+ * while a crash is every task's; the log line, with its stack and a repeat
+ * count, is the bug report. Each known chain catches for itself; this is the
+ * net under the one nobody has found yet.
  *
  * **An uncaught exception still ends the process**, after the same logging.
  * It is a synchronous throw that escaped a callback, possibly between two
@@ -28,7 +31,7 @@ import { errorDetail } from "./text";
  */
 export function installDaemonCrashGuards(target: NodeJS.Process = process): void {
   target.on("unhandledRejection", (reason) => {
-    console.error(`[wisp] unhandled promise rejection; the daemon keeps serving: ${errorDetail(reason)}`);
+    logFailure("unhandled promise rejection; the daemon keeps serving", reason);
   });
   target.on("uncaughtException", (error) => {
     console.error(`[wisp] uncaught exception; the daemon exits so its service manager restarts it: ${errorDetail(error)}`);

@@ -32,7 +32,7 @@ import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
 import { startProcessGroupLoop } from "./task-processes";
 import { route } from "./routes";
-import { HomeLifetime } from "./home-lifetime";
+import { backgroundPass, HomeLifetime } from "./home-lifetime";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import {
   ALLOWED_ORIGINS_ENV,
@@ -720,7 +720,7 @@ async function serveOwned(
   };
   // Model discovery is deliberately after Bun.serve: listening never waits on
   // a harness CLI, and /api/harnesses serves the cache while this runs.
-  void lifetime.track(modelCache.refreshIfStale());
+  void backgroundPass("model discovery", () => modelCache.refreshIfStale());
   console.log(
     `wispd listening on http://${hostname}:${server.port} (token in ${process.env.WISP_HOME ?? "~/.wisp"}/config.json)`,
   );

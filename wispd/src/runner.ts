@@ -1,6 +1,6 @@
 import { assertTaskCapacity } from "./task-admission";
 import { pauseTaskWorkflows } from "./workflows/store";
-import { homeIsDraining, trackHomeWork } from "./home-lifetime";
+import { backgroundPass, homeIsDraining } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -342,7 +342,9 @@ export function startTurn(
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, def, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
-  void trackHomeWork(watchTurn(
+  // Detached: the turn settles on its own. A watcher that fails must still
+  // leave a trace, and must never reject unhandled.
+  void backgroundPass(`turn watcher for task ${task.id} turn ${n}`, () => watchTurn(
     child,
     task.id,
     turnId,
@@ -528,7 +530,7 @@ async function watchTurn(
     }
   };
   // detached tick, same idiom as `void watchTurn`: interval callbacks can't be awaited
-  const capTimer = recorder ? null : setInterval(() => void trackHomeWork(capTick()), 5000);
+  const capTimer = recorder ? null : setInterval(() => void backgroundPass(`log cap check for task ${taskId}`, capTick), 5000);
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   await refreshProcessGroups(taskId, turnId);

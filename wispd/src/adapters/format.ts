@@ -1,4 +1,4 @@
-import { trunc } from "../text";
+import { safeString, trunc } from "../text";
 import { string } from "./activity-value";
 import type { AdapterDef, EventFormatter } from "./types";
 import { createEventLineDecoder, cursorToolCall, decodeEventLine, messageContent, type DecodedEventLine } from "./wire";
@@ -11,7 +11,7 @@ import { createEventLineDecoder, cursorToolCall, decodeEventLine, messageContent
  * stays 300 characters.
  */
 function thinkingLines(value: unknown, pre = "", keepEmpty = true): string | null {
-  const thought = trunc(String(value ?? "").trim(), 300);
+  const thought = trunc(safeString(value ?? "").trim(), 300);
   if (!thought) return keepEmpty ? `${pre}~` : null;
   return thought
     .split("\n")
@@ -31,14 +31,14 @@ function thinkingLines(value: unknown, pre = "", keepEmpty = true): string | nul
  * "success"! — tests/fixtures/claude-unknown-model.jsonl), so it prints, as ✗.
  */
 function settlementLine(e: Record<string, unknown>, text: unknown): string {
-  return e.is_error ? `✗ ${trunc(String(text ?? ""), 500)}` : "✓ turn complete";
+  return e.is_error ? `✗ ${trunc(safeString(text ?? ""), 500)}` : "✓ turn complete";
 }
 
 export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
   "claude-stream-json": (e) => {
     switch (e.type) {
       case "system":
-        return e.subtype === "init" ? `· session ${e.session_id}` : null;
+        return e.subtype === "init" ? `· session ${safeString(e.session_id)}` : null;
       case "assistant": {
         // message with content items; subagent activity carries parent_tool_use_id
         const pre = e.parent_tool_use_id ? "  [sub] " : "";
@@ -46,7 +46,7 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
         for (const c of messageContent(e.message)) {
           const text = string(c.text);
           if (c.type === "text" && text) parts.push(`${pre}${trunc(text, 300)}`);
-          if (c.type === "tool_use") parts.push(`${pre}→ ${c.name}(${trunc(JSON.stringify(c.input ?? {}), 120)})`);
+          if (c.type === "tool_use") parts.push(`${pre}→ ${safeString(c.name)}(${trunc(JSON.stringify(c.input ?? {}), 120)})`);
           // `~` is the thinking marker. Verified across 167 real thinking
           // blocks in ~/.wisp/logs: claude-code ships `signature` (encrypted)
           // and an EMPTY `thinking` string every time, so the bare marker is
@@ -64,7 +64,7 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
           .filter((c) => c.type === "tool_result")
           .map(
             (c) =>
-              `${pre}← ${trunc(String(typeof c.content === "string" ? c.content : JSON.stringify(c.content)).replaceAll("\n", " "), 120)}`,
+              `${pre}← ${trunc(safeString(typeof c.content === "string" ? c.content : JSON.stringify(c.content)).replaceAll("\n", " "), 120)}`,
           );
         return results.length ? results.join("\n") : null;
       }
@@ -78,9 +78,9 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
     const pre = e.parent_tool_use_id ? "  [sub] " : "";
     switch (e.type) {
       case "system":
-        return e.subtype === "init" ? `· session ${e.session_id}` : null;
+        return e.subtype === "init" ? `· session ${safeString(e.session_id)}` : null;
       case "message":
-        return e.role === "assistant" && e.text ? `${pre}${trunc(e.text, 300)}` : null;
+        return e.role === "assistant" && e.text ? `${pre}${trunc(safeString(e.text), 300)}` : null;
       // droid DOES ship its reasoning text (shape captured from real logs:
       // {type:"reasoning", id, text, timestamp, session_id}). Its text often
       // begins with a newline and can contain paragraphs, so every rendered
@@ -88,9 +88,9 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
       case "reasoning":
         return thinkingLines(e.text, pre, false);
       case "tool_call":
-        return `${pre}→ ${e.toolName}(${trunc(JSON.stringify(e.parameters ?? {}), 120)})`;
+        return `${pre}→ ${safeString(e.toolName)}(${trunc(JSON.stringify(e.parameters ?? {}), 120)})`;
       case "tool_result":
-        return `${pre}← ${trunc(String(e.value ?? "").replaceAll("\n", " "), 120)}`;
+        return `${pre}← ${trunc(safeString(e.value ?? "").replaceAll("\n", " "), 120)}`;
       case "completion": // final
         return settlementLine(e, e.finalText);
       default:
@@ -107,7 +107,7 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
   "cursor-stream-json": (e) => {
     switch (e.type) {
       case "system":
-        return e.subtype === "init" ? `· session ${e.session_id}` : null;
+        return e.subtype === "init" ? `· session ${safeString(e.session_id)}` : null;
       case "assistant": {
         const parts: string[] = [];
         for (const c of messageContent(e.message)) {
@@ -139,10 +139,10 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
   "codex-jsonl": (e) => {
     switch (e.type) {
       case "thread.started":
-        return `· session ${e.thread_id}`;
+        return `· session ${safeString(e.thread_id)}`;
       case "item.started":
         // only the command pre-echo earns a line; everything else repeats on completion
-        return e.item?.type === "command_execution" ? `→ ${trunc(String(e.item.command ?? ""), 200)}` : null;
+        return e.item?.type === "command_execution" ? `→ ${trunc(safeString(e.item.command ?? ""), 200)}` : null;
       case "item.completed": {
         const item = e.item ?? {};
         switch (item.type) {
@@ -151,9 +151,9 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
             return text ? trunc(text, 300) : null;
           }
           case "command_execution":
-            return `← [exit ${item.exit_code ?? "?"}] ${trunc(String(item.aggregated_output ?? "").replaceAll("\n", " "), 120)}`;
+            return `← [exit ${safeString(item.exit_code ?? "?")}] ${trunc(safeString(item.aggregated_output ?? "").replaceAll("\n", " "), 120)}`;
           case "error": // codex reports recoverable errors as items too, mid-turn
-            return `✗ ${trunc(String(item.message ?? ""), 300)}`;
+            return `✗ ${trunc(safeString(item.message ?? ""), 300)}`;
           case "reasoning":
             // Dropped, unlike droid's: no codex reasoning item has ever been
             // captured in a real log, so its text field is unknown and this
@@ -165,7 +165,7 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
             // mcp_tool_call, web_search, todo_list, …): show the type and a
             // truncated payload rather than guess field names — or worse, drop
             // the activity silently.
-            return item.type ? `→ ${item.type}(${trunc(JSON.stringify(item), 120)})` : null;
+            return item.type ? `→ ${safeString(item.type)}(${trunc(JSON.stringify(item), 120)})` : null;
         }
       }
       case "turn.completed":
@@ -173,7 +173,7 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
       case "turn.failed":
         return `✗ turn failed: ${trunc(typeof e.error?.message === "string" ? e.error.message : JSON.stringify(e.error ?? {}), 300)}`;
       case "error": // top-level stream error (observed alongside turn.failed)
-        return `✗ ${trunc(String(e.message ?? ""), 300)}`;
+        return `✗ ${trunc(safeString(e.message ?? ""), 300)}`;
       default:
         return null; // turn.started, item.updated, …
     }
@@ -199,19 +199,19 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
         // opencode emits ONE event per tool call, already terminal (its
         // writer fires only for state.status completed|error), so the call
         // and its result are rendered together rather than as a → … ← pair.
-        const name = String(part.tool ?? "tool");
+        const name = safeString(part.tool ?? "tool");
         const state = (part.state ?? {}) as Record<string, any>;
         const args = trunc(JSON.stringify(state.input ?? {}), 120);
         if (state.status === "error") {
-          return `→ ${name}(${args})\n✗ ${trunc(String(state.error ?? "tool failed").replaceAll("\n", " "), 120)}`;
+          return `→ ${name}(${args})\n✗ ${trunc(safeString(state.error ?? "tool failed").replaceAll("\n", " "), 120)}`;
         }
-        return `→ ${name}(${args})\n← ${trunc(String(state.output ?? "").replaceAll("\n", " "), 120)}`;
+        return `→ ${name}(${args})\n← ${trunc(safeString(state.output ?? "").replaceAll("\n", " "), 120)}`;
       }
       case "step_finish":
         // "tool-calls" means another step follows; anything else ends the turn
         return part.reason === "tool-calls" ? null : "✓ turn complete";
       case "error":
-        return `✗ ${trunc(String(e.error?.data?.message ?? e.error?.name ?? "unknown error"), 300)}`;
+        return `✗ ${trunc(safeString(e.error?.data?.message ?? e.error?.name ?? "unknown error"), 300)}`;
       default:
         return null; // step_start
     }
@@ -258,5 +258,23 @@ export function createEventFormatter(def?: AdapterDef): (line: string) => string
   return (line) => {
     const decoded = decode(line);
     return decoded ? formatDecodedEvent(decoded, def) : null;
+  };
+}
+
+/**
+ * A line renderer that cannot end its caller: a line the formatter throws on
+ * comes back as the raw line, truncated as plain text is. The builtin
+ * formatters are fuzzed not to throw (tests/formatter-fuzz.test.ts); this is
+ * for everything else, such as a code-built adapter naming an unknown
+ * formatter. `wisp log` uses it so one line cannot make the command exit.
+ */
+export function rawOnThrow(format: (line: string) => string | null): (line: string) => string | null {
+  return (line) => {
+    try {
+      return format(line);
+    } catch {
+      const raw = line.trim();
+      return raw ? trunc(raw, 200) : null;
+    }
   };
 }

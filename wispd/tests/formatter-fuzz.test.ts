@@ -77,6 +77,8 @@ const SEEDS: Json[] = [
 const ODD: Json[] = [
   null, true, 0, 7, "", "odd", " \n ", [], [null], [7], ["odd"], [[]], [{}], {}, { type: "text" },
   { type: "tool_use" }, { type: "tool_result" }, { text: 7, type: "text" }, { content: {} },
+  // shadows Object.prototype.toString, so String() and template literals throw on it
+  { toString: 1 }, { toString: 1, valueOf: 1 },
 ];
 
 function fixtureEvents(): Json[] {

@@ -2,7 +2,8 @@ import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
-import { errorDetail } from "../text";
+import { logFailure } from "../failure-log";
+import { safeString } from "../text";
 import { typeName } from "../validate";
 import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
 
@@ -130,11 +131,14 @@ export function err(message: string, status: number): Response {
  * daemon log gets the method, the path and the stack, which are what tie a
  * 500 to its cause. It used to get nothing. Only the path is logged: a query
  * string can carry what the caller searched for, and the body and headers
- * (the bearer token among them) are never touched here.
+ * (the bearer token among them) are never touched here. The path itself is
+ * not always free of user text: attachment and suffix-prompt routes carry
+ * their names in it, so those names can appear in the daemon log. A route
+ * failing on every poll is summarized rather than logged each time.
  */
 export function routeFailure(method: string, path: string, error: unknown): Response {
-  console.error(`[wisp] ${method} ${path} failed: ${errorDetail(error)}`);
-  return err(error instanceof Error ? error.message : String(error), 500);
+  logFailure(`${method} ${path} failed`, error);
+  return err(error instanceof Error ? error.message : safeString(error), 500);
 }
 
 /**

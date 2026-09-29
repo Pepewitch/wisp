@@ -47,5 +47,24 @@ export function elideMiddle(s: string, n: number): string {
  * error, never the request or input that caused it.
  */
 export function errorDetail(error: unknown): string {
-  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return error instanceof Error ? (error.stack ?? error.message) : safeString(error);
+}
+
+/**
+ * `String(value)` that cannot throw. `String()` and template literals call a
+ * value's own `toString`, which an object parsed from JSON can shadow with a
+ * non-function (`{"toString":1}`); JSON text is used instead.
+ */
+export function safeString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === null || typeof value !== "object") return String(value);
+  try {
+    return String(value);
+  } catch {
+    try {
+      return JSON.stringify(value) ?? "[unprintable value]";
+    } catch {
+      return "[unprintable value]";
+    }
+  }
 }
