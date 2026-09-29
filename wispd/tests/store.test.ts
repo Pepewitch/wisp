@@ -17,8 +17,11 @@ import {
   getTask,
   getTaskMessage,
   getTurn,
+  isQueueHead,
   latestTurnOutcomes,
   listTasksWithLatestTurn,
+  messagesFor,
+  messagesForTurnPage,
   newTaskId,
   newTaskMessageId,
   nextQueuedMessage,
@@ -334,6 +337,25 @@ describe("native message delivery claims", () => {
       delivery_uncertain: 1,
     });
     expect(nextQueuedMessage(task.id)?.id).toBe(steered);
+  });
+});
+
+describe("message queue order", () => {
+  test("a clock stepped back between two sends does not reorder the queue", () => {
+    const task = makeTask();
+    const first = newTaskMessageId();
+    const second = newTaskMessageId();
+    createTextMessage(task.id, first, "first");
+    createTextMessage(task.id, second, "second");
+    // The host clock jumped back an hour before the second send was stamped.
+    db.run(`UPDATE task_messages SET created_at = ? WHERE id = ?`, ["2000-01-01T01:00:00.000Z", first]);
+    db.run(`UPDATE task_messages SET created_at = ? WHERE id = ?`, ["2000-01-01T00:00:00.000Z", second]);
+
+    expect(nextQueuedMessage(task.id)?.id).toBe(first);
+    expect(isQueueHead(first, task.id)).toBe(true);
+    expect(isQueueHead(second, task.id)).toBe(false);
+    expect(messagesFor(task.id).map((message) => message.id)).toEqual([first, second]);
+    expect(messagesForTurnPage(task.id, null, null, true).map((message) => message.id)).toEqual([first, second]);
   });
 });
 

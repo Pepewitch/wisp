@@ -148,9 +148,17 @@ export function getTaskMessage(id: string): TaskMessage | null {
   return (db.query(`SELECT * FROM task_messages WHERE id = ?`).get(id) as TaskMessage | null) ?? null;
 }
 
+/**
+ * Admission order, never the wall clock: `source_seq` is taken from the task's
+ * counter when the input is admitted, while `created_at` follows the host
+ * clock, which an NTP step or a VM resume can move backwards between two
+ * sends. rowid breaks a tie for a row from before the counter existed.
+ */
+const ADMISSION_ORDER = "source_seq ASC, rowid ASC";
+
 export function messagesFor(taskId: string): TaskMessage[] {
   return db
-    .query(`SELECT * FROM task_messages WHERE task_id = ? ORDER BY created_at ASC, rowid ASC`)
+    .query(`SELECT * FROM task_messages WHERE task_id = ? ORDER BY ${ADMISSION_ORDER}`)
     .all(taskId) as TaskMessage[];
 }
 
@@ -187,7 +195,7 @@ export function messagesForTurnPage(
   const unique = new Map<string, OrderedMessage>();
   for (const message of [...page, ...pending]) unique.set(message.id, message);
   return [...unique.values()]
-    .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.page_rowid - b.page_rowid)
+    .sort((a, b) => (a.source_seq ?? 0) - (b.source_seq ?? 0) || a.page_rowid - b.page_rowid)
     .map(({ page_rowid: _pageRowId, ...message }) => message);
 }
 
@@ -196,7 +204,7 @@ export function messagesForTurnPage(
  * lets anything sent after it without the hold go first. Waiting was the
  * sender's point; a later message that did not ask to wait should not.
  */
-const QUEUE_ORDER = "deferred ASC, created_at ASC, rowid ASC";
+const QUEUE_ORDER = `deferred ASC, ${ADMISSION_ORDER}`;
 
 export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskMessage | null {
   return (
@@ -269,7 +277,7 @@ export function claimTaskMessageForSteering(id: string, taskId: string, turnN: n
 /** The FIFO head for (task, id), counting rows already claimed by an admission in flight. */
 const QUEUE_HEAD = `SELECT queued.id FROM task_messages AS queued
   WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
-  ORDER BY queued.deferred ASC, queued.created_at ASC, queued.rowid ASC LIMIT 1`;
+  ORDER BY queued.deferred ASC, queued.source_seq ASC, queued.rowid ASC LIMIT 1`;
 
 /** Whether this queued message is the one the next turn would start. */
 export function isQueueHead(id: string, taskId: string): boolean {
