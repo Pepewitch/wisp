@@ -27,7 +27,7 @@ describe("build identity", () => {
   test("version inspection does not initialize a read-only home", () => {
     const home = mkdtempSync(join(tmpdir(), "wisp-version-home-"));
     chmodSync(home, 0o500);
-    const env = { ...process.env, HOME: home };
+    const env: Record<string, string | undefined> = { ...process.env, HOME: home };
     delete env.WISP_HOME;
     // Production startup, not a test process — see the note in init.test.ts.
     delete env.NODE_ENV;

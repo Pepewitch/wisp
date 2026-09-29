@@ -870,7 +870,7 @@ describe("parseOutput model capture (P5b)", () => {
 });
 
 describe("validateAdapters (a prior audit)", () => {
-  const validNew = {
+  const validNew: AdapterDef = {
     bin: "fake",
     exec: ["run"],
     parse: { format: "json", result: "result", session: "session_id" },

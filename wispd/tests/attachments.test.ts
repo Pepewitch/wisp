@@ -285,7 +285,7 @@ describe("decodeAttachments", () => {
 
   test("happy path: decoded bytes, sniffed mediaType, original name", () => {
     const out = decodeAttachments("codex", codex, [item("red.png", PNG), item("shot.jpg", JPEG)]);
-    expect(out.map((a) => [a.name, a.mediaType, a.data.length])).toEqual([
+    expect(out.map((a) => [a.name, a.mediaType, "data" in a ? a.data.length : null])).toEqual([
       ["red.png", "image/png", 320],
       ["shot.jpg", "image/jpeg", 32],
     ]);

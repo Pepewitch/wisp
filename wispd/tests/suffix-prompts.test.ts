@@ -74,7 +74,7 @@ describe("daemon-wide suffix prompt storage", () => {
     const first = createSuffixPrompt("Review", "First");
     const second = createSuffixPrompt("Audit", "Second");
 
-    const updated = updateSuffixPrompt(first.id, "  Deep review ", " Check everything twice. ");
+    const updated = updateSuffixPrompt(first.id, "  Deep review ", " Check everything twice. ")!;
     expect(updated).toEqual({
       id: first.id,
       createdAt: first.createdAt,

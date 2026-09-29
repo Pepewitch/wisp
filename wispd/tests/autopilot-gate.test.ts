@@ -11,8 +11,9 @@ const NOW = Date.parse("2026-09-23T12:00:00Z");
 function check(name: string, conclusion: string | null, over: Partial<PrCheck> = {}): PrCheck {
   return { name, status: conclusion === null ? "IN_PROGRESS" : "COMPLETED", conclusion, required: false, url: "", ...over };
 }
+let reviewSeq = 0;
 function review(over: Partial<PrReview>): PrReview {
-  return { author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "", commit: HEAD, submittedAt: "2026-09-23T11:00:00Z", ...over };
+  return { id: `PRR_${++reviewSeq}`, author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "", commit: HEAD, submittedAt: "2026-09-23T11:00:00Z", editedAt: null, url: "", ...over };
 }
 function pr(over: Partial<PrSnapshot> = {}): PrSnapshot {
   return {

@@ -11,7 +11,7 @@ describe("wisp init", () => {
     const initialPort = reserve.port;
     reserve.stop(true);
     const run = (port = initialPort) => {
-      const env = { ...process.env, HOME: home };
+      const env: Record<string, string | undefined> = { ...process.env, HOME: home };
       delete env.WISP_HOME;
       // This child IS production startup, so it must not claim to be a test:
       // config.ts refuses an unset WISP_HOME under NODE_ENV=test.

@@ -450,7 +450,7 @@ describe("image turns (S3, spike ts7efd)", () => {
       const envelope = JSON.parse(lines[2]!);
       expect(envelope.type).toBe("user");
       expect(envelope.message.role).toBe("user");
-      const content = envelope.message.content as { type: string; source?: { data: string; media_type: string }; text?: string }[];
+      const content = envelope.message.content as { type: string; source?: { type: string; data: string; media_type: string }; text?: string }[];
       expect(content.map((c) => c.type)).toEqual(["image", "image", "text"]); // base64 blocks before the text block
       expect(content[0]!.source).toEqual({ type: "base64", media_type: "image/png", data: PNG.toString("base64") });
       expect(content[1]!.source).toEqual({ type: "base64", media_type: "image/jpeg", data: JPG.toString("base64") });

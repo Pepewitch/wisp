@@ -84,7 +84,19 @@ async function api(base: string, path: string, method = "GET", body?: unknown): 
   return fetch(`${base}${path}`, init);
 }
 
-async function json<T>(res: Response): Promise<T> {
+/** One `/api/repos` row: the project plus the hooks the settings modal edits. */
+interface RepoRow {
+  path: string;
+  name: string | null;
+  exists: boolean;
+  setupScript: string;
+  archiveScript: string;
+  copyFiles: string[];
+  baseBranch: string;
+  configured: boolean;
+}
+
+async function json<T = unknown>(res: Response): Promise<NoInfer<T>> {
   return (await res.json()) as T;
 }
 
@@ -896,7 +908,7 @@ describe("daemon API contracts", () => {
 
     const repos = await api(base, "/api/repos");
     expect(repos.status).toBe(200);
-    const repoRows = await json<{ repos: Array<{ path: string; name: string | null; exists: boolean }> }>(repos);
+    const repoRows = await json<{ repos: RepoRow[] }>(repos);
     // every row carries its project config; a configured repo with no hooks
     // set reports them empty, and a task-history-only repo is `configured: false`
     expect(repoRows.repos.find((row) => row.path === configured)).toEqual({

@@ -17,7 +17,7 @@ import { db, getTask, setTaskFields, transition } from "../src/store";
 import { taskPreambleLines, wispSection } from "../src/turn-input";
 import type { Task } from "../src/types";
 import { pauseTaskWorkflows, recordWorkflow } from "../src/workflows/store";
-import type { AutopilotHistoryEntry } from "../../shared/autopilot";
+import type { AutopilotHistoryEntry, AutopilotStatus } from "../../shared/autopilot";
 import { HEAD, START, forgetTasks, doneTask, snapshot, pull, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -988,14 +988,18 @@ describe("API and CLI", () => {
   });
 
   test("wisp pr prints one line and drives the same route", async () => {
-    expect(formatAutopilot({ autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", updatedAt: null }))
+    const status = (over: Partial<AutopilotStatus>): AutopilotStatus => ({
+      autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "pr", by: "auto-merge",
+      mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null, ...over,
+    });
+    expect(formatAutopilot(status({ autoMerge: true, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)" })))
       .toBe("auto-merge: on · PR #7 · waiting · Waiting for checks (2 running)");
-    expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: 7, state: "merged", reason: "Merged by Wisp", updatedAt: null }))
+    expect(formatAutopilot(status({ pr: 7, state: "merged", reason: "Merged by Wisp" })))
       .toBe("auto-merge: done · PR #7 · Merged by Wisp");
     // off names both switches, and a plain switch-off adds nothing
-    expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: null, state: "off", reason: "Auto-merge off", updatedAt: null } as never))
+    expect(formatAutopilot(status({ reason: "Auto-merge off" })))
       .toBe("auto-merge and auto-fix: off");
-    expect(formatAutopilot({ autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", updatedAt: null } as never))
+    expect(formatAutopilot(status({ pr: 7, reason: "Auto-merge off — #7 was closed" })))
       .toBe("auto-merge and auto-fix: off · PR #7 · Auto-merge off — #7 was closed");
     const calls: unknown[] = [];
     const api = async (...args: unknown[]) => { calls.push(args); return { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", updatedAt: null }; };

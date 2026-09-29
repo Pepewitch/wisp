@@ -247,6 +247,19 @@ describe("ids and slots", () => {
     setTaskFields(a.id, { archived: 1 });
     expect(freeSlot()).toBe(a.slot);
   });
+
+  test("setTaskFields refuses a key it cannot set instead of dropping it", () => {
+    const task = makeTask();
+    // Deliberately bad input: `state` is outside the settable list (state
+    // changes go through transition()), which the type already forbids.
+    expect(() => setTaskFields(task.id, { state: "done", title: "renamed" } as never)).toThrow(
+      "setTaskFields: not a settable task field: state",
+    );
+    // nothing was half-written
+    expect(getTask(task.id)).toMatchObject({ state: task.state, title: task.title });
+    setTaskFields(task.id, { title: "renamed" });
+    expect(getTask(task.id)?.title).toBe("renamed");
+  });
 });
 
 describe("native message delivery claims", () => {

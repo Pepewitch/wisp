@@ -22,7 +22,8 @@ import {
   PROBE_RPC_MAX_OUTPUT_BYTES,
   TaskProbeCache,
 } from "../src/probes";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields, type Task } from "../src/store";
+import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
+import type { Task } from "../src/types";
 import type { SpawnResult } from "../src/doctor";
 import { DEFAULT_MAX_ERROR_BYTES } from "../src/subprocess";
 
@@ -368,10 +369,10 @@ describe("TaskProbeCache", () => {
 
 describe("production probe process bounds", () => {
   test("one-shot probes stop on output floods", async () => {
-    const error = await bunProbeSpawn(
+    const error = await Promise.resolve(bunProbeSpawn(
       ["bash", "-c", `head -c ${PROBE_MAX_BYTES + 1} /dev/zero | tr '\\0' x`],
       {},
-    ).catch(message);
+    )).catch(message);
     expect(error).toContain("output budget");
   });
 
@@ -397,11 +398,11 @@ describe("production probe process bounds", () => {
   test("RPC cancellation preserves a caller's timeout error", async () => {
     const controller = new AbortController();
     const rpc = bunRpcFactory(["bash", "-c", "sleep 60"], { envelope: "plain", signal: controller.signal });
-    const pending = rpc.call("probe", {}).catch((error) => error as ProbeError);
+    const pending = rpc.call("probe", {}).then(() => null, (error: unknown) => error);
     controller.abort(new ProbeError("probe timed out", 504));
     const error = await pending;
-    expect(error.message).toBe("probe timed out");
-    expect(error.status).toBe(504);
+    expect(error).toBeInstanceOf(ProbeError);
+    expect(error).toMatchObject({ message: "probe timed out", status: 504 });
   });
 
   test("RPC EOF closes the session instead of leaving later calls pending", async () => {
@@ -425,7 +426,7 @@ describe("production probe process bounds", () => {
       ].join("\n")],
       { envelope: "plain" },
     );
-    const error = await rpc.call("probe", {}).catch(message);
+    const error = await rpc.call("probe", {}).then(() => "the call resolved", message);
     expect(error).toContain("output budget");
     expect(error.length).toBeLessThan(500);
     rpc.close();

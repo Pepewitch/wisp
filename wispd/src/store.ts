@@ -130,7 +130,13 @@ const TASK_FIELDS = [
 ] as const;
 
 export function setTaskFields(id: string, fields: Partial<Pick<Task, (typeof TASK_FIELDS)[number]>>): void {
-  const keys = Object.keys(fields).filter((k) => (TASK_FIELDS as readonly string[]).includes(k));
+  const keys = Object.keys(fields);
+  // Refuse rather than drop: a silently ignored key (a fixture passing
+  // `state`, say) leaves the row in a state its caller does not know about.
+  const unsettable = keys.filter((k) => !(TASK_FIELDS as readonly string[]).includes(k));
+  if (unsettable.length > 0) {
+    throw new Error(`setTaskFields: not a settable task field: ${unsettable.join(", ")} (state changes go through transition())`);
+  }
   if (keys.length === 0) return;
   const sets = keys.map((k) => `${k} = ?`).join(", ");
   const vals = keys.map((k) => (fields as Record<string, unknown>)[k]);

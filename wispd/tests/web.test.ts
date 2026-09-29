@@ -451,7 +451,16 @@ describe("S1 create-modal and project APIs", () => {
     expect(((await update.json()) as { name: string }).name).toBe("Renamed");
 
     const listed = (await (await fetch(`${base}/api/repos`, { headers: { authorization: `Bearer ${token}` } })).json()) as {
-      repos: { path: string; name: string | null; exists: boolean }[];
+      repos: {
+        path: string;
+        name: string | null;
+        exists: boolean;
+        setupScript: string;
+        archiveScript: string;
+        copyFiles: string[];
+        baseBranch: string;
+        configured: boolean;
+      }[];
     };
     const row = listed.repos.find((repo) => repo.path === first);
     // the row now carries the project's hooks; unset ones come back empty

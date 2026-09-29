@@ -45,7 +45,7 @@ async function startDaemon(): Promise<void> {
     modelProbeTimeoutMs: 100,
   });
   // the CLI reads the config file, not the booted daemon, so it needs the real port
-  writeConfig(server.port);
+  writeConfig(server.port!);
 }
 
 afterEach(async () => {

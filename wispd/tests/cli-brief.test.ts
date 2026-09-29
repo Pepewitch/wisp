@@ -79,7 +79,7 @@ describe("wisp brief help needs no home, daemon or credentials", () => {
       const result = Bun.spawnSync({
         cmd: ["sh", "wispd/scripts/wisp-dev", ...args],
         cwd: ROOT,
-        env: { ...process.env, WISP_DEV_HOME: dev, WISP_DEV_PORT: port, NODE_ENV: undefined, WISP_TASK_ID: undefined, WISP_BRIEF_RUN: undefined } as Record<string, string>,
+        env: { ...process.env, WISP_DEV_HOME: dev, WISP_DEV_PORT: port, NODE_ENV: undefined, WISP_TASK_ID: undefined, WISP_BRIEF_RUN: undefined },
         stdout: "pipe",
         stderr: "pipe",
       });

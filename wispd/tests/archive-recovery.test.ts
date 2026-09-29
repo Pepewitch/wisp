@@ -7,7 +7,7 @@ import { cleanupProgress, recoverCleanupProgress, updateProgress } from "../src/
 import { resumeArchiveCleanups } from "../src/archive-worker";
 import { route } from "../src/daemon";
 import { loadConfig } from "../src/config";
-import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
+import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { createWorktree } from "../src/worktree";
 import { runBounded } from "../src/subprocess";
 
@@ -26,7 +26,8 @@ async function fixture(script?: string, badRepo = false) {
   const cfg = loadConfig();
   const wt = await createWorktree(repo, id, cfg);
   createTask({ id, title: "Cleanup recovery", repo_path: repo, harness: "fake", model: null, slot: freeSlot() });
-  setTaskFields(id, { state: "done", worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
+  setTaskFields(id, { worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
+  transition(id, "done");
   archiveTaskWithCleanup(id, null, { task_id: id, stage: "stop-turn", force: true, stop_turn: false,
     removable: true, repo_path: badRepo ? mkdtempSync(join(tmpdir(), "wisp-no-repo-")) : repo,
     worktree_path: wt.path, branch: wt.branch, archive_script: script?.replaceAll("TASKID", id) ?? null, timeout_minutes: 1 });

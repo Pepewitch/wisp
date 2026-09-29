@@ -1,19 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CONFIG_PATH } from "../src/config";
 import { parseTerminalSize, serve } from "../src/daemon";
 import { subscribe } from "../src/events";
 import {
   closeShell,
-  createShell,
+  createShell as createShellTab,
   DEFAULT_PTY_SIZE,
   DISPLACED_MESSAGE,
   killAll,
   killForTask,
   listShells,
-  openSession,
+  openSession as openShellSession,
   loginShellArgv,
   renameShell,
   resolveLoginShell,
@@ -27,9 +27,17 @@ import {
 } from "../src/terminal";
 import { MAX_SHELL_TITLE_LENGTH, noteShell } from "../src/terminal-tabs";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields } from "../src/store";
+import { HERMETIC_SHELL, useHermeticHome } from "./helpers/hermetic-shell";
+import { openWebSocket } from "./helpers/websocket";
 
 const token = "terminal-test-token";
 let server: Awaited<ReturnType<typeof serve>> | null = null;
+
+useHermeticHome();
+/** A session opened directly runs the hermetic shell, as one the daemon opens does. */
+const openSession = (taskId: string, shellId: number, worktree: string) =>
+  openShellSession(taskId, shellId, worktree, DEFAULT_PTY_SIZE, HERMETIC_SHELL);
+const createShell = (taskId: string) => createShellTab(taskId, HERMETIC_SHELL);
 
 function git(cwd: string, args: string[]): string {
   const result = Bun.spawnSync({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
@@ -72,7 +80,7 @@ afterEach(async () => {
  * suite mostly setup — the interesting part of each test is what it does to
  * the shell afterwards.
  */
-function terminalFixture(label: string, terminalShell?: string): { task: ReturnType<typeof createTask>; worktree: string } {
+function terminalFixture(label: string, terminalShell = HERMETIC_SHELL): { task: ReturnType<typeof createTask>; worktree: string } {
   writeFileSync(
     CONFIG_PATH,
     JSON.stringify({
@@ -81,7 +89,7 @@ function terminalFixture(label: string, terminalShell?: string): { task: ReturnT
       token,
       webhooks: [],
       stuckMinutes: 10,
-      ...(terminalShell ? { terminalShell } : {}),
+      terminalShell,
       logMaxBytes: 5_000_000,
       setupTimeoutMinutes: 10,
       envAllowlist: {},
@@ -120,9 +128,7 @@ describe("embedded web terminal", () => {
     const { task, worktree } = terminalFixture("attach");
 
     server = await serve({ port: 0 });
-    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
+    const ws = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, { authorization: `Bearer ${token}` });
     const messages: Array<Record<string, unknown>> = [];
     let sentInput = false;
     let resolveOutput!: () => void;
@@ -176,9 +182,7 @@ describe("embedded web terminal", () => {
       const { task, worktree } = terminalFixture("respawn");
 
       server = await serve({ port: 0 });
-      const first = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
+      const first = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, { authorization: `Bearer ${token}` });
       const firstHello = new Promise<void>((resolve, reject) => {
         first.onerror = () => reject(new Error("first terminal websocket error"));
         first.onmessage = (event) => {
@@ -190,9 +194,7 @@ describe("embedded web terminal", () => {
       await killForTask(task.id);
       first.close();
 
-      const second = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
+      const second = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, { authorization: `Bearer ${token}` });
       const reattachedOutput = new Promise<void>((resolve, reject) => {
         second.onerror = () => reject(new Error("reattached terminal websocket error"));
         second.onmessage = (event) => {
@@ -222,7 +224,7 @@ describe("embedded web terminal", () => {
       /** Attach, run `input` if given, and resolve with the hello frame's replay. */
       const attach = (shell: number, input?: string, awaitOutput?: string): Promise<string> =>
         new Promise<string>((resolve, reject) => {
-          const ws = new WebSocket(url(shell), { headers: { authorization: `Bearer ${token}` } });
+          const ws = openWebSocket(url(shell), { authorization: `Bearer ${token}` });
           let replay = "";
           ws.onerror = () => reject(new Error(`terminal websocket error on shell ${shell}`));
           ws.onmessage = (event) => {
@@ -273,7 +275,7 @@ describe("embedded web terminal", () => {
       const url = `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0`;
 
       const errors: string[] = [];
-      const first = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+      const first = openWebSocket(url, { authorization: `Bearer ${token}` });
       const firstHello = new Promise<void>((resolve, reject) => {
         first.onerror = () => reject(new Error("first terminal websocket error"));
         first.onmessage = (event) => {
@@ -293,7 +295,7 @@ describe("embedded web terminal", () => {
         }, 25);
       });
 
-      const second = new WebSocket(url, { headers: { authorization: `Bearer ${token}` } });
+      const second = openWebSocket(url, { authorization: `Bearer ${token}` });
       const secondHello = new Promise<void>((resolve, reject) => {
         second.onerror = () => reject(new Error("second terminal websocket error"));
         second.onmessage = (event) => {
@@ -324,10 +326,7 @@ describe("embedded web terminal", () => {
       const { task } = terminalFixture("size");
 
       server = await serve({ port: 0 });
-      const ws = new WebSocket(
-        `ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=58&rows=9`,
-        { headers: { authorization: `Bearer ${token}` } },
-      );
+      const ws = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=58&rows=9`, { authorization: `Bearer ${token}` });
       let seen = "";
       let resolveSize!: () => void;
       let rejectSize!: (error: Error) => void;
@@ -361,9 +360,7 @@ describe("embedded web terminal", () => {
     const { task } = terminalFixture("configured-shell", shell);
 
     server = await serve({ port: 0 });
-    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, {
-      headers: { authorization: `Bearer ${token}` },
-    });
+    const ws = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal`, { authorization: `Bearer ${token}` });
     let seen = "";
     const started = new Promise<void>((resolve, reject) => {
       ws.onerror = () => reject(new Error("configured terminal websocket error"));
@@ -387,12 +384,10 @@ describe("embedded web terminal", () => {
       // script(1) that did not matter, because script does not; now the shell
       // is the child, so terminating it with SIGTERM would make every archive
       // and every daemon shutdown sit through the full grace period first.
-      const { task } = terminalFixture("kill");
+      const { task, worktree } = terminalFixture("kill");
 
       server = await serve({ port: 0 });
-      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=80&rows=24`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
+      const ws = openWebSocket(`ws://127.0.0.1:${server.port}/api/tasks/${task.id}/terminal?shell=0&cols=80&rows=24`, { authorization: `Bearer ${token}` });
       // Kill it from an interactive PROMPT, not from a shell still starting
       // up: a shell that has finished initialising is the one that has its
       // signal handling in place, and it is the state a real pane is in.
@@ -419,7 +414,9 @@ describe("embedded web terminal", () => {
         }
       };
       await waitFor(ready, 10_000);
-      await Bun.sleep(500); // let `sleep 30` become the foreground job
+      // the daemon's own live session: asking for it again hands back the same one
+      const session = openSession(task.id, 0, worktree);
+      await until(() => session.foregroundProgram() === "sleep");
 
       const killedAt = Date.now();
       await killForTask(task.id);
@@ -681,6 +678,21 @@ async function until(check: () => boolean, ms = 10_000): Promise<void> {
     await Bun.sleep(25);
   }
 }
+
+describe("the shells these tests spawn", () => {
+  test("are the hermetic shell, with a HOME that holds no dotfiles", async () => {
+    const { task, worktree } = terminalFixture("hermetic");
+    const home = process.env.HOME ?? "";
+    expect(basename(home)).toStartWith("wisp-terminal-home-");
+    expect(createShell(task.id).shell).toBe(basename(HERMETIC_SHELL));
+    const session = openSession(task.id, 0, worktree);
+    const client = recordingClient();
+    session.attach(client);
+    await session.write(client, 'echo "home=$HOME"\n');
+    await until(() => client.output().includes(`home=${home}`));
+    await killAll();
+  }, 30_000);
+});
 
 describe("shell tabs", () => {
   async function api(path: string, init: RequestInit = {}): Promise<Response> {

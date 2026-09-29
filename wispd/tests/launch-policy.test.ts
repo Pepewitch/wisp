@@ -9,9 +9,9 @@
  * that only asserted a 201).
  */
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import {
@@ -98,6 +98,46 @@ describe("the default test environment fails closed on real launches", () => {
   test("the checkout's own repository hooks are refused", () => {
     expect(() => assertWorkingDirectoryAllowed(join(import.meta.dir, ".."), "repo hook")).toThrow(LaunchBlocked);
   });
+});
+
+describe("the preload's per-run temporary root", () => {
+  test("fixtures and the home share one root that the policy and the git ceiling name", () => {
+    const root = tmpdir();
+    expect(basename(root)).toStartWith("wisp-run-");
+    expect(dirname(process.env.WISP_HOME!)).toBe(root);
+    expect(launchPolicyDescription()).toContain(root);
+    expect((process.env.GIT_CEILING_DIRECTORIES ?? "").split(":")).toContain(root);
+  });
+
+  test("everything a run leaves in its temporary root is removed when it exits", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-run-probe-"));
+    const probe = join(dir, "leak.test.ts");
+    writeFileSync(
+      probe,
+      [
+        `import { test } from "bun:test";`,
+        `import { mkdtempSync } from "node:fs";`,
+        `import { tmpdir } from "node:os";`,
+        `import { join } from "node:path";`,
+        `test("leaves a fixture behind", () => {`,
+        `  console.log("FIXTURE=" + mkdtempSync(join(tmpdir(), "wisp-leak-")));`,
+        `  console.log("HOME=" + process.env.WISP_HOME);`,
+        `});`,
+      ].join("\n"),
+    );
+    const env: Record<string, string | undefined> = { ...process.env };
+    delete env.WISP_KEEP_TEST_TMP;
+    // this package's bunfig preloads setup.ts, as for any run of the suite
+    const run = Bun.spawnSync({ cmd: [process.execPath, "test", probe], cwd: join(import.meta.dir, ".."), env, stdout: "pipe", stderr: "pipe" });
+    const output = run.stdout.toString() + run.stderr.toString();
+    expect(run.exitCode, output).toBe(0);
+    const fixture = /FIXTURE=(\S+)/.exec(output)?.[1];
+    const home = /HOME=(\S+)/.exec(output)?.[1];
+    expect(fixture, output).toBeDefined();
+    expect(home, output).toBeDefined();
+    expect(existsSync(fixture!)).toBe(false);
+    expect(existsSync(home!)).toBe(false);
+  }, 30_000);
 });
 
 describe("fixtures-only launch policy", () => {

@@ -410,7 +410,7 @@ describe("auto-fix for review feedback", () => {
     // a turn from before arming: its "comment" is the agent's own, unmarked
     db.run("INSERT INTO turns(task_id, n, prompt, status, log_file, started_at, ended_at) VALUES (?, 1, 'x', 'done', '/dev/null', ?, ?)",
       [task.id, "2026-09-23T12:00:00Z", "2026-09-23T12:05:00Z"]);
-    const theirs = { id: "IC_1", author: "owner", association: "OWNER", bot: false, body: "I opened this PR to fix the retry loop.", createdAt: "2026-09-23T12:02:00Z", editedAt: null, url: "https://gh/c/1" };
+    const theirs = { id: "IC_1", author: "owner", association: "OWNER", bot: false, body: "I opened this PR to fix the retry loop.", createdAt: "2026-09-23T12:02:00Z", editedAt: null, url: "https://gh/c/1", hidden: false };
     const mine = { ...theirs, id: "IC_2", body: "Please also cover the zero case.", createdAt: "2026-09-23T12:07:00Z" };
     const { github } = fakeGitHub({ pr: snapshot({ comments: [theirs, mine] }) });
     const rt = runtime(github, clock, adapters);

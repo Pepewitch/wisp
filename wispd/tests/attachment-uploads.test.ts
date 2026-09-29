@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { BUILTIN_ADAPTERS } from "../src/adapters";
+import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import {
   ATTACHMENT_UPLOAD_TTL_MS,
   discardAttachmentUpload,
@@ -34,6 +34,14 @@ const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.alloc(312, 7),
 ]);
+
+/** An adapter with no image capability, so decoding refuses the upload. */
+const blindBash: AdapterDef = {
+  bin: "bash",
+  exec: ["-c", "true"],
+  parse: { format: "text" },
+  attach: null,
+};
 
 function uploadRequest(bytes: BlobPart, name = "shot.png"): { request: Request; url: URL } {
   const url = new URL(`http://wisp.test/api/attachments?name=${encodeURIComponent(name)}`);
@@ -177,7 +185,7 @@ describe("raw attachment upload", () => {
   test("a validation refusal releases every upload already claimed by the request", async () => {
     const { body } = await upload(PNG);
     expect(() =>
-      decodeAttachments("blind", { argv: ["bash"] }, [
+      decodeAttachments("blind", blindBash, [
         { name: "shot.png", uploadId: body.uploadId },
       ]),
     ).toThrow(AttachError);
