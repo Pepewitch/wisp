@@ -105,7 +105,7 @@ export function BriefPane({
 }
 
 /** The on/off switch and the one line saying what it does. The whole row is the hit target. */
-function BriefSwitch({
+export function BriefSwitch({
   enabled,
   disabled,
   note,

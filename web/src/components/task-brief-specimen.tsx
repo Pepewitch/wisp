@@ -1,8 +1,8 @@
 import { type ReactNode } from "react"
 
 import { Section } from "@/components/gallery-chrome"
-import { PaneHeader, SwitchTrack, Tab } from "@/components/primitives"
-import { BriefBody } from "@/components/task-brief"
+import { PaneHeader, Tab } from "@/components/primitives"
+import { BriefBody, BriefSwitch } from "@/components/task-brief"
 import { briefBand, type BriefView } from "@/lib/brief"
 
 /*
@@ -97,13 +97,8 @@ function Panel({ children, height, touch = false, note }: { children: ReactNode;
           <Tab role="tab" size={touch ? "lg" : "sm"}>Workflows</Tab>
         </div>
       </PaneHeader>
-      <div className="border-b border-border">
-        <div className="flex items-center justify-between gap-3 px-3.5 py-2">
-          <span className="text-[12.5px] font-medium text-foreground">Brief on</span>
-          <SwitchTrack checked />
-        </div>
-        {note && <p className="px-3.5 pt-3 pb-3.5 text-[11.5px] leading-relaxed text-muted-foreground">{note}</p>}
-      </div>
+      {/* the REAL switch row, with fixed props — not a re-implementation */}
+      <BriefSwitch enabled disabled={false} note={note ?? null} error={null} touch={touch} onChange={() => {}} />
       <div className="scroll-slim @container min-h-0 flex-1 overflow-y-auto">{children}</div>
     </div>
   )
