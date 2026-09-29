@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { dlopen, FFIType } from "bun:ffi";
-import { closeSync, fstatSync, open, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, open, openSync, promises as fsp, readFileSync, rmSync, writeSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,7 +12,10 @@ import {
   readPty,
   resizePty,
   runPtyExec,
+  startPtyOutput,
+  stopPtyOutput,
   writePty,
+  type PtyHandle,
   type PtySize,
 } from "../src/pty";
 
@@ -28,6 +31,7 @@ interface Harness {
   read(): string;
   send(data: string): Promise<void>;
   resize(size: PtySize): void;
+  handle: PtyHandle;
   pid: number;
   stop(): Promise<void>;
 }
@@ -43,15 +47,17 @@ function start(argv: string[], size: PtySize): Harness {
     stderr: "pipe",
   });
   let output = "";
+  const decoder = new TextDecoder();
   const reader = readPty(
     handle.masterFd,
-    (chunk) => (output += chunk.toString("utf8")),
+    (chunk) => (output += decoder.decode(chunk, { stream: true })),
     () => undefined,
   );
   return {
     read: () => output,
     send: (data) => writePty(handle, data),
     resize: (next) => resizePty(handle, next),
+    handle,
     pid: child.pid,
     stop: async () => {
       try {
@@ -60,7 +66,7 @@ function start(argv: string[], size: PtySize): Harness {
         // already gone
       }
       await child.exited;
-      reader.destroy();
+      await reader.close();
       closePty(handle);
     },
   };
@@ -92,13 +98,6 @@ function closesOnExec(fd: number): boolean {
   return (flags & 1) !== 0;
 }
 
-/** The number the next descriptor this process opens will get. */
-function lowestFreeFd(): number {
-  const fd = openSync("/dev/null", "r");
-  closeSync(fd);
-  return fd;
-}
-
 /**
  * Hold every worker of the runtime's fs pool inside open(2) of a FIFO nobody
  * writes, so an async fs call made now reaches the kernel only after
@@ -128,6 +127,18 @@ async function parkFsWorkers(): Promise<{ release(): Promise<void> }> {
         }
       })()),
   };
+}
+
+/** Put the pty in raw mode with no echo, so nothing consumes or answers what is written to it. */
+function rawNoEcho(handle: PtyHandle): void {
+  const flag = process.platform === "darwin" ? "-f" : "-F";
+  const result = Bun.spawnSync(["stty", flag, handle.slavePath, "raw", "-echo"], { stderr: "pipe" });
+  if (result.exitCode !== 0) throw new Error(`pty test: stty raw failed: ${result.stderr.toString().trim()}`);
+}
+
+/** `promise`'s value, or "timeout" once `ms` have passed. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  return Promise.race([promise, Bun.sleep(ms).then(() => "timeout" as const)]);
 }
 
 const sh = "/bin/sh";
@@ -220,19 +231,91 @@ describe("pty", () => {
   });
 
   test("tearing down the reader never closes a descriptor the handle owns", async () => {
-    // A read stream's destroy() closes its fd even with autoClose: false, and
-    // does it asynchronously. Reading the handle's own master meant closePty
-    // closed that number a second time, landing on whatever had been opened
-    // in between (a spawn pipe, a socket, the next shell's master).
+    // The reader has its own duplicate and releases exactly that. Reading the
+    // handle's own master meant closePty closed that number a second time,
+    // landing on whatever had been opened in between (a spawn pipe, a
+    // socket, the next shell's master).
     const handle = openPty({ cols: 80, rows: 24 });
     const reader = readPty(handle.masterFd, () => undefined, () => undefined);
-    const closed = new Promise<void>((resolve) => reader.once("close", () => resolve()));
-    reader.destroy();
-    await Promise.race([closed, Bun.sleep(2_000)]);
-    expect(reader.closed).toBe(true);
+    expect(reader.fd).not.toBe(handle.masterFd);
+    expect(await within(reader.close(), 2_000)).not.toBe("timeout");
+    expect(() => fstatSync(reader.fd)).toThrow(); // its own duplicate is released
     expect(() => fstatSync(handle.masterFd)).not.toThrow();
     expect(() => resizePty(handle, { cols: 100, rows: 30 })).not.toThrow();
     closePty(handle);
+  });
+
+  test(
+    "idle ptys hold no file I/O worker, and every one still carries data both ways",
+    { timeout: 20_000 },
+    async () => {
+      // A reader parked in read(2) on a worker thread held that worker for as
+      // long as its shell was quiet. With about one worker per CPU, that many
+      // idle terminals stopped every async fs call in the daemon (a turn's
+      // finalization, log streams, archive) and every keystroke with them.
+      // No shell is needed to be idle: the daemon's own slave descriptor
+      // keeps each pty open, exactly as it does for a shell at its prompt.
+      const count = Math.max(16, availableParallelism() * 2);
+      const ptys: { handle: PtyHandle; output(): string; close(): Promise<void> }[] = [];
+      try {
+        for (let index = 0; index < count; index++) {
+          const handle = openPty({ cols: 80, rows: 24 });
+          let output = "";
+          const reader = readPty(handle.masterFd, (chunk) => (output += Buffer.from(chunk).toString("utf8")), () => undefined);
+          ptys.push({ handle, output: () => output, close: () => reader.close() });
+        }
+        await Bun.sleep(200); // every reader is waiting by now
+
+        expect(await within(fsp.stat(tmpdir()), 3_000)).not.toBe("timeout");
+        expect(await within(fsp.readFile(import.meta.path, "utf8"), 3_000)).not.toBe("timeout");
+
+        // Keystrokes reach every pty, and its line discipline's echo comes
+        // back through the reader; what a program prints on the slave does too.
+        const typed = Promise.all(ptys.map(({ handle }, index) => writePty(handle, `typed-${index}\n`)));
+        expect(await within(typed, 3_000)).not.toBe("timeout");
+        ptys.forEach(({ handle }, index) => writeSync(handle.slaveFd, `printed-${index}\n`));
+        const missing = (): number =>
+          ptys.filter(({ output }, index) => !output().includes(`typed-${index}`) || !output().includes(`printed-${index}`))
+            .length;
+        const deadline = Date.now() + 5_000;
+        while (missing() > 0 && Date.now() < deadline) await Bun.sleep(25);
+        expect(missing()).toBe(0);
+      } finally {
+        for (const pty of ptys) closePty(pty.handle);
+        await within(Promise.all(ptys.map((pty) => pty.close())), 3_000);
+      }
+    },
+  );
+
+  test("a pty needs no file I/O worker, even when every one is busy", { timeout: 20_000 }, async () => {
+    // The other half of the same failure: while the pool is taken, by idle
+    // shells or by anything else, typing and output must still flow.
+    const workers = await parkFsWorkers();
+    const harness = start([sh], { cols: 80, rows: 24 });
+    try {
+      expect(await within(harness.send("echo parked-$((6*7))\n"), 3_000)).not.toBe("timeout");
+      await waitFor(harness, /parked-42/);
+    } finally {
+      await workers.release();
+      await harness.stop();
+    }
+  });
+
+  test("a paste larger than the pty's buffer waits for room instead of failing", { timeout: 20_000 }, async () => {
+    // The master is non-blocking, so a paste bigger than the pty can hold
+    // meets EAGAIN part way through. The rest has to be offered again once
+    // the program reads, not dropped and not turned into an error.
+    const harness = start([sh, "-c", "stty raw -echo; echo PASTE_READY; head -c 262144 > /dev/null; echo PASTE_DONE"], {
+      cols: 80,
+      rows: 24,
+    });
+    try {
+      await waitFor(harness, /PASTE_READY/); // raw, so no line limit applies to the paste
+      await harness.send("x".repeat(262_144));
+      await waitFor(harness, /PASTE_DONE/);
+    } finally {
+      await harness.stop();
+    }
   });
 
   test("a write that outlives its pty stops instead of reaching a reused descriptor", async () => {
@@ -241,32 +324,59 @@ describe("pty", () => {
     await expect(writePty(handle, "late keystrokes")).rejects.toThrow(/after the pty was closed/);
   });
 
-  test("a write in flight when the pty closes cannot land on the number's next owner", async () => {
-    // fs.write makes its syscall later, on a worker thread, with the number it
-    // was handed. Parking the workers holds a write in that gap while the pty
-    // closes and its number goes to a file; a write handed `masterFd` itself
-    // put its bytes in that file.
-    const workers = await parkFsWorkers();
+  test("a write waiting for room when the pty closes cannot land on the number's next owner", async () => {
+    // A write the pty has no room for waits and is offered again later. By
+    // then the pty may be closed and its number handed to a file; the retry
+    // must stop at the closed handle rather than write into that file.
     const path = join(tmpdir(), `wisp-pty-late-write-${process.pid}`);
     let next = -1;
     try {
       const handle = openPty({ cols: 80, rows: 24 });
+      rawNoEcho(handle); // nothing reads, so the pty fills and stays full
       const released = handle.masterFd;
-      const own = lowestFreeFd(); // where the write's duplicate is about to go
-      // EIO is expected, since the pty has no slave by the time the write runs
-      const writing = writePty(handle, "late keystrokes").catch(() => undefined);
-      expect(closesOnExec(own)).toBe(true);
+      const writing = writePty(handle, Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(await within(writing, 100)).toBe("timeout"); // it is waiting for room
       closePty(handle);
       next = openSync(path, "w");
       expect(next).toBe(released); // the number really was handed on
-      await workers.release();
-      await writing;
+      await expect(writing).rejects.toThrow(/after the pty was closed/);
       expect(readFileSync(path, "utf8")).toBe("");
-      expect(() => fstatSync(own)).toThrow(); // and the write closed its duplicate
     } finally {
-      await workers.release();
       if (next >= 0) closeSync(next);
       rmSync(path, { force: true });
+    }
+  });
+
+  test("stopping a pty's output holds the shell until it is started again", { timeout: 20_000 }, async () => {
+    // How a client that cannot keep up is kept from having the shell's
+    // output queued for it without limit: the shell itself waits.
+    // Started by a file, not a keystroke: Darwin's default IXANY lets any
+    // typed character restart stopped output (the daemon stops it again on
+    // the next congested send), and this asserts the stop itself.
+    const go = join(tmpdir(), `wisp-pty-flow-go-${process.pid}`);
+    const done = join(tmpdir(), `wisp-pty-flow-done-${process.pid}`);
+    for (const path of [go, done]) rmSync(path, { force: true });
+    const flood = [
+      "echo FLOW_READY",
+      `while [ ! -e ${go} ]; do sleep 0.05; done`,
+      "head -c 2000000 /dev/zero | tr '\\0' Z",
+      `: > ${done}`,
+      "echo FLOW_DONE",
+    ].join("; ");
+    const harness = start([sh, "-c", flood], { cols: 80, rows: 24 });
+    try {
+      await waitFor(harness, /FLOW_READY/);
+      expect(stopPtyOutput(harness.handle)).toBe(true);
+      closeSync(openSync(go, "w"));
+      await Bun.sleep(1_000);
+      expect(existsSync(done)).toBe(false); // the flood is still waiting to be read
+      expect(harness.read().length).toBeLessThan(1_000_000);
+      expect(startPtyOutput(harness.handle)).toBe(true);
+      await waitFor(harness, /FLOW_DONE/);
+      expect(harness.read()).toContain("Z".repeat(2_000_000));
+    } finally {
+      await harness.stop();
+      for (const path of [go, done]) rmSync(path, { force: true });
     }
   });
 
@@ -275,14 +385,11 @@ describe("pty", () => {
     // after its session ended.
     const handle = openPty({ cols: 80, rows: 24 });
     const reader = readPty(handle.masterFd, () => undefined, () => undefined);
-    const closed = new Promise<void>((resolve) => reader.once("close", () => resolve()));
     try {
-      const readerFd = (reader as unknown as { fd: number }).fd;
-      for (const fd of [handle.masterFd, handle.slaveFd, readerFd]) expect(closesOnExec(fd)).toBe(true);
+      for (const fd of [handle.masterFd, handle.slaveFd, reader.fd]) expect(closesOnExec(fd)).toBe(true);
     } finally {
-      reader.destroy();
+      await within(reader.close(), 2_000);
       closePty(handle);
-      await Promise.race([closed, Bun.sleep(2_000)]);
     }
   });
 

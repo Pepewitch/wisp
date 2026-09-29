@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import type { ReadStream } from "node:fs";
 import { userInfo } from "node:os";
 import { basename } from "node:path";
 import {
@@ -12,8 +11,11 @@ import {
   ptyExecArgv,
   readPty,
   resizePty,
+  startPtyOutput,
+  stopPtyOutput,
   writePty,
   type PtyHandle,
+  type PtyReader,
   type PtySize,
 } from "./pty";
 import { taskEnv } from "./runner";
@@ -161,7 +163,18 @@ class TerminalSession {
   private readonly taskId: string;
   private readonly child: ShellProcess;
   private readonly handle: PtyHandle | null;
-  private readonly reader: ReadStream | null;
+  private readonly reader: PtyReader | null;
+  /**
+   * ONE decoder for the life of the pty, fed with `stream: true`. Reads end
+   * wherever the kernel's buffer did, not on character boundaries, so
+   * decoding each chunk on its own turned every multibyte character split
+   * across two reads (box drawing, CJK, emoji) into two U+FFFD — in the pane
+   * and in the screen a reattaching client is sent. `ignoreBOM` keeps a
+   * leading U+FEFF the shell printed, as the byte-for-byte decode did.
+   */
+  private readonly decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  /** The attached client the pty's output is suspended for; see `holdOutput`. */
+  private heldFor: TerminalClient | null = null;
   /** the daemon's model of the screen — what a reattaching client is sent */
   private readonly screen: TerminalScreen;
   private client: TerminalClient | null = null;
@@ -193,7 +206,10 @@ class TerminalSession {
     if (handle) {
       this.reader = readPty(
         handle.masterFd,
-        (chunk) => this.emitOutput(chunk.toString("utf8")),
+        (chunk) => {
+          const text = this.decoder.decode(chunk, { stream: true });
+          if (text) this.emitOutput(text);
+        },
         (error) => this.emitError(`terminal task ${taskId}: pty read failed: ${messageOf(error)}`),
       );
       // Anything the child half printed before it became the shell (a libc it
@@ -331,6 +347,8 @@ class TerminalSession {
     if (this.finished) throw new Error(`terminal task ${this.taskId}: shell has already exited`);
     const displaced = this.client;
     this.client = client;
+    // output held for a client that no longer receives it would stay held
+    if (displaced && displaced !== client) this.releaseOutput(displaced);
     if (displaced && displaced !== client && displaced.isOpen()) {
       displaced.sendError(DISPLACED_MESSAGE);
     }
@@ -339,6 +357,34 @@ class TerminalSession {
   detach(client: TerminalClient): void {
     if (this.client !== client) return;
     this.client = null;
+    this.releaseOutput(client);
+  }
+
+  /**
+   * The attached client is behind: its transport has queued output it has
+   * not taken yet. Suspend the shell's output until it catches up
+   * (`releaseOutput`) instead of reading everything the shell prints into a
+   * queue for a client that is not reading it. Past its limit that queue
+   * drops frames, and a frame dropped from the middle of an escape sequence
+   * garbles the pane until it reattaches.
+   *
+   * The shell simply waits, as it would behind a slow SSH connection, and
+   * the daemon's screen model resumes with it. It is asked of the kernel
+   * every time rather than once: a keystroke can restart output meanwhile
+   * (^Q anywhere, and on Darwin any key, whose default termios sets IXANY),
+   * and suspending twice is harmless. The piped fallback has no terminal to
+   * suspend, so it is never held.
+   */
+  holdOutput(client: TerminalClient): void {
+    if (client !== this.client || this.finished || !this.handle) return;
+    if (stopPtyOutput(this.handle)) this.heldFor = client;
+  }
+
+  /** Resume output held for `client`, or for whoever it is held for when omitted. */
+  releaseOutput(client?: TerminalClient): void {
+    if (this.heldFor === null || (client !== undefined && client !== this.heldFor)) return;
+    this.heldFor = null;
+    if (this.handle) startPtyOutput(this.handle);
   }
 
   accepts(client: TerminalClient): boolean {
@@ -552,11 +598,17 @@ class TerminalSession {
       this.foregroundProbe = null;
     }
     if (this.handle) {
+      // Held output would never reach the master, and the drain below would
+      // wait out its bound for output that cannot come.
+      this.releaseOutput();
       closePtySlave(this.handle);
       await drained(this.reader);
-      // The reader closes only its own duplicate (see readPty), so this
-      // order cannot close any number twice.
-      this.reader?.destroy();
+      // Not awaited: the reader releases only its own duplicate (see
+      // readPty), whenever its stream lets go of it, so this order cannot
+      // close any number twice.
+      void this.reader?.close();
+      const rest = this.decoder.decode();
+      if (rest) this.emitOutput(rest);
       closePty(this.handle);
     }
     if (sessions.get(this.key) === this) sessions.delete(this.key);
@@ -576,16 +628,9 @@ class TerminalSession {
 }
 
 /** Wait for a pty reader to deliver what is left, bounded so exit cannot hang. */
-function drained(reader: ReadStream | null): Promise<void> {
-  if (!reader || reader.closed) return Promise.resolve();
-  return Promise.race([
-    new Promise<void>((resolve) => {
-      reader.once("close", resolve);
-      reader.once("end", resolve);
-      reader.once("error", () => resolve());
-    }),
-    Bun.sleep(250),
-  ]);
+function drained(reader: PtyReader | null): Promise<void> {
+  if (!reader) return Promise.resolve();
+  return Promise.race([reader.ended, Bun.sleep(250)]);
 }
 
 const sessions = new Map<string, TerminalSession>();
