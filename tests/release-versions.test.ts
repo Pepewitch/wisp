@@ -11,7 +11,7 @@ import {
   VERSION_SITES,
   writeVersionSites,
 } from "../scripts/release-versions";
-import { addedMigrations, isInternalChange, migrationIds, parseMergedChanges, renderReleaseNotes } from "../scripts/release-notes";
+import { addedMigrations, isInternalChange, isMigrationSource, migrationIds, migrationSourceAt, parseMergedChanges, renderReleaseNotes } from "../scripts/release-notes";
 import { expectedReleaseAssets, releaseAssetsInReadingOrder } from "../scripts/release-promotion";
 import { BUILTIN_ADAPTERS } from "../wispd/src/adapters/builtins";
 
@@ -189,6 +189,36 @@ describe("release notes derivation", () => {
     // Ids are appended, never renumbered, so two in one release is possible.
     expect(addedMigrations(before, after + "    id: 8,\n")).toEqual([7, 8]);
     expect(migrationIds("no migrations here")).toEqual([]);
+  });
+
+  test("reads migrations split out of migrations.ts too", () => {
+    expect(isMigrationSource("wispd/src/migrations.ts")).toBe(true);
+    expect(isMigrationSource("wispd/src/migration-history-trail.ts")).toBe(true);
+    expect(isMigrationSource("wispd/src/migrations-trailing.ts")).toBe(true);
+    expect(isMigrationSource("wispd/src/migration.ts")).toBe(true);
+    expect(isMigrationSource("wispd/src/migrate-helper.ts")).toBe(false);
+    expect(isMigrationSource("wispd/tests/migrations.test.ts")).toBe(false);
+    const tree: Record<string, Record<string, string>> = {
+      v1: { "wispd/src/migrations.ts": "    id: 15,\n" },
+      v2: {
+        "wispd/src/migrations.ts": "    id: 15,\n    id: 16,\n",
+        "wispd/src/migration-history-trail.ts": "  id: 17,\n",
+        "wispd/src/migration-live-row-indexes.ts": "  id: 18,\n",
+        "wispd/src/store.ts": "  id: 99,\n",
+      },
+    };
+    const git = (args: string[]): string => {
+      if (args[0] === "ls-tree") return Object.keys(tree[args[2]!]!).join("\n");
+      const [ref, path] = args[1]!.split(":");
+      return tree[ref!]![path!]!;
+    };
+    expect(addedMigrations(migrationSourceAt("v1", git), migrationSourceAt("v2", git))).toEqual([16, 17, 18]);
+  });
+
+  test("names every migration a release adds", () => {
+    expect(renderReleaseNotes("0.6.5", "v0.6.4", [], [16, 17, 18, 19])).toContain(
+      "adds database migrations 16, 17, 18, and 19, so a 0.6.4 daemon",
+    );
   });
 
   test("states the migration consequence, or says there is none", () => {

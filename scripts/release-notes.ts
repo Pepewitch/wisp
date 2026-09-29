@@ -44,6 +44,30 @@ export function addedMigrations(before: string, after: string): number[] {
   return migrationIds(after).filter((id) => !had.has(id));
 }
 
+/** A file that declares migrations: the list itself, or one split out of it to keep it short. */
+export function isMigrationSource(path: string): boolean {
+  return /^wispd\/src\/migrations?(?:-[\w-]+)?\.ts$/.test(path);
+}
+
+/**
+ * Every migration source at `ref`, concatenated for `migrationIds`. Reading
+ * `migrations.ts` alone missed the migrations that live in their own files,
+ * and the notes then named only the first of a release's migrations.
+ */
+export function migrationSourceAt(ref: string, git: (args: string[]) => string): string {
+  return git(["ls-tree", "--name-only", ref, "wispd/src/"])
+    .split(/\r?\n/)
+    .filter(isMigrationSource)
+    .map((path) => git(["show", `${ref}:${path}`]))
+    .join("\n");
+}
+
+function idList(ids: readonly number[]): string {
+  const items = ids.map(String);
+  if (items.length <= 2) return items.join(" and ");
+  return `${items.slice(0, -1).join(", ")}, and ${items.at(-1)}`;
+}
+
 function run(args: string[]): string {
   const result = Bun.spawnSync({ cmd: args, cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) {
@@ -97,7 +121,7 @@ export function renderReleaseNotes(
   const migrationLine =
     migrations.length === 0
       ? "This release adds no database migration."
-      : `This release adds database migration ${migrations.join(" and ")}, so a ${since.replace(/^v/, "")} daemon cannot reopen a profile that ${version} has opened.`;
+      : `This release adds database ${migrations.length === 1 ? "migration" : "migrations"} ${idList(migrations)}, so a ${since.replace(/^v/, "")} daemon cannot reopen a profile that ${version} has opened.`;
   return `# Wisp ${version}
 
 TODO one paragraph: what this release is, and the two or three things a user
@@ -196,11 +220,8 @@ if (import.meta.main) {
         return run(["git", "show", "--name-only", "--format=", found[0]!]).split(/\r?\n/).filter(Boolean);
       },
     );
-    const MIGRATIONS = "wispd/src/migrations.ts";
-    const migrations = addedMigrations(
-      run(["git", "show", `${since}:${MIGRATIONS}`]),
-      run(["git", "show", `HEAD:${MIGRATIONS}`]),
-    );
+    const git = (args: string[]): string => run(["git", ...args]);
+    const migrations = addedMigrations(migrationSourceAt(since, git), migrationSourceAt("HEAD", git));
     const path = releaseNotesPath(ROOT, `v${version}`);
     if (existsSync(path)) throw new Error(`release notes already exist: ${path}`);
     mkdirSync(dirname(path), { recursive: true });
@@ -220,7 +241,7 @@ if (import.meta.main) {
     console.log(
       `wrote ${path} with ${changes.length} change(s) since ${since}` +
         `${internal > 0 ? `, ${internal} flagged as probably internal` : ""}` +
-        `${migrations.length > 0 ? `, adding migration ${migrations.join(" and ")}` : ", adding no migration"}`,
+        `${migrations.length > 0 ? `, adding ${migrations.length === 1 ? "migration" : "migrations"} ${idList(migrations)}` : ", adding no migration"}`,
     );
     console.log("Edit every TODO before committing; the notes become an immutable release body.");
   } catch (error) {

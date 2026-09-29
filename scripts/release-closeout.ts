@@ -42,7 +42,7 @@ import {
   type PublicationFacts,
 } from "./release-ledger";
 import { PNG_INPUTS, pngInputChanges } from "./release-check";
-import { addedMigrations } from "./release-notes";
+import { addedMigrations, migrationSourceAt } from "./release-notes";
 import { releaseMetadataFromApi, validateReleaseMetadata } from "./release-promotion";
 import { assertTaggableVersion } from "./release-versions";
 
@@ -283,8 +283,7 @@ function recoveryPromotion(tag: string, sha: string, after: string): { run: Work
 }
 
 function releaseMigrations(previousTag: string, tag: string): number[] {
-  const migrations = "wispd/src/migrations.ts";
-  return addedMigrations(git(["show", `${previousTag}:${migrations}`]), git(["show", `${tag}:${migrations}`]));
+  return addedMigrations(migrationSourceAt(previousTag, git), migrationSourceAt(tag, git));
 }
 
 /** The PNG inputs release:check saw change, one entry per input directory. */
