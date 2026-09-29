@@ -2,6 +2,7 @@ import { PROCESS_BOOT_ID } from "./process-boot";
 import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
 import { processNames, processSnapshot, sameProcessConfirmed, type GroupMember, type ProcessMember } from "./process-snapshot";
+import { processGroupAlive } from "./process-tree";
 import type { BackgroundGroup, BackgroundWork } from "./types";
 
 interface GroupRow {
@@ -295,10 +296,42 @@ export async function stopRecordedGroups(taskId: string, graceMs: number): Promi
   throw new Error("Background work has not stopped; files are preserved. Retry Stop before sending or archiving.");
 }
 
+/**
+ * Setup-script process groups by task. Setup runs before the task has a turn,
+ * so `turn_process_groups` cannot hold it, yet it works in the same worktree:
+ * a script still running when archive starts, or one that exited 0 and left
+ * background jobs in its group, would have the workspace deleted under it.
+ *
+ * Memory only, and only ever checked, never signalled: once the script has
+ * exited nothing proves a numeric group id is still its own, so a stale id can
+ * only make Wisp keep files, never kill a stranger.
+ */
+const setupGroups = new Map<string, Set<number>>();
+
+/** Written at the setup script's spawn, before anything can archive the task. */
+export function recordSetupGroup(taskId: string, pgid: number): void {
+  const groups = setupGroups.get(taskId) ?? new Set<number>();
+  groups.add(pgid);
+  setupGroups.set(taskId, groups);
+}
+
+/** The task's setup groups that still have a member. Empty ones are forgotten. */
+export function liveSetupGroups(taskId: string): number[] {
+  const groups = setupGroups.get(taskId);
+  if (!groups) return [];
+  for (const pgid of groups) if (!processGroupAlive(pgid)) groups.delete(pgid);
+  if (!groups.size) setupGroups.delete(taskId);
+  return [...groups];
+}
+
 /** Deletion checks every recorded turn again, including resumed cleanup jobs. */
 export async function assertTaskProcessesEnded(taskId: string): Promise<void> {
   await refreshProcessGroups(taskId);
   if (rows(taskId).length) throw new Error("Background work is still running or unverified; stop it before removing the workspace.");
+  const setup = liveSetupGroups(taskId);
+  if (setup.length) {
+    throw new Error(`Processes started by the setup script are still running (process group ${setup.join(", ")}); stop them before removing the workspace.`);
+  }
 }
 
 export function startProcessGroupLoop(): { stop(): Promise<void> } {

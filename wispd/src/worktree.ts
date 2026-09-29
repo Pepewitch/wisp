@@ -6,8 +6,9 @@ import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
 import { pathExists } from "./fsutil";
 import { assertWorkingDirectoryAllowed } from "./launch-policy";
-import { signalProcessTree } from "./process-tree";
+import { processGroupEnded, signalProcessTree } from "./process-tree";
 import { READ_TIMEOUT_MS, runBounded, WRITE_TIMEOUT_MS } from "./subprocess";
+import { liveSetupGroups, recordSetupGroup } from "./task-processes";
 import { envForCwd } from "./turn-input";
 
 interface GitResult {
@@ -406,6 +407,9 @@ async function copyIntoWorktree(repo: string, dest: string, cfg: WispConfig): Pr
   }
 }
 
+/** How long a timed-out setup's group gets between SIGTERM and SIGKILL. */
+const SETUP_KILL_GRACE_MS = 5000;
+
 interface ScriptOutcome {
   /** the exit code, or null when the child was killed by a signal */
   code: number | null;
@@ -430,6 +434,7 @@ async function runScript(
   env: Record<string, string>,
   timeoutMinutes: number,
   logPath: string,
+  killGraceMs: number,
 ): Promise<ScriptOutcome> {
   // Repository code, about to run. Under a fixtures-only launch policy this
   // refuses anything outside the fixture tree, so a test can never execute the
@@ -450,31 +455,37 @@ async function runScript(
       env: envForCwd({ ...process.env, ...env }, cwd),
       detached: true,
     });
+    // The archive gate reads this, so a workspace is never removed under a
+    // setup that is still running or under what it left behind.
+    recordSetupGroup(taskId, child.pid);
     const killTree = (sig: "SIGTERM" | "SIGKILL"): void => {
       signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
     };
     let timedOut = false;
     let escalated = false;
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let stopped: Promise<void> | undefined;
     const timer = setTimeout(
       () => {
         timedOut = true;
         console.error(`[wisp] task ${taskId}: ${what} exceeded ${timeoutMinutes} min, killing it`);
         killTree("SIGTERM");
-        // M3: a script that traps SIGTERM must not wedge the task in 'creating'
-        killTimer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) {
-            escalated = true;
-            console.error(`[wisp] task ${taskId}: ${what} survived SIGTERM, escalating to SIGKILL`);
-            killTree("SIGKILL");
-          }
-        }, 5000);
+        // M3: a script that traps SIGTERM must not wedge the task in 'creating'.
+        // The GROUP decides, not the shell: bash dying of SIGTERM says nothing
+        // about a child that trapped it and is still working in the worktree.
+        stopped = (async () => {
+          if (await processGroupEnded(child.pid, killGraceMs)) return;
+          escalated = true;
+          console.error(`[wisp] task ${taskId}: ${what} survived SIGTERM, escalating to SIGKILL`);
+          killTree("SIGKILL");
+          await processGroupEnded(child.pid, killGraceMs);
+        })();
       },
       timeoutMinutes * 60_000,
     );
     const code = await child.exited;
     clearTimeout(timer);
-    clearTimeout(killTimer);
+    await stopped;
+    liveSetupGroups(taskId); // forgets the group once nothing is left in it
     return { code, timedOut, escalated };
   } finally {
     closeSync(fd);
@@ -493,15 +504,22 @@ async function runScriptStep(
   cwd: string,
   env: Record<string, string>,
   cfg: WispConfig,
+  options: SetupOptions,
 ): Promise<void> {
   const logPath = join(LOG_DIR, `${taskId}-setup.log`);
-  const r = await runScript(cmd, what, taskId, cwd, env, cfg.setupTimeoutMinutes, logPath);
+  const r = await runScript(cmd, what, taskId, cwd, env, cfg.setupTimeoutMinutes, logPath, options.killGraceMs ?? SETUP_KILL_GRACE_MS);
   if (r.timedOut) {
     throw new Error(
       `${what} timed out after ${cfg.setupTimeoutMinutes} min and was killed${r.escalated ? " (escalated to SIGKILL after SIGTERM was trapped)" : ""}, see ${logPath}`,
     );
   }
   if (r.code !== 0) throw new Error(`${what} failed (exit ${r.code}), see ${logPath}`);
+}
+
+/** Injection for tests; production always uses the default grace. */
+export interface SetupOptions {
+  /** SIGTERM-to-SIGKILL grace for a timed-out setup's process group */
+  killGraceMs?: number;
 }
 
 /** Timeout for a teardown hook when the caller carries no config (tests, CLI paths). */
@@ -524,14 +542,15 @@ export async function runSetup(
   worktree: string,
   env: Record<string, string>,
   cfg: WispConfig,
+  options: SetupOptions = {},
 ): Promise<void> {
   const script = join(worktree, ".wisp", "setup.sh");
   if (await pathExists(script)) {
-    await runScriptStep(["bash", script], "setup script", taskId, worktree, env, cfg);
+    await runScriptStep(["bash", script], "setup script", taskId, worktree, env, cfg, options);
   }
   const configured = repoConfigFor(cfg, repoPath)?.setupScript?.trim();
   if (configured) {
-    await runScriptStep(["bash", "-c", configured], "project setup script", taskId, worktree, env, cfg);
+    await runScriptStep(["bash", "-c", configured], "project setup script", taskId, worktree, env, cfg, options);
   }
 }
 
