@@ -27,7 +27,8 @@ import type { SearchResponse } from "./types";
 
 export type SearchRequest =
   | { type: "open"; path: string }
-  | { type: "search"; id: number; query: string; cancel: SharedArrayBuffer };
+  | { type: "search"; id: number; query: string; cancel: SharedArrayBuffer }
+  | { type: "close" };
 
 export type SearchWorkerReply =
   | { type: "ready" }
@@ -42,6 +43,8 @@ export const SEARCH_TIMEOUT_MS = 20_000;
 export const SEARCH_QUEUE_LIMIT = 16;
 const START_TIMEOUT_MS = 10_000;
 const RETRY_WORKER_MS = 60_000;
+/** A retired worker closes itself once its scan returns; this is the backstop. */
+const RETIRE_GRACE_MS = 60_000;
 
 /** A search that was not answered; `status` is the HTTP status to report it with. */
 export class SearchUnavailable extends Error {
@@ -58,7 +61,6 @@ interface Job {
   resolve(response: SearchResponse): void;
   reject(error: Error): void;
   settled: boolean;
-  timer?: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -86,6 +88,12 @@ export class SearchRunner {
   private readonly queue: Job[] = [];
   private active: Job | null = null;
   private nextId = 1;
+  /**
+   * The running scan's deadline. It belongs to the worker, not the request:
+   * a cancelled search is answered at once, but its scan still holds the
+   * worker, so the deadline keeps running until the worker replies.
+   */
+  private deadline: ReturnType<typeof setTimeout> | undefined;
   private readonly entry: string;
   private readonly path: string;
   private readonly timeoutMs: number;
@@ -123,13 +131,13 @@ export class SearchRunner {
     for (const job of this.queue.splice(0)) this.settle(job, new SearchUnavailable("search stopped", 503));
     if (this.active) this.settle(this.active, new SearchUnavailable("search stopped", 503));
     this.active = null;
-    this.discardWorker();
+    clearTimeout(this.deadline);
+    this.retireWorker();
   }
 
   private settle(job: Job, outcome: SearchResponse | Error): void {
     if (job.settled) return;
     job.settled = true;
-    clearTimeout(job.timer);
     if (outcome instanceof Error) job.reject(outcome);
     else job.resolve(outcome);
   }
@@ -159,13 +167,15 @@ export class SearchRunner {
         }
         return this.next();
       }
-      job.timer = setTimeout(() => this.expire(job), this.timeoutMs);
+      this.deadline = setTimeout(() => this.expire(job), this.timeoutMs);
       const request: SearchRequest = { type: "search", id: job.id, query: job.query, cancel: job.cancel.buffer as SharedArrayBuffer };
       worker.postMessage(request);
     });
   }
 
   private next(): void {
+    clearTimeout(this.deadline);
+    this.deadline = undefined;
     this.active = null;
     this.pump();
   }
@@ -177,8 +187,10 @@ export class SearchRunner {
       503,
     ));
     // The worker is still inside the scan and cannot be interrupted; retire it
-    // so the searches behind this one do not wait for it.
-    this.discardWorker();
+    // so the searches behind this one do not wait for it. It stops at its next
+    // checkpoint, then closes its connection and exits.
+    Atomics.store(job.cancel, 0, 1);
+    this.retireWorker();
     this.next();
   }
 
@@ -204,11 +216,21 @@ export class SearchRunner {
     }
   }
 
-  private discardWorker(): void {
+  /**
+   * Stop using the current worker. Not terminate(): a worker killed inside a
+   * scan never closed its database, so each one leaked its file handles and
+   * memory. Asked to close, it does so as soon as its scan returns.
+   */
+  private retireWorker(): void {
     const worker = this.worker;
     this.worker = null;
     this.starting = null;
-    worker?.terminate();
+    if (worker === null) return;
+    const close: SearchRequest = { type: "close" };
+    worker.postMessage(close);
+    const backstop = setTimeout(() => worker.terminate(), RETIRE_GRACE_MS);
+    (backstop as { unref?: () => void }).unref?.();
+    worker.addEventListener("close", () => clearTimeout(backstop));
   }
 
   private ensureWorker(): Promise<Worker | null> {

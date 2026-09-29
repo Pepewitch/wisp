@@ -35,6 +35,13 @@ self.onmessage = (event: MessageEvent<SearchRequest>) => {
     }
     return;
   }
+  if (message.type === "close") {
+    // Retired by the runner: this runs only after any scan in progress returned.
+    database?.close();
+    database = null;
+    (self as unknown as { close(): void }).close();
+    return;
+  }
   const cancel = new Int32Array(message.cancel);
   try {
     if (database === null) throw new Error("search worker has no database");

@@ -1,8 +1,8 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { WISP_HOME } from "../src/config";
+import { DB_PATH, WISP_HOME } from "../src/config";
 import { SearchRunner, SearchUnavailable } from "../src/search-runner";
 import { createTask, createTurn, db, freeSlot, newTaskId } from "../src/store";
 import { searchTasks } from "../src/store-search";
@@ -88,6 +88,7 @@ test("a worker that dies fails only the search it was running; the next search s
 self.onmessage = (event) => {
   const message = event.data;
   if (message.type === "open") return postMessage({ type: "ready" });
+  if (message.type === "close") return self.close();
   if (message.query === "crash") throw new Error("synthetic worker crash");
   postMessage({ type: "result", id: message.id, response: { query: message.query, tasks: [], truncated: false } });
 };
@@ -99,6 +100,70 @@ self.onmessage = (event) => {
 
   expect(await search.search("fine")).toEqual({ query: "fine", tasks: [], truncated: false });
 });
+
+test("a cancelled search keeps its deadline, so a scan that never ends cannot hold the queue", async () => {
+  // A worker that never answers a "hang" query stands in for a runaway scan.
+  const entry = join(fixtures, "hanging-worker.ts");
+  writeFileSync(entry, `
+self.onmessage = (event) => {
+  const message = event.data;
+  if (message.type === "open") return postMessage({ type: "ready" });
+  if (message.type === "close") return self.close();
+  if (message.query === "hang") return;
+  postMessage({ type: "result", id: message.id, response: { query: message.query, tasks: [], truncated: false } });
+};
+`);
+  const search = runner({ entry, timeoutMs: 50 });
+  const client = new AbortController();
+  const hung = search.search("hang", client.signal).catch((error: unknown) => error);
+  await Bun.sleep(10);
+  client.abort();
+  expect(await hung).toBeInstanceOf(SearchUnavailable);
+  // Without the deadline this waits forever behind the hung worker.
+  expect(await search.search("fine")).toEqual({ query: "fine", tasks: [], truncated: false });
+});
+
+/** This process's open handles on the database file and its WAL and shared-memory files. */
+function databaseHandles(): number {
+  // lsof and /proc report the resolved path (macOS temp dirs sit behind a symlink).
+  const path = realpathSync(DB_PATH);
+  if (process.platform === "linux") {
+    return readdirSync("/proc/self/fd").filter((fd) => {
+      try {
+        return readlinkSync(`/proc/self/fd/${fd}`).startsWith(path);
+      } catch {
+        return false;
+      }
+    }).length;
+  }
+  const listing = Bun.spawnSync({ cmd: ["lsof", "-n", "-P", "-Fn", "-p", String(process.pid)] }).stdout.toString();
+  return listing.split("\n").filter((line) => line.startsWith("n") && line.slice(1).startsWith(path)).length;
+}
+
+test("replaced workers close their database, so handles do not grow with each replacement", async () => {
+  const search = runner({ timeoutMs: 50 });
+  const before = databaseHandles();
+  // SQLite keeps one closed descriptor per database file for reuse while
+  // another connection in this process still has it open: one spare, not one
+  // per worker.
+  const limit = before + 1;
+  const settled = async (): Promise<number> => {
+    const until = Date.now() + 4000;
+    let count = databaseHandles();
+    while (count > limit && Date.now() < until) {
+      await Bun.sleep(100);
+      count = databaseHandles();
+    }
+    return count;
+  };
+  const counts: number[] = [];
+  for (let round = 0; round < 3; round++) {
+    expect(await search.search(SLOW).catch((error: unknown) => error)).toBeInstanceOf(SearchUnavailable);
+    // The retired worker closes once its scan returns.
+    counts.push(await settled());
+  }
+  for (const count of counts) expect(count).toBeLessThanOrEqual(limit);
+}, 30_000);
 
 test("a worker that cannot start leaves search answering in-process", async () => {
   const errors: unknown[] = [];
