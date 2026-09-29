@@ -101,7 +101,8 @@ describe("daemon capabilities", () => {
     const { base } = await startServer();
     const health = (await (await fetch(`${base}/api/health`)).json()) as Record<string, unknown>;
 
-    expect(health).toEqual({ ok: true, ...BUILD_INFO });
+    // when this run started is liveness, not identity: a restart has to show
+    expect(health).toEqual({ ok: true, ...BUILD_INFO, startedAt: expect.any(String), uptimeSeconds: expect.any(Number) });
     expect(health).not.toHaveProperty("instanceId");
     expect(health).not.toHaveProperty("apiProtocolVersion");
     expect(health).not.toHaveProperty("capabilities");
