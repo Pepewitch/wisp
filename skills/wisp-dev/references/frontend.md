@@ -416,11 +416,14 @@ What the caption carries, and nothing else:
   INSIDE the bubble and made every steer a row taller for a fact that fits in
   space already going spare.
 - **where the delivery stands**, on a queued one, in place of a time: it has
-  not been sent, so there is no time to state. `queued for the next turn`, or
-  the archived / cancelled / retry-uncertain wording the state calls for.
+  not been sent, so there is no time to state. `queued for the next turn`,
+  `held for the next turn` for one the queue toggle held, or the archived /
+  cancelled / retry-uncertain wording the state calls for.
 
-What the toolbar carries: **copy**, on every bubble, and **edit and cancel** on
-a queued one. While a queued bubble is being EDITED it is a form, so `Save` and
+What the toolbar carries: **copy**, on every bubble, and **send now, edit and
+cancel** on a queued one. Send now (the send arrow) lifts a hold and delivers
+the message the way a mid-turn send does; a workflow's generated instruction
+does not offer it, and a daemon without `steerDelivery` hides it. While a queued bubble is being EDITED it is a form, so `Save` and
 `Cancel` appear inside it and the toolbar disappears: a form owns its own
 commit, and only a form puts controls in a bubble.
 
@@ -838,6 +841,21 @@ pixels**, so a media query would never fire for it. `@container`, in two steps:
 
 On `touch` the bar is one row of thumb targets instead: the model chip, the
 effort glyph, the paperclip, the suffix glyph and the send.
+
+**While a turn runs, the send says what it will do, and one toggle changes
+it.** The daemon reports the running turn's input (`turn_input`: `steer`,
+`wait` or `interrupt`, and the agent it runs), and `lib/steer-delivery.ts`
+turns that and the picker's agent into the running note and the send
+button's name: `send steers this turn`, `finishing · send starts the next
+turn`, or `send stops this turn, then sends` in the needs-input tone, since
+it is the one that stops work. A different agent than the running turn's can
+only start a new turn, so it reads as a stop too. The **queue toggle**
+(`PeopleQueue`, Regular off and Filled on, glyph only in both states) sits
+beside the send and holds that one send for the next turn; it turns itself
+off after the send, on a task switch, and when the turn ends, so it can never
+quietly hold every later message. The send keeps its arrow in every case.
+Against a daemon without `steerDelivery` there is no toggle, no `when`, and
+the older `send won't interrupt` note.
 
 Both things that yield are things the **task header two rows up still says**,
 so nothing leaves the screen. Width is not `touch`'s question: `touch` sizes

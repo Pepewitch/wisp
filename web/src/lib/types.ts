@@ -88,7 +88,27 @@ export interface BackgroundGroup {
   names: string[]
 }
 
+/**
+ * What a message sent now does to the running turn: steered into it, started
+ * once it ends on its own (its answer is already out), or started by stopping
+ * it. A message for any other agent than the one named here can only start a
+ * new turn, so it stops this one too.
+ */
+export interface TurnInput {
+  mode: "steer" | "wait" | "interrupt"
+  context_n: number
+  harness: string
+  model: string | null
+  effort: string | null
+  fast: boolean
+}
+
+/** When a composer send should reach the agent (/send `when`). */
+export type SendWhen = "now" | "next-turn"
+
 export interface ApiTask {
+  /** The running turn's input; null while idle, absent from a daemon older than the queue toggle. */
+  turn_input?: TurnInput | null;
   attachmentsRetained?: boolean;
   deletionPending?: boolean;
   cleanup?: CleanupSummary;
@@ -250,6 +270,8 @@ export interface TaskMessage {
   turn_n: number | null
   /** Delivery may have succeeded before its acknowledgement or turn record was lost. */
   delivery_uncertain: boolean
+  /** Held for the next turn by the composer's queue toggle; absent from older daemons. */
+  deferred?: boolean
   attachments: TurnAttachment[]
   created_at: string
   updated_at: string
@@ -261,6 +283,8 @@ export interface SendResponse extends ApiTask {
   disposition: SendDisposition
   message: TaskMessage
   operation?: "compact"
+  /** The running turn was stopped so this message could start. */
+  interrupted?: boolean
 }
 
 /**
@@ -647,6 +671,8 @@ export interface HarnessesResponse {
     taskTerminals?: boolean;
     /** GET/PUT /api/tasks/:id/brief and …/brief-settings: the optional per-task brief. */
     taskBriefs?: boolean;
+    /** /send takes `when`, tasks carry `turn_input`, and a queued message can be sent now (the composer's queue toggle). */
+    steerDelivery?: boolean;
   };
 }
 

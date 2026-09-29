@@ -70,6 +70,7 @@ export async function persistTaskSubmission(
   attachments: DecodedAttachment[],
   clientMessageId?: string,
   agent?: TaskAgentSelection,
+  deferred = false,
 ): Promise<{ task: Task; message: TaskMessage }> {
   const id = clientMessageId ?? newTaskMessageId()
   const existing = getTaskMessage(id)
@@ -104,6 +105,7 @@ export async function persistTaskSubmission(
         text,
         attachmentHash,
         attachmentsJson: attachmentManifest(stored),
+        deferred,
       },
       agent ?? {
         harness: task.harness,
@@ -124,7 +126,10 @@ export interface RunningDelivery {
   result: SendResult | null
 }
 
-/** Admit an unchanged-agent message to a verified live turn, or leave it queued. */
+/**
+ * Admit an unchanged-agent message to a verified live turn, or leave it
+ * queued. A message held for the next turn is never admitted here.
+ */
 export async function deliverToRunningTurn(
   task: Task,
   message: TaskMessage,
@@ -140,6 +145,7 @@ export async function deliverToRunningTurn(
   }
   const running = runningTurn(task.id)
   if (!running) return { running: false, result: null }
+  if (message.deferred === 1) return { running: true, result: null }
   const sameAgent =
     running.context_n === message.context_n &&
     running.harness === message.harness &&

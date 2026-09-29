@@ -26,6 +26,8 @@ export {
   DeleteRegular as Trash,
   FlashRegular as Flash,
   PromptRegular as Prompt,
+  PeopleQueueRegular as Queue,
+  PeopleQueueFilled as QueueFilled,
   FolderRegular as Folder,
   SparkleRegular as Sparkle,
   StarFilled,

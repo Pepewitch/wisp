@@ -247,6 +247,8 @@ export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_
   /** Task briefs are on for this task. Absent from a daemon older than the feature. */
   briefEnabled?: boolean;
   background?: BackgroundWork;
+  /** The running turn's input, null while idle. Absent from a daemon older than the feature. */
+  turn_input?: TurnInput | null;
 };
 
 export interface Turn {
@@ -352,6 +354,11 @@ export interface TaskMessage {
   attachment_hash: string;
   /** SQLite boolean: a daemon crash or failed acknowledgement made delivery indeterminate. */
   delivery_uncertain: number;
+  /**
+   * SQLite boolean: held for the next turn. Never steered into a running
+   * turn, and queued behind any message sent later without the hold.
+   */
+  deferred: number;
   attachments_json: string | null;
   /**
    * Who wrote it, fixed at creation: 'human'; 'workflow' for Wisp's own
@@ -370,6 +377,32 @@ export interface TaskMessage {
 export interface SendResult {
   disposition: "started" | "steered" | "queued-next";
   message: TaskMessage;
+  /** The running turn was stopped so this message could start. */
+  interrupted?: boolean;
+}
+
+/** When a sender wants a message to reach the agent. Absent keeps the older "steer, else queue". */
+export type SendWhen = "now" | "next-turn";
+
+/**
+ * What a message sent now can do to a running turn: be steered into it, wait
+ * for it to end on its own (its live channel closed because the answer is
+ * done), or only reach the agent by stopping it (a harness with no live
+ * channel, or a turn a restarted daemon re-adopted without its stdin).
+ */
+export type TurnInputMode = "steer" | "wait" | "interrupt";
+
+/**
+ * The running turn's input mode, and the agent that turn runs: a message for
+ * any other agent can only start a new turn.
+ */
+export interface TurnInput {
+  mode: TurnInputMode;
+  context_n: number;
+  harness: string;
+  model: string | null;
+  effort: string | null;
+  fast: boolean;
 }
 
 export interface OutboxRow {

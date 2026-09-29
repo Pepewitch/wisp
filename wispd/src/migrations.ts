@@ -22,6 +22,12 @@
  */
 import type { Database } from "bun:sqlite";
 
+/** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
+function addColumn(db: Database, table: string, column: string, definition: string): void {
+  const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((found) => found.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
 export interface Migration {
   /** Monotonic; never renumber a released one. */
   id: number;
@@ -546,12 +552,7 @@ WHERE EXISTS (
       // finished turn's log is the evidence ledger, not a source to re-fold on
       // upgrade. NULL means "not observed", which reads correctly everywhere —
       // including for the two harnesses that can never report it.
-      for (const table of ["tasks", "task_contexts"] as const) {
-        const columns = (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]);
-        if (!columns.some((column) => column.name === "context_tokens")) {
-          db.exec(`ALTER TABLE ${table} ADD COLUMN context_tokens INTEGER`);
-        }
-      }
+      for (const table of ["tasks", "task_contexts"] as const) addColumn(db, table, "context_tokens", "INTEGER");
     },
   },
   {
@@ -569,16 +570,11 @@ WHERE EXISTS (
       // that. There is no third "unspecified" state to preserve, and the spawn
       // path turns 0 into an EXPLICIT standard-tier flag so an OFF toggle
       // cannot silently inherit a tier pinned in the harness's own config.
-      const addFlag = (table: string, column: string) => {
-        const columns = (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]);
-        if (!columns.some((found) => found.name === column)) {
-          db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`);
-        }
-      };
-      addFlag("tasks", "fast");
-      addFlag("task_contexts", "fast");
-      addFlag("task_messages", "fast");
-      addFlag("turns", "requested_fast");
+      const flag = "INTEGER NOT NULL DEFAULT 0";
+      addColumn(db, "tasks", "fast", flag);
+      addColumn(db, "task_contexts", "fast", flag);
+      addColumn(db, "task_messages", "fast", flag);
+      addColumn(db, "turns", "requested_fast", flag);
 
       // The workflow guard watches the agent fields, so it has to learn this
       // one too: a workflow that was driving a standard-speed task should
@@ -696,6 +692,17 @@ CREATE TABLE IF NOT EXISTS task_answer_observations (
 );
 CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_observations(task_id, source_seq);
 `);
+    },
+  },
+  {
+    id: 16,
+    name: "message-deferred",
+    up: (db) => {
+      // A message its sender chose to hold for the next turn (the composer's
+      // queue toggle). It is never steered into a running turn, and a message
+      // sent afterwards without that choice goes ahead of it: waiting was the
+      // point. Every existing row was an ordinary send, which 0 says.
+      addColumn(db, "task_messages", "deferred", "INTEGER NOT NULL DEFAULT 0");
     },
   },
 ];

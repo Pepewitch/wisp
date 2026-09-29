@@ -339,13 +339,14 @@ async function sendTaskResponse(
       body.clientMessageId as string | undefined,
       adapters,
       agent,
-      operation ? "next-turn-only" : "allow-steer",
+      operation ? "next-turn-only" : body.when === "now" ? "now" : body.when === "next-turn" ? "hold" : "allow-steer",
     );
     return json({
       ...apiTask(getTask(task.id)!),
       disposition: result.disposition,
       message: apiTaskMessage(result.message),
       ...(operation ? { operation } : {}),
+      ...(result.interrupted ? { interrupted: true } : {}),
     });
   } catch (error) {
     if (error instanceof TaskCapacityError) return err(error.message, 429);

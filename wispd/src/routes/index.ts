@@ -28,7 +28,7 @@ import {
   listSuffixPromptsRoute,
   updateSuffixPromptRoute,
 } from "./suffix-prompts";
-import { attachmentRoute, taskMessageRoute } from "./task-messages";
+import { attachmentRoute, taskMessageRoute, taskMessageSendNowRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
@@ -144,6 +144,8 @@ function taskRoutes(
   if (attachmentResponse !== null) return attachmentResponse;
   const messageResponse = taskMessageRoute(req, path, method);
   if (messageResponse !== null) return messageResponse;
+  const sendNowResponse = taskMessageSendNowRoute(path, method, cfg, adapters, compacts);
+  if (sendNowResponse !== null) return sendNowResponse;
   if (path === "/api/tasks" && method === "GET") return listTasksRoute(url);
   if (path === "/api/tasks" && method === "POST") return createTaskRoute(req, cfg, adapters);
   if (path === "/api/pull-requests" && method === "GET") {

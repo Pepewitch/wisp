@@ -1,5 +1,6 @@
 import { ArrowUp, Stop } from "@/components/icons"
 import { AttachButton } from "@/components/pending-attachments"
+import { QueueToggle } from "@/components/queue-toggle"
 import { TaskIdentity } from "@/components/steer-box-overlays"
 import { SuffixPromptPicker } from "@/components/suffix-prompt-picker"
 import {
@@ -8,6 +9,7 @@ import {
 } from "@/components/task-agent-picker"
 import { type PendingAttachments } from "@/lib/attachments"
 import { backgroundNames } from "@/lib/state"
+import { steerSendLabel, type SteerAction } from "@/lib/steer-delivery"
 import type { ApiTask, HarnessInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -31,7 +33,8 @@ import { cn } from "@/lib/utils"
  *
  * What a send will and will not do mid-turn is NOT in this bar: it belongs to
  * the line above the composer, where it takes the resume hint's place for as
- * long as the turn runs.
+ * long as the turn runs. The bar only carries the switch that changes it, the
+ * queue toggle, beside the button it changes.
  *
  * `touch` is a different question — how big a thumb is, not how wide the bar
  * is — and it answers with ONE row of 44px targets: the paperclip, the model,
@@ -56,6 +59,8 @@ export function ComposerControls({
   onAgentChange,
   onSend,
   onStop,
+  action = null,
+  queue = null,
 }: {
   task: ApiTask | null
   taskId: string | null
@@ -74,6 +79,10 @@ export function ComposerControls({
   onAgentChange: (choice: TaskAgentChoice) => void
   onSend: () => void
   onStop: () => void
+  /** What send does to the running turn; null while idle. */
+  action?: SteerAction | null
+  /** The queue toggle, offered only while a turn runs on a daemon that takes it. */
+  queue?: { value: boolean; onChange: (value: boolean) => void } | null
 }) {
   const backgroundOnly = Boolean(
     !blocked && task?.background && task.background.state !== "none"
@@ -119,7 +128,16 @@ export function ComposerControls({
       {/* The send stays put on the right however many lines the controls take. */}
       <div className={cn("ml-auto flex shrink-0 items-center", touch ? "gap-1" : "gap-2")}>
         {!touch && <WideEnd />}
+        {queue && (
+          <QueueToggle
+            value={queue.value}
+            disabled={disabled || sending}
+            touch={touch}
+            onChange={queue.onChange}
+          />
+        )}
         <SendButton
+          action={action}
           blocked={blocked}
           backgroundOnly={backgroundOnly}
           running={running}
@@ -155,6 +173,7 @@ function WideEnd() {
  * this is where the reader decides whether it is safe.
  */
 function SendButton({
+  action,
   blocked,
   backgroundOnly,
   running,
@@ -164,6 +183,7 @@ function SendButton({
   onSend,
   onStop,
 }: {
+  action: SteerAction | null
   blocked: boolean
   backgroundOnly: boolean
   running: string | null
@@ -177,16 +197,14 @@ function SendButton({
   const stopTitle = backgroundOnly
     ? `Stop this task's background work${running ? ` (${running})` : ""}; keep the completed result`
     : "Stop the running turn and background work; the session is kept"
-  const sendTitle = blocked
-    ? "Send at a safe boundary, or queue for the next turn"
-    : "Send"
+  const sendName = blocked ? steerSendLabel(action ?? "legacy") : null
   return (
     <button
       type="button"
       onClick={canStop ? onStop : onSend}
       disabled={!canStop && !canSend}
-      aria-label={canStop ? stopName : blocked ? "Send safely" : "Send"}
-      title={canStop ? stopTitle : sendTitle}
+      aria-label={canStop ? stopName : (sendName?.label ?? "Send")}
+      title={canStop ? stopTitle : (sendName?.title ?? "Send")}
       className={cn(
         "flex shrink-0 items-center justify-center rounded-full transition-all",
         "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",

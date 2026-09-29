@@ -9,7 +9,7 @@ import {
 } from "@/lib/attachments"
 import { useDaemonTransport } from "@/lib/runtime"
 import { COMPACTING_TEXT } from "@/lib/compaction"
-import type { ApiTask, SendResponse } from "@/lib/types"
+import type { ApiTask, SendResponse, SendWhen } from "@/lib/types"
 import type { SlashToken } from "@/lib/slash"
 
 interface PendingSend {
@@ -19,6 +19,7 @@ interface PendingSend {
   attachments: AttachmentPayload[] | undefined
   clientMessageId: string
   agent: AgentSubmission | null
+  when: SendWhen | undefined
 }
 
 export interface AgentSubmission {
@@ -51,6 +52,7 @@ export function useSteerSubmit({
   value,
   suffixPromptId,
   attachments,
+  when: currentWhen,
   onSend,
   onInterrupt,
   onSent,
@@ -65,6 +67,8 @@ export function useSteerSubmit({
   value: string
   suffixPromptId: string | null
   attachments: PendingAttachments
+  /** How the send may reach a running turn; omitted for a daemon without the choice. */
+  when?: SendWhen
   onSend?: (
     message: string,
     attachments?: AttachmentPayload[],
@@ -110,15 +114,19 @@ export function useSteerSubmit({
     agent: AgentSubmission | null,
   ) => {
     const previous = pendingSend.current
-    const clientMessageId =
+    const retry =
       previous?.taskId === id &&
       previous.message === message &&
       previous.suffixPromptId === suffixPromptId &&
       sameAgent(previous.agent, agent) &&
       sameAttachments(previous.attachments, payloads)
-        ? previous.clientMessageId
-        : crypto.randomUUID()
-    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent }
+        ? previous
+        : null
+    const clientMessageId = retry?.clientMessageId ?? crypto.randomUUID()
+    // A retry may name a row the first attempt already persisted with its
+    // hold; a changed toggle must not send `now` for a row still held.
+    const when = retry ? retry.when : currentWhen
+    pendingSend.current = { taskId: id, message, suffixPromptId, attachments: payloads, clientMessageId, agent, when }
     const done = (result: SendResponse | void) => {
       pendingSend.current = null
       setSending(false)
@@ -141,12 +149,13 @@ export function useSteerSubmit({
           })
           return
         }
+        const started = `started turn ${result.message.turn_n ?? result.turn_count}`
         const delivery =
           result.disposition === "steered"
             ? "sent to the running turn"
             : result.disposition === "queued-next"
-              ? "queued for the next turn"
-              : `started turn ${result.message.turn_n ?? result.turn_count}`
+              ? result.interrupted ? "stopped the turn; this starts next" : "queued for the next turn"
+              : result.interrupted ? `stopped the turn and ${started}` : started
         const text = result.message.delivery_uncertain
           ? `${delivery}; prior delivery may already have succeeded`
           : delivery
@@ -167,6 +176,7 @@ export function useSteerSubmit({
           ...(suffixPromptId ? { suffixPromptId } : {}),
           ...(payloads ? { attachments: payloads } : {}),
           ...(agent ?? {}),
+          ...(when ? { when } : {}),
         })
       }
       try {
@@ -181,8 +191,9 @@ export function useSteerSubmit({
         return Promise.reject(error)
       }
     }
-    // Sending is never an implicit stop. The daemon either admits this to a
-    // verified live channel or keeps it durably for the next turn.
+    // A send stops a turn only when the composer said so first (`when: "now"`
+    // against a turn that cannot take it); otherwise the daemon admits it to
+    // a verified live channel or keeps it durably for the next turn.
     void postMessage().then(done, failed)
   }
 

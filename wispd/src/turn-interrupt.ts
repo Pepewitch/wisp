@@ -1,15 +1,17 @@
-import { closeLiveInput } from "./live-input";
+import { closeLiveInput, turnInputMode } from "./live-input";
 import { INTERRUPTED, isUnresolvedInterrupt, STOP_FAILED, STOPPING } from "./interrupt-state";
 import { pidIdentity } from "./process-watch";
 import { processGroupAlive, processGroupEnded, signalProcessGroup } from "./process-tree";
-import { getTask, getTurn, latestTurnForTask, runningTurn, setTurnInterrupt, transition } from "./store";
+import { getTask, getTurn, isQueueHead, latestTurnForTask, runningTurn, setTurnInterrupt, transition } from "./store";
 import type { Turn } from "./types";
-import { hasRecordedGroup, recordedGroupRebooted, processStop, processStopPending, stopRecordedGroups } from "./task-processes";
+import { hasRecordedGroup, recordedGroupRebooted, processStop, processStopPending, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
 
 /** A stop's process phase must finish before either watcher can finalize. */
 const interruptBarriers = new Map<number, Promise<void>>();
-/** Concurrent explicit Stop requests share one operation. Sending never enters it. */
+/** Concurrent stops share one operation: an explicit Stop, or a `now` send the turn could not take. */
 const interruptRequests = new Map<string, Promise<void>>();
+/** Tasks whose running turn is being stopped so a `now` message can start. */
+const messageStops = new Set<string>();
 
 export class InterruptConflict extends Error {}
 
@@ -20,6 +22,10 @@ function unresolvedInterrupt(taskId: string): Turn | null {
 
 /** Persisted refusals also protect callers after a failed Stop or daemon restart. */
 export function assertTaskNotStopping(taskId: string, retryBackgroundStop = false): void {
+  // nobody pressed Stop here, so the Stop wording below would mislead
+  if (messageStops.has(taskId)) {
+    throw new InterruptConflict("The running turn is stopping so an earlier message can start; try again in a moment.");
+  }
   const turn = unresolvedInterrupt(taskId);
   if (turn) throw new InterruptConflict(`${turn.interrupt_detail}; retry Stop before sending or archiving`);
   if (interruptBarriers.has(latestTurnForTask(taskId)?.id ?? -1)) throw new InterruptConflict(STOPPING);
@@ -37,7 +43,8 @@ export async function turnFinalized(turnId: number, ms: number): Promise<boolean
 }
 
 /**
- * Explicit Stop only. A finalized leader is not proof that its group stopped.
+ * Explicit Stop, or a `now` send the running turn cannot take (runner's
+ * interruptForMessage). A finalized leader is not proof that its group stopped.
  * Keep finalization behind the process phase; a queued or concurrent send must
  * never start work while a resistant descendant is still being terminated.
  */
@@ -180,4 +187,38 @@ export function waitForInterrupt(turnId: number): Promise<void> | undefined {
 
 export function isTaskStopping(taskId: string): boolean {
   return unresolvedInterrupt(taskId) !== null || interruptBarriers.has(latestTurnForTask(taskId)?.id ?? -1);
+}
+
+/**
+ * Stop the running turn so a message it cannot take starts next. Unlike an
+ * explicit Stop this leaves workflows and background work alone: the person
+ * is redirecting the agent, not halting the task. A turn whose live channel
+ * already closed is ending by itself, so it is left to finish. Behind older
+ * queued messages, a stop would only start them sooner, so the message keeps
+ * its place and the turn runs on. A stop that fails is refused by name; the
+ * message it was for stays queued.
+ */
+export async function interruptForMessage(
+  taskId: string,
+  messageId: string,
+  graceMs: number,
+  getLiveChild: (turnId: number) => ReturnType<typeof Bun.spawn> | undefined,
+): Promise<boolean> {
+  const running = runningTurn(taskId);
+  if (!running || turnInputMode(taskId, running.id) === "wait" || !isQueueHead(messageId, taskId)) return false;
+  messageStops.add(taskId);
+  try {
+    await withProcessStop(taskId, async () => {
+      await refreshProcessGroups(taskId);
+      await interruptTaskTurn(taskId, graceMs, getLiveChild);
+    });
+    return true;
+  } catch (error) {
+    // it ended by itself in the meantime: the message can start all the same
+    if (!runningTurn(taskId)) return true;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new InterruptConflict(`${detail}; message ${messageId} stays queued`, { cause: error });
+  } finally {
+    messageStops.delete(taskId);
+  }
 }

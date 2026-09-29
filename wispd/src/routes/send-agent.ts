@@ -10,7 +10,7 @@
 import type { AdapterDef } from "../adapters";
 import { resolveHarnessDefaults, type WispConfig } from "../config";
 import type { TaskAgentSelection } from "../store-messages";
-import type { Task } from "../types";
+import type { SendWhen, Task } from "../types";
 import { typeName } from "../validate";
 import { err } from "./http";
 
@@ -24,7 +24,11 @@ export interface SendTaskBody {
   effort?: unknown;
   fast?: unknown;
   startFreshContext?: unknown;
+  /** "now" steers or else stops the running turn; "next-turn" holds it; absent steers or else waits. */
+  when?: unknown;
 }
+
+const SEND_WHEN: readonly string[] = ["now", "next-turn"] satisfies SendWhen[];
 
 export function sendTaskBodyError(body: SendTaskBody): Response | null {
   if (typeof body.message !== "string" || body.message.length === 0) return err("message is required", 400);
@@ -45,6 +49,9 @@ export function sendTaskBodyError(body: SendTaskBody): Response | null {
   }
   if (body.startFreshContext !== undefined && typeof body.startFreshContext !== "boolean") {
     return err("startFreshContext must be a boolean", 400);
+  }
+  if (body.when !== undefined && (typeof body.when !== "string" || !SEND_WHEN.includes(body.when))) {
+    return err(`when must be one of ${SEND_WHEN.join(", ")}`, 400);
   }
   if (
     body.clientMessageId !== undefined &&

@@ -605,6 +605,7 @@ function TaskComposer({
       task={task}
       harnesses={harnesses}
       canSwitchAgent={features.data?.taskAgentSwitching === true}
+      canChooseDelivery={features.data?.steerDelivery === true}
       hasImage={harness?.hasImage}
       imageNote={harness?.imageNote}
       probeCommands={harness?.probeCommands}
