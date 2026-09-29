@@ -2,6 +2,7 @@ import type { ComponentProps } from "react"
 import remarkBreaks from "remark-breaks"
 import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdown"
 
+import { PaneErrorBoundary } from "@/components/error-boundary"
 import { externalLinkProps } from "@/lib/external-links"
 import {
   PROSE_HIGHLIGHT_PLUGINS,
@@ -35,16 +36,22 @@ export function Prose({
 
   return (
     <div className={cn("text-[13px] leading-[1.7] text-foreground/85", className)}>
-      <Streamdown
-        mode={mode}
-        parseIncompleteMarkdown={mode === "streaming"}
-        controls={false}
-        remarkPlugins={PROSE_REMARK_PLUGINS}
-        rehypePlugins={rehypePlugins}
-        components={PROSE_COMPONENTS}
-      >
-        {text}
-      </Streamdown>
+      {/* Not keyed: this markdown/Mermaid block is one node among many (an
+          activity row, a turn's conclusion, a file preview); the pane that
+          holds it already remounts on a task switch, and that is what resets
+          it. */}
+      <PaneErrorBoundary label="this content" fill={false}>
+        <Streamdown
+          mode={mode}
+          parseIncompleteMarkdown={mode === "streaming"}
+          controls={false}
+          remarkPlugins={PROSE_REMARK_PLUGINS}
+          rehypePlugins={rehypePlugins}
+          components={PROSE_COMPONENTS}
+        >
+          {text}
+        </Streamdown>
+      </PaneErrorBoundary>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 
 import { ChangesPane } from "@/components/changes-pane"
+import { PaneErrorBoundary } from "@/components/error-boundary"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { BriefPane } from "@/components/task-brief"
 import { TaskPanel } from "@/components/task-panel"
@@ -43,7 +44,11 @@ export function buildTaskSurfaces({
       onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
     >
       {mobile ? (
-        <ChangesPane taskId={taskId} archived={archived} onRefresh={onRefresh} touch />
+        // Keyed by task: switching tasks must not still show the last one's
+        // crash while the new one's diff is perfectly readable.
+        <PaneErrorBoundary key={taskId ?? "none"} label="the changes">
+          <ChangesPane taskId={taskId} archived={archived} onRefresh={onRefresh} touch />
+        </PaneErrorBoundary>
       ) : (
         <TaskPanel
           task={task}
@@ -79,14 +84,18 @@ export function buildTaskSurfaces({
     />
   ) : undefined
   const terminal = (
-    <TerminalSection
-      taskId={taskId}
-      // The list row is what the SSE bridge refreshes. A just-created task has
-      // no worktree yet, so the pane waits instead of failing to connect.
-      worktreePath={task?.worktree_path ?? null}
-      archived={archived}
-      touch={mobile}
-    />
+    // Keyed by task: a shell that broke rendering task A's terminal must not
+    // still show task A's fallback once task B's terminal pane mounts.
+    <PaneErrorBoundary key={taskId ?? "none"} label="the terminal">
+      <TerminalSection
+        taskId={taskId}
+        // The list row is what the SSE bridge refreshes. A just-created task has
+        // no worktree yet, so the pane waits instead of failing to connect.
+        worktreePath={task?.worktree_path ?? null}
+        archived={archived}
+        touch={mobile}
+      />
+    </PaneErrorBoundary>
   )
   return { changes, brief, workflows, terminal }
 }
