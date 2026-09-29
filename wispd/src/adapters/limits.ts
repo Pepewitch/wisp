@@ -68,7 +68,11 @@ export interface LimitsIo {
   /** a file's text, or null when it is missing or unreadable */
   readFile: (path: string) => string | null;
   homeDir: string;
-  /** a neutral cwd for a CLI that would otherwise load the daemon's project settings */
+  /**
+   * A neutral cwd for a CLI that would otherwise load the daemon's project
+   * settings. It must be writable by this user alone: claude loads a cwd's
+   * `.claude/settings.json` without asking in print mode.
+   */
   scratchDir: string;
 }
 
@@ -340,11 +344,14 @@ export const LIMIT_STRATEGIES: Record<string, LimitsStrategy> = {
    * mode answers it with zero model tokens in ~0.5s. `--no-session-persistence`
    * keeps the read out of the user's session history, and `TZ=UTC` makes
    * claude state every reset in UTC, which is the only zone the parser reads.
+   * `--setting-sources user` keeps project and local settings (hooks,
+   * `apiKeyHelper`, `env`) out of the read even if the private scratch cwd
+   * were ever to hold some: print mode skips the workspace trust dialog.
    */
   "claude-usage": {
     async run(def, ctx, io) {
       const res = await io.spawnOnce(
-        [def.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence"],
+        [def.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence", "--setting-sources", "user"],
         { cwd: io.scratchDir, env: { TZ: "UTC" }, signal: ctx.signal },
       );
       const line = res.stdout.split("\n").reverse().find((l) => l.trim().startsWith("{"));
