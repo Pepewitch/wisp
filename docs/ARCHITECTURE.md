@@ -50,7 +50,13 @@ its connection's baseline after an event-stream reconnect.
 Each turn uses a headless harness process and its native session contract,
 not TUI scraping or synthesized keystrokes. Claude stream-json, Droid
 JSON-RPC, and Codex app-server drivers stay duplex during a turn for native
-steering; other adapters queue follow-ups for the next turn.
+steering; other adapters queue follow-ups for the next turn. A send may say
+when it should arrive: `now` steers when the running turn can take it and
+otherwise stops that turn so the message starts next (unless the turn has
+already answered and is exiting), and `next-turn` holds it, never steered and
+queued behind any later message sent without the hold. Each running task
+reports its turn's input mode (`steer`, `wait`, or `interrupt`) and agent so
+a client can say which will happen before the person sends.
 
 Turn transcripts are size-capped. Recorder-capable drivers keep draining
 activity and checkpoint the result independently of retained history.

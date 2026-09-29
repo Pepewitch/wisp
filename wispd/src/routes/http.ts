@@ -4,6 +4,7 @@ import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
 import { typeName } from "../validate";
 import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
+import { turnInput } from "../live-input";
 
 /**
  * SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit).
@@ -14,15 +15,16 @@ import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
  */
 export function apiTask(t: Task): ApiTask {
   const { brief_enabled, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
-  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, briefEnabled: brief_enabled === 1, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, briefEnabled: brief_enabled === 1, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export type ApiTaskMessage = Omit<
   TaskMessage,
-  "attachments_json" | "claim" | "claim_turn_n" | "attachment_hash" | "delivery_uncertain" | "fast" | "origin" | "source_seq"
+  "attachments_json" | "claim" | "claim_turn_n" | "attachment_hash" | "delivery_uncertain" | "deferred" | "fast" | "origin" | "source_seq"
 > & {
   attachments: AttachmentRecord[];
   delivery_uncertain: boolean;
+  deferred: boolean;
   fast: boolean;
 };
 
@@ -33,6 +35,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     claim_turn_n: _claimTurn,
     attachment_hash: _attachmentHash,
     delivery_uncertain,
+    deferred,
     fast,
     origin: _origin,
     source_seq: _sourceSeq,
@@ -41,6 +44,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
   return {
     ...rest,
     delivery_uncertain: delivery_uncertain !== 0,
+    deferred: deferred === 1,
     fast: fast !== 0,
     attachments: parseAttachmentManifest(attachments_json),
   };

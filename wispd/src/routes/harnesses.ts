@@ -49,6 +49,9 @@ export function harnessesRoute(
       harnessLimits: true,
       taskTerminals: true,
       taskBriefs: true,
+      // /send takes `when`, tasks carry `turn_input`, and a queued message
+      // can be sent now: the composer's queue toggle and its send-now action.
+      steerDelivery: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

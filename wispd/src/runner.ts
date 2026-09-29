@@ -21,6 +21,7 @@ import { LOG_DIR, transcriptBudgetBytes, type WispConfig } from "./config";
 import {
   closeLiveInput,
   configureLiveTurn,
+  forgetLiveTurn,
   liveCommand,
   LiveTransportError,
   pendingDelivery,
@@ -28,7 +29,7 @@ import {
   type LiveOutputSink,
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
-import { assertTaskNotStopping, interruptTaskTurn, isTaskStopping, turnFinalized, waitForInterrupt } from "./turn-interrupt";
+import { assertTaskNotStopping, interruptForMessage, interruptTaskTurn, isTaskStopping, turnFinalized, waitForInterrupt } from "./turn-interrupt";
 import { assertTaskProcessesEnded, backgroundWork, processStop, processStopPending, recordProcessGroup, recordedGroupRebooted, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
 import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { signalProcessTree } from "./process-tree";
@@ -49,6 +50,7 @@ import {
   nextQueuedMessage,
   releaseOrphanedTaskMessageClaims,
   releaseTaskMessageClaim,
+  releaseTaskMessageHold,
   runningTurns,
   runningTurn,
   setTaskFields,
@@ -350,7 +352,16 @@ export function startTurn(
   ));
 }
 
-/** Persist first, then deliver without ever interrupting the active process. */
+/**
+ * How a submission may reach the agent. `allow-steer` steers when it can and
+ * otherwise waits for the next turn; `next-turn-only` never steers (a native
+ * compaction); `hold` also never steers and lets later unheld messages go
+ * first; `now` steers when it can and otherwise stops the running turn so the
+ * message starts, unless that turn is already ending on its own.
+ */
+export type DeliveryPolicy = "allow-steer" | "next-turn-only" | "hold" | "now";
+
+/** Persist first, then deliver; only the `now` policy ever interrupts the active process. */
 export async function submitTaskMessage(
   task: Task,
   text: string,
@@ -360,7 +371,7 @@ export async function submitTaskMessage(
   clientMessageId?: string,
   adapters: Readonly<Record<string, AdapterDef>> = { [task.harness]: def },
   agent?: TaskAgentSelection,
-  deliveryPolicy: "allow-steer" | "next-turn-only" = "allow-steer",
+  deliveryPolicy: DeliveryPolicy = "allow-steer",
 ): Promise<SendResult> {
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
@@ -369,7 +380,7 @@ export async function submitTaskMessage(
   task = currentTask;
   const existing = clientMessageId ? getTaskMessage(clientMessageId) : null;
   if (!existing) assertTaskCapacity(cfg, task.id);
-  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent);
+  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent, deliveryPolicy === "hold");
   task = persisted.task;
   const message = persisted.message;
   if (message.status !== "queued") {
@@ -383,12 +394,45 @@ export async function submitTaskMessage(
   if (deliveryPolicy === "next-turn-only" && hasRunningTurn(task.id)) {
     return { disposition: "queued-next", message };
   }
+  return deliverQueuedMessage(task, message, adapters, cfg, deliveryPolicy === "now");
+}
+
+/**
+ * Deliver a queued message the person now wants sent without waiting: lift
+ * its next-turn hold, then steer it, or stop a turn that cannot take it.
+ */
+export async function sendQueuedMessageNow(
+  taskId: string,
+  messageId: string,
+  adapters: Readonly<Record<string, AdapterDef>>,
+  cfg: WispConfig,
+): Promise<SendResult | null> {
+  const task = getTask(taskId);
+  if (!task || task.archived) throw new Error("task is archived — archived tasks are read-only");
+  assertTaskNotStopping(taskId);
+  const message = releaseTaskMessageHold(messageId, taskId);
+  if (!message) return null;
+  return deliverQueuedMessage(task, message, adapters, cfg, true);
+}
+
+async function deliverQueuedMessage(
+  task: Task,
+  message: TaskMessage,
+  adapters: Readonly<Record<string, AdapterDef>>,
+  cfg: WispConfig,
+  interrupt: boolean,
+): Promise<SendResult> {
   const delivery = await deliverToRunningTurn(task, message);
   if (delivery.result) return delivery.result;
-  if (!delivery.running) {
+  const interrupted =
+    delivery.running && interrupt && (await interruptForMessage(task.id, message.id, KILL_GRACE_MS, (id) => liveChildren.get(id)));
+  if (!delivery.running || interrupted) {
     const started = startNextQueuedMessage(task.id, adapters, cfg);
-    if (started?.id === message.id) return { disposition: "started", message: started };
+    const current = started?.id === message.id ? started : getTaskMessage(message.id)!;
+    // the interrupted turn's own watcher may have started it first
+    if (current.delivery === "started") return { disposition: "started", message: current, ...(interrupted ? { interrupted } : {}) };
     warnIfNothingWillRun(task.id, message.id, started);
+    return { disposition: "queued-next", message: current, ...(interrupted ? { interrupted } : {}) };
   }
   return { disposition: "queued-next", message };
 }
@@ -526,6 +570,7 @@ async function watchTurn(
   await refreshProcessGroups(taskId, turnId);
   await waitForInterrupt(turnId);
   liveChildren.delete(turnId);
+  forgetLiveTurn(taskId, turnId);
   await closeLiveInput(taskId, turnId);
   await pendingDelivery(taskId)?.catch(() => {});
   await outputPump.catch(() => {});
@@ -694,7 +739,7 @@ function standingNotes(taskId: string, n: number, command: boolean): TurnNotes |
   return notes;
 }
 
-/** Explicit interruption; normal message delivery never calls this operation. */
+/** Explicit Stop. A `now` send that has to stop a turn uses interruptForMessage, which keeps workflows and background work. */
 export function interruptTurn(taskId: string, graceMs = KILL_GRACE_MS): Promise<void> {
   pauseTaskWorkflows(taskId);
   const hadBackground = backgroundWork(taskId).groups > 0;

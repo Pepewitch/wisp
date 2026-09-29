@@ -589,6 +589,7 @@ export {
   nextQueuedMessage,
   releaseOrphanedTaskMessageClaims,
   releaseTaskMessageClaim,
+  releaseTaskMessageHold,
   updateQueuedTaskMessage,
   type TaskAgentSelection,
 } from "./store-messages";

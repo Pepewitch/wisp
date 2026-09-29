@@ -11,10 +11,10 @@ import {
   readMessageAttachments,
   type StoredAttachment,
 } from "./attachments";
-import { transition } from "./store";
+import { runningTurn, transition } from "./store";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
-import type { Task, TaskMessage } from "./types";
+import type { Task, TaskMessage, TurnInput, TurnInputMode } from "./types";
 
 export interface LiveOutputSink {
   recordEvent(event: Record<string, unknown>): void;
@@ -53,11 +53,40 @@ interface ConfigureLiveTurnOptions {
 
 /** Verified active-turn inputs by task. Absence means durable next-turn fallback. */
 const liveInputs = new Map<string, ActiveLiveInput>();
+/**
+ * Turns this daemon spawned with a live channel, until their process exits.
+ * The channel itself leaves `liveInputs` earlier, when the harness finishes
+ * its answer; the difference between the two is a turn that is ending.
+ */
+const liveTurns = new Map<string, number>();
 /** In-flight native admission acknowledgements, serialized per task. */
 const pendingDeliveries = new Map<string, Promise<void>>();
 
 export function activeLiveInput(taskId: string): ActiveLiveInput | undefined {
   return liveInputs.get(taskId);
+}
+
+export function turnInputMode(taskId: string, turnId: number): TurnInputMode {
+  if (liveInputs.get(taskId)?.turnId === turnId) return "steer";
+  return liveTurns.get(taskId) === turnId ? "wait" : "interrupt";
+}
+
+/** The running turn's input for the task API; null while idle. */
+export function turnInput(taskId: string): TurnInput | null {
+  const running = runningTurn(taskId);
+  if (!running) return null;
+  return {
+    mode: turnInputMode(taskId, running.id),
+    context_n: running.context_n,
+    harness: running.harness,
+    model: running.requested_model,
+    effort: running.requested_effort,
+    fast: running.requested_fast !== 0,
+  };
+}
+
+export function forgetLiveTurn(taskId: string, turnId: number): void {
+  if (liveTurns.get(taskId) === turnId) liveTurns.delete(taskId);
 }
 
 export function pendingDelivery(taskId: string): Promise<void> | undefined {
@@ -101,6 +130,7 @@ function staged<T>(stage: LiveStage, work: Promise<T>): Promise<T> {
 }
 
 export function configureLiveTurn(options: ConfigureLiveTurnOptions): Promise<void> {
+  liveTurns.set(options.task.id, options.turnId);
   switch (options.def.liveInput) {
     case "claude-stream-json":
       if (!options.claudeStrategy) throw new Error("Claude live input strategy is unavailable");

@@ -7,7 +7,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -178,6 +178,7 @@ export function useSendMessage() {
       effort,
       fast,
       startFreshContext,
+      when,
     }: {
       id: string;
       message: string;
@@ -189,6 +190,8 @@ export function useSendMessage() {
       effort?: string | null;
       fast?: boolean;
       startFreshContext?: boolean;
+      /** omitted against a daemon without the steerDelivery feature */
+      when?: SendWhen;
     }) =>
       // the field is OMITTED rather than sent empty: the daemon rejects
       // attachments on a harness without the capability, and an empty array
@@ -205,6 +208,7 @@ export function useSendMessage() {
           ...(effort !== undefined ? { effort } : {}),
           ...(fast !== undefined ? { fast } : {}),
           ...(startFreshContext ? { startFreshContext: true } : {}),
+          ...(when ? { when } : {}),
         },
       }),
     onSuccess: (_data, { id, harness }) => {
@@ -224,6 +228,19 @@ export function useUpdateQueuedMessage() {
     mutationFn: ({ taskId, messageId, message }: { taskId: string; messageId: string; message: string }) =>
       transport.request<TaskMessage>(`/api/tasks/${taskId}/messages/${messageId}`, { method: "PATCH", body: { message } }),
     onSuccess: (_saved, { taskId }) => {
+      void client.invalidateQueries({ queryKey: qk.task(taskId) })
+    },
+  })
+}
+
+/** Lift a queued message's hold and deliver it now: steered in, or started by stopping the turn. */
+export function useSendQueuedMessageNow() {
+  const client = useQueryClient()
+  const { transport, qk } = useDaemonRuntime()
+  return useMutation({
+    mutationFn: ({ taskId, messageId }: { taskId: string; messageId: string }) =>
+      transport.request<SendResponse>(`/api/tasks/${taskId}/messages/${messageId}/send-now`, { method: "POST" }),
+    onSuccess: (_sent, { taskId }) => {
       void client.invalidateQueries({ queryKey: qk.task(taskId) })
     },
   })

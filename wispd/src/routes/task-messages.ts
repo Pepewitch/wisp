@@ -14,9 +14,14 @@ import {
   turnForTask,
   updateQueuedTaskMessage,
 } from "../store";
+import { isCompactPrompt, type AdapterDef } from "../adapters";
+import type { WispConfig } from "../config";
+import type { TaskCompactor } from "../compacts";
+import { hasRunningTurn, sendQueuedMessageNow } from "../runner";
+import { InterruptConflict } from "../turn-interrupt";
 import { changeWorkflowState } from "../workflows/store";
 import { skipCancelledRound } from "../autopilot/store";
-import { apiTaskMessage, err, json, jsonObjectBody } from "./http";
+import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
  * Serve turn or message attachment bytes. The requested name is first matched
@@ -165,4 +170,49 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
     return json(apiTaskMessage(cancelled));
   }
   return err("method not allowed", 405);
+}
+
+/**
+ * POST /api/tasks/:id/messages/:messageId/send-now — a queued message the
+ * person no longer wants to wait: its hold is lifted and it is delivered the
+ * way a `now` send is, steered in or started by stopping the running turn.
+ */
+export function taskMessageSendNowRoute(
+  path: string,
+  method: string,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+  compacts: TaskCompactor,
+): Response | Promise<Response> | null {
+  const match = path.match(/^\/api\/tasks\/([a-z0-9]+)\/messages\/([A-Za-z0-9_-]+)\/send-now$/);
+  if (!match) return null;
+  if (method !== "POST") return err("method not allowed", 405);
+  const [, taskId, messageId] = match;
+  const task = getTask(taskId!);
+  if (!task) return err(`no such task: ${taskId}`, 404);
+  const message = getTaskMessage(messageId!);
+  if (!message || message.task_id !== task.id) return err(`no such message: ${messageId}`, 404);
+  if (task.archived) return err("task is archived — archived tasks are read-only", 409);
+  if (message.workflow_id) return err("a workflow's generated instruction is sent by its workflow", 409);
+  const running = hasRunningTurn(task.id);
+  if (compacts.isCompacting(task.id) || (running && isCompactPrompt(adapters[running.harness], running.prompt))) {
+    return err("compaction is still running — wait for it to finish", 409);
+  }
+  return (async () => {
+    try {
+      const result = await sendQueuedMessageNow(task.id, message.id, adapters, cfg);
+      if (!result) return err("only queued messages can be sent now", 409);
+      return json({
+        ...apiTask(getTask(task.id)!),
+        disposition: result.disposition,
+        message: apiTaskMessage(result.message),
+        ...(result.interrupted ? { interrupted: true } : {}),
+      });
+    } catch (error) {
+      if (error instanceof InterruptConflict) return err(error.message, 409);
+      const detail = error instanceof Error ? error.message : String(error);
+      if (detail === "task is archived — archived tasks are read-only") return err(detail, 409);
+      throw error;
+    }
+  })();
 }

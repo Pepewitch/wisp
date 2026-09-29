@@ -25,6 +25,7 @@ import {
   type AgentSubmission,
 } from "@/hooks/useSteerSubmit"
 import { useAutosizeTextarea } from "@/hooks/useAutosizeTextarea"
+import { useSteerDelivery, type QueueToggleState } from "@/hooks/useSteerDelivery"
 import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
 import {
@@ -42,6 +43,7 @@ import { openExternalLink } from "@/lib/external-links"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { handleComposerPaste } from "@/lib/paste-links"
+import type { SteerAction } from "@/lib/steer-delivery"
 import {
   commandEntries,
   compactEntry,
@@ -99,6 +101,8 @@ interface SteerBoxProps {
   harnesses?: HarnessInfo[]
   /** Daemon feature flag; absent on an older daemon, whose /send would ignore a switch. */
   canSwitchAgent?: boolean
+  /** Daemon feature flag (steerDelivery): /send takes `when`, so the queue toggle and running note can be exact. */
+  canChooseDelivery?: boolean
   onSend?: (
     message: string,
     attachments?: AttachmentPayload[],
@@ -127,6 +131,17 @@ function useComposerFocusRequests(box: RefObject<HTMLTextAreaElement | null>): v
   }, [box, requests])
 }
 
+/** Put the caret where a pick that rewrote the draft asked for it, after that render. */
+function useCaretRestore(boxRef: RefObject<HTMLTextAreaElement | null>, caretRef: RefObject<number | null>): void {
+  useEffect(() => {
+    const pos = caretRef.current
+    if (pos === null) return
+    caretRef.current = null
+    boxRef.current?.focus()
+    boxRef.current?.setSelectionRange(pos, pos)
+  })
+}
+
 export function SteerBox({
   task,
   hasImage = true,
@@ -138,6 +153,7 @@ export function SteerBox({
   compact,
   harnesses = [],
   canSwitchAgent = false,
+  canChooseDelivery = false,
   onSend,
   onInterrupt,
   runningSince = null,
@@ -168,6 +184,8 @@ export function SteerBox({
   if (suffixSelection.taskId !== taskId) {
     setSuffixSelection({ taskId, value: null })
   }
+  const choice = canSwitchAgent ? agent.choice : null
+  const delivery = useSteerDelivery({ task, taskId, blocked, supported: canChooseDelivery, choice })
   /** the slash token the palette is bound to; null = closed */
   const [palette, setPalette] = useState<SlashToken | null>(null)
   /** One task-keyed report: either a harness probe or Wisp's task-level tokens. */
@@ -192,14 +210,7 @@ export function SteerBox({
   })
   const commands = useSteerCommands({ task, status, setNote, setReport, setCompactingTaskId })
   const archive = commands.archive
-  useEffect(() => {
-    const pos = caret.current
-    if (pos === null) return
-    caret.current = null
-    box.current?.focus()
-    box.current?.setSelectionRange(pos, pos)
-  })
-
+  useCaretRestore(box, caret)
   useComposerFocusRequests(box)
 
   const { send: submit, stop } = useSteerSubmit({
@@ -209,9 +220,10 @@ export function SteerBox({
     value,
     suffixPromptId,
     attachments,
+    when: delivery.when,
     onSend,
     onInterrupt,
-    onSent: (taskId) => setSuffixSelection({ taskId, value: null }),
+    onSent: (taskId) => (setSuffixSelection({ taskId, value: null }), delivery.reset()),
     setValue,
     setSending,
     setNote,
@@ -266,7 +278,7 @@ export function SteerBox({
   const groups = slashGroups(task, probeCommands, skills, compact)
   const shownReport =
     report && task && report.taskId === task.id ? report : null
-  const runtimeStatus = composerStatus(task, blocked, compacting)
+  const runtimeStatus = composerStatus(task, delivery.action, compacting)
 
   return (
     <div
@@ -322,6 +334,7 @@ export function SteerBox({
           harnesses={harnesses}
           canSwitchAgent={canSwitchAgent}
           agentChoice={agent.choice}
+          delivery={delivery}
           onValueChange={setValue}
           onTrack={track}
           onDismissPalette={dismiss}
@@ -488,6 +501,7 @@ function SteerComposer({
   harnesses,
   canSwitchAgent,
   agentChoice,
+  delivery,
   onValueChange,
   onTrack,
   onDismissPalette,
@@ -516,6 +530,7 @@ function SteerComposer({
   harnesses: HarnessInfo[]
   canSwitchAgent: boolean
   agentChoice: TaskAgentChoice | null
+  delivery: { action: SteerAction | null; queue: QueueToggleState | null }
   onValueChange: (value: string) => void
   onTrack: (value: string, caret: number | null) => void
   onDismissPalette: () => void
@@ -646,6 +661,8 @@ function SteerComposer({
         harnesses={harnesses}
         canSwitchAgent={canSwitchAgent}
         agentChoice={agentChoice}
+        action={delivery.action}
+        queue={delivery.queue}
         onSuffixPromptChange={onSuffixPromptChange}
         onAgentChange={onAgentChange}
         onSend={onSend}

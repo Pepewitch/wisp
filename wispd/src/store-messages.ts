@@ -30,6 +30,8 @@ interface CreateTaskMessageInput {
   attachmentsJson?: string | null;
   /** who wrote it; fixed at creation, so delivery can frame it and a brief never counts a workflow's message as the person's */
   origin?: "human" | "workflow" | "scheduled" | "plugin";
+  /** held for the next turn: never steered, and behind anything sent later without the hold */
+  deferred?: boolean;
 }
 
 export type TaskAgentSelection = TaskAgentTarget & { freshContext: boolean };
@@ -64,8 +66,8 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
   db.run(
     `INSERT INTO task_messages
       (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,
-       attachment_hash, attachments_json, origin, source_seq, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?)`,
+       attachment_hash, attachments_json, origin, source_seq, deferred, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -79,6 +81,7 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       input.attachmentsJson ?? null,
       origin,
       seq,
+      input.deferred ? 1 : 0,
       timestamp,
       timestamp,
     ],
@@ -188,13 +191,20 @@ export function messagesForTurnPage(
     .map(({ page_rowid: _pageRowId, ...message }) => message);
 }
 
+/**
+ * The queue's order: arrival, except that a message held for the next turn
+ * lets anything sent after it without the hold go first. Waiting was the
+ * sender's point; a later message that did not ask to wait should not.
+ */
+const QUEUE_ORDER = "deferred ASC, created_at ASC, rowid ASC";
+
 export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskMessage | null {
   return (
     (db
       .query(
         `SELECT * FROM task_messages
          WHERE task_id = ? AND status = 'queued' AND claim IS NULL AND (workflow_id IS NULL OR id = ?)
-         ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+         ORDER BY ${QUEUE_ORDER} LIMIT 1`,
       )
       .get(taskId, workflowMessageId) as TaskMessage | null) ?? null
   );
@@ -212,6 +222,22 @@ export function updateQueuedTaskMessage(id: string, taskId: string, text: string
     emit({ type: "message", taskId, messageId: id });
   }
   return updated;
+}
+
+/** Lift a queued message's next-turn hold, so it can be delivered now. Idempotent. */
+export function releaseTaskMessageHold(id: string, taskId: string): TaskMessage | null {
+  const result = db.run(
+    `UPDATE task_messages SET deferred = 0, updated_at = ?
+     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL AND deferred = 1`,
+    [now(), id, taskId],
+  );
+  const message = getTaskMessage(id);
+  if (!message || message.task_id !== taskId || message.status !== "queued") return null;
+  if (result.changes > 0) {
+    touchHumanInput(id);
+    emit({ type: "message", taskId, messageId: id });
+  }
+  return message;
 }
 
 export function cancelQueuedTaskMessage(id: string, taskId: string): TaskMessage | null {
@@ -250,7 +276,7 @@ function claimTaskMessage(
        AND id = (
          SELECT queued.id FROM task_messages AS queued
          WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
-         ORDER BY queued.created_at ASC, queued.rowid ASC LIMIT 1
+         ORDER BY queued.deferred ASC, queued.created_at ASC, queued.rowid ASC LIMIT 1
        )`,
     [delivery, turnN, now(), id, taskId, taskId, id],
   );

@@ -1,5 +1,6 @@
 import type { RefObject } from "react"
 
+import type { ComposerStatus } from "@/components/composer-status"
 import { CopyButton } from "@/components/copy-button"
 import { Meta, StateDot } from "@/components/primitives"
 import { ProbePanel } from "@/components/probe-panel"
@@ -38,7 +39,7 @@ export function SteerOverlays({
   commandRef: RefObject<HTMLDivElement | null>
   touch: boolean
   runningSince: string | null
-  composerStatus: string | null
+  composerStatus: ComposerStatus | null
   note: SteerNote | null
 }) {
   const tokensOpen = shownReport?.kind === "tokens" && task !== null
@@ -140,7 +141,7 @@ function RunningRow({
   status,
 }: {
   startedAt: string | null
-  status: string | null
+  status: ComposerStatus | null
 }) {
   const now = useTick(Boolean(startedAt))
   const text = startedAt ? elapsed(startedAt, now) : null
@@ -161,8 +162,13 @@ function RunningRow({
       )}
       <span className="flex-1" />
       {status && (
-        <span className="min-w-0 truncate text-right text-[11.5px] text-faint">
-          {status}
+        <span
+          className={cn(
+            "min-w-0 truncate text-right text-[11.5px]",
+            status.warn ? "text-state-needs-input" : "text-faint"
+          )}
+        >
+          {status.text}
         </span>
       )}
     </div>

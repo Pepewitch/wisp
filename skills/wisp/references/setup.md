@@ -230,8 +230,12 @@ it; it mints no credential. Every other API route requires
 - `GET /api/tasks/:id/conversation` — SQLite-only task history. Protocol-1
   clients fall back to the legacy Git-aware `GET /api/tasks/:id` when an older
   daemon does not provide this additive route
-- `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?}`) ·
+- `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?,
+  when?}`; `when` is `now` or `next-turn`, see the CLI reference) ·
   `…/interrupt` · `…/fresh-session` · `…/push` · `…/archive` (`{force?}`)
+- `PATCH|DELETE /api/tasks/:id/messages/:messageId` (edit or cancel a queued
+  message) · `POST …/messages/:messageId/send-now` (lift its hold and deliver
+  it the way a `now` send does)
 - `GET /api/tasks/:id/log?turn=N&offset=B` — pollable log bytes
 - `GET /api/tasks/:id/attachments/:turn/:name` — image bytes (410 after
   archive)
