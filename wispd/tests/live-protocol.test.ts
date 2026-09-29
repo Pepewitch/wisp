@@ -5,6 +5,8 @@ import { CodexLiveDriver } from "../src/adapters/live/codex";
 import { DroidLiveDriver } from "../src/adapters/live/droid";
 import { JsonLineBuffer, MAX_PROTOCOL_FRAME_CHARS } from "../src/adapters/live/json-lines";
 import { JsonRpcPeer, type WritableRpcSink } from "../src/adapters/live/json-rpc";
+import { activeLiveInput, closeLiveInput, configureLiveTurn, forgetLiveTurn } from "../src/live-input";
+import type { Task, TaskMessage } from "../src/types";
 
 class MemorySink implements WritableRpcSink {
   readonly lines: string[] = [];
@@ -109,6 +111,32 @@ describe("bounded live protocol transport", () => {
     await expect(peer.call("blocked", {})).rejects.toThrow(/timed out after 10ms/);
     await peer.close();
     expect(ended).toBe(true);
+  });
+
+  test("a refused write fails only itself: the next write is still attempted", async () => {
+    const sink = new MemorySink();
+    let refuse = true;
+    const peer = new JsonRpcPeer({
+      sink: {
+        write: (data: string) => {
+          if (refuse) {
+            refuse = false;
+            throw new Error("pipe refused");
+          }
+          sink.write(data);
+        },
+        flush: () => {},
+        end: () => sink.end(),
+      },
+      label: "test peer",
+      errorMessage: () => "error",
+    });
+
+    await expect(peer.notify("first")).rejects.toThrow("pipe refused");
+    await peer.respond("server-1", { answers: [] });
+    expect(JSON.parse(sink.lines[0]!)).toMatchObject({ id: "server-1", result: { answers: [] } });
+    await peer.close();
+    expect(sink.ended).toBe(true);
   });
 
   test("an oversized complete frame is dropped without disturbing its neighbours", () => {
@@ -932,5 +960,52 @@ describe("Droid live turn completion", () => {
       { type: "error", source: "agent_loop", message: "Droid turn error" },
     ]);
     await driver.close();
+  });
+});
+
+describe("Claude live input", () => {
+  test("a refused steer fails only itself: a later steer and the close still reach stdin", async () => {
+    const lines: string[] = [];
+    let ended = false;
+    let refuseNext = false;
+    const stdin = {
+      write(data: string) {
+        if (refuseNext) {
+          refuseNext = false;
+          throw new Error("pipe refused");
+        }
+        lines.push(data.trimEnd());
+      },
+      flush() {},
+      end() {
+        ended = true;
+      },
+    };
+    const taskId = "t-claude-live-write-chain";
+    const message = (id: string, text: string) => ({ id, text, attachments_json: null, origin: "human" }) as TaskMessage;
+    await configureLiveTurn({
+      child: { stdin } as unknown as ReturnType<typeof Bun.spawn>,
+      task: { id: taskId } as Task,
+      def: BUILTIN_ADAPTERS.claude!,
+      turnId: 1,
+      turn: 1,
+      recorder: { recordEvent() {}, recordStdoutLine() {}, recordNote() {}, recordFrameDrop() {} },
+      prompt: "prompt",
+      attachments: [],
+      initialMessageId: "m-prompt",
+      claudeStrategy: { argv: [], envelope: (prompt) => JSON.stringify({ prompt }) },
+    });
+    const live = activeLiveInput(taskId)!;
+    try {
+      refuseNext = true;
+      await expect(live.send(message("m-refused", "refused"))).rejects.toThrow("pipe refused");
+      await live.send(message("m-later", "later"));
+      await live.close();
+      expect(lines.map((line) => JSON.parse(line).prompt)).toEqual(["prompt", expect.stringContaining("later")]);
+      expect(ended).toBe(true);
+    } finally {
+      await closeLiveInput(taskId, 1);
+      forgetLiveTurn(taskId, 1);
+    }
   });
 });

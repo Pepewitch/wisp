@@ -143,9 +143,14 @@ export class JsonRpcPeer {
     return this.writeChain;
   }
 
+  /**
+   * Queue one frame behind the writes already in flight. The caller gets this
+   * write's own outcome; the chain keeps only its settling, so one timed-out
+   * or refused write fails that write alone and the next one is still tried.
+   */
   private write(frame: Record<string, unknown>): Promise<void> {
     if (this.closed) return Promise.reject(new Error(`${this.options.label} input is closed`));
-    this.writeChain = this.writeChain.then(async () => {
+    const next = this.writeChain.then(async () => {
       if (this.closed) throw new Error(`${this.options.label} input is closed`);
       const timeoutMs = this.options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
       await within(
@@ -159,7 +164,8 @@ export class JsonRpcPeer {
         `${this.options.label} flush timed out after ${timeoutMs}ms`,
       );
     });
-    return this.writeChain;
+    this.writeChain = next.catch(() => {});
+    return next;
   }
 
   private reject(id: string, error: Error): void {
