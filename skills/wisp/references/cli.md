@@ -226,7 +226,10 @@ nonzero, named reason) while a turn is running, the tree is dirty, the
 branch holds commits nothing else holds — a merged or pushed branch archives
 clean — or auto-merge / auto-fix is still watching its PR (archiving switches
 them off). `-f` overrides: kills the turn, commits leftovers onto the branch as
-`wisp: uncommitted work at archive`. Teardown runs in the background after the
+`wisp: uncommitted work at archive`. When Git cannot read the worktree's status
+(a corrupt index, a bad object), archive refuses even with `-f`, because it cannot
+tell what would be lost: repair the repository, or move the worktree directory
+somewhere else, and archive then clears the task. Teardown runs in the background after the
 response; watch for a `note` line naming anything left behind, and for
 failures in `state_detail`. `cleanup` shows the current step and remedy. `--retry`
 retries safe steps after their cause is fixed. For an uncertain script, inspect

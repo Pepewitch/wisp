@@ -80,6 +80,36 @@ test("a task's briefs travel with its export, and purge removes them with their 
   }
 });
 
+test("purge leaves no row keyed by the task behind, even where foreign keys are not enforced", async () => {
+  const f = fixture();
+  const workflow = `wf_${f.id}`;
+  db.run(
+    `INSERT INTO workflows (id, task_id, type, version, params_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
+     VALUES (?, ?, 'heartbeat', '1', '{}', 'completed', 'fixture', 1, 'now', 'now', 'now', 'now')`,
+    [workflow, f.id],
+  );
+  db.run(`INSERT INTO workflow_history (workflow_id, at, kind, detail) VALUES (?, 'now', 'fixture', 'kept')`, [workflow]);
+  // A profile whose old orphans kept enforcement off (enforceForeignKeys):
+  // nothing cascades there, so purge must name every table itself.
+  const enforced = (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    await purgeTask(f.task);
+  } finally {
+    db.exec(`PRAGMA foreign_keys = ${enforced ? "ON" : "OFF"}`);
+  }
+  const keyed = (db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+    .map(({ name }) => name)
+    .filter((name) => (db.query(`PRAGMA table_info(${name})`).all() as { name: string }[]).some((c) => c.name === "task_id"));
+  expect(keyed).toEqual(expect.arrayContaining(["task_contexts", "workflows", "turns", "task_messages"]));
+  for (const table of keyed) {
+    expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE task_id = ?`).get(f.id), table).toEqual({ n: 0 });
+  }
+  for (const table of ["workflow_history", "workflow_wakes"]) {
+    expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE workflow_id = ?`).get(workflow), table).toEqual({ n: 0 });
+  }
+});
+
 test("active tasks and incomplete archive jobs cannot be deleted; explicit confirmation is required", async () => {
   const f = fixture();
   setTaskFields(f.id, { archived: 0 });

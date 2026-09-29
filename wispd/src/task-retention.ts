@@ -141,6 +141,12 @@ export async function purgeTask(task: Task): Promise<void> {
       db.query("DELETE FROM task_briefs WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM brief_runs WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM task_answer_observations WHERE task_id = ?").run(task.id);
+      // Workflows and their history; the workflows_delete trigger does the
+      // same, but this list is the one that says what deletion removes.
+      db.query("DELETE FROM workflow_history WHERE workflow_id IN (SELECT id FROM workflows WHERE task_id = ?)").run(task.id);
+      db.query("DELETE FROM workflow_wakes WHERE workflow_id IN (SELECT id FROM workflows WHERE task_id = ?)").run(task.id);
+      db.query("DELETE FROM workflows WHERE task_id = ?").run(task.id);
+      db.query("DELETE FROM task_contexts WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM turns WHERE task_id = ?").run(task.id);
       db.query("DELETE FROM tasks WHERE id = ?").run(task.id);
     })();

@@ -154,6 +154,27 @@ describe("worktree lifecycle", () => {
     expect(shOut(["git", "show", "--name-only", "--format=", wt.branch], repo)).toContain("precious.txt");
   });
 
+  test("a git status that fails is never read as clean: archive refuses and nothing is deleted", async () => {
+    const repo = makeRepo();
+    const wt = await createWorktree(repo, "tidx01", cfg);
+    writeFileSync(join(wt.path, "precious.txt"), "keep me\n");
+    // a corrupt index: `rev-parse --git-dir` (the health check) still passes,
+    // but `git status` exits nonzero with nothing on stdout
+    const index = shOut(["git", "rev-parse", "--path-format=absolute", "--git-path", "index"], wt.path).trim();
+    writeFileSync(index, "not an index\n");
+    expect((await worktreeHealth(wt.path)).ok).toBe(true);
+
+    await expect(isDirty(wt.path)).rejects.toThrow(/git status failed/);
+    for (const force of [false, true]) {
+      const pre = await archivePreflight(wt.path, wt.branch, wt.base_commit, force);
+      expect(pre.refusal).toMatch(/could not read this worktree's status/);
+      expect(pre.refusal).toContain(`repair the repository, or move the worktree directory (${wt.path}) somewhere else`);
+    }
+    // the background removal fails closed too, before it deletes anything
+    await expect(removeWorktree(repo, wt.path, wt.branch, true)).rejects.toThrow(/git status failed/);
+    expect(readFileSync(join(wt.path, "precious.txt"), "utf8")).toBe("keep me\n");
+  });
+
   test("clean worktree archives without force, committing nothing", async () => {
     const repo = makeRepo();
     const wt = await createWorktree(repo, "tjkl78", cfg);

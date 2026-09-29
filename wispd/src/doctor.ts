@@ -186,11 +186,13 @@ export function checkGitIdentity(spawn: SpawnFn, repoPath?: string): DoctorCheck
 
 export function checkConfigFile(path: string = CONFIG_PATH): DoctorCheck {
   if (!existsSync(path)) return fail("config.json", `not initialized — run '${COMMAND} init'`);
+  // the check is already named config.json; the loader's messages say it too
+  const unprefixed = (message: string): string => message.replace(/^config\.json: /, "");
   const warnings: string[] = [];
   try {
-    validateConfig(readUserJson(path), (message) => warnings.push(message));
+    validateConfig(readUserJson(path), (message) => warnings.push(unprefixed(message)));
   } catch (error) {
-    return fail("config.json", error instanceof Error ? error.message : String(error));
+    return fail("config.json", unprefixed(error instanceof Error ? error.message : String(error)));
   }
   return warnings.length > 0 ? warn("config.json", warnings.join("; ")) : ok("config.json", "valid");
 }
@@ -431,7 +433,8 @@ function loadDoctorConfig(deps: DoctorDeps): WispConfig | undefined {
   const configFile = deps.configPath ?? CONFIG_PATH;
   if (!existsSync(configFile) || configFile !== CONFIG_PATH) return undefined;
   try {
-    return loadConfig();
+    // checkConfigFile reports config warnings; printing them here too doubled them
+    return loadConfig({ warn: () => {} });
   } catch {
     return undefined;
   }

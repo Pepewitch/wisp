@@ -535,9 +535,14 @@ export async function runSetup(
   }
 }
 
-/** Porcelain status lines (one per dirty/untracked path) — shared by isDirty and statusSummary. */
+/**
+ * Porcelain status lines (one per dirty/untracked path) — shared by isDirty and
+ * statusSummary. A nonzero exit THROWS: a corrupt index or a bad object makes
+ * `git status` fail with nothing on stdout, and reading that as "no changes"
+ * let archive delete uncommitted and untracked work it never saved.
+ */
 async function porcelainStatus(worktree: string): Promise<string[]> {
-  const out = (await git(["status", "--porcelain"], worktree)).out;
+  const out = must(await git(["status", "--porcelain"], worktree), "git status failed");
   return out === "" ? [] : out.split("\n");
 }
 
@@ -923,7 +928,19 @@ export async function archivePreflight(
           : null,
     };
   }
-  const dirty = await isDirty(worktree);
+  let dirty: boolean;
+  try {
+    dirty = await isDirty(worktree);
+  } catch (error) {
+    // Force does not help here: the teardown saves uncommitted work by asking
+    // the same question, so it could only fail later, after the archive flip.
+    const why = error instanceof Error ? error.message : String(error);
+    return {
+      health,
+      refusal: `Git could not read this worktree's status (${why}), so archive cannot tell whether it holds uncommitted work, even with force; repair the repository, or move the worktree directory (${worktree}) somewhere else, and archive then clears the task`,
+      leftBehind: null,
+    };
+  }
   const unpushed = await hasUnpushedWork(worktree, branch, base_commit);
   if ((dirty || unpushed) && !force) {
     const reasons = [dirty && "uncommitted changes", unpushed && "unpushed commits"].filter(Boolean).join(" and ");

@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
@@ -18,6 +18,7 @@ import {
   validateConfig,
   type WispConfig,
 } from "../src/config";
+import { loadOrCreateInstanceId } from "../src/instance-id";
 
 /** Exact-message assertions for the fail-at-boot errors (a prior audit). */
 function thrownMessage(fn: () => unknown): string {
@@ -217,6 +218,36 @@ describe("validateConfig (a prior audit)", () => {
     expect(validateConfig({ port: MAX_CONFIGURED_PORT })).toEqual({ port: MAX_CONFIGURED_PORT });
   });
 
+  test("out-of-range durations and byte budgets fall back to the default with a warning, never a refusal", () => {
+    // setTimeout's largest delay; past it the timer fires after 1 ms
+    const maxTimerMinutes = Math.floor((2 ** 31 - 1) / 60_000);
+    const ignored = (raw: Record<string, number>): string[] => {
+      const warnings: string[] = [];
+      expect(validateConfig(raw, (m) => warnings.push(m))).toEqual({});
+      return warnings;
+    };
+    for (const value of [0, -5, maxTimerMinutes + 1, 100_000]) {
+      expect(ignored({ setupTimeoutMinutes: value })).toEqual([
+        `config.json: setupTimeoutMinutes is ${value} but must be a number of minutes above 0 and at most ${maxTimerMinutes} — ignoring it and using the default (10)`,
+      ]);
+    }
+    expect(validateConfig({ setupTimeoutMinutes: 0.5 })).toEqual({ setupTimeoutMinutes: 0.5 });
+    expect(validateConfig({ setupTimeoutMinutes: maxTimerMinutes })).toEqual({ setupTimeoutMinutes: maxTimerMinutes });
+    for (const value of [0, -1]) {
+      expect(ignored({ stuckMinutes: value })).toEqual([
+        `config.json: stuckMinutes is ${value} but must be a number of minutes above 0 — ignoring it and using the default (10)`,
+      ]);
+    }
+    expect(validateConfig({ stuckMinutes: 0.5 })).toEqual({ stuckMinutes: 0.5 });
+    for (const key of ["turnTranscriptBytes", "logMaxBytes"] as const) {
+      for (const value of [0, -1, 1.5]) {
+        expect(ignored({ [key]: value })).toEqual([
+          `config.json: ${key} is ${value} but must be a positive integer — ignoring it and using the default (25000000)`,
+        ]);
+      }
+    }
+  });
+
   test("unknown keys warn and are dropped", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
@@ -278,6 +309,40 @@ describe("loadConfig", () => {
     }
   });
 
+  test("an out-of-range setting still loads, on its default, warning once and leaving the file as written", () => {
+    const written = JSON.stringify({ port: 9000, token: "t", instanceId: loadConfig().instanceId, setupTimeoutMinutes: 0, stuckMinutes: -1 });
+    writeFileSync(CONFIG_PATH, written);
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const first = loadConfig();
+      const second = loadConfig();
+      for (const cfg of [first, second]) {
+        expect(cfg.setupTimeoutMinutes).toBe(10);
+        expect(cfg.stuckMinutes).toBe(10);
+      }
+      const messages = warn.mock.calls.map(([message]) => String(message));
+      expect(messages.filter((m) => m.includes("setupTimeoutMinutes is 0"))).toHaveLength(1);
+      expect(messages.filter((m) => m.includes("stuckMinutes is -1"))).toHaveLength(1);
+      expect(readFileSync(CONFIG_PATH, "utf8")).toBe(written);
+    } finally {
+      warn.mockRestore();
+      rmSync(CONFIG_PATH, { force: true });
+    }
+  });
+
+  test("a first-run rewrite for another reason keeps an ignored value as written", () => {
+    writeFileSync(CONFIG_PATH, JSON.stringify({ port: 9000, setupTimeoutMinutes: 0 }));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(loadConfig().setupTimeoutMinutes).toBe(10);
+      // the missing token forced a write; the bad value was not turned into a pinned default
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({ setupTimeoutMinutes: 0 });
+    } finally {
+      warn.mockRestore();
+      rmSync(CONFIG_PATH, { force: true });
+    }
+  });
+
   test("refuses a malformed persisted instance ID instead of silently changing identity", () => {
     writeFileSync(CONFIG_PATH, JSON.stringify({ token: "t", instanceId: "not-a-uuid" }));
     try {
@@ -298,6 +363,67 @@ describe("loadConfig", () => {
       expect(first.instanceId).toBe(second.instanceId);
       expect(persisted.instanceId).toBe(first.instanceId);
       expect(readFileSync(join(home, "instance-id"), "utf8").trim()).toBe(first.instanceId);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty instance-id left by an interrupted first start is repaired, the same way by every start", async () => {
+    const home = mkdtempSync(join(tmpdir(), "wisp-config-empty-id-"));
+    try {
+      writeFileSync(join(home, "instance-id"), "", { mode: 0o600 });
+      const [first, second] = await Promise.all([loadFromIsolatedProcess(home), loadFromIsolatedProcess(home)]);
+      expect(first.instanceId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(second.instanceId).toBe(first.instanceId);
+      expect(readFileSync(join(home, "instance-id"), "utf8").trim()).toBe(first.instanceId);
+      const persisted = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as { instanceId: string };
+      expect(persisted.instanceId).toBe(first.instanceId);
+      // and from then on it is simply the home's identity
+      expect((await loadFromIsolatedProcess(home)).instanceId).toBe(first.instanceId);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty or unreadable instance-id is restored from config.json, never rotated", async () => {
+    for (const broken of ["", "\n", "123e4567-e89b"]) {
+      const home = mkdtempSync(join(tmpdir(), "wisp-config-bad-id-"));
+      try {
+        const instanceId = "123e4567-e89b-42d3-a456-426614174000";
+        writeFileSync(join(home, "config.json"), JSON.stringify({ token: "t", instanceId }), { mode: 0o600 });
+        writeFileSync(join(home, "instance-id"), broken, { mode: 0o600 });
+        expect((await loadFromIsolatedProcess(home)).instanceId).toBe(instanceId);
+        expect(readFileSync(join(home, "instance-id"), "utf8")).toBe(`${instanceId}\n`);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("a valid instance-id is only read: loading it writes nothing, so a full disk cannot fail it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-config-ro-id-"));
+    const path = join(dir, "instance-id");
+    const instanceId = "123e4567-e89b-42d3-a456-426614174000";
+    writeFileSync(path, `${instanceId}\n`, { mode: 0o600 });
+    chmodSync(dir, 0o500); // any file created beside the sidecar now fails
+    try {
+      expect(loadOrCreateInstanceId(path, instanceId)).toBe(instanceId);
+      expect(loadOrCreateInstanceId(path, undefined)).toBe(instanceId);
+      expect(readdirSync(dir)).toEqual(["instance-id"]);
+    } finally {
+      chmodSync(dir, 0o700);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a valid instance-id that disagrees with config.json still refuses to load", async () => {
+    const home = mkdtempSync(join(tmpdir(), "wisp-config-split-id-"));
+    try {
+      const instanceId = "123e4567-e89b-42d3-a456-426614174000";
+      writeFileSync(join(home, "config.json"), JSON.stringify({ token: "t", instanceId }), { mode: 0o600 });
+      writeFileSync(join(home, "instance-id"), "223e4567-e89b-42d3-a456-426614174000\n", { mode: 0o600 });
+      await expect(loadFromIsolatedProcess(home)).rejects.toThrow("config.json: instanceId does not match the Wisp home identity");
+      expect(readFileSync(join(home, "instance-id"), "utf8")).toBe("223e4567-e89b-42d3-a456-426614174000\n");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
