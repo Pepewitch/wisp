@@ -260,6 +260,24 @@ DELETE FROM schema_migrations WHERE id = 13;
     db.close();
   });
 
+  test("upgrading gives the outbox a dead-letter column, and no existing event is dead", () => {
+    const db = freshDatabase("outbox-dead-letter");
+    db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    for (const migration of MIGRATIONS.filter((entry) => entry.id <= 18)) {
+      migration.up(db);
+      db.query("INSERT INTO schema_migrations (id, name, applied_at) VALUES (?, ?, 'fixture')").run(migration.id, migration.name);
+    }
+    expect(columns(db, "outbox")).not.toContain("dead_at");
+    db.query(
+      "INSERT INTO outbox (task_id, seq, event, payload, attempts, next_attempt_at, last_error, created_at) VALUES ('tfixture', 1, 'done', '{}', 3, 'later', 'HTTP 500', 'then')",
+    ).run();
+
+    expect(migrate(db).applied).toContain(19);
+    expect(db.query("SELECT attempts, last_error, dead_at FROM outbox").get()).toEqual({ attempts: 3, last_error: "HTTP 500", dead_at: null });
+    expect(migrate(db).applied).toEqual([]);
+    db.close();
+  });
+
   test("migration ids are unique and ordered, so a released one is never renumbered", () => {
     const ids = MIGRATIONS.map((migration) => migration.id);
     expect(new Set(ids).size).toBe(ids.length);

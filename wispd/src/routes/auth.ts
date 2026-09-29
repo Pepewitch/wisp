@@ -33,8 +33,7 @@ function tokenMatches(given: string, expected: string): boolean {
  * stay BANNED — they leak into logs and browser history (a prior audit).
  */
 export function authorized(req: Request, cfg: WispConfig): boolean {
-  const header = req.headers.get("authorization");
-  const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
+  const token = bearerToken(req);
   return token !== null && tokenMatches(token, cfg.token);
 }
 
@@ -47,6 +46,143 @@ export function authorized(req: Request, cfg: WispConfig): boolean {
  */
 export function tokenAuthorizes(token: unknown, cfg: WispConfig): boolean {
   return typeof token === "string" && token !== "" && tokenMatches(token, cfg.token);
+}
+
+/** The address a failed credential is counted against. */
+export function remoteAddress(req: Request, server: { requestIP(req: Request): { address: string } | null }): string {
+  return server.requestIP(req)?.address ?? "unknown";
+}
+
+/** The bearer token a request presents, or null when it presents none. */
+export function bearerToken(req: Request): string | null {
+  const header = req.headers.get("authorization");
+  return header?.startsWith("Bearer ") ? header.slice(7) : null;
+}
+
+/** Below this many characters `wisp doctor` calls a configured token weak. A minted one is 36. */
+export const MIN_TOKEN_LENGTH = 32;
+
+export interface AuthThrottleOptions {
+  /** Wrong credentials an address may present before it has to wait. */
+  freeFailures?: number;
+  /** The first wait; each further failure doubles it, up to `maxDelayMs`. */
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  /** An address with no failure for this long starts over. */
+  forgetMs?: number;
+  /** Addresses remembered at once; the oldest is forgotten first. */
+  maxAddresses?: number;
+  now?: () => number;
+}
+
+/**
+ * Failed-authentication throttle, per remote address, in memory only.
+ *
+ * A minted token (a random UUID) cannot be guessed at any rate, but config.json
+ * accepts any string, and a short hand-set token can be brute-forced by anything
+ * that reaches the port: a local process, or a web page through DNS rebinding.
+ * So after `freeFailures` wrong credentials an address must wait before the
+ * daemon evaluates another one from it, 1 s at first and doubling to 30 s. The
+ * wait refuses the right token too; otherwise the answer would still tell a
+ * guess apart. A success does not reset the count, because everything behind a
+ * local reverse proxy shares one address and a legitimate client's steady
+ * successes would hand an attacker there a fresh allowance each time; the count
+ * is forgotten `forgetMs` after the address's last failure instead. The cost,
+ * accepted: a client sharing an address with a guesser can be kept waiting up
+ * to the ceiling. A request that presents no credential at all is not a guess
+ * and is never counted.
+ */
+export class AuthThrottle {
+  private readonly freeFailures: number;
+  private readonly baseDelayMs: number;
+  private readonly maxDelayMs: number;
+  private readonly forgetMs: number;
+  private readonly maxAddresses: number;
+  private readonly now: () => number;
+  private readonly entries = new Map<string, { failures: number; lastFailureAt: number; lockedUntil: number }>();
+
+  constructor(options: AuthThrottleOptions = {}) {
+    this.freeFailures = options.freeFailures ?? 10;
+    this.baseDelayMs = options.baseDelayMs ?? 1_000;
+    this.maxDelayMs = options.maxDelayMs ?? 30_000;
+    this.forgetMs = options.forgetMs ?? 15 * 60_000;
+    this.maxAddresses = options.maxAddresses ?? 4096;
+    this.now = options.now ?? Date.now;
+  }
+
+  private entry(address: string) {
+    const entry = this.entries.get(address);
+    if (entry && this.now() - entry.lastFailureAt >= this.forgetMs) {
+      this.entries.delete(address);
+      return undefined;
+    }
+    return entry;
+  }
+
+  /** Milliseconds until this address may present a credential again; 0 when it may now. */
+  retryAfterMs(address: string): number {
+    const entry = this.entry(address);
+    return entry ? Math.max(0, entry.lockedUntil - this.now()) : 0;
+  }
+
+  failed(address: string): void {
+    const now = this.now();
+    const entry = this.entry(address) ?? { failures: 0, lastFailureAt: now, lockedUntil: 0 };
+    entry.failures++;
+    entry.lastFailureAt = now;
+    if (entry.failures >= this.freeFailures) {
+      const doublings = Math.min(entry.failures - this.freeFailures, 30);
+      entry.lockedUntil = now + Math.min(this.baseDelayMs * 2 ** doublings, this.maxDelayMs);
+    }
+    this.entries.delete(address); // re-inserted last: the map's order is least recently failed first
+    if (this.entries.size >= this.maxAddresses) this.entries.delete(this.entries.keys().next().value!);
+    this.entries.set(address, entry);
+  }
+}
+
+export type CredentialVerdict = "valid" | "absent" | "invalid" | "throttled";
+
+/**
+ * Judge a presented credential through the throttle. An address that must
+ * wait is refused before its credential is compared, and only a wrong
+ * credential counts against it.
+ */
+export function judgeCredential(
+  token: unknown,
+  cfg: WispConfig,
+  throttle: AuthThrottle | undefined,
+  address: string,
+): CredentialVerdict {
+  if (typeof token !== "string" || token === "") return "absent";
+  if (throttle && throttle.retryAfterMs(address) > 0) return "throttled";
+  if (tokenMatches(token, cfg.token)) return "valid";
+  throttle?.failed(address);
+  return "invalid";
+}
+
+const waitSeconds = (throttle: AuthThrottle, address: string): number =>
+  Math.max(1, Math.ceil(throttle.retryAfterMs(address) / 1000));
+
+/** Why an address that must wait was refused, for a socket that cannot carry a status. */
+export function throttledMessage(throttle: AuthThrottle, address: string): string {
+  return `too many failed authentication attempts; retry in ${waitSeconds(throttle, address)} s`;
+}
+
+/** The 429 for an address that must wait. */
+export function throttledResponse(throttle: AuthThrottle, address: string): Response {
+  return json({ error: throttledMessage(throttle, address) }, 429, { "retry-after": String(waitSeconds(throttle, address)) });
+}
+
+/** The response that refuses a credential, or null when it is valid. */
+export function credentialRefusal(
+  token: unknown,
+  cfg: WispConfig,
+  throttle: AuthThrottle | undefined,
+  address: string,
+): Response | null {
+  const verdict = judgeCredential(token, cfg, throttle, address);
+  if (verdict === "throttled") return throttledResponse(throttle!, address);
+  return verdict === "valid" ? null : err("unauthorized", 401);
 }
 
 /**
@@ -190,7 +326,12 @@ export const RETIRED_COOKIE = "wisp_token=; Path=/; Max-Age=0; HttpOnly; SameSit
  */
 export const SESSION_BODY_MAX_BYTES = 4096;
 
-export async function postSession(req: Request, cfg: WispConfig): Promise<Response> {
+export async function postSession(
+  req: Request,
+  cfg: WispConfig,
+  throttle?: AuthThrottle,
+  address = "unknown",
+): Promise<Response> {
   // The same body contract as every mutating route (ENG-09), so `null`, an
   // array, and unparseable bytes are named 400s rather than "unauthorized" —
   // a wrong token and a wrong body are different mistakes, and this was the
@@ -199,6 +340,5 @@ export async function postSession(req: Request, cfg: WispConfig): Promise<Respon
   // without a preflight, so an oversized one is refused before it is buffered.
   const body = await boundedJsonObjectBody(req, SESSION_BODY_MAX_BYTES);
   if (body instanceof Response) return body;
-  if (!tokenAuthorizes(body.token, cfg)) return err("unauthorized", 401);
-  return json({ ok: true }, 200, { "set-cookie": RETIRED_COOKIE });
+  return credentialRefusal(body.token, cfg, throttle, address) ?? json({ ok: true }, 200, { "set-cookie": RETIRED_COOKIE });
 }

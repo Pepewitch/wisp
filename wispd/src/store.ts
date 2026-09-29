@@ -672,14 +672,51 @@ export function pendingOutbox(taskId?: string, limit = 20): OutboxRow[] {
     return db
       .query(
         `SELECT * FROM outbox
-         WHERE delivered_at IS NULL AND next_attempt_at <= ? AND task_id = ?
+         WHERE delivered_at IS NULL AND dead_at IS NULL AND next_attempt_at <= ? AND task_id = ?
          ORDER BY id ASC LIMIT ?`,
       )
       .all(now(), taskId, limit) as OutboxRow[];
   }
   return db
-    .query(`SELECT * FROM outbox WHERE delivered_at IS NULL AND next_attempt_at <= ? ORDER BY id ASC LIMIT ?`)
+    .query(
+      `SELECT * FROM outbox WHERE delivered_at IS NULL AND dead_at IS NULL AND next_attempt_at <= ? ORDER BY id ASC LIMIT ?`,
+    )
     .all(now(), limit) as OutboxRow[];
+}
+
+/** What `wisp doctor` reports about webhook delivery. */
+export interface OutboxSummary {
+  /** Still retried: undelivered, not given up on, and failed at least once. */
+  failing: number;
+  /** Given up on: never retried again. */
+  dead: number;
+  /** The oldest failing or dead event's creation time. */
+  oldestAt: string | null;
+  /** The most recent failure's (redacted) error. */
+  lastError: string | null;
+}
+
+export function outboxSummary(): OutboxSummary {
+  const counts = db
+    .query(
+      `SELECT
+         SUM(CASE WHEN dead_at IS NULL AND attempts > 0 THEN 1 ELSE 0 END) AS failing,
+         SUM(CASE WHEN dead_at IS NOT NULL THEN 1 ELSE 0 END) AS dead,
+         MIN(created_at) AS oldestAt
+       FROM outbox WHERE delivered_at IS NULL AND (attempts > 0 OR dead_at IS NOT NULL)`,
+    )
+    .get() as { failing: number | null; dead: number | null; oldestAt: string | null };
+  const latest = db
+    .query(
+      `SELECT last_error FROM outbox WHERE delivered_at IS NULL AND last_error IS NOT NULL ORDER BY id DESC LIMIT 1`,
+    )
+    .get() as { last_error: string } | null;
+  return {
+    failing: counts.failing ?? 0,
+    dead: counts.dead ?? 0,
+    oldestAt: counts.oldestAt,
+    lastError: latest?.last_error ?? null,
+  };
 }
 
 export function undeliveredOutbox(): OutboxRow[] {
@@ -690,6 +727,12 @@ export function markDelivered(id: number): void {
   db.run(`UPDATE outbox SET delivered_at = ? WHERE id = ?`, [now(), id]);
 }
 
+/** A failed attempt that delivery gave up after: the row stays, undelivered, and is never retried. */
+export function markDead(id: number, attempts: number, err: string): void {
+  db.run(`UPDATE outbox SET attempts = ?, last_error = ?, dead_at = ? WHERE id = ?`, [attempts, err.slice(0, 500), now(), id]);
+}
+
+/** Exponential backoff, 10 s after the first failure, doubling to a 15-minute ceiling. */
 export function markAttempt(id: number, attempts: number, err: string): void {
   const backoffSec = Math.min(2 ** attempts * 5, 900);
   const next = new Date(Date.now() + backoffSec * 1000).toISOString();

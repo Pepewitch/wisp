@@ -23,6 +23,7 @@
 import type { Database } from "bun:sqlite";
 import { WORKFLOW_HISTORY_TRAIL } from "./migration-history-trail";
 import { LIVE_ROW_INDEXES } from "./migration-live-row-indexes";
+import { OUTBOX_DEAD_LETTER } from "./migration-outbox-dead-letter";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -709,6 +710,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   },
   WORKFLOW_HISTORY_TRAIL,
   LIVE_ROW_INDEXES,
+  OUTBOX_DEAD_LETTER,
 ];
 
 /** The newest schema this build knows how to run. */

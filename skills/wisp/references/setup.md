@@ -15,12 +15,20 @@ unsupervised daemon dies with its shell or container. Any of:
 - systemd: `ExecStart=/usr/local/bin/wisp serve`, `Restart=always`
 - Homebrew on macOS: `brew services start wisp` (launchd)
 
-Liveness: `GET /api/health`. `wisp doctor` is the full self-check (harness
-CLIs and their auth, git identity, config files, daemon reachability, terminal
-origins) and exits 1 naming what failed. Its harness and auth probes are
-spawned in the CLI's own process, so they describe the invoking shell's
-environment; only the `daemon` and `terminal origins` checks ask the running
-daemon directly. Under a supervisor whose environment differs, a green
+Liveness: `GET /api/health`, which also reports `startedAt` and
+`uptimeSeconds`, so a restart shows even to a poller that never saw the daemon
+go away. `wisp doctor` is the full self-check (harness CLIs and their auth, git
+identity, every registered project, `gh` and `gh auth status`, config files
+and token length, daemon reachability, terminal origins, unclean restarts, the
+last self-update, background loops and webhook delivery) and exits 1 naming
+what failed. Its harness and auth probes are spawned in the CLI's own process,
+so they describe the invoking shell's environment; the `daemon`, `terminal
+origins`, `background loops` and `webhooks` checks ask the running daemon
+directly. A daemon that exits without its graceful stop (a crash, a kill, an
+out-of-memory end) is logged at the next boot and recorded in
+`daemon-exits.json`; doctor warns when two or more happened in the last hour.
+The last self-update's outcome is kept in `update-last.json`. The daemon's own
+log lines start with an ISO-8601 UTC timestamp. Under a supervisor whose environment differs, a green
 harness line can accompany a turn that fails to authenticate — confirm with
 one real task. Crash recovery (re-adopting running tasks) is the daemon's job;
 process restart is the supervisor's.
@@ -241,9 +249,16 @@ unique id if you only want the models you declared.
 unauthenticated. `POST /api/session` accepts `{token}` and answers whether it is
 the right one, so the browser's dialog can refuse a wrong token before storing
 it; it mints no credential. Every other API route requires
-`authorization: Bearer <token>`. The web UI is served at `/`.
+`authorization: Bearer <token>`. After 10 wrong tokens from one address
+(bearer, `/api/session` or the terminal handshake), every credential from that
+address waits, 1 s at first and doubling to 30 s, answered `429` with
+`retry-after`; the count lives in memory and resets 15 minutes after the
+address's last failure. The web UI is served at `/`.
 
-- `GET /api/health` — liveness
+- `GET /api/health` — liveness, build identity, `startedAt`, `uptimeSeconds`
+- `GET /api/diagnostics` — what `wisp doctor` asks: each background loop's
+  last success and failure in this run, and the webhook outbox's failing and
+  given-up counts
 - `GET /api/capabilities` — authenticated stable instance identity, Wisp build,
   integer API protocol version, and implemented API feature flags. Flags mean
   an API surface exists; runtime readiness such as automatic-update support is
@@ -279,14 +294,20 @@ it; it mints no credential. Every other API route requires
   `PATCH|DELETE /api/suffix-prompts/:id`
 - `GET /api/harnesses` (capabilities, effort levels, offered models per
   harness) ·
-  `GET /api/outbox` (undelivered webhook queue)
+  `GET /api/outbox` (undelivered webhook queue). Delivery backs off from 10 s
+  to 15 minutes and gives up on an event after 100 attempts or 24 hours,
+  setting its `dead_at`. Redirects are refused, not followed, and a stored or
+  logged error names a webhook by its position and origin only, never its
+  path, query or userinfo
 - `GET|POST /api/update` — daemon update status/action. `GET` with `refresh=1`
   bypasses the release cache for an explicit check. Status reports current and
   latest API protocol versions; latest is `null` when legacy, malformed, or
   unreachable release metadata cannot establish it. `POST` takes
   `{"version": …}` and refuses with `409` and `running: N` while N tasks have
   a running turn the restart would interrupt; add `"force": true` to update
-  anyway.
+  anyway. `lastAttempt` is the last self-update this home ran (versions,
+  times, `installing|installed|failed`, the failure's tail), read from
+  `update-last.json` so it survives the restart.
 - `GET /api/tasks/:id/terminal` — WebSocket. A bearer handshake attaches
   immediately; a browser handshake (which cannot set a header) upgrades
   unauthenticated, is asked for the token in an `auth_required` frame, and

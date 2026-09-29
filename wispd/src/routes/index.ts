@@ -19,6 +19,7 @@ import { TaskSkillCache, type TaskSkillCacheOptions } from "../skills";
 import { UpdateManager } from "../update";
 import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
+import { diagnosticsRoute } from "./diagnostics";
 import { err, json } from "./http";
 import { addProjectRoute, copyPreviewRoute, removeProjectRoute, reposRoute, statusRoute } from "./projects";
 import { eventStream, logStream } from "./stream";
@@ -263,6 +264,7 @@ export function route(
   if (harnessResponse !== null) return harnessResponse;
 
   if (path === "/api/outbox" && m === "GET") return outboxRoute();
+  if (path === "/api/diagnostics" && m === "GET") return diagnosticsRoute();
 
   return err("not found", 404);
 }

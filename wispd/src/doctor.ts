@@ -5,13 +5,16 @@ import { BUILTIN_ADAPTERS, loadAdapters, validateAdapters, type AdapterDef } fro
 import { wispCommand, type WispCommand } from "./command";
 import { ADAPTERS_PATH, CONFIG_PATH, DB_PATH, loadConfig, validateConfig, type WispConfig } from "./config";
 import { assertExecutableAllowed } from "./launch-policy";
+import { checkDaemonDiagnostics, checkLastUpdate, checkRestarts } from "./doctor-background";
 import { integrityProblems, SCHEMA_VERSION } from "./migrations";
-import { ALLOWED_ORIGINS_ENV } from "./routes/auth";
+import { ALLOWED_ORIGINS_ENV, MIN_TOKEN_LENGTH } from "./routes/auth";
 import { trunc } from "./text";
 import { readUserJson } from "./validate";
 import { BUILD_COMMIT, BUILD_DIRTY, VERSION } from "./version";
 
 const COMMAND = wispCommand();
+
+export { checkDaemonDiagnostics, checkLastUpdate, checkRestarts, daemonLogHint } from "./doctor-background";
 
 /**
  * Activation-oriented self-check. A compiled-binary user does not need Bun,
@@ -39,7 +42,15 @@ export interface SpawnResult {
 /** Throws when the executable itself is absent, matching Bun.spawnSync. */
 export type SpawnFn = (cmd: string[]) => SpawnResult;
 
-export const bunSpawn: SpawnFn = (cmd) => {
+export const bunSpawn: SpawnFn = (cmd) => spawnBounded(cmd);
+
+/**
+ * bunSpawn for a probe that may wait on the network: one that runs out of
+ * time reports a non-zero exit instead of holding `wisp doctor` up.
+ */
+export const bunSpawnWithin = (timeoutMs: number): SpawnFn => (cmd) => spawnBounded(cmd, timeoutMs);
+
+function spawnBounded(cmd: string[], timeoutMs?: number): SpawnResult {
   // `wisp doctor` and `wisp models` run the installed harness (`claude
   // --version`, auth probes), so this is a provider-CLI launch and belongs
   // behind the same gate as the runner's and the probes' (a review: the
@@ -47,9 +58,10 @@ export const bunSpawn: SpawnFn = (cmd) => {
   // was ungated). Daemon tests inject a fake `spawn`, so nothing in the suite
   // depended on it being open.
   assertExecutableAllowed(cmd, "doctor harness probe");
-  const res = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe" });
+  const res = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "pipe", ...(timeoutMs ? { timeout: timeoutMs } : {}) });
+  if (res.exitedDueToTimeout) return { exitCode: -1, stdout: "", stderr: `timed out after ${timeoutMs} ms` };
   return { exitCode: res.exitCode, stdout: res.stdout.toString().trim(), stderr: res.stderr.toString().trim() };
-};
+}
 
 const firstLine = (s: string): string => s.split("\n")[0]?.trim() ?? "";
 const quote = (value: string): string => (/^[A-Za-z0-9_./:@+-]+$/.test(value) ? value : JSON.stringify(value));
@@ -411,9 +423,55 @@ export async function checkTerminalOrigins(
   );
 }
 
+/** How long `gh auth status`, which asks GitHub, may take before doctor moves on. */
+export const GH_AUTH_TIMEOUT_MS = 5_000;
+
+/**
+ * The GitHub CLI: pull-request status and autopilot read GitHub through the
+ * daemon host's `gh`. Warn-level, because Wisp runs tasks without it; what
+ * stops working is only the GitHub half. `gh auth status` is read-only.
+ */
+export function checkGh(spawn: SpawnFn, authSpawn: SpawnFn = spawn): DoctorCheck[] {
+  let version: SpawnResult;
+  try {
+    version = spawn(["gh", "--version"]);
+  } catch {
+    return [warn("gh", "not found on PATH — pull-request status and autopilot need the GitHub CLI; install it, then 'gh auth login'")];
+  }
+  if (version.exitCode !== 0) return [warn("gh", `'gh --version' exited ${version.exitCode}`)];
+  const found = ok("gh", `gh ${parseVersion(version.stdout) ?? firstLine(version.stdout)}`);
+  let auth: SpawnResult;
+  try {
+    auth = authSpawn(["gh", "auth", "status"]);
+  } catch {
+    return [found, warn("gh auth", "could not run 'gh auth status'")];
+  }
+  if (auth.exitCode !== 0) {
+    const detail = firstLine(auth.stderr) || firstLine(auth.stdout);
+    return [
+      found,
+      warn("gh auth", `'gh auth status' says GitHub is not reachable or not logged in${detail ? ` — ${trunc(detail, 120)}` : ""}; run 'gh auth login'`),
+    ];
+  }
+  return [found, ok("gh auth", "authenticated (gh auth status)")];
+}
+
+/** A hand-set token shorter than this can be guessed; a minted one is a 36-character UUID. */
+export function checkToken(cfg: { token: string }): DoctorCheck {
+  if (cfg.token.length >= MIN_TOKEN_LENGTH) return ok("token", `${cfg.token.length} characters`);
+  return warn(
+    "token",
+    `the configured token is only ${cfg.token.length} characters; use at least ${MIN_TOKEN_LENGTH} — stop the daemon, run '${COMMAND} token --rotate', then start it again`,
+  );
+}
+
 export interface DoctorDeps {
   spawn?: SpawnFn;
   fetchFn?: typeof fetch;
+  /** The recorded unclean exits and last self-update; the Wisp home's by default. */
+  exitsPath?: string;
+  updateRecordPath?: string;
+  now?: Date;
   configPath?: string;
   adaptersPath?: string;
   selectedHarness?: string;
@@ -426,6 +484,24 @@ export interface DoctorDeps {
 function repoPath(entry: WispConfig["repos"][number] | undefined): string | undefined {
   if (typeof entry === "string") return entry;
   return entry?.path;
+}
+
+/**
+ * Every registered project, not only the first. One healthy project is enough
+ * to start a task, so a broken one beside it is a warning; with none healthy,
+ * the first finding stays the blocker it always was. Returns the first healthy
+ * project, which the identity check and the first-task handoff use.
+ */
+function appendProjectChecks(checks: DoctorCheck[], cfg: WispConfig, spawn: SpawnFn): string | undefined {
+  const paths = cfg.repos.map(repoPath).filter((path): path is string => typeof path === "string");
+  if (paths.length === 0) {
+    checks.push(checkProject(undefined, spawn));
+    return undefined;
+  }
+  const results = paths.map((path) => checkProject(path, spawn));
+  const healthy = paths.find((_, index) => results[index]!.status === "ok");
+  for (const result of results) checks.push(healthy && result.status === "fail" ? { ...result, status: "warn" } : result);
+  return healthy ?? paths[0];
 }
 
 function loadDoctorConfig(deps: DoctorDeps): WispConfig | undefined {
@@ -519,21 +595,30 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
     checkGitBinary(spawn),
   ];
 
+  if (cfg) checks.push(checkToken(cfg));
   if (!cfg) checks.push(fail("project", "skipped — config.json is invalid (see above)"));
-  const project = repoPath(cfg?.repos[0]);
-  if (cfg) checks.push(checkProject(project, spawn));
+  const project = cfg ? appendProjectChecks(checks, cfg, spawn) : undefined;
   checks.push(checkGitIdentity(spawn, project));
+  checks.push(...checkGh(spawn, deps.spawn ?? bunSpawnWithin(GH_AUTH_TIMEOUT_MS)));
 
   const selected = deps.selectedHarness;
   const ready = appendHarnessChecks(checks, loadDoctorAdapters(deps, checks), selected, spawn);
 
-  checks.push(checkSupervisor(spawn, deps.currentPlatform ?? platform()));
+  const currentPlatform = deps.currentPlatform ?? platform();
+  const now = deps.now ?? new Date();
+  checks.push(checkSupervisor(spawn, currentPlatform));
+  checks.push(checkRestarts(deps.exitsPath, now, currentPlatform));
+  const lastUpdate = checkLastUpdate(deps.updateRecordPath, now);
+  if (lastUpdate) checks.push(lastUpdate);
   if (cfg) {
     const daemon = await checkDaemon(cfg, fetchFn);
     checks.push(daemon);
     // Only worth asking a daemon that answered. An unreachable one already
     // has its own FAIL above, and a second line saying so explains nothing.
-    if (daemon.status !== "fail") checks.push(await checkTerminalOrigins(cfg, fetchFn));
+    if (daemon.status !== "fail") {
+      checks.push(await checkTerminalOrigins(cfg, fetchFn));
+      checks.push(...(await checkDaemonDiagnostics(cfg, fetchFn, now)));
+    }
   } else checks.push(fail("daemon", "skipped — config.json is invalid (see above)"));
 
   checks.push(activationReceipt(checks, ready, selected, project));

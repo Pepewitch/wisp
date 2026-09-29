@@ -475,3 +475,69 @@ describe("a refused terminal origin explains itself somewhere readable", () => {
     });
   });
 });
+
+describe("failed authentication is throttled per address", () => {
+  // A long first wait, so the lockout cannot lapse mid-test on a loaded machine.
+  const LIMITS = { freeFailures: 3, baseDelayMs: 60_000, maxDelayMs: 60_000 };
+  const bearer = (token: string) => ({ headers: { authorization: `Bearer ${token}` } });
+
+  test("after repeated wrong tokens every credential waits, the right one included, on every entry point", async () => {
+    writeConfig();
+    const taskId = taskWithWorktree("throttle");
+    server = await serve({ port: 0, authThrottle: LIMITS });
+    const base = `http://127.0.0.1:${server.port}`;
+
+    for (let attempt = 0; attempt < LIMITS.freeFailures; attempt++) {
+      expect((await fetch(`${base}/api/tasks`, bearer(`guess-${attempt}`))).status).toBe(401);
+    }
+    const locked = await fetch(`${base}/api/tasks`, bearer(TOKEN));
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(((await locked.json()) as { error: string }).error).toContain("too many failed authentication attempts");
+
+    const session = await fetch(`${base}/api/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(session.status).toBe(429);
+
+    const url = `ws://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`;
+    const socket = await upgradeOutcome(url, { headers: { origin: base }, send: { type: "auth", token: TOKEN } });
+    expect(socket.frames.some((frame) => frame.type === "hello")).toBe(false);
+    expect(JSON.stringify(socket.frames)).toContain("too many failed authentication attempts");
+    expect(socket.closed).toBe(1008);
+
+    // Liveness stays open: it takes no credential.
+    expect((await fetch(`${base}/api/health`)).status).toBe(200);
+  }, 30_000);
+
+  test("a request that presents no credential is not a guess", async () => {
+    writeConfig();
+    server = await serve({ port: 0, authThrottle: LIMITS });
+    const base = `http://127.0.0.1:${server.port}`;
+    for (let attempt = 0; attempt < LIMITS.freeFailures * 3; attempt++) {
+      expect((await fetch(`${base}/api/tasks`)).status).toBe(401);
+    }
+    expect((await fetch(`${base}/api/tasks`, bearer(TOKEN))).status).toBe(200);
+  });
+
+  test("wrong tokens at the session check and the socket handshake count too", async () => {
+    writeConfig();
+    const taskId = taskWithWorktree("throttle-mixed");
+    server = await serve({ port: 0, authThrottle: LIMITS });
+    const base = `http://127.0.0.1:${server.port}`;
+    const url = `ws://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`;
+
+    const wrongSession = () =>
+      fetch(`${base}/api/session`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: "wrong" }),
+      });
+    expect((await wrongSession()).status).toBe(401);
+    expect((await wrongSession()).status).toBe(401);
+    expect((await upgradeOutcome(url, { headers: { origin: base }, send: { type: "auth", token: "wrong" } })).closed).toBe(1008);
+    expect((await fetch(`${base}/api/tasks`, bearer(TOKEN))).status).toBe(429);
+  }, 30_000);
+});

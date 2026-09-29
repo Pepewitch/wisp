@@ -36,14 +36,10 @@ import { route } from "./routes";
 import { backgroundPass, HomeLifetime } from "./home-lifetime";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import {
-  ALLOWED_ORIGINS_ENV,
-  allowedOrigins,
-  authorized,
-  foreignOriginMessage,
-  originVerdict,
-  postSession,
-  tokenAuthorizes,
+  ALLOWED_ORIGINS_ENV, allowedOrigins, AuthThrottle, type AuthThrottleOptions, authorized, bearerToken, credentialRefusal,
+  foreignOriginMessage, judgeCredential, originVerdict, postSession, remoteAddress, throttledMessage, throttledResponse,
 } from "./routes/auth";
+import { beginDaemonRun, endDaemonRun, runTimes, type DaemonRun } from "./daemon-run";
 import { acceptsGzip, err, finishResponse, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
@@ -132,6 +128,8 @@ type TerminalSocketData = {
    * instead. Nothing is attached and no shell is spawned until this is true.
    */
   authenticated: boolean;
+  /** The remote address the upgrade came from, which the auth frame's throttle is kept for. */
+  address: string;
 };
 type TerminalSocket = Bun.ServerWebSocket<TerminalSocketData>;
 
@@ -281,7 +279,7 @@ async function attachTerminal(ws: TerminalSocket, cfg: WispConfig): Promise<void
   }
 }
 
-function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffer>, cfg: WispConfig): void {
+function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffer>, cfg: WispConfig, throttle: AuthThrottle): void {
   // Checked before parsing: until it authenticates, a socket is anyone's.
   if (!ws.data.authenticated) {
     const bytes = typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
@@ -313,8 +311,9 @@ function terminalMessage(ws: TerminalSocket, message: string | Buffer<ArrayBuffe
       ws.close(1008, "unauthorized");
       return;
     }
-    if (!tokenAuthorizes(value.token, cfg)) {
-      wsError(ws, "unauthorized");
+    const verdict = judgeCredential(value.token, cfg, throttle, ws.data.address);
+    if (verdict !== "valid") {
+      wsError(ws, verdict === "throttled" ? throttledMessage(throttle, ws.data.address) : "unauthorized");
       ws.close(1008, "unauthorized");
       return;
     }
@@ -387,6 +386,7 @@ function terminalUpgrade(
   taskId: string,
   server: Bun.Server<TerminalSocketData>,
   cfg: WispConfig,
+  throttle: AuthThrottle,
 ): Response | undefined {
   // A terminal upgrade is command execution, so it is the one route
   // that must not settle for "the request looked fine". Two gates:
@@ -401,7 +401,6 @@ function terminalUpgrade(
   //   same-origin socket may upgrade unauthenticated and prove itself
   //   in its first frame instead. It attaches to nothing and spawns
   //   nothing until it does.
-  const credentialed = authorized(req, cfg);
   const origin = originVerdict(req, url);
   if (origin === "foreign") {
     // Logged as well as answered. The 403 body is the only artifact
@@ -414,6 +413,10 @@ function terminalUpgrade(
     console.warn(`[wisp] refused terminal upgrade: ${foreignOriginMessage(sent, url.origin, allowedOrigins())}`);
     return err(foreignOriginMessage(sent, url.origin), 403);
   }
+  const address = remoteAddress(req, server);
+  const verdict = judgeCredential(bearerToken(req), cfg, throttle, address);
+  if (verdict === "throttled") return throttledResponse(throttle, address);
+  const credentialed = verdict === "valid";
   if (!credentialed && origin === "absent") return err("unauthorized", 401);
   // Whether a task exists is only answered to a caller that already
   // proved itself; an unauthenticated socket hears it after the
@@ -437,7 +440,7 @@ function terminalUpgrade(
   // at a default width and then redrawn when the client reports in.
   const size = parseTerminalSize(url.searchParams);
   if (typeof size === "string") return err(size, 400);
-  if (!server.upgrade(req, { data: { taskId, shellId, size, authenticated: credentialed } })) {
+  if (!server.upgrade(req, { data: { taskId, shellId, size, authenticated: credentialed, address } })) {
     return err("websocket upgrade failed", 500);
   }
   return undefined;
@@ -460,6 +463,8 @@ export function stopForExit(server: Bun.Server<TerminalSocketData>): Promise<voi
 export interface ServeOptions {
   /** Test-only listener override. Persisted user configuration remains unchanged. */
   port?: number;
+  /** Test injection: the failed-authentication throttle's limits and clock. */
+  authThrottle?: AuthThrottleOptions;
   modelProbeSpawn?: ModelProbeCacheOptions["spawn"];
   modelProbeTimeoutMs?: number;
   /** A3 test injection: fake the harness CLIs the probe strategies would spawn */
@@ -556,13 +561,20 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
   // Importing store/query helpers is inert. Only the owner may load or upgrade
   // config and initialize the database. Every failed start releases the lock.
   const lifetime = new HomeLifetime();
+  let run: DaemonRun | undefined;
   try {
     const web = await bundledWeb();
     const cfg = loadConfig();
     const hostname = hostOverride ?? cfg.host;
     const port = options.port ?? cfg.port;
-    return await lifetime.run(() => serveOwned(options, cfg, hostname, port, web, ownership, lifetime));
+    // The run marker brackets everything the daemon does once it owns its
+    // home, boot recovery included: a crash there is the loop it reveals.
+    run = beginDaemonRun().run;
+    const owned = run;
+    return await lifetime.run(() => serveOwned(options, cfg, hostname, port, web, ownership, lifetime, owned));
   } catch (error) {
+    // A boot that fails reports its own error, so it is not an unclean exit.
+    if (run) endDaemonRun(run);
     // Report startup failure immediately. If recovery already started work,
     // retain ownership until it settles (or the process exits), not until the
     // error is reported. A retry meanwhile gets the normal ownership remedy.
@@ -579,6 +591,7 @@ async function serveOwned(
   web: BundledWeb,
   ownership: { release(): void },
   lifetime: HomeLifetime,
+  run: DaemonRun,
 ): Promise<Bun.Server<TerminalSocketData>> {
   // Scan the generated HTML once at startup; the policy is assembled per
   // response because it names this daemon's origin.
@@ -638,6 +651,8 @@ async function serveOwned(
   const appGzip = gzipSync(web.html, { level: 5 });
 
   let stopping = false;
+  // Per process and never persisted: a restart forgives every address.
+  const authThrottle = new AuthThrottle(options.authThrottle);
   let server: Bun.Server<TerminalSocketData>;
   try {
     server = Bun.serve({
@@ -659,7 +674,7 @@ async function serveOwned(
         },
         message(ws, message) {
           if (stopping) { ws.close(1012, "Wisp is restarting"); return; }
-          terminalMessage(ws, message, cfg);
+          terminalMessage(ws, message, cfg, authThrottle);
         },
         // the client has read what was queued for it; see holdOutput
         drain(ws) {
@@ -710,13 +725,14 @@ async function serveOwned(
     if (webAsset) return webAsset;
     const pwa = pwaResponse(req);
     if (pwa) return pwa;
-    if (path === "/api/health") return json({ ok: true, ...BUILD_INFO });
+    if (path === "/api/health") return json({ ok: true, ...BUILD_INFO, ...runTimes(run) });
     // the ONLY unauthenticated /api route — it mints the cookie the browser streams authenticate with
-    if (path === "/api/session" && req.method === "POST") return postSession(req, cfg);
+    if (path === "/api/session" && req.method === "POST") return postSession(req, cfg, authThrottle, remoteAddress(req, server));
     if (!path.startsWith("/api/")) return err("not found", 404);
     const terminalMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/terminal$/);
-    if (terminalMatch && req.method === "GET") return terminalUpgrade(req, url, terminalMatch[1]!, server, cfg);
-    if (!authorized(req, cfg)) return err("unauthorized", 401);
+    if (terminalMatch && req.method === "GET") return terminalUpgrade(req, url, terminalMatch[1]!, server, cfg, authThrottle);
+    const refused = credentialRefusal(bearerToken(req), cfg, authThrottle, remoteAddress(req, server));
+    if (refused) return refused;
     return lifetime.run(() => lifetime.track(Promise.resolve()
       .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
       .catch((e: unknown) => routeFailure(req.method, path, e))));
@@ -742,6 +758,9 @@ async function serveOwned(
     return stopPromise ??= (async () => {
       stopping = true;
       lifetime.draining = true;
+      // First: a stop that was asked for is clean even if it then runs past
+      // its deadline. What leaves the marker behind is a run that never got here.
+      endDaemonRun(run);
       clearInterval(outboxTimer);
       clearInterval(stuckTimer);
       clearInterval(cleanupTimer);

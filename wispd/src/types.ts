@@ -416,6 +416,8 @@ export interface OutboxRow {
   delivered_at: string | null;
   last_error: string | null;
   created_at: string;
+  /** When delivery gave up on this event; it is never retried after that. */
+  dead_at: string | null;
 }
 
 /**

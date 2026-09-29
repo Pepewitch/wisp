@@ -7,7 +7,7 @@
  * process of its own.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { ADAPTERS_PATH, CONFIG_PATH } from "../src/config";
@@ -28,9 +28,10 @@ function freePort(): number {
   return port;
 }
 
-async function startDaemon() {
-  const home = mkdtempSync(join(tmpdir(), "wisp-shutdown-"));
-  homes.push(home);
+/** `home` restarts a daemon in a home an earlier one used, as a service manager would. */
+async function startDaemon(existingHome?: string) {
+  const home = existingHome ?? mkdtempSync(join(tmpdir(), "wisp-shutdown-"));
+  if (!existingHome) homes.push(home);
   const port = freePort();
   const token = "shutdown-test-token";
   writeFileSync(join(home, "config.json"), JSON.stringify({ port, host: "127.0.0.1", token, webhooks: [], repos: [] }));
@@ -53,8 +54,48 @@ async function startDaemon() {
     if (health?.ok) break;
     await Bun.sleep(50);
   }
-  return { proc, base, token, stderr };
+  return { proc, base, token, stderr, home };
 }
+
+const ISO_PREFIX = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z /;
+
+describe("a daemon's run is visible afterwards", () => {
+  test("health reports when this run started, and a graceful stop leaves no marker", async () => {
+    const daemon = await startDaemon();
+    const health = (await (await fetch(`${daemon.base}/api/health`)).json()) as { startedAt: string; uptimeSeconds: number };
+    expect(Date.parse(health.startedAt)).toBeGreaterThan(Date.now() - 60_000);
+    expect(health.uptimeSeconds).toBeGreaterThanOrEqual(0);
+    expect(existsSync(join(daemon.home, "daemon-run.json"))).toBe(true);
+    daemon.proc.kill("SIGTERM");
+    await daemon.proc.exited;
+    const log = await daemon.stderr;
+    expect(existsSync(join(daemon.home, "daemon-run.json"))).toBe(false);
+    // the daemon's own lines carry a timestamp, ahead of the unchanged tag
+    const own = log.split("\n").filter((line) => line.includes("[wisp] SIGTERM"));
+    expect(own.length).toBeGreaterThan(0);
+    for (const line of own) expect(line).toMatch(ISO_PREFIX);
+  }, 30_000);
+
+  test("a killed daemon's successor logs and records the unclean exit", async () => {
+    const first = await startDaemon();
+    const firstPid = first.proc.pid;
+    first.proc.kill("SIGKILL");
+    await first.proc.exited;
+    await first.stderr;
+
+    const second = await startDaemon(first.home);
+    try {
+      const exits = JSON.parse(readFileSync(join(first.home, "daemon-exits.json"), "utf8")) as { exits: { pid: number }[] };
+      expect(exits.exits.map((exit) => exit.pid)).toEqual([firstPid]);
+    } finally {
+      second.proc.kill("SIGTERM");
+      await second.proc.exited;
+    }
+    const log = await second.stderr;
+    expect(log).toContain(`[wisp] the previous daemon (pid ${firstPid},`);
+    expect(log).toContain("exited without shutting down");
+  }, 40_000);
+});
 
 describe("a signalled daemon", () => {
   for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {

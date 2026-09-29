@@ -29,6 +29,10 @@ try {
     if (positional.length) throw new Error("doctor --storage does not take positional arguments");
     await doctorCommand(flags);
   } else if (args[0] === "serve") {
+    // First, so a warning printed while the daemon's modules load (config.json
+    // is read on import) carries its timestamp too.
+    const { installLogTimestamps } = await import("./failure-log");
+    installLogTimestamps();
     const [{ installDaemonCrashGuards }, { installShutdownSignals }, { serve, stopForExit }] = await Promise.all([
       import("./crash-guard"),
       import("./shutdown"),
