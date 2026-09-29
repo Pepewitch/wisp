@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Everything runs from `main "$@"`, the script's last line. Piped from curl,
+# a download cut short defines at most part of a function and runs nothing.
+main() {
+
 VERSION="${WISP_VERSION:-0.6.4}"
 INSTALL_ROOT="${WISP_INSTALL_ROOT:-$HOME/.local/share/wisp}"
 BIN_DIR="${WISP_BIN_DIR:-$HOME/.local/bin}"
@@ -16,6 +20,12 @@ MARKER="wisp-managed-install-v1"
 fail() {
   echo "wisp install: $*" >&2
   exit 1
+}
+
+# https only, redirects included, and a failed or short transfer is an error.
+download() {
+  curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --fail --silent --show-error --location --output "$2" "$1"
 }
 
 usage() {
@@ -79,13 +89,17 @@ if [ -n "$LOCAL_ARTIFACT" ]; then
   [ -f "$LOCAL_ARTIFACT" ] || fail "local artifact not found: $LOCAL_ARTIFACT"
   cp "$LOCAL_ARTIFACT" "$DOWNLOADED"
 else
+  case "$RELEASE_BASE_URL" in
+    https://*) ;;
+    *) fail "WISP_RELEASE_BASE_URL must be an https:// URL: $RELEASE_BASE_URL" ;;
+  esac
   command -v curl >/dev/null 2>&1 || fail "curl is required for release downloads"
-  curl --fail --silent --show-error --location "$RELEASE_BASE_URL/$ARTIFACT" --output "$DOWNLOADED"
+  download "$RELEASE_BASE_URL/$ARTIFACT" "$DOWNLOADED"
 fi
 
 if [ -z "$EXPECTED_SHA256" ]; then
   [ -z "$LOCAL_ARTIFACT" ] || fail "WISP_SHA256 is required with WISP_ARTIFACT_PATH"
-  curl --fail --silent --show-error --location "$RELEASE_BASE_URL/SHA256SUMS" --output "$TMP/SHA256SUMS"
+  download "$RELEASE_BASE_URL/SHA256SUMS" "$TMP/SHA256SUMS"
   EXPECTED_SHA256="$(awk -v file="$ARTIFACT" '$2 == file { print $1 }' "$TMP/SHA256SUMS")"
 fi
 case "$EXPECTED_SHA256" in
@@ -185,3 +199,6 @@ case ":$PATH:" in
   *) echo "PATH: add $BIN_DIR to PATH before invoking 'wisp'" ;;
 esac
 echo "next: $LINK project add /path/to/repo && $LINK doctor"
+}
+
+main "$@"
