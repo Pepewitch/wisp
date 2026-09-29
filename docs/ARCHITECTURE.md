@@ -98,7 +98,7 @@ transport from its runtime instead of constructing daemon URLs itself:
   retarget themselves to whichever tab is active later.
 
 The same React source produces two Git-ignored delivery artifacts. The daemon
-embeds `web/web-dist/index.html` and its allowlisted lazy Mermaid chunks; Tauri
+embeds `web/web-dist/index.html` and its allowlisted lazy chunks; Tauri
 packages the single-file `web/ui-dist/index.html`. PRs review source, while tag
 CI checksums and transfers both generated outputs. There is no separate desktop
 fork of the React application.
@@ -285,7 +285,7 @@ gates live in
 The source workspace is a Bun monorepo with `wispd/` for the daemon and CLI,
 `web/` for the shared React app, and `desktop/` for the Rust/Tauri crate.
 `bun run build:ui` creates the ignored single-file Desktop bundle, and
-`bun run build:web` creates the browser HTML plus lazy Mermaid chunks. The
+`bun run build:web` creates the browser HTML plus lazy chunks. The
 daemon binary embeds the complete browser artifact; the desktop build packages
 its single-file output. Pull-request CI generates and exercises both artifacts
 but never compares them to Git. Tag CI reproduces and checksums both, transfers

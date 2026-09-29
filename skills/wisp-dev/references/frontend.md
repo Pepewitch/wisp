@@ -135,6 +135,10 @@ are load-bearing:
   past `PROSE_HIGHLIGHT_LIMIT` (20 000 characters — ~73ms per pass, measured)
   the language class comes off and the block renders as what it then is: plain.
 
+In the browser build the highlighter is a lazy chunk, asked for when a task is
+selected. A fence drawn before it lands is the same box in plain mono and takes
+its colour when it does; Desktop's single file has it from the first render.
+
 It emits **classes, not colours**, which is the whole reason to prefer it over
 a bundled VSCode theme: the palette is ours. Five roles in `index.css`, mapped
 once for every language rather than a theme per language:

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { openFetchEventStream } from "./fetch-event-source"
 
@@ -31,8 +31,43 @@ function eventStreamResponse(body: ReadableStream<Uint8Array>): Response {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-describe("the fetch-based event stream", () => {
-  it("replaces suspended streams on foregrounding without an old stream scheduling another retry", async () => {
+describe("the fetch-based event stream across visibility changes", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("keeps a stream that heard from the daemon recently when the tab is shown again", async () => {
+    vi.useFakeTimers()
+    const stream = pushable()
+    const fetchImpl = vi.fn().mockResolvedValue(eventStreamResponse(stream.body))
+    const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 1 })
+    const messages: string[] = []
+    let errors = 0
+    source.onmessage = (event) => messages.push(event.data)
+    source.onerror = () => errors++
+    await vi.advanceTimersByTimeAsync(0)
+    // a heartbeat every 15 s, the way the daemon sends them, while the tab is away
+    for (let beat = 0; beat < 4; beat++) {
+      await vi.advanceTimersByTimeAsync(15_000)
+      stream.push(": hb\n\n")
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    document.dispatchEvent(new Event("visibilitychange"))
+    await vi.advanceTimersByTimeAsync(10_000)
+    stream.push("data: still-here\n\n")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(fetchImpl.mock.calls[0]![1].signal.aborted).toBe(false)
+    // no reported drop, so the events bridge does not resync the world
+    expect(errors).toBe(0)
+    expect(source.readyState).toBe(1)
+    expect(messages).toEqual(["still-here"])
+    source.close()
+  })
+
+  it("replaces a quiet stream that stays quiet once the page is back, without the old one retrying too", async () => {
+    vi.useFakeTimers()
     const first = pushable()
     const second = pushable()
     const fetchImpl = vi.fn()
@@ -40,16 +75,23 @@ describe("the fetch-based event stream", () => {
       .mockResolvedValueOnce(eventStreamResponse(second.body))
     const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 1 })
     const messages: string[] = []
+    let errors = 0
     source.onmessage = (event) => messages.push(event.data)
-    await settle()
+    source.onerror = () => errors++
+    await vi.advanceTimersByTimeAsync(0)
+    // a suspended phone: no heartbeat for minutes
+    await vi.advanceTimersByTimeAsync(120_000)
     document.dispatchEvent(new Event("visibilitychange"))
-    await settle()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(3_000)
+
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     expect(fetchImpl.mock.calls[0]![1].signal.aborted).toBe(true)
+    expect(errors).toBe(1)
     first.push("data: stale\n\n")
     second.push("data: current\n\n")
-    await settle()
-    await settle()
+    await vi.advanceTimersByTimeAsync(10)
     expect(messages).toEqual(["current"])
     expect(fetchImpl).toHaveBeenCalledTimes(2)
     source.close()
@@ -57,6 +99,98 @@ describe("the fetch-based event stream", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
+  it("keeps a quiet stream that delivers what it buffered as soon as the page is back", async () => {
+    vi.useFakeTimers()
+    const stream = pushable()
+    const fetchImpl = vi.fn().mockResolvedValue(eventStreamResponse(stream.body))
+    const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 1 })
+    let errors = 0
+    source.onerror = () => errors++
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(120_000)
+    document.dispatchEvent(new Event("visibilitychange"))
+    // the heartbeats the socket held while the page was suspended
+    stream.push(": hb\n\n: hb\n\n")
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(errors).toBe(0)
+    source.close()
+  })
+
+  it("replaces the stream when the network comes back", async () => {
+    const first = pushable()
+    const second = pushable()
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(eventStreamResponse(first.body))
+      .mockResolvedValueOnce(eventStreamResponse(second.body))
+    const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 1 })
+    await settle()
+    window.dispatchEvent(new Event("online"))
+    await settle()
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[0]![1].signal.aborted).toBe(true)
+    source.close()
+  })
+})
+
+describe("the fetch-based event stream's reconnect delay", () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it("backs off while the daemon keeps failing, and starts over after a success", async () => {
+    vi.useFakeTimers()
+    const stream = pushable()
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
+      .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
+      .mockResolvedValueOnce(new Response("bad gateway", { status: 502 }))
+      .mockResolvedValueOnce(eventStreamResponse(stream.body))
+      .mockResolvedValue(new Response("bad gateway", { status: 502 }))
+    // the top of the jitter range, so each wait is its whole ceiling
+    const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 100, random: () => 0.999_999 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(99)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(199)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(400)
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    expect(source.readyState).toBe(1)
+    // the daemon restarts: the first retry after a good connection is quick again
+    stream.end()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetchImpl).toHaveBeenCalledTimes(5)
+    source.close()
+  })
+
+  it("spreads clients that lost the daemon together", async () => {
+    vi.useFakeTimers()
+    const at = (random: number) => {
+      const fetchImpl = vi.fn().mockResolvedValue(new Response("bad gateway", { status: 502 }))
+      const source = openFetchEventStream("/api/events", { fetchImpl, retryMs: 3_000, random: () => random })
+      return { fetchImpl, source }
+    }
+    const early = at(0)
+    const late = at(0.999_999)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(early.fetchImpl).toHaveBeenCalledTimes(2)
+    expect(late.fetchImpl).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(late.fetchImpl).toHaveBeenCalledTimes(2)
+    early.source.close()
+    late.source.close()
+  })
+})
+
+describe("the fetch-based event stream", () => {
   it("does not revive a refused stream when the device comes online", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 }))
     const source = openFetchEventStream("/api/events", { fetchImpl })

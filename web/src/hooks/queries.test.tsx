@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { createConnectionQueryKeys } from "@/lib/query"
 import { ApiError, type DaemonTransport } from "@/lib/transport"
-import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
+import type { ApiTask, PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
@@ -21,6 +21,7 @@ import {
   useDiff,
   useWorktreeFile,
   useTaskDetail,
+  useTasks,
   useTaskUsage,
   useUpdateStatus,
 } from "./queries"
@@ -88,6 +89,64 @@ function harness(connectionId = "local") {
     wrapper: runtimeWrapper(transport, client),
   }
 }
+
+describe("useTasks", () => {
+  const row = (id: string, updatedAt: string, archived = false) =>
+    ({ id, updated_at: updatedAt, archived, title: id }) as unknown as ApiTask
+
+  beforeEach(() => mocks.request.mockReset())
+
+  it("takes live rows from the live list and only archived rows from the history, newest first", async () => {
+    mocks.request.mockImplementation((path: string) =>
+      Promise.resolve(path === "/api/tasks?cleanup=1"
+        ? [row("running", "2026-09-30T10:00:00Z"), row("cleaning", "2026-09-30T08:00:00Z", true)]
+        // the history's copies of live rows can be older than the live list's
+        : [row("running", "2026-09-29T00:00:00Z"), row("old-a", "2026-09-30T09:00:00Z", true),
+            row("cleaning", "2026-09-30T07:00:00Z", true), row("old-b", "2026-09-01T00:00:00Z", true)]),
+    )
+    const { wrapper } = harness()
+    const { result } = renderHook(() => useTasks(true), { wrapper })
+    await waitFor(() => expect(result.current.data).toBeDefined())
+    expect(result.current.data!.map((task) => [task.id, task.updated_at])).toEqual([
+      ["running", "2026-09-30T10:00:00Z"],
+      ["old-a", "2026-09-30T09:00:00Z"],
+      ["cleaning", "2026-09-30T08:00:00Z"],
+      ["old-b", "2026-09-01T00:00:00Z"],
+    ])
+    expect(result.current.isPending).toBe(false)
+  })
+
+  it("reads only the live list while archived history is hidden", async () => {
+    mocks.request.mockResolvedValue([row("running", "2026-09-30T10:00:00Z")])
+    const { wrapper } = harness()
+    const { result } = renderHook(() => useTasks(false), { wrapper })
+    await waitFor(() => expect(result.current.data).toHaveLength(1))
+    expect(mocks.request.mock.calls.map(([path]) => path)).toEqual(["/api/tasks?cleanup=1"])
+  })
+
+  it("refetches the history when a live task vanished from a newer live list", async () => {
+    let live = [row("a", "2026-09-30T10:00:00Z"), row("b", "2026-09-30T09:00:00Z")]
+    let history = [...live]
+    mocks.request.mockImplementation((path: string) =>
+      Promise.resolve(path === "/api/tasks?cleanup=1" ? live : history))
+    const { client, wrapper } = harness()
+    const keys = createConnectionQueryKeys("local")
+    const { result } = renderHook(() => useTasks(true), { wrapper })
+    await waitFor(() => expect(result.current.data).toHaveLength(2))
+
+    // "b" was archived and cleaned up between two refetches of the live list
+    live = [row("a", "2026-09-30T10:00:00Z")]
+    history = [row("a", "2026-09-30T10:00:00Z"), row("b", "2026-09-30T11:00:00Z", true)]
+    const historyReads = () => mocks.request.mock.calls.filter(([path]) => path === "/api/tasks?archived=1").length
+    const before = historyReads()
+    await act(() => client.invalidateQueries({ queryKey: keys.tasksList(false), exact: true }))
+    await waitFor(() => expect(historyReads()).toBe(before + 1))
+    await waitFor(() => expect(result.current.data!.map((task) => [task.id, task.archived])).toEqual([
+      ["b", true],
+      ["a", false],
+    ]))
+  })
+})
 
 describe("usePullRequestStatus", () => {
   beforeEach(() => {

@@ -2,8 +2,8 @@ import { useState, type ReactNode } from "react"
 
 import { Refresh } from "@/components/icons"
 import { Button, DiffStat, PaneHeader } from "@/components/primitives"
-import { useDiff, type DiffData } from "@/hooks/queries"
-import { changedFileCount, hunkGaps, hunkSection, parseDiff, type DiffFile, type DiffLine } from "@/lib/diff"
+import { parsedDiff, useDiff, type DiffData } from "@/hooks/queries"
+import { changedFileCount, hunkGaps, hunkSection, type DiffFile, type DiffLine } from "@/lib/diff"
 import { cn, oneLine } from "@/lib/utils"
 import { useWorktreeFileOpener } from "@/lib/worktree-files"
 
@@ -75,7 +75,7 @@ export function ChangesPane({
 
 function counted(data: DiffData | undefined): number | null {
   if (!data || data.kind !== "ok") return null
-  return changedFileCount(parseDiff(data.diff).files, data.untracked)
+  return changedFileCount(parsedDiff(data).files, data.untracked)
 }
 
 function Header({
@@ -145,7 +145,7 @@ function Body({
   // line saying why there is nothing here
   if (data.kind === "unavailable") return <Note>{oneLine(data.message)}</Note>
 
-  const parsed = parseDiff(data.diff)
+  const parsed = parsedDiff(data)
   const filesByPath = new Map(parsed.files.map((candidate) => [candidate.path, candidate]))
   const untrackedNames = new Set(data.untracked)
   const tracked = parsed.files.filter((f) => !untrackedNames.has(f.path))

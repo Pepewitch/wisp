@@ -268,11 +268,17 @@ function bestField(value: unknown): string {
 
 const NOTE_MAX = 24
 
+/**
+ * A result short enough to sit on the row, else null. Trimmed and measured
+ * BEFORE newlines are flattened: a tool's output can be megabytes, this runs
+ * for every row on every render of a live turn, and trimming only walks the
+ * ends. Flattening newlines never changes a length, so the answer is the same.
+ */
 function shortResult(step: ToolActivityItem): string | null {
   const value = step.error ?? step.output
   if (!value) return null
-  const oneLine = value.replaceAll("\n", " ").trim()
-  return oneLine.length <= NOTE_MAX ? oneLine : null
+  const trimmed = value.trim()
+  return trimmed.length <= NOTE_MAX ? trimmed.replaceAll("\n", " ") : null
 }
 
 export function toolDetails(step: ToolActivityItem): string {

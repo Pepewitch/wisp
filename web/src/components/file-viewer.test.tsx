@@ -1,17 +1,21 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { beforeAll, describe, expect, it, vi } from "vitest"
 
 import { ApiError, type DaemonTransport } from "@/lib/transport"
 import { parseDiff } from "@/lib/diff"
 import {
   PROSE_HIGHLIGHT_LIMIT,
+  preloadProseHighlighter,
   STATIC_PROSE_HIGHLIGHT_LIMIT,
 } from "@/lib/prose-highlight"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { FileViewer, FileViewerProvider } from "./file-viewer"
 import { Prose } from "./prose"
+
+// the highlighter is its own lazy module; these tests read its colours
+beforeAll(() => preloadProseHighlighter())
 
 /** `request` is whatever the test wants to answer with; the transport's own
  * generic signature is not what a mock is written against. */

@@ -11,7 +11,7 @@ verified installation and supervised restart to the running daemon.
 - `scripts/` contains binary builds, daemon releases, smoke tests, harness
   synchronization, evaluator tooling, and the source-development launcher.
 
-The daemon embeds `../web/web-dist/index.html` and its allowlisted lazy Mermaid
+The daemon embeds `../web/web-dist/index.html` and its allowlisted lazy
 chunks. Wisp Desktop packages the separate single-file `web/ui-dist/index.html`
 from the same React source. Build and validation orchestration stays at the
 repository root. The public `scripts/install.sh` and `scripts/uninstall.sh`

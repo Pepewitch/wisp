@@ -47,12 +47,16 @@ Scripts, styles, xterm.js, Geist fonts, Mermaid, and the favicon are inlined.
 Tauri packages that file, preserving its local first-diagram behavior.
 
 `bun run build:web` writes `web/web-dist/index.html` with styles, fonts, and
-favicon inline. The main app is one content-hashed entry script; Mermaid and
-its diagram-family modules are separate, lazy JavaScript chunks. The compiled
-daemon embeds this complete generated web artifact and serves only its
-allowlisted scripts. A browser with no diagram does not download Mermaid; its
-first diagram fetches the needed chunks. Neither client needs a CDN or a
-sibling directory at installation.
+favicon inline. The main app is one content-hashed entry script and the chunks
+it imports; Mermaid and its diagram-family modules, the terminal (xterm), the
+syntax highlighter (highlight.js) and the `#/gallery` route are separate, lazy
+JavaScript chunks. The compiled daemon embeds this complete generated web
+artifact and serves only its allowlisted scripts. A browser with no diagram
+does not download Mermaid; its first diagram fetches the needed chunks. The
+terminal and the highlighter arrive with the first open task, shown meanwhile
+as a connecting tab and as plain code. `web/scripts/generate-web-assets.ts`
+fails the build if any of them lands in the entry's static graph. Neither
+client needs a CDN or a sibling directory at installation.
 `wispd/tests/web.test.ts` checks the browser artifact and asset routes; Desktop
 bundle tests keep the one-file assertion.
 

@@ -1,6 +1,6 @@
 {
   "$comment": "Maximums `bun run bench` enforces (bench/run.ts). Every one is deterministic: bytes of the built UIs, full-table SCAN steps in the query plans of the named hot paths on the seeded database, git/gh/ps spawns, and bytes on the wire. Timings are printed but never gated. Counts are exact: when a change lowers one, lower its budget in the same PR so the gain stays. To raise one, change it here in the PR that needs it and say in the description why the cost is worth it; the bench output shows the measured value and, for plans and spawns, what ran. Bundle budgets are ceilings with room for ordinary growth, not a target.",
-  "bundle.webInitialJs.gzipBytes": 720000,
+  "bundle.webInitialJs.gzipBytes": 520000,
   "bundle.webIndexHtml.bytes": 330000,
   "bundle.desktopIndexHtml.bytes": 6700000,
   "plan.runningTurns.scans": 1,

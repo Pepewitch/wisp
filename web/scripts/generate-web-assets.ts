@@ -87,8 +87,10 @@ const files = assertBuildShape()
 const fileSet = new Set(files)
 const staticImports = new Map<string, string[]>()
 const dynamicImports = new Map<string, string[]>()
+const sources = new Map<string, string>()
 for (const file of files) {
   const code = readFileSync(path.join(chunks, file), "utf8")
+  sources.set(file, code)
   // Also catch Vite's preload URL strings, not just ESM import declarations.
   for (const [, relative] of code.matchAll(/\.\/([A-Za-z0-9._/-]+\.js)/g)) {
     const dependency = path.posix.normalize(
@@ -160,14 +162,57 @@ while (queue.length > 0) {
   staticClosure.add(file)
   queue.push(...(staticImports.get(file) ?? []))
 }
-if (
-  staticClosure.has(mermaid) ||
-  staticClosure.has(mermaidPackageFile) ||
-  !(dynamicImports.get(entry) ?? []).includes(mermaid)
-) {
-  throw new Error(
-    "Mermaid must remain a lazy import outside the web entry's static graph"
+// What the page loads up front may ask for these later. Shared modules can
+// land in chunks the entry imports, so the import need not be in the entry.
+const lazyImports = new Set(
+  [...staticClosure].flatMap((file) => dynamicImports.get(file) ?? [])
+)
+function assertLazy(label: string, file: string): void {
+  if (staticClosure.has(file) || !lazyImports.has(file)) {
+    throw new Error(
+      `${label} must remain a lazy import outside the web entry's static graph`
+    )
+  }
+}
+assertLazy("Mermaid", mermaid)
+assertLazy("Mermaid", mermaidPackageFile)
+
+// The other code only some pages need. A marker is a string the library's
+// own code always carries, so it also catches the library slipping into a
+// static chunk by another import path; it must be found somewhere, or the
+// check would pass by matching nothing.
+const LAZY_SOURCES: { label: string; source: string; marker?: string }[] = [
+  {
+    label: "The terminal (xterm)",
+    source: "src/components/shell-view.tsx",
+    marker: "xterm-helper-textarea",
+  },
+  {
+    label: "The syntax highlighter (highlight.js)",
+    source: "/rehype-highlight/index.js",
+    marker: "Falling back to no-highlight mode",
+  },
+  { label: "The design gallery", source: "src/components/gallery.tsx" },
+]
+for (const lazy of LAZY_SOURCES) {
+  const found = Object.entries(manifest).find(
+    ([source, chunk]) =>
+      (source === lazy.source || source.endsWith(lazy.source)) &&
+      chunk.isDynamicEntry
   )
+  if (!found) throw new Error(`${lazy.label} is not a dynamic Vite entry`)
+  assertLazy(lazy.label, found[1].file.replace(/^chunks\//, ""))
+  if (!lazy.marker) continue
+  const holders = files.filter((file) => sources.get(file)!.includes(lazy.marker!))
+  if (holders.length === 0) {
+    throw new Error(`${lazy.label}: no chunk contains "${lazy.marker}"; update the marker`)
+  }
+  const eager = holders.filter((file) => staticClosure.has(file))
+  if (eager.length > 0) {
+    throw new Error(
+      `${lazy.label} is in the web entry's static graph: ${eager.join(", ")}`
+    )
+  }
 }
 
 const assets = files.map((file) => {

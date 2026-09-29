@@ -4,6 +4,7 @@ import { SearchAddon, type ISearchOptions } from "@xterm/addon-search"
 import { Terminal, type ITheme } from "@xterm/xterm"
 import xtermCss from "@xterm/xterm/css/xterm.css?inline"
 
+import { SHELL_CONNECTING, ShellFrame, ShellStatus, ShellStatusAction } from "@/components/shell-frame"
 import { TerminalFindBar } from "@/components/terminal-find-bar"
 import {
   isClearChord,
@@ -16,7 +17,6 @@ import {
 import { cellHeightOf, TouchScrollGesture } from "@/lib/terminal-touch"
 import { themeStore, useTheme, type Theme } from "@/lib/theme"
 import type { DaemonTransport } from "@/lib/transport"
-import { cn } from "@/lib/utils"
 
 /**
  * The app's one licensed hex block outside index.css: xterm paints to a canvas
@@ -250,8 +250,7 @@ export function ShellView({
   useTouchScroll(host, term, active)
 
   return (
-    <div className={cn("absolute inset-0 flex flex-col", !active && "pointer-events-none invisible")}>
-      <div ref={host} className="min-h-0 flex-1 px-2.5 pb-1" />
+    <ShellFrame active={active} host={host}>
       {active && finding !== null && search && (
         <TerminalFindBar
           search={search}
@@ -263,36 +262,28 @@ export function ShellView({
         />
       )}
       {(phase !== "live" || noPty) && (
-        <div className="flex shrink-0 items-start gap-2.5 px-3.5 pb-1.5 font-mono text-[10.5px] text-faint">
-          {/*
-            A refusal can be a whole sentence — the daemon's origin
-            explanation is the long one — and a single truncated line would
-            hide the half that says what to change. Errors wrap instead, with
-            the full text on the title for anything past three lines.
-          */}
-          <span
-            className={cn("min-w-0", phase === "error" ? "line-clamp-3 break-words" : "truncate")}
-            title={phase === "error" && detail ? detail : undefined}
-          >
-            {phase === "connecting"
-              ? "connecting…"
-              : phase === "live"
-                ? "no pty — this shell has no window size or job control"
-                : detail}
-          </span>
-          {phase !== "connecting" && (
-            <button
-              type="button"
-              onClick={retry}
-              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-            >
+        // A refusal can be a whole sentence — the daemon's origin explanation
+        // is the long one — and a single truncated line would hide the half
+        // that says what to change. Errors wrap instead, with the full text on
+        // the title for anything past three lines.
+        <ShellStatus
+          wrap={phase === "error"}
+          title={phase === "error" && detail ? detail : undefined}
+          actions={phase !== "connecting" && (
+            <ShellStatusAction onClick={retry}>
               {/* reconnecting to a shell that ended starts a new one */}
               {phase === "exited" ? "restart" : "retry"}
-            </button>
+            </ShellStatusAction>
           )}
-        </div>
+        >
+          {phase === "connecting"
+            ? SHELL_CONNECTING
+            : phase === "live"
+              ? "no pty — this shell has no window size or job control"
+              : detail}
+        </ShellStatus>
       )}
-    </div>
+    </ShellFrame>
   )
 }
 

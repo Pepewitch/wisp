@@ -32,7 +32,7 @@ Wisp has one authoritative daemon and several clients:
 - Harness-specific argv and wire knowledge stays under `wispd/src/adapters/`.
 - The React app uses Query for replaceable server state and a separate reducer
   for append-oriented activity. One source generates a Git-ignored single-file
-  Desktop bundle and a browser bundle with lazy Mermaid chunks; transport and
+  Desktop bundle and a browser bundle with lazy chunks; transport and
   state scope also vary by runtime.
 
 ## Route the task before reading deeply
