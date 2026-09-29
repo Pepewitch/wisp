@@ -1,15 +1,19 @@
 import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { WispConfig } from "../src/config";
+import { STOP_FAILED } from "../src/interrupt-state";
 import { stuckTick } from "../src/runner";
+import * as store from "../src/store";
 import {
   createTask,
   createTurn,
+  finishTurn,
   freeSlot,
   getTask,
   newTaskId,
+  runningTurns,
   setTaskFields,
   transition,
   undeliveredOutbox,
@@ -166,5 +170,81 @@ describe("stuckTick — running ⇄ stuck flapping (the state-flapping regressio
     await stuckTick(cfg, NOW); // must not throw on the missing log...
 
     expect(getTask(id)!.state).toBe("stuck"); // ...and must still flag via the healthy turn
+  });
+});
+
+/**
+ * The tick reads the task, then awaits the log's stat. Anything that happens
+ * to the task inside that await must win over the tick's older read. `during`
+ * runs exactly there: queued when the tick reads THIS task, so it lands before
+ * the stat resolves no matter how many other turns the pass visits first.
+ */
+async function tickWhile(taskId: string, during: () => void): Promise<void> {
+  const read = store.getTask;
+  let fired = false;
+  const spy = spyOn(store, "getTask").mockImplementation((id: string) => {
+    const task = read(id);
+    if (id === taskId && !fired) {
+      fired = true;
+      queueMicrotask(during);
+    }
+    return task;
+  });
+  try {
+    await stuckTick(cfg, NOW);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(fired).toBe(true);
+}
+
+describe("stuckTick — decisions made before an await", () => {
+  test("a turn that finalizes while its log is being read is not revived as running", async () => {
+    const { id, logFile } = makeRunningTask();
+    setLogAge(logFile, 15);
+    await stuckTick(cfg, NOW);
+    expect(getTask(id)!.state).toBe("stuck");
+    setLogAge(logFile, 0.1); // fresh output: this pass would recover the task
+    const turn = runningTurns(id)[0]!;
+
+    await tickWhile(id, () => {
+      finishTurn(turn.id, "done", 0, "finished");
+      transition(id, "done", "finished");
+    });
+
+    expect(getTask(id)!.state).toBe("done");
+    expect(getTask(id)!.state_detail).toBe("finished");
+  });
+
+  test("a task that moved on during the read is not overwritten, even while its turn runs", async () => {
+    const { id, logFile } = makeRunningTask();
+    setLogAge(logFile, 15); // quiet: this pass would mark the task stuck
+    await tickWhile(id, () => transition(id, "needs-input", "the harness asked a question"));
+    expect(getTask(id)!.state).toBe("needs-input");
+    expect(stuckEventsFor(id).length).toBe(0);
+  });
+
+  test("fresh output does not hide a failed Stop behind 'recovered'", async () => {
+    const { id, logFile } = makeRunningTask();
+    const detail = `${STOP_FAILED}: processes in turn 1 survived SIGKILL`;
+    transition(id, "stuck", detail);
+    setLogAge(logFile, 0.1);
+    await stuckTick(cfg, NOW);
+    expect(getTask(id)!.state).toBe("stuck");
+    expect(getTask(id)!.state_detail).toBe(detail);
+  });
+});
+
+describe("transition with an expected seq", () => {
+  test("applies when the seq still matches, and writes and notifies nothing when it does not", () => {
+    const { id } = makeRunningTask();
+    const seq = getTask(id)!.seq;
+    expect(transition(id, "stuck", "first", seq)).toBe(true);
+    expect(getTask(id)!.seq).toBe(seq + 1);
+    // `seq` is now stale: a tick that read it must not write over the change.
+    expect(transition(id, "running", "stale", seq)).toBe(false);
+    expect(getTask(id)).toMatchObject({ state: "stuck", state_detail: "first", seq: seq + 1 });
+    expect(transition(id, "stuck", "stale again", seq)).toBe(false);
+    expect(stuckEventsFor(id).length).toBe(1);
   });
 });
