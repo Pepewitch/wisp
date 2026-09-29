@@ -325,3 +325,33 @@ connection/runtime/native integration, or qualifies a material shared flow for
 release, build with `bash scripts/desktop/build-macos.sh --app-only` and
 exercise the same scenario in the browser and app. Brand changes use
 `bun run brand:check`.
+
+### Performance budgets
+
+`bun run bench` builds both UIs, seeds a synthetic home in a fresh
+`wisp-bench-*` directory under the system temp root, and starts a real daemon
+on it with `git`, `gh` and `ps` wrapped by counting shims. The launch policy is
+`block` and no turn starts, so no harness runs. It fails when a number goes
+over its maximum in `bench/budgets.json`:
+
+- bytes of the browser bundle's initial JavaScript (gzip), its HTML, and the
+  Desktop bundle;
+- full-table `SCAN` steps in the query plans of the running-turn, task-list
+  and search paths, taken from the statements those functions actually run;
+- git spawns for one `/api/status` after one task's event, with a dozen live
+  worktrees;
+- bytes a live-only log stream sends for a finished task with a large
+  transcript.
+
+Those are counts, so CI's `bench` job enforces them. Search latency, health
+latency during a search, and boot time are printed for comparison and never
+gate. A change that lowers a count lowers its budget in the same PR; a change
+that raises one edits the budget and says why in the PR description. Add a
+case by measuring it in `bench/` and giving it a budget; `--json <file>` saves
+a run for comparison.
+
+CI splits the daemon suite across six shards by recorded per-file duration
+(`wispd/tests/durations.json`, read by `scripts/test-shards.ts`), not by file
+name. A new test file with no entry counts as a median file. When a file
+becomes much slower or faster, refresh the map with the commands at the top of
+that script.
