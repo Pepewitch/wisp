@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { Check, ClipboardPaste, Copy, Plus, type FluentIcon } from "@/components/icons"
 import { ShellKillDialog, ShellMenu, ShellTab } from "@/components/shell-tab"
-import { ShellView, type ShellHandle } from "@/components/shell-view"
+import { LazyShellView } from "@/components/lazy-shell-view"
+import type { ShellHandle } from "@/components/shell-view"
 import { MAX_SHELLS_PER_TASK, useShellTabs } from "@/hooks/useShellTabs"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { isApplePlatform, shellTitle } from "@/lib/terminal"
@@ -24,7 +25,8 @@ import { cn } from "@/lib/utils"
  * the same tabs and closing one is what hangs its shell up — the way closing
  * a terminal window or dropping an SSH session does.
  *
- * The strip is `shell-tab.tsx`; one tab's xterm and socket are `shell-view.tsx`.
+ * The strip is `shell-tab.tsx`; one tab's xterm and socket are `shell-view.tsx`,
+ * which the browser loads with the first tab (`lazy-shell-view.tsx`).
  */
 
 /**
@@ -274,7 +276,7 @@ export function TerminalSection({
           <div className="px-3.5 pt-1 font-mono text-[11px] text-faint">{unavailable}</div>
         ) : (
           shells.map((id) => (
-            <ShellView
+            <LazyShellView
               key={`${runtime.connectionId}:${taskId}:${id}`}
               transport={runtime.transport}
               taskId={taskId!}

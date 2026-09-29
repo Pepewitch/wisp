@@ -4,15 +4,23 @@ import { describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-const mocks = vi.hoisted(() => ({ api: vi.fn() }))
+const mocks = vi.hoisted(() => ({ api: vi.fn(), parseDiff: vi.fn() }))
 
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   api: mocks.api,
 }))
 
+// the real parser, counted
+vi.mock("@/lib/diff", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/diff")>()
+  mocks.parseDiff.mockImplementation(actual.parseDiff)
+  return { ...actual, parseDiff: mocks.parseDiff }
+})
+
 import { ChangesPane } from "./changes-pane"
 import { FileViewerProvider } from "./file-viewer"
+import { TaskPanel } from "./task-panel"
 
 const TRACKED = `diff --git a/src/a.ts b/src/a.ts
 --- a/src/a.ts
@@ -45,6 +53,19 @@ function okDiff(over: { diff?: string; untracked?: string[]; truncated?: boolean
     worktreeReason: null,
   })
 }
+
+describe("the Changes pane's diff parse", () => {
+  it("parses one answer once for the panel's count, the header and the file list, however often they render", async () => {
+    okDiff()
+    mocks.parseDiff.mockClear()
+    withClient(<TaskPanel task={null} taskId="tk9zdy" archived={false} />)
+    await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
+    fireEvent.click(screen.getByText("a.ts"))
+    fireEvent.click(screen.getByText("scratch.txt"))
+    expect(screen.getByText(/UNTRACKED_CONTENT/)).toBeInTheDocument()
+    expect(mocks.parseDiff).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe("the Changes pane's untracked files", () => {
   it("lists an untracked path once, labelled untracked, and shows nothing until click", async () => {

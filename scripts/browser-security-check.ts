@@ -17,7 +17,9 @@
  *   5. a page on another local port receives no Wisp cookie, cannot write
  *      cross-origin, and cannot upgrade a terminal socket (SEC-01/SEC-02);
  *   6. the app refuses to be framed (SEC-04).
- *   7. Mermaid stays lazy and a missing chunk can be recovered explicitly.
+ *   7. Mermaid, the terminal, the highlighter and the gallery stay lazy, a
+ *      missing Mermaid chunk can be recovered explicitly, and the terminal
+ *      still renders from its own chunk.
  *   8. hostile agent output (Mermaid labels, image shapes, click links, and
  *      clobbering ids in prose) fetches nothing and navigates nowhere.
  *
@@ -29,10 +31,11 @@
  * Everything it touches is disposable: a temporary WISP_HOME, an ephemeral
  * port, a fresh Chrome profile, and a synthetic checkout, attachment, and shell; no provider harness is called.
  */
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { initialChunkPaths, mermaidChunkPath } from "./browser-security-chunks";
 import { checkHostileContent, HOSTILE_PROSE } from "./browser-security-hostile";
 import { startHostRewritingProxy, startOtherLocalService } from "./browser-security-servers";
 import { DaemonExitedError, exitDescription, waitInPage, watchDaemon } from "./browser-security-wait";
@@ -273,11 +276,13 @@ async function checkTheAppLoads(page: Page, origin: string): Promise<void> {
   await waitInPage(page, 'document.body.innerText.includes("PROJECTS")', "the app to render");
   const rendered = String(await page.evaluate("document.body.innerText"));
   check("the app renders", rendered.includes("PROJECTS"), `body text was ${JSON.stringify(rendered.slice(0, 200))}`);
+  const initial = initialChunkPaths();
   const unexpectedChunks = page.client.events
     .filter(event => event.method === "Network.requestWillBeSent")
     .map(event => String((event.params.request as { url?: string }).url ?? ""))
-    .filter(url => url.startsWith(`${origin}/chunks/`) && !/\/(?:index|rolldown-runtime)-[^/]+\.js$/.test(url));
-  check("a diagram-free page does not fetch Mermaid chunks", unexpectedChunks.length === 0, unexpectedChunks.join("; "));
+    .filter(url => url.startsWith(`${origin}/chunks/`) && !initial.has(url.slice(origin.length)));
+  check("a page with no task open fetches no lazy chunk (Mermaid, terminal, highlighter, gallery)",
+    unexpectedChunks.length === 0, unexpectedChunks.join("; "));
   const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
   check("no CSP violation", violations.length === 0, violations.join("; "));
   const consoleErrors = page.client.events
@@ -420,15 +425,11 @@ async function checkMermaidRecovery(page: Page, origin: string, mermaidPath: str
   check("lazy Mermaid loads under the browser CSP", violations.length === 0, violations.join("; "));
 }
 
-function mermaidChunkPath(): string {
-  const manifest = JSON.parse(readFileSync(join(import.meta.dir, "../web/web-dist/.vite/manifest.json"), "utf8")) as
-    Record<string, { file: string; isDynamicEntry?: boolean }>;
-  const entries = Object.entries(manifest).filter(([source, entry]) =>
-    source.includes("@streamdown/mermaid/dist/index.js") && entry.isDynamicEntry);
-  if (entries.length !== 1 || !/^chunks\/[a-zA-Z0-9_-]+\.js$/.test(entries[0]![1].file)) {
-    throw new Error(`expected one hashed Mermaid entry chunk, got ${JSON.stringify(entries)}`);
-  }
-  return `/${entries[0]![1].file}`;
+/** The open task's terminal arrives as its own chunk, and xterm still renders under the CSP. */
+async function checkLazyTerminal(page: Page): Promise<void> {
+  await waitInPage(page, "!!document.querySelector('[data-terminal] .xterm')", "the lazily loaded terminal", 30_000);
+  const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
+  check("the lazy terminal renders xterm under the browser CSP", violations.length === 0, violations.join("; "));
 }
 
 /** 5: what a page on another local port can get out of the daemon. */
@@ -564,6 +565,7 @@ async function main(): Promise<void> {
     await checkTerminalHandshake(page, started.origin, home);
     await checkImageConsent(page, started.origin, mermaidPath);
     await checkMermaidRecovery(page, started.origin, mermaidPath);
+    await checkLazyTerminal(page);
     await checkHostileContent(page, { check, waitInPage });
     await checkPwa(page, started.origin);
     // Reset this fixture's selection before the clean-app navigation below.

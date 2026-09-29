@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
-import { PROSE_HIGHLIGHT_LIMIT } from "@/lib/prose-highlight"
+import { PROSE_HIGHLIGHT_LIMIT, preloadProseHighlighter } from "@/lib/prose-highlight"
 import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
 
@@ -30,6 +30,9 @@ vi.mock("mermaid", () => ({
     },
   },
 }))
+
+// the highlighter is its own lazy module; these tests read its colours
+beforeAll(() => preloadProseHighlighter())
 
 /**
  * The three things agents emit that a hand-rolled inline parser could not do:

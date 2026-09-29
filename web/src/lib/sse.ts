@@ -1,6 +1,7 @@
 import { clearAssetCache } from "./asset-src";
 import type { QueryClient } from "@tanstack/react-query";
 
+import { reconnectDelay } from "./backoff";
 import type { ConnectionQueryKeys } from "./query";
 import type { DaemonEventStream, DaemonTransport } from "./transport";
 import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types";
@@ -13,7 +14,9 @@ import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types"
  *
  * The invalidation mapping mirrors the classic UI (web/index.html):
  *   task event    → metadata-only renames patch task caches directly; other
- *                   changes invalidate the list and selected detail
+ *                   changes invalidate the live task list and selected detail,
+ *                   and the list with archived history only when the task is
+ *                   archived (see `useTasks`)
  *   turn event    → the selected task's detail + diff (debounced)
  *   project event → the repos list (debounced; add/remove re-shape the sidebar)
  *   harnesses event → the cached harness/model list
@@ -58,18 +61,28 @@ interface Debounced {
   cancel(): void;
 }
 
-function debounce(fn: () => void, ms: number): Debounced {
+/**
+ * A burst of events waits for a quiet moment, but no longer than this: a
+ * steady stream (archive progress, a bulk purge) would otherwise postpone the
+ * refresh until the whole burst was over.
+ */
+const DEBOUNCE_MAX_WAIT_MS = 2_000;
+
+function debounce(fn: () => void, ms: number, maxWaitMs = DEBOUNCE_MAX_WAIT_MS): Debounced {
   let t: ReturnType<typeof setTimeout> | null = null;
+  let firstCall = 0;
   const run: Debounced = () => {
     if (ms <= 0) {
       fn();
       return;
     }
-    if (t !== null) clearTimeout(t);
+    const now = Date.now();
+    if (t === null) firstCall = now;
+    else clearTimeout(t);
     t = setTimeout(() => {
       t = null;
       fn();
-    }, ms);
+    }, Math.max(0, Math.min(ms, firstCall + maxWaitMs - now)));
   };
   run.cancel = () => {
     if (t === null) return;
@@ -87,8 +100,29 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   let closed = false;
   let wasDown = false;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** hard failures since the stream last opened, for the rebuild's backoff */
+  let hardFailures = 0;
 
-  const invalidateTasks = debounce(() => void opts.client.invalidateQueries({ queryKey: qk.tasks }), opts.tasksDebounceMs ?? 300);
+  // The live list (`?cleanup=1`) is small. The list with archived history is
+  // the whole archive, so an event refetches it only when it is about a task
+  // that list shows as archived: cleanup progress, a purge, a restore. A live
+  // task archived between two refetches is caught by `useTasks` instead.
+  let archiveTouched = false;
+  const flushTasks = debounce(() => {
+    const archive = archiveTouched;
+    archiveTouched = false;
+    if (archive) void opts.client.invalidateQueries({ queryKey: qk.tasks });
+    else void opts.client.invalidateQueries({ queryKey: qk.tasksList(false), exact: true });
+  }, opts.tasksDebounceMs ?? 300);
+  const invalidateTasks = (taskId: string) => {
+    if (isArchivedInCache(taskId)) archiveTouched = true;
+    flushTasks();
+  };
+  function isArchivedInCache(taskId: string): boolean {
+    return opts.client
+      .getQueriesData<ApiTask[]>({ queryKey: qk.tasks })
+      .some(([, rows]) => rows?.some((task) => task.id === taskId && task.archived) ?? false);
+  }
   const invalidateStatus = debounce(
     () => void opts.client.invalidateQueries({ queryKey: qk.status }),
     opts.statusDebounceMs ?? 400,
@@ -143,14 +177,14 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (evt.type === "brief") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "brief"] });
       // the switch lives on the task row (`briefEnabled`)
-      invalidateTasks();
+      invalidateTasks(evt.taskId);
       return;
     }
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
       // The task list carries has_workflow so every sidebar row can render
       // standing workflow state without opening one request per task.
-      invalidateTasks();
+      invalidateTasks(evt.taskId);
       return;
     }
     // A rename carries the complete metadata delta. Patching it directly keeps
@@ -176,7 +210,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (evt.type === "task") {
       clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/`);
       // state/title/archive changes land in the sidebar
-      invalidateTasks();
+      invalidateTasks(evt.taskId);
       if (evt.taskId === opts.getSelectedId()) {
         // instant header echo; the debounced refetch brings the truth (and
         // archive flips, which the event alone can't carry)
@@ -197,6 +231,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     // store intentionally outlives that view, so every fresh stream must heal
     // it rather than waiting for another drop/reconnect cycle.
     opts.onConnectionChange?.(true);
+    hardFailures = 0;
     if (!wasDown) return;
     // the stream went down and came back: refetch the world once, and reopen
     // the log stream so its pane restarts from a fresh backlog
@@ -222,14 +257,15 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     if (!wasDown) opts.onConnectionChange?.(false);
     wasDown = true;
     // readyState CLOSED means a hard failure (e.g. 401): the stream will not
-    // retry on its own — re-check the token, then rebuild the stream once.
+    // retry on its own — re-check the token, then rebuild the stream once,
+    // waiting longer each time the rebuilt one is refused again.
     if (source && source.readyState === SSE_CLOSED && reconnectTimer === null) {
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         void opts.transport.ensureReady().then(() => {
           if (!closed) open();
         });
-      }, reconnectDelayMs);
+      }, reconnectDelay(hardFailures++, reconnectDelayMs));
     }
   }
 
@@ -260,7 +296,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   return () => {
     closed = true;
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
-    invalidateTasks.cancel();
+    flushTasks.cancel();
     invalidateStatus.cancel();
     invalidateRepos.cancel();
     invalidateSelectedTurn.cancel();

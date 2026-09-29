@@ -1,4 +1,6 @@
-import rehypeHighlight from "rehype-highlight"
+import { useEffect, useSyncExternalStore } from "react"
+
+import { lazyModule } from "@/lib/lazy-module"
 
 /**
  * Syntax highlighting for a fence that NAMED a language, and nothing else.
@@ -68,20 +70,56 @@ function skipCodePast(limit: number) {
   }
 }
 
-function highlightPlugins(limit: number) {
-  return [
-    skipCodePast(limit),
-    [rehypeHighlight, { detect: false, ignoreMissing: true }],
-  ] as const
+/**
+ * highlight.js and its common grammars are the second-largest thing in the
+ * browser bundle, and only a fence that names a language uses them, so the
+ * browser loads them on first use (`lazy-module.ts`). Until they arrive such a
+ * fence renders as plain mono on `--code`: the same box, the colour missing,
+ * which is also how a fence past the limit renders.
+ */
+const highlighter = lazyModule(() => import("rehype-highlight").then((module) => module.default))
+
+export type ProseHighlighter = Awaited<ReturnType<typeof highlighter.load>>
+
+/**
+ * Ask for the highlighter before a fence needs it: a selected task is about
+ * to show prose. Settles either way; a failure leaves fences plain.
+ */
+export function preloadProseHighlighter(): Promise<void> {
+  return highlighter.load().then(
+    () => undefined,
+    () => undefined
+  )
 }
 
-export const PROSE_HIGHLIGHT_PLUGINS = highlightPlugins(HIGHLIGHT_LIMIT)
+/**
+ * The highlighter once it has arrived, else null, asking for it on first use.
+ * A failed load leaves fences plain; the next mount asks again.
+ */
+export function useProseHighlighter(): ProseHighlighter | null {
+  const loaded = useSyncExternalStore(highlighter.subscribe, highlighter.current)
+  useEffect(() => {
+    if (!loaded) void preloadProseHighlighter()
+  }, [loaded])
+  return loaded
+}
+
+/**
+ * The highlighting end of the rehype chain for one limit. Without the
+ * highlighter it still strips a huge block's language, so that block looks
+ * the same before and after the highlighter arrives.
+ */
+export function highlightPlugins(limit: number, highlight: ProseHighlighter | null) {
+  const skip = skipCodePast(limit)
+  return highlight
+    ? ([skip, [highlight, { detect: false, ignoreMissing: true }]] as const)
+    : ([skip] as const)
+}
+
+export const PROSE_HIGHLIGHT_LIMIT = HIGHLIGHT_LIMIT
 
 /**
  * A complete document or source file is coloured once, not again for every
  * arriving chunk, so it can safely support the ordinary 20–50 KB file range.
  */
-export const STATIC_PROSE_HIGHLIGHT_PLUGINS = highlightPlugins(STATIC_HIGHLIGHT_LIMIT)
-
-export const PROSE_HIGHLIGHT_LIMIT = HIGHLIGHT_LIMIT
 export const STATIC_PROSE_HIGHLIGHT_LIMIT = STATIC_HIGHLIGHT_LIMIT

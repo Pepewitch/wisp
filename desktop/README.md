@@ -4,7 +4,7 @@ The Wisp desktop shell for Apple Silicon macOS: a Tauri 2 application whose
 webview runs the shared React app as a single-file local bundle
 (`web/ui-dist/index.html`), plus a native core that lets it talk to several
 independent Wisp daemons at once. The daemon serves a separate build of the
-same source with lazy Mermaid chunks for the browser.
+same source with lazy chunks for the browser.
 
 Start with the repository-wide [architecture](../docs/ARCHITECTURE.md), then
 use [the desktop transport contract](../docs/DESKTOP-TRANSPORT.md) for the

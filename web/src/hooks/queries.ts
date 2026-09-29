@@ -5,6 +5,7 @@ import type { BriefView } from "../../../shared/task-brief";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
 import { prependConversationPage, refreshConversationPage } from "@/lib/conversation-pages";
+import { parseDiff, type ParsedDiff } from "@/lib/diff";
 import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
 import type {
@@ -28,13 +29,78 @@ import type {
   WorktreeFileResponse,
 } from "@/lib/types";
 
-/** GET /api/tasks — unfinished cleanup stays visible even with archived history hidden. */
+/**
+ * GET /api/tasks — unfinished cleanup stays visible even with archived history hidden.
+ *
+ * The live list (`?cleanup=1`: every unarchived task, plus archived ones still
+ * being cleaned up) is always read, and every live row comes from it. "Show
+ * archived" adds the whole list (`?archived=1`) for its archived rows only, so
+ * the events bridge can refresh a running task by refetching the small list,
+ * and ship the archive again only for an event about an archived task.
+ */
 export function useTasks(showArchived: boolean) {
   const { transport, qk } = useDaemonRuntime();
-  return useQuery({
-    queryKey: qk.tasksList(showArchived),
-    queryFn: () => transport.request<ApiTask[]>(`/api/tasks${showArchived ? "?archived=1" : "?cleanup=1"}`),
+  const client = useQueryClient();
+  const live = useQuery({
+    queryKey: qk.tasksList(false),
+    queryFn: () => transport.request<ApiTask[]>("/api/tasks?cleanup=1"),
   });
+  const history = useQuery({
+    queryKey: qk.tasksList(true),
+    queryFn: () => transport.request<ApiTask[]>("/api/tasks?archived=1"),
+    enabled: showArchived,
+  });
+  const data = useMemo(
+    () => (showArchived ? withArchivedHistory(live.data, history.data) : live.data),
+    [showArchived, live.data, history.data],
+  );
+  // A live task archived (or deleted) between two refetches of the live list
+  // leaves no event about an archived row: the history still has it live,
+  // the live list no longer has it at all. Ask for the history once per gap.
+  const lost = showArchived && live.data && history.data ? lostLiveRows(live.data, history.data) : "";
+  useEffect(() => {
+    if (lost) void client.invalidateQueries({ queryKey: qk.tasksList(true), exact: true });
+  }, [lost, client, qk]);
+  return {
+    data,
+    error: live.error ?? (showArchived ? history.error : null),
+    isPending: live.isPending || (showArchived && history.isPending),
+  };
+}
+
+/**
+ * The live rows and the history's archived rows that are not also live,
+ * newest first, as the daemon orders a single list (`updated_at DESC`).
+ * Undefined until both have answered, as the one list used to be.
+ */
+export function withArchivedHistory(
+  live: ApiTask[] | undefined,
+  history: ApiTask[] | undefined,
+): ApiTask[] | undefined {
+  if (!live || !history) return undefined;
+  const liveIds = new Set(live.map((task) => task.id));
+  const archived = history.filter((task) => task.archived && !liveIds.has(task.id));
+  if (archived.length === 0) return live;
+  const rows: ApiTask[] = [];
+  let l = 0;
+  let a = 0;
+  while (l < live.length || a < archived.length) {
+    if (a === archived.length || (l < live.length && live[l]!.updated_at >= archived[a]!.updated_at)) {
+      rows.push(live[l++]!);
+    } else {
+      rows.push(archived[a++]!);
+    }
+  }
+  return rows;
+}
+
+/** The ids the history shows live and the live list lacks, as one comparable string. */
+function lostLiveRows(live: ApiTask[], history: ApiTask[]): string {
+  const liveIds = new Set(live.map((task) => task.id));
+  return history
+    .filter((task) => !task.archived && !liveIds.has(task.id))
+    .map((task) => task.id)
+    .join(" ");
 }
 
 /**
@@ -393,6 +459,23 @@ export function useDiff(id: string | null, archived: boolean) {
       }
     },
   });
+}
+
+const parsedDiffs = new WeakMap<Extract<DiffData, { kind: "ok" }>, ParsedDiff>();
+
+/**
+ * One fetched diff, parsed once. The panel's tab count, the pane's header and
+ * its file list all read the same cached answer, and a refetch that brings the
+ * same diff keeps that object, so a diff of up to 512 KiB is parsed once per
+ * answer rather than three times on every render.
+ */
+export function parsedDiff(data: Extract<DiffData, { kind: "ok" }>): ParsedDiff {
+  let parsed = parsedDiffs.get(data);
+  if (!parsed) {
+    parsed = parseDiff(data.diff);
+    parsedDiffs.set(data, parsed);
+  }
+  return parsed;
 }
 
 /**

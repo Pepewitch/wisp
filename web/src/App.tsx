@@ -18,7 +18,7 @@ import { CreateTaskDialog } from "@/components/create-task-dialog"
 import { Conversation } from "@/components/conversation"
 import { DesktopZoomControl } from "@/components/desktop-zoom-control"
 import { PaneErrorBoundary } from "@/components/error-boundary"
-import { Gallery } from "@/components/gallery"
+import { LazyGallery } from "@/components/lazy-gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
@@ -61,6 +61,7 @@ import {
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
 import { groupTasksByProject } from "@/lib/projects"
+import { preloadProseHighlighter } from "@/lib/prose-highlight"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { connectEventsBridge } from "@/lib/sse"
@@ -89,7 +90,7 @@ export default function App() {
   const runtime = useDaemonRuntime()
   const route = useHashRoute()
   return route === "/gallery" ? (
-    <Gallery />
+    <LazyGallery />
   ) : (
     <ConnectedApp runtimeKey={runtime.connectionId} />
   )
@@ -114,6 +115,9 @@ type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" 
 /** The log follow lives down here, so a frame re-renders the transcript and not the app shell. */
 function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
   const stream = useLogStream(taskId, "activity", generation)
+  // Ask for the lazily loaded highlighter with the task rather than with its
+  // first fence, so it is normally here before the transcript is.
+  useEffect(() => void (taskId !== null && preloadProseHighlighter()), [taskId])
   return (
     // Keyed by task: a bad turn in one task must not leave the next task's
     // conversation stuck showing the previous one's fallback.

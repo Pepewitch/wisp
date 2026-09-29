@@ -5,8 +5,11 @@ import { defaultRehypePlugins, defaultRemarkPlugins, Streamdown } from "streamdo
 import { PaneErrorBoundary } from "@/components/error-boundary"
 import { externalLinkProps } from "@/lib/external-links"
 import {
-  PROSE_HIGHLIGHT_PLUGINS,
-  STATIC_PROSE_HIGHLIGHT_PLUGINS,
+  highlightPlugins,
+  PROSE_HIGHLIGHT_LIMIT,
+  STATIC_PROSE_HIGHLIGHT_LIMIT,
+  useProseHighlighter,
+  type ProseHighlighter,
 } from "@/lib/prose-highlight"
 import { mermaidFenceCode } from "@/lib/mermaid-fence-code"
 import { rehypeSourceLines } from "@/lib/prose-source-lines"
@@ -27,12 +30,14 @@ export function Prose({
   mode?: "streaming" | "static"
   sourceLine?: { line: number; endLine?: number }
 }) {
+  const highlight = useProseHighlighter()
+  const chains = rehypeChains(highlight)
   const rehypePlugins = (mode === "static"
     ? [
-        ...(STATIC_PROSE_REHYPE_PLUGINS ?? []),
+        ...chains.static,
         ...(sourceLine ? [[rehypeSourceLines, sourceLine]] : []),
       ]
-    : PROSE_REHYPE_PLUGINS) as ComponentProps<typeof Streamdown>["rehypePlugins"]
+    : chains.streaming) as ComponentProps<typeof Streamdown>["rehypePlugins"]
 
   return (
     <div className={cn("text-[13px] leading-[1.7] text-foreground/85", className)}>
@@ -42,6 +47,10 @@ export function Prose({
           it. */}
       <PaneErrorBoundary label="this content" fill={false}>
         <Streamdown
+          // Streamdown's memo compares its text and not its plugins, so a block
+          // drawn before the highlighter arrived would stay plain. It remounts
+          // once, when the highlighter lands; later mounts never see "plain".
+          key={highlight ? "highlighted" : "plain"}
           mode={mode}
           parseIncompleteMarkdown={mode === "streaming"}
           controls={false}
@@ -89,17 +98,33 @@ function prefixedSanitize(plugin: unknown): unknown {
   return [transform, { ...schema, clobberPrefix: "user-content-" }]
 }
 
-const PROSE_REHYPE_PLUGINS = [
-  ...PROSE_REHYPE_BASE,
-  // LAST, and deliberately after `sanitize`: the `hljs-*` spans are added to a
-  // tree that has already been sanitised, so they reach the DOM (§5b).
-  ...PROSE_HIGHLIGHT_PLUGINS,
-] as ComponentProps<typeof Streamdown>["rehypePlugins"]
+type RehypePlugins = NonNullable<ComponentProps<typeof Streamdown>["rehypePlugins"]>
 
-const STATIC_PROSE_REHYPE_PLUGINS = [
-  ...PROSE_REHYPE_BASE,
-  ...STATIC_PROSE_HIGHLIGHT_PLUGINS,
-] as ComponentProps<typeof Streamdown>["rehypePlugins"]
+const REHYPE_CHAINS = new Map<ProseHighlighter | null, { streaming: RehypePlugins; static: RehypePlugins }>()
+
+/**
+ * Both rehype chains for one highlighter state, built once per state so every
+ * render hands Streamdown the same arrays.
+ */
+function rehypeChains(highlight: ProseHighlighter | null) {
+  let chains = REHYPE_CHAINS.get(highlight)
+  if (!chains) {
+    chains = {
+      streaming: [
+        ...PROSE_REHYPE_BASE,
+        // LAST, and deliberately after `sanitize`: the `hljs-*` spans are added
+        // to a tree that has already been sanitised, so they reach the DOM (§5b).
+        ...highlightPlugins(PROSE_HIGHLIGHT_LIMIT, highlight),
+      ] as RehypePlugins,
+      static: [
+        ...PROSE_REHYPE_BASE,
+        ...highlightPlugins(STATIC_PROSE_HIGHLIGHT_LIMIT, highlight),
+      ] as RehypePlugins,
+    }
+    REHYPE_CHAINS.set(highlight, chains)
+  }
+  return chains
+}
 
 const PROSE_COMPONENTS: ComponentProps<typeof Streamdown>["components"] = {
   p: ({ children, node }) => (

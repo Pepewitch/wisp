@@ -5,8 +5,8 @@ import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Tab } from "@/components/primitives"
 import { BriefPane } from "@/components/task-brief"
 import { WorkflowsPane } from "@/components/workflows-pane"
-import { useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
-import { changedFileCount, parseDiff } from "@/lib/diff"
+import { parsedDiff, useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
+import { changedFileCount } from "@/lib/diff"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 
@@ -66,7 +66,7 @@ export function TaskPanel({
   // Both counts belong to the strip, so it reads the same from either tab.
   // Each is the query the pane below already makes — one key, one request.
   const diff = useDiff(taskId, archived).data
-  const changes = diff?.kind === "ok" ? changedFileCount(parseDiff(diff.diff).files, diff.untracked) : undefined
+  const changes = diff?.kind === "ok" ? changedFileCount(parsedDiff(diff).files, diff.untracked) : undefined
   const workflows = useTaskWorkflows(taskId, workflowsSupported).data
   const attached = workflows?.filter((w) => w.state !== "completed").length ?? 0
 

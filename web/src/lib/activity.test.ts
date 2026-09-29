@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
 import {
   activityByTurn,
@@ -202,6 +202,21 @@ describe("tool summaries", () => {
   it("uses only short output as the right-edge fact", () => {
     expect(summarizeStep(tool({ output: "7 passed" })).note).toBe("7 passed")
     expect(summarizeStep(tool({ output: "x".repeat(80) })).note).toBeNull()
+    // measured after trimming, on one line
+    expect(summarizeStep(tool({ output: `\n\n  ok\nall ${"x".repeat(17)}  \n` })).note).toBe(`ok all ${"x".repeat(17)}`)
+    expect(summarizeStep(tool({ output: `ok\nall ${"x".repeat(18)}` })).note).toBeNull()
+  })
+
+  it("never rewrites a long output just to find it is too long for the row", () => {
+    // it runs for every row on every live render, and outputs are uncapped
+    const long = `${"line of tool output\n".repeat(50_000)}done`
+    const replaceAll = vi.spyOn(String.prototype, "replaceAll")
+    try {
+      expect(summarizeStep(tool({ output: long })).note).toBeNull()
+      expect(replaceAll.mock.contexts.map((receiver) => String(receiver).length)).not.toContain(long.length)
+    } finally {
+      replaceAll.mockRestore()
+    }
   })
 
   it("keeps full input, output, and errors in expanded details", () => {
