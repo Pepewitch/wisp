@@ -395,7 +395,7 @@ describe("readWorktreeFile (the UI's file viewer)", () => {
     writeFileSync(join(wt.path, "big.log"), "x".repeat(size));
     const file = await readWorktreeFile(wt.path, "big.log");
     expect(file).toMatchObject({ kind: "text", path: "big.log", bytes: size, truncated: true });
-    expect(file!.kind === "text" && file.text.length).toBe(FILE_CAP);
+    expect(file?.kind === "text" && file.text.length).toBe(FILE_CAP);
   });
 });
 

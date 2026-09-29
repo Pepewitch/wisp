@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { canonicalBriefJson, TASK_BRIEF_LIMITS, validateTaskBrief } from "../../shared/task-brief";
 
-const minimal = { version: 1, outcome: "The duplicate-save bug is fixed.", remaining: ["Verify it in a browser."] };
+const minimal = { version: 1 as const, outcome: "The duplicate-save bug is fixed.", remaining: ["Verify it in a browser."] };
 
 function fails(value: unknown): { field: string; message: string } {
   const check = validateTaskBrief(value);

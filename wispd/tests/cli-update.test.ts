@@ -15,6 +15,7 @@ function status(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
     canAutoUpdate: true,
     message: null,
     checkedAt: "2026-09-09T12:00:00.000Z",
+    lastAttempt: null,
     ...overrides,
   };
 }

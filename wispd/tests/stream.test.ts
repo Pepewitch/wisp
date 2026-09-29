@@ -23,6 +23,7 @@ const cfg: WispConfig = {
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
+  repos: [],
 };
 
 /** Minimal adapter def with a real event formatter, so human-format rendering is exercised. */
@@ -443,7 +444,7 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
       try {
         const backlog = await sse.nextFrame();
         expect(backlog.event).toBe("backlog");
-        const { activity } = JSON.parse(backlog.data) as { activity: { kind: string; id: string }[] };
+        const { activity } = JSON.parse(backlog.data) as { activity: { kind: string; id: string; parentId?: string | null; text?: string }[] };
         expect(activity.map((event) => [event.kind, event.id])).toEqual([
           ["text", "text-1"],
           ["message", "mfaketestid01"],

@@ -127,8 +127,11 @@ export interface UpdateStartOptions {
   runningTasks?: () => number;
 }
 
+/** The one thing the manager asks of `fetch`: a call. Bun's `typeof fetch` also demands `preconnect`. */
+type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 export interface UpdateManagerOptions {
-  fetch?: typeof fetch;
+  fetch?: Fetcher;
   run?: (cmd: string[]) => Promise<CommandResult>;
   detectInstallation?: () => Installation;
   restart?: () => void;
@@ -307,7 +310,7 @@ function validateLinuxManifest(value: unknown, release: ReleaseInfo): asserts va
 }
 
 export class UpdateManager {
-  private readonly fetcher: typeof fetch;
+  private readonly fetcher: Fetcher;
   private readonly run: (cmd: string[]) => Promise<CommandResult>;
   private readonly detector: () => Installation;
   private readonly restart: () => void;

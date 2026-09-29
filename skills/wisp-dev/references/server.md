@@ -236,6 +236,14 @@ remains active. That preload only runs when Bun reads it from `wispd`'s own
 falling back to `~/.wisp`. Always invoke the daemon suite as `bun run --cwd
 wispd test` (or `bun run test:wispd`) so the preload runs in the first place.
 
+The preload also points `TMPDIR` at one `wisp-run-*` directory per run, which
+holds that `WISP_HOME` and every fixture made with `tmpdir()`, and removes it
+after the last file; set `WISP_KEEP_TEST_TMP=1` to keep it for a post-mortem.
+Terminal tests run `/bin/sh` with an empty `HOME` (`tests/helpers/hermetic-shell.ts`)
+rather than your login shell and dotfiles. `typecheck:wispd` covers
+`wispd/tests` as well as the sources, so a fixture that drifts from a real type
+fails the gate.
+
 ### The test suite may not launch a real harness
 
 `wispd/tests/setup.ts` also fails the suite closed on process execution, because

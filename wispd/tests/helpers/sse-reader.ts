@@ -21,7 +21,7 @@ export function testSseReader(reader: ReadableStreamDefaultReader<Uint8Array>) {
         pending ??= frames.next();
         const result = await Promise.race([
           pending,
-          Bun.sleep(remaining).then(() => TIMEOUT),
+          Bun.sleep(remaining).then((): typeof TIMEOUT => TIMEOUT),
         ]);
         if (result === TIMEOUT) continue;
         pending = null;

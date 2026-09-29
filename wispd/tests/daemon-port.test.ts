@@ -65,7 +65,7 @@ describe("daemon port conflicts", () => {
       port: 0,
       fetch: () => new Response("not wisp"),
     });
-    const message = await portConflictMessage("127.0.0.1", listener.port);
+    const message = await portConflictMessage("127.0.0.1", listener.port!);
     expect(message).toContain("already in use by a non-Wisp service");
     expect(message).toContain("Wisp did not stop that process");
   });

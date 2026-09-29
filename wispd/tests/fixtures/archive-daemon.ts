@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { CONFIG_PATH, loadConfig, WISP_HOME } from "../../src/config";
 import { acquireHomeOwnership } from "../../src/home-lock";
 import { archiveTaskWithCleanup } from "../../src/archive-jobs";
-import { createTask, initializeStore, setTaskFields } from "../../src/store";
+import { createTask, initializeStore, setTaskFields, transition } from "../../src/store";
 import { createWorktree } from "../../src/worktree";
 import { serve } from "../../src/daemon";
 
@@ -19,7 +19,8 @@ if (process.argv[2] === "seed") {
     const id = `tfixture${i}`, cfg = loadConfig();
     const wt = await createWorktree(repo, id, cfg);
     createTask({ id, title: `Slow cleanup ${i}`, repo_path: repo, harness: "fake", model: null, slot: i });
-    setTaskFields(id, { state: "done", worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
+    setTaskFields(id, { worktree_path: wt.path, branch: wt.branch, base_commit: wt.base_commit });
+    transition(id, "done");
     archiveTaskWithCleanup(id, null, { task_id: id, stage: "stop-turn", force: true, stop_turn: false,
       removable: true, repo_path: repo, worktree_path: wt.path, branch: wt.branch,
       archive_script: `echo effect >> "$WISP_HOME/${id}-effects"; while [ ! -f "$WISP_HOME/${id}-release" ]; do sleep .05; done`, timeout_minutes: 1 });

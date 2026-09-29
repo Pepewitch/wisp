@@ -481,7 +481,9 @@ describe("Codex app-server subagent dialect", () => {
     // The child's command and final message live under the child, not the parent.
     expect(events).toContainEqual(expect.objectContaining({ kind: "tool", id: "exec-1", parentId: "agent-codex-live", name: "Run" }));
     expect(events).toContainEqual(expect.objectContaining({ kind: "text", parentId: "agent-codex-live", text: "papaya-verify" }));
-    expect(events.filter((event) => event.kind === "text" && event.parentId === null).map((event) => event.text)).toEqual([
+    expect(events
+      .filter((event): event is Extract<ActivityEvent, { kind: "text" }> => event.kind === "text" && event.parentId === null)
+      .map((event) => event.text)).toEqual([
       "I’m spawning the single requested subagent now and will wait for its exact reply.",
       "child said: papaya-verify",
     ]);

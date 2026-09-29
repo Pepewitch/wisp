@@ -22,17 +22,53 @@
 // Real-provider qualification is a separate, explicit act on a disposable
 // host: run the suite with WISP_LAUNCH_POLICY=allow, which this file honors
 // rather than overwrites.
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { afterAll } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { LAUNCH_POLICY_ENV } from "../src/launch-policy";
 
-const TMP_ROOT = tmpdir();
-/** macOS hands out /var/folders/… paths that are really /private/var/folders/…; both spellings have to be listed. */
-const TMP_ROOTS = [...new Set([TMP_ROOT, realpathSync(TMP_ROOT)])];
+// One directory per run holds everything the run creates. Fixtures call
+// `mkdtempSync(join(tmpdir(), …))` and mostly never clean up; pointing TMPDIR
+// here (Bun's tmpdir() follows it, and child processes inherit it) means one
+// removal takes all of them, instead of hundreds of git repositories and
+// worktrees piling up in the system temp directory with every run. A preload's
+// afterAll runs once, after every file (Bun emits no process "exit" there).
+// WISP_KEEP_TEST_TMP=1 keeps it for a post-mortem.
+const RUN_ROOT = mkdtempSync(join(tmpdir(), "wisp-run-"));
+process.env.TMPDIR = RUN_ROOT;
+if (tmpdir() !== RUN_ROOT) {
+  throw new Error(`[wisp tests] tmpdir() did not follow TMPDIR to ${RUN_ROOT}; fixtures would land outside the run root`);
+}
+afterAll(() => {
+  if (process.env.WISP_KEEP_TEST_TMP === "1") {
+    console.warn(`[wisp tests] kept this run's temporary files in ${RUN_ROOT}`);
+    return;
+  }
+  removeRunRoot();
+});
 
-process.env.WISP_HOME = mkdtempSync(join(TMP_ROOT, "wisp-test-"));
+function removeRunRoot(): void {
+  try {
+    rmSync(RUN_ROOT, { recursive: true, force: true });
+  } catch {
+    // a fixture that made a directory read-only (to test a refusal) blocks
+    // removal of what is inside it; restore write permission and try again
+    Bun.spawnSync(["chmod", "-R", "u+w", RUN_ROOT]);
+    try {
+      rmSync(RUN_ROOT, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[wisp tests] could not remove ${RUN_ROOT}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+/** macOS hands out /var/folders/… paths that are really /private/var/folders/…; both spellings have to be listed. */
+const TMP_ROOTS = [...new Set([RUN_ROOT, realpathSync(RUN_ROOT)])];
+
+process.env.WISP_HOME = join(RUN_ROOT, "home");
+mkdirSync(process.env.WISP_HOME, { mode: 0o700 });
 // Server fixtures share this identity regardless of Bun's test-file order.
 writeFileSync(
   join(process.env.WISP_HOME, "instance-id"),

@@ -37,9 +37,9 @@ function droidSpawn(seen: string[][] = []): SpawnFn {
 
 describe("daemon model probe cache", () => {
   test("production model probes stop on output floods", async () => {
-    const error = await bunModelProbeSpawn(
+    const error = await Promise.resolve(bunModelProbeSpawn(
       ["bash", "-c", `head -c ${MODEL_PROBE_MAX_BYTES + 1} /dev/zero | tr '\\0' x`],
-    ).catch((value) => value instanceof Error ? value.message : String(value));
+    )).catch((value) => value instanceof Error ? value.message : String(value));
     expect(error).toContain("output budget");
   });
 

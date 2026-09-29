@@ -162,7 +162,7 @@ describe("wisp search, end to end", () => {
   test("finds a live task's prompt and hides an archived match until -a", async () => {
     writeConfig(18710);
     server = await serve({ port: 0, proseBackfill: false });
-    writeConfig(server.port);
+    writeConfig(server.port!);
 
     const live = newTaskId();
     createTask({ id: live, title: "Live cliword task", repo_path: "/tmp/repo", harness: "fake", model: null, slot: freeSlot() });
@@ -187,7 +187,7 @@ describe("wisp search, end to end", () => {
   test("prints the daemon's own refusal for an empty query", async () => {
     writeConfig(18710);
     server = await serve({ port: 0, proseBackfill: false });
-    writeConfig(server.port);
+    writeConfig(server.port!);
 
     const out = await run(["search", "   "]);
     expect(out.exitCode).toBe(1);

@@ -41,7 +41,7 @@ function start(argv: string[], size: PtySize): Harness {
   const child = Bun.spawn({
     cmd: ptyExecArgv(handle.slavePath, argv),
     cwd: "/tmp",
-    env: { ...process.env, TERM: "xterm-256color", COLUMNS: undefined, LINES: undefined } as Record<string, string>,
+    env: { ...process.env, TERM: "xterm-256color", COLUMNS: undefined, LINES: undefined },
     stdin: "ignore",
     stdout: "ignore",
     stderr: "pipe",

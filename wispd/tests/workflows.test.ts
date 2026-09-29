@@ -234,7 +234,7 @@ test("workflow messages never drain on ordinary queue recovery", () => {
   const message = reserveWorkflowWake(row, { action: "wake", reason: "Due", key: "once", message: "Check", checkpoint: {} }, "Check", base);
   expect(message).toBeTruthy();
   expect(nextQueuedMessage(item.taskId)).toBeNull();
-  expect(nextQueuedMessage(item.taskId, message!)?.id).toBe(message);
+  expect(nextQueuedMessage(item.taskId, message!)?.id).toBe(message!);
   changeWorkflowState(item.id, "paused", "Pause", base);
   expect(messagesFor(item.taskId)[0]?.status).toBe("cancelled");
 });

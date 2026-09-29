@@ -625,7 +625,7 @@ describe("reporting background work", () => {
 
     const group = backgroundWork(task.id, BACKGROUND_SETTLE_MS).details[0]!;
     expect(group.turn).toBe(1);
-    expect(group.pgid).toBe(turn.pid);
+    expect(group.pgid).toBe(turn.pid!);
     expect(group.processes).toBeGreaterThan(0);
     expect(group.state).toBe("running");
     expect(group.stopRequested).toBe(false);

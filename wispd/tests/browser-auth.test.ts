@@ -26,6 +26,8 @@ import {
 import { TERMINAL_MAX_FRAME_BYTES } from "../../shared/terminal-protocol";
 import { killAll } from "../src/terminal";
 import { createTask, freeSlot, newTaskId, setTaskFields } from "../src/store";
+import { HERMETIC_SHELL, useHermeticHome } from "./helpers/hermetic-shell";
+import { openWebSocket } from "./helpers/websocket";
 
 const TOKEN = "browser-auth-test-token";
 /** The origin the attack comes from: another HTTP service on the very same host. */
@@ -57,6 +59,9 @@ afterEach(async () => {
   server = null;
 }, 30_000);
 
+// an authenticated upgrade spawns a real shell; keep it off the operator's dotfiles
+useHermeticHome();
+
 function git(cwd: string, args: string[]): string {
   const result = Bun.spawnSync({ cmd: ["git", ...args], cwd, stdout: "pipe", stderr: "pipe" });
   if (!result.success) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
@@ -72,6 +77,7 @@ function writeConfig(): void {
       token: TOKEN,
       webhooks: [],
       stuckMinutes: 10,
+      terminalShell: HERMETIC_SHELL,
       logMaxBytes: 5_000_000,
       setupTimeoutMinutes: 10,
       envAllowlist: {},
@@ -113,7 +119,7 @@ async function upgradeOutcome(
   url: string,
   options: { headers?: Record<string, string>; send?: unknown } = {},
 ): Promise<{ closed: number | null; frames: Record<string, unknown>[] }> {
-  const socket = new WebSocket(url, { headers: options.headers ?? {} });
+  const socket = openWebSocket(url, options.headers ?? {});
   const frames: Record<string, unknown>[] = [];
   return await new Promise((resolve) => {
     const finish = (closed: number | null): void => resolve({ closed, frames });
@@ -196,12 +202,13 @@ describe("SEC-02 — terminal WebSocket upgrades", () => {
     server = await serve({ port: 0 });
     const url = `ws://127.0.0.1:${server.port}/api/tasks/${taskId}/terminal`;
 
-    for (const headers of [
+    const attempts: Record<string, string>[] = [
       { origin: OTHER_LOCAL_PORT, cookie: `wisp_token=${TOKEN}` },
       { origin: OTHER_LOCAL_PORT },
       { origin: "null" },
       { origin: "https://attacker.example", authorization: `Bearer ${TOKEN}` },
-    ]) {
+    ];
+    for (const headers of attempts) {
       const outcome = await upgradeOutcome(url, { headers });
       expect(outcome.frames.some((frame) => frame.type === "hello")).toBe(false);
     }
@@ -295,7 +302,7 @@ describe("SEC-02 — terminal WebSocket upgrades", () => {
     const pending = await Promise.all(
       Array.from({ length: MAX_PENDING_TERMINAL_SOCKETS }, () =>
         new Promise<{ closed: Promise<number> }>((resolve, reject) => {
-          const socket = new WebSocket(url, { headers: { origin } });
+          const socket = openWebSocket(url, { origin });
           const closed = new Promise<number>((settle) => (socket.onclose = (event) => settle(event.code)));
           socket.onmessage = (event) => {
             if ((JSON.parse(String(event.data)) as { type: string }).type === "auth_required") resolve({ closed });

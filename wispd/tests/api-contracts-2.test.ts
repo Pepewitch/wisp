@@ -66,7 +66,7 @@ async function api(base: string, path: string, method = "GET", body?: unknown): 
   return fetch(`${base}${path}`, init);
 }
 
-async function json<T>(res: Response): Promise<T> {
+async function json<T = unknown>(res: Response): Promise<NoInfer<T>> {
   return (await res.json()) as T;
 }
 
