@@ -29,7 +29,7 @@ function report(model: ReturnType<typeof briefBand>) {
   return model
 }
 
-describe("the brief band", () => {
+describe("the brief", () => {
   it("renders nothing while loading, and nothing when the switch is off", () => {
     expect(briefBand(undefined, null, NOW)).toEqual({ kind: "hidden" })
     expect(briefBand(view({ enabled: false }), null, NOW)).toEqual({ kind: "hidden" })

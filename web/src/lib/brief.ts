@@ -1,6 +1,6 @@
 /**
- * The task brief band's words, derived from `GET /api/tasks/:id/brief` and
- * nothing else — so every sentence the band can say is testable here, away
+ * The task brief's words, derived from `GET /api/tasks/:id/brief` and
+ * nothing else — so every sentence the brief can say is testable here, away
  * from layout (skills/wisp-dev/references/frontend.md §5k).
  *
  * Two voices, kept apart on purpose: what Wisp RECORDED (your words, their
@@ -13,7 +13,7 @@ import { fromNow } from "./time"
 
 export type { BriefLatestInput, BriefView, TaskBriefV1 }
 
-/** The person's words as the band shows them. */
+/** The person's words as the brief shows them. */
 export interface BriefInputView {
   /** identifies this input, so per-input state (Show all) never carries to the next one */
   key: string
@@ -22,7 +22,7 @@ export interface BriefInputView {
   question: string | null
   /** exact text — already an excerpt when the daemon cut it */
   text: string
-  /** the daemon cut the text; the band must say so and offer the conversation */
+  /** the daemon cut the text; the brief must say so and offer the conversation */
   truncated: boolean
   /** facts about the words, never inside them */
   caption: string[]
@@ -31,7 +31,7 @@ export interface BriefInputView {
 }
 
 export type BriefBandModel =
-  /** off, or nothing to say yet: the band does not render */
+  /** off, or nothing to say yet: nothing to render */
   | { kind: "hidden" }
   /** one line and nothing to open: empty, unsupported, or an error with its repair */
   | { kind: "line"; text: string; retry?: boolean }
@@ -128,7 +128,7 @@ function dividerText(view: BriefView): string {
 }
 
 /**
- * The band for one task. `view` undefined is still loading (render nothing:
+ * The brief's content for one task. `view` undefined is still loading (render nothing:
  * a placeholder that then turns into content is a jump for no information);
  * `error` is a read that failed, and says so with its own repair.
  */

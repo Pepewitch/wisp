@@ -13,9 +13,10 @@ import { useWorktreeFileOpener } from "@/lib/worktree-files"
  * edge. A full-branch wall of diff is never the entry point.
  *
  * "Changes" keeps a tab's shape because it now HAS a sibling: the right
- * column's strip is Changes · Workflows, and `header` is where that strip
- * arrives. Without one the pane draws its own label, which is what an older
- * daemon with no workflow support still sees — a label, no underline, no hue.
+ * column's strip is Brief · Changes · Workflows, and `header` is where that
+ * strip arrives. Without one the pane draws its own label, which is what a
+ * daemon with neither briefs nor workflows still sees — a label, no underline,
+ * no hue.
  */
 export function ChangesPane({
   taskId,
