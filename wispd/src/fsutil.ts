@@ -26,8 +26,30 @@ export async function directoryExists(path: string): Promise<boolean> {
   }
 }
 
-/** Read up to `max` bytes starting at `start`. `size` is the next read offset. */
-export async function readSlice(path: string, start: number, max: number): Promise<{ text: string; size: number }> {
+/**
+ * A decoder for a run of contiguous `readSlice` calls over one file. A slice
+ * boundary is a byte offset and can land inside a multibyte character; decoded
+ * on its own, each half becomes U+FFFD. A streaming decoder holds the partial
+ * sequence back until the next slice completes it. `decode()` with no
+ * arguments at the end returns whatever was still held (as U+FFFD, if the
+ * file really ends mid-character). The BOM is kept, as `Buffer#toString` does.
+ */
+export function sliceDecoder(): TextDecoder {
+  return new TextDecoder("utf-8", { ignoreBOM: true });
+}
+
+/**
+ * Read up to `max` bytes starting at `start`. `size` is the next read offset.
+ * Pass the same `decoder` (from `sliceDecoder`) to every read of a contiguous
+ * run, so characters split across slices survive; without one, each slice is
+ * decoded on its own.
+ */
+export async function readSlice(
+  path: string,
+  start: number,
+  max: number,
+  decoder?: TextDecoder,
+): Promise<{ text: string; size: number }> {
   let fh;
   try {
     fh = await open(path, "r");
@@ -41,7 +63,10 @@ export async function readSlice(path: string, start: number, max: number): Promi
     if (len === 0) return { text: "", size: from };
     const buf = Buffer.alloc(len);
     const { bytesRead } = await fh.read(buf, 0, len, from);
-    return { text: buf.toString("utf8", 0, bytesRead), size: from + bytesRead };
+    const text = decoder
+      ? decoder.decode(buf.subarray(0, bytesRead), { stream: true })
+      : buf.toString("utf8", 0, bytesRead);
+    return { text, size: from + bytesRead };
   } finally {
     await fh.close();
   }

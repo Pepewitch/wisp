@@ -40,3 +40,12 @@ export function elideMiddle(s: string, n: number): string {
   const removed = s.length - n;
   return `${s.slice(0, head)}\n… ${removed} characters elided …\n${s.slice(s.length - tail)}`;
 }
+
+/**
+ * A thrown value as the daemon log should show it: the stack when there is
+ * one (its first line is the message), else the value itself. Pass the
+ * error, never the request or input that caused it.
+ */
+export function errorDetail(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : String(error);
+}

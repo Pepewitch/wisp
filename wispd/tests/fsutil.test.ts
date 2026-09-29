@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathExists, readSlice, readTailOf, readTailSlice } from "../src/fsutil";
+import { pathExists, readSlice, readTailOf, readTailSlice, sliceDecoder } from "../src/fsutil";
 
 const dir = mkdtempSync(join(tmpdir(), "wisp-fsutil-"));
 
@@ -17,6 +17,24 @@ describe("readSlice", () => {
 
   test("missing file yields empty at the same offset", async () => {
     expect(await readSlice(join(dir, "nope.log"), 5, 10)).toEqual({ text: "", size: 5 });
+  });
+
+  test("with a shared decoder, a character split across two slices arrives whole", async () => {
+    const p = join(dir, "split.log");
+    writeFileSync(p, `${"a".repeat(262_143)}é\n`); // é's first byte is the slice's last
+    const decoder = sliceDecoder();
+    const first = await readSlice(p, 0, 262_144, decoder);
+    expect(first).toEqual({ text: "a".repeat(262_143), size: 262_144 });
+    expect(await readSlice(p, first.size, 262_144, decoder)).toEqual({ text: "é\n", size: 262_146 });
+    expect(decoder.decode()).toBe("");
+  });
+
+  test("a file that really ends mid-character yields U+FFFD once the run is flushed", async () => {
+    const p = join(dir, "truncated.log");
+    writeFileSync(p, Buffer.from([0x6f, 0x6b, 0xc3])); // "ok" and half an é
+    const decoder = sliceDecoder();
+    expect(await readSlice(p, 0, 100, decoder)).toEqual({ text: "ok", size: 3 });
+    expect(decoder.decode()).toBe("�");
   });
 });
 

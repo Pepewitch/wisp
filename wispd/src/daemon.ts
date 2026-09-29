@@ -43,7 +43,7 @@ import {
   postSession,
   tokenAuthorizes,
 } from "./routes/auth";
-import { err, json } from "./routes/http";
+import { err, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
 import type { PtySize } from "./pty";
@@ -667,7 +667,7 @@ async function serveOwned(
         if (!authorized(req, cfg)) return err("unauthorized", 401);
         return lifetime.run(() => lifetime.track(Promise.resolve()
           .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
-          .catch((e) => err(String(e instanceof Error ? e.message : e), 500))));
+          .catch((e: unknown) => routeFailure(req.method, path, e))));
       },
     });
   } catch (error) {

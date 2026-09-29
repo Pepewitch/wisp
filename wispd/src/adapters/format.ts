@@ -1,6 +1,7 @@
 import { trunc } from "../text";
+import { string } from "./activity-value";
 import type { AdapterDef, EventFormatter } from "./types";
-import { createEventLineDecoder, cursorToolCall, decodeEventLine, type DecodedEventLine } from "./wire";
+import { createEventLineDecoder, cursorToolCall, decodeEventLine, messageContent, type DecodedEventLine } from "./wire";
 
 /**
  * Reasoning is one logical block even when the harness sends paragraphs.
@@ -42,8 +43,9 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
         // message with content items; subagent activity carries parent_tool_use_id
         const pre = e.parent_tool_use_id ? "  [sub] " : "";
         const parts: string[] = [];
-        for (const c of e.message?.content ?? []) {
-          if (c.type === "text" && c.text?.trim()) parts.push(`${pre}${trunc(c.text.trim(), 300)}`);
+        for (const c of messageContent(e.message)) {
+          const text = string(c.text);
+          if (c.type === "text" && text) parts.push(`${pre}${trunc(text, 300)}`);
           if (c.type === "tool_use") parts.push(`${pre}→ ${c.name}(${trunc(JSON.stringify(c.input ?? {}), 120)})`);
           // `~` is the thinking marker. Verified across 167 real thinking
           // blocks in ~/.wisp/logs: claude-code ships `signature` (encrypted)
@@ -58,10 +60,10 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
       }
       case "user": {
         const pre = e.parent_tool_use_id ? "  [sub] " : "";
-        const results = (e.message?.content ?? [])
-          .filter((c: any) => c.type === "tool_result")
+        const results = messageContent(e.message)
+          .filter((c) => c.type === "tool_result")
           .map(
-            (c: any) =>
+            (c) =>
               `${pre}← ${trunc(String(typeof c.content === "string" ? c.content : JSON.stringify(c.content)).replaceAll("\n", " "), 120)}`,
           );
         return results.length ? results.join("\n") : null;
@@ -108,8 +110,9 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
         return e.subtype === "init" ? `· session ${e.session_id}` : null;
       case "assistant": {
         const parts: string[] = [];
-        for (const c of (e.message as { content?: { type?: string; text?: string }[] } | undefined)?.content ?? []) {
-          if (c.type === "text" && c.text?.trim()) parts.push(trunc(c.text.trim(), 300));
+        for (const c of messageContent(e.message)) {
+          const text = string(c.text);
+          if (c.type === "text" && text) parts.push(trunc(text, 300));
         }
         return parts.length ? parts.join("\n") : null;
       }
@@ -143,8 +146,10 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
       case "item.completed": {
         const item = e.item ?? {};
         switch (item.type) {
-          case "agent_message":
-            return item.text?.trim() ? trunc(item.text.trim(), 300) : null;
+          case "agent_message": {
+            const text = string(item.text);
+            return text ? trunc(text, 300) : null;
+          }
           case "command_execution":
             return `← [exit ${item.exit_code ?? "?"}] ${trunc(String(item.aggregated_output ?? "").replaceAll("\n", " "), 120)}`;
           case "error": // codex reports recoverable errors as items too, mid-turn
@@ -184,8 +189,10 @@ export const EVENT_FORMATTERS: Record<string, EventFormatter> = {
   "opencode-json": (e) => {
     const part = (e.part ?? {}) as Record<string, any>;
     switch (e.type) {
-      case "text":
-        return part.text?.trim() ? trunc(part.text.trim(), 300) : null;
+      case "text": {
+        const text = string(part.text);
+        return text ? trunc(text, 300) : null;
+      }
       case "reasoning":
         return thinkingLines(part.text, "", false);
       case "tool_use": {

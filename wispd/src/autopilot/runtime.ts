@@ -10,7 +10,7 @@ import type { AutopilotState } from "../../../shared/autopilot"
 import type { AdapterDef } from "../adapters"
 import { repoConfigFor, type WispConfig } from "../config"
 import { subscribe } from "../events"
-import { homeIsDraining, trackHomeWork } from "../home-lifetime"
+import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
 import { githubRepository } from "../pull-request-github"
@@ -197,7 +197,7 @@ export class AutopilotRuntime {
   }
 
   start(): void {
-    const kick = (): void => { void trackHomeWork(this.tick()).catch(() => console.error("[wisp] autopilot check failed")) }
+    const kick = (): void => { void backgroundPass("autopilot check", () => this.tick()) }
     this.timer = setInterval(kick, 10_000)
     this.timer.unref?.()
     // A task that settles is the moment auto-merge usually has something to do.
@@ -415,7 +415,11 @@ export class AutopilotRuntime {
       forgetPending(checkpoint)
       // Token-free, once per run and head: a flake gets a second chance
       // before anyone spends an agent turn on it.
-      const accepted = await Promise.all(plan.runs.map((run) => this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch(() => false)))
+      const accepted = await Promise.all(plan.runs.map((run) => this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch((error: unknown) => {
+        // The history can only say "Could not rerun"; the daemon log keeps why.
+        console.error(`[wisp] autopilot: could not rerun workflow run ${run} of ${ctx.repository}: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      })))
       // Tried is tried: a refused rerun is not asked for again, and the next look moves on.
       checkpoint.rerun = { head: pr.head, runs: [...rerun, ...plan.runs] }
       const reason = accepted.some(Boolean) ? plan.reason : plan.reason.replace(/^Rerunning/, "Could not rerun")

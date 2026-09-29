@@ -4,7 +4,7 @@ import type { WorkflowDecision } from "../../../shared/workflows";
 import type { AdapterDef } from "../adapters";
 import { TASKS_DIR, type WispConfig } from "../config";
 import { wispCommand } from "../command";
-import { homeIsDraining, trackHomeWork } from "../home-lifetime";
+import { backgroundPass, homeIsDraining } from "../home-lifetime";
 import { isTaskStopping } from "../turn-interrupt";
 import { startNextQueuedMessage } from "../runner";
 import { db, getTask, getTaskMessage, nextQueuedMessage, runningTurn } from "../store";
@@ -79,7 +79,7 @@ export class WorkflowRuntime {
   }
   start(): void {
     retireWorkflowTypes(RETIRED_WORKFLOWS, this.now());
-    const kick = (): void => { void trackHomeWork(this.tick()).catch(() => console.error("[wisp] workflow scheduler failed")); };
+    const kick = (): void => { void backgroundPass("workflow scheduler", () => this.tick()); };
     this.timer = setInterval(kick, 10_000);
     this.timer.unref?.();
     kick();
