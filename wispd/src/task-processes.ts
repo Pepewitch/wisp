@@ -2,7 +2,7 @@ import { PROCESS_BOOT_ID } from "./process-boot";
 import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
 import { processNames, processSnapshot, sameProcessConfirmed, type GroupMember, type ProcessMember } from "./process-snapshot";
-import { processGroupAlive } from "./process-tree";
+import { processGroupAlive, signalProcessGroup } from "./process-tree";
 import type { BackgroundGroup, BackgroundWork } from "./types";
 
 interface GroupRow {
@@ -302,9 +302,10 @@ export async function stopRecordedGroups(taskId: string, graceMs: number): Promi
  * a script still running when archive starts, or one that exited 0 and left
  * background jobs in its group, would have the workspace deleted under it.
  *
- * Memory only, and only ever checked, never signalled: once the script has
- * exited nothing proves a numeric group id is still its own, so a stale id can
- * only make Wisp keep files, never kill a stranger.
+ * Memory only. A group id with members is still the script's own group: POSIX
+ * does not reuse a pid as a new group id while that group has members, so an
+ * id that `kill(-pgid, 0)` still reaches cannot belong to a stranger. The
+ * normal archive refuses on it; a force archive stops it (`stopSetupGroups`).
  */
 const setupGroups = new Map<string, Set<number>>();
 
@@ -322,6 +323,32 @@ export function liveSetupGroups(taskId: string): number[] {
   for (const pgid of groups) if (!processGroupAlive(pgid)) groups.delete(pgid);
   if (!groups.size) setupGroups.delete(taskId);
   return [...groups];
+}
+
+/**
+ * Force archive: stop what the task's setup scripts left running, SIGTERM
+ * first and SIGKILL after the grace, the way `stopRecordedGroups` escalates
+ * a turn's groups. A setup that deliberately left a server up must not make
+ * force archive impossible. Throws only if a group survives SIGKILL.
+ */
+export async function stopSetupGroups(taskId: string, graceMs = 5_000): Promise<void> {
+  const ended = async (ms: number): Promise<boolean> => {
+    const end = Date.now() + ms;
+    do {
+      if (!liveSetupGroups(taskId).length) return true;
+      await Bun.sleep(50);
+    } while (Date.now() < end);
+    return false;
+  };
+  const signal = (sig: "SIGTERM" | "SIGKILL"): void => {
+    for (const pgid of liveSetupGroups(taskId)) signalProcessGroup(pgid, sig);
+  };
+  if (!liveSetupGroups(taskId).length) return;
+  signal("SIGTERM");
+  if (await ended(graceMs)) return;
+  signal("SIGKILL");
+  if (await ended(Math.max(graceMs, 1000))) return;
+  throw new Error("Processes started by the setup script have not stopped; files are preserved. Retry the archive.");
 }
 
 /** Deletion checks every recorded turn again, including resumed cleanup jobs. */
