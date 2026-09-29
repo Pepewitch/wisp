@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { branchFor } from "../src/branch-name";
 import type { WispConfig } from "../src/config";
+import { processGroupEnded } from "../src/process-tree";
+import { assertTaskProcessesEnded } from "../src/task-processes";
 import {
   ARCHIVE_COMMIT_MESSAGE,
   archivePreflight,
@@ -548,6 +550,47 @@ describe("runSetup (.wisp/setup.sh)", () => {
     const started = Date.now();
     await expect(runSetup("tsh004", repo, wt.path, {}, impatient)).rejects.toThrow(/timed out/);
     expect(Date.now() - started).toBeLessThan(20_000); // nowhere near the 60s sleep
+  });
+
+  /** The setup's process group id, which the script writes as its first act. */
+  function setupGroup(worktree: string): number {
+    return Number(readFileSync(join(worktree, "setup.pgid"), "utf8"));
+  }
+
+  function killGroup(pgid: number): void {
+    try { process.kill(-pgid, "SIGKILL"); } catch { /* already gone */ }
+  }
+
+  test("a timed-out setup's child that ignores SIGTERM is still killed", async () => {
+    // bash dies of the SIGTERM; the subshell and its sleeps ignore it and keep
+    // running in the worktree unless the group itself is escalated.
+    const repo = repoWithSetup("#!/usr/bin/env bash\necho $$ > setup.pgid\n( trap '' TERM; while :; do sleep 0.1; done ) &\nwait\n");
+    const wt = await createWorktree(repo, "tsk008", cfg);
+    const impatient = { ...cfg, setupTimeoutMinutes: 0.01 }; // 0.6s
+    try {
+      await expect(runSetup("tsk008", repo, wt.path, {}, impatient, { killGraceMs: 300 })).rejects.toThrow(
+        /timed out .* \(escalated to SIGKILL/,
+      );
+      expect(await processGroupEnded(setupGroup(wt.path), 1000)).toBe(true);
+    } finally {
+      killGroup(setupGroup(wt.path));
+    }
+  });
+
+  test("a setup that exits 0 but leaves a job running holds archive's process check", async () => {
+    const repo = repoWithSetup("#!/usr/bin/env bash\necho $$ > setup.pgid\nsleep 30 &\n");
+    const wt = await createWorktree(repo, "tsl009", cfg);
+    await runSetup("tsl009", repo, wt.path, {}, cfg);
+    const pgid = setupGroup(wt.path);
+    try {
+      await expect(assertTaskProcessesEnded("tsl009")).rejects.toThrow(
+        new RegExp(`setup script are still running \\(process group ${pgid}\\)`),
+      );
+    } finally {
+      killGroup(pgid);
+    }
+    expect(await processGroupEnded(pgid, 2000)).toBe(true);
+    await assertTaskProcessesEnded("tsl009");
   });
 
   // The project-configured script is per-machine; .wisp/setup.sh is the team's.

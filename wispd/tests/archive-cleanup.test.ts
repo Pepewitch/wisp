@@ -39,8 +39,8 @@ import {
 } from "../src/store";
 import { processStartTime } from "../src/procid";
 import { recordProcessGroup } from "../src/task-processes";
-import { signalProcessGroup } from "../src/process-tree";
-import { createWorktree } from "../src/worktree";
+import { processGroupAlive, signalProcessGroup } from "../src/process-tree";
+import { createWorktree, runSetup } from "../src/worktree";
 
 const token = "archive-cleanup-token";
 
@@ -243,6 +243,45 @@ describe("resumed deletion checks older background groups", () => {
       expect(existsSync(fixture.attachmentDir)).toBe(true);
     } finally {
       if (child.exitCode === null) { signalProcessGroup(child.pid, "SIGKILL"); await child.exited; }
+    }
+  }, 20_000);
+});
+
+describe("processes a setup script left running", () => {
+  /** Setup that exits 0 but leaves a job in its group. The group id goes outside the worktree, which stays clean. */
+  async function lingeringSetup(fixture: Fixture): Promise<number> {
+    const pgidFile = join(mkdtempSync(join(tmpdir(), "wisp-setup-pgid-")), "pgid");
+    const script = `echo $$ > ${pgidFile}; sleep 30 &`;
+    await runSetup(fixture.id, fixture.repo, fixture.worktree, {}, cfg([{ path: fixture.repo, setupScript: script }]));
+    return Number(readFileSync(pgidFile, "utf8"));
+  }
+
+  test("a normal archive keeps the worktree and says why", async () => {
+    const fixture = await finishedTask();
+    const pgid = await lingeringSetup(fixture);
+    try {
+      const response = await call(`/api/tasks/${fixture.id}/archive`, { method: "POST", body: "{}" });
+      expect(response.status).toBe(200);
+      await eventually("the cleanup to fail", () => Boolean(archiveCleanup(fixture.id)?.last_error));
+      expect(archiveCleanup(fixture.id)?.last_error).toContain("setup script are still running");
+      expect(existsSync(fixture.worktree)).toBe(true);
+      expect(processGroupAlive(pgid)).toBe(true);
+    } finally {
+      signalProcessGroup(pgid, "SIGKILL");
+    }
+  }, 20_000);
+
+  test("a force archive stops them and completes", async () => {
+    const fixture = await finishedTask();
+    const pgid = await lingeringSetup(fixture);
+    try {
+      const response = await call(`/api/tasks/${fixture.id}/archive`, { method: "POST", body: JSON.stringify({ force: true }) });
+      expect(response.status).toBe(200);
+      await eventually("the teardown to finish", () => archiveCleanup(fixture.id) === null);
+      expect(processGroupAlive(pgid)).toBe(false);
+      expect(existsSync(fixture.worktree)).toBe(false);
+    } finally {
+      signalProcessGroup(pgid, "SIGKILL");
     }
   }, 20_000);
 });

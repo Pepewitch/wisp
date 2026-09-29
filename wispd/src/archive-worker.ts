@@ -3,7 +3,7 @@ import { db, getTask } from "./store";
 import { archiveCleanup, clearArchiveCleanup, failArchiveCleanup, pendingArchiveCleanups, type ArchiveCleanupJob } from "./archive-jobs";
 import { CLEANUP_PHASES, cleanupProgress, isHook, notifyCleanup, updateProgress, type CleanupProgress } from "./archive-progress";
 import { assertCleanupHookEnded, runCleanupHook } from "./archive-hooks";
-import { assertTaskProcessesEnded } from "./task-processes";
+import { assertTaskProcessesEnded, stopSetupGroups } from "./task-processes";
 import { killTurnForArchive } from "./runner";
 import { killForTask } from "./terminal";
 import { commitDirtyWork, removeWorktree, worktreeHealth } from "./worktree";
@@ -28,12 +28,14 @@ async function prepareHooks(job: ArchiveCleanupJob, p: CleanupProgress): Promise
 
 /** Injection for tests; production always stops a turn with the runner's default grace. */
 export interface CleanupOptions {
-  /** SIGTERM-to-SIGKILL grace for a turn this cleanup stops */
+  /** SIGTERM-to-SIGKILL grace for a turn, or a setup's leftovers, this cleanup stops */
   killGraceMs?: number;
 }
 
 async function stage(job: ArchiveCleanupJob, p: CleanupProgress, options: CleanupOptions): Promise<void> {
   if (p.phase === "stop-turn") {
+    // Only force stops what setup left running; a normal archive refuses on it later.
+    if (job.force) await stopSetupGroups(job.task_id, options.killGraceMs);
     if (job.force || !job.stop_turn) await killTurnForArchive(job.task_id, options.killGraceMs);
   } else if (p.phase === "stop-shells") await killForTask(job.task_id);
   else if (p.phase === "save-work") await prepareHooks(job, p);

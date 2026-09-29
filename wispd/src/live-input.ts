@@ -216,23 +216,27 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("live input process did not expose stdin");
   let closed = false;
+  // Serialized, but a failed write fails only itself: the chain keeps each
+  // step's settling, never its rejection, so a later steer is still written
+  // and close still ends stdin after an earlier write was refused.
   let chain = Promise.resolve();
-  const write = (line: string): Promise<void> => {
-    chain = chain.then(async () => {
+  const serialize = (step: () => Promise<void>): Promise<void> => {
+    const next = chain.then(step);
+    chain = next.catch(() => {});
+    return next;
+  };
+  const write = (line: string): Promise<void> =>
+    serialize(async () => {
       if (closed) throw new Error("live input already closed");
       await Promise.resolve(sink.write(`${line}\n`));
       await Promise.resolve(sink.flush());
     });
-    return chain;
-  };
-  const close = (): Promise<void> => {
-    chain = chain.then(async () => {
+  const close = (): Promise<void> =>
+    serialize(async () => {
       if (closed) return;
       closed = true;
       await Promise.resolve(sink.end());
     });
-    return chain;
-  };
   liveInputs.set(options.task.id, {
     turnId: options.turnId,
     turn: options.turn,
