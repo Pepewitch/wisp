@@ -234,8 +234,9 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
  * Nothing is active yet at that first result, so closing on it shut stdin
  * before the prompt ran. The CLI then treated the turn as a print-mode run,
  * gave the background agents the prompt started a 600 s grace, and killed them.
- * Until the prompt's own result has arrived, a notification's result is not it.
- * A CLI that sends no `origin` makes its first result the answer, as before.
+ * Until the prompt's own result has arrived, a notification's result that made
+ * no model call is not it. A CLI that sends no `origin` or `num_turns` makes its
+ * first result the answer, as before.
  */
 function createBackgroundFollowUp(): {
   observe(event: Record<string, unknown>): void;
@@ -287,7 +288,7 @@ function createBackgroundFollowUp(): {
     },
     closesTurn(result: Record<string, unknown>): boolean {
       if (!answered) {
-        if (fromTaskNotification(result)) return false;
+        if (replayedNotification(result)) return false;
         answered = true;
       }
       if (active.size > 0) return false;
@@ -300,9 +301,17 @@ function createBackgroundFollowUp(): {
   };
 }
 
-function fromTaskNotification(result: Record<string, unknown>): boolean {
+/**
+ * A notification's result that made no model call. Only `num_turns: 0` is
+ * safe to skip: the CLI can fold a queued prompt into a notification cycle
+ * that does call the model, and that cycle's result is then the prompt's
+ * answer even though its origin says task-notification.
+ */
+function replayedNotification(result: Record<string, unknown>): boolean {
   const origin = result.origin;
-  return typeof origin === "object" && origin !== null && (origin as Record<string, unknown>).kind === "task-notification";
+  const fromNotification =
+    typeof origin === "object" && origin !== null && (origin as Record<string, unknown>).kind === "task-notification";
+  return fromNotification && result.num_turns === 0;
 }
 
 async function pumpClaude(

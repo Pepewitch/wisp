@@ -43,6 +43,11 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
   }
 }
 
+function settled(taskId: string): boolean {
+  const status = turnsFor(taskId)[0]?.status;
+  return status !== undefined && status !== "running";
+}
+
 describe("Claude background follow-up", () => {
   test("keeps stdin open until background work reports its follow-up result", async () => {
     const script = [
@@ -266,9 +271,40 @@ describe("Claude background follow-up", () => {
     };
     const task = makeTask();
     startTurn(task, "continue", def, cfg);
-    await until(() => turnsFor(task.id)[0]?.status === "done");
+    await until(() => settled(task.id), 4000);
 
+    // exit_code 9 means the fake harness saw stdin close at the replayed result.
     expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "PROMPT_ANSWER" });
+  });
+
+  // The CLI can fold a queued prompt into a notification cycle that calls the
+  // model, and that cycle's result is the prompt's answer despite its origin.
+  // Skipping it would hold the turn open with nothing left to arrive.
+  test("a notification cycle that answered the prompt still closes the turn", async () => {
+    const script = [
+      "IFS= read -r first",
+      `printf '%s\\n' '{"type":"system","subtype":"task_notification","task_id":"old-agent","status":"completed"}'`,
+      `printf '%s\\n' '{"type":"system","subtype":"init","session_id":"session-folded"}'`,
+      `printf '%s\\n' '{"type":"result","subtype":"success","result":"FOLDED_ANSWER","num_turns":4,"origin":{"kind":"task-notification"},"session_id":"session-folded"}'`,
+      "exec 3<&0",
+      'IFS= read -r unexpected <&3 & reader="$!"',
+      "sleep 0.2",
+      'if kill -0 "$reader" 2>/dev/null; then kill "$reader" 2>/dev/null; exit 9; fi',
+      "exec 3<&-",
+    ].join("; ");
+    const def: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", script],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    const task = makeTask();
+    startTurn(task, "continue", def, cfg);
+    await until(() => settled(task.id), 4000);
+
+    // exit_code 9 means stdin stayed open after the only answer that will come.
+    expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "FOLDED_ANSWER" });
   });
 
   // Once the prompt has its answer, notification-driven results are the normal
@@ -297,7 +333,7 @@ describe("Claude background follow-up", () => {
     };
     const task = makeTask();
     startTurn(task, "start an agent", def, cfg);
-    await until(() => turnsFor(task.id)[0]?.status === "done");
+    await until(() => settled(task.id), 4000);
 
     expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", exit_code: 0, result: "AGENT_DONE" });
   });
