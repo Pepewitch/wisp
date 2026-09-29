@@ -569,8 +569,7 @@ export async function serve(options: ServeOptions = {}): Promise<Bun.Server<Term
     const port = options.port ?? cfg.port;
     // The run marker brackets everything the daemon does once it owns its
     // home, boot recovery included: a crash there is the loop it reveals.
-    run = beginDaemonRun().run;
-    const owned = run;
+    const owned = (run = beginDaemonRun().run);
     return await lifetime.run(() => serveOwned(options, cfg, hostname, port, web, ownership, lifetime, owned));
   } catch (error) {
     // A boot that fails reports its own error, so it is not an unclean exit.
@@ -731,9 +730,8 @@ async function serveOwned(
     if (!path.startsWith("/api/")) return err("not found", 404);
     const terminalMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/terminal$/);
     if (terminalMatch && req.method === "GET") return terminalUpgrade(req, url, terminalMatch[1]!, server, cfg, authThrottle);
-    const refused = credentialRefusal(bearerToken(req), cfg, authThrottle, remoteAddress(req, server));
-    if (refused) return refused;
-    return lifetime.run(() => lifetime.track(Promise.resolve()
+    // a refused credential answers before any route runs
+    return credentialRefusal(bearerToken(req), cfg, authThrottle, remoteAddress(req, server)) ?? lifetime.run(() => lifetime.track(Promise.resolve()
       .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
       .catch((e: unknown) => routeFailure(req.method, path, e))));
   }
