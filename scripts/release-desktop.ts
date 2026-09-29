@@ -325,10 +325,16 @@ export function releaseCertificateSource(
 
 /**
  * The updater signing key. It forges the one signature designed to survive a
- * GitHub or tap compromise, so it is never in the environment of a build:
- * every crate's `build.rs` and proc-macro, and every npm build tool, can read
- * that. `--signed` refuses to build while it is present, and `--sign-updater`
+ * GitHub or tap compromise, so it is kept out of the environment of a build,
+ * which every crate's `build.rs` and proc-macro, and every npm build tool, can
+ * read. `--signed` refuses to build while it is present, and `--sign-updater`
  * is the separate pass that receives it.
+ *
+ * That narrows exposure: the key is absent while anything compiles. It is not
+ * isolation. On one machine the signing pass still runs files the build could
+ * have changed (the Tauri CLI in node_modules, the verifier it compiled), and
+ * anything the build left running. Full isolation needs signing in a separate
+ * CI job on a fresh runner.
  */
 export const UPDATER_SIGNING_KEYS = ["TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"] as const;
 

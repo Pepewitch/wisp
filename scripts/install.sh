@@ -36,7 +36,7 @@ Environment:
   WISP_VERSION             release version (default: 0.6.4)
   WISP_SHA256              pinned artifact checksum; otherwise fetch SHA256SUMS
   WISP_COMMIT              optional expected full build commit
-  WISP_RELEASE_BASE_URL    release directory URL
+  WISP_RELEASE_BASE_URL    release directory URL (https only)
   WISP_INSTALL_ROOT        managed version directory
   WISP_BIN_DIR             directory for the wisp symlink
   WISP_HOME                Wisp data/config directory
@@ -90,7 +90,7 @@ if [ -n "$LOCAL_ARTIFACT" ]; then
   cp "$LOCAL_ARTIFACT" "$DOWNLOADED"
 else
   case "$RELEASE_BASE_URL" in
-    https://*) ;;
+    [Hh][Tt][Tt][Pp][Ss]://*) ;;
     *) fail "WISP_RELEASE_BASE_URL must be an https:// URL: $RELEASE_BASE_URL" ;;
   esac
   command -v curl >/dev/null 2>&1 || fail "curl is required for release downloads"

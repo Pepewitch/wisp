@@ -63,6 +63,15 @@ describe("the public installer", () => {
     expect(box.curlCalls()).toEqual([]);
   });
 
+  test("accepts an https release URL whatever the scheme's case", () => {
+    const box = sandbox();
+    const result = box.run(INSTALLER, { WISP_RELEASE_BASE_URL: "HTTPS://mirror.example.invalid/wisp" });
+    expect(result.stderr.toString()).not.toContain("must be an https:// URL");
+    const [call] = box.curlCalls();
+    expect(call).toContain("HTTPS://mirror.example.invalid/wisp/");
+    expect(call).toContain("--proto =https");
+  });
+
   // `curl … | sh` executes whatever arrived. A connection that drops mid-script
   // must leave a prefix that does nothing, rather than one that downloads,
   // creates directories, or replaces the command link.

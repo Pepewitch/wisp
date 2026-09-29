@@ -53,7 +53,7 @@ the same way as [service credentials](#harness-credentials-under-a-service-manag
 The installer itself reads several environment variables (`sh install.sh
 --help`): `WISP_VERSION` (release to install), `WISP_SHA256`/`WISP_COMMIT`
 (pin the expected checksum/commit instead of fetching `SHA256SUMS`),
-`WISP_RELEASE_BASE_URL` (release asset directory), `WISP_INSTALL_ROOT`
+`WISP_RELEASE_BASE_URL` (release asset directory; must be https), `WISP_INSTALL_ROOT`
 (managed version directory, default `~/.local/share/wisp`), `WISP_BIN_DIR`
 (where the `wisp` symlink goes, default `~/.local/bin`), `WISP_HOME`
 (data/config directory), `WISP_ARTIFACT_PATH` (a verified local/offline

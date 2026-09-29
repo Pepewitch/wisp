@@ -333,7 +333,10 @@ The matching updater public key is committed at
 `desktop/src-tauri/updater-public.key`. Never print or place a private value on
 a command line, where logs and `ps` see it; the certificate password reaches
 `security` on stdin. Each secret reaches only the step that uses it, and the
-updater key only a step that compiles nothing. The workflow writes the Apple
+updater key only a later step that compiles nothing. That narrows exposure
+rather than isolating the key: the signing step shares the runner and user
+with the build, and runs files the build could have changed. Full isolation
+needs signing in a separate job on a fresh runner. The workflow writes the Apple
 API key to a mode-`0600` runner-temporary file, removes it and the signing
 keychain when the build step ends (and again in an `always()` step), and stops
 before publication if any input or trust check is absent. No release job
@@ -584,12 +587,15 @@ On a maintainer Mac, `APPLE_SIGNING_IDENTITY` must already be available in an
 unlocked Keychain. CI imports `APPLE_CERTIFICATE` with
 `APPLE_CERTIFICATE_PASSWORD` into a temporary Keychain in a step of its own,
 before either signed release script runs. The notarization API key is required
-for both artifacts. The Tauri updater key is never in a build's environment,
-where every crate's build script could read it: `--signed` refuses to run
-while it is set, and `--sign-updater` is the separate pass that signs the
-archive `--signed` left, verifies the signature with the verifier that build
-compiled, and binds it into the manifest and checksums. It refuses an archive
-whose bytes changed between the passes.
+for both artifacts. The Tauri updater key is kept out of the build's
+environment, where every crate's build script could read it: `--signed`
+refuses to run while it is set, and `--sign-updater` is the separate pass that
+signs the archive `--signed` left, verifies the signature with the verifier
+that build compiled, and binds it into the manifest and checksums. It refuses
+an archive whose bytes changed between the passes. This narrows exposure (the
+key is absent while anything compiles) but does not isolate it: on the same
+machine, the signing pass runs the Tauri CLI and a verifier the build could
+have altered. Isolating it fully needs signing on a separate, fresh host.
 
 Timestamped Apple signatures are intentionally not byte-reproducible. Neither
 signed pass is compared with its ad-hoc payload. The daemon release script

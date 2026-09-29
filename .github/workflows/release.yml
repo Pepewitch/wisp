@@ -280,8 +280,11 @@ jobs:
   # staples, updater-signs, and negatively tests Desktop in parallel with the
   # credential-free builders. Within the job each secret reaches only the step
   # that uses it: the certificate its import, the Apple signing identity and
-  # notarization key the build, and the updater key a signing step that
-  # compiles nothing.
+  # notarization key the build, and the updater key a later signing step. That
+  # narrows exposure (the updater key is absent while anything compiles); it is
+  # not isolation. The signing step runs on the same runner and user as the
+  # build, with tools the build could have altered, so fully isolating the key
+  # needs signing in a separate job on a fresh runner.
   macos-trusted:
     needs: release-source
     if: github.event_name == 'push'
@@ -396,8 +399,12 @@ jobs:
           bun run wispd/scripts/release-macos.ts --require-tag --signed
           WISP_PREBUILT_UI=1 CARGO_TARGET_DIR="$RUNNER_TEMP/wisp-desktop-release-signed" \
             bun run scripts/release-desktop.ts --require-tag --signed
-      # The only step that holds the updater key. It compiles nothing: it signs
-      # the archive the build left, then runs the verifier the build compiled.
+      # The only step that holds the updater key, and it compiles nothing: it
+      # signs the archive the build left, then runs the verifier the build
+      # compiled. Both that verifier and the signer (node_modules' Tauri CLI)
+      # are files the build step could have changed, and a process it left
+      # behind would still be running, so this narrows exposure rather than
+      # isolating the key. Full isolation needs a separate job on a fresh runner.
       - name: updater-sign the Desktop archive
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
