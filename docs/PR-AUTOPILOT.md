@@ -421,9 +421,56 @@ Deleting a task deletes its history.
 ## How often it checks
 
 Wisp checks an armed task's PR about once a minute while something is
-moving: checks running, a fresh head, a merge queue. It checks every five
-minutes when it is waiting on a person, and every twenty while the task is
-busy. A task that settles is checked at once. It reads GitHub through the
-daemon host's authenticated `gh`, and a failed read backs off without an
-agent turn.
+moving: checks running, a fresh head, a merge queue, a merge about to
+happen. While it waits only on a person (a review, an approval, anything
+under [When it needs you](#when-it-needs-you)) or on nothing (auto-fix alone
+with nothing to fix), it looks again after one minute, then two, then four,
+then every five, for as long as nothing changes. A push, a rerun or round
+Wisp started, or any change in what it waits for starts that over at a
+minute. It checks every twenty minutes while the task is busy, and at once
+when the task settles. It reads GitHub through the daemon host's
+authenticated `gh`, and a failed read backs off without an agent turn.
+
+### GitHub's rate limit
+
+`gh` has one hourly limit per account (5,000 GraphQL points and 5,000 REST
+requests for a personal account), and every other tool you run through it
+spends from the same one. Wisp keeps to a share of it:
+
+- **Its own share.** Wisp's spend over any rolling hour, autopilot and the
+  sidebar's PR status together, stays within a quarter of each limit. It
+  measures every read: a GraphQL answer carries its cost (`rateLimit`), a
+  REST answer GitHub's `x-ratelimit-*` headers. Past half its share it spaces
+  its checks out (twice as far apart at three quarters, ten times near the
+  end); at the cap it reads nothing until its spend is back under 90% of it.
+- **Everyone's use.** When GitHub reports less than a fifth of a limit left,
+  whoever spent it, Wisp stretches its waits in proportion: twice as long at
+  a tenth left.
+- **GitHub's word.** A primary limit (the hour is spent) pauses Wisp's calls
+  on that limit alone until GitHub's reset, at most an hour, after which the
+  next answer says again what is left: REST used up by other tools leaves
+  GraphQL reads and merges going. A secondary limit (a 403 or 429 for too
+  many requests too fast) pauses every call for its `retry-after`, kept
+  between one and fifteen minutes; without one, a minute, doubling on
+  repeats. A pause is not a failure: a merge GitHub refused for the rate
+  does not count toward the three that pause auto-merge, and is tried again
+  after it.
+- **Where it shows.** The PR's status says `Paused: GitHub rate limit, resumes
+  14:05`, or `Paused: Wisp's share of the GitHub rate limit is used up,
+  resumes 14:05`, in the daemon host's time. The sidebar's PR status keeps
+  its last answer, marked stale. `wisp doctor` shows Wisp's spend over the
+  last hour against its share, what GitHub reports is left, and any pause;
+  `GET /api/diagnostics` reports the same as `github`. The count is kept in
+  memory, so a restarted daemon starts its own hour afresh, and learns what
+  is left from GitHub's next answer.
+- **Several PRs a request.** The PRs of one repository that are due together
+  are read five to a request. GitHub prices each PR's part as it would alone
+  (2 points for one, 10 for five, as `rateLimit(dryRun: true)` reports), so
+  this saves requests and `gh` processes, not points: twelve armed PRs in one
+  repository take 3 requests a pass instead of 12, for the same 24 points. A
+  PR GitHub cannot find fails its own check, and the rest of its batch still
+  counts.
+
+Forty armed PRs whose checks never stop running would spend about 4,800
+points an hour at a look a minute; Wisp holds them to its 1,250.
 

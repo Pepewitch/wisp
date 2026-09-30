@@ -13,7 +13,6 @@ import { subscribe } from "../events"
 import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
-import { githubRepository } from "../pull-request-github"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
@@ -23,7 +22,11 @@ import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
-import { ghAutopilot, type AutopilotGitHub, type BaseRules, type OpenPullRequest, type PrComment, type PrSnapshot } from "./github"
+import { createGhAutopilot, ghAutopilot, type AutopilotGitHub, type BaseRules, type PrComment, type PrSnapshot } from "./github"
+import { githubBudget, GitHubPausedError, unlessPaused, type GitHubBudget } from "../github-budget"
+import { SnapshotBatches } from "./batch"
+import { choosePull, originRepository, skippedPull } from "./bind"
+import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
@@ -34,16 +37,12 @@ import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsCha
 import { planFix, type FixPlan } from "./fix"
 import {
   checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
-  reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheckpoint,
+  reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 
-/** Something that moves on its own: checks running, a fresh head, a merge queue. */
-export const MOVING_MS = 60_000
-/** Blocked on a person, or no PR yet. The settle event still brings it forward. */
-export const WAITING_ON_YOU_MS = 5 * 60_000
-/** A busy task: only a lifecycle look, for a PR someone else merged or closed. */
-export const BUSY_MS = 20 * 60_000
+export { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
+export { choosePull, skippedPull } from "./bind"
 const REQUIRED_TTL_MS = 10 * 60_000
 /** How long after the task goes idle an auto-fix round waits before it is sent. */
 export const SEND_DELAY_MS = 2 * 60_000
@@ -67,6 +66,8 @@ export interface AutopilotRuntimeOptions {
   lookTimeoutMs?: number
   /** the review judge, in place of Jev and whether a key is set */
   judge?: JudgeClient
+  /** the GitHub budget the looks spend from and are paced by; the daemon's own by default */
+  budget?: GitHubBudget
 }
 
 export { taskIsIdle } from "./idle"
@@ -80,47 +81,6 @@ function busyReason(task: Task): string {
     case "running": return "Waiting for the task to finish"
     default: return backgroundWork(task.id).state !== "none" ? "Waiting for the task's background work" : "Waiting for the task to finish"
   }
-}
-
-async function originRepository(task: Task, signal: AbortSignal): Promise<string | null> {
-  const origin = await Promise.resolve()
-    .then(() => bunProbeSpawn(["git", "remote", "get-url", "origin"], { cwd: task.repo_path, signal }))
-    .catch(() => null)
-  return origin && origin.exitCode === 0 ? githubRepository(origin.stdout) : null
-}
-
-/**
- * Only a PR this task could have opened: authored by the account Wisp merges
- * as, opened after the task was created, from this repository. A worktree can
- * check out anyone's branch (`gh pr checkout`), and adopting that PR would
- * merge someone else's work under the owner's name. Among those, the task's
- * own branch names first, then the oldest onto the base, so a stacked child
- * never jumps its parent.
- */
-export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>, afterPr = 0): OpenPullRequest | null {
-  const created = Date.parse(task.created_at)
-  // After a merge, only a PR numbered above the merged one: GitHub numbers in
-  // creation order, so that is the task's next change or a PR stacked on the
-  // merged one, and never the merged PR itself (a lagging open list) or an
-  // older open PR, which is stale or abandoned.
-  const own = pulls
-    .filter((pull) => !pull.isCrossRepository && viewer !== "" && pull.author === viewer && Date.parse(pull.createdAt) >= created && pull.number > afterPr)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
-  const named = (pull: OpenPullRequest) => pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`)
-  return own.find((pull) => named(pull) && allowedBases.has(pull.baseRefName)) ??
-    own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own.find(named) ?? own[0] ?? null
-}
-
-/** Why the first open PR was not adopted, so "Waiting for a PR" never hides one that exists. */
-export function skippedPull(pulls: OpenPullRequest[], task: Task, viewer: string, mergedPr?: number): string | null {
-  // the merged PR itself, still listed open for a moment, says nothing
-  const pull = pulls.find((candidate) => candidate.number !== mergedPr)
-  if (!pull) return null
-  if (pull.isCrossRepository) return `#${pull.number} is from a fork`
-  if (pull.author !== viewer) return `#${pull.number} was opened by @${pull.author ?? "someone else"}, not @${viewer}`
-  if (Date.parse(pull.createdAt) < Date.parse(task.created_at)) return `#${pull.number} is older than this task`
-  if (mergedPr !== undefined && pull.number < mergedPr) return `#${pull.number} is older than #${mergedPr}, which merged`
-  return null
 }
 
 interface FixContext {
@@ -191,12 +151,28 @@ export class AutopilotRuntime {
   private unsubscribe: (() => void) | null = null
   private readonly now: () => Date
   private readonly github: AutopilotGitHub
-  private readonly required = new Map<string, { rules: BaseRules; at: number }>()
+  private readonly budget: GitHubBudget
+  private readonly required = new Map<string, { rules: Promise<BaseRules>; at: number }>()
   private readonly pushers = new Map<string, { ok: boolean; until: number }>()
+  /** this pass's shared snapshots, and each repository path's origin */
+  private batches: SnapshotBatches | null = null
+  private origins = new Map<string, Promise<string | null>>()
 
   constructor(private cfg: WispConfig, private adapters: Record<string, AdapterDef>, private options: AutopilotRuntimeOptions = {}) {
     this.now = options.now ?? (() => new Date())
-    this.github = options.github ?? ghAutopilot
+    this.budget = options.budget ?? githubBudget
+    this.github = options.github ?? (options.budget ? createGhAutopilot({ budget: options.budget }) : ghAutopilot)
+  }
+
+  /** Every look's save: its wait stretched as the GitHub budget runs low. */
+  private saveCheck(row: WorkflowRow, check: AutopilotCheck): boolean {
+    return saveAutopilotCheck(row, { stretch: this.budget.stretch(), ...check }, this.now())
+  }
+
+  /** The task's GitHub repository, asked of git once per repository path a pass. */
+  private repositoryOf(task: Task, signal: AbortSignal): Promise<string | null> {
+    if (!this.origins.has(task.repo_path)) this.origins.set(task.repo_path, (this.options.repository ?? originRepository)(task, signal))
+    return this.origins.get(task.repo_path)!
   }
 
   start(): void {
@@ -235,9 +211,15 @@ export class AutopilotRuntime {
   private async runDue(): Promise<void> {
     const rows = dueAutopilots(this.now())
     let cursor = 0
-    await Promise.all(Array.from({ length: Math.min(3, rows.length) }, async () => {
-      while (cursor < rows.length && !this.stopped && !homeIsDraining()) await this.evaluate(rows[cursor++]!)
-    }))
+    this.origins = new Map()
+    this.batches = new SnapshotBatches(rows, { github: this.github, repository: (task, signal) => this.repositoryOf(task, signal), now: () => this.now().getTime() })
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, rows.length) }, async () => {
+        while (cursor < rows.length && !this.stopped && !homeIsDraining()) await this.evaluate(rows[cursor++]!)
+      }))
+    } finally {
+      this.batches = null
+    }
   }
 
   private async evaluate(row: WorkflowRow): Promise<void> {
@@ -251,13 +233,21 @@ export class AutopilotRuntime {
       if (this.stopped || homeIsDraining()) return
       const current = getWorkflow(row.id)
       if (!current || current.state !== "active") return
+      const checkpoint = checkpointOf(current)
+      if (error instanceof GitHubPausedError) {
+        // GitHub (or Wisp's own share) said wait: no failure, and back at the minute it resumes. A merge
+        // attempt stays: one that may have gone out (before a restart, say) is confirmed by the next look.
+        const delayMs = Math.max(error.until - this.now().getTime(), 1000)
+        this.saveCheck(current, { state: "waiting", reason: error.message, checkpoint, failures: current.failures, delayMs, stretch: 1, patient: false })
+        return
+      }
       const failures = current.failures + 1
       const message = (error instanceof Error ? error.message : String(error)).slice(0, 200)
-      saveAutopilotCheck(current, {
+      this.saveCheck(current, {
         state: "waiting", reason: message.startsWith("GitHub") ? message : `Check failed: ${message}`,
-        checkpoint: checkpointOf(current), failures,
+        checkpoint, failures,
         delayMs: Math.min(MOVING_MS * 2 ** Math.min(failures, 5), 30 * 60_000),
-      }, this.now())
+      })
     } finally {
       clearTimeout(timeout)
       this.controller.signal.removeEventListener("abort", abort)
@@ -284,8 +274,8 @@ export class AutopilotRuntime {
     if (withdrawQueuedRound(row)) return
     const checkpoint: AutopilotCheckpoint = checkpointOf(row)
     const idle = taskIsIdle(task)
-    const save = (state: AutopilotState, reason: string, delayMs: number, about: "pr" | "task" = "task") =>
-      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about }, this.now())
+    const save = (state: AutopilotState, reason: string, delayMs: number, about: "pr" | "task" = "task", patient?: boolean) =>
+      this.saveCheck(row, { state, reason, checkpoint, delayMs, about, patient })
 
     if (checkpoint.stopHold) {
       if (idle && task.turn_count > checkpoint.stopHold.turnCount) delete checkpoint.stopHold
@@ -298,7 +288,7 @@ export class AutopilotRuntime {
       }
     }
 
-    const repository = await (this.options.repository ?? originRepository)(task, signal)
+    const repository = await this.repositoryOf(task, signal)
     if (!repository) { save("needs-you", "Not a GitHub repository", BUSY_MS); return }
     const cwd = task.repo_path
     const configured = repoConfigFor(this.cfg, task.repo_path)?.baseBranch?.replace(/^origin\//, "")
@@ -320,10 +310,10 @@ export class AutopilotRuntime {
         const misses = checkpoint.lastMerged ? (checkpoint.nextPrMisses ?? 0) + 1 : 0
         if (checkpoint.lastMerged) checkpoint.nextPrMisses = misses
         // its PR merged on this row and nothing new has come: done for now (the violet rail)
-        saveAutopilotCheck(row, {
+        this.saveCheck(row, {
           state: "waiting", reason: checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, bound) : bound, checkpoint,
           delayMs: checkpoint.lastMerged && misses > 2 ? AFTER_MERGE_MS : WAITING_ON_YOU_MS, done: mergedHere,
-        }, this.now())
+        })
         return
       }
       delete checkpoint.nextPrMisses
@@ -331,7 +321,7 @@ export class AutopilotRuntime {
       checkpoint.pr = bound.number
     }
 
-    const pr = await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
+    const pr = await this.batches?.take(row.id, checkpoint.pr, signal) ?? await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
     await this.lookAt({ row, task, checkpoint, pr, repository, configured, idle, save, autoFix: params.autoFix, autoMerge: params.autoMerge, signal })
   }
 
@@ -339,7 +329,7 @@ export class AutopilotRuntime {
   private async lookAt(ctx: {
     row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; repository: string
     configured: string | undefined; idle: boolean; autoFix: boolean; autoMerge: boolean; signal: AbortSignal
-    save: (state: AutopilotState, reason: string, delayMs: number, about?: "pr" | "task") => boolean
+    save: (state: AutopilotState, reason: string, delayMs: number, about?: "pr" | "task", patient?: boolean) => boolean
   }): Promise<void> {
     const { row, task, checkpoint, pr, repository, configured, save, signal } = ctx
     const now = this.now()
@@ -386,11 +376,12 @@ export class AutopilotRuntime {
       nowMs: now.getTime(), published,
       reviewerProblems: verdicts.problems, reviewersAwaited: verdicts.awaited, judgePending: verdicts.pending,
     })
-    if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr"); return }
+    // waiting on reviewers backs off from a minute, like needs-you (cadence.ts)
+    if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr", gate.slow === true); return }
     if (gate.kind === "needs-you") { save("needs-you", gate.reason, WAITING_ON_YOU_MS, "pr"); return }
     // One more read right before merging: words or checks that arrived while
     // this look judged and gated are looked at (and judged) first, not merged over.
-    const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(() => null)
+    const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(unlessPaused(null))
     if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
     await this.merge(row, checkpoint, pr, repository, { turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null) })
   }
@@ -404,7 +395,7 @@ export class AutopilotRuntime {
     const { row, task, checkpoint, pr } = ctx
     const now = this.now()
     const say = (state: AutopilotState, reason: string, delayMs: number): null => {
-      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" }, this.now())
+      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" })
       return null
     }
     const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
@@ -419,6 +410,8 @@ export class AutopilotRuntime {
       // Token-free, once per run and head: a flake gets a second chance
       // before anyone spends an agent turn on it.
       const accepted = await Promise.all(plan.runs.map((run) => this.github.rerunRun(ctx.repository, run, task.repo_path, ctx.signal).catch((error: unknown) => {
+        // a pause is no refusal: the run is not marked tried, and the look pauses
+        if (error instanceof GitHubPausedError) throw error
         // The history can only say "Could not rerun"; the daemon log keeps why.
         console.error(`[wisp] autopilot: could not rerun workflow run ${run} of ${ctx.repository}: ${error instanceof Error ? error.message : String(error)}`)
         return false
@@ -540,7 +533,7 @@ export class AutopilotRuntime {
     const hit = this.pushers.get(key)
     const now = this.now().getTime()
     if (hit && now < hit.until) return hit.ok
-    const ok = await this.github.canPush(repository, login, cwd, signal).then((value) => ({ value, known: true }), () => ({ value: false, known: false }))
+    const ok = await this.github.canPush(repository, login, cwd, signal).then((value) => ({ value, known: true }), unlessPaused({ value: false, known: false }))
     this.pushers.set(key, { ok: ok.value, until: now + (ok.known ? 60 * 60_000 : 5 * 60_000) })
     return ok.value
   }
@@ -549,7 +542,7 @@ export class AutopilotRuntime {
   private async sendRound(ctx: FixContext & { content: RoundContent; key: string; round: number }): Promise<null> {
     const { row, task, checkpoint, pr, content, key, round } = ctx
     const say = (state: AutopilotState, reason: string, delayMs: number): null => {
-      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" }, this.now())
+      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" })
       return null
     }
     // A full slot table would refuse the turn: wait for a slot rather than
@@ -605,7 +598,7 @@ export class AutopilotRuntime {
 
   /** A held row whose merge was under way: settle it if the PR is no longer open. */
   private async settledWhileHeld(row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, signal: AbortSignal): Promise<boolean> {
-    const repository = await (this.options.repository ?? originRepository)(task, signal)
+    const repository = await this.repositoryOf(task, signal)
     const pr = repository ? await this.github.snapshot(repository, checkpoint.pr!, task.repo_path, signal).catch(() => null) : null
     if (!pr || pr.state === "OPEN") return false
     this.settle(row, checkpoint, pr)
@@ -620,8 +613,8 @@ export class AutopilotRuntime {
    */
   private autoFixAlone(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, nothingToFix: string): void {
     const now = this.now()
-    const say = (state: AutopilotState, reason: string, delayMs: number, done = false) =>
-      saveAutopilotCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done }, now)
+    const say = (state: AutopilotState, reason: string, delayMs: number, done = false, patient?: boolean) =>
+      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done, patient })
     if (conversationsBlock(pr)) {
       say("needs-you", `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}`, WAITING_ON_YOU_MS)
       return
@@ -633,7 +626,8 @@ export class AutopilotRuntime {
     const quietFor = now.getTime() - lastActivity(pr, checkpoint)
     const done = green && quietFor >= QUIET_MS
     const reason = done ? `${nothingToFix} · no new review for ${QUIET_MS / 60_000} min` : nothingToFix
-    say("waiting", reason, done || !green ? WAITING_ON_YOU_MS : Math.min(WAITING_ON_YOU_MS, QUIET_MS - quietFor), done)
+    // idle (done, or nothing it can fix) backs off; the quiet countdown looks exactly when it completes
+    say("waiting", reason, done || !green ? WAITING_ON_YOU_MS : Math.min(WAITING_ON_YOU_MS, QUIET_MS - quietFor), done, done || !green)
   }
 
   /** GitHub's own auto-merge is on: that pause is auto-merge's, whichever switch spoke last. */
@@ -682,18 +676,25 @@ export class AutopilotRuntime {
     if (hit && this.now().getTime() - hit.at < REQUIRED_TTL_MS) return hit.rules
     // Unreadable protection counts as no required checks, which is the
     // STRICTER branch: every check then counts. Cached briefly so a flaky
-    // read retries soon.
-    const rules = await this.github.requiredChecks(repository, base, cwd, signal).catch(() => null)
-    const known = rules ?? { checks: [], classicProtection: null }
-    this.required.set(key, { rules: known, at: rules ? this.now().getTime() : this.now().getTime() - REQUIRED_TTL_MS + 60_000 })
-    return known
+    // read retries soon. The read itself is shared by looks side by side.
+    const at = this.now().getTime()
+    const rules = this.github.requiredChecks(repository, base, cwd, signal).catch((error: unknown) => {
+      // REST paused: the last rules read stand in until it resumes; with none, the look pauses
+      if (error instanceof GitHubPausedError && hit) { this.required.set(key, hit); return hit.rules }
+      if (error instanceof GitHubPausedError) { this.required.delete(key); throw error }
+      const none: BaseRules = { checks: [], classicProtection: null }
+      this.required.set(key, { rules: Promise.resolve(none), at: at - REQUIRED_TTL_MS + 60_000 })
+      return none
+    })
+    this.required.set(key, { rules, at })
+    return rules
   }
 
   /** A paused row still notices a PR that someone merged or closed, so it never sits paused on a finished PR. */
   private async pausedLifecycle(row: WorkflowRow, signal: AbortSignal): Promise<void> {
     const checkpoint = checkpointOf(row)
     const task = getTask(row.task_id)
-    const repository = task && checkpoint.pr ? await (this.options.repository ?? originRepository)(task, signal) : null
+    const repository = task && checkpoint.pr ? await this.repositoryOf(task, signal) : null
     const pr = repository && task ? await this.github.snapshot(repository, checkpoint.pr!, task.repo_path, signal).catch(() => null) : null
     if (pr && pr.state !== "OPEN") { this.settle(row, checkpoint, pr); return }
     deferAutopilot(row, new Date(this.now().getTime() + BUSY_MS))
@@ -730,7 +731,11 @@ export class AutopilotRuntime {
       // only after the row says how it ended, so its turn is told the branch
       // is finished instead of being asked to push to a merged PR.
       await whileMerging(task.id, async () => {
-        const result = await this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, controller.signal)
+        const result = await this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, controller.signal).catch((error: unknown) => {
+          // held back before it went out: there was no merge, so there is no attempt to confirm
+          if (error instanceof GitHubPausedError && !error.sent) endMergeAttempt(getWorkflow(row.id) ?? row, false)
+          throw error
+        })
         const after = await this.github.snapshot(repository, pr.number, task.repo_path, controller.signal).catch(() => null)
         this.afterMerge(row, attempt, pr, result, after)
       }, () => { startNextQueuedMessage(task.id, this.adapters, this.cfg) })
@@ -756,7 +761,7 @@ export class AutopilotRuntime {
     const attempt: AutopilotCheckpoint = { ...started, stopHold: fresh.stopHold, fixArmedAt: fresh.fixArmedAt, unmarkedTurns: fresh.unmarkedTurns }
     for (const key of ["stopHold", "fixArmedAt", "unmarkedTurns"] as const) if (attempt[key] === undefined) delete attempt[key]
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
-    if (after?.queued) { saveAutopilotCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }, this.now()); return }
+    if (after?.queued) { this.saveCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }); return }
     if (after?.providerAutoMerge) {
       // no longer confirming anything: turns during the pause may push
       this.providerPause(current, { ...attempt, state: "waiting" }, pr)
@@ -767,7 +772,7 @@ export class AutopilotRuntime {
       // lag, a timeout): not a failure. Keep the attempt, so the next look
       // records it as Wisp's merge, and look again soon.
       const confirming: AutopilotCheckpoint = { ...attempt, mergeAttempt: { ...attempt.mergeAttempt!, reported: true } }
-      saveAutopilotCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: confirming, delayMs: 15_000, about: "pr" }, this.now())
+      this.saveCheck(current, { state: "merging", reason: "Confirming the merge", checkpoint: confirming, delayMs: 15_000, about: "pr" })
       return
     }
     const failures = attempt.mergeFailures?.head === pr.head ? attempt.mergeFailures.count + 1 : 1
@@ -779,6 +784,6 @@ export class AutopilotRuntime {
       pauseAutopilot(getWorkflow(row.id) ?? current, `Merge failed: ${detail}`.slice(0, 300), this.now())
       return
     }
-    saveAutopilotCheck(current, { state: "waiting", reason: `Merge failed, retrying: ${detail}`.slice(0, 300), checkpoint: failed, delayMs: 2 * MOVING_MS, about: "pr" }, this.now())
+    this.saveCheck(current, { state: "waiting", reason: `Merge failed, retrying: ${detail}`.slice(0, 300), checkpoint: failed, delayMs: 2 * MOVING_MS, about: "pr" })
   }
 }

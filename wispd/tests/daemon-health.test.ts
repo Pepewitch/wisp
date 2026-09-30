@@ -107,8 +107,11 @@ describe("background loop health", () => {
       pid: number;
       loops: { name: string }[];
       webhooks: { failing: number; dead: number };
+      github: { share: number; resources: { resource: string; spentLastHour: number; cap: number }[] };
     };
     expect(report.pid).toBe(process.pid);
+    expect(report.github.share).toBe(0.25);
+    expect(report.github.resources.map((entry) => entry.resource)).toEqual(["graphql", "core"]);
     expect(report.loops.map((loop) => loop.name)).toContain("diagnostics test loop");
     expect(typeof report.webhooks.failing).toBe("number");
     expect(typeof report.webhooks.dead).toBe("number");

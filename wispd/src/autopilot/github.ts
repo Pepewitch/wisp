@@ -5,7 +5,8 @@
  * every branch protection, ruleset, and merge queue the repository has.
  */
 import { controlFree } from "../control-free"
-import { runBounded } from "../subprocess"
+import { ghReply, githubBudget, MERGE_POINTS, unlessPaused, type GitHubBudget, type GitHubResource } from "../github-budget"
+import { runBounded, type RunOptions, type RunResult } from "../subprocess"
 import { isRecord } from "../validate"
 import type { PrCheck } from "./checks"
 
@@ -119,6 +120,8 @@ export interface OpenPullRequest {
 
 export interface AutopilotGitHub {
   snapshot(repository: string, number: number, cwd: string, signal: AbortSignal): Promise<PrSnapshot>
+  /** Several PRs of one repository in one request (batch.ts): each one read, or GitHub's error about it. */
+  snapshots?(repository: string, numbers: number[], cwd: string, signal: AbortSignal): Promise<Map<number, PrSnapshot | Error>>
   openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; viewer: string; pulls: OpenPullRequest[] }>
   /** Context names the base branch requires, from classic protection and rulesets. */
   requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules>
@@ -135,20 +138,8 @@ export interface AutopilotGitHub {
 
 const GH_ENV = { GH_PROMPT_DISABLED: "1", GH_PAGER: "cat", NO_COLOR: "1" }
 
-async function gh(args: string[], cwd: string, signal: AbortSignal, timeoutMs = 20_000) {
-  return await runBounded({
-    cmd: ["gh", ...args], cwd, signal, timeoutMs, maxBytes: 4_000_000, maxErrorBytes: 4000, env: GH_ENV,
-  })
-}
-
-async function ghJson(args: string[], cwd: string, signal: AbortSignal): Promise<unknown> {
-  const result = await gh(args, cwd, signal)
-  if (result.exitCode !== 0 || result.truncated || result.timedOut || result.cancelled || result.cleanupError) {
-    const detail = result.err.trim().split("\n").pop() ?? ""
-    throw new Error(`GitHub unavailable${detail ? `: ${detail.slice(0, 200)}` : ""}`)
-  }
-  return JSON.parse(result.out)
-}
+/** How a gh command runs: `runBounded`, or a fake GitHub in tests. */
+export type GhRun = (options: RunOptions) => Promise<RunResult>
 
 function split(repository: string): [string, string] {
   const [owner, name] = repository.split("/")
@@ -158,13 +149,12 @@ function split(repository: string): [string, string] {
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "")
 
-const SNAPSHOT = `
-query($owner: String!, $name: String!, $number: Int!) {
-  viewer { login }
-  repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
-    squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed viewerDefaultMergeMethod
-    pullRequest(number: $number) {
+/** Costs nothing, and says what the query cost and what is left of the hour (github-budget.ts). */
+const RATE_LIMIT = "rateLimit { cost remaining limit resetAt }"
+const REPOSITORY_FIELDS = "defaultBranchRef { name } squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed viewerDefaultMergeMethod"
+
+/** One PR's part of a snapshot; `number` is what `isRequired` asks about: the variable, or a literal in a batch. */
+const pullRequestFields = (number: string): string => `
       number url state isDraft isCrossRepository
       mergedBy { login }
       headRefOid headRefName baseRefName
@@ -182,9 +172,9 @@ query($owner: String!, $name: String!, $number: Int!) {
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
         statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
-          ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: $number)
+          ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: ${number})
             deployment { id } checkSuite { app { slug } workflowRun { databaseId event } } }
-          ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: $number) }
+          ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: ${number}) }
         } } }
       } } }
       baseRef {
@@ -195,15 +185,49 @@ query($owner: String!, $name: String!, $number: Int!) {
           ... on CheckRun { name status conclusion }
           ... on StatusContext { context state }
         } } } } }
-      }
-    }
-  }
-}
+      }`
+
+const COMMENT_FRAGMENT = `
 fragment comment on Comment {
   id body createdAt lastEditedAt authorAssociation author { login __typename }
   ... on IssueComment { url isMinimized }
   ... on PullRequestReviewComment { url isMinimized state }
 }`
+
+export const SNAPSHOT = `
+query($owner: String!, $name: String!, $number: Int!) {
+  ${RATE_LIMIT}
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    ${REPOSITORY_FIELDS}
+    pullRequest(number: $number) {${pullRequestFields("$number")}
+    }
+  }
+}${COMMENT_FRAGMENT}`
+
+/** What a snapshot costs: GitHub charged 2 points for it on a real PR (`rateLimit(dryRun: true)`). */
+const SNAPSHOT_POINTS = 2
+/** PRs per batched request: each is ~3,700 nodes, and a busy PR's answer can run to megabytes. */
+export const SNAPSHOT_BATCH = 5
+
+/**
+ * Several PRs of one repository in one request, as aliases `p0`, `p1`, ….
+ * GraphQL prices each PR's part as it would alone, so this saves requests
+ * and gh processes rather than points.
+ */
+export function snapshotsQuery(numbers: number[]): string {
+  const pulls = numbers.map((number, index) => `
+    p${index}: pullRequest(number: ${Math.trunc(number)}) {${pullRequestFields(String(Math.trunc(number)))}
+    }`).join("")
+  return `
+query($owner: String!, $name: String!) {
+  ${RATE_LIMIT}
+  viewer { login }
+  repository(owner: $owner, name: $name) {
+    ${REPOSITORY_FIELDS}${pulls}
+  }
+}${COMMENT_FRAGMENT}`
+}
 
 function nodes(value: unknown): Record<string, unknown>[] {
   return isRecord(value) && Array.isArray(value.nodes) ? value.nodes.filter(isRecord) : []
@@ -336,6 +360,57 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   }
 }
 
+/** GitHub's errors about one aliased PR of a batch (`path: ["repository", "p2", …]`), by alias; null if any error is about something else. */
+function aliasErrors(raw: unknown): Map<string, string> | null {
+  const errors = isRecord(raw) && Array.isArray(raw.errors) ? raw.errors : []
+  const byAlias = new Map<string, string>()
+  for (const error of errors) {
+    const path = isRecord(error) && Array.isArray(error.path) ? error.path : []
+    if (path[0] !== "repository" || typeof path[1] !== "string" || !/^p\d+$/.test(path[1])) return null
+    if (!byAlias.has(path[1])) byAlias.set(path[1], isRecord(error) ? str(error.message).slice(0, 200) : "")
+  }
+  return byAlias
+}
+
+/**
+ * Whether a failed batch still answered: gh exits 1 on any GraphQL error, and
+ * a PR that cannot be found errors on its own alias alone, with the other
+ * PRs' data beside it.
+ */
+function partialAnswer(result: RunResult, raw: unknown): boolean {
+  if (result.exitCode !== 1 || result.truncated || result.timedOut || result.cancelled || result.cleanupError) return false
+  const errors = aliasErrors(raw)
+  return errors !== null && errors.size > 0 && isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.repository)
+}
+
+/**
+ * A batch's snapshots by PR number. A PR GitHub answered with an error is
+ * that error, and its look fails with it as a read of its own would; one that
+ * could not be parsed (inconsistent, too many checks) is left out, and its
+ * look reads it alone.
+ */
+export function parseSnapshots(raw: unknown, numbers: number[]): Map<number, PrSnapshot | Error> {
+  const data = isRecord(raw) && isRecord(raw.data) ? raw.data : null
+  const repo = data && isRecord(data.repository) ? data.repository : null
+  const found = new Map<number, PrSnapshot | Error>()
+  if (!data || !repo) return found
+  const errors = aliasErrors(raw) ?? new Map<string, string>()
+  numbers.forEach((number, index) => {
+    const error = errors.get(`p${index}`)
+    if (error !== undefined) {
+      found.set(number, new Error(`GitHub unavailable${error ? `: ${error}` : ""}`))
+      return
+    }
+    try {
+      const snapshot = parseSnapshot({ data: { ...data, repository: { ...repo, pullRequest: repo[`p${index}`] } } })
+      if (snapshot.number === number) found.set(number, snapshot)
+    } catch {
+      // inconsistent, or too many checks: the look's own read says why
+    }
+  })
+  return found
+}
+
 // shared with the CLI's brief printer; re-exported for this module's callers
 export { controlFree }
 
@@ -437,7 +512,7 @@ export function openPullsQuery(branches: string[]): string {
     b${index}: pullRequests(first: 100, headRefName: ${JSON.stringify(branch)}, states: [OPEN], orderBy: { field: CREATED_AT, direction: ASC }) {
       nodes { number headRefName baseRefName createdAt isCrossRepository author { login } }
     }`).join("\n")
-  return `query($owner: String!, $name: String!) { viewer { login } repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
+  return `query($owner: String!, $name: String!) { ${RATE_LIMIT} viewer { login } repository(owner: $owner, name: $name) { defaultBranchRef { name } ${selections} } }`
 }
 
 export function parseOpenPulls(raw: unknown, branches: string[]): { defaultBranch: string; viewer: string; pulls: OpenPullRequest[] } {
@@ -457,77 +532,140 @@ export function parseOpenPulls(raw: unknown, branches: string[]): { defaultBranc
   return { defaultBranch: isRecord(repo.defaultBranchRef) ? str(repo.defaultBranchRef.name) : "", viewer, pulls }
 }
 
-export const ghAutopilot: AutopilotGitHub = {
-  async snapshot(repository, number, cwd, signal) {
-    const [owner, name] = split(repository)
-    const raw = await ghJson(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${SNAPSHOT}`], cwd, signal)
-    return parseSnapshot(raw)
-  },
-  async openPullRequests(repository, branches, cwd, signal) {
-    const [owner, name] = split(repository)
-    const raw = await ghJson(["api", "graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${openPullsQuery(branches)}`], cwd, signal)
-    return parseOpenPulls(raw, branches)
-  },
-  async requiredChecks(repository, base, cwd, signal) {
-    const path = `repos/${repository}`
-    const encoded = encodeURIComponent(base)
-    const [branch, rules] = await Promise.all([
-      ghJson(["api", `${path}/branches/${encoded}`], cwd, signal),
-      ghJson(["api", `${path}/rules/branches/${encoded}`], cwd, signal).catch(() => []),
-    ])
-    return { checks: parseRequiredChecks(branch, rules), classicProtection: classicProtectionOf(branch) }
-  },
-  async rerunRun(repository, runId, cwd, signal) {
-    // Per RUN, not per job: rerunning one job of a run whose aggregator needs
-    // it re-evaluates the aggregator against the old results, and a second
-    // job's rerun is refused while the first is going.
-    const result = await gh(["api", "-X", "POST", `repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`], cwd, signal)
-    if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return true
-    // A refusal is an answer ("Could not rerun"), not an error; its reason is
-    // only in gh's stderr, so the daemon log keeps it. A shutdown's abort is not news.
-    if (!result.cancelled) {
-      const detail = result.timedOut ? "timed out" : (result.err.trim().split("\n").pop() ?? "").slice(0, 200)
-      console.error(`[wisp] autopilot: GitHub did not rerun workflow run ${runId} of ${repository}${detail ? `: ${detail}` : ""}`)
-    }
-    return false
-  },
-  async jobLogTail(repository, jobId, cwd, signal) {
-    // A job log can be many megabytes and the bounded runner keeps its START;
-    // pipe it through `tail` so only the end — where the failure is — arrives.
-    // `--allow-escape-sequences` is needed because CI logs carry terminal
-    // escapes (tidyLog strips them); an older gh without the flag gets a retry
-    // without it.
-    const read = (flag: string[]) => runBounded({
-      cmd: ["bash", "-c", 'set -o pipefail; gh api "$@" | tail -n 2000 | tail -c 600000', "wisp-log", ...flag, `repos/${repository}/actions/jobs/${jobId}/logs`],
-      cwd, signal, timeoutMs: 60_000, maxBytes: 800_000, maxErrorBytes: 2000, env: GH_ENV,
-    })
-    let result = await read(["--allow-escape-sequences"])
-    if (result.exitCode !== 0 && /unknown flag/i.test(result.err)) result = await read([])
-    if (result.exitCode !== 0 || result.timedOut || result.cancelled) throw new Error("GitHub unavailable: could not read the job log")
-    return tidyLog(result.out)
-  },
-  async checkRunReport(repository, checkRunId, cwd, signal) {
-    const [run, annotations] = await Promise.all([
-      ghJson(["api", `repos/${repository}/check-runs/${checkRunId}`], cwd, signal),
-      ghJson(["api", `repos/${repository}/check-runs/${checkRunId}/annotations?per_page=50`], cwd, signal).catch(() => []),
-    ])
-    const output = isRecord(run) && isRecord(run.output) ? run.output : {}
-    const notes = Array.isArray(annotations) ? annotations.filter(isRecord).map((note) =>
-      `${str(note.path)}:${String(note.start_line ?? "")} ${str(note.annotation_level)}: ${str(note.message)}`) : []
-    return controlFree([str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n")).slice(0, 64_000)
-  },
-  async canPush(repository, login, cwd, signal) {
-    const result = await ghJson(["api", `repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`], cwd, signal)
-    if (!isRecord(result)) return false
-    // role_name tells maintain from write; permission is the classic level
-    return ["admin", "maintain", "write"].includes(str(result.role_name)) || ["admin", "write"].includes(str(result.permission))
-  },
-  async merge({ repository, number, method, head }, cwd, signal) {
-    const result = await gh(
-      ["pr", "merge", String(number), "--repo", repository, `--${method.toLowerCase()}`, "--match-head-commit", head],
-      cwd, signal, 60_000,
-    )
-    const detail = [result.out, result.err].join("\n").trim().split("\n").filter(Boolean).slice(-3).join(" · ").slice(0, 300)
-    return { ok: result.exitCode === 0 && !result.timedOut && !result.cancelled, detail }
-  },
+function failure(result: RunResult): string | null {
+  if (result.exitCode === 0 && !result.truncated && !result.timedOut && !result.cancelled && !result.cleanupError) return null
+  return result.err.trim().split("\n").pop() ?? ""
 }
+
+/**
+ * The client over the daemon host's `gh`. Every call is accounted in the
+ * budget: refused before it goes out while GitHub (or Wisp's own share) says
+ * wait, and a rate limit in its answer pauses them all (github-budget.ts).
+ */
+export function createGhAutopilot(options: { run?: GhRun; budget?: GitHubBudget } = {}): AutopilotGitHub {
+  const run = options.run ?? runBounded
+  const budget = options.budget ?? githubBudget
+  const gh = (args: string[], cwd: string, signal: AbortSignal, timeoutMs = 20_000, maxBytes = 4_000_000) =>
+    run({ cmd: ["gh", ...args], cwd, signal, timeoutMs, maxBytes, maxErrorBytes: 4000, env: GH_ENV })
+
+  /**
+   * A gh call spent from the budget: its expected cost reserved before it goes
+   * out, then settled with what GitHub said. Only `--include` shows GitHub's
+   * headers; any other call is read from gh's stderr, and costs `unseen`.
+   */
+  async function accounted(resource: GitHubResource, estimate: number, go: () => Promise<RunResult>, included: boolean, unseen = 0) {
+    budget.reserve(resource, estimate)
+    let result: RunResult
+    try {
+      result = await go()
+    } catch (error) {
+      budget.settle(resource, null, estimate)
+      throw error
+    }
+    const reply = ghReply(included ? result.out : "", result.err, failure(result) !== null)
+    budget.settle(resource, reply, estimate, unseen)
+    return { result, reply }
+  }
+
+  /** One `gh api --include` call: GitHub's rate-limit headers come back with the answer. */
+  const api = (resource: GitHubResource, args: string[], cwd: string, signal: AbortSignal, estimate = 1, maxBytes?: number) =>
+    accounted(resource, estimate, () => gh(["api", "--include", ...args], cwd, signal, 20_000, maxBytes), true)
+
+  /** `partial`: a batch whose failure is errors about some of its aliases alone still answers for the rest. */
+  interface JsonOptions { estimate?: number; maxBytes?: number; partial?: boolean }
+
+  async function json(resource: GitHubResource, args: string[], cwd: string, signal: AbortSignal, options: JsonOptions = {}): Promise<unknown> {
+    const { result, reply } = await api(resource, args, cwd, signal, options.estimate, options.maxBytes)
+    const detail = failure(result)
+    if (detail !== null && !(options.partial && partialAnswer(result, reply.json))) {
+      throw new Error(`GitHub unavailable${detail ? `: ${detail.slice(0, 200)}` : ""}`)
+    }
+    if (reply.json === undefined) throw new Error("GitHub unavailable: its answer was not JSON")
+    return reply.json
+  }
+
+  const graphql = (repository: string, query: string, cwd: string, signal: AbortSignal, options: JsonOptions & { extra?: string[] }) => {
+    const [owner, name] = split(repository)
+    return json("graphql", ["graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, ...options.extra ?? [], "-f", `query=${query}`], cwd, signal, options)
+  }
+
+  return {
+    async snapshot(repository, number, cwd, signal) {
+      return parseSnapshot(await graphql(repository, SNAPSHOT, cwd, signal, { estimate: SNAPSHOT_POINTS, extra: ["-F", `number=${number}`] }))
+    },
+    async snapshots(repository, numbers, cwd, signal) {
+      const raw = await graphql(repository, snapshotsQuery(numbers), cwd, signal, {
+        estimate: SNAPSHOT_POINTS * numbers.length, maxBytes: 4_000_000 * numbers.length, partial: true,
+      })
+      return parseSnapshots(raw, numbers)
+    },
+    async openPullRequests(repository, branches, cwd, signal) {
+      return parseOpenPulls(await graphql(repository, openPullsQuery(branches), cwd, signal, { estimate: 1 }), branches)
+    },
+    async requiredChecks(repository, base, cwd, signal) {
+      const path = `repos/${repository}`
+      const encoded = encodeURIComponent(base)
+      const [branch, rules] = await Promise.all([
+        json("core", [`${path}/branches/${encoded}`], cwd, signal),
+        json("core", [`${path}/rules/branches/${encoded}`], cwd, signal).catch(unlessPaused([])),
+      ])
+      return { checks: parseRequiredChecks(branch, rules), classicProtection: classicProtectionOf(branch) }
+    },
+    async rerunRun(repository, runId, cwd, signal) {
+      // Per RUN, not per job: rerunning one job of a run whose aggregator needs
+      // it re-evaluates the aggregator against the old results, and a second
+      // job's rerun is refused while the first is going.
+      const { result } = await api("core", ["-X", "POST", `repos/${repository}/actions/runs/${runId}/rerun-failed-jobs`], cwd, signal)
+      if (result.exitCode === 0 && !result.timedOut && !result.cancelled) return true
+      // A refusal is an answer ("Could not rerun"), not an error; its reason is
+      // only in gh's stderr, so the daemon log keeps it. A shutdown's abort is not news.
+      if (!result.cancelled) {
+        const detail = result.timedOut ? "timed out" : (result.err.trim().split("\n").pop() ?? "").slice(0, 200)
+        console.error(`[wisp] autopilot: GitHub did not rerun workflow run ${runId} of ${repository}${detail ? `: ${detail}` : ""}`)
+      }
+      return false
+    },
+    async jobLogTail(repository, jobId, cwd, signal) {
+      // A job log can be many megabytes and the bounded runner keeps its START;
+      // pipe it through `tail` so only the end — where the failure is — arrives.
+      // `--allow-escape-sequences` is needed because CI logs carry terminal
+      // escapes (tidyLog strips them); an older gh without the flag gets a retry
+      // without it. Piped, the answer shows no headers: it counts as one request.
+      const read = async (flag: string[]) => (await accounted("core", 1, () => run({
+        cmd: ["bash", "-c", 'set -o pipefail; gh api "$@" | tail -n 2000 | tail -c 600000', "wisp-log", ...flag, `repos/${repository}/actions/jobs/${jobId}/logs`],
+        cwd, signal, timeoutMs: 60_000, maxBytes: 800_000, maxErrorBytes: 2000, env: GH_ENV,
+      }), false, 1)).result
+      let result = await read(["--allow-escape-sequences"])
+      if (result.exitCode !== 0 && /unknown flag/i.test(result.err)) result = await read([])
+      if (result.exitCode !== 0 || result.timedOut || result.cancelled) throw new Error("GitHub unavailable: could not read the job log")
+      return tidyLog(result.out)
+    },
+    async checkRunReport(repository, checkRunId, cwd, signal) {
+      const [report, annotations] = await Promise.all([
+        json("core", [`repos/${repository}/check-runs/${checkRunId}`], cwd, signal),
+        json("core", [`repos/${repository}/check-runs/${checkRunId}/annotations?per_page=50`], cwd, signal).catch(unlessPaused([])),
+      ])
+      const output = isRecord(report) && isRecord(report.output) ? report.output : {}
+      const notes = Array.isArray(annotations) ? annotations.filter(isRecord).map((note) =>
+        `${str(note.path)}:${String(note.start_line ?? "")} ${str(note.annotation_level)}: ${str(note.message)}`) : []
+      return controlFree([str(output.title), str(output.summary), str(output.text), ...notes].filter(Boolean).join("\n\n")).slice(0, 64_000)
+    },
+    async canPush(repository, login, cwd, signal) {
+      const result = await json("core", [`repos/${repository}/collaborators/${encodeURIComponent(login)}/permission`], cwd, signal)
+      if (!isRecord(result)) return false
+      // role_name tells maintain from write; permission is the classic level
+      return ["admin", "maintain", "write"].includes(str(result.role_name)) || ["admin", "write"].includes(str(result.permission))
+    },
+    async merge({ repository, number, method, head }, cwd, signal) {
+      // GitHub refusing the merge for the rate is no merge failure: settling throws, and the look pauses instead
+      const { result } = await accounted("graphql", MERGE_POINTS, () => gh(
+        ["pr", "merge", String(number), "--repo", repository, `--${method.toLowerCase()}`, "--match-head-commit", head],
+        cwd, signal, 60_000,
+      ), false, MERGE_POINTS)
+      const detail = [result.out, result.err].join("\n").trim().split("\n").filter(Boolean).slice(-3).join(" · ").slice(0, 300)
+      return { ok: result.exitCode === 0 && !result.timedOut && !result.cancelled, detail }
+    },
+  }
+}
+
+export const ghAutopilot: AutopilotGitHub = createGhAutopilot()

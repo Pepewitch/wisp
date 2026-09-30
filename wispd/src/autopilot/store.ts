@@ -16,6 +16,7 @@ import {
   announceWorkflow, cancelWorkflowMessages, changeWorkflowState, DURABLE_HISTORY_KINDS, getWorkflow, recordWorkflow, seenWake, type WorkflowRow,
 } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
+import { nextDelay, type Backoff } from "./cadence"
 
 export interface AutopilotCheckpoint {
   pr?: number
@@ -84,6 +85,8 @@ export interface AutopilotCheckpoint {
   /** the head the PR last went green on, and when: quiet is counted from it too */
   greenHead?: string
   greenAt?: string
+  /** how long the current patient wait has been backing off (cadence.ts) */
+  backoff?: Backoff
 }
 
 export interface AutopilotParams {
@@ -308,6 +311,13 @@ export interface AutopilotCheck {
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
+  /**
+   * waiting on a person or on nothing: back off from a minute up to delayMs
+   * (cadence.ts). Defaults to true for needs-you, which is waiting on a person.
+   */
+  patient?: boolean
+  /** how much Wisp's GitHub budget stretches this wait (github-budget.ts) */
+  stretch?: number
 }
 
 /** Save one evaluation. False when the row moved on meanwhile (a toggle, Stop, a resume): the result is stale. */
@@ -319,9 +329,15 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   const checkpoint: AutopilotCheckpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
   if (check.done) checkpoint.done = true
   else delete checkpoint.done
+  const paced = nextDelay({
+    delayMs: check.delayMs, patient: check.patient ?? check.state === "needs-you", key: `${check.state}:${check.reason}`,
+    previous: previous.backoff, stretch: check.stretch ?? 1,
+  })
+  if (paced.backoff) checkpoint.backoff = paced.backoff
+  else delete checkpoint.backoff
   db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
     last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
-  [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + check.delayMs).toISOString(), check.reason, at, row.id])
+  [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
   const changed = current.reason !== check.reason || previous.state !== check.state
   if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
     recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
