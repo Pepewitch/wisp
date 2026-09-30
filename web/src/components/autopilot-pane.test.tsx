@@ -206,6 +206,21 @@ describe("the Autopilot tab", () => {
     expect(screen.getByRole("region", { name: "Automation" })).toBeInTheDocument()
   })
 
+  it("keeps the overview mounted under the log, so back returns to the same place", async () => {
+    stub(ALL, history())
+    mount(<AutopilotPane task={withStatus(WAITING)} />)
+    const open = await screen.findByRole("button", { name: /All history/ })
+    const scroller = open.closest(".overflow-y-auto") as HTMLElement
+    scroller.scrollTop = 240
+    fireEvent.click(open)
+    expect(scroller.isConnected).toBe(true)
+    expect(scroller.className).toContain("hidden")
+    fireEvent.click(screen.getByRole("button", { name: "Autopilot" }))
+    expect(screen.getByRole("button", { name: /All history/ }).closest(".overflow-y-auto")).toBe(scroller)
+    expect(scroller.className).not.toContain("hidden")
+    expect(scroller.scrollTop).toBe(240)
+  })
+
   it("routine checks unfold every run at once", async () => {
     stub(ALL, history())
     mount(<AutopilotPane task={withStatus(WAITING)} />)
@@ -243,12 +258,13 @@ describe("the docked Automation header", () => {
       observe() {}
       disconnect() {}
     })
-    return (below: boolean) => act(() => {
+    return (below: boolean | "hidden") => act(() => {
       for (const callback of observers) {
         callback([{
-          isIntersecting: !below,
-          boundingClientRect: { top: below ? 900 : 300 } as DOMRectReadOnly,
-          rootBounds: { bottom: 680 } as DOMRectReadOnly,
+          isIntersecting: below === false,
+          boundingClientRect: { top: below === true ? 900 : below === "hidden" ? 0 : 300 } as DOMRectReadOnly,
+          // a pane under display:none has no box, so its root reads zero-height
+          rootBounds: (below === "hidden" ? { bottom: 0, height: 0 } : { bottom: 680, height: 640 }) as DOMRectReadOnly,
         }])
       }
     })
@@ -276,6 +292,16 @@ describe("the docked Automation header", () => {
 
     // scrolled into place, it is a plain header again
     fold(false)
+    expect(screen.queryByRole("button", { name: /^Show Automation/ })).toBeNull()
+    expect(heading.parentElement).not.toHaveAttribute("data-docked")
+  })
+
+  it("stays a plain header while the pane is hidden, so coming back to the tab never flashes it", async () => {
+    const fold = observe()
+    stub(ALL)
+    mount(<AutopilotPane task={withStatus(PAUSED)} />)
+    const heading = await screen.findByRole("heading", { name: "Automation" })
+    fold("hidden")
     expect(screen.queryByRole("button", { name: /^Show Automation/ })).toBeNull()
     expect(heading.parentElement).not.toHaveAttribute("data-docked")
   })

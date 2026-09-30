@@ -1,12 +1,12 @@
 import { useBriefSettings } from "@/hooks/mutations"
 import { useHarnesses, useHarnessFeatures, useTaskBrief } from "@/hooks/queries"
 import { failureReason } from "@/lib/api"
-import { briefMenuNote, briefWaiting } from "@/lib/brief"
+import { briefSwitchNote, briefWaiting } from "@/lib/brief"
 import type { ApiTask } from "@/lib/types"
 
 /**
- * The one task-brief switch, for every surface that draws it (the Brief tab
- * and the task menu). Whether briefs are on, and what switching them does, are
+ * The one task-brief switch, for every surface that draws it (the Autopilot
+ * tab's Brief section and the task menu). Whether briefs are on, and what switching them does, are
  * read from the same task row and the same brief query, so the two agree.
  *
  * Each caller owns its own write: `pending` and `error` belong to the control
@@ -31,7 +31,7 @@ export function useBriefSwitch(task: ApiTask | null) {
   const query = useTaskBrief(task?.id ?? null, available && enabled)
   const supported = task ? harnesses.data?.find((h) => h.name === task.harness)?.hasBriefs === true : false
   const note = task
-    ? briefMenuNote({
+    ? briefSwitchNote({
       enabled,
       // a harness that cannot publish is only worth mentioning to someone about to switch it on
       supported: supported || enabled,

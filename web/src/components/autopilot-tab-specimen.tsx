@@ -5,7 +5,7 @@ import { AutopilotView, type AutomationModel, type HistoryLinks } from "@/compon
 import { Section } from "@/components/gallery-chrome"
 import { Tab } from "@/components/primitives"
 import type { BriefSectionProps } from "@/components/task-brief"
-import { briefBand, briefMenuNote, type BriefView } from "@/lib/brief"
+import { briefBand, briefSwitchNote, type BriefView } from "@/lib/brief"
 import { cn } from "@/lib/utils"
 
 /*
@@ -85,7 +85,7 @@ const BRIEF_LONG: BriefView = {
   latestTurn: { n: 7, status: "done", contextN: 1 },
 }
 
-const OFF_NOTE = briefMenuNote({ enabled: false, supported: true, harness: "claude", waiting: null })
+const OFF_NOTE = briefSwitchNote({ enabled: false, supported: true, harness: "claude", waiting: null })
 
 function briefOf(view: BriefView | null): BriefSectionProps {
   const enabled = view?.enabled === true

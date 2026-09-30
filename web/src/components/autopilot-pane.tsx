@@ -201,7 +201,7 @@ export function AutopilotView({
           {header ?? <span className="text-[12.5px] font-medium text-foreground">{automation ? "Autopilot" : "Brief"}</span>}
         </PaneHeader>
       )}
-      {log ? (
+      {log && (
         <HistoryLog
           entries={entries}
           touch={touch}
@@ -211,8 +211,10 @@ export function AutopilotView({
           onRoutine={setRoutine}
           onBack={() => setView("overview")}
         />
-      ) : (
-        <div ref={scroller} className="scroll-slim @container relative min-h-0 flex-1 overflow-y-auto">
+      )}
+      {/* kept mounted under the log, as the tabs keep their panes: back
+          returns to the same scroll position and an open comparison */}
+      <div ref={scroller} className={cn("scroll-slim @container relative min-h-0 flex-1 overflow-y-auto", log && "hidden")}>
           {empty ? (
             <p className="px-3.5 py-3 text-[12.5px] text-muted-foreground">{empty}</p>
           ) : (
@@ -234,8 +236,7 @@ export function AutopilotView({
               )}
             </>
           )}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -254,9 +255,11 @@ function useBelowFold(target: RefObject<HTMLElement | null>, root: RefObject<HTM
     const scroller = root.current
     if (!el || !scroller || typeof IntersectionObserver === "undefined") return
     const observer = new IntersectionObserver(([entry]) => {
-      if (!entry) return
-      const bottom = entry.rootBounds?.bottom ?? scroller.getBoundingClientRect().bottom
-      setBelow(!entry.isIntersecting && entry.boundingClientRect.top >= bottom - 1)
+      // A hidden pane (another tab, the log, the phone's other surfaces) has
+      // no box: it reports a zero-height root, which is not "below the fold",
+      // and believing it would flash the docked header on the way back.
+      if (!entry?.rootBounds || entry.rootBounds.height === 0) return
+      setBelow(!entry.isIntersecting && entry.boundingClientRect.top >= entry.rootBounds.bottom - 1)
     }, { root: scroller })
     observer.observe(el)
     return () => observer.disconnect()

@@ -30,7 +30,7 @@ export function buildTaskSurfaces({
 }): {
   changes: ReactNode
   /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void) => ReactNode }
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void, hidden: boolean) => ReactNode }
   workflows?: ReactNode
   terminal: ReactNode
 } {
@@ -67,7 +67,8 @@ export function buildTaskSurfaces({
   const autopilot = mobile && (briefsSupported || autopilotSupported)
     ? {
       label: autopilotSupported ? "Autopilot" as const : "Brief" as const,
-      render: (showConversation: () => void) => (
+      // `hidden` while another surface shows: its clock stops, and its docked header rests
+      render: (showConversation: () => void, hidden: boolean) => (
         <FileViewerProvider
           taskId={archived ? null : taskId}
           onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
@@ -76,6 +77,7 @@ export function buildTaskSurfaces({
             key={`${connectionId}:${taskId ?? ""}`}
             task={task}
             touch
+            hidden={hidden}
             onShowConversation={showConversation}
           />
         </FileViewerProvider>

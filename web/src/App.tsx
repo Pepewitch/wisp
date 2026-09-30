@@ -495,7 +495,7 @@ function AppShell({
   }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void) => ReactNode }
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void, hidden: boolean) => ReactNode }
   workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode

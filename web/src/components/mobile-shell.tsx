@@ -90,7 +90,7 @@ export function MobileShell({
    * chat because "Show in conversation" and "View message" must land on a
    * transcript that is on screen.
    */
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showChat: () => void) => ReactNode }
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showChat: () => void, hidden: boolean) => ReactNode }
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
   terminal: ReactNode
@@ -253,7 +253,7 @@ export function MobileShell({
             conversation's scroll position or tear down a live shell */}
         {firstRun}
         {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
-        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot.render(() => setTab("chat"))}</Pane>}
+        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot.render(() => setTab("chat"), tab !== "autopilot")}</Pane>}
         {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
         {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
         {!firstRun && (

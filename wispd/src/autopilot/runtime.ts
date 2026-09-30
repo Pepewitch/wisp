@@ -19,7 +19,7 @@ import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { recordAudit } from "../task-audit"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
-import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
+import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
 import { createGhAutopilot, ghAutopilot, type AutopilotGitHub, type BaseRules, type PrComment, type PrSnapshot } from "./github"
@@ -408,6 +408,8 @@ export class AutopilotRuntime {
       checkpoint.rerun = { head: pr.head, runs: [...rerun, ...plan.runs] }
       const reason = accepted.some(Boolean) ? plan.reason : plan.reason.replace(/^Rerunning/, "Could not rerun")
       recordWorkflow(row.id, "rerun", reason, now.toISOString(), null, { pr: pr.number, sha: pr.head })
+      // the entry is news even when the reason reads the same as the last look's
+      announceWorkflow(row.task_id)
       return say("waiting", reason, MOVING_MS)
     }
     // CI's part, unless that evidence already went out (alone, or in a round
@@ -497,12 +499,16 @@ export class AutopilotRuntime {
       log: (entry) => {
         writeJudgeLog(task.id, row.id, entry)
         // only what can change what happens: status boards would crowd the history out
-        if (entry.answer && needsChanges(entry.answer)) recordWorkflow(row.id, "judged", `@${entry.author ?? "ghost"}'s ${entry.postedAs}: needs changes (${entry.answer.confidence.toFixed(2)})`, entry.at)
+        if (entry.answer && needsChanges(entry.answer)) {
+          recordWorkflow(row.id, "judged", `@${entry.author ?? "ghost"}'s ${entry.postedAs}: needs changes (${entry.answer.confidence.toFixed(2)})`, entry.at)
+          announceWorkflow(row.task_id)
+        }
       },
     })
     for (const id of look.gaveUp) {
       recordWorkflow(row.id, "judge-unavailable", `The review judge failed ${JUDGE_FAILURE_LIMIT} times on ${id}; auto-merge no longer waits for it`, this.now().toISOString())
     }
+    if (look.gaveUp.length > 0) announceWorkflow(row.task_id)
     return look
   }
 
@@ -741,6 +747,8 @@ export class AutopilotRuntime {
     if (!result.ok && after?.state !== "MERGED" && current) {
       recordWorkflow(current.id, "merge-failed", `Merge of #${pr.number} at ${pr.head.slice(0, 7)} failed: ${result.detail || "gh pr merge did not merge"}`,
         this.now().toISOString(), null, { pr: pr.number, sha: pr.head })
+      // a paused or switched-off row saves no check after this, so nothing else would say it
+      announceWorkflow(current.task_id)
     }
     // Switched off (or archived) while gh ran, and it merged: still record
     // whose merge it was. rebindAfterMerge never re-arms a finished row.

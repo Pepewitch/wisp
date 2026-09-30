@@ -98,6 +98,16 @@ describe("the mobile header", () => {
     expect(screen.getByText("Autopilot content").parentElement).not.toHaveAttribute("aria-hidden", "true")
   })
 
+  it("tells the Autopilot pane when another surface hides it, so its clock can stop", () => {
+    const seen: boolean[] = []
+    mount({ autopilot: { label: "Autopilot", render: (_showChat, hidden) => { seen.push(hidden); return <div>Autopilot content</div> } } })
+    expect(seen.at(-1)).toBe(true)
+    fireEvent.click(screen.getByRole("button", { name: "Autopilot" }))
+    expect(seen.at(-1)).toBe(false)
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }))
+    expect(seen.at(-1)).toBe(true)
+  })
+
   it("keeps the name Brief on a daemon with briefs and no autopilot", () => {
     mount({ autopilot: { label: "Brief", render: () => <div>Brief content</div> } })
 
