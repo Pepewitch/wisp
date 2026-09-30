@@ -31,9 +31,10 @@ import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
 import {
-  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, withDelivered, type FeedbackItem,
+  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackItem,
 } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
+import { headFirstSeen, headSince, trimHeads } from "./heads"
 import { planFix, type FixPlan } from "./fix"
 import {
   checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
@@ -128,18 +129,6 @@ function lastActivity(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
 /** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
 function nextPrReason(merged: NonNullable<AutopilotCheckpoint["lastMerged"]>, reason: string): string {
   return `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · ${reason === "Waiting for a PR" ? "Waiting for the task's next PR" : reason}`
-}
-
-/** The earliest this head could have been reviewed: its commit, or when Wisp first saw it. */
-function headSince(checkpoint: AutopilotCheckpoint, pr: PrSnapshot): number {
-  const times = [checkpoint.heads?.[pr.head], pr.headCommittedAt].map((at) => Date.parse(at ?? "")).filter(Number.isFinite)
-  return times.length > 0 ? Math.min(...times) : 0
-}
-
-/** The last few heads seen, and always the current one. */
-function trimHeads(heads: Record<string, string>, current: string): Record<string, string> {
-  const kept = Object.entries(heads).filter(([sha]) => sha !== current).sort((a, b) => a[1].localeCompare(b[1])).slice(-4)
-  return Object.fromEntries([...kept, [current, heads[current]!]])
 }
 
 export class AutopilotRuntime {
@@ -363,9 +352,8 @@ export class AutopilotRuntime {
       : "Nothing to fix"
     if (nothingToFix === null) return
     if (!ctx.autoMerge) { this.autoFixAlone(row, checkpoint, pr, nothingToFix); return }
-    const firstSeenMs = Date.parse(checkpoint.heads?.[pr.head] ?? "")
     const verdicts = judging
-      ? judgedHead(judging, pr, { sinceMs: headSince(checkpoint, pr), firstSeenMs: Number.isFinite(firstSeenMs) ? firstSeenMs : now.getTime(), nowMs: now.getTime() })
+      ? judgedHead(judging, pr, { sinceMs: headSince(checkpoint, pr), firstSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
       : { problems: [], awaited: [], pending: false }
     const published = await (this.options.published ?? publishedWork)(task, pr.headRefName, pr.head, signal)
     const gate = mergeGate({
@@ -446,10 +434,14 @@ export class AutopilotRuntime {
       pauseAutopilot(getWorkflow(row.id) ?? row, `Auto-fix gave up after ${MAX_ROUNDS} rounds — resume to try again`, now)
       return null
     }
-    // A short delay after the task goes idle, and after the newest review
-    // words (a reviewer's burst goes as one): time to read what it did and
-    // steer by hand first. Send now or Skip act on it.
-    const settled = Math.max(Date.parse(checkpoint.idleSince ?? now.toISOString()), ...items.map((item) => Date.parse(item.at)).filter(Number.isFinite))
+    // A reviewer bot still at work on this head: the whole round, CI's part too, waits for its pass.
+    const passes = reviewerPasses(pr, items, { headSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
+    if (passes.wait) { forgetPending(checkpoint); return say("waiting", passes.wait, MOVING_MS) }
+    // A short delay after the task goes idle, after the newest review words
+    // (a reviewer's burst goes as one), and after a reviewer bot's check
+    // ends (it may rewrite its summary a moment later): time to read what
+    // it did and steer by hand first. Send now or Skip act on it.
+    const settled = Math.max(Date.parse(checkpoint.idleSince ?? now.toISOString()), ...[...items.map((item) => item.at), ...passes.finished].map((at) => Date.parse(at)).filter(Number.isFinite))
     const sendsAt = settled + SEND_DELAY_MS
     if (checkpoint.sendNow !== key && now.getTime() < sendsAt) {
       checkpoint.pending = { key, summary, sendsAt: new Date(sendsAt).toISOString() }

@@ -266,7 +266,11 @@ export async function judgeLook(input: {
 }
 
 const VERDICTS: ReadonlySet<JudgeKind> = new Set(["needs_changes", "minor_only", "all_clear"])
-/** How long after a new head auto-merge waits for a bot that found problems on an earlier one to speak again. */
+/**
+ * How long after a new head auto-merge waits for a bot that found problems on
+ * an earlier one to speak again, and auto-fix waits for a bot's check to end
+ * before sending its comment.
+ */
 export const PASS_WAIT_MS = 20 * 60_000
 
 export interface JudgedHead {

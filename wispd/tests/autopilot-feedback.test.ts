@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrCheck } from "../src/autopilot/checks";
-import { acknowledgement, approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, relayedBlocks, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
+import { acknowledgement, approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
 import type { Judged } from "../src/autopilot/judge";
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "../src/autopilot/github";
 
@@ -279,6 +279,35 @@ describe("what GitHub leaves undecided goes to the review judge", () => {
     expect(items({ reviews: [approval] }, { judged: judged("several_findings", 0.5) })).toEqual([]);
     expect(items({ reviews: [approval] }, { judged: judged("several_findings"), delivered: { "review:PRR_A": approval.submittedAt } })).toEqual([]);
     expect(feedbackSummary(items({ reviews: [approval] }, { judged: judged("several_findings") }))).toBe("1 approval with notes");
+  });
+
+  test("a bot whose own check on the head is still running holds the round, for twenty minutes at most", () => {
+    const summary = board();
+    const running: PrCheck = { ...check("pr-reviewer", "", "pr-reviewer"), status: "IN_PROGRESS", conclusion: null };
+    const judged = judgedAs("needs_changes");
+    const seen = Date.parse("2026-09-24T11:00:00Z");
+    const soon = { headSeenMs: seen, nowMs: seen + 5 * 60_000 };
+    const at = (checks: PrCheck[], times = soon) => reviewerPasses(pr({ comments: [summary], checks }), items({ comments: [summary], checks }, { judged }), times);
+    expect(at([running, check("test", "SUCCESS", "github-actions")])).toEqual({ running: ["pr-reviewer"], finished: [], wait: `Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}` });
+    expect(at([running], { headSeenMs: seen, nowMs: seen + 20 * 60_000 })).toMatchObject({ running: ["pr-reviewer"], wait: null });
+    // once it ends, the round owes it only the settle time after it finished
+    expect(at([{ ...green[0]!, completedAt: "2026-09-24T11:03:00Z" }])).toEqual({ running: [], finished: ["2026-09-24T11:03:00Z"], wait: null });
+    // another app's running check, or a person's comment, holds nothing
+    expect(at([{ ...running, app: "other-bot" }])).toEqual({ running: [], finished: [], wait: null });
+    const person = comment({ id: "IC_2", body: "Please also cover the zero case." });
+    expect(reviewerPasses(pr({ comments: [person], checks: [running] }), items({ comments: [person], checks: [running] }), soon)).toMatchObject({ running: [], wait: null });
+    // every Actions job reports as github-actions: running CI is never a reviewer's pass
+    const actions = comment({ id: "IC_3", author: "github-actions", bot: true, association: "NONE", body: "Coverage dropped 4%." });
+    const ci: PrCheck = { ...running, name: "test", app: "github-actions" };
+    expect(reviewerPasses(pr({ comments: [actions], checks: [ci] }), [{ kind: "comment", id: "comment:IC_3", fingerprint: "x", at: actions.createdAt, comment: actions, check: null }], soon))
+      .toMatchObject({ running: [], wait: null });
+    // every bot at work is named
+    const bots = ["alpha-reviewer", "beta-reviewer", "gamma-reviewer"];
+    const summaries = bots.map((author, index) => board({ id: `IC_B${index}`, author }));
+    const checks = bots.map((app) => ({ ...running, name: app, app }));
+    const ledger = Object.fromEntries(summaries.map((summary) => [`comment:${summary.id}`, { fp: summary.editedAt!, kind: "needs_changes" as const, confidence: 0.95, model: "jev-1.13.0" }]));
+    expect(reviewerPasses(pr({ comments: summaries, checks }), items({ comments: summaries, checks }, { judged: ledger }), soon).wait)
+      .toBe(`Waiting for @alpha-reviewer, @beta-reviewer and @gamma-reviewer to finish reviewing ${HEAD.slice(0, 7)}`);
   });
 
   test("a bot's review body the judge read as needing changes is sent; its overview otherwise is not", () => {

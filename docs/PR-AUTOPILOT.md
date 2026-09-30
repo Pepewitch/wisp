@@ -205,7 +205,8 @@ Auto-fix also sends the agent review feedback it has not seen yet. That covers:
 
 CI failures and review feedback go out together as one round, and share the
 five-round budget. Review feedback is not held back while CI is still
-running.
+running, except by a reviewer bot's own check (see "A reviewer at work"
+below).
 
 - **Whose words count.**
   - The PR owner's account counts, since reviewer agents post as you.
@@ -257,6 +258,15 @@ running.
 - **A burst goes as one.** A round waits two minutes after the newest
   feedback as well as after the task's turn, so a reviewer's many comments
   arrive together.
+- **A reviewer at work.** A bot that keeps one summary comment often marks
+  it "review in progress" when its check starts on a new head, leaving the
+  previous head's findings in it until its check ends. While a bot's own
+  check on the head is still running, a round with that bot's comment waits
+  for it ("Waiting for @bot to finish reviewing abc1234"), and then two
+  minutes more, since a bot may rewrite its summary a moment after its check
+  ends. It waits at most 20 minutes from when Wisp first saw the head, then
+  sends what is there. `github-actions` is never a reviewer at work: every
+  Actions job reports as it, so its checks are CI.
 - **Resolving threads.** The agent may resolve a thread started by you or by a
   bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
   anyone else's thread and never resolves it. It never resolves a thread it

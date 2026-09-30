@@ -20,6 +20,8 @@ export interface PrCheck {
   deployment?: boolean
   /** the GitHub App that reported it: pairs a bot's sticky comment with its verdict */
   app?: string
+  /** when a check run finished: a bot may rewrite its sticky comment a moment after */
+  completedAt?: string
 }
 
 const PASS = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"])

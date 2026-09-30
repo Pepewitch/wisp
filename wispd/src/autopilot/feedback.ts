@@ -15,11 +15,13 @@
  * - What those signals leave undecided (a bot's summary under no red check of
  *   its own, a bot's review body with no verdict) is feedback only when the
  *   optional review judge (judge.ts) read that version as asking for changes.
+ * - A round with a bot's comment waits while that bot's own check on the head
+ *   is still running (`reviewerPasses`): its words may still be the last head's.
  */
 import type { PrCheck } from "./checks"
 import { classifyCheck } from "./checks"
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "./github"
-import { listsFindings, needsChanges, type JudgeCandidate, type Judged, type Judgment } from "./judge"
+import { listsFindings, needsChanges, PASS_WAIT_MS, type JudgeCandidate, type Judged, type Judgment } from "./judge"
 import { parseVerdict } from "./verdict"
 
 /** Every post the agent makes on GitHub while auto-fix is on ends with this, so Wisp can tell its words from a reviewer's. */
@@ -385,6 +387,44 @@ export function pairedChecks(pr: PrSnapshot, items: FeedbackItem[], delivered: R
     for (const check of pr.checks) if (check.app && check.app === comment.author) names.add(check.name)
   }
   return names
+}
+
+/** "@a", "@a and @b", "@a, @b and @c". */
+const listed = (names: string[]): string => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`
+
+export interface ReviewerPasses {
+  /** bots whose comment would be sent while their own check on the head is still running */
+  running: string[]
+  /** when those bots' checks on the head finished: a bot may rewrite its summary a moment later */
+  finished: string[]
+  /** why the round waits for them; null once none is running, or after PASS_WAIT_MS on this head */
+  wait: string | null
+}
+
+/**
+ * Where the bots whose comments a round would send stand on this head. A
+ * reviewer that keeps one summary comment often marks it "review in progress"
+ * when its check starts, leaving the previous head's findings in it until the
+ * check ends: an edit that is new, but whose findings are not. The round
+ * waits for such a pass, though not forever: a check that never ends must not
+ * silence the rest.
+ */
+export function reviewerPasses(pr: PrSnapshot, items: FeedbackItem[], times: { headSeenMs: number; nowMs: number }): ReviewerPasses {
+  // every Actions job reports as github-actions: its check is CI, never one reviewer's pass
+  const bots = new Set(items.flatMap((item) =>
+    item.kind === "comment" && item.comment.bot && item.comment.author && item.comment.author !== "github-actions" ? [item.comment.author] : []))
+  const running = new Set<string>()
+  const finished: string[] = []
+  for (const check of pr.checks) {
+    if (!check.app || !bots.has(check.app)) continue
+    if (classifyCheck(check) === "pending") running.add(check.app)
+    else if (check.completedAt) finished.push(check.completedAt)
+  }
+  const names = [...running].sort()
+  const wait = names.length > 0 && times.nowMs - times.headSeenMs < PASS_WAIT_MS
+    ? `Waiting for ${listed(names.map((bot) => `@${bot}`))} to finish reviewing ${pr.head.slice(0, 7)}`
+    : null
+  return { running: names, finished, wait }
 }
 
 /**

@@ -172,7 +172,7 @@ const pullRequestFields = (number: string): string => `
         checkSuites(first: 100) { pageInfo { hasNextPage } nodes { status workflowRun { databaseId } } }
         statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
           __typename
-          ... on CheckRun { name status conclusion detailsUrl databaseId isRequired(pullRequestNumber: ${number})
+          ... on CheckRun { name status conclusion completedAt detailsUrl databaseId isRequired(pullRequestNumber: ${number})
             deployment { id } checkSuite { app { slug } workflowRun { databaseId event } } }
           ... on StatusContext { context state targetUrl isRequired(pullRequestNumber: ${number}) }
         } } }
@@ -246,6 +246,7 @@ function parseCheck(node: Record<string, unknown>): PrCheck {
     ...(typeof node.databaseId === "number" ? { checkRunId: node.databaseId } : {}),
     ...(run && typeof run.databaseId === "number" ? { run: { id: run.databaseId, event: str(run.event) } } : {}),
     ...(app ? { app } : {}),
+    ...(typeof node.completedAt === "string" && node.completedAt ? { completedAt: node.completedAt } : {}),
     deployment: isRecord(node.deployment),
   }
 }
