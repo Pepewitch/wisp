@@ -175,9 +175,13 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    `staticModels` is the documented exception for CLIs that enumerate none.
    `defaultModel` is Wisp's own default for new tasks. It loses to the user's
    `harnessDefaults` config and beats the CLI's own default, but only where
-   the installed CLI offers the id (a probed catalog that lacks it falls back
-   to the CLI's default). With `staticModels` it must be *in* that list
-   (validate enforces it). Set one only where the owner named it.
+   the installed CLI offers the id: a probed catalog that lacks it, or no
+   probe result yet (first boot), falls back to the CLI's default. With
+   `staticModels` there is no catalog to check, so the curated list is
+   trusted and every new task is sent the id; an older CLI would fail the
+   turn. With `staticModels` it must be *in* that list (validate enforces
+   it; a user list that omits an inherited default drops it with a warning,
+   and `defaultModel: null` clears it). Set one only where the owner named it.
 7. **`probe`** — out-of-turn reads (`context`, the harness's own `usage`).
    The strategy declares which commands it can answer; a surface never fakes
    the other one. The two JSON-RPC envelopes (`factory` adds droid's

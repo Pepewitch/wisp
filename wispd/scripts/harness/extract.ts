@@ -56,8 +56,11 @@ export function effortValuesFromRejection(text: string): string[] {
 
 /**
  * Which phrases still exist in the shipped binary? One streamed pass over the
- * executable, ASCII case-folded, with each chunk overlapping the last by the
- * longest phrase so a match across a chunk boundary is never lost.
+ * executable, decoded one byte per character (latin1) and lowercased, with
+ * each chunk overlapping the last by the longest phrase so a match across a
+ * chunk boundary is never lost. Markers must be ASCII: a non-ASCII phrase's
+ * UTF-8 bytes decode to different characters and would never match. An
+ * unreadable binary throws, and harness:snapshot reports that harness failed.
  *
  * This replaces one `grep -aiqF` per phrase: BSD grep's case-insensitive
  * search takes ~10s on a 240 MB binary, which hits the probe timeout. Reading

@@ -62,7 +62,7 @@ const input = (repoPath: string, extra: Partial<NewTaskInput> = {}): NewTaskInpu
 describe("creating a task without HTTP", () => {
   test("each refusal is named, and none leaves a task behind", async () => {
     const repo = await gitRepo();
-    const refusal = async (extra: Partial<NewTaskInput>, config = cfg) => createAndLaunchTask(input(repo, extra), config, adapters);
+    const refusal = async (extra: Partial<NewTaskInput>, config = cfg) => createAndLaunchTask(input(repo, extra), config, adapters, null);
     expect(await refusal({ harness: "nope" })).toMatchObject({ kind: "invalid", error: expect.stringContaining("unknown harness 'nope'") });
     expect(await refusal({ repoPath: join(repo, "missing") })).toMatchObject({ kind: "invalid", error: expect.stringContaining("does not exist") });
     expect(await refusal({ effort: "high" })).toMatchObject({ kind: "invalid", error: "harness 'quick' has no effort support" });
@@ -80,6 +80,7 @@ describe("creating a task without HTTP", () => {
       input(repo, { prompt: "the caller's words", firstTurnPrompt: "the caller's words\n\nplus a suffix", actor: "agent:orch9" }),
       cfg,
       adapters,
+      null,
     );
     if ("error" in created) throw new Error(created.error);
     expect(created.task).toMatchObject({ title: "the caller's words", state: "creating", repo_path: repo });
@@ -89,7 +90,7 @@ describe("creating a task without HTTP", () => {
     expect(turnsFor(created.task.id)[0]).toMatchObject({ prompt: "the caller's words\n\nplus a suffix", status: "done" });
 
     // one checkout, one local task
-    const second = await createAndLaunchTask(input(repo), cfg, adapters);
+    const second = await createAndLaunchTask(input(repo), cfg, adapters, null);
     expect(second).toMatchObject({ kind: "conflict", error: expect.stringContaining(`task ${created.task.id} is already running locally`) });
     expect(tasksIn(repo).map((task) => task.id)).toEqual([created.task.id]);
   });
@@ -100,6 +101,7 @@ describe("creating a task without HTTP", () => {
       input(repo, { mode: "worktree", autopilot: { autoMerge: true, autoFix: false }, actor: "desktop" }),
       cfg,
       adapters,
+      null,
     );
     if ("error" in created) throw new Error(created.error);
     expect(created.autopilot).toMatchObject({ autoMerge: true, autoFix: false });

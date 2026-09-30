@@ -33,7 +33,7 @@ export interface NewTaskInput {
   /** what the first turn is sent, when it is more than `prompt` (a suffix prompt) */
   firstTurnPrompt?: string;
   harness: string;
-  /** explicit values win over config harnessDefaults, then the harness's own */
+  /** explicit values win over config harnessDefaults, then Wisp's default, then the harness's own */
   model?: string;
   effort?: string;
   fast: boolean;
@@ -153,7 +153,8 @@ export async function createAndLaunchTask(
   input: NewTaskInput,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
-  models?: ModelProbeCache,
+  /** The daemon's probe cache; null only where there is none (Wisp's default then never applies to a probed harness). */
+  models: ModelProbeCache | null,
 ): Promise<NewTask | NewTaskRefusal> {
   const { repoPath, harness } = input;
   const def = adapters[harness];
@@ -162,6 +163,8 @@ export async function createAndLaunchTask(
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
   // Explicit values win; then config harnessDefaults; then Wisp's default
   // where this install offers it; then the harness's own defaults (null).
+  // A probed harness with no snapshot yet (first boot, or a cache dropped by
+  // an adapter change) gets the CLI's own default until the probe lands.
   const resolved = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
   const model = resolved.model ?? wispDefaultModel(def, models?.snapshot(harness).models?.list ?? null);
   const effort = resolved.effort;

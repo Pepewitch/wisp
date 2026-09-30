@@ -134,6 +134,14 @@ describe("extractors", () => {
     }
   });
 
+  test("every declared marker is ASCII, which the one-byte-per-character scan requires", () => {
+    for (const [name, def] of Object.entries(BUILTIN_ADAPTERS)) {
+      for (const marker of [...(def.limitMarkers ?? []), ...(def.transientMarkers ?? [])]) {
+        expect(/^[\x20-\x7e]+$/.test(marker), `${name}: ${marker}`).toBe(true);
+      }
+    }
+  });
+
   test("marker search finds a phrase split across a chunk boundary", async () => {
     const dir = mkdtempSync(join(tmpdir(), "wisp-markers-"));
     try {

@@ -142,9 +142,14 @@ export interface AdapterDef {
    * harnessDefaults wins over it; it wins over the CLI's own default, but
    * only where the installed CLI offers the id (wispDefaultModel), so an
    * older CLI keeps its own default instead of failing on an unknown model.
+   * That check needs a probed catalog: with staticModels (claude) the curated
+   * list is the only evidence, so an installed CLI older than the default is
+   * still sent it — keep a static default no newer than staticModels itself.
    * Omit when the harness should pick: asserting a default is a product
    * statement, and wisp only makes it where the owner named one. With
-   * staticModels, validateAdapter requires the value to be IN that list.
+   * staticModels, validateAdapter requires the value to be IN that list; a
+   * user list that drops an inherited default drops the default too, and
+   * `defaultModel: null` in adapters.json clears it.
    */
   defaultModel?: string;
   /**

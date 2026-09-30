@@ -997,7 +997,7 @@ describe("validateAdapters (a prior audit)", () => {
   test("defaultModel must be a non-empty string from staticModels", () => {
     const base = { bin: "x", exec: [], parse: { format: "text" } as const };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, defaultModel: "" } }))).toBe(
-      "adapters.json: adapter 'foo'.defaultModel must be a non-empty string, got string",
+      "adapters.json: adapter 'foo'.defaultModel must be a non-empty string or null, got string",
     );
     expect(
       thrownMessage(() => validateAdapters({ foo: { ...base, staticModels: ["a"], defaultModel: "b" } })),

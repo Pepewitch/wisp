@@ -948,7 +948,7 @@ describe("API and CLI", () => {
   test("a create request says what to arm, and a bad one is refused before any task exists", async () => {
     const create = (body: Record<string, unknown>) => createTaskRoute(new Request("http://wisp.test/api/tasks", {
       method: "POST", body: JSON.stringify({ repoPath: "/tmp/nowhere", prompt: "p", harness: "fake", ...body }),
-    }), loadConfig(), {});
+    }), loadConfig(), {}, null);
     expect((await create({ autopilot: "yes" })).status).toBe(400);
     expect((await create({ autopilot: { autoMerge: "on" } })).status).toBe(400);
     const local = await create({ mode: "local", autopilot: { autoMerge: true } });

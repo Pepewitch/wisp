@@ -86,7 +86,7 @@ export function renderLivePins(facts: HarnessFacts, installed: string | null): s
   return out;
 }
 
-async function snapshotOne(facts: HarnessFacts, write: boolean): Promise<{ lines: string[]; drifted: boolean }> {
+async function snapshotOne(facts: HarnessFacts, write: boolean): Promise<{ lines: string[]; drifted: boolean; failed?: boolean }> {
   const def = BUILTIN_ADAPTERS[facts.harness];
   const extractor = EXTRACTORS[facts.harness];
   if (!def || !extractor) {
@@ -97,7 +97,14 @@ async function snapshotOne(facts: HarnessFacts, write: boolean): Promise<{ lines
     return { lines: [`${facts.harness} — skipped: ${installed.error}`], drifted: false };
   }
   const binPath = Bun.which(facts.bin);
-  const extracted = await extractor({ def, binPath, spawn: bunModelProbeSpawn });
+  let extracted: Record<string, Surface>;
+  try {
+    extracted = await extractor({ def, binPath, spawn: bunModelProbeSpawn });
+  } catch (error) {
+    // one harness failing must not abort the rest, or hide what they printed
+    const message = error instanceof Error ? error.message : String(error);
+    return { lines: [`${facts.harness} — FAILED, facts not written: ${message}`], drifted: false, failed: true };
+  }
   const next = mergeSurfaces(facts, extracted, installed.version);
   const changes = diffFacts(facts, next, def);
   const firstCaptured = Object.entries(next.surfaces)
@@ -125,16 +132,19 @@ async function main(): Promise<void> {
   }
 
   let drifted = false;
+  let failed = false;
   const blocks: string[][] = [];
   for (const facts of selected) {
     // re-read from disk so a partial earlier write cannot skew the diff
     const current = loadFacts(facts.harness);
     const result = await snapshotOne(current, write);
     drifted ||= result.drifted;
+    failed ||= result.failed === true;
     blocks.push(result.lines);
   }
 
   console.log(blocks.map((b) => b.join("\n")).join("\n\n"));
+  if (failed) process.exit(1);
   if (!write && drifted) {
     console.log("\n--check: committed facts are stale. Re-run without --check, then reconcile the adapters.");
     process.exit(1);

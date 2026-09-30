@@ -140,7 +140,7 @@ export function createTaskRoute(
   req: Request,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
-  models?: ModelProbeCache,
+  models: ModelProbeCache | null,
 ): Promise<Response> {
   return (async () => {
     const parsed = await jsonObjectBody(req);

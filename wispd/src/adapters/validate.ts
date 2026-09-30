@@ -162,6 +162,38 @@ function validateFastMode(raw: unknown, label: string): AdapterDef["fastMode"] {
   return { fast, standard, argv };
 }
 
+/**
+ * `defaultModel`, which a builtin may carry as Wisp's own default. A user list
+ * that replaces the builtin's `staticModels` without that id drops the
+ * inherited default (with a warning) rather than failing the boot, and
+ * `defaultModel: null` clears it. A default the user names must be in their list.
+ */
+function applyDefaultModel(
+  raw: Record<string, unknown>,
+  merged: AdapterDef,
+  label: string,
+  warn: (msg: string) => void,
+): void {
+  if (raw.defaultModel === null) {
+    delete merged.defaultModel;
+  } else if (raw.defaultModel !== undefined) {
+    if (typeof raw.defaultModel !== "string" || raw.defaultModel.length === 0) {
+      throw new Error(`${label}.defaultModel must be a non-empty string or null, got ${typeName(raw.defaultModel)}`);
+    }
+    merged.defaultModel = raw.defaultModel;
+  } else if (raw.staticModels !== undefined && merged.defaultModel !== undefined && !merged.staticModels?.includes(merged.defaultModel)) {
+    warn(
+      `${label}: staticModels does not include the inherited default '${merged.defaultModel}' — dropping it; set defaultModel to one of your models to pin one`,
+    );
+    delete merged.defaultModel;
+  }
+  if (merged.defaultModel !== undefined && merged.staticModels && !merged.staticModels.includes(merged.defaultModel)) {
+    throw new Error(
+      `${label}.defaultModel '${merged.defaultModel}' is not in staticModels — the default must be one of the offered models`,
+    );
+  }
+}
+
 function applyCoreFields(
   name: string,
   raw: Record<string, any>,
@@ -203,17 +235,7 @@ function applyCoreFields(
     merged.briefs = raw.briefs;
   }
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);
-  if (raw.defaultModel !== undefined) {
-    if (typeof raw.defaultModel !== "string" || raw.defaultModel.length === 0) {
-      throw new Error(`${label}.defaultModel must be a non-empty string, got ${typeName(raw.defaultModel)}`);
-    }
-    merged.defaultModel = raw.defaultModel;
-  }
-  if (merged.defaultModel !== undefined && merged.staticModels && !merged.staticModels.includes(merged.defaultModel)) {
-    throw new Error(
-      `${label}.defaultModel '${merged.defaultModel}' is not in staticModels — the default must be one of the offered models`,
-    );
-  }
+  applyDefaultModel(raw, merged, label, warn);
   if (raw.allowEmptyResult !== undefined) {
     if (typeof raw.allowEmptyResult !== "boolean") {
       throw new Error(`${label}.allowEmptyResult must be a boolean, got ${typeName(raw.allowEmptyResult)}`);
@@ -449,6 +471,9 @@ function validateAdapter(
   applyEventFields(raw, merged, label);
   applyDiscoveryFields(raw, merged, label);
   applyCompactFields(raw, merged, label);
+  if (merged.defaultModel !== undefined && !merged.staticModels?.length && !merged.modelDiscovery) {
+    warn(`${label}: defaultModel '${merged.defaultModel}' has no effect without staticModels or modelDiscovery`);
+  }
   const liveIssue = liveCommandIssue(merged);
   if (liveIssue) {
     throw new Error(`${label}.liveInput '${merged.liveInput}' is incompatible with exec: ${liveIssue}`);
