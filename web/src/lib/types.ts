@@ -33,6 +33,7 @@ export type {
   AttachResponse,
   BackgroundGroup,
   CleanupSummary,
+  HarnessBackgroundTask,
   CompactAnswer,
   SearchResponse,
   SearchSnippet,

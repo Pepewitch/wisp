@@ -3,7 +3,7 @@ import { emit } from "./events";
 import { db, getTask, getTurn } from "./store";
 import { processNames, processSnapshot, sameProcessConfirmed, type GroupMember, type ProcessMember } from "./process-snapshot";
 import { processGroupAlive, signalProcessGroup } from "./process-tree";
-import type { BackgroundGroup, BackgroundWork } from "./types";
+import type { BackgroundGroup, BackgroundWork, HarnessBackgroundTask } from "./types";
 
 interface GroupRow {
   turn_id: number; task_id: string; pgid: number; boot_id: string | null; members_json: string;
@@ -35,6 +35,14 @@ const liveNames = new Map<number, string[]>();
 const announced = new Set<number>();
 /** turn id → the pid set already named, so an unchanged group is never re-named. */
 const namedPids = new Map<number, string>();
+/**
+ * Settled turn id → what the harness process still holding its group says it
+ * is running. Set only while Wisp deliberately keeps that process alive past
+ * the turn's answer (live-input's lingering Claude process). Memory only, like
+ * `liveNames`: a restarted daemon no longer owns the process's input, so it
+ * reports the group as ordinary background work until it ends.
+ */
+const harnessTasks = new Map<number, () => HarnessBackgroundTask[]>();
 let refreshing: Promise<void> = Promise.resolve();
 const TURN_LAUNCH_CLOCK_SLOP_MS = 10_000;
 
@@ -110,6 +118,7 @@ function settling(turn: ReturnType<typeof getTurn>, settleMs: number): boolean {
 function describe(group: GroupRow[]): BackgroundGroup[] {
   return group.map(row => {
     const turn = getTurn(row.turn_id);
+    const tasks = harnessTasks.get(row.turn_id)?.();
     return {
       turn: turn?.n ?? row.turn_id,
       pgid: row.pgid,
@@ -118,8 +127,43 @@ function describe(group: GroupRow[]): BackgroundGroup[] {
       state: row.state === "running" ? "running" as const : "unknown" as const,
       stopRequested: row.stop_requested !== 0,
       names: liveNames.get(row.turn_id) ?? [],
+      ...(tasks ? { tasks } : {}),
     };
   });
+}
+
+/**
+ * Name what a harness process kept alive past `turnId`'s answer is running.
+ * Its group is then reported at once, not after the settle window: that
+ * window exists for stragglers that die with their turn, and this process was
+ * kept on purpose.
+ */
+export function setHarnessBackground(turnId: number, tasks: () => HarnessBackgroundTask[]): void {
+  harnessTasks.set(turnId, tasks);
+}
+
+export function clearHarnessBackground(turnId: number): void {
+  harnessTasks.delete(turnId);
+}
+
+/**
+ * Hand a live group to the next turn its process serves. One harness process
+ * can span several turn rows (a lingering Claude process takes the next
+ * message as a new turn), and the group must follow it: left on the settled
+ * turn, it would read as background work beside the turn that is running.
+ * Call inside the transaction that creates `toTurnId`.
+ */
+export function transferProcessGroup(fromTurnId: number, toTurnId: number): void {
+  db.query("UPDATE turn_process_groups SET turn_id = ? WHERE turn_id = ?").run(toTurnId, fromTurnId);
+  if (localGroups.delete(fromTurnId)) localGroups.add(toTurnId);
+  const names = liveNames.get(fromTurnId);
+  if (names) liveNames.set(toTurnId, names);
+  const pids = namedPids.get(fromTurnId);
+  if (pids) namedPids.set(toTurnId, pids);
+  liveNames.delete(fromTurnId);
+  namedPids.delete(fromTurnId);
+  announced.delete(fromTurnId);
+  harnessTasks.delete(fromTurnId);
 }
 
 /**
@@ -133,7 +177,7 @@ export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
   const all = rows(taskId);
   const background = all.filter(row => {
     const turn = getTurn(row.turn_id);
-    return turn?.status !== "running" && !settling(turn, settleMs);
+    return turn?.status !== "running" && (harnessTasks.has(row.turn_id) || !settling(turn, settleMs));
   });
   if (stops.has(taskId)) return { state: "stopping", groups: all.length, details: describe(all) };
   const details = describe(background);
@@ -240,7 +284,7 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
       // the state comparison below would never announce it. Emit once when it
       // crosses, or the badge it earned would wait for an unrelated event.
       const reportable = state !== "none" && original?.status !== "running" && !settling(original, BACKGROUND_SETTLE_MS);
-      if (state === "none") { liveNames.delete(row.turn_id); namedPids.delete(row.turn_id); announced.delete(row.turn_id); }
+      if (state === "none") { liveNames.delete(row.turn_id); namedPids.delete(row.turn_id); announced.delete(row.turn_id); harnessTasks.delete(row.turn_id); }
       // Only groups the report will actually show are worth a naming call.
       else if (reportable) living.push({ turnId: row.turn_id, pids: members.map(member => member.pid) });
       const crossed = reportable && !announced.has(row.turn_id);

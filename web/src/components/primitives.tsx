@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 
-import { useTick } from "@/hooks/useTick"
-import { backgroundDetail, backgroundLabel, STATE_DOT, STATE_LABEL } from "@/lib/state"
+import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
+import { backgroundLabel, STATE_DOT, STATE_LABEL } from "@/lib/state"
 import type { ApiTask, TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -49,9 +49,7 @@ export function StateDot({
   const word = [STATE_LABEL[state], label, workflow ? "Workflow attached" : null].filter(Boolean).join(" · ")
   // The word says something is running; the detail says what, so the reader
   // can judge Stop without guessing. Screen readers get the same text.
-  // Subscribes only when there IS background work, so the thirty idle dots in
-  // a sidebar start no timer and still read a valid cached instant.
-  const detail = backgroundDetail(background, useTick(Boolean(label)))
+  const detail = useBackgroundDetail(background)
   const title = detail ? `${word}\n${detail}` : word
   return (
     <span

@@ -38,7 +38,7 @@ import {
   undeliveredOutbox,
   updateQueuedTaskMessage,
 } from "../src/store";
-import { displayStateWord, turnCaptureState, turnDiagnosticState } from "../src/types";
+import { backgroundSummary, displayStateWord, turnCaptureState, turnDiagnosticState, type ApiTask, type BackgroundGroup } from "../src/types";
 
 function makeTask(over: Partial<Parameters<typeof createTask>[0]> = {}) {
   return createTask({
@@ -536,5 +536,15 @@ describe("the honest failure word (Theme B, Q12)", () => {
     expect(displayStateWord("done", 0, true)).toBe("done");
     expect(displayStateWord("running", null, false)).toBe("running");
     expect(displayStateWord("needs-input", 0, true)).toBe("needs-input");
+  });
+
+  // `ls` says what the web says: the harness's own tasks where it named them, else the groups
+  test("background work is counted the way the web counts it", () => {
+    const group: BackgroundGroup = { turn: 2, pgid: 9, processes: 2, since: null, state: "running", stopRequested: false, names: [] };
+    const task = (details: BackgroundGroup[]) => ({ background: { state: "running", groups: details.length, details } }) as unknown as ApiTask;
+    expect(backgroundSummary(task([group]))).toBe(" · 1 background process running");
+    const kept = { ...group, tasks: [1, 2].map((turn) => ({ name: `server ${turn}`, kind: "local_bash", turn, since: "2026-09-30T00:00:00.000Z" })) };
+    expect(backgroundSummary(task([kept]))).toBe(" · 2 background processes running");
+    expect(backgroundSummary({ background: { state: "none", groups: 0, details: [] } } as unknown as ApiTask)).toBe("");
   });
 });

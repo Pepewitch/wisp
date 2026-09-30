@@ -2,6 +2,7 @@ import { ActivityList } from "@/components/activity-list"
 import { ConnectionGallerySpecimen } from "@/components/connection-gallery-specimen"
 import {
   ACCENTS,
+  LINGERING_BACKGROUND,
   PALETTE_GROUPS,
   PROBE_CONTEXT_ANSWER,
   ROW_PR_SPECIMENS,
@@ -143,6 +144,24 @@ function ThemeSpecimen() {
   )
 }
 
+/**
+ * Background work on a finished task. The last row is the answer being in
+ * while the dev server the agent started is still up: hover its ring.
+ */
+function BackgroundRingSpecimens() {
+  const rows = [...(["running", "stopping", "unknown"] as const).map((state) => ({ state, groups: 1 })), LINGERING_BACKGROUND]
+  return (
+    <div className="mt-4 grid gap-2.5">
+      {rows.map((background, index) => (
+        <div key={index} className="flex items-center gap-2.5 text-[12px] text-fg-secondary">
+          <StateDot state="done" background={background} />
+          <span>Done · {backgroundLabel(background)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function FoundationSpecimens() {
   const theme = useTheme()
   return (
@@ -261,14 +280,7 @@ function FoundationSpecimens() {
               </div>
             ))}
           </div>
-          <div className="mt-4 grid gap-2.5">
-            {(["running", "stopping", "unknown"] as const).map((state) => (
-              <div key={state} className="flex items-center gap-2.5 text-[12px] text-fg-secondary">
-                <StateDot state="done" background={{ state, groups: 1 }} />
-                <span>Done · {backgroundLabel({ state, groups: 1 })}</span>
-              </div>
-            ))}
-          </div>
+          <BackgroundRingSpecimens />
           <p className="mt-5 border-t border-border pt-4 text-[11.5px] leading-relaxed text-muted-foreground">
             Every marker is a circle. A FILLED dot is the agent's own outcome; a RING is ambient work
             outside the turn — background processes above, archive cleanup in the sidebar. Unknown takes the

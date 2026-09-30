@@ -21,20 +21,18 @@ import { LOG_DIR, transcriptBudgetBytes, type WispConfig } from "./config";
 import {
   closeLiveInput,
   configureLiveTurn,
-  forgetLiveTurn,
   legacyLiveOutput,
+  liveClaudeProcess,
   liveCommand,
   LiveTransportError,
-  pendingDelivery,
   writeImageEnvelope,
   type LiveOutputSink,
 } from "./live-input";
 import { assertExecutableAllowed } from "./launch-policy";
 import { assertTaskNotStopping, interruptForMessage, interruptTaskTurn, isTaskStopping, turnFinalized, waitForInterrupt } from "./turn-interrupt";
 import { assertTaskProcessesEnded, backgroundWork, processStop, processStopPending, recordProcessGroup, recordedGroupRebooted, refreshProcessGroups, stopRecordedGroups, withProcessStop } from "./task-processes";
-import { closeDescriptors, fileOverCap, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
+import { closeDescriptors, pidIdentity, startReAdoptionPoll, type PidIdentity } from "./process-watch";
 import { signalProcessTree } from "./process-tree";
-import { settlePipes } from "./pipe-drain";
 import { processStartTime } from "./procid";
 import {
   db,
@@ -44,7 +42,6 @@ import {
   getTask,
   getTaskContext,
   getTaskMessage,
-  getTurn,
   listTasks,
   markTaskMessageDelivered,
   nextTurnNumber,
@@ -63,7 +60,28 @@ import {
   type TaskAgentSelection,
 } from "./store";
 import { recordAudit } from "./task-audit";
-import { TurnRecorder } from "./recording/turn-recorder";
+import { drainLines, TurnRecorder } from "./recording/turn-recorder";
+import {
+  agentOf,
+  adoptable,
+  adoptTurn,
+  endLingeringProcess,
+  failLiveTurn,
+  followingSink,
+  killChildTree,
+  KILL_GRACE_MS,
+  lingerHooks,
+  lingeringProcess,
+  liveChildren,
+  FORCE_ARCHIVE_DETAIL,
+  FORCE_ARCHIVE_ESCALATED_DETAIL,
+  killedForArchive,
+  sameAgent,
+  turnProcesses,
+  watchTurn,
+  type TurnProcess,
+  type TurnSlot,
+} from "./turn-process";
 import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
@@ -88,21 +106,6 @@ import type { SendResult, Task, TaskMessage, Turn } from "./types";
 export { startStuckLoop, stuckTick } from "./stuck";
 export { finalizeTurn } from "./turn-finalize";
 export { taskEnv } from "./turn-input";
-/** Live children by turn id — for interrupts. Re-adopted turns (post-restart) fall back to pid. */
-const liveChildren = new Map<number, ReturnType<typeof Bun.spawn>>();
-/** Grace period between SIGTERM and SIGKILL escalation (a prior audit). */
-const KILL_GRACE_MS = 5000;
-/** How long a turn's output pipes may stay open after the harness exits (see settlePipes). */
-const PIPE_DRAIN_GRACE_MS = 2000;
-/** Interrupt details written by force-archive, and the only reading of them. */
-const FORCE_ARCHIVE_DETAIL = "turn interrupted by force-archive";
-const FORCE_ARCHIVE_ESCALATED_DETAIL = `${FORCE_ARCHIVE_DETAIL} (escalated to SIGKILL after SIGTERM was trapped)`;
-
-/** Was this turn killed to clear the way for an archive? Then its queue stays put. */
-function killedForArchive(turnId: number): boolean {
-  return getTurn(turnId)?.interrupt_detail?.startsWith(FORCE_ARCHIVE_DETAIL) === true;
-}
-
 export { pidIdentity };
 export type { PidIdentity };
 
@@ -135,11 +138,12 @@ function startCapture(
   outFd: number,
   errFd: number,
   attachments: StoredAttachment[],
+  stderrTo?: () => LiveOutputSink,
 ): StartedCapture {
   if (!enabled) return { recorder: null, sink: legacyLiveOutput(outFd), stderrPump: Promise.resolve() };
   const recorder = new TurnRecorder(turnId, def, cfg, outFd, errFd);
   if (attachments.length > 0) recorder.recordNote(formatAttachNote(attachments));
-  return { recorder, sink: recorder, stderrPump: recorder.drain(child.stderr, "stderr") };
+  return { recorder, sink: recorder, stderrPump: drainLines(child.stderr, "stderr", stderrTo ? followingSink(stderrTo) : recorder) };
 }
 
 /** Who wrote a queued message, for its framing at delivery (turn-input framedMessage); a direct turn is the person's. */
@@ -187,15 +191,25 @@ export function startTurn(
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
   const command = n > 1 && message.trimStart().startsWith("/");
+  // A Claude process still alive for background work it started takes this
+  // turn itself: a second process would split its session, and ending it
+  // would kill the work it was kept for.
+  const lingering = lingeringProcess(task);
   const autopilot = standingNotes(task.id, n, command);
   // A task brief is asked for once per eligible turn, through this same
   // standing-note path: never in the user's message, never on a steer, and
   // never in front of a command. Its binding is chosen now, before the spawn,
-  // because the turn row it names does not exist until after it.
-  const brief = pendingBriefRun(task.id, def, command);
+  // because the turn row it names does not exist until after it. A reused
+  // process keeps the environment it was spawned with, so it cannot carry a
+  // new binding; the brief waits for the next spawned turn.
+  const brief = lingering ? null : pendingBriefRun(task.id, def, command);
   const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
   const framed = framedMessage(messageOrigin(sourceMessageId), message);
   const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
+  if (lingering) {
+    adoptTurn(lingering, task, n, message, prompt, attachments, autopilot);
+    return;
+  }
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${task.id}-turn${n}.err.log`);
   // Only IMAGES have an argv/stdin channel; pdf, text and video reached the
@@ -288,6 +302,7 @@ export function startTurn(
   // this process from a stranger that got the same pid. null (child already
   // exited before ps could see it) degrades to bare-liveness re-adoption.
   let turnId: number;
+  const pidStartTime = processStartTime(child.pid);
   try {
     turnId = db.transaction(() => {
       const id = createTurn(
@@ -296,7 +311,7 @@ export function startTurn(
         message,
         child.pid,
         outPath,
-        processStartTime(child.pid),
+        pidStartTime,
         // the manifest is written with the turn row, in the same sync block as the
         // spawn: a crash between them would otherwise leave bytes on disk that no
         // turn admits to owning
@@ -317,54 +332,84 @@ export function startTurn(
     throw error;
   }
   liveChildren.set(turnId, child);
-  const capture = startCapture(recorderEligible, turnId, def, cfg, child, outFd, errFd, attachments);
-  const { recorder, sink, stderrPump } = capture;
-  // stderr must be drained independently of the stdout protocol pump. A noisy
-  // stderr can otherwise fill its OS pipe and stall an otherwise healthy turn.
-  if (recorder) {
-    void stderrPump.catch((error) =>
-      failLiveTurn(child, turnId, sink, new LiveTransportError("live output pump", error)));
-  }
-  let outputPump = Promise.resolve();
-  if (isLive) {
-    try {
-      outputPump = configureLiveTurn({
-        child,
-        task,
-        def,
-        turnId,
-        turn: n,
-        recorder: sink,
-        prompt,
-        attachments,
-        initialMessageId: sourceMessageId ?? `wisp-${task.id}-turn-${n}`,
-        claudeStrategy: stdinStrategy,
-      });
-    } catch (error) {
-      failLiveTurn(child, turnId, sink, error);
-    }
-    void outputPump.catch((error) => failLiveTurn(child, turnId, sink, error));
-  }
+  const slot: TurnSlot = { turnId, n, outPath, errPath, fds: [outFd, errFd], recorder: null, sink: legacyLiveOutput(outFd) };
+  const proc: TurnProcess = {
+    taskId: task.id, child, def, cfg, agent: agentOf(task), pidStartTime, slot, settled: false, ending: false,
+    startQueue: () => void startNextQueuedMessage(task.id, adapters, cfg),
+  };
+  const { outputPump, stderrPump } = attachCapture(proc, task, {
+    recorderEligible,
+    attachments,
+    prompt,
+    initialMessageId: sourceMessageId ?? `wisp-${task.id}-turn-${n}`,
+    claudeStrategy: isLive ? stdinStrategy : undefined,
+  });
   if (stdinStrategy && !isLive) writeImageEnvelope(child, stdinStrategy, def, prompt, attachments);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   // Detached: the turn settles on its own. A watcher that fails must still
   // leave a trace, and must never reject unhandled. Recoverable: a daemon
   // that is exiting leaves the harness running for boot recovery to re-adopt.
-  void backgroundPass(`turn watcher for task ${task.id} turn ${n}`, () => watchTurn(
-    child,
-    task.id,
-    turnId,
-    def,
-    cfg,
-    outPath,
-    errPath,
-    [outFd, errFd],
-    outputPump,
-    stderrPump,
-    recorder,
-    adapters,
-  ), { recoverable: true });
+  void backgroundPass(`turn watcher for task ${task.id} turn ${n}`, () => watchTurn(proc, outputPump, stderrPump), { recoverable: true });
+}
+
+/**
+ * Capture a freshly spawned process's output and, for a live harness, start
+ * its protocol. Only a recorder-captured Claude turn can outlive its answer:
+ * its process stays for the background work it started and takes the next
+ * turn, so its stderr follows it from turn to turn.
+ */
+function attachCapture(
+  proc: TurnProcess,
+  task: Task,
+  input: {
+    recorderEligible: boolean;
+    attachments: StoredAttachment[];
+    prompt: string;
+    initialMessageId: string;
+    claudeStrategy: ReturnType<typeof inputStrategyFor>;
+  },
+): { outputPump: Promise<void>; stderrPump: Promise<void> } {
+  const { child, def, cfg, slot } = proc;
+  const isLive = Boolean(def.liveInput);
+  const lingers = def.liveInput === "claude-stream-json" && input.recorderEligible;
+  const stderrTo = lingers ? () => proc.claude?.output() ?? proc.slot.sink : undefined;
+  const capture = startCapture(input.recorderEligible, slot.turnId, def, cfg, child, slot.fds[0]!, slot.fds[1]!, input.attachments, stderrTo);
+  const { recorder, sink, stderrPump } = capture;
+  slot.recorder = recorder;
+  slot.sink = sink;
+  // stderr must be drained independently of the stdout protocol pump. A noisy
+  // stderr can otherwise fill its OS pipe and stall an otherwise healthy turn.
+  // A failure is the turn's the process is serving when it happens.
+  if (recorder) {
+    void stderrPump.catch((error) =>
+      failLiveTurn(child, proc.slot.turnId, proc.slot.sink, new LiveTransportError("live output pump", error)));
+  }
+  let outputPump = Promise.resolve();
+  if (!isLive) return { outputPump, stderrPump };
+  try {
+    outputPump = configureLiveTurn({
+      child,
+      task,
+      def,
+      turnId: slot.turnId,
+      turn: slot.n,
+      recorder: sink,
+      prompt: input.prompt,
+      attachments: input.attachments,
+      initialMessageId: input.initialMessageId,
+      claudeStrategy: input.claudeStrategy,
+      linger: lingers ? lingerHooks(proc) : undefined,
+    });
+    if (lingers) {
+      proc.claude = liveClaudeProcess(task.id);
+      turnProcesses.set(task.id, proc);
+    }
+  } catch (error) {
+    failLiveTurn(child, slot.turnId, sink, error);
+  }
+  void outputPump.catch((error) => failLiveTurn(child, proc.slot.turnId, proc.slot.sink, error));
+  return { outputPump, stderrPump };
 }
 
 /**
@@ -459,7 +504,7 @@ async function deliverQueuedMessage(
  * took the turn.
  */
 function warnIfNothingWillRun(taskId: string, messageId: string, started: TaskMessage | null): void {
-  if (started || hasRunningTurn(taskId)) return;
+  if (started || hasRunningTurn(taskId) || turnProcesses.has(taskId)) return;
   console.warn(`[wisp] task ${taskId}: message ${messageId} stays queued with no turn running`);
 }
 
@@ -501,6 +546,17 @@ export function startNextQueuedMessage(
   // Recovery may find a legacy/incomplete row whose denormalized turn_count
   // lagged the actual turns table. Never reuse a turn number.
   const turn = nextTurnNumber(taskId, task.turn_count);
+  const lingering = turnProcesses.get(taskId);
+  if (lingering) {
+    // Still settling its last answer, or exited and not yet let go by its
+    // watcher: either one starts the queue itself when it is done.
+    if (!adoptable(lingering)) return null;
+    const agent = { context_n: message.context_n, harness: message.harness, model: message.model, effort: message.effort, fast: message.fast === 1 };
+    if (!sameAgent(lingering.agent, agent)) {
+      endLingeringProcess(lingering, `turn ${turn} asks for another agent`);
+      return null;
+    }
+  }
   const current: Task = {
     ...task,
     turn_count: turn - 1,
@@ -534,74 +590,6 @@ export function startNextQueuedMessage(
     }
     return null;
   }
-}
-
-async function watchTurn(
-  child: ReturnType<typeof Bun.spawn>,
-  taskId: string,
-  turnId: number,
-  def: AdapterDef,
-  cfg: WispConfig,
-  outPath: string,
-  errPath: string,
-  fds: number[],
-  outputPump: Promise<void> = Promise.resolve(),
-  stderrPump: Promise<void> = Promise.resolve(),
-  recorder: TurnRecorder | null = null,
-  adapters: Readonly<Record<string, AdapterDef>>,
-): Promise<void> {
-  let capTermAt: number | null = null;
-  let capChecking = false;
-  const capTick = async (): Promise<void> => {
-    if (capChecking) return;
-    capChecking = true;
-    try {
-      const budget = transcriptBudgetBytes(cfg);
-      const hit = await fileOverCap([outPath, errPath], budget);
-      if (!hit) return;
-      if (capTermAt === null) {
-        capTermAt = Date.now();
-        console.error(`[wisp] task ${taskId}: log cap exceeded (${hit}), killing turn`);
-        recordKillReason(turnId, `log cap exceeded (${budget} bytes)`);
-        // The whole group, for the same reason the re-adoption poll's cap kill
-        // signals one: the harness's own children are what filled this log, and
-        // killing only the leader leaves them writing to it (ENG-03). This is
-        // the common path — a non-recorder turn owned by THIS daemon.
-        killChildTree(child, "SIGTERM");
-      } else if (Date.now() - capTermAt >= KILL_GRACE_MS && childRunning(child)) {
-        // M3: a harness that traps SIGTERM must not keep the turn alive forever
-        console.error(`[wisp] task ${taskId}: turn survived SIGTERM, escalating to SIGKILL`);
-        recordKillReason(turnId, `log cap exceeded (${budget} bytes); escalated to SIGKILL after SIGTERM was trapped`);
-        killChildTree(child, "SIGKILL");
-      }
-    } finally {
-      capChecking = false;
-    }
-  };
-  // detached tick, same idiom as `void watchTurn`: interval callbacks can't be awaited
-  const capTimer = recorder ? null : setInterval(() => void backgroundPass(`log cap check for task ${taskId}`, capTick), 5000);
-  const exitCode = await child.exited;
-  if (capTimer !== null) clearInterval(capTimer);
-  await refreshProcessGroups(taskId, turnId);
-  await waitForInterrupt(turnId);
-  liveChildren.delete(turnId);
-  forgetLiveTurn(taskId, turnId);
-  await closeLiveInput(taskId, turnId);
-  await pendingDelivery(taskId)?.catch(() => {});
-  // Bounded: a process the harness left behind can hold its pipes open for as
-  // long as it lives, and the turn must not wait on it to settle.
-  if (await settlePipes([child.stdout, child.stderr], [outputPump, stderrPump], PIPE_DRAIN_GRACE_MS)) {
-    console.error(`[wisp] task ${taskId}: turn ${turnId} settled without waiting for a process that still holds its output open`);
-    recorder?.recordNote("· the harness exited while a process it started still held its output open; the turn settled without waiting for it");
-  }
-  const recorderOutcome = recorder?.finish();
-  for (const fd of fds) {
-    closeDescriptors([fd]);
-  }
-  await waitForInterrupt(turnId);
-  await finalizeTurn(taskId, turnId, def, exitCode, outPath, errPath, recorderOutcome);
-  await processStop(taskId)?.catch(() => {});
-  if (!killedForArchive(turnId)) startNextQueuedMessage(taskId, adapters, cfg);
 }
 
 /**
@@ -691,28 +679,6 @@ export function failStaleCreatingTasks(): void {
 
 export function hasRunningTurn(taskId: string): Turn | null { return runningTurn(taskId); }
 
-function childRunning(child: ReturnType<typeof Bun.spawn>): boolean {
-  return child.exitCode === null && child.signalCode === null;
-}
-
-/** Kill a live turn whose transport broke, naming the half that failed (LiveTransportError). */
-function failLiveTurn(
-  child: ReturnType<typeof Bun.spawn>,
-  turnId: number,
-  sink: LiveOutputSink,
-  error: unknown,
-): void {
-  if (!childRunning(child)) return;
-  const stage = error instanceof LiveTransportError ? error.stage : "live input setup";
-  const detail = `${stage} failed: ${error instanceof Error ? error.message : String(error)}`;
-  sink.recordNote(`· ${detail}`);
-  recordKillReason(turnId, detail);
-  killChildTree(child, "SIGTERM");
-  const timer = setTimeout(() => childRunning(child) && killChildTree(child, "SIGKILL"), KILL_GRACE_MS);
-  timer.unref?.();
-  void child.exited.finally(() => clearTimeout(timer));
-}
-
 /**
  * Signal a turn's process, preferring the live child handle; no live child =
  * re-adopted turn, fall back to the persisted pid — its poll loop finalizes
@@ -729,15 +695,6 @@ async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void>
     // group attempt reports `gone` and the pid signal below is what runs.
     signalProcessTree(turn.pid, sig, () => process.kill(turn.pid!, sig));
   }
-}
-
-/**
- * Signal a live child's whole group, falling back to the child handle. Bun's
- * `child.kill` is preferred as the fallback because it also keeps the
- * subprocess object's own bookkeeping straight.
- */
-function killChildTree(child: ReturnType<typeof Bun.spawn>, sig: "SIGTERM" | "SIGKILL"): void {
-  signalProcessTree(child.pid, sig, (signal) => child.kill(signal));
 }
 
 /**

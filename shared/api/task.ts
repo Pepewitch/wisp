@@ -50,6 +50,26 @@ export interface BackgroundGroup {
   stopRequested: boolean;
   /** Deduped executable names, best effort; empty when naming failed. Never arguments. */
   names: string[];
+  /**
+   * What the harness itself says this group is running, when Wisp kept the
+   * harness process alive past the turn's answer because work it started in
+   * the background was still going (a Claude `run_in_background` command, a
+   * Monitor, a background agent). Absent for any other group, and after a
+   * daemon restart: the new daemon no longer owns that process's input.
+   */
+  tasks?: HarnessBackgroundTask[];
+}
+
+/** One background task a lingering harness process reports running. */
+export interface HarnessBackgroundTask {
+  /** The harness's own label for it: the description the agent gave the command or monitor. */
+  name: string;
+  /** The harness's kind, as it named it (`local_bash`, `local_agent`, …); null when it gave none. */
+  kind: string | null;
+  /** The turn number it started in, as the operator sees it. */
+  turn: number;
+  /** When Wisp first saw it start. */
+  since: string;
 }
 
 export interface BackgroundWork {

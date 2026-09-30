@@ -22,6 +22,7 @@ export type {
   ApiTurn,
   BackgroundGroup,
   BackgroundWork,
+  HarnessBackgroundTask,
   CleanupState,
   CleanupSummary,
   SearchResponse,
@@ -321,7 +322,12 @@ export interface OutboxRow {
  */
 export function backgroundSummary(task: ApiTask): string {
   switch (task.background?.state) {
-    case "running": return " · background work running";
+    case "running": {
+      // The count the web's label gives: what the harness named, else the groups.
+      const details = task.background.details;
+      const count = details.length ? details.reduce((sum, group) => sum + (group.tasks?.length || 1), 0) : task.background.groups;
+      return count > 0 ? ` · ${count} background process${count === 1 ? "" : "es"} running` : " · background work running";
+    }
     case "unknown": return " · background status unknown";
     case "stopping": return " · stopping background work";
     default: return "";

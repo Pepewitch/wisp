@@ -61,6 +61,42 @@ export interface TranscriptMark {
  */
 export type RecorderCheckpoint = OutcomeCheckpointV1 & { transcript?: TranscriptMark | null };
 
+/** Where a drained pipe's complete lines go. */
+export interface LineTarget {
+  recordStdoutLine(line: string): void;
+  recordStderrLine(line: string): void;
+  recordFrameDrop(source: RecorderSource, chars: number): void;
+}
+
+/**
+ * Drain one harness pipe line by line into `target`. The target is read per
+ * line, so a caller whose process outlives one turn's recorder can hand it a
+ * router that follows the process from turn to turn.
+ */
+export async function drainLines(
+  stream: ReadableStream<Uint8Array> | number | null | undefined,
+  source: RecorderSource,
+  target: LineTarget,
+): Promise<void> {
+  if (!stream || typeof stream === "number") return;
+  const reader = pipeReader(stream);
+  const decoder = new TextDecoder();
+  const frames = new JsonLineBuffer({ onDrop: (chars) => target.recordFrameDrop(source, chars) });
+  const consume = source === "stdout"
+    ? (line: string) => target.recordStdoutLine(line)
+    : (line: string) => target.recordStderrLine(line);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      for (const line of frames.push(decoder.decode(value, { stream: true }))) consume(line);
+    }
+    for (const line of frames.finish(decoder.decode())) consume(line);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function categoryOf(event: Record<string, unknown> | null, source: RecorderSource): string {
   if (source === "stderr") return "stderr";
   if (!event || typeof event.type !== "string") return "text";
@@ -186,24 +222,8 @@ export class TurnRecorder {
     else this.recordStderrLine(note);
   }
 
-  async drain(stream: ReadableStream<Uint8Array> | number | null | undefined, source: RecorderSource): Promise<void> {
-    if (!stream || typeof stream === "number") return;
-    const reader = pipeReader(stream);
-    const decoder = new TextDecoder();
-    const frames = new JsonLineBuffer({ onDrop: (chars) => this.recordFrameDrop(source, chars) });
-    const consume = source === "stdout"
-      ? (line: string) => this.recordStdoutLine(line)
-      : (line: string) => this.recordStderrLine(line);
-    try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        for (const line of frames.push(decoder.decode(value, { stream: true }))) consume(line);
-      }
-      for (const line of frames.finish(decoder.decode())) consume(line);
-    } finally {
-      reader.releaseLock();
-    }
+  drain(stream: ReadableStream<Uint8Array> | number | null | undefined, source: RecorderSource): Promise<void> {
+    return drainLines(stream, source, this);
   }
 
   currentOutcome(): RecorderOutcome {

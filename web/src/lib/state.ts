@@ -64,19 +64,40 @@ export function stateWord(task: ApiTask): string {
   return background ? `${outcome} · ${background}` : outcome
 }
 
+/**
+ * "Done · 1 background process running". The count is what the tooltip lists
+ * one line each: the tasks the harness itself named, when Wisp kept it alive
+ * past its answer for them, and otherwise the process groups a turn left.
+ */
 export function backgroundLabel(background: ApiTask["background"]): string | null {
-  if (background?.state === "running") return "Background work running";
+  if (background?.state === "running") {
+    const count = backgroundCount(background)
+    return count > 0 ? `${count} background process${count === 1 ? "" : "es"} running` : "Background work running";
+  }
   if (background?.state === "unknown") return "Background status unknown";
   if (background?.state === "stopping") return "Stopping background work";
   return null;
 }
 
+function backgroundCount(background: NonNullable<ApiTask["background"]>): number {
+  const details = background.details
+  if (!details?.length) return background.groups
+  return details.reduce((count, group) => count + (group.tasks?.length || 1), 0)
+}
+
+/** True when the harness process that holds this work was kept alive for it, and takes the next message. */
+export function backgroundLingers(background: ApiTask["background"]): boolean {
+  return background?.state === "running" && Boolean(background.details?.some(group => group.tasks?.length))
+}
+
 /**
  * The programs still running, deduped across groups — the short form, for
- * places that already have a sentence and only need the nouns.
+ * places that already have a sentence and only need the nouns. The harness's
+ * own names win over `ps`'s: "vite dev server" says more than "bash, node".
  */
 export function backgroundNames(background: ApiTask["background"], limit = 3): string | null {
-  const names = [...new Set((background?.details ?? []).flatMap(group => group.names))]
+  const names = [...new Set((background?.details ?? []).flatMap(group =>
+    group.tasks?.length ? group.tasks.map(task => task.name) : group.names))]
   if (!names.length) return null
   return names.length > limit ? `${names.slice(0, limit).join(", ")}, +${names.length - limit}` : names.join(", ")
 }
@@ -87,7 +108,9 @@ export function backgroundNames(background: ApiTask["background"], limit = 3): s
  * The word alone ("Background work running") states a fact the reader can act
  * on in exactly one way — Stop — while withholding everything needed to decide
  * whether Stop is safe. One line per group: which turn started it, what the
- * programs are, and how far past the turn they have run.
+ * programs are, and how far past the turn they have run. A harness kept alive
+ * for its own background tasks gets one line per task instead, in its words:
+ * "vite dev server · started in turn 4 · 12m 00s ago".
  *
  * Empty when the daemon is older than background detail, so the caller falls
  * back to the word rather than rendering a confident blank.
@@ -100,12 +123,19 @@ export function backgroundDetail(background: ApiTask["background"], now: number)
   const details = background?.details
   if (!details?.length) return null
   return details
-    .map(group => {
+    .flatMap(group => {
+      const unverified = group.state === "unknown" && "ownership unverified"
+      // What the harness named, where it started, and for how long: the
+      // process group is the harness itself, so its own names say nothing.
+      if (group.tasks?.length) {
+        return group.tasks.map(task => {
+          const age = elapsed(task.since, now)
+          return [task.name, `started in turn ${task.turn}`, age && `${age} ago`, unverified].filter(Boolean).join(" · ")
+        })
+      }
       const what = group.names.length ? group.names.join(", ") : `${group.processes} process${group.processes === 1 ? "" : "es"}`
       const age = group.since ? elapsed(group.since, now) : null
-      return [`turn ${group.turn}: ${what}`, age && `${age} past the turn`, group.state === "unknown" && "ownership unverified"]
-        .filter(Boolean)
-        .join(" · ")
+      return [[`turn ${group.turn}: ${what}`, age && `${age} past the turn`, unverified].filter(Boolean).join(" · ")]
     })
     .join("\n")
 }
