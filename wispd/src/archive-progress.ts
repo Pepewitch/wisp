@@ -1,18 +1,16 @@
 import { db, getTask } from "./store";
 import { archiveCleanup } from "./archive-jobs";
 import { emit } from "./events";
+import type { CleanupState, CleanupSummary } from "../../shared/api/task";
+
+export type { CleanupState, CleanupSummary } from "../../shared/api/task";
 
 export const CLEANUP_PHASES = ["stop-turn", "stop-shells", "save-work", "repo-hook", "project-hook", "remove-worktree", "remove-attachments"] as const;
 export type CleanupPhase = typeof CLEANUP_PHASES[number] | "legacy-hooks";
-export type CleanupState = "pending" | "running" | "needs-attention" | "complete";
 export interface CleanupProgress {
   task_id: string; phase: CleanupPhase; status: CleanupState; repo_script: string | null;
   prepared: number; next_retry_at: string | null; revision: number;
   hook_pgid: number | null; hook_boot: string | null;
-}
-export interface CleanupSummary {
-  state: CleanupState; step: string; error: string | null; retryAt: string | null;
-  revision: number; uncertain: boolean; confirmStopped: boolean;
 }
 export const isHook = (phase: string): boolean => ["repo-hook", "project-hook", "legacy-hooks"].includes(phase);
 const LABELS: Record<CleanupPhase, string> = {

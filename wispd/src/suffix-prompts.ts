@@ -1,13 +1,9 @@
 import { chmodSync, existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { SUFFIX_PROMPTS_PATH } from "./config";
 import { isRecord, readUserJson, typeName } from "./validate";
+import type { SuffixPrompt } from "../../shared/api/settings";
 
-export interface SuffixPrompt {
-  id: string;
-  name: string;
-  prompt: string;
-  createdAt: string;
-}
+export type { SuffixPrompt } from "../../shared/api/settings";
 
 interface SuffixPromptStore {
   version: 1;

@@ -10,6 +10,7 @@ import {
   turnUsageFor,
 } from "../store";
 import type { Task } from "../types";
+import type { ConversationDetail, TaskUsage } from "../../../shared/api/task";
 import {
   apiTask,
   apiTaskMessage,
@@ -37,7 +38,7 @@ const MAX_CONVERSATION_PAGE_SIZE = 100;
 const TASK_USAGE_DETAIL_LIMIT = 50;
 
 /** The unpaginated protocol-1 compatibility payload. */
-export function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): Record<string, unknown> {
+export function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): ConversationDetail {
   const turns = turnsFor(task.id);
   const latest = turns.at(-1);
   return {
@@ -56,7 +57,7 @@ function pagedConversationDetail(
   adapters: Record<string, AdapterDef>,
   before: number | null,
   limit: number,
-): Record<string, unknown> {
+): ConversationDetail {
   const page = turnPageFor(task.id, before, limit);
   const latest = latestTurnForTask(task.id);
   const first = page.turns.at(0)?.n ?? null;
@@ -85,7 +86,7 @@ export function conversationResponse(
 ): Response {
   const started = performance.now();
   const limitParam = url.searchParams.get("limit");
-  let detail: Record<string, unknown>;
+  let detail: ConversationDetail;
   if (limitParam === null) {
     detail = conversationDetail(task, adapters);
   } else {
@@ -98,7 +99,7 @@ export function conversationResponse(
     if (before instanceof Response) return before;
     detail = pagedConversationDetail(task, adapters, before, limit!);
   }
-  const response = json(detail);
+  const response = json<ConversationDetail>(detail);
   response.headers.set("server-timing", `conversation;dur=${(performance.now() - started).toFixed(1)}`);
   return response;
 }
@@ -110,7 +111,7 @@ export function taskUsageResponse(task: Task, adapters: Record<string, AdapterDe
       const usage = apiTurnUsage(turn.usage_json, adapters[turn.harness]);
       return usage ? [{ id: turn.id, n: turn.n, usage }] : [];
     });
-  return json({
+  return json<TaskUsage>({
     total: totalUsage(turns.map((turn) => turn.usage)),
     reporting_turns: turns.length,
     turns: turns.slice(-TASK_USAGE_DETAIL_LIMIT),

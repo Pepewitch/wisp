@@ -1,5 +1,19 @@
 import type { SpawnResult } from "../doctor";
 import type { ContextPoint } from "./context";
+import type { ProbeCommand, ProbeReport, SkillDiscoveryResult } from "../../../shared/api/harness";
+
+// The API's shapes live in shared/api, so the daemon and the web client
+// compile against one definition.
+export type { UsageSummary } from "../../../shared/api/task";
+export type {
+  ContextBreakdown,
+  HarnessUsageReport,
+  ProbeCommand,
+  ProbeReport,
+  SkillDiscoveryResult,
+  SkillEntry,
+  SlashCommandEntry,
+} from "../../../shared/api/harness";
 
 /**
  * A harness adapter is declarative config (D7): how to run one headless turn,
@@ -460,77 +474,7 @@ export interface ParsedTurn {
   skills: string[] | null;
 }
 
-/**
- * A turn's usage, normalized (Theme B). Every field is optional: a harness
- * reports what it reports, and a normalizer copies values — it never computes,
- * sums, or invents one. Money is deliberately absent (emit-only: token counts
- * are facts; prices are a product statement that rots — claude's
- * `total_cost_usd` and droid's `factory_credits` stay in the raw blob only).
- */
-export interface UsageSummary {
-  inputTokens?: number;
-  outputTokens?: number;
-  /** prompt tokens served from the provider's cache (claude/droid cache_read, codex cached_input) */
-  cachedInputTokens?: number;
-  /** prompt tokens WRITTEN to the provider's cache (claude/droid cache_creation, codex cache_write) */
-  cacheWriteTokens?: number;
-  /** codex splits reasoning from visible output; kept distinct rather than silently summed */
-  reasoningTokens?: number;
-}
-
 export type ParseStrategy = (raw: string) => ParsedTurn;
-
-/**
- * The out-of-turn reads (v0.3 A3, SP1): a harness command that returns a
- * REPORT without driving a model turn. Two exist anywhere today: `context`
- * (what fills the session's window) and the harness's own `usage` (what the
- * account has spent). Availability is uneven per harness — claude has both,
- * droid has context only, codex has usage only — and the strategy declares
- * which it can answer, so a surface never fakes the other one.
- */
-export type ProbeCommand = "context" | "usage";
-
-/**
- * What a probe returns. Two render shapes (SP1): claude writes its own report
- * as markdown and Wisp renders it as-is; droid and codex return structured
- * JSON, which is better — Wisp normalizes it at the boundary and owns the
- * vocabulary of the tables, exactly like `usageFormat` for turn usage.
- */
-export type ProbeReport =
-  | { format: "markdown"; text: string }
-  | { format: "context"; context: ContextBreakdown }
-  | { format: "usage"; usage: HarnessUsageReport };
-
-/**
- * droid's `droid.get_context_breakdown`, normalized. Every number is copied,
- * never computed — a field the harness stopped sending is absent, not zero.
- * The TUI's own panel vocabulary is kept (System prompt, System tools, …).
- */
-export interface ContextBreakdown {
-  /** the model the breakdown belongs to, as the harness names it */
-  model: string | null;
-  budgetTokens: number | null;
-  usedTokens: number | null;
-  freeTokens: number | null;
-  categories: { name: string; tokens: number }[];
-  skills: { name: string; tokens: number }[];
-  mcpServers: { name: string; toolCount: number | null; tokens: number }[];
-}
-
-/**
- * codex's `account/rateLimits/read` + `account/usage/read`, normalized. These
- * are ACCOUNT-level numbers (codex has no per-thread context read — SP1), so
- * the panel must say "account", not imply the task.
- */
-export interface HarnessUsageReport {
-  planType: string | null;
-  /** the short rate-limit window (codex: 5h), when the harness reports one */
-  primary: { usedPercent: number; windowMins: number | null; resetsAt: string | null } | null;
-  /** the long rate-limit window (codex: weekly) */
-  secondary: { usedPercent: number; windowMins: number | null; resetsAt: string | null } | null;
-  credits: { hasCredits: boolean; unlimited: boolean; balance: number | null } | null;
-  lifetimeTokens: number | null;
-}
 
 /** What a probe needs from the task row: which read, which session, which cwd. */
 export interface ProbeCtx {
@@ -745,56 +689,6 @@ export type ModelProbeSpawnFn = (
   cmd: string[],
   signal?: AbortSignal,
 ) => SpawnResult | Promise<SpawnResult>;
-
-/**
- * One skill as the palette renders it (A4). `description` is nullable because
- * droid legitimately ships name-only skills (its schema marks description
- * optional — SP2): the row renders without a hint rather than with invented
- * text, and never gets dropped for lacking one.
- */
-export interface SkillEntry {
-  name: string;
-  description: string | null;
-}
-
-/**
- * One custom slash command exposed by the harness's own registry. Commands
- * stay separate from skills because they can carry an argument hint and can
- * be executable scripts; the palette still only prefills them, so selecting
- * one never runs code or spends a turn without a second explicit send.
- */
-export interface SlashCommandEntry {
-  name: string;
-  description: string | null;
-  argumentHint: string | null;
-  executable: boolean;
-}
-
-/**
- * What discovery found (A4, SP2). `errors` are the malformed-skill reports a
- * harness handed back (codex's skills/list `errors[]`) — surfaced verbatim,
- * never swallowed, because a silently-skipped skill is the absence this
- * product refuses. `partialNote` is set when the list is knowingly
- * INCOMPLETE (claude before its first turn: the init event that names the
- * builtins hasn't been captured yet, so only user/project skills are listed)
- * — a partial list that presents itself as complete would be the quiet lie.
- */
-export interface SkillDiscoveryResult {
-  skills: SkillEntry[];
-  /** Custom slash commands discovered alongside the skill registry, when exposed. */
-  commands: SlashCommandEntry[];
-  /** Command-registry failure that must not erase an otherwise valid skill list. */
-  commandError: string | null;
-  errors: string[];
-  partialNote: string | null;
-  /**
-   * How a palette pick becomes prompt text: "slash" prefills `/name`
-   * (claude/droid run skills headless by slash — SP2 verified), "prompt"
-   * writes a plain-text ask (codex has no headless slash surface at all, and
-   * a pick must not pretend otherwise — it still costs a turn).
-   */
-  invoke: "slash" | "prompt";
-}
 
 /** What skill discovery needs from the task row — the same trio a probe needs, plus claude's init-captured names. */
 export interface SkillCtx {

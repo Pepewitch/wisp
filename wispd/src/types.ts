@@ -1,29 +1,43 @@
 /**
- * The single source of truth for task states (a prior audit). The CLI's
- * STATE_ICON map derives its keys from this via Record<TaskState, string>, and
- * the web app's STATE_DOT / STATE_LABEL / STATE_TEXT maps in
- * web/src/lib/state.ts are Record<TaskState, …> for the same reason — add a
- * state here and both fail to compile until they carry it.
+ * The daemon's rows. The shapes the API serves (tasks, turns, messages) live
+ * in shared/api/task.ts, so the daemon and the web client compile against one
+ * definition; they are re-exported here for the daemon.
  */
-export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck", "failed"] as const;
-export type TaskState = (typeof TASK_STATES)[number];
-
-/**
- * Where a task's turns actually run.
- *
- * `worktree` (the default, and everything wisp did before): an isolated git
- * worktree under WORKTREE_ROOT on its own `wisp/<id>-<words>` branch, created
- * at task start and REMOVED at archive.
- *
- * `local`: the repo checkout itself, on whatever branch it is already on.
- * Nothing is created and — the load-bearing half — nothing is ever removed,
- * because that directory is the user's actual working copy. Archive must not
- * touch it, and neither setup nor archive scripts run for it: those exist to
- * make a FRESH worktree usable, and re-running them over a live checkout is
- * how you delete someone's node_modules mid-edit.
- */
-export const TASK_MODES = ["worktree", "local"] as const;
-export type TaskMode = (typeof TASK_MODES)[number];
+import type {
+  ApiTask,
+  TaskMessageDelivery,
+  TaskMessageStatus,
+  TaskMode,
+  TaskState,
+  TurnCaptureMode,
+  TurnCaptureState,
+  TurnDiagnosticState,
+  TurnStatus,
+} from "../../shared/api/task";
+export { TASK_MODES, TASK_STATES } from "../../shared/api/task";
+export type {
+  ApiTask,
+  ApiTaskListItem,
+  ApiTaskMessage,
+  ApiTurn,
+  BackgroundGroup,
+  BackgroundWork,
+  CleanupState,
+  CleanupSummary,
+  SendResponse,
+  SendWhen,
+  TaskDetail,
+  TaskMessageDelivery,
+  TaskMessageStatus,
+  TaskMode,
+  TaskState,
+  TurnCaptureMode,
+  TurnCaptureState,
+  TurnDiagnosticState,
+  TurnInput,
+  TurnInputMode,
+  TurnStatus,
+} from "../../shared/api/task";
 
 export interface Task {
   id: string;
@@ -116,13 +130,6 @@ export function taskMode(task: Pick<Task, "mode">): TaskMode {
   return task.mode === "local" ? "local" : "worktree";
 }
 
-export type TurnStatus = "running" | "done" | "failed" | "interrupted";
-
-/** Durable selection of the turn-capture semantics used when a process starts. */
-export type TurnCaptureMode = "recorder-v1";
-export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
-export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
-
 /**
  * The honest failure word (Theme B, Q12). A turn that exits NONZERO after
  * delivering a terminal assistant message is not a failure of the work — the
@@ -203,54 +210,6 @@ export function displayStateWord(
   return state;
 }
 
-/**
- * One tracked process group that outlived its turn.
- *
- * Everything here is already in `turn_process_groups` or the turn it belongs
- * to; the badge simply never showed it, which left "Background work running"
- * as a fact the operator could neither act on nor dismiss. Deciding whether to
- * Stop needs WHICH turn started it, HOW MANY processes are left, HOW LONG they
- * have outlived the turn, and — the part that actually answers the question —
- * WHAT they are.
- */
-export interface BackgroundGroup {
-  /** The turn number the operator sees in `show`/the UI, not the row id. */
-  turn: number;
-  pgid: number;
-  /** Live members at the last inventory, not a historical high-water mark. */
-  processes: number;
-  /** When the owning turn ended, so the UI can age it. Null while unfinished. */
-  since: string | null;
-  state: "running" | "unknown";
-  stopRequested: boolean;
-  /**
-   * Deduped executable names, best effort — empty when the naming call failed
-   * or the group settled between the inventory and now. Never arguments.
-   */
-  names: string[];
-}
-
-export interface BackgroundWork {
-  state: "none" | "running" | "unknown" | "stopping";
-  groups: number;
-  details: BackgroundGroup[];
-}
-
-/** Task as the API serializes it: archived is a boolean at the boundary, not SQLite's 0/1 (a prior audit). */
-export type ApiTask = Omit<Task, "archived" | "fast" | "brief_enabled" | "brief_generation" | "input_seq" | "input_rev"> & {
-  attachmentsRetained?: boolean;
-  deletionPending?: boolean;
-  cleanup?: import("./archive-progress").CleanupSummary;
-  archived: boolean;
-  /** Fast mode, for the same reason `archived` is a boolean here. */
-  fast: boolean;
-  /** Task briefs are on for this task. Absent from a daemon older than the feature. */
-  briefEnabled?: boolean;
-  background?: BackgroundWork;
-  /** The running turn's input, null while idle. Absent from a daemon older than the feature. */
-  turn_input?: TurnInput | null;
-};
-
 export interface Turn {
   id: number;
   task_id: string;
@@ -323,9 +282,6 @@ export function turnDiagnosticState(turn: Pick<Turn, "diagnostic_state">): TurnD
   return turn.diagnostic_state ?? "unavailable";
 }
 
-export type TaskMessageStatus = "queued" | "delivered" | "cancelled";
-export type TaskMessageDelivery = "started" | "steered" | null;
-
 /**
  * A user submission is persisted before delivery. Unlike a turn, it can wait
  * for the current process to settle or be admitted to a verified live input.
@@ -379,30 +335,6 @@ export interface SendResult {
   message: TaskMessage;
   /** The running turn was stopped so this message could start. */
   interrupted?: boolean;
-}
-
-/** When a sender wants a message to reach the agent. Absent keeps the older "steer, else queue". */
-export type SendWhen = "now" | "next-turn";
-
-/**
- * What a message sent now can do to a running turn: be steered into it, wait
- * for it to end on its own (its live channel closed because the answer is
- * done), or only reach the agent by stopping it (a harness with no live
- * channel, or a turn a restarted daemon re-adopted without its stdin).
- */
-export type TurnInputMode = "steer" | "wait" | "interrupt";
-
-/**
- * The running turn's input mode, and the agent that turn runs: a message for
- * any other agent can only start a new turn.
- */
-export interface TurnInput {
-  mode: TurnInputMode;
-  context_n: number;
-  harness: string;
-  model: string | null;
-  effort: string | null;
-  fast: boolean;
 }
 
 export interface OutboxRow {

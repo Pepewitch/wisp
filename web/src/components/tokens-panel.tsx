@@ -2,7 +2,7 @@ import { memo, useMemo } from "react"
 
 import { Eyebrow } from "@/components/primitives"
 import { ReportPanel } from "@/components/report-panel"
-import type { TurnUsage, UsageSummary } from "@/lib/types"
+import type { Turn, UsageSummary } from "@/lib/types"
 import { reportedUsageTurns, totalUsage, usageParts } from "@/lib/usage"
 
 /**
@@ -21,7 +21,8 @@ function TokensPanelView({
   className,
 }: {
   harness: string
-  turns: TurnUsage[] | undefined
+  /** GET /api/tasks/:id/usage's turns, or a legacy daemon's conversation turns (usage may be null). */
+  turns: Pick<Turn, "id" | "n" | "usage">[] | undefined
   total?: UsageSummary
   reportingTurns?: number
   hasOlderTurns?: boolean

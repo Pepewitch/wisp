@@ -31,7 +31,7 @@ import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT, rotateToken } fro
 import { bunSpawn } from "./doctor";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { modelsReport } from "./models";
-import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type TaskMessage, type TaskState, type Turn } from "./types";
+import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type ApiTaskListItem, type ApiTurn, type TaskDetail, type TaskState } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
 
 const COMMAND = wispCommand();
@@ -63,16 +63,6 @@ const WAIT_POLL_MS = 2000;
 const WAIT_DEFAULT_TIMEOUT_SEC = 86_400;
 
 /**
- * Task as the list endpoint serializes it: ApiTask plus the latest turn's
- * actual model (P5b) and the exit facts behind the "exited N" word (Theme B).
- */
-type ListedTask = ApiTask & {
-  latest_turn_model?: string | null;
-  latest_turn_exit_code?: number | null;
-  latest_turn_has_result?: boolean;
-};
-
-/**
  * A turn's usage, one compact line (Theme B): `41.2k in · 2.1k out · 24.8m
  * cached · 900 cache write · 12k reasoning`. Only the numbers the harness
  * actually reported appear — the normalized summary carries no zeros, so the
@@ -96,7 +86,7 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-function printTasks(tasks: ListedTask[]): void {
+function printTasks(tasks: ApiTaskListItem[]): void {
   if (tasks.length === 0) {
     print("no tasks");
     return;
@@ -117,7 +107,7 @@ function printTasks(tasks: ListedTask[]): void {
 }
 
 async function resultCommand(positional: string[]): Promise<void> {
-  const task = (await api(`/api/tasks/${positional[0]}`)) as ApiTask & { turns: Turn[] };
+  const task = (await api(`/api/tasks/${positional[0]}`)) as TaskDetail;
   const n = positional[1] ? Number(positional[1]) : undefined;
   const turn = n
     ? task.turns.find((candidate) => candidate.n === n)
@@ -131,12 +121,7 @@ async function resultCommand(positional: string[]): Promise<void> {
 }
 
 async function showCommand(positional: string[]): Promise<void> {
-  const task = (await api(`/api/tasks/${positional[0]}`)) as ApiTask & {
-    turns: (Turn & { attachments: { name: string; size: number }[]; usage: UsageSummary | null })[];
-    messages?: (Omit<TaskMessage, "attachments_json"> & { attachments: { name: string; size: number }[] })[];
-    diffstat: string | null;
-    worktreeReason: string | null;
-  };
+  const task = (await api(`/api/tasks/${positional[0]}`)) as TaskDetail;
   const latest = [...task.turns].sort((a, b) => b.n - a.n)[0];
   const word = displayStateWord(
     task.state,
@@ -189,7 +174,7 @@ function printBackground(task: ApiTask): void {
 
 function printTurn(
   task: ApiTask,
-  turn: Turn & { attachments: { name: string; size: number }[]; usage: UsageSummary | null },
+  turn: ApiTurn,
 ): void {
   const model = turn.model ?? (turn.requested_model ? `${turn.requested_model} (requested)` : null);
   print(
@@ -498,7 +483,7 @@ export const COMMANDS = {
   },
   new: (positional, flags) => createCommand(positional, flags),
   ls: async (_positional, flags) => {
-    printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ListedTask[]);
+    printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ApiTaskListItem[]);
   },
   show: (positional) => showCommand(positional),
   result: (positional) => resultCommand(positional),

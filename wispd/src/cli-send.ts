@@ -5,7 +5,7 @@ import {
   type AttachmentFlags,
 } from "./cli-attach";
 import { print, printError } from "./cli-print";
-import type { ApiTask, SendResult, TaskMessage } from "./types";
+import type { ApiTaskMessage, SendResponse } from "./types";
 
 interface SendCommandOptions {
   positional: string[];
@@ -30,13 +30,13 @@ export async function sendCommand(options: SendCommandOptions): Promise<void> {
   } catch (error) {
     options.requestError(error);
   }
-  let result: ApiTask & SendResult;
+  let result: SendResponse;
   try {
     result = (await options.request(`/api/tasks/${id}/send`, "POST", {
       message: message.join(" "),
       clientMessageId: randomUUID(),
       attachments,
-    })) as ApiTask & SendResult;
+    })) as SendResponse;
   } catch (error) {
     if (attachments) await discardAttachmentPayloads(attachments, options.discardAttachment);
     options.requestError(error);
@@ -55,7 +55,7 @@ export async function sendCommand(options: SendCommandOptions): Promise<void> {
 
 /** One durable-message line for `wisp show`; started messages otherwise live in their turn row. */
 export function taskMessageSummary(
-  message: Pick<TaskMessage, "id" | "text" | "status" | "delivery" | "turn_n" | "delivery_uncertain">,
+  message: Pick<ApiTaskMessage, "id" | "text" | "status" | "delivery" | "turn_n" | "delivery_uncertain">,
   archived: boolean,
 ): string | null {
   const text = message.text.slice(0, 120).replaceAll("\n", " ");

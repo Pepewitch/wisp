@@ -299,7 +299,7 @@ cannot tell you a browser stopped attaching a credential.
 | Shell tabs (the list every client shows) | `wispd/src/terminal-tabs.ts`, `wispd/src/routes/terminals.ts` |
 | Pty allocation, sizing, and the `__pty-exec` child | `wispd/src/pty.ts` |
 | The daemon's model of each shell's screen | `wispd/src/terminal-screen.ts` |
-| Shared public shapes | `wispd/src/types.ts`, route serializers, `web/src/lib/types.ts`, desktop bridge/proxy contracts where applicable |
+| Shared public shapes | `shared/api/` (the daemon's actual output; routes name it in `json<T>(…)`), route serializers, `web/src/lib/types.ts` (re-exports, plus views that mark fields an older daemon omits as optional), desktop bridge/proxy contracts where applicable |
 
 ## Validation
 

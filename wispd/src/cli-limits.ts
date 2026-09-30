@@ -1,16 +1,12 @@
 import type { LimitWindow } from "./adapters";
 import { print, printJson } from "./cli-print";
-import type { HarnessLimitsEntry } from "./harness-limits";
+import type { HarnessLimitsResponse } from "../../shared/api/harness";
 
 /**
  * `wisp limits` — the CLI half of the top bar's usage popover. It asks the
  * same `GET /api/harness-limits`, so every read, cache and refusal is the
  * daemon's; this file owns only what the answer looks like in a terminal.
  */
-
-export interface HarnessLimitsResponse {
-  harnesses: HarnessLimitsEntry[];
-}
 
 const BAR_CELLS = 10;
 

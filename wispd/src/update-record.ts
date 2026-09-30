@@ -1,6 +1,9 @@
 import { join } from "node:path";
 import { WISP_HOME } from "./config";
 import { readStateFile, writeStateFile } from "./state-file";
+import type { UpdateAttempt } from "../../shared/api/update";
+
+export type { UpdateAttempt } from "../../shared/api/update";
 
 /**
  * The durable record of the last self-update, kept in the Wisp home. The
@@ -9,18 +12,6 @@ import { readStateFile, writeStateFile } from "./state-file";
  * file is what is left to say what was attempted and how it ended. The update
  * status API and `wisp doctor` both report it.
  */
-export interface UpdateAttempt {
-  fromVersion: string;
-  toVersion: string;
-  method: "homebrew" | "managed-linux" | "unsupported";
-  startedAt: string;
-  finishedAt: string | null;
-  /** `installing` that is not the running daemon's own attempt never finished: the daemon died mid-update. */
-  outcome: "installing" | "installed" | "failed";
-  /** The end of the failure's message, where a package manager's own error usually is. */
-  error: string | null;
-}
-
 export const UPDATE_RECORD_PATH = join(WISP_HOME, "update-last.json");
 const ERROR_CHARS = 1000;
 

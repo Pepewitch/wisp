@@ -29,6 +29,7 @@ import { JsonLineBuffer } from "./adapters/live/json-lines";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
 import { TaskCacheEntries } from "./task-cache";
 import type { Task } from "./types";
+import type { ProbeAnswer } from "../../shared/api/harness";
 
 export const PROBE_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
 export const PROBE_CACHE_TTL_MS = 120_000;
@@ -241,12 +242,8 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
   };
 };
 
-/** What the route answers with: the report, when it was taken, and whether it was served from the click before. */
-export interface ProbeAnswer {
-  report: ProbeReport;
-  probedAt: string;
-  cached: boolean;
-}
+/** What the cache answers with; the route adds the command it ran (shared/api's ProbeAnswer). */
+export type CachedProbe = Omit<ProbeAnswer, "command">;
 
 export interface TaskProbeCacheOptions {
   spawnOnce?: ProbeSpawnFn;
@@ -283,7 +280,7 @@ export class TaskProbeCache {
     string,
     {
       taskId: string;
-      promise: Promise<ProbeAnswer>;
+      promise: Promise<CachedProbe>;
       controller: AbortController;
       /** set once this answer must not be stored: the task is gone, or its session moved under it */
       state: { uncacheable: boolean };
@@ -300,7 +297,7 @@ export class TaskProbeCache {
     this.entries = new TaskCacheEntries(options.ttlMs ?? PROBE_CACHE_TTL_MS);
   }
 
-  probe(task: Task, def: AdapterDef, command: ProbeCommand): Promise<ProbeAnswer> {
+  probe(task: Task, def: AdapterDef, command: ProbeCommand): Promise<CachedProbe> {
     const key = cacheKey(task, command);
     const hit = this.entries.get(key, this.now().getTime());
     if (hit) {
@@ -328,7 +325,7 @@ export class TaskProbeCache {
       }, this.io),
       timedOut,
     ])
-      .then((report): ProbeAnswer => {
+      .then((report): CachedProbe => {
         const at = this.now();
         if (!state.uncacheable) this.entries.set(task.id, key, report, at.getTime());
         return { report, probedAt: at.toISOString(), cached: false };

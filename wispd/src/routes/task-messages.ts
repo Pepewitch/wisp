@@ -21,6 +21,7 @@ import { hasRunningTurn, sendQueuedMessageNow } from "../runner";
 import { InterruptConflict } from "../turn-interrupt";
 import { changeWorkflowState } from "../workflows/store";
 import { skipCancelledRound } from "../autopilot/store";
+import type { SendResponse } from "../../../shared/api/task";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
@@ -205,7 +206,7 @@ export function taskMessageSendNowRoute(
     try {
       const result = await sendQueuedMessageNow(task.id, message.id, adapters, cfg);
       if (!result) return err("only queued messages can be sent now", 409);
-      return json({
+      return json<SendResponse>({
         ...apiTask(getTask(task.id)!),
         disposition: result.disposition,
         message: apiTaskMessage(result.message),

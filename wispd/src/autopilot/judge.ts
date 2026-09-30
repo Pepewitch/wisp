@@ -21,6 +21,8 @@ import { TASKS_DIR, WISP_HOME, type WispConfig } from "../config"
 import { classifyCheck } from "./checks"
 import type { PrSnapshot } from "./github"
 import { parseVerdict } from "./verdict"
+import type { JudgeUsage, SecretKeySource } from "../../../shared/api/settings"
+export type { JudgeUsage } from "../../../shared/api/settings"
 
 export const JEV_URL = "https://api.typesafe.ai/v1/systemone"
 /** Pinned: `jev-latest` could change its answers under a release that did not. */
@@ -150,7 +152,7 @@ export function jevClient(key: string, fetcher: typeof fetch = fetch): JudgeClie
   }
 }
 
-export type JudgeKeySource = "settings" | "environment"
+export type JudgeKeySource = SecretKeySource
 
 /** The key the judge uses: the one saved in Settings, else the environment's. */
 export function jevKey(cfg: Pick<WispConfig, "jevApiKey">, env: Record<string, string | undefined> = process.env): { key: string; source: JudgeKeySource } | null {
@@ -361,7 +363,6 @@ export function writeJudgeLog(taskId: string, rowId: string, entry: JudgeLogEntr
   }
 }
 
-export interface JudgeUsage { month: string; calls: number; errors: number; inputTokens: number; costUsd: number }
 type UsageFile = Record<string, { calls: number; errors: number; inputTokens: number }>
 
 const usagePath = () => join(WISP_HOME, "judge-usage.json")

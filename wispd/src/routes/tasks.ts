@@ -22,6 +22,8 @@ import { InterruptConflict } from "../turn-interrupt";
 import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
 import type { TaskSkillCache } from "../skills";
+import type { ProbeAnswer, TaskSkills } from "../../../shared/api/harness";
+import type { ApiTask, ApiTaskListItem, AttachResponse, CompactAnswer, SendResponse, TaskDetail } from "../../../shared/api/task";
 import {
   createTask,
   freeSlot,
@@ -62,7 +64,7 @@ export function listTasksRoute(url: URL): Response {
   const includeCleanup = url.searchParams.get("cleanup") === "1";
   const attachedWorkflows = taskIdsWithAttachedWorkflows();
   const autopilot = autopilotStatuses();
-  return json(
+  return json<ApiTaskListItem[]>(
     listTasksWithLatestTurn(includeArchived, includeCleanup).map(({ task: t, latestTurn }) => ({
       ...apiTask(t),
       has_workflow: attachedWorkflows.has(t.id),
@@ -266,7 +268,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
         `launch of task ${task.id}`,
         () => launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
       );
-      return json({ ...apiTask(task), autopilot: autopilotStatus(task.id) }, 201);
+      return json<ApiTask & Pick<ApiTaskListItem, "autopilot">>({ ...apiTask(task), autopilot: autopilotStatus(task.id) }, 201);
     } finally {
       if (!handedOff) releaseDecodedAttachments(attachments);
     }
@@ -342,7 +344,7 @@ async function sendTaskResponse(
       agent,
       operation ? "next-turn-only" : body.when === "now" ? "now" : body.when === "next-turn" ? "hold" : "allow-steer",
     );
-    return json({
+    return json<SendResponse>({
       ...apiTask(getTask(task.id)!),
       disposition: result.disposition,
       message: apiTaskMessage(result.message),
@@ -424,9 +426,9 @@ function basicTaskAction(
   }
   if (action === "attach" && method === "GET") {
     const def = adapters[task.harness];
-    if (!def || !task.session_id) return json({ argv: null, message: "no session yet" });
+    if (!def || !task.session_id) return json<AttachResponse>({ argv: null, cwd: null, message: "no session yet" });
     const argv = buildAttachArgv(def, task.session_id);
-    return json({
+    return json<AttachResponse>({
       argv,
       cwd: task.worktree_path,
       message: argv ? null : `harness '${task.harness}' has no known interactive attach command yet`,
@@ -501,7 +503,7 @@ export function taskRoute(
       // task they archived.
       const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path);
       const stat = health?.ok ? await diffStat(task.worktree_path!) : null;
-      return json({
+      return json<TaskDetail>({
         ...conversationDetail(task, adapters),
         diffstat: stat,
         worktreeReason: health?.reason ?? null,
@@ -550,7 +552,7 @@ export function taskRoute(
       }
       try {
         const answer = await probes.probe(task, def, body.command as "context" | "usage");
-        return json({ command: body.command, probedAt: answer.probedAt, cached: answer.cached, report: answer.report });
+        return json<ProbeAnswer>({ command: body.command as ProbeAnswer["command"], probedAt: answer.probedAt, cached: answer.cached, report: answer.report });
       } catch (e) {
         if (e instanceof ProbeError) return err(e.message, e.status);
         throw e;
@@ -570,7 +572,7 @@ export function taskRoute(
       if (!def) return err(`unknown harness: ${task.harness}`, 500);
       if (!skills) return err("skill discovery is not available on this daemon", 500);
       if (!def.skillDiscovery) {
-        return json({
+        return json<TaskSkills>({
           skills: [],
           commands: [],
           commandError: null,
@@ -583,7 +585,7 @@ export function taskRoute(
       }
       try {
         const answer = await skills.skills(task, def);
-        return json({ ...answer.result, probedAt: answer.probedAt, cached: answer.cached });
+        return json<TaskSkills>({ ...answer.result, probedAt: answer.probedAt, cached: answer.cached });
       } catch (e) {
         if (e instanceof ProbeError) return err(e.message, e.status);
         throw e;
@@ -631,7 +633,7 @@ export function taskRoute(
         // This action records no turn row, so a cached /context from before it
         // would survive the compaction and report the tokens it just dropped.
         probes?.invalidateTask(task.id);
-        return json({
+        return json<CompactAnswer>({
           ok: true,
           removedCount: result.removedCount,
           sessionReplaced: result.newSessionId !== null,
