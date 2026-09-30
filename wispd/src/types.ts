@@ -1,7 +1,7 @@
 /**
- * The daemon's rows. The shapes the API serves (tasks, turns, messages) live
- * in shared/api/task.ts, so the daemon and the web client compile against one
- * definition; they are re-exported here for the daemon.
+ * The daemon's rows. The shapes the API serves (tasks, turns, messages,
+ * search) live in shared/api/task.ts, so the daemon and the web client compile
+ * against one definition; they are re-exported here for the daemon.
  */
 import type {
   ApiTask,
@@ -24,6 +24,10 @@ export type {
   BackgroundWork,
   CleanupState,
   CleanupSummary,
+  SearchResponse,
+  SearchSnippet,
+  SearchSnippetKind,
+  SearchTaskHit,
   SendResponse,
   SendWhen,
   TaskDetail,
@@ -141,50 +145,6 @@ export function taskMode(task: Pick<Task, "mode">): TaskMode {
  * outbox keep "failed"; only the WORD changes, derived from facts the store
  * already holds (the latest turn's exit_code and result presence).
  */
-/**
- * GET /api/search — the shapes the daemon answers with, shared by the store
- * that builds them (store-search.ts) and the CLI that prints them
- * (cli-search.ts). One definition, so a field cannot mean two things.
- */
-export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose";
-
-export interface SearchSnippet {
-  kind: SearchSnippetKind;
-  /** the turn a prompt/result snippet came from; null for a title or a message */
-  turn: number | null;
-  /** one collapsed line around the first match, ellipsised at either end */
-  text: string;
-  /** where the match sits inside `text`, so a client highlights what it was given */
-  offset: number;
-  length: number;
-}
-
-export interface SearchTaskHit {
-  id: string;
-  title: string;
-  repo_path: string;
-  updated_at: string;
-  /** the task's own state, so a result row renders without a second fetch */
-  state: TaskState;
-  archived: boolean;
-  /** total occurrences across every searched field of this task */
-  matches: number;
-  snippets: SearchSnippet[];
-}
-
-export interface SearchResponse {
-  query: string;
-  tasks: SearchTaskHit[];
-  /** a daemon scan cap was reached: this answer is not the whole ledger */
-  truncated: boolean;
-  /**
-   * Present only while the agent-prose index is still catching up on turns
-   * that ended before it existed. A client says so out loud: a search that
-   * has not read half your history must not look like one that has.
-   */
-  indexing?: { remainingTurns: number };
-}
-
 /**
  * The CLI's one glyph per state. It lives here rather than in cli.ts because
  * two commands print it now (`ls` and `search`) and the keys derive from
