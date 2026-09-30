@@ -169,7 +169,11 @@ bun run release:closeout "$version"
 ```
 
 The release notes describe the artifact gates as pending, so the qualification
-ledger is where the outcome lands. The closeout reads the release, its
+ledger is where the outcome lands. Once the ledger records the publication,
+the closeout also regenerates `CHANGELOG.md`, which lists each published
+version with the opening paragraph of its notes, so commit it with the ledger.
+`docs:check` refuses a stale changelog; `bun run changelog` rewrites it by hand.
+The closeout reads the release, its
 workflow jobs, the promotion receipt, the release PR's checks, and the
 migrations itself, verifies anonymously that the tap and both update channels
 serve the version, and writes the `## <version> publication` section into
