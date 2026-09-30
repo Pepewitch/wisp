@@ -98,7 +98,8 @@ its turn open, and records who took each task action.
 - The daemon and the web app share their API types, task create and archive
   move into domain operations, routes get one daemon context, and the daemon
   tests are typechecked and hermetic (#342, #346, #348, #351, #352). The
-  release notes count migrations kept in their own files (#340), and the
+  release notes count migrations kept in their own files (#340), a
+  development-only dependency is pinned past new advisories (#356), and the
   0.6.5 publication is recorded (#339).
 
 ## Install or upgrade
