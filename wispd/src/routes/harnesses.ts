@@ -46,6 +46,8 @@ export function harnessesRoute(
       taskSearch: true,
       taskWorkflows: true,
       taskAutopilot: true,
+      // GET /api/tasks/:id/autopilot/history: the Autopilot tab's History
+      autopilotHistory: true,
       harnessLimits: true,
       taskTerminals: true,
       taskBriefs: true,

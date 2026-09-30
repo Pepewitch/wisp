@@ -4,7 +4,7 @@
  * monotonic counter as the snapshot, consumers react in an effect. Never state
  * that matters: a missed intent is a shrug, not a bug.
  *
- * SIX intents. `/log` is the palette's one command that needs another
+ * SEVEN intents. `/log` is the palette's one command that needs another
  * component to move (`/diff`'s intent was deleted with the command, lib/slash.ts:
  * the Changes pane is always visible). A task focus request is the desktop
  * shell's: a clicked notification names a task on a connection whose view is
@@ -15,7 +15,9 @@
  * shape again: the first-run panel and the sidebar's error row both mean "open
  * the Local Wisp dialog", and neither owns it — the desktop connection chrome
  * does, and it is mounted in two different shells. A successful native
- * reconnect also asks the mounted view to reopen both of its streams.
+ * reconnect also asks the mounted view to reopen both of its streams. And a
+ * message reveal is the Autopilot tab's "View message": the history names the
+ * message an auto-fix round queued, and only the conversation can scroll to it.
  */
 import { LOCAL_CONNECTION_ID } from "./transport";
 
@@ -37,6 +39,12 @@ export interface FindRequest {
   readonly seq: number;
 }
 
+/** A request to scroll the conversation to one task message (queued, steered, or the prompt it started). */
+export interface MessageRevealRequest {
+  readonly messageId: string;
+  readonly seq: number;
+}
+
 export interface UiIntents {
   subscribe(fn: () => void): () => void;
   streamFocusRequests(): number;
@@ -47,6 +55,8 @@ export interface UiIntents {
   focusTask(taskId: string): void;
   findRequest(): FindRequest | null;
   openFind(query?: string | null, turn?: number | null): void;
+  messageRevealRequest(): MessageRevealRequest | null;
+  revealMessage(messageId: string): void;
   localSetupRequests(): number;
   openLocalSetup(): void;
   reconnectRequests(): number;
@@ -59,6 +69,7 @@ function createUiIntents(): UiIntents {
   let composerFocusRequests = 0;
   let taskFocusRequest: TaskFocusRequest | null = null;
   let findRequest: FindRequest | null = null;
+  let messageRevealRequest: MessageRevealRequest | null = null;
   let localSetupRequests = 0;
   let reconnectRequests = 0;
   const notify = () => {
@@ -101,6 +112,14 @@ function createUiIntents(): UiIntents {
     },
     openFind(query: string | null = null, turn: number | null = null): void {
       findRequest = { query, turn, seq: (findRequest?.seq ?? 0) + 1 };
+      notify();
+    },
+    /** the latest "View message" from the Autopilot tab's history */
+    messageRevealRequest(): MessageRevealRequest | null {
+      return messageRevealRequest;
+    },
+    revealMessage(messageId: string): void {
+      messageRevealRequest = { messageId, seq: (messageRevealRequest?.seq ?? 0) + 1 };
       notify();
     },
     /** the latest "open the Local Wisp setup dialog" request */

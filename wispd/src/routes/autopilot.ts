@@ -4,9 +4,10 @@
  * POST /api/tasks/:id/autopilot/resume      resume a pause, or release a Stop hold
  * POST /api/tasks/:id/autopilot/send-now    send a pending auto-fix round without its delay
  * POST /api/tasks/:id/autopilot/skip        never send the pending round's evidence
- * GET  /api/tasks/:id/autopilot/history     what it did, newest first: { history: AutopilotHistoryEntry[] }
+ * GET  /api/tasks/:id/autopilot/history     what it did, newest first (AutopilotHistoryResponse)
  */
 import type { AutopilotUpdate } from "../../../shared/autopilot"
+import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot"
 import { AutopilotError, autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
 import { getTask } from "../store"
 import { autopilotSwitchDetail, recordAudit, requestActor } from "../task-audit"
@@ -36,7 +37,7 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
   const taskId = match[1]!
   if (!getTask(taskId)) return err("Task not found", 404)
   try {
-    if (match[2] === "history") return req.method === "GET" ? json({ history: autopilotHistory(taskId) }) : err("Method not allowed", 405)
+    if (match[2] === "history") return req.method === "GET" ? json<AutopilotHistoryResponse>({ history: autopilotHistory(taskId) }) : err("Method not allowed", 405)
     if (match[2]) {
       if (req.method !== "POST") return err("Method not allowed", 405)
       const verb = match[2] as "resume" | "send-now" | "skip"

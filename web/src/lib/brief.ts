@@ -190,8 +190,8 @@ export function briefWaiting(view: BriefView | undefined): "not-yet" | "after-ru
   return view.latestEligibleTurn === null && view.report === null ? "not-yet" : null
 }
 
-/** The switch's one-line note in the task menu, or null when there is nothing worth saying. */
-export function briefMenuNote(options: {
+/** The line under the brief switch in the Autopilot tab's Brief section, or null when there is nothing worth saying. */
+export function briefSwitchNote(options: {
   enabled: boolean
   supported: boolean
   harness: string

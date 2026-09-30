@@ -16,8 +16,9 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
  * The task verbs that are not worth a permanent button: find, rename and
- * archive — and auto-merge, a switch you flip once and then read on the PR
- * line, which is where its reason lives while it waits.
+ * archive — and the brief, auto-merge and auto-fix switches, as shortcuts.
+ * What those switches are doing (the reason, the round waiting to send, the
+ * pause to resume) lives in the Autopilot tab, which has the room for it.
  * Stop/steer lives in the composer; Push stays in the header because it has a
  * consequence at the moment you are reading a task. Fresh session is a slash
  * command in the composer (`/fresh`).
@@ -110,9 +111,9 @@ export function TaskActions({ task }: { task: ApiTask }) {
 }
 
 /**
- * Task briefs: one switch, and one line saying what switching it does. On
- * means the NEXT eligible turn is asked — the menu says so, because nothing
- * visible happens at the moment of the click, and that is on purpose.
+ * Task briefs: the switch alone. What switching does, and that it starts with
+ * the NEXT turn, is said by the Autopilot tab's Brief section; a failed write
+ * still shows here, on the control that sent it.
  */
 function BriefItems({ task }: { task: ApiTask }) {
   const brief = useBriefSwitch(task)
@@ -123,17 +124,16 @@ function BriefItems({ task }: { task: ApiTask }) {
       <MenuCheckboxItem checked={brief.enabled} disabled={brief.disabled} onCheckedChange={brief.set}>
         Task brief
       </MenuCheckboxItem>
-      {brief.note && <div className="max-w-[280px]"><MenuNote>{brief.note}</MenuNote></div>}
       {brief.error && <div className="max-w-[280px]"><MenuNote>{brief.error}</MenuNote></div>}
     </>
   )
 }
 
 /**
- * Auto-merge and auto-fix: the two switches, the PR they are bound to, the one
- * reason they are waiting, and the single action a pending round, a pause, or
- * a Stop hold asks for. Every control is a menu row, so touch and keyboard
- * reach all of them.
+ * Auto-merge and auto-fix: the two switches and the PR they are bound to, as
+ * a keyboard and quick-toggle shortcut. The reason they are waiting and the
+ * one action it asks for (Send now / Skip, Resume, Continue now) are the
+ * Autopilot tab's; a menu that repeats a paragraph is why that tab exists.
  */
 function AutoMergeItems({ task }: { task: ApiTask }) {
   const features = useHarnessFeatures()
@@ -142,10 +142,8 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
   const status = task.autopilot
   const merge = status?.autoMerge === true
   const fix = status?.autoFix === true
-  const armed = merge || fix
   const local = task.mode === "local"
   const busy = local || autopilot.isPending
-  const act = (action: "resume" | "send-now" | "skip") => autopilot.mutate({ id: task.id, act: action })
   const set = (change: { autoMerge?: boolean; autoFix?: boolean }) => autopilot.mutate({ id: task.id, set: change })
   return (
     <>
@@ -157,32 +155,7 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
         {fix && !merge && status?.pr ? `Auto-fix #${status.pr}` : "Auto-fix"}
       </MenuCheckboxItem>
       {local && <MenuNote>Needs a worktree task: this one runs in the project checkout.</MenuNote>}
-      {/* the reason while it is on; and when Wisp itself switched it off, why */}
-      {status && (armed || (status.reason !== "" && status.reason !== "Auto-merge off")) && (
-        <div className="max-w-[280px]">
-          <MenuNote>{status.state === "paused" ? `Paused — ${status.reason}` : status.reason}</MenuNote>
-        </div>
-      )}
-      {armed && status && <AutopilotActions status={status} pending={autopilot.isPending} act={act} />}
       {autopilot.error && <div className="max-w-[280px]"><MenuNote>{failureReason(autopilot.error)}</MenuNote></div>}
     </>
   )
 }
-
-/** The one action the current state asks for: a pending round, a pause, or a Stop hold. */
-function AutopilotActions({ status, pending, act }: {
-  status: NonNullable<ApiTask["autopilot"]>
-  pending: boolean
-  act: (action: "resume" | "send-now" | "skip") => void
-}) {
-  if (status.state === "paused") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Resume</MenuItem>
-  if (status.state === "held") return <MenuItem keepOpen disabled={pending} onClick={() => act("resume")}>Continue now</MenuItem>
-  if (!status.autoFix || !status.pendingFix) return null
-  return (
-    <>
-      <MenuItem keepOpen disabled={pending} onClick={() => act("send-now")}>Send now</MenuItem>
-      <MenuItem keepOpen disabled={pending} onClick={() => act("skip")}>Skip</MenuItem>
-    </>
-  )
-}
-

@@ -1,147 +1,109 @@
 import { useId, useState, type ReactNode } from "react"
 
 import { Check, ChevronRight } from "@/components/icons"
-import { PaneHeader, Rule, SwitchTrack } from "@/components/primitives"
+import { Rule, SwitchTrack } from "@/components/primitives"
 import { Prose } from "@/components/prose"
-import { useTick } from "@/hooks/useTick"
-import { useBriefSwitch } from "@/hooks/useBriefSwitch"
-import { briefBand, recommendedOption, type BriefBandModel, type BriefInputView, type TaskBriefV1 } from "@/lib/brief"
-import { useDaemonRuntime } from "@/lib/runtime"
-import type { ApiTask } from "@/lib/types"
-import { uiIntentsFor } from "@/lib/ui-intents"
+import { recommendedOption, type BriefBandModel, type BriefInputView, type TaskBriefV1 } from "@/lib/brief"
 import { cn } from "@/lib/utils"
 
 /** Hand some words to find-in-task, in the turn they belong to. */
-type Reveal = (query: string, turn: number | null) => void
+export type Reveal = (query: string, turn: number | null) => void
 
-/**
- * The task brief: a tab of the task panel, beside Changes and Workflows
- * (frontend reference §5k). The header says which task this is; this says
- * where it stands — your latest words as Wisp recorded them, then the agent's
- * own report of goal, result, what remains, and any decision waiting on you.
- *
- * It used to be a band above the conversation. That cost the reading column
- * a strip of height on every task, open or not, and moved the text you were
- * reading whenever a report changed. A tab costs nothing until you go there,
- * and the panel is where standing state already lives.
- *
- * The switch at the top is the one control here: it decides whether briefs
- * are generated, and is the same switch as the task menu's. Everything else
- * is READING ONLY and writes nothing.
- *
- * Kept mounted while another tab shows (`hidden`), like its siblings, so the
- * scroll position and an open comparison survive a look at the diff.
- */
-export function BriefPane({
-  task,
-  header,
-  hidden = false,
-  touch = false,
-  onShowConversation,
-}: {
-  task: ApiTask | null
-  /** the panel's tab strip; without one the pane names itself */
-  header?: ReactNode
-  hidden?: boolean
+export interface BriefSectionProps {
+  /** a live task on a daemon with briefs; an archived one keeps its report and loses the switch */
+  switchable: boolean
+  enabled: boolean
+  disabled: boolean
+  /** what switching does, or why it cannot; null once a report or its empty line says it */
+  note: string | null
+  error: string | null
+  model: BriefBandModel
+  /** per task: nothing opened on one task's brief carries to another's */
+  reportKey: string
   touch?: boolean
-  /** Bring the transcript on screen before a find runs against it (touch, where it is another tab). */
-  onShowConversation?: () => void
-}) {
-  const { connectionId } = useDaemonRuntime()
-  const brief = useBriefSwitch(task)
-  const now = useTick(brief.enabled)
-  const model: BriefBandModel = brief.enabled ? briefBand(brief.query.data, brief.query.error, now) : { kind: "hidden" }
-
-  const intents = uiIntentsFor(connectionId)
-  const reveal: Reveal = (words, turn) => {
-    if (!onShowConversation) return intents.openFind(words, turn)
-    onShowConversation()
-    // a frame later, so the find runs against a transcript that is on screen
-    requestAnimationFrame(() => intents.openFind(words, turn))
-  }
-
-  return (
-    <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
-      {(!touch || header) && (
-        <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-          {header ?? <span className="text-[12.5px] font-medium text-foreground">Brief</span>}
-        </PaneHeader>
-      )}
-      <section aria-label="Task brief" className="@container flex min-h-0 flex-1 flex-col">
-        {!task ? (
-          <p className="px-3.5 py-3 text-[12.5px] text-muted-foreground">No task selected.</p>
-        ) : (
-          <>
-            {/* pinned above the scroller: a long report must not take the switch out of reach */}
-            {brief.switchable && (
-              <BriefSwitch
-                enabled={brief.enabled}
-                disabled={brief.disabled}
-                // once a report or its empty line is showing, that says the same thing
-                note={brief.enabled && model.kind !== "hidden" ? null : brief.note}
-                error={brief.error}
-                touch={touch}
-                onChange={brief.set}
-              />
-            )}
-            {/* Archived tasks cannot be switched, but a report already written stays readable. */}
-            <div className="scroll-slim min-h-0 flex-1 overflow-y-auto">
-              {model.kind !== "hidden" && (
-                <BriefBody
-                  // per task: nothing opened on one task's brief carries to another's
-                  key={task.id}
-                  model={model}
-                  touch={touch}
-                  onReveal={reveal}
-                  onRetry={() => void brief.query.refetch()}
-                />
-              )}
-            </div>
-          </>
-        )}
-      </section>
-    </div>
-  )
+  onChange: (enabled: boolean) => void
+  onReveal?: Reveal
+  onRetry?: () => void
 }
 
-/** The on/off switch and the one line saying what it does. The whole row is the hit target. */
-export function BriefSwitch({
+/**
+ * The task brief: the FIRST section of the Autopilot tab (frontend reference
+ * §5k). The header says which task this is; this says where it stands — your
+ * latest words as Wisp recorded them, then the agent's own report of goal,
+ * result, what remains, and any decision waiting on you.
+ *
+ * It is the part of the tab a person reads, so nothing sits above it but the
+ * tab strip, and nothing caps it: a long report is shown in full, and the
+ * Automation section under it docks its header instead (autopilot-pane.tsx).
+ *
+ * The header row's switch is the one control here: it decides whether briefs
+ * are generated, and is the same switch as the task menu's. Everything else
+ * is READING ONLY and writes nothing.
+ */
+export function BriefSection({
+  switchable,
   enabled,
   disabled,
   note,
   error,
+  model,
+  reportKey,
+  touch = false,
+  onChange,
+  onReveal,
+  onRetry,
+}: BriefSectionProps) {
+  const line = error ?? (switchable ? note : null)
+  return (
+    <section aria-label="Task brief">
+      <BriefSwitch switchable={switchable} enabled={enabled} disabled={disabled} touch={touch} onChange={onChange} />
+      {line && <p className="px-3.5 pt-0.5 pb-4 text-[11.5px] leading-relaxed text-muted-foreground">{line}</p>}
+      {model.kind !== "hidden" && (
+        <div className="pb-2">
+          <BriefBody key={reportKey} model={model} touch={touch} onReveal={onReveal} onRetry={onRetry} />
+        </div>
+      )}
+    </section>
+  )
+}
+
+/**
+ * The section's header row, which IS its switch: the whole row is the hit
+ * target. An archived task keeps the header and loses the switch.
+ */
+export function BriefSwitch({
+  switchable,
+  enabled,
+  disabled,
   touch,
   onChange,
 }: {
+  switchable: boolean
   enabled: boolean
   disabled: boolean
-  note: string | null
-  error: string | null
   touch: boolean
   onChange: (enabled: boolean) => void
 }) {
+  const row = cn("flex w-full items-center justify-between gap-3 px-3.5", touch ? "min-h-12" : "h-10")
+  const label = <span className="text-[12.5px] font-semibold text-foreground">Brief</span>
+  if (!switchable) return <div className={row}>{label}</div>
   return (
-    <div className="border-b border-border">
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        aria-label="Task brief"
-        disabled={disabled}
-        onClick={() => onChange(!enabled)}
-        className={cn(
-          "flex w-full items-center justify-between gap-3 px-3.5 text-left transition-colors hover:bg-hover",
-          "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset disabled:opacity-60",
-          touch ? "min-h-11 py-2" : "py-2",
-        )}
-      >
-        <span className="text-[12.5px] font-medium text-foreground">{enabled ? "Brief on" : "Brief off"}</span>
-        <SwitchTrack checked={enabled} />
-      </button>
-      {(note || error) && (
-        <p className="px-3.5 pt-3 pb-3.5 text-[11.5px] leading-relaxed text-muted-foreground">{error ?? note}</p>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label="Task brief"
+      disabled={disabled}
+      onClick={() => onChange(!enabled)}
+      className={cn(
+        row,
+        "text-left transition-colors hover:bg-hover",
+        "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset disabled:opacity-60",
       )}
-    </div>
+    >
+      {label}
+      <SwitchTrack checked={enabled} />
+    </button>
   )
 }
 
@@ -205,14 +167,14 @@ function Row({ label, children, touch }: { label: string; children: ReactNode; t
   return (
     <div className={cn("grid gap-x-3 gap-y-0.5", !touch && "@min-[520px]:grid-cols-[76px_minmax(0,1fr)]")}>
       <div className="pt-[3px] text-[11.5px] text-muted-foreground">{label}</div>
-      <div className="min-w-0 text-[13px] leading-[1.6] text-foreground">{children}</div>
+      <div className="min-w-0 text-[13px] leading-[1.7] text-foreground">{children}</div>
     </div>
   )
 }
 
 /** Agent text: rendered by the app's one safe prose path, never as HTML. */
 function AgentText({ text, className }: { text: string; className?: string }) {
-  return <Prose text={text} mode="static" className={cn("text-[13px] leading-[1.6] text-foreground [&_p]:my-0", className)} />
+  return <Prose text={text} mode="static" className={cn("text-[13px] leading-[1.7] text-foreground [&_p]:my-0", className)} />
 }
 
 function QuietButton({ children, onClick, touch }: { children: ReactNode; onClick: () => void; touch: boolean }) {

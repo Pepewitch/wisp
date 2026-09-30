@@ -1,4 +1,5 @@
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../shared/autopilot"
+import type { AutopilotHistoryResponse } from "../../shared/api/autopilot"
 import type { Flags } from "./cli-args"
 import { controlFree } from "./control-free"
 import { print, printJson } from "./cli-print"
@@ -34,7 +35,7 @@ export async function prCommand(positional: string[], flags: Flags, api: Api): P
   if (!task) throw new Error(PR_USAGE)
   const path = `/api/tasks/${encodeURIComponent(task)}/autopilot`
   if (action === "history" && value === undefined) {
-    const { history } = await api(`${path}/history`) as { history: AutopilotHistoryEntry[] }
+    const { history } = await api(`${path}/history`) as AutopilotHistoryResponse
     if (flags.json) printJson(history)
     else print(formatAutopilotHistory(history))
     return

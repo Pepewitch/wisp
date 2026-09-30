@@ -411,6 +411,8 @@ export function endMergeAttempt(row: WorkflowRow, reported: boolean): void {
     if (checkpoint.state === "merging") checkpoint.state = "waiting"
   }
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), row.id])
+  // a failed attempt takes the row out of "merging": clients re-read it
+  announceWorkflow(current.task_id)
 }
 
 export function finishAutopilot(row: WorkflowRow, outcome: "merged" | "closed", reason: string, now: Date, merged?: { base: string; byWisp: boolean }): void {

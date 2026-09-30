@@ -10,6 +10,8 @@ import { AFTER_MERGE_MS, choosePull, WAITING_ON_YOU_MS } from "../src/autopilot/
 import { autopilotArchiveWarning, autopilotHistory, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, resumeAutopilot, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { formatAutopilot, formatAutopilotHistory, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
+import { harnessesRoute } from "../src/routes/harnesses";
+import type { ModelProbeCache } from "../src/model-probes";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
@@ -990,6 +992,13 @@ describe("API and CLI", () => {
     expect(lines[1]).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ {2}completed {5}#7 {6}- {8}Auto-merge off$/);
     expect(formatAutopilotHistory([{ at: "2026-09-23T12:00:00.000Z", kind: "merging", detail: "Merging #7 at ccccccc", pr: 7, sha: HEAD, messageId: null }]))
       .toBe("2026-09-23T12:00:00Z  merging       #7      ccccccc  Merging #7 at ccccccc");
+  });
+
+  test("the harnesses route advertises the history, so a client never probes an older daemon for it", async () => {
+    const models = { refresh: async () => {}, refreshIfStale: async () => {} } as unknown as ModelProbeCache;
+    const response = harnessesRoute(new URL("http://wisp.test/api/harnesses"), loadConfig(), {}, models);
+    const { features } = await response.json() as { features: Record<string, unknown> };
+    expect(features).toMatchObject({ taskAutopilot: true, autopilotHistory: true });
   });
 
   test("wisp pr prints one line and drives the same route", async () => {

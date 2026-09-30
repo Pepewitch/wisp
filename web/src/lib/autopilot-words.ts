@@ -43,3 +43,55 @@ export function autopilotBlocks(status: AutopilotStatus | null | undefined, numb
   return Boolean(status && (status.autoMerge || status.autoFix) && status.pr === number &&
     (status.state === "needs-you" || status.state === "paused"))
 }
+
+/** The rail's three colours, as dot classes: the sidebar rail, and the Autopilot tab's live line. */
+export const AUTOPILOT_RAIL_TONE = { "needs-you": "bg-destructive", done: "bg-primary", on: "bg-state-background" } as const
+
+/** The rail's reading, plus "off" when neither switch is on: what the Autopilot tab tints its live line with. */
+export function autopilotTint(status: AutopilotStatus | null | undefined): "needs-you" | "done" | "on" | "off" {
+  if (!status || !(status.autoMerge || status.autoFix) || status.state === "off") return "off"
+  // a finished row from before the switches stayed on across merges is done
+  return autopilotRail(status) ?? "done"
+}
+
+/** The reason as the tab and its docked header say it: a pause names itself. */
+export function autopilotReason(status: AutopilotStatus): string {
+  return status.state === "paused" ? `Paused — ${status.reason}` : status.reason
+}
+
+/** Which switch's row the live line sits under: the one the reason speaks for, among those that are on. */
+export function autopilotSpeaker(status: AutopilotStatus): "auto-merge" | "auto-fix" {
+  if (status.by === "auto-fix" && status.autoFix) return "auto-fix"
+  return status.autoMerge ? "auto-merge" : "auto-fix"
+}
+
+/**
+ * The one action the state asks for: Resume a pause, Continue now after a
+ * Stop hold, or Send now / Skip for an auto-fix round waiting out its delay.
+ */
+export function autopilotAction(status: AutopilotStatus | null | undefined): "resume" | "continue" | "round" | null {
+  if (!status || !(status.autoMerge || status.autoFix)) return null
+  if (status.state === "paused") return "resume"
+  if (status.state === "held") return "continue"
+  return status.autoFix && status.pendingFix ? "round" : null
+}
+
+/** What each switch does, said while it is off: the empty state is the onboarding. */
+export const AUTOPILOT_OFF_WORDS = {
+  "auto-merge": "Merges this task's PR once its checks pass and reviews allow it, then waits for the next PR.",
+  "auto-fix": "When CI fails, the PR conflicts with its base, or a review asks for changes, sends the agent a fix round.",
+} as const
+
+/**
+ * Why Wisp itself switched them off (the PR closed, the task was archived),
+ * or null for a plain switch-off and a task never armed.
+ */
+export function autopilotOffReason(status: AutopilotStatus | null | undefined): string | null {
+  if (!status || status.autoMerge || status.autoFix) return null
+  return status.reason !== "" && status.reason !== "Auto-merge off" ? status.reason : null
+}
+
+/** Auto-fix's round count, as the quiet line under its switch says it while the other one speaks. */
+export function fixRoundsWords(rounds: number): string {
+  return rounds === 0 ? "no fix rounds yet" : rounds === 1 ? "1 fix round sent" : `${rounds} fix rounds sent`
+}

@@ -14,11 +14,11 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 
-type MobileTab = "chat" | "brief" | "changes" | "workflows" | "terminal"
+type MobileTab = "chat" | "autopilot" | "changes" | "workflows" | "terminal"
 
 const TAB_LABEL: Record<MobileTab, string> = {
   chat: "Chat",
-  brief: "Brief",
+  autopilot: "Autopilot",
   changes: "Changes",
   workflows: "Workflows",
   terminal: "Terminal",
@@ -55,7 +55,7 @@ const TAB_LABEL: Record<MobileTab, string> = {
  *
  *  - drawer task rows are the TWO-LINE touch variant. The desktop row defers
  *    branch and state to a hover card, and a finger cannot hover.
- *  - the composer is pinned on Chat, Brief, Changes, and Workflows but NOT on
+ *  - the composer is pinned on Chat, Autopilot, Changes, and Workflows but NOT on
  *    Terminal, where the shell itself is the input and a second one would
  *    fight the keyboard.
  *
@@ -68,7 +68,7 @@ export function MobileShell({
   sidebar,
   conversation,
   changes,
-  brief,
+  autopilot,
   workflows,
   terminal,
   composer,
@@ -84,11 +84,13 @@ export function MobileShell({
   conversation: ReactNode
   changes: ReactNode
   /**
-   * The task brief, a surface level with Changes. Absent when the connected
-   * daemon has no briefs. It is handed a way back to the chat because "Show
-   * in conversation" must land on a transcript that is on screen.
+   * The Autopilot tab (the task brief, auto-merge and auto-fix), a surface
+   * level with Changes; labelled Brief on a daemon with briefs and no
+   * autopilot, and absent on one with neither. It is handed a way back to the
+   * chat because "Show in conversation" and "View message" must land on a
+   * transcript that is on screen.
    */
-  brief?: (showChat: () => void) => ReactNode
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showChat: () => void, hidden: boolean) => ReactNode }
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
   terminal: ReactNode
@@ -111,7 +113,7 @@ export function MobileShell({
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
-  const tabs = surfaceTabs(brief !== undefined, workflows !== undefined)
+  const tabs = surfaceTabs(autopilot !== undefined, workflows !== undefined)
   useChatOnFind(tab, setTab)
 
   // a task switch is always about reading the conversation next
@@ -240,7 +242,7 @@ export function MobileShell({
       >
         {tabs.map((t) => (
           <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 basis-auto justify-center px-1">
-            {TAB_LABEL[t]}
+            {t === "autopilot" && autopilot ? autopilot.label : TAB_LABEL[t]}
           </Tab>
         ))}
       </div>
@@ -251,7 +253,7 @@ export function MobileShell({
             conversation's scroll position or tear down a live shell */}
         {firstRun}
         {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
-        {!firstRun && brief && <Pane show={tab === "brief"}>{brief(() => setTab("chat"))}</Pane>}
+        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot.render(() => setTab("chat"), tab !== "autopilot")}</Pane>}
         {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
         {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
         {!firstRun && (
@@ -283,10 +285,10 @@ export function MobileShell({
   )
 }
 
-function surfaceTabs(brief: boolean, workflows: boolean): MobileTab[] {
+function surfaceTabs(autopilot: boolean, workflows: boolean): MobileTab[] {
   return [
     "chat",
-    ...(brief ? (["brief"] as const) : []),
+    ...(autopilot ? (["autopilot"] as const) : []),
     "changes",
     ...(workflows ? (["workflows"] as const) : []),
     "terminal",
@@ -294,11 +296,11 @@ function surfaceTabs(brief: boolean, workflows: boolean): MobileTab[] {
 }
 
 /**
- * Find-in-task searches the transcript, which the Brief tab hides: a find
+ * Find-in-task searches the transcript, which the Autopilot tab hides: a find
  * from anywhere (the task menu, ⌘F) gives the chat back first. The find has
  * already run against a hidden transcript by then, where nothing can scroll,
  * so it is asked again once the chat is on screen — the same frame the
- * Brief's own "Show in conversation" waits.
+ * Autopilot tab's own "Show in conversation" waits.
  */
 function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
   const { connectionId } = useDaemonRuntime()
@@ -308,7 +310,7 @@ function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
   useEffect(() => {
     if (findSeq === seenFind.current) return
     seenFind.current = findSeq
-    if (tab !== "brief") return
+    if (tab !== "autopilot") return
     const request = intents.findRequest()
     setTab("chat")
     if (request) requestAnimationFrame(() => intents.openFind(request.query, request.turn))

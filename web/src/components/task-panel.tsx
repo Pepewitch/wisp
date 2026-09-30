@@ -3,21 +3,19 @@ import { useState } from "react"
 import { ChangesPane } from "@/components/changes-pane"
 import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Tab } from "@/components/primitives"
-import { BriefPane } from "@/components/task-brief"
+import { AutopilotPane } from "@/components/autopilot-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { parsedDiff, useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
 import { changedFileCount } from "@/lib/diff"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 
-type PanelTab = "brief" | "changes" | "workflows"
-
-const LABEL: Record<PanelTab, string> = { brief: "Brief", changes: "Changes", workflows: "Workflows" }
+type PanelTab = "autopilot" | "changes" | "workflows"
 
 /**
  * The right column's upper panel. Three views of the same task's durable state:
- * the **Brief** (where it stands), its **Changes**, and the **Workflows**
- * watching it.
+ * **Autopilot** (where it stands, and what auto-merge and auto-fix are doing
+ * about it), its **Changes**, and the **Workflows** watching it.
  *
  * The frontend reference said Changes "keeps a tab's shape so Checks can slot
  * in beside it later". Workflows is the sibling that arrived first. It belongs
@@ -28,13 +26,16 @@ const LABEL: Record<PanelTab, string> = { brief: "Brief", changes: "Changes", wo
  * The brief joined them for the same reason. As a band above the conversation
  * it took height from the one column you read in, on every task, whether or
  * not you wanted it. Here it costs nothing until you look, and it is the tab
- * the panel opens on: it is the answer to "where did this leave off?".
+ * the panel opens on: it is the answer to "where did this leave off?". The
+ * auto-merge and auto-fix switches moved in under it from the task menu, with
+ * the room to say what they did; a daemon with briefs and no autopilot keeps
+ * the tab's old name, Brief.
  *
  * All panes stay mounted. Switching to Workflows and back must not close the
  * diff you had open — the same rule the mobile shell's tabs already follow.
  *
- * A daemon with neither `taskBriefs` nor `taskWorkflows` gets no strip at
- * all: one pane, its own label, exactly as before.
+ * A daemon with none of `taskBriefs`, `taskAutopilot` and `taskWorkflows`
+ * gets no strip at all: one pane, its own label, exactly as before.
  */
 export function TaskPanel({
   task,
@@ -52,15 +53,21 @@ export function TaskPanel({
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
   const workflowsSupported = Boolean(features.data?.taskWorkflows)
-  const briefsSupported = Boolean(features.data?.taskBriefs)
+  const autopilotSupported = Boolean(features.data?.taskAutopilot)
+  const firstSupported = Boolean(features.data?.taskBriefs) || autopilotSupported
   const tabs: PanelTab[] = [
-    ...(briefsSupported ? (["brief"] as const) : []),
+    ...(firstSupported ? (["autopilot"] as const) : []),
     "changes",
     ...(workflowsSupported ? (["workflows"] as const) : []),
   ]
-  // What the person last asked for; the Brief is the opening choice. Features
+  const label: Record<PanelTab, string> = {
+    autopilot: autopilotSupported ? "Autopilot" : "Brief",
+    changes: "Changes",
+    workflows: "Workflows",
+  }
+  // What the person last asked for; Autopilot is the opening choice. Features
   // load after first paint, so the choice is held even while it is unavailable.
-  const [tab, setTab] = useState<PanelTab>("brief")
+  const [tab, setTab] = useState<PanelTab>("autopilot")
   const view = tabs.includes(tab) ? tab : "changes"
 
   // Both counts belong to the strip, so it reads the same from either tab.
@@ -84,14 +91,14 @@ export function TaskPanel({
           count={name === "changes" ? changes : name === "workflows" ? attached || undefined : undefined}
           onClick={() => setTab(name)}
         >
-          {LABEL[name]}
+          {label[name]}
         </Tab>
       ))}
     </div>
   ) : undefined
 
   // The strip depends on which surfaces the daemon has. Painting before that
-  // is known opens on Changes, then jumps to the Brief when features arrive.
+  // is known opens on Changes, then jumps to Autopilot when features arrive.
   // A failed features read falls through to Changes, as it always did.
   if (features.isPending) return <div className="h-full min-h-0 flex-1" />
 
@@ -99,14 +106,14 @@ export function TaskPanel({
     // h-full AND flex-1: this root fills a resizable panel (which sets a
     // height) as well as a flex column (which does not) — frontend reference §6b
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {briefsSupported && (
-        <BriefPane
-          // a task's brief belongs to ONE task on ONE daemon; the prefix keeps
-          // it apart from its sibling, whose key would otherwise be identical
-          key={`brief:${connectionId}:${taskId ?? ""}`}
+      {firstSupported && (
+        <AutopilotPane
+          // a task's brief and history belong to ONE task on ONE daemon; the
+          // prefix keeps it apart from its siblings, whose keys would otherwise be identical
+          key={`autopilot:${connectionId}:${taskId ?? ""}`}
           task={task}
-          header={view === "brief" ? strip : undefined}
-          hidden={view !== "brief"}
+          header={view === "autopilot" ? strip : undefined}
+          hidden={view !== "autopilot"}
           touch={touch}
         />
       )}

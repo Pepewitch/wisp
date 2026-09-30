@@ -121,6 +121,18 @@ it("workflow events refresh workflow state and task dots only on the originating
   h.close();
 });
 
+it("a workflow event refreshes that task's autopilot history, whichever task is selected", () => {
+  const h = bridge("t1");
+  const history = [...h.qk.task("t9"), "autopilot-history"];
+  const other = [...h.qk.task("t2"), "autopilot-history"];
+  h.client.setQueryData(history, []);
+  h.client.setQueryData(other, []);
+  h.sources[0]!.emit({ type: "workflow", taskId: "t9" });
+  expect(h.client.getQueryState(history)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(other)?.isInvalidated).toBe(false);
+  h.close();
+});
+
 it("a brief event refreshes that task's brief and the task list, never its transcript", () => {
   const h = bridge("t1");
   const brief = [...h.qk.task("t9"), "brief"];

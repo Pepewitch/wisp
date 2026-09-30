@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { briefBand, briefInput, briefMenuNote, briefWaiting, recommendedOption, type BriefView } from "@/lib/brief"
+import { briefBand, briefInput, briefSwitchNote, briefWaiting, recommendedOption, type BriefView } from "@/lib/brief"
 
 const NOW = Date.parse("2026-09-28T10:12:00Z")
 
@@ -130,11 +130,11 @@ describe("your latest words", () => {
 describe("the task menu's note", () => {
   const base = { enabled: false, supported: true, harness: "codex", waiting: null }
   it("explains the cost before it is on, and the timing only while it is still true", () => {
-    expect(briefMenuNote(base)).toContain("One extra step per turn")
-    expect(briefMenuNote({ ...base, enabled: true, waiting: "not-yet" })).toBe("Starts with the next turn.")
-    expect(briefMenuNote({ ...base, enabled: true, waiting: "after-running" })).toBe("Starts with the next turn — this one began before briefs were on.")
-    expect(briefMenuNote({ ...base, enabled: true })).toBeNull()
-    expect(briefMenuNote({ ...base, supported: false, harness: "opencode" })).toBe("opencode can't write briefs through Wisp yet.")
+    expect(briefSwitchNote(base)).toContain("One extra step per turn")
+    expect(briefSwitchNote({ ...base, enabled: true, waiting: "not-yet" })).toBe("Starts with the next turn.")
+    expect(briefSwitchNote({ ...base, enabled: true, waiting: "after-running" })).toBe("Starts with the next turn — this one began before briefs were on.")
+    expect(briefSwitchNote({ ...base, enabled: true })).toBeNull()
+    expect(briefSwitchNote({ ...base, supported: false, harness: "opencode" })).toBe("opencode can't write briefs through Wisp yet.")
   })
 
   it("reads 'waiting' from the daemon's read model, so it expires once a briefed turn has run", () => {

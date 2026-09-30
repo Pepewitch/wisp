@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { loadConfig } from "../src/config";
+import { subscribe } from "../src/events";
 import { type PrSnapshot } from "../src/autopilot/github";
 import { SEND_DELAY_MS } from "../src/autopilot/runtime";
-import { autopilotRow, autopilotStatus, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint } from "../src/autopilot/store";
+import { autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { db, getTask, setTaskFields } from "../src/store";
 import { pauseTaskWorkflows } from "../src/workflows/store";
@@ -115,6 +116,31 @@ describe("auto-fix", () => {
     await until(() => existsSync(file), "the fix round");
     expect(state.reruns).toEqual([5]);
     await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("a rerun's history entry is announced even when the reason reads the same as before", async () => {
+    const { task, adapters } = fixTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub({ pr: snapshot({ checks: [{ ...RED, required: false }] }) });
+    state.required = [];
+    const rt = runtime(github, clock, adapters);
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: longAgo, idleTurn: 1 });
+    // the last look already said "Rerunning test", so saving this one changes no reason
+    const row = autopilotRow(task.id)!;
+    writeAutopilotCheckpoint(row, { ...checkpointOf(row), state: "waiting", by: "auto-fix" }, new Date(clock.now), "Rerunning test");
+    const reruns: number[] = [];
+    const stop = subscribe((evt) => {
+      if (evt.type === "workflow" && evt.taskId === task.id) reruns.push(autopilotHistory(task.id).filter((entry) => entry.kind === "rerun").length);
+    });
+    try {
+      await pass(rt, task.id, clock);
+    } finally {
+      stop();
+    }
+    expect(state.reruns).toEqual([5]);
+    // a client told after the entry was written reads it
+    expect(reruns).toContain(1);
   });
 
   test("with both on, a red is fixed and never merged; once green, it merges", async () => {

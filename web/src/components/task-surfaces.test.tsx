@@ -34,8 +34,7 @@ afterEach(() => vi.restoreAllMocks())
 function surfaces(taskId: string | null, mobile = false) {
   return buildTaskSurfaces({
     mobile,
-    workflowsSupported: false,
-    briefsSupported: false,
+    features: undefined,
     connectionId: "conn",
     task: null,
     taskId,
