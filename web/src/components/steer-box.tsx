@@ -281,7 +281,7 @@ export function SteerBox({
   const groups = slashGroups(task, probeCommands, skills, compact)
   const shownReport =
     report && task && report.taskId === task.id ? report : null
-  const runtimeStatus = composerStatus(task, delivery.action, compacting)
+  const runtimeStatus = composerStatus(task, delivery.action, compacting, choice)
 
   return (
     <div

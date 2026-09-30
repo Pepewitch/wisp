@@ -33,6 +33,7 @@ export type {
   AttachResponse,
   BackgroundGroup,
   CleanupSummary,
+  HarnessBackgroundTask,
   CompactAnswer,
   SearchResponse,
   SearchSnippet,
@@ -113,11 +114,13 @@ export type ApiTask = FromAnyDaemon<
   | "latest_turn_model"
   | "latest_turn_exit_code"
   | "latest_turn_has_result"
+  | "latest_turn_background"
 >;
 
 /** A turn from the conversation routes. */
 export type Turn = FromAnyDaemon<
   ApiTurn,
+  | "origin"
   | "context_n"
   | "harness"
   | "requested_model"

@@ -11,6 +11,7 @@ import type {
   TurnCaptureMode,
   TurnCaptureState,
   TurnDiagnosticState,
+  TurnOrigin,
   TurnStatus,
 } from "./types";
 
@@ -351,6 +352,8 @@ export function createTurn(
     effort: string | null;
     fast: boolean;
   },
+  /** Who asked for it when a message did not (TurnOrigin). */
+  origin: TurnOrigin | null = null,
 ): number {
   const captureState: TurnCaptureState = capture_mode === null ? "legacy" : "complete";
   const task = getTask(task_id);
@@ -362,9 +365,9 @@ export function createTurn(
   const res = db.run(
     `INSERT INTO turns
        (task_id, n, context_n, harness, requested_model, requested_effort, requested_fast,
-        prompt, status, pid, pid_start_time, log_file, started_at, attachments_json,
+        prompt, origin, status, pid, pid_start_time, log_file, started_at, attachments_json,
         capture_mode, capture_state, captured_bytes, omitted_bytes, omitted_records, diagnostic_state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
     [
       task_id,
       n,
@@ -374,6 +377,7 @@ export function createTurn(
       requestedEffort,
       requestedFast,
       prompt,
+      origin,
       pid,
       pid_start_time,
       log_file,
@@ -420,10 +424,12 @@ export function settleTurn(
   taskId: string,
   state: TaskState,
   detail: string | null,
+  /** False for a turn nobody asked for: clients still hear of it, but no webhook fires. */
+  notify = true,
 ): void {
   const seq = db.transaction((): number | null => {
     finishTurnRow(turnId, turn.status, turn.exitCode, turn.result);
-    return transitionBody(taskId, state, detail, undefined);
+    return transitionBody(taskId, state, detail, undefined, notify);
   })();
   emitTurnFinished(turnId, turn.status);
   if (seq !== null) emit({ type: "task", taskId, state, stateDetail: detail, seq });
@@ -524,16 +530,18 @@ export interface LatestTurnOutcome {
   model: string | null;
   exitCode: number | null;
   hasResult: boolean;
+  /** The turn was one background work woke, not a message's. */
+  background: boolean;
 }
 
 export function latestTurnOutcomes(): Map<string, LatestTurnOutcome> {
   const rows = db
     .query(
-      `SELECT task_id, model, exit_code, (result IS NOT NULL) AS has_result FROM turns
+      `SELECT task_id, model, exit_code, (result IS NOT NULL) AS has_result, origin FROM turns
        WHERE (task_id, n) IN (SELECT task_id, MAX(n) FROM turns GROUP BY task_id)`,
     )
-    .all() as { task_id: string; model: string | null; exit_code: number | null; has_result: number }[];
-  return new Map(rows.map((r) => [r.task_id, { model: r.model, exitCode: r.exit_code, hasResult: r.has_result === 1 }]));
+    .all() as { task_id: string; model: string | null; exit_code: number | null; has_result: number; origin: string | null }[];
+  return new Map(rows.map((r) => [r.task_id, { model: r.model, exitCode: r.exit_code, hasResult: r.has_result === 1, background: r.origin === "background" }]));
 }
 
 /**
@@ -551,7 +559,8 @@ export function listTasksWithLatestTurn(includeArchived: boolean, includeCleanup
   const rows = db.query(`
     SELECT t.*, latest.model AS latest_turn_model,
       latest.exit_code AS latest_turn_exit_code,
-      (latest.result IS NOT NULL) AS latest_turn_has_result
+      (latest.result IS NOT NULL) AS latest_turn_has_result,
+      latest.origin AS latest_turn_origin
     FROM tasks t
     LEFT JOIN turns latest ON latest.id = (
       SELECT id FROM turns WHERE task_id = t.id ORDER BY n DESC LIMIT 1
@@ -562,13 +571,15 @@ export function listTasksWithLatestTurn(includeArchived: boolean, includeCleanup
     latest_turn_model: string | null;
     latest_turn_exit_code: number | null;
     latest_turn_has_result: number;
+    latest_turn_origin: string | null;
   })[];
-  return rows.map(({ latest_turn_model, latest_turn_exit_code, latest_turn_has_result, ...task }) => ({
+  return rows.map(({ latest_turn_model, latest_turn_exit_code, latest_turn_has_result, latest_turn_origin, ...task }) => ({
     task: task as Task,
     latestTurn: {
       model: latest_turn_model,
       exitCode: latest_turn_exit_code,
       hasResult: latest_turn_has_result === 1,
+      background: latest_turn_origin === "background",
     },
   }));
 }
@@ -654,6 +665,7 @@ export {
   releaseOrphanedTaskMessageClaims,
   releaseTaskMessageClaim,
   releaseTaskMessageHold,
+  requeueStartedTaskMessage,
   updateQueuedTaskMessage,
   type TaskAgentSelection,
 } from "./store-messages";

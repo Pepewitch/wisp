@@ -149,7 +149,7 @@ async function showCommand(positional: string[]): Promise<void> {
 /**
  * The tracked process groups behind the one-line status word.
  *
- * `show` is where an operator lands after reading "background work running"
+ * `show` is where an operator lands after reading "1 background process running"
  * and wanting to know whether Stop is safe, so the answer belongs here rather
  * than in a command they would have to know exists. Silent when there is
  * nothing running, which is almost always.
@@ -170,6 +170,11 @@ function printBackground(task: ApiTask): void {
     if (group.state === "unknown") parts.push("ownership unverified — Stop will refuse");
     if (group.stopRequested) parts.push("stop requested");
     print(`  ${parts.join(" · ")}`);
+    // The harness's own account, when Wisp kept it alive for this work.
+    for (const task of group.tasks ?? []) {
+      const started = ago(task.since);
+      print(`    ${task.name}${task.kind ? ` (${task.kind})` : ""} · started in turn ${task.turn} · ${started === "now" ? "just now" : `${started} ago`}`);
+    }
   }
 }
 

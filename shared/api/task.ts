@@ -29,6 +29,13 @@ export const TASK_MODES = ["worktree", "local"] as const;
 export type TaskMode = (typeof TASK_MODES)[number];
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
+/**
+ * Who asked for a turn when it was not a message: `background` is a model call
+ * that work the agent started in the background woke on its own after its
+ * answer (a Monitor event, a background command finishing). Nobody asked for
+ * it, so its finish raises no notification.
+ */
+export type TurnOrigin = "background";
 /** Durable selection of the turn-capture semantics used when a process starts. */
 export type TurnCaptureMode = "recorder-v1";
 export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
@@ -50,6 +57,26 @@ export interface BackgroundGroup {
   stopRequested: boolean;
   /** Deduped executable names, best effort; empty when naming failed. Never arguments. */
   names: string[];
+  /**
+   * What the harness itself says this group is running, when Wisp kept the
+   * harness process alive past the turn's answer because work it started in
+   * the background was still going (a Claude `run_in_background` command, a
+   * Monitor, a background agent). Absent for any other group. A restarted
+   * daemon stops such a process at boot: it cannot give it the next message.
+   */
+  tasks?: HarnessBackgroundTask[];
+}
+
+/** One background task a lingering harness process reports running. */
+export interface HarnessBackgroundTask {
+  /** The harness's own label for it: the description the agent gave the command or monitor. */
+  name: string;
+  /** The harness's kind, as it named it (`local_bash`, `local_agent`, …); null when it gave none. */
+  kind: string | null;
+  /** The turn number it started in, as the operator sees it. */
+  turn: number;
+  /** When Wisp first saw it start. */
+  since: string;
 }
 
 export interface BackgroundWork {
@@ -178,6 +205,8 @@ export interface ApiTaskListItem extends ApiTask {
   latest_turn_exit_code: number | null;
   /** Whether the latest turn delivered a result; "exited N" requires it. */
   latest_turn_has_result: boolean;
+  /** The latest turn was one background work woke (TurnOrigin), not a message: its finish is not news. */
+  latest_turn_background: boolean;
 }
 
 /** A turn as the API serves it: internal JSON columns parsed, never relayed raw. */
@@ -192,6 +221,8 @@ export interface ApiTurn {
   requested_effort: string | null;
   requested_fast: boolean;
   prompt: string;
+  /** Null for a message's turn; see TurnOrigin. */
+  origin: TurnOrigin | null;
   /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
   operation?: "compact";
   result: string | null;

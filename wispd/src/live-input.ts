@@ -5,6 +5,7 @@ import { liveCommand } from "./adapters/live/command";
 import { DroidLiveDriver, type DroidLiveImage, type QuestionAnswer } from "./adapters/live/droid";
 import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
+import { createBackgroundFollowUp, isSystem, noticeText, startsModelCall, type TurnKind } from "./adapters/live/claude-background";
 import { pipeReader } from "./pipe-drain";
 import {
   formatAttachNote,
@@ -14,6 +15,7 @@ import {
 } from "./attachments";
 import { emit } from "./events";
 import { getTask, runningTurn, transition } from "./store";
+import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage, TurnInput, TurnInputMode } from "./types";
@@ -23,6 +25,34 @@ export interface LiveOutputSink {
   recordStdoutLine(line: string): void;
   recordNote(note: string): void;
   recordFrameDrop(source: "stdout" | "stderr", chars: number): void;
+  /** Present on sinks that also take the harness's stderr (the recorder), so it can follow a process from turn to turn. */
+  recordStderrLine?(line: string): void;
+}
+
+/** A turn a live process is serving, and where its output goes. */
+export interface LiveTurn {
+  turnId: number;
+  turn: number;
+  sink: LiveOutputSink;
+}
+
+/**
+ * The runner's side of a Claude process that can outlive its turn: the answer
+ * arrived, but work the agent started in the background is still running, and
+ * closing stdin would make the CLI kill it. Every hook but `settle` runs
+ * synchronously on the line that needs it.
+ */
+export interface ClaudeLingerHooks {
+  /** May this turn settle now and leave its process running? False while a Stop, archive or shutdown owns it. */
+  canLinger(turnId: number): boolean;
+  /** Settle the turn from what it recorded. The process stays alive, stdin open. */
+  settle(turnId: number): Promise<void>;
+  /** Where the process's output goes while no turn is open: the settled turn's transcript. */
+  between(turnId: number): LiveOutputSink;
+  /** A model call began with no turn open. Open the turn that records it, or null to keep it with the settled turn. */
+  wake(reason: string): LiveTurn | null;
+  /** The settle finished and nothing woke the process, so the next queued message may start. */
+  idle(): void;
 }
 
 export interface ActiveLiveInput {
@@ -51,6 +81,8 @@ interface ConfigureLiveTurnOptions {
   attachments: StoredAttachment[];
   initialMessageId: string;
   claudeStrategy?: ImageInputStrategy;
+  /** Lets a Claude turn settle while its process keeps background work alive. Absent: the turn stays open instead. */
+  linger?: ClaudeLingerHooks;
 }
 
 /** Verified active-turn inputs by task. Absence means durable next-turn fallback. */
@@ -155,12 +187,14 @@ function staged<T>(stage: LiveStage, work: Promise<T>): Promise<T> {
 export function configureLiveTurn(options: ConfigureLiveTurnOptions): Promise<void> {
   liveTurns.set(options.task.id, options.turnId);
   switch (options.def.liveInput) {
-    case "claude-stream-json":
+    case "claude-stream-json": {
       if (!options.claudeStrategy) throw new Error("Claude live input strategy is unavailable");
+      const claude = configureClaude(options, options.claudeStrategy);
       return Promise.all([
-        staged("live input setup", configureClaude(options, options.claudeStrategy)),
-        staged("live output pump", pumpClaude(options.child, options.task.id, options.turnId, options.recorder)),
+        staged("live input setup", claude.start()),
+        staged("live output pump", pumpClaude(options.child, claude)),
       ]).then(() => {});
+    }
     case "droid-jsonrpc":
       return configureDroid(options);
     case "codex-app-server":
@@ -212,194 +246,355 @@ function envelopeFor(
   return strategy.envelope(prompt, envelopeFiles(def, attachments));
 }
 
-function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInputStrategy): Promise<void> {
+function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInputStrategy): ClaudeLiveProcess {
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("live input process did not expose stdin");
-  let closed = false;
+  const claude = new ClaudeLiveProcess(options, strategy, sink);
+  claudeProcesses.set(options.task.id, claude);
+  return claude;
+}
+
+/**
+ * `followOnMs`: how long an answer waits for a model call input written during
+ * it may still start. `quietMs`: how long a lingering process with nothing left
+ * in the background waits for a call that end may wake before its input closes.
+ * A test seam; production never changes them.
+ */
+export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000 };
+
+/** Live Claude processes by task, from spawn until the runner sees them exit. */
+const claudeProcesses = new Map<string, ClaudeLiveProcess>();
+
+/** The task's live Claude process, if one is running. */
+export function liveClaudeProcess(taskId: string): ClaudeLiveProcess | undefined {
+  return claudeProcesses.get(taskId);
+}
+
+/**
+ * Wisp's side of one live Claude CLI process, which can serve several turn
+ * rows.
+ *
+ * A turn normally ends by closing stdin, and the process exits. When the answer
+ * arrives while work the agent started in the background is still running (a
+ * `run_in_background` command, a Monitor, a background agent), closing stdin
+ * would make the CLI kill that work after its print-mode grace, so the turn
+ * settles here instead and the process LINGERS: alive, stdin open, owned by
+ * the task. Its process group stays recorded under the settled turn, which is
+ * what makes it the task's background work for Stop, archive and the badge.
+ *
+ * While it lingers:
+ *  - A new message is written to it as a NEW turn (`adopt`), so the CLI keeps
+ *    its background work; the runner does that instead of spawning.
+ *  - A model call the background work wakes (a completion, a Monitor event)
+ *    starts with `system/init` and opens a follow-up turn of its own
+ *    (`hooks.wake`): the agent is working again, so the task reads running. The
+ *    settled turn never reopens.
+ *  - Bookkeeping between turns (a task finishing without waking the model) is
+ *    appended to the settled turn's transcript (`hooks.between`).
+ *  - When nothing is left in the background and no call follows, stdin closes
+ *    and the process exits; the runner then clears the marker.
+ */
+export class ClaudeLiveProcess {
+  private readonly taskId: string;
+  private readonly followUp = createBackgroundFollowUp();
+  private current: LiveTurn;
+  private phaseValue: "turn" | "settling" | "lingering" = "turn";
+  /**
+   * Its input is closing or closed: set the moment `close` is asked for, not
+   * when the write chain gets to it, so no turn is handed a process that is
+   * about to exit. The exit watcher starts the next turn with `--resume`.
+   */
+  private closing = false;
+  private between: LiveOutputSink | null = null;
+  /** Lines held while a settle is in flight and a model call has already begun. */
+  private held: string[] | null = null;
+  private followOn: { turnId: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  /** Bumped whenever the follow-on wait is cancelled or re-armed, so a wait already firing can tell. */
+  private followOnGeneration = 0;
+  private quiet: ReturnType<typeof setTimeout> | null = null;
+  private settling: Promise<void> = Promise.resolve();
+  /** What the last task notification since the turn settled said, for the follow-up turn's reason. */
+  private notice: string | null = null;
+  private closed = false;
   // Serialized, but a failed write fails only itself: the chain keeps each
   // step's settling, never its rejection, so a later steer is still written
   // and close still ends stdin after an earlier write was refused.
-  let chain = Promise.resolve();
-  const serialize = (step: () => Promise<void>): Promise<void> => {
-    const next = chain.then(step);
-    chain = next.catch(() => {});
+  private chain = Promise.resolve();
+
+  constructor(
+    private readonly options: ConfigureLiveTurnOptions,
+    private readonly strategy: ImageInputStrategy,
+    private readonly sink: import("bun").FileSink,
+  ) {
+    this.taskId = options.task.id;
+    this.current = { turnId: options.turnId, turn: options.turn, sink: options.recorder };
+    this.open(this.current, "spawned");
+  }
+
+  /**
+   * `lingering` once the settled turn is recorded and the process may take the
+   * next one; `closing` once its input is closing, when it may not.
+   */
+  get phase(): "turn" | "settling" | "lingering" | "closing" {
+    return this.closing ? "closing" : this.phaseValue;
+  }
+
+  /** The turn this process is serving, or the settled one it last served. */
+  get turnId(): number {
+    return this.current.turnId;
+  }
+
+  /**
+   * Resolves once no settle is in flight. One settle can start the next: the
+   * calls it held back open a follow-up turn, which can linger in turn.
+   */
+  async settled(): Promise<void> {
+    for (let current = this.settling; ; current = this.settling) {
+      await current;
+      if (current === this.settling) return;
+    }
+  }
+
+  /** Write the spawning turn's prompt. */
+  start(): Promise<void> {
+    return this.input(envelopeFor(this.strategy, this.options.def, this.options.prompt, this.options.attachments));
+  }
+
+  /** Take the next turn while lingering: its prompt goes to the live process. */
+  adopt(turn: LiveTurn, prompt: string, attachments: StoredAttachment[]): Promise<void> {
+    if (this.phase !== "lingering") throw new Error("the live Claude process is not waiting for a turn");
+    const settled = this.current;
+    const between = this.between;
+    this.open(turn, "adopted");
+    return this.input(envelopeFor(this.strategy, this.options.def, prompt, attachments)).catch((error) => {
+      // It never took the prompt: an exit the watcher has not seen yet, or a
+      // process that stopped reading. Back to the settled turn, input closed,
+      // so the exit watcher starts the next turn on a resumed process.
+      this.closing = true;
+      this.clearTimers();
+      if (liveInputs.get(this.taskId)?.turnId === turn.turnId) liveInputs.delete(this.taskId);
+      if (liveTurns.get(this.taskId) === turn.turnId) liveTurns.delete(this.taskId);
+      if (this.current.turnId === turn.turnId) {
+        this.current = settled;
+        this.between = between;
+        this.phaseValue = "lingering";
+      }
+      throw error;
+    });
+  }
+
+  /** The process is going away on purpose: nothing it prints from now on opens a turn. */
+  retire(): void {
+    this.options.linger = undefined;
+    this.clearTimers();
+  }
+
+  /** The process exited: stop every timer and forget it. */
+  ended(): void {
+    this.retire();
+    if (claudeProcesses.get(this.taskId) === this) claudeProcesses.delete(this.taskId);
+    clearHarnessBackground(this.current.turnId);
+  }
+
+  /** Where output goes now: the open turn, or between turns the settled one's transcript. */
+  output(): LiveOutputSink {
+    return this.phaseValue === "turn" ? this.current.sink : (this.between ?? this.current.sink);
+  }
+
+  /** One stdout line from the process, in order. */
+  line(line: string): void {
+    if (this.held) {
+      this.held.push(line);
+      return;
+    }
+    let event: Record<string, unknown> | null = null;
+    try {
+      const parsed: unknown = JSON.parse(line);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) event = parsed as Record<string, unknown>;
+    } catch {
+      // Plain notes and partial/unknown future events are still logged.
+    }
+    if (event && this.phaseValue !== "turn" && startsModelCall(event)) {
+      if (this.phaseValue === "settling" && this.options.linger) {
+        this.held = [line];
+        return;
+      }
+      this.wake();
+    }
+    this.output().recordStdoutLine(line);
+    if (!event) return;
+    if (this.phaseValue !== "turn" && isSystem(event, "task_notification")) this.notice = noticeText(event);
+    this.followUp.observe(event, this.current.turn);
+    if (isSystem(event, "init")) this.clearFollowOn();
+    if (event.type === "result" && this.phaseValue === "turn") this.decide(event);
+    this.checkQuiet();
+  }
+
+  private open(turn: LiveTurn, kind: TurnKind): void {
+    this.clearTimers();
+    this.current = turn;
+    this.phaseValue = "turn";
+    this.between = null;
+    this.notice = null;
+    this.followUp.beginTurn(kind);
+    liveTurns.set(this.taskId, turn.turnId);
+    liveInputs.set(this.taskId, {
+      turnId: turn.turnId,
+      turn: turn.turn,
+      send: async (message) => {
+        const files = messageAttachments(this.taskId, message);
+        await this.input(envelopeFor(this.strategy, this.options.def, steerText(this.options.def, message, files), files));
+        noteDelivery(turn.sink, message, files);
+      },
+      close: () => this.close(),
+    });
+  }
+
+  private input(line: string): Promise<void> {
+    this.followUp.noteInput();
+    // More input, so any wait for the call it may get starts over.
+    if (this.followOn) this.armFollowOn(this.followOn.turnId);
+    return this.write(line);
+  }
+
+  private serialize(step: () => Promise<void>): Promise<void> {
+    const next = this.chain.then(step);
+    this.chain = next.catch(() => {});
     return next;
-  };
-  const write = (line: string): Promise<void> =>
-    serialize(async () => {
-      if (closed) throw new Error("live input already closed");
-      await Promise.resolve(sink.write(`${line}\n`));
-      await Promise.resolve(sink.flush());
+  }
+
+  private write(line: string): Promise<void> {
+    return this.serialize(async () => {
+      if (this.closed) throw new Error("live input already closed");
+      await Promise.resolve(this.sink.write(`${line}\n`));
+      await Promise.resolve(this.sink.flush());
     });
-  const close = (): Promise<void> =>
-    serialize(async () => {
-      if (closed) return;
-      closed = true;
-      await Promise.resolve(sink.end());
+  }
+
+  private close(): Promise<void> {
+    this.closing = true;
+    this.clearTimers();
+    return this.serialize(async () => {
+      if (this.closed) return;
+      this.closed = true;
+      await Promise.resolve(this.sink.end());
     });
-  liveInputs.set(options.task.id, {
-    turnId: options.turnId,
-    turn: options.turn,
-    async send(message) {
-      const files = messageAttachments(options.task.id, message);
-      await write(envelopeFor(strategy, options.def, steerText(options.def, message, files), files));
-      noteDelivery(options.recorder, message, files);
-    },
-    close,
-  });
-  return write(envelopeFor(strategy, options.def, options.prompt, options.attachments));
+  }
+
+  private decide(result: Record<string, unknown>): void {
+    const verdict = this.followUp.closesTurn(result);
+    if (verdict === "close") void closeLiveInput(this.taskId, this.current.turnId);
+    else if (verdict === "linger") this.linger();
+    // Input written during this call may still get a call of its own, which
+    // starts at once when it does. Settling first would file its answer as
+    // background work's.
+    else if (verdict === "wait" && this.options.linger && !this.followOn) this.armFollowOn(this.current.turnId);
+  }
+
+  private armFollowOn(turnId: number): void {
+    this.clearFollowOn();
+    const generation = this.followOnGeneration;
+    const timer = setTimeout(() => {
+      // One more I/O cycle first: a `system/init` already in the pipe is the
+      // call starting, and it cancels this wait before anything settles. Input
+      // written meanwhile re-arms it; either one bumps the generation.
+      setImmediate(() => {
+        if (generation !== this.followOnGeneration) return;
+        this.followOn = null;
+        if (this.phaseValue !== "turn" || this.current.turnId !== turnId) return;
+        this.followUp.inputAnswered();
+        if (this.followUp.activeCount() > 0) this.linger();
+        else void closeLiveInput(this.taskId, turnId);
+      });
+    }, lingerTiming.followOnMs);
+    this.followOn = { turnId, timer };
+  }
+
+  /** Settle the current turn and keep the process for its background work. */
+  private linger(): void {
+    const hooks = this.options.linger;
+    const turn = this.current;
+    // Without the hooks (or while a Stop owns the turn) the turn stays open
+    // as it always did; stdin stays open either way.
+    if (!hooks || this.closing || !hooks.canLinger(turn.turnId)) return;
+    this.clearTimers();
+    this.phaseValue = "settling";
+    this.followUp.inputAnswered();
+    // The steer channel belonged to the turn, which is over. A send now is a
+    // new turn, which the runner hands back through `adopt`.
+    if (liveInputs.get(this.taskId)?.turnId === turn.turnId) liveInputs.delete(this.taskId);
+    if (liveTurns.get(this.taskId) === turn.turnId) liveTurns.delete(this.taskId);
+    setHarnessBackground(turn.turnId, () => this.followUp.tasks());
+    this.between = hooks.between(turn.turnId);
+    this.settling = hooks.settle(turn.turnId)
+      .catch((error) => console.error(`[wisp] task ${this.taskId}: settling turn ${turn.turn} for its background work failed: ${String(error)}`))
+      .then(() => {
+        if (this.phaseValue !== "settling") return;
+        this.phaseValue = "lingering";
+        const held = this.held;
+        this.held = null;
+        for (const line of held ?? []) this.line(line);
+        if (this.phaseValue === "lingering") this.options.linger?.idle();
+        this.checkQuiet();
+      });
+  }
+
+  private wake(): void {
+    const turn = this.options.linger?.wake(this.wakeReason());
+    if (turn) this.open(turn, "follow-up");
+  }
+
+  private wakeReason(): string {
+    if (this.notice) return `Background update: ${this.notice}`;
+    const tasks = this.followUp.tasks();
+    return tasks.length === 1 ? `Background update from "${tasks[0]!.name}"` : "Background update";
+  }
+
+  /**
+   * Nothing left in the background, and no call has started: the process has
+   * nothing more to do. Ending its input lets it exit.
+   */
+  private checkQuiet(): void {
+    if (this.phase !== "lingering" || this.followUp.activeCount() > 0) {
+      if (this.quiet) clearTimeout(this.quiet);
+      this.quiet = null;
+      return;
+    }
+    if (this.quiet) return;
+    this.quiet = setTimeout(() => {
+      this.quiet = null;
+      if (this.phase === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
+    }, lingerTiming.quietMs);
+    this.quiet.unref?.();
+  }
+
+  private clearFollowOn(): void {
+    this.followOnGeneration += 1;
+    if (this.followOn) clearTimeout(this.followOn.timer);
+    this.followOn = null;
+  }
+
+  private clearTimers(): void {
+    this.clearFollowOn();
+    if (this.quiet) clearTimeout(this.quiet);
+    this.quiet = null;
+  }
 }
 
-/**
- * Tracks whether Claude still owes the turn another model call.
- *
- * Claude can emit a successful result while a background task it started — a
- * `run_in_background` Bash command, or a Monitor, which registers as a
- * backgrounded local_bash task — is still active. That result is a safe
- * boundary, not the last one: each notification the task delivers wakes its own
- * model call, with its own result and no new user input. Closing stdin on the
- * first result makes the CLI tear the task down before any of that happens.
- *
- * Captured from claude-code against a real Monitor:
- *
- *   background_tasks_changed [mon] / task_started is_backgrounded=true
- *   result "tick 1"              <- one result per event, task still active
- *   system/init                  <- the CLI starting the next input cycle
- *   result "tick 2"
- *   background_tasks_changed []  + task_notification status=completed
- *   system/init                  <- the follow-up cycle the completion woke
- *   result "done"                <- only now is the turn really over
- *
- * `system/init` is the discriminator. A result arriving after the completion
- * but before any new init belongs to the call that was already running when the
- * completion landed, so closing on it drops the follow-up. A foreground tool
- * result after the completion means that in-flight call consumed it instead and
- * no separate cycle will start. The result count bounds the wait, so an
- * unfamiliar stream cannot hold a turn open forever.
- *
- * A resumed session can also answer a notification BEFORE the prompt. When the
- * previous process exited with background work still running, the CLI replays
- * those `stopped` notifications first and emits a result for them, marked
- * `origin.kind: "task-notification"`, ahead of the prompt's own cycle:
- *
- *   task_notification status=stopped   <- tasks of the previous process
- *   system/init
- *   result "" num_turns=0 origin=task-notification
- *   system/init                        <- the prompt's cycle
- *   result "…"                         <- the prompt's answer, no origin
- *
- * Nothing is active yet at that first result, so closing on it shut stdin
- * before the prompt ran. The CLI then treated the turn as a print-mode run,
- * gave the background agents the prompt started a 600 s grace, and killed them.
- * Until the prompt's own result has arrived, a notification's result that made
- * no model call is not it. A CLI that sends no `origin` or `num_turns` makes its
- * first result the answer, as before.
- */
-function createBackgroundFollowUp(): {
-  observe(event: Record<string, unknown>): void;
-  closesTurn(result: Record<string, unknown>): boolean;
-} {
-  const active = new Set<string>();
-  let answered = false;
-  let pending = false;
-  let followUpStarted = false;
-  let consumed = false;
-  let resultsSince = 0;
-  const note = (): void => {
-    pending = true;
-    followUpStarted = false;
-    consumed = false;
-    resultsSince = 0;
-  };
-  const isSystem = (event: Record<string, unknown>, subtype: string): boolean =>
-    event.type === "system" && event.subtype === subtype;
-  return {
-    observe(event: Record<string, unknown>): void {
-      if (isSystem(event, "background_tasks_changed") && Array.isArray(event.tasks)) {
-        const next = new Set<string>();
-        for (const task of event.tasks) {
-          const id = (task as Record<string, unknown> | null)?.task_id;
-          if (typeof id === "string") next.add(id);
-        }
-        let finished = false;
-        for (const id of active) if (!next.has(id)) finished = true;
-        active.clear();
-        for (const id of next) active.add(id);
-        if (finished) note();
-      } else if (isSystem(event, "task_started") && event.is_backgrounded === true && typeof event.task_id === "string") {
-        active.add(event.task_id);
-      } else if (
-        isSystem(event, "task_notification") &&
-        typeof event.task_id === "string" &&
-        ["completed", "failed", "stopped"].includes(String(event.status))
-      ) {
-        // Only a task Claude actually backgrounded owes a follow-up cycle. A
-        // foreground subagent reports the same event and must not hold the
-        // turn open waiting for a call that will never start.
-        if (active.delete(event.task_id)) note();
-      } else if (isSystem(event, "init") && pending) {
-        followUpStarted = true;
-      } else if (event.type === "user" && pending) {
-        consumed = true;
-      }
-    },
-    closesTurn(result: Record<string, unknown>): boolean {
-      if (!answered) {
-        if (replayedNotification(result)) return false;
-        answered = true;
-      }
-      if (active.size > 0) return false;
-      if (!pending) return true;
-      resultsSince += 1;
-      if (!followUpStarted && !consumed && resultsSince < 2) return false;
-      pending = false;
-      return true;
-    },
-  };
-}
-
-/**
- * A notification's result that made no model call. Only `num_turns: 0` is
- * safe to skip: the CLI can fold a queued prompt into a notification cycle
- * that does call the model, and that cycle's result is then the prompt's
- * answer even though its origin says task-notification.
- */
-function replayedNotification(result: Record<string, unknown>): boolean {
-  const origin = result.origin;
-  const fromNotification =
-    typeof origin === "object" && origin !== null && (origin as Record<string, unknown>).kind === "task-notification";
-  return fromNotification && result.num_turns === 0;
-}
-
-async function pumpClaude(
-  child: ReturnType<typeof Bun.spawn>,
-  taskId: string,
-  turnId: number,
-  recorder: LiveOutputSink,
-): Promise<void> {
+async function pumpClaude(child: ReturnType<typeof Bun.spawn>, claude: ClaudeLiveProcess): Promise<void> {
   const stdout = child.stdout;
   if (!stdout || typeof stdout === "number") return;
   const reader = pipeReader(stdout as ReadableStream<Uint8Array>);
   const decoder = new TextDecoder();
-  const frames = new JsonLineBuffer({ onDrop: frameDropNote(recorder) });
-  const followUp = createBackgroundFollowUp();
-  const consume = (line: string): void => {
-    recorder.recordStdoutLine(line);
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-      followUp.observe(event);
-      if (event.type === "result" && followUp.closesTurn(event)) void closeLiveInput(taskId, turnId);
-    } catch {
-      // Plain notes and partial/unknown future events are still logged.
-    }
-  };
+  // The drop note goes wherever the process's output goes at that moment.
+  const frames = new JsonLineBuffer({ onDrop: (chars) => claude.output().recordFrameDrop("stdout", chars) });
   try {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      for (const line of frames.push(decoder.decode(value, { stream: true }))) consume(line);
+      for (const line of frames.push(decoder.decode(value, { stream: true }))) claude.line(line);
     }
-    for (const line of frames.finish(decoder.decode())) consume(line);
+    for (const line of frames.finish(decoder.decode())) claude.line(line);
   } finally {
     reader.releaseLock();
   }

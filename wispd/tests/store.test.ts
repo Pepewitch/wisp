@@ -38,7 +38,7 @@ import {
   undeliveredOutbox,
   updateQueuedTaskMessage,
 } from "../src/store";
-import { displayStateWord, turnCaptureState, turnDiagnosticState } from "../src/types";
+import { backgroundSummary, displayStateWord, turnCaptureState, turnDiagnosticState, type ApiTask, type BackgroundGroup } from "../src/types";
 
 function makeTask(over: Partial<Parameters<typeof createTask>[0]> = {}) {
   return createTask({
@@ -139,9 +139,9 @@ describe("task-list rows", () => {
       expect(listed(false, false).map(({ task }) => task.id)).toEqual([live.id]);
       expect(listed(false, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id]);
       expect(listed(true, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id, hidden.id]);
-      expect(listed(false, false)[0]!.latestTurn).toEqual({ model: "new-model", exitCode: 7, hasResult: true });
+      expect(listed(false, false)[0]!.latestTurn).toEqual({ model: "new-model", exitCode: 7, hasResult: true, background: false });
       expect(listed(true, false).find(({ task }) => task.id === hidden.id)!.latestTurn)
-        .toEqual({ model: null, exitCode: null, hasResult: false });
+        .toEqual({ model: null, exitCode: null, hasResult: false, background: false });
     } finally {
       for (const id of ids) {
         db.run("DELETE FROM archive_cleanup_progress WHERE task_id = ?", [id]);
@@ -495,8 +495,8 @@ describe("per-turn model + per-task effort (P5b)", () => {
     createTurn(b.id, 1, "one", null, "/tmp/b1.out.log"); // never finalized
     const c = makeTask(); // no turns at all (still creating)
     const outcomes = latestTurnOutcomes();
-    expect(outcomes.get(a.id)).toEqual({ model: "new-model", exitCode: 0, hasResult: true });
-    expect(outcomes.get(b.id)).toEqual({ model: null, exitCode: null, hasResult: false });
+    expect(outcomes.get(a.id)).toEqual({ model: "new-model", exitCode: 0, hasResult: true, background: false });
+    expect(outcomes.get(b.id)).toEqual({ model: null, exitCode: null, hasResult: false, background: false });
     expect(outcomes.has(c.id)).toBe(false);
   });
 
@@ -536,5 +536,17 @@ describe("the honest failure word (Theme B, Q12)", () => {
     expect(displayStateWord("done", 0, true)).toBe("done");
     expect(displayStateWord("running", null, false)).toBe("running");
     expect(displayStateWord("needs-input", 0, true)).toBe("needs-input");
+  });
+
+  // `ls` says what the web says: processes the harness named where it named them, else each group's live members
+  test("background work is counted in processes, the way the web counts it", () => {
+    const group: BackgroundGroup = { turn: 2, pgid: 9, processes: 1, since: null, state: "running", stopRequested: false, names: [] };
+    const task = (details: BackgroundGroup[]) => ({ background: { state: "running", groups: details.length, details } }) as unknown as ApiTask;
+    expect(backgroundSummary(task([group]))).toBe(" · 1 background process running");
+    expect(backgroundSummary(task([group, { ...group, pgid: 10, processes: 3 }]))).toBe(" · 4 background processes running");
+    // a lingering harness: its own name for the work, not the harness and its helpers
+    const kept = { ...group, processes: 5, tasks: [1, 2].map((turn) => ({ name: `server ${turn}`, kind: "local_bash", turn, since: "2026-09-30T00:00:00.000Z" })) };
+    expect(backgroundSummary(task([kept]))).toBe(" · 2 background processes running");
+    expect(backgroundSummary({ background: { state: "none", groups: 0, details: [] } } as unknown as ApiTask)).toBe("");
   });
 });

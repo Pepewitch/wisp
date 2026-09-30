@@ -1,6 +1,7 @@
 import { CleanupPanel } from "./cleanup-panel"
 import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
+import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { formatTokens } from "@/lib/format"
@@ -58,10 +59,7 @@ export function TaskHeader({
           <span key="id" className="font-mono text-fg-secondary">
             {task.id}
           </span>,
-          <span key="state" className="flex items-center gap-1.5">
-            <StateDot state={task.state} background={task.background} />
-            <span className="text-fg-secondary">{stateWord(task)}</span>
-          </span>,
+          <TaskStateLine key="state" task={task} />,
           task.archived && <span key="arch">Archived</span>,
           // Worktree is the default and the wisp/… branch already says so;
           // LOCAL is the one worth calling out, because this task is editing
@@ -114,5 +112,21 @@ export function TaskHeader({
         <div className="mt-1.5 text-[11.5px] leading-normal text-muted-foreground">{oneLine(worktreeReason)}</div>
       )}
     </div>
+  )
+}
+
+/**
+ * The state, dot and word. While work the agent started is still running in
+ * the background — "Done · 1 background process running" — hovering it names
+ * that work, where it started and for how long, which is what Stop is judged on.
+ */
+function TaskStateLine({ task }: { task: ApiTask }) {
+  const word = stateWord(task)
+  const detail = useBackgroundDetail(task.background)
+  return (
+    <span className="flex items-center gap-1.5" title={detail ? `${word}\n${detail}` : undefined}>
+      <StateDot state={task.state} background={task.background} />
+      <span className="text-fg-secondary">{word}</span>
+    </span>
   )
 }

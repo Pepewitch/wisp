@@ -1,5 +1,6 @@
 import { compactEntry, TIER1_ENTRIES, tier2Entries, tier3Entries, type SlashGroup } from "@/lib/slash"
 import type {
+  ApiTask,
   ProbeAnswer,
   SearchTaskHit,
   PullRequestInfo,
@@ -7,6 +8,21 @@ import type {
   UpdateStatus,
 } from "@/lib/types"
 import type { ActivityItem, QuestionActivityItem } from "@/stream/reducer"
+
+/**
+ * The agent answered, and the harness is kept alive for the dev server it
+ * started: one process group, the harness's own one task. Twelve minutes old
+ * at whatever moment the gallery renders.
+ */
+export const LINGERING_BACKGROUND: NonNullable<ApiTask["background"]> = {
+  state: "running",
+  groups: 1,
+  details: [{
+    turn: 4, pgid: 48213, processes: 3, since: new Date(Date.now() - 11 * 60_000).toISOString(),
+    state: "running", stopRequested: false, names: ["claude", "node"],
+    tasks: [{ name: "vite", kind: "local_bash", turn: 4, since: new Date(Date.now() - 12 * 60_000).toISOString() }],
+  }],
+}
 
 export const PR_SPECIMEN: PullRequestInfo = {
   number: 42,

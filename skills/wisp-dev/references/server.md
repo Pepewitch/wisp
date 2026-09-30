@@ -72,6 +72,20 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Each turn is one short-lived headless harness process, spawned as its own
   process-GROUP leader. Output is written directly to persisted log files so
   daemon restart recovery can re-adopt or finalize the turn.
+- One exception: a live Claude turn whose answer arrives while work the agent
+  started in the background is still running (a `run_in_background` command, a
+  Monitor) settles at that answer, and its process LINGERS with stdin open,
+  because closing stdin makes the CLI kill that work. The lingering process is
+  the settled turn's background work (its group stays recorded, so Stop,
+  archive and the badge treat it as such), it takes the next message as a new
+  turn row, and a model call the work wakes becomes a follow-up turn
+  (`turns.origin = 'background'`, which raises no finish notification and
+  never opens over a task that needs the person); a turn never reopens. A
+  message for another agent stops it first, and so does a closing input: the
+  next turn then waits for the exit and resumes. Only the daemon that spawned
+  it owns its stdin, so boot recovery stops any it finds rather than resume
+  the session beside it. See `ClaudeLiveProcess` in `live-input.ts` and
+  `turn-process.ts`.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design
@@ -292,7 +306,7 @@ cannot tell you a browser stopped attaching a credential.
 | Task/API behavior | `wispd/src/routes/` |
 | Task operations every caller shares (create and launch, archive) | `wispd/src/domain/`; a route parses the request and maps the result to HTTP, and lint keeps store writes out of `routes/` |
 | Persistence and state transitions | `wispd/src/store.ts` |
-| Harness process lifecycle | `wispd/src/runner.ts` |
+| Harness process lifecycle | `wispd/src/runner.ts` (spawn, queue, recovery), `wispd/src/turn-process.ts` (exit watcher, a process that serves several turns) |
 | Worktrees, git, setup hooks | `wispd/src/worktree.ts` |
 | Archive hooks and teardown | `wispd/src/archive-hooks.ts`, `wispd/src/archive-worker.ts` |
 | Harness definitions and wire formats | `wispd/src/adapters/` |

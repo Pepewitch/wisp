@@ -363,6 +363,25 @@ export function releaseOrphanedTaskMessageClaims(): void {
   }
 }
 
+/**
+ * Undo a start the harness never received: the message goes back to its
+ * place at the head of the queue, as if it had never been taken. Only for a
+ * start whose turn row is being removed with it, so nothing claims it twice.
+ */
+export function requeueStartedTaskMessage(id: string, taskId: string, turnN: number): TaskMessage | null {
+  const result = db.run(
+    `UPDATE task_messages
+     SET status = 'queued', delivery = NULL, turn_n = NULL, claim = NULL, claim_turn_n = NULL, updated_at = ?
+     WHERE id = ? AND task_id = ?
+       AND ((status = 'delivered' AND delivery = 'started' AND turn_n = ?)
+         OR (status = 'queued' AND claim = 'started' AND claim_turn_n = ?))`,
+    [now(), id, taskId, turnN, turnN],
+  );
+  if (result.changes === 0) return null;
+  emit({ type: "message", taskId, messageId: id });
+  return getTaskMessage(id);
+}
+
 export function markTaskMessageDelivered(
   id: string,
   delivery: Exclude<TaskMessageDelivery, null>,

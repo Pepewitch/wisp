@@ -66,6 +66,7 @@ export function listTasksRoute(url: URL): Response {
       latest_turn_model: latestTurn.model,
       latest_turn_exit_code: latestTurn.exitCode,
       latest_turn_has_result: latestTurn.hasResult,
+      latest_turn_background: latestTurn.background,
     })),
   );
 }

@@ -5,6 +5,7 @@ import { PreviewCard } from "@base-ui/react/preview-card"
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { Archive, Pencil, ArrowUp, BranchRequest } from "@/components/icons"
 import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
+import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { autoMergeWords, autopilotBlocks, autopilotRail, autopilotSwitches } from "@/lib/autopilot-words"
 import { PULL_REQUEST_ICON_TONE, pullRequestSidebarTone } from "@/lib/pull-request-tone"
@@ -374,6 +375,13 @@ function GitMarks({ status, yields = false }: { status?: StatusEntry; yields?: b
   )
 }
 
+/** What "1 background process running" is, one line each, under the card's state line. */
+function BackgroundDetail({ background }: { background: ApiTask["background"] }) {
+  const detail = useBackgroundDetail(background)
+  if (!detail) return null
+  return <div data-background-detail className="mt-1 text-[11.5px] leading-normal whitespace-pre-line text-fg-secondary">{detail}</div>
+}
+
 /** The hover card. Exported so the gallery can render it without hovering. */
 export function TaskCard({
   task,
@@ -412,6 +420,7 @@ export function TaskCard({
         <span className={cn("text-[11.5px]", STATE_TEXT[task.state])}>{stateWord(task)}</span>
         {task.archived && <span className="text-[11.5px] text-faint">· archived</span>}
       </div>
+      <BackgroundDetail background={task.background} />
       {task.state_detail && (
         <div className="mt-1 text-[11.5px] leading-normal text-fg-secondary">{task.state_detail}</div>
       )}
