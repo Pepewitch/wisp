@@ -1,19 +1,18 @@
 import type { ReactNode } from "react"
 
+import { AutopilotPane } from "@/components/autopilot-pane"
 import { ChangesPane } from "@/components/changes-pane"
 import { PaneErrorBoundary } from "@/components/error-boundary"
 import { FileViewerProvider } from "@/components/file-viewer"
-import { BriefPane } from "@/components/task-brief"
 import { TaskPanel } from "@/components/task-panel"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { revealFileHandler } from "@/lib/external-links"
-import type { ApiTask } from "@/lib/types"
+import type { ApiTask, HarnessesResponse } from "@/lib/types"
 
 export function buildTaskSurfaces({
   mobile,
-  workflowsSupported,
-  briefsSupported,
+  features,
   connectionId,
   task,
   taskId,
@@ -21,8 +20,8 @@ export function buildTaskSurfaces({
   onRefresh,
 }: {
   mobile: boolean
-  workflowsSupported: boolean
-  briefsSupported: boolean
+  /** the daemon's feature flags, which decide the surfaces it has; absent reads as none */
+  features: HarnessesResponse["features"]
   connectionId: string
   task: ApiTask | null
   taskId: string | null
@@ -30,11 +29,14 @@ export function buildTaskSurfaces({
   onRefresh: () => void
 }): {
   changes: ReactNode
-  /** Touch only: the desktop Brief is a tab inside `changes`' task panel. */
-  brief?: (showConversation: () => void) => ReactNode
+  /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void) => ReactNode }
   workflows?: ReactNode
   terminal: ReactNode
 } {
+  const workflowsSupported = features?.taskWorkflows === true
+  const briefsSupported = features?.taskBriefs === true
+  const autopilotSupported = features?.taskAutopilot === true
   // The diff pane's double-click opens a file the way a path in prose does,
   // so it gets the same provider. An archived task's worktree is gone, which
   // is exactly what the pane's own "unavailable" note says.
@@ -61,20 +63,24 @@ export function buildTaskSurfaces({
   )
   // Its own surface on touch, so it needs the same provider as the diff and
   // a way to bring the chat forward before a find runs against it.
-  const brief = mobile && briefsSupported
-    ? (showConversation: () => void) => (
-      <FileViewerProvider
-        taskId={archived ? null : taskId}
-        onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
-      >
-        <BriefPane
-          key={`${connectionId}:${taskId ?? ""}`}
-          task={task}
-          touch
-          onShowConversation={showConversation}
-        />
-      </FileViewerProvider>
-    )
+  // A daemon with briefs and no autopilot keeps the tab's old name.
+  const autopilot = mobile && (briefsSupported || autopilotSupported)
+    ? {
+      label: autopilotSupported ? "Autopilot" as const : "Brief" as const,
+      render: (showConversation: () => void) => (
+        <FileViewerProvider
+          taskId={archived ? null : taskId}
+          onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
+        >
+          <AutopilotPane
+            key={`${connectionId}:${taskId ?? ""}`}
+            task={task}
+            touch
+            onShowConversation={showConversation}
+          />
+        </FileViewerProvider>
+      ),
+    }
     : undefined
   const workflows = workflowsSupported ? (
     <WorkflowsPane
@@ -97,5 +103,5 @@ export function buildTaskSurfaces({
       />
     </PaneErrorBoundary>
   )
-  return { changes, brief, workflows, terminal }
+  return { changes, autopilot, workflows, terminal }
 }

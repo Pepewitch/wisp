@@ -372,6 +372,8 @@ export interface HarnessesResponse {
     taskWorkflows?: boolean;
     /** GET/PUT /api/tasks/:id/autopilot: auto-merge for a task's PR. */
     taskAutopilot?: boolean;
+    /** GET /api/tasks/:id/autopilot/history: what auto-merge and auto-fix did (the Autopilot tab's History). */
+    autopilotHistory?: boolean;
     /** GET /api/harness-limits: each harness's plan usage windows (the top bar's usage ring). */
     harnessLimits?: boolean;
     /** /api/tasks/:id/terminals: the daemon keeps each task's shell tabs, and closing one kills its shell. */

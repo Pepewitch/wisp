@@ -789,11 +789,10 @@ REPLACES the CI and review words — `PR #271 · Open · Auto-merge: Waiting for
 checks (2 running)` — because the reason already accounts for both, and the
 line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
-switches — Auto-merge and Auto-fix — are checkbox rows in the task's `…` menu
-(`MenuCheckboxItem`, a trailing switch), naming the PR they are bound to, with the reason as a
-`MenuNote` and the one action the state asks for beneath it (Send now / Skip for
-a waiting auto-fix round, Resume, or Continue now): menu rows, so touch and
-keyboard reach every control. Only a reason about the PR's own state
+switches — Auto-merge and Auto-fix — live in the Autopilot tab (§5k) with
+their live line, the one action the state asks for, and History; the task's
+`…` menu keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
+naming the PR they are bound to, and nothing else. Only a reason about the PR's own state
 (`about: "pr"`) may stand in for CI and review; one about the task never does.
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
 from the UI polling below. The new-task dialog arms both from the start with a
@@ -1249,33 +1248,69 @@ naming whose filesystem the path is on). The disabled button it replaced meant
 the web UI could not be taken from zero to one project without a terminal, on
 the one surface — a phone — where that costs the most.
 
-## 5k. The task brief — a tab of the task panel
+## 5k. The Autopilot tab — the brief, then what auto-merge and auto-fix are doing
 
-`components/task-brief.tsx` (`BriefPane`). The brief is the first tab of the
-task panel, beside Changes and Workflows, and the tab the panel opens on. The
-header says **which task this is**; the brief says **where it stands**.
+`components/autopilot-pane.tsx` (`AutopilotPane`, drawn from its models by
+`AutopilotView`). Autopilot is the first tab of the task panel, beside Changes
+and Workflows, and the tab the panel opens on. The header says **which task
+this is**; the tab says **where it stands**, and what Wisp is doing about its
+PR. Two sections share ONE scroller:
 
-It used to be a band under the task header. That took a strip of height from
-the one column you read in, on every task, open or not, and moved the text
-under your eyes whenever a report changed. A tab costs nothing until you look.
-Do not put it back above the conversation.
+1. **Brief** (`BriefSection` in `task-brief.tsx`), first, with only the tab
+   strip above it: it is the part a person reads. Its header row is `Brief`
+   and its switch; under it the report in full, at agent-prose leading
+   (13 / 1.7). Nothing caps it and it has no scroller of its own.
+2. **Automation**, under the one full-width line in the tab
+   (`border-border-strong`; every other rule is inset): the Auto-merge and
+   Auto-fix switch rows, then History.
 
-- **A tab, not a band.** `TaskPanel` builds the strip from the daemon's
-  features: `Brief` (`taskBriefs`) · `Changes` · `Workflows`
-  (`taskWorkflows`). All panes stay mounted, so a scroll position and an open
-  comparison survive a look at the diff. The opening choice is `Brief`; a
-  person's own pick wins after that, and a daemon without briefs opens on
-  Changes with no strip. On touch it is its own surface in the mobile shell's
-  tab strip, level with Changes (`Chat · Brief · Changes · Workflows ·
-  Terminal`); a task still opens on Chat.
-- **One switch, on the tab.** A `role="switch"` row at the top turns briefs on
-  and off for the task (`useBriefSwitch`, shared with the task menu's
-  `Task brief` item, so both read the same task row; a pending write or its
-  error shows only on the control that sent it). Its note says what
-  switching does, and that it starts with the NEXT turn, because nothing
-  visible happens on click. An archived task has no switch but keeps the
-  report it has; a harness without `hasBriefs` cannot be switched on and is
-  named as unable.
+- **Section headers are 12.5 / 600**, the §4 row size at a heavier weight, so
+  they outrank the `Auto-merge` row under them without an eyebrow.
+- **The switch rows.** The top line is the `role="switch"` hit target. Off,
+  the second line teaches what the switch does (the empty state is the
+  onboarding, §5j). On, the switch the reason speaks for (`autopilotSpeaker`)
+  carries the live line: a dot in the sidebar rail's tone (§5f), `#PR` when
+  the reason is about the PR, the reason, and how long it has stood. A
+  needs-you or paused line is red, text and all. The other switch says one
+  quiet fact (`On · merges #318 once it is ready`). The one action the state
+  asks for (`autopilotAction`: Resume, Continue now, or Send now / Skip with
+  its countdown) sits under that line as buttons.
+- **History** (`autopilot-history-view.tsx`, words in `lib/autopilot-history.ts`):
+  the three latest meaningful events, two lines each (the event word you scan
+  down, then the detail with its links), and `All history N ›`, which swaps the
+  pane for the dense per-PR log with a `‹ Autopilot` back row (the Workflows
+  drill-down). The log groups by PR under sticky headers, folds each run of
+  routine waits into one line (`Waiting · for checks ×7`, a click opens it),
+  and has a `Routine checks` switch that opens them all. The dot carries the
+  tone (violet merges, red trouble, faint routine); the words stay gray.
+  `#PR` and a SHA link to GitHub when the task's PR names its repository and
+  stay plain text otherwise; `View message` asks the conversation to scroll to
+  the message an auto-fix round queued (`revealMessage`, `useRevealMessage`).
+  The data is `GET /api/tasks/:id/autopilot/history` (`useAutopilotHistory`),
+  refreshed by the SSE `workflow` event; a daemon without
+  `features.autopilotHistory` draws no History at all and is never asked.
+- **A long brief docks the Automation header.** The header row is
+  `sticky bottom-0`, a direct child of the scroller (a sticky row docks only
+  within its parent). While the section is below the fold (one
+  IntersectionObserver on a 1px sentinel) it docks at the foot of the pane
+  with the live line, so a needs-you red is always on screen; a click scrolls
+  there, and in place it is a plain header again. No red dot on the tab
+  itself: the rail and the PR icon already say it.
+- **Which daemon, which tab.** `taskBriefs` and `taskAutopilot` each bring
+  their section; a daemon with briefs and no autopilot keeps the tab's old
+  name, `Brief`, and shows the brief alone. The panel opens on it; a person's
+  own pick wins after that, and a daemon with neither opens on Changes with no
+  strip. All panes stay mounted, so a scroll position, an open comparison and
+  the log survive a look at the diff. On touch it is its own surface in the
+  mobile shell's strip (`Chat · Autopilot · Changes · Workflows · Terminal`);
+  a task still opens on Chat.
+- **The task menu keeps the switches as shortcuts** — `Task brief`,
+  `Auto-merge #318`, `Auto-fix` — and nothing else: no reason notes, no action
+  rows. A menu that repeats a paragraph is why this tab exists. Each surface
+  owns its own write: a pending write or its error shows only on the control
+  that sent it. An archived task has no brief switch but keeps the report it
+  has; a harness without `hasBriefs` cannot be switched on and is named as
+  unable.
 - **Two voices, split where the speaker changes.** Your latest words come
   first, exact and in quotes, with a caption of Wisp's own facts (`sent
   mid-turn 4`, `queued for the next turn`, `may not have arrived`). Then a
@@ -1287,8 +1322,8 @@ Do not put it back above the conversation.
   `lib/brief.ts`; the best state is a time. No state says "complete",
   "verified" or "up to date". An empty remaining list reads `Nothing the agent
   knows of.`, never "Done".
-- **Always open.** There is nothing to collapse: the tab scrolls within
-  itself. (`lib/brief-open.ts` and its stored preference are gone.)
+- **Always open.** There is nothing to collapse, and nothing capped.
+  (`lib/brief-open.ts` and its stored preference are gone.)
 - **No accent, no chips.** Send stays the one primary. "Recommended" is a
   check glyph and a muted word, and it marks an option only when the
   recommendation plainly starts with that option's label: the payload names
@@ -1299,14 +1334,15 @@ Do not put it back above the conversation.
   (`openFind(query, turn)`), which already knows how to load pages until a
   turn is mounted. On touch the transcript is another tab, so the shell brings
   Chat forward first (`onShowConversation`), and any find from elsewhere (the
-  task menu, ⌘F) does the same when the Brief tab is showing. The switch is
-  the tab's only mutation.
-- **Honest absence.** A daemon without `features.taskBriefs` has no tab. On
+  task menu, ⌘F) does the same when the Autopilot tab is showing. The switch
+  is the brief's only mutation.
+- **Honest absence.** A daemon without `features.taskBriefs` has no Brief section. On
   with no report is one line that never guesses why (`Turn 5 ended without
   one.`). The create composer offers its glyph toggle (§5c-ii's shape, on the
   scoping row beside the PR picker) only where the harness can publish.
 
-The gallery's *Task brief* section draws every state from real models.
+The gallery's *Autopilot tab* section draws every state from the real
+components and models, one `data-frame` per state for screenshots.
 
 ## 6. Panes and dividers
 
@@ -1333,22 +1369,22 @@ clear, restart and close. Find is ⌘F on Apple platforms and Ctrl+Alt+F
 elsewhere: plain Ctrl+F is readline's, and the terminal never takes a key the
 shell uses.
 
-### The task panel: Brief · Changes · Workflows
+### The task panel: Autopilot · Changes · Workflows
 
 `Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
 slot in beside it later". **Workflows** is the sibling that arrived first, and
-the **Brief** (§5k) joined them (`task-panel.tsx`); the shape was right:
-tabs, selection is a background pill, no underline and no hue. The Brief is
-first and the panel opens on it.
+the **Brief** joined them, and grew into **Autopilot** (§5k,
+`task-panel.tsx`); the shape was right: tabs, selection is a background pill,
+no underline and no hue. Autopilot is first and the panel opens on it.
 
 Both panes stay **mounted**; the inactive one is `hidden`, so switching tabs
 never closes the diff you had open. The strip is handed to the VISIBLE pane's
 `PaneHeader`, never to both — two tablists in one tree is the bug that trades
 one duplicated label for a broken a11y tree. Each pane still renders its own
 plain label when it is given no strip. The strip is built from the daemon's
-features (`taskBriefs`, `taskWorkflows`): a daemon with neither gets Changes
+features (`taskBriefs`, `taskAutopilot`, `taskWorkflows`): a daemon with none gets Changes
 alone, with its own label. The panel paints nothing until those features are
-known, so a cold load never opens on Changes and then jumps to the Brief.
+known, so a cold load never opens on Changes and then jumps to Autopilot.
 
 **Nothing that CREATES may sit at the right end of a tab strip.** Changes keeps
 its Refresh there because refreshing acts on the view. Workflows put a `+`
@@ -1432,7 +1468,7 @@ version wrapped onto two lines inside the width the title needed.
    the title left both unreadable.
 4. **The tab strip fills the row** (`flex-1 basis-auto`, `px-1`), a segmented
    control rather than left-packed pills with a dead right half. It is `Chat ·
-   Brief · Changes · Workflows · Terminal`; Brief and Workflows appear only
+   Autopilot · Changes · Workflows · Terminal`; Autopilot and Workflows appear only
    where the daemon supports them. Tabs are sized by their content plus an
    equal share, so all five still fit at 320px. Each pane's `PaneHeader` takes
    `touch` so its own action reaches 44px.

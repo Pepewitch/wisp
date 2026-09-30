@@ -8,7 +8,7 @@ import type { ApiTask } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { BriefPane } from "./task-brief"
+import { AutopilotPane } from "./autopilot-pane"
 import { TaskPanel } from "./task-panel"
 
 const CONNECTION = "brief-connection"
@@ -91,9 +91,10 @@ function stub(brief: BriefView | null, features: Record<string, boolean> = { tas
 
 const asked = (calls: Call[], suffix: string) => calls.some((c) => c.path.endsWith(suffix))
 
-function mount(task: ApiTask, props: Partial<Parameters<typeof BriefPane>[0]> = {}) {
+// a daemon with briefs and no autopilot: the Autopilot tab is the Brief section alone
+function mount(task: ApiTask, props: Partial<Parameters<typeof AutopilotPane>[0]> = {}) {
   const wrapper = runtimeWrapper(fakeDaemonTransport(CONNECTION, { request: api }))
-  return render(<BriefPane task={task} {...props} />, { wrapper: wrapper as (props: { children: ReactNode }) => ReactNode })
+  return render(<AutopilotPane task={task} {...props} />, { wrapper: wrapper as (props: { children: ReactNode }) => ReactNode })
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -156,14 +157,17 @@ describe("the task brief tab", () => {
     expect(within(pane).queryByRole("button", { expanded: true })).toBeNull()
   })
 
-  it("keeps the switch outside the scrolling report, so a long brief cannot take it out of reach", async () => {
+  it("heads the tab's one scroller with its switch, shows the report in full, and draws no Automation", async () => {
     stub(VIEW)
     mount(TASK)
     const toggle = await screen.findByRole("switch", { name: "Task brief" })
-    const report = (await screen.findByText("Stop the editor saving twice.")).closest(".scroll-slim")
-    expect(report).not.toBeNull()
-    expect(report!.contains(toggle)).toBe(false)
-    expect(toggle.closest(".scroll-slim")).toBeNull()
+    expect(toggle).toHaveTextContent("Brief")
+    const report = await screen.findByText("Stop the editor saving twice.")
+    const scroller = report.closest(".scroll-slim")!
+    expect(scroller.contains(toggle)).toBe(true)
+    // one scroller: nothing inside it scrolls on its own, and nothing is capped
+    expect(scroller.querySelector(".overflow-y-auto, .scroll-slim, [class*='max-h-']")).toBeNull()
+    expect(screen.queryByRole("region", { name: "Automation" })).toBeNull()
   })
 
   it("compares options in place, marking the recommended one", async () => {

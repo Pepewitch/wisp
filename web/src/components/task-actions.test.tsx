@@ -180,29 +180,30 @@ describe("auto-merge in the overflow menu", () => {
     expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toBeInTheDocument()
   })
 
-  it("names the bound PR and says what it is waiting for", async () => {
+  it("names the bound PR, and leaves the reason to the Autopilot tab", async () => {
     daemon()
     mount(<TaskActions task={armed()} />)
     const toggle = await open()
     expect(toggle).toHaveTextContent("Auto-merge #7")
     expect(toggle).toHaveAttribute("aria-checked", "true")
-    expect(screen.getByText("Waiting for checks (2 running)")).toBeInTheDocument()
+    expect(screen.queryByText(/Waiting for checks/)).toBeNull()
   })
 
-  it("offers Resume for a pause and Continue now for a Stop hold, both through the resume route", async () => {
-    const calls = daemon()
-    const { unmount } = mount(<TaskActions task={armed({ state: "paused", reason: "Merge failed: Base branch was modified" })} />)
-    await open()
-    expect(screen.getByText("Paused — Merge failed: Base branch was modified")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("menuitem", { name: "Resume" }))
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/resume`, method: "POST", body: {} }))
-    unmount()
-    mount(<TaskActions task={armed({ state: "held", reason: "Held — you pressed Stop; continues after your next turn", about: "task" })} />)
-    await open()
-    fireEvent.click(screen.getByRole("menuitem", { name: "Continue now" }))
-    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/autopilot/resume"))).toHaveLength(2))
-    // it stays open, so what happened can be read in place
-    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toBeInTheDocument()
+  it("keeps no notes and no action rows: Resume, Continue now, Send now and Skip live in the tab", async () => {
+    daemon()
+    const states = [
+      armed({ state: "paused", reason: "Merge failed: Base branch was modified" }),
+      armed({ state: "held", reason: "Held — you pressed Stop; continues after your next turn", about: "task" }),
+      armed({ autoFix: true, by: "auto-fix", reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing", sendsAt: new Date(Date.now() + 60_000).toISOString() } }),
+      { ...TASK, autopilot: { ...armed().autopilot!, autoMerge: false, state: "off" as const, reason: "Auto-merge off — #7 was closed" } },
+    ]
+    for (const task of states) {
+      const { unmount } = mount(<TaskActions task={task} />)
+      await open()
+      expect(screen.queryByText(new RegExp(task.autopilot!.reason.slice(0, 12)))).toBeNull()
+      for (const action of ["Resume", "Continue now", "Send now", "Skip"]) expect(screen.queryByRole("menuitem", { name: action })).toBeNull()
+      unmount()
+    }
   })
 
   it("keeps the switch where it was and says why when the daemon refuses", async () => {
@@ -214,13 +215,6 @@ describe("auto-merge in the overflow menu", () => {
     expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
   })
 
-  it("says why when Wisp itself switched it off", async () => {
-    daemon()
-    mount(<TaskActions task={{ ...TASK, autopilot: { autoMerge: false, autoFix: false, pr: 7, state: "off", reason: "Auto-merge off — #7 was closed", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null } }} />)
-    await open()
-    expect(screen.getByText("Auto-merge off — #7 was closed")).toBeInTheDocument()
-  })
-
   it("is not offered on an archived task", async () => {
     const calls = daemon()
     mount(<TaskActions task={{ ...TASK, archived: true }} />)
@@ -230,7 +224,7 @@ describe("auto-merge in the overflow menu", () => {
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
   })
 
-  it("has its own auto-fix switch, and Send now / Skip for a round waiting out its delay", async () => {
+  it("has its own auto-fix switch, which names the PR when auto-merge is off", async () => {
     const calls = daemon()
     mount(<TaskActions task={armed({ autoMerge: false, autoFix: true, reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing", sendsAt: new Date(Date.now() + 60_000).toISOString() } })} />)
     fireEvent.click(screen.getByRole("button", { name: "More actions" }))
@@ -238,20 +232,8 @@ describe("auto-merge in the overflow menu", () => {
     expect(fix).toHaveAttribute("aria-checked", "true")
     expect(fix).toHaveTextContent("Auto-fix #7")
     expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
-    fireEvent.click(screen.getByRole("menuitem", { name: "Send now" }))
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/send-now`, method: "POST", body: {} }))
-    fireEvent.click(screen.getByRole("menuitem", { name: "Skip" }))
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/skip`, method: "POST", body: {} }))
     fireEvent.click(fix)
     await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoFix: false } }))
-  })
-
-  it("offers Continue now, not Send now, while a Stop holds a pending round", async () => {
-    daemon()
-    mount(<TaskActions task={armed({ autoFix: true, state: "held", reason: "Held — you pressed Stop; continues after your next turn", pendingFix: { summary: "test failing", sendsAt: new Date().toISOString() } })} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    expect(await screen.findByRole("menuitem", { name: "Continue now" })).toBeInTheDocument()
-    expect(screen.queryByRole("menuitem", { name: "Send now" })).toBeNull()
   })
 
   it("is disabled, and says why, for a task that runs in the project checkout", async () => {
@@ -293,41 +275,26 @@ describe("the task brief switch", () => {
     return await screen.findByRole("menuitemcheckbox", { name: "Task brief" })
   }
 
-  it("says what it costs before it is on, and switches it on without starting anything", async () => {
+  it("switches it on without starting anything, and leaves what that means to the tab", async () => {
     const calls = daemon()
     mount(<TaskActions task={TASK} />)
     const toggle = await open()
     expect(toggle).toHaveAttribute("aria-checked", "false")
-    expect(screen.getByText(/One extra step per turn/)).toBeInTheDocument()
+    expect(screen.queryByText(/One extra step per turn/)).toBeNull()
     await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"))
     fireEvent.click(toggle)
     await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/brief-settings`, method: "PUT", body: { enabled: true } }))
-    expect(await screen.findByText("Starts with the next turn.")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole("menuitemcheckbox", { name: "Task brief" })).toHaveAttribute("aria-checked", "true"))
+    expect(screen.queryByText(/Starts with the next turn/)).toBeNull()
     // the switch writes the setting and nothing else: no send, no interrupt
     expect(calls.filter((c) => c.method !== "GET").map((c) => c.path)).toEqual([`/api/tasks/${TASK.id}/brief-settings`])
-  })
-
-  it("stops saying 'starts with the next turn' once a briefed turn has run", async () => {
-    // the row caught up with the switch, and the first briefed turn is under way
-    daemon(true, () => view({ activation: "active", latestEligibleTurn: { n: 4, status: "running", reported: false } }))
-    const { unmount } = mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
-    const toggle = await open()
-    expect(toggle).toHaveAttribute("aria-checked", "true")
-    await waitFor(() => expect(screen.queryByText(/Starts with the next turn/)).toBeNull())
-    unmount()
-    // …and while it is still waiting, the note says so, from the daemon's own read model
-    daemon(true, () => view({ reasons: ["awaiting-next-turn", "no-report"] }))
-    mount(<TaskActions task={{ ...TASK, briefEnabled: true }} />)
-    await open()
-    expect(await screen.findByText("Starts with the next turn — this one began before briefs were on.")).toBeInTheDocument()
   })
 
   it("is not offered to switch on for a harness that cannot publish", async () => {
     daemon(false)
     mount(<TaskActions task={TASK} />)
     const toggle = await open()
-    expect(await screen.findByText("droid can't write briefs through Wisp yet.")).toBeInTheDocument()
-    expect(toggle).toHaveAttribute("aria-disabled", "true")
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-disabled", "true"))
   })
 
   it("is absent on an archived task and on a daemon without briefs", async () => {

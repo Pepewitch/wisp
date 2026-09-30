@@ -7,7 +7,7 @@ import { Archive, Pencil, ArrowUp, BranchRequest } from "@/components/icons"
 import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
 import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
-import { autoMergeWords, autopilotBlocks, autopilotRail, autopilotSwitches } from "@/lib/autopilot-words"
+import { AUTOPILOT_RAIL_TONE, autoMergeWords, autopilotBlocks, autopilotRail, autopilotSwitches } from "@/lib/autopilot-words"
 import { PULL_REQUEST_ICON_TONE, pullRequestSidebarTone } from "@/lib/pull-request-tone"
 import { STATE_TEXT, stateWord, since } from "@/lib/state"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
@@ -250,8 +250,6 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
   )
 }
 
-const RAIL_TONE = { "needs-you": "bg-destructive", done: "bg-primary", on: "bg-state-background" } as const
-
 /**
  * A 2px rail on the row's left edge while auto-merge or auto-fix is on, so a
  * switch left on is never out of sight: blue while it works, violet once it
@@ -266,7 +264,7 @@ function AutopilotRail({ status }: { status: ApiTask["autopilot"] }) {
       aria-hidden
       data-testid="autopilot-rail"
       data-rail={rail}
-      className={cn("pointer-events-none absolute top-[5px] bottom-[5px] left-0 z-10 w-[2px] rounded-full", RAIL_TONE[rail])}
+      className={cn("pointer-events-none absolute top-[5px] bottom-[5px] left-0 z-10 w-[2px] rounded-full", AUTOPILOT_RAIL_TONE[rail])}
     />
   )
 }

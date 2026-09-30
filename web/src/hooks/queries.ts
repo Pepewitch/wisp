@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 
+import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
 import type { BriefView } from "../../../shared/task-brief";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
@@ -526,6 +527,23 @@ export function useTaskBrief(taskId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: [...qk.task(taskId ?? ""), "brief"],
     queryFn: () => transport.request<BriefView>(`/api/tasks/${taskId}/brief`),
+    enabled: enabled && taskId !== null,
+  });
+}
+
+/**
+ * GET /api/tasks/:id/autopilot/history — what auto-merge and auto-fix did for
+ * one task, newest first. Nested under the task key like the brief, and
+ * invalidated by the SSE `workflow` event every history entry announces
+ * (`lib/sse.ts`), so the Autopilot tab never polls. `enabled` carries the
+ * daemon's `autopilotHistory` flag: an older daemon is never asked.
+ */
+export function useAutopilotHistory(taskId: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.task(taskId ?? ""), "autopilot-history"],
+    queryFn: async () =>
+      (await transport.request<AutopilotHistoryResponse>(`/api/tasks/${taskId}/autopilot/history`)).history,
     enabled: enabled && taskId !== null,
   });
 }

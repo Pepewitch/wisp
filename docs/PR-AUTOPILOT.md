@@ -7,8 +7,8 @@ Two switches on a task, with nothing to configure:
   reviewer leaves feedback, Wisp sends it back to the task's agent to fix.
 
 Turn either on when you create the task (the new-task dialog's PR picker, or
-`--auto-merge` / `--auto-fix`), from the task's `…` menu, or with `wisp pr` at
-any point after:
+`--auto-merge` / `--auto-fix`), from the task's Autopilot tab (or its `…`
+menu), or with `wisp pr` at any point after:
 
 ```sh
 wisp new . "Fix the flaky retry test, open a PR" --harness claude --auto-merge --auto-fix
@@ -409,7 +409,9 @@ next pass is not one of these: the rail stays blue.
 
 ## History
 
-`wisp pr <task> history` prints what auto-merge and auto-fix did for the task,
+The Autopilot tab shows the latest three events under the switches, and all
+of them, per PR, behind **All history**. `wisp pr <task> history` prints what
+auto-merge and auto-fix did for the task,
 newest first, one line each: the time, what happened, the PR, the commit, and
 the reason. `--json` gives the same entries, and so does
 `GET /api/tasks/<task>/autopilot/history`. It covers every time the switches

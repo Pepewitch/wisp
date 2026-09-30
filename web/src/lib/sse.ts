@@ -182,6 +182,8 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     }
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
+      // auto-merge and auto-fix are a workflow: each entry of their history announces one
+      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "autopilot-history"] });
       // The task list carries has_workflow so every sidebar row can render
       // standing workflow state without opening one request per task.
       invalidateTasks(evt.taskId);

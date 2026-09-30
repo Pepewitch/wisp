@@ -404,8 +404,7 @@ function MainView({
   )
   const taskSurfaces = buildTaskSurfaces({
     mobile: isMobile,
-    workflowsSupported: searchFeature.data?.taskWorkflows === true,
-    briefsSupported: searchFeature.data?.taskBriefs === true,
+    features: searchFeature.data,
     connectionId: runtime.connectionId,
     // the header's row: it carries the brief switch, and the list row alone can lag the detail
     task: header,
@@ -449,7 +448,7 @@ function MainView({
       sidebar={sidebarNode}
       conversation={conversationNode}
       changes={taskSurfaces.changes}
-      brief={taskSurfaces.brief}
+      autopilot={taskSurfaces.autopilot}
       workflows={taskSurfaces.workflows}
       terminal={taskSurfaces.terminal}
       composer={composerNode}
@@ -476,7 +475,7 @@ function AppShell({
   sidebar,
   conversation,
   changes,
-  brief,
+  autopilot,
   workflows,
   terminal,
   composer,
@@ -496,7 +495,7 @@ function AppShell({
   }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
-  brief?: (showConversation: () => void) => ReactNode
+  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void) => ReactNode }
   workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode
@@ -520,7 +519,7 @@ function AppShell({
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
           changes={changes}
-          brief={brief}
+          autopilot={autopilot}
           workflows={workflows}
           terminal={terminal}
           composer={composer}

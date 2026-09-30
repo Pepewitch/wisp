@@ -27,6 +27,7 @@ import { TurnAttachments } from "@/components/turn-attachments"
 import { TurnProgress } from "@/components/turn-progress"
 import { revealFileHandler } from "@/lib/external-links"
 import { useFindInTask } from "@/hooks/useFindInTask"
+import { useRevealMessage } from "@/hooks/useRevealMessage"
 import { useQuestionnaireController } from "@/hooks/useQuestionnaire"
 import {
   useConversationPagination,
@@ -138,6 +139,8 @@ export function Conversation({
   })
   // ⌘F, the overflow menu and a picked cross-project result all land here.
   const find = useFindInTask(viewport, uiIntents)
+  // the Autopilot tab's "View message" names a message an auto-fix round queued
+  useRevealMessage(viewport, uiIntents, task?.messages ?? EMPTY_MESSAGES)
   // Answering a questionnaire card, and what each card is allowed to offer.
   const questionnaire = useQuestionnaireController(task, touch)
   const pendingQuestionId = task?.pending_question_id ?? null
