@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
-import { resumeArchiveCleanups } from "../src/routes/archive";
+import { resumeArchiveCleanups } from "../src/archive-worker";
 import { autopilotRow, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import {
   ARCHIVE_STAGES,

@@ -1,5 +1,4 @@
 import { kickCleanup } from "../archive-worker";
-export { resumeArchiveCleanups, startArchiveCleanupLoop, CLEANUP_RETRY_MS } from "../archive-worker";
 import { repoConfigFor, type WispConfig } from "../config";
 import { hasRunningTurn } from "../runner";
 import { assertTaskNotStopping } from "../turn-interrupt";

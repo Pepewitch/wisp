@@ -8,7 +8,7 @@ import { Semaphore } from "../subprocess";
 import { taskMode, type Task } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
-import { archiveTaskRows } from "./archive";
+import { archiveTaskRows } from "../domain/archive";
 import { requestActor } from "../task-audit";
 import { err, json, jsonObjectBody } from "./http";
 
