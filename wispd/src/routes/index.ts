@@ -1,7 +1,7 @@
 /**
  * The /api dispatcher. Everything here has already passed the daemon's auth
- * gate; each handler module owns one family of routes and takes the request
- * context (cfg, adapters, models) explicitly, because a daemon is constructed
+ * gate; each handler module owns one family of routes and takes what it needs
+ * from the daemon's RouteContext explicitly, because a daemon is constructed
  * per serve() call and nothing about it may become a module-level singleton.
  *
  * The if-chain's ORDER is behaviour: the nested log regexes must be tested
@@ -9,14 +9,14 @@
  * (returns null) so a non-task path reaches the routes below it.
  */
 import type { AdapterDef } from "../adapters";
-import { TaskCompactor, type TaskCompactorOptions } from "../compacts";
+import type { TaskCompactor } from "../compacts";
 import type { WispConfig } from "../config";
-import { ModelProbeCache, type ModelProbeCacheOptions } from "../model-probes";
-import { TaskProbeCache, type TaskProbeCacheOptions } from "../probes";
-import { HarnessLimitsCache } from "../harness-limits";
-import { PullRequestCache, type PullRequestCacheOptions } from "../pull-requests";
-import { TaskSkillCache, type TaskSkillCacheOptions } from "../skills";
-import { UpdateManager } from "../update";
+import type { RouteContext } from "../daemon-context";
+import type { ModelProbeCache } from "../model-probes";
+import type { TaskProbeCache } from "../probes";
+import type { HarnessLimitsCache } from "../harness-limits";
+import type { PullRequestCache } from "../pull-requests";
+import type { TaskSkillCache } from "../skills";
 import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
 import { diagnosticsRoute } from "./diagnostics";
@@ -43,78 +43,10 @@ import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
 import { BRIEF_PATH, briefRoute } from "./task-brief";
 import { settingsRoute } from "./settings";
 import { harnessLimitsRoute } from "./harness-limits";
-import { pullRequestTitleSync } from "../task-update";
 import {
   attachmentUploadRoute,
   discardAttachmentUploadRoute,
 } from "./attachment-uploads";
-
-const standaloneModelCaches = new WeakMap<Record<string, AdapterDef>, ModelProbeCache>();
-const standaloneProbeCaches = new WeakMap<Record<string, AdapterDef>, TaskProbeCache>();
-const standaloneSkillCaches = new WeakMap<Record<string, AdapterDef>, TaskSkillCache>();
-const standaloneCompactors = new WeakMap<Record<string, AdapterDef>, TaskCompactor>();
-const standalonePullRequestCaches = new WeakMap<WispConfig, PullRequestCache>();
-const standaloneUpdateManagers = new WeakMap<WispConfig, UpdateManager>();
-const standaloneLimitsCaches = new WeakMap<Record<string, AdapterDef>, HarnessLimitsCache>();
-
-function limitsCacheFor(adapters: Record<string, AdapterDef>): HarnessLimitsCache {
-  const existing = standaloneLimitsCaches.get(adapters);
-  if (existing) return existing;
-  const cache = new HarnessLimitsCache();
-  standaloneLimitsCaches.set(adapters, cache);
-  return cache;
-}
-
-function modelCacheFor(adapters: Record<string, AdapterDef>, options?: ModelProbeCacheOptions): ModelProbeCache {
-  const existing = standaloneModelCaches.get(adapters);
-  if (existing) return existing;
-  const cache = new ModelProbeCache(adapters, options);
-  standaloneModelCaches.set(adapters, cache);
-  return cache;
-}
-
-function probeCacheFor(adapters: Record<string, AdapterDef>, options?: TaskProbeCacheOptions): TaskProbeCache {
-  const existing = standaloneProbeCaches.get(adapters);
-  if (existing) return existing;
-  const cache = new TaskProbeCache(options);
-  standaloneProbeCaches.set(adapters, cache);
-  return cache;
-}
-
-function skillCacheFor(adapters: Record<string, AdapterDef>, options?: TaskSkillCacheOptions): TaskSkillCache {
-  const existing = standaloneSkillCaches.get(adapters);
-  if (existing) return existing;
-  const cache = new TaskSkillCache(options);
-  standaloneSkillCaches.set(adapters, cache);
-  return cache;
-}
-
-function compactorFor(adapters: Record<string, AdapterDef>, options?: TaskCompactorOptions): TaskCompactor {
-  const existing = standaloneCompactors.get(adapters);
-  if (existing) return existing;
-  const compactor = new TaskCompactor(options);
-  standaloneCompactors.set(adapters, compactor);
-  return compactor;
-}
-
-function pullRequestCacheFor(cfg: WispConfig, options?: PullRequestCacheOptions): PullRequestCache {
-  const existing = standalonePullRequestCaches.get(cfg);
-  if (existing) return existing;
-  const cache = new PullRequestCache({
-    ...options,
-    onPullRequestFound: pullRequestTitleSync(cfg),
-  });
-  standalonePullRequestCaches.set(cfg, cache);
-  return cache;
-}
-
-function updateManagerFor(cfg: WispConfig): UpdateManager {
-  const existing = standaloneUpdateManagers.get(cfg);
-  if (existing) return existing;
-  const manager = new UpdateManager();
-  standaloneUpdateManagers.set(cfg, manager);
-  return manager;
-}
 
 function taskRoutes(
   req: Request,
@@ -209,30 +141,12 @@ function taskFamilyRoute(
   return null;
 }
 
-export function route(
-  req: Request,
-  url: URL,
-  path: string,
-  cfg: WispConfig,
-  adapters: Record<string, AdapterDef>,
-  modelCache?: ModelProbeCache,
-  probeCache?: TaskProbeCache,
-  skillCache?: TaskSkillCache,
-  compactor?: TaskCompactor,
-  pullRequestCache?: PullRequestCache,
-  updateManager?: UpdateManager,
-  limitsCache?: HarnessLimitsCache,
-): Response | Promise<Response> {
+export function route(req: Request, url: URL, path: string, ctx: RouteContext): Response | Promise<Response> {
   const m = req.method;
+  const { cfg, adapters } = ctx;
   const family = taskFamilyRoute(req, url, path, cfg, adapters);
   if (family !== null) return family;
-  const models = modelCache ?? modelCacheFor(adapters);
-  const probes = probeCache ?? probeCacheFor(adapters);
-  const skills = skillCache ?? skillCacheFor(adapters);
-  const compacts = compactor ?? compactorFor(adapters);
-  const pullRequests = pullRequestCache ?? pullRequestCacheFor(cfg);
-  const updates = updateManager ?? updateManagerFor(cfg);
-  const limits = limitsCache ?? limitsCacheFor(adapters);
+  const { models, probes, skills, compacts, pullRequests, updates, limits } = ctx.caches;
 
   if (path === "/api/capabilities" && m === "GET") return capabilitiesRoute(cfg);
   const settingsResponse = settingsRoute(req, path, m, cfg, undefined, { cache: limits, adapters });

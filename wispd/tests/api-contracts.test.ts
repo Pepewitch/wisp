@@ -8,6 +8,7 @@ import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { ModelProbeCache } from "../src/model-probes";
 import { createTurnDiagnosticWriter } from "../src/recording/diagnostic";
 import { route, serve } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { subscribe, type WispEvent } from "../src/events";
 import {
   createTask,
@@ -1065,9 +1066,7 @@ describe("daemon API contracts", () => {
       new Request(url, { headers: { authorization: `Bearer ${token}` } }),
       url,
       url.pathname,
-      config(),
-      BUILTIN_ADAPTERS,
-      cache,
+      testRouteContext(config(), BUILTIN_ADAPTERS, { models: cache }),
     );
     const unprobed = await json<{
       harnesses: Array<{ name: string; models: unknown; modelsError?: string }>;
@@ -1085,7 +1084,7 @@ describe("daemon API contracts", () => {
     }
 
     await cache.refresh();
-    const after = await route(new Request(url), url, url.pathname, config(), BUILTIN_ADAPTERS, cache);
+    const after = await route(new Request(url), url, url.pathname, testRouteContext(config(), BUILTIN_ADAPTERS, { models: cache }));
     const failed = await json<{ harnesses: Array<{ name: string; models: unknown; modelsError?: string }> }>(after);
     expect(failed.harnesses.find((harness) => harness.name === "droid")).toMatchObject({
       models: null,

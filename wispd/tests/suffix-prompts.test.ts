@@ -3,6 +3,7 @@ import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { SUFFIX_PROMPTS_PATH, type WispConfig } from "../src/config";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import {
   createSuffixPrompt,
   deleteSuffixPrompt,
@@ -37,7 +38,7 @@ async function call(method: string, body?: unknown, path = "/api/suffix-prompts"
     init.headers = { "content-type": "application/json" };
     init.body = JSON.stringify(body);
   }
-  return await route(new Request(url, init), url, url.pathname, cfg, BUILTIN_ADAPTERS);
+  return await route(new Request(url, init), url, url.pathname, testRouteContext(cfg, BUILTIN_ADAPTERS));
 }
 
 describe("daemon-wide suffix prompt storage", () => {

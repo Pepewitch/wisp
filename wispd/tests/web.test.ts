@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import { acceptsGzip, route, serve } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { finishResponse, json, JSON_GZIP_MIN_CHARS } from "../src/routes/http";
 import {
   createTask,
@@ -286,7 +287,7 @@ describe("every daemon response", () => {
     const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as WispConfig;
     const eventsUrl = new URL("http://wisp.test/api/events");
     const gzipRequest = new Request(eventsUrl, { headers: { ...auth().headers, "accept-encoding": "gzip" } });
-    const stream = finishResponse(gzipRequest, await route(gzipRequest, eventsUrl, eventsUrl.pathname, cfg, {}));
+    const stream = finishResponse(gzipRequest, await route(gzipRequest, eventsUrl, eventsUrl.pathname, testRouteContext(cfg, {})));
     expect(stream.headers.get("content-type")).toContain("text/event-stream");
     expect(stream.headers.get("content-encoding")).toBeNull();
     expect(stream.headers.get("x-content-type-options")).toBe("nosniff");
@@ -378,8 +379,7 @@ describe("S1 create-modal and project APIs", () => {
         new Request(url, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
         url,
         url.pathname,
-        cfg,
-        adapters,
+        testRouteContext(cfg, adapters),
       );
     };
 
@@ -665,10 +665,10 @@ describe("local vs worktree tasks", () => {
       init.body = JSON.stringify(body);
       init.headers = { "content-type": "application/json" };
     }
-    return await route(new Request(url, init), url, url.pathname, cfg(), {
+    return await route(new Request(url, init), url, url.pathname, testRouteContext(cfg(), {
       droid: BUILTIN_ADAPTERS.droid!,
       fake: FAKE_HARNESS,
-    });
+    }));
   };
 
   test("an unknown mode is rejected by name, before any task row exists", async () => {
@@ -886,7 +886,7 @@ describe("the archived-tasks view", () => {
     };
     const call = (path: string, init?: RequestInit): Response | Promise<Response> => {
       const url = new URL(`http://wisp.test${path}`);
-      return route(new Request(url, init), url, url.pathname, cfg, {});
+      return route(new Request(url, init), url, url.pathname, testRouteContext(cfg, {}));
     };
 
     // repo_path must exist (the archive endpoint prunes in it); the worktree dir is already gone

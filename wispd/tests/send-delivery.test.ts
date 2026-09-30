@@ -8,6 +8,7 @@ import { subscribe } from "../src/events";
 import { STOPPING } from "../src/interrupt-state";
 import { turnInput } from "../src/live-input";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import { sendTaskBodyError } from "../src/routes/send-agent";
 import { hasRunningTurn, sendQueuedMessageNow, startNextQueuedMessage, startTurn, submitTaskMessage } from "../src/runner";
 import { createTask, createTaskMessage, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
@@ -252,7 +253,7 @@ test("send validates when", () => {
 describe("over the API", () => {
   const call = async (path: string, adapters: Record<string, AdapterDef>, init: RequestInit = {}) => {
     const url = new URL(`http://127.0.0.1${path}`);
-    const response = await route(new Request(url, init), url, url.pathname, cfg, adapters);
+    const response = await route(new Request(url, init), url, url.pathname, testRouteContext(cfg, adapters));
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
 

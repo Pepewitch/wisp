@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { testRouteContext } from "./helpers/daemon-context";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
 import { resumeArchiveCleanups } from "../src/archive-worker";
@@ -73,7 +74,7 @@ function cfg(repos: WispConfig["repos"] = []): WispConfig {
 function call(path: string, init?: RequestInit, repos: WispConfig["repos"] = []): Response | Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
   const headers = { authorization: `Bearer ${token}`, ...(init?.body ? { "content-type": "application/json" } : {}) };
-  return route(new Request(url, { ...init, headers }), url, url.pathname, cfg(repos), {});
+  return route(new Request(url, { ...init, headers }), url, url.pathname, testRouteContext(cfg(repos), {}));
 }
 
 function sh(cmd: string[], cwd: string): string {
@@ -198,7 +199,7 @@ describe("archive asks before it stops auto-merge or auto-fix", () => {
     const send = (method: string, body: unknown) => {
       const url = new URL("http://wisp.test/api/projects");
       const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-      return route(new Request(url, { method, headers, body: JSON.stringify(body) }), url, url.pathname, shared, {});
+      return route(new Request(url, { method, headers, body: JSON.stringify(body) }), url, url.pathname, testRouteContext(shared, {}));
     };
 
     const removal = send("DELETE", { path: fixture.repo, archiveTasks: true });

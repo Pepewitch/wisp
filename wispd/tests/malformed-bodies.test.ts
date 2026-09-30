@@ -20,6 +20,7 @@ import { MAX_BASE64_CHARS, MAX_TURN_BASE64_CHARS } from "../src/attachments";
 import { MAX_REQUEST_BODY_BYTES } from "../src/daemon";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import {
   createTask,
   createTaskMessage,
@@ -61,8 +62,7 @@ function call(path: string, method: string, body: string): Promise<Response> {
       }),
       url,
       url.pathname,
-      cfg,
-      BUILTIN_ADAPTERS,
+      testRouteContext(cfg, BUILTIN_ADAPTERS),
     ),
   );
 }

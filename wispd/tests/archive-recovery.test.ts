@@ -6,6 +6,7 @@ import { archiveCleanup, archiveTaskWithCleanup, clearArchiveCleanup, pendingArc
 import { cleanupProgress, recoverCleanupProgress, updateProgress } from "../src/archive-progress";
 import { resumeArchiveCleanups } from "../src/archive-worker";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { loadConfig } from "../src/config";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { createWorktree } from "../src/worktree";
@@ -36,7 +37,7 @@ async function fixture(script?: string, badRepo = false) {
 
 async function call(id: string, action: string, revision = cleanupProgress(id)!.revision, extra = {}) {
   const url = new URL(`http://fixture.test/api/tasks/${id}/cleanup`);
-  return await route(new Request(url, { method: "POST", body: JSON.stringify({ action, revision, ...extra }) }), url, url.pathname, loadConfig(), {});
+  return await route(new Request(url, { method: "POST", body: JSON.stringify({ action, revision, ...extra }) }), url, url.pathname, testRouteContext(loadConfig(), {}));
 }
 
 test("successful hooks are not repeated after a later Git failure, and retries back off", async () => {
@@ -82,7 +83,7 @@ test("repeated archive requests cannot erase a hook's uncertain checkpoint", asy
   await resumeArchiveCleanups();
   const before = cleanupProgress(f.id);
   const url = new URL(`http://fixture.test/api/tasks/${f.id}/archive`);
-  expect((await route(new Request(url, { method: "POST", body: "{}" }), url, url.pathname, loadConfig(), {})).status).toBe(200);
+  expect((await route(new Request(url, { method: "POST", body: "{}" }), url, url.pathname, testRouteContext(loadConfig(), {}))).status).toBe(200);
   await resumeArchiveCleanups();
   expect(cleanupProgress(f.id)).toEqual(before);
   expect(readFileSync(f.count, "utf8")).toBe("effect\n");
