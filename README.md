@@ -98,7 +98,7 @@ unbundled and ad-hoc signed.
 - [Remote and phone access](docs/REMOTE-ACCESS.md)
 - [Storage, archive, and cleanup](docs/ARCHIVE-CLEANUP.md)
 - [Security and vulnerability reporting](SECURITY.md)
-- [Release notes](https://github.com/Pepewitch/wisp/releases) and [tested limits](docs/v0.6/QUALIFICATION.md)
+- [Changelog](CHANGELOG.md), [release notes](https://github.com/Pepewitch/wisp/releases) and [tested limits](docs/v0.6/QUALIFICATION.md)
 
 ## Contribute
 

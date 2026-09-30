@@ -42,6 +42,7 @@ import {
   type PublicationFacts,
 } from "./release-ledger";
 import { PNG_INPUTS, pngInputChanges } from "./release-check";
+import { writeChangelog } from "./changelog";
 import { addedMigrations, migrationSourceAt } from "./release-notes";
 import { releaseMetadataFromApi, validateReleaseMetadata } from "./release-promotion";
 import { assertTaggableVersion } from "./release-versions";
@@ -443,6 +444,8 @@ async function main(): Promise<number> {
       writeFileSync(join(ROOT, write.path), write.text);
       console.log(`  wrote ${write.path}`);
     }
+    // The ledger now records the publication, so the changelog lists it.
+    if (writeChangelog(ROOT)) console.log("  wrote CHANGELOG.md");
   }
   if (todos.length > 0) {
     console.log(`${todos.length} TODO marker(s) need judgment:`);
