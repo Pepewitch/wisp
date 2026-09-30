@@ -27,7 +27,7 @@ import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { settleStrandedTasks } from "./turn-finalize";
-import { startArchiveCleanupLoop } from "./routes/archive";
+import { startArchiveCleanupLoop } from "./archive-worker";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
 import { stopSearch } from "./search-runner";

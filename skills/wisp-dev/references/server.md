@@ -287,6 +287,7 @@ cannot tell you a browser stopped attaching a credential.
 | CLI parsing and presentation | `wispd/src/cli.ts` |
 | Authentication and HTTP responses | `wispd/src/routes/auth.ts`, `wispd/src/routes/http.ts` |
 | Task/API behavior | `wispd/src/routes/` |
+| Task operations every caller shares (create and launch, archive) | `wispd/src/domain/`; a route parses the request and maps the result to HTTP, and lint keeps store writes out of `routes/` |
 | Persistence and state transitions | `wispd/src/store.ts` |
 | Harness process lifecycle | `wispd/src/runner.ts` |
 | Worktrees, git, setup hooks | `wispd/src/worktree.ts` |

@@ -28,7 +28,7 @@ import { db, createTask, createTurn, finishTurn, freeSlot, getTask, newTaskId, s
 import { processStartTime } from "../src/procid";
 import { STOPPING } from "../src/interrupt-state";
 import { assertTaskNotStopping } from "../src/turn-interrupt";
-import { archiveTaskRows } from "../src/routes/archive";
+import { archiveTaskRows } from "../src/domain/archive";
 import { route } from "../src/routes";
 import * as processSnapshot from "../src/process-snapshot";
 import { BACKGROUND_SETTLE_MS, backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";

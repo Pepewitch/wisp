@@ -8,7 +8,7 @@
  * owning them. A row here IS that owner — written in the same transaction as
  * the flip, naming the stage reached, and picked up by the next daemon.
  *
- * The stage ORDER is the safety property (see routes/archive.ts): everything
+ * The stage ORDER is the safety property (see domain/archive.ts): everything
  * destructive sits behind everything that stops a process.
  */
 import { db, setTaskFields } from "./store";

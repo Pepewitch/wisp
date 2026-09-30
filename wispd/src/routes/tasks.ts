@@ -1,9 +1,7 @@
 import { retentionRoute } from "./retention";
 import { taskLogResponse } from "./task-log";
-import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
+import { TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
-import { backgroundPass } from "../home-lifetime";
-import { resolve } from "node:path";
 import { buildAttachArgv, isCompactPrompt, ProbeError, probeCommands, type AdapterDef } from "../adapters";
 import {
   AttachError,
@@ -11,12 +9,10 @@ import {
   releaseDecodedAttachments,
   type DecodedAttachment,
 } from "../attachments";
-import { resolveHarnessDefaults, type WispConfig } from "../config";
+import type { WispConfig } from "../config";
 import { emit } from "../events";
-import { pathExists } from "../fsutil";
 import { answerQuestionResponse } from "./task-answer";
 import type { PullRequestCache } from "../pull-requests";
-import { isProjectRemovalInProgress } from "../project-removals";
 import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
 import { InterruptConflict } from "../turn-interrupt";
 import type { TaskCompactor } from "../compacts";
@@ -25,12 +21,8 @@ import type { TaskSkillCache } from "../skills";
 import type { ProbeAnswer, TaskSkills } from "../../../shared/api/harness";
 import type { ApiTask, ApiTaskListItem, AttachResponse, CompactAnswer, SendResponse, TaskDetail } from "../../../shared/api/task";
 import {
-  createTask,
-  freeSlot,
   getTask,
-  listTasks,
   listTasksWithLatestTurn,
-  newTaskId,
   setTaskContextFields,
   setTaskFields,
   switchTaskAgent,
@@ -40,11 +32,11 @@ import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { isRecord, typeName } from "../validate";
 import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { taskIdsWithAttachedWorkflows } from "../workflows/store";
-import { autopilotStatus, autopilotStatuses, setAutopilot } from "../autopilot/store";
+import { autopilotStatuses } from "../autopilot/store";
 import { autopilotUpdateError } from "./autopilot";
-import { archiveTaskRows } from "./archive";
+import { archiveTaskRows } from "../domain/archive";
+import { createAndLaunchTask, type NewTaskRefusal } from "../domain/task-create";
 import { invalidateStatus } from "./projects";
-import { launchTask } from "./task-launch";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 import {
   agentSwitch,
@@ -54,7 +46,7 @@ import {
 } from "./send-agent";
 import { conversationDetail, conversationResponse, taskUsageResponse } from "./task-conversation";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
-import { autopilotSwitchDetail, recordAudit, recordSendAudit, requestActor, type TaskAuditActor } from "../task-audit";
+import { recordAudit, recordSendAudit, requestActor } from "../task-audit";
 import { taskAuditRoute } from "./task-audit";
 
 /** GET /api/tasks */
@@ -136,35 +128,12 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   return null;
 }
 
-/**
- * Armed before the first turn starts, so that turn already carries the
- * auto-merge note. Never fatal: the task row already exists, and failing the
- * request here would strand it in `creating`. The response says what took.
- */
-function armRequestedAutopilot(taskId: string, requested: unknown, actor: TaskAuditActor): void {
-  if (!isRecord(requested) || (requested.autoMerge !== true && requested.autoFix !== true)) return;
-  try {
-    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge === true, autoFix: requested.autoFix === true });
-    const detail = autopilotSwitchDetail(null, armed);
-    if (detail) recordAudit(taskId, "autopilot", actor, detail);
-  } catch (error) {
-    console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
+const REFUSAL_STATUS = { invalid: 400, conflict: 409, "at-capacity": 429, "no-free-id": 500 } as const;
 
-/** A choice the chosen harness cannot honour is refused by name, never silently dropped. */
-function unsupportedRequest(
-  def: AdapterDef,
-  harness: string,
-  asked: { effort: string | null; fast: boolean; brief: boolean },
-): Response | null {
-  if (asked.effort !== null && !def.effort) return err(`harness '${harness}' has no effort support`, 400);
-  if (asked.fast && !def.fastMode) return err(`harness '${harness}' has no fast mode`, 400);
-  if (asked.brief && def.briefs !== true) return err(`harness '${harness}' can't write task briefs`, 400);
-  return null;
-}
+const refusalStatus = (refusal: NewTaskRefusal): number =>
+  refusal.kind === "attachment" ? refusal.status : REFUSAL_STATUS[refusal.kind];
 
-/** POST /api/tasks */
+/** POST /api/tasks: parse the request; the domain operation owns every rule after that. */
 export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<string, AdapterDef>): Promise<Response> {
   return (async () => {
     const parsed = await jsonObjectBody(req);
@@ -172,11 +141,8 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
     const body = parsed as CreateTaskBody;
     const invalid = createTaskBodyError(body);
     if (invalid) return invalid;
-    // createTaskBodyError establishes these required string fields at the
-    // request boundary; bind them once so later async callbacks stay narrow.
-    const repoPath = body.repoPath as string;
+    // createTaskBodyError establishes the required string fields' types
     const rawPrompt = body.prompt as string;
-    const harness = body.harness as string;
     const prompt = promptWithSuffix(rawPrompt, body.suffixPromptId as string | undefined);
     if (prompt === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
     let mode: TaskMode = "worktree";
@@ -187,97 +153,29 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       }
       mode = body.mode as TaskMode;
     }
-    const def = adapters[harness];
-    if (!def) return err(`unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`, 400);
-    if (!(await pathExists(repoPath))) return err(`repoPath does not exist: ${repoPath}`, 400);
-    if (isProjectRemovalInProgress(repoPath)) {
-      return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
-    }
-    // Explicit values win; then config harnessDefaults; then the harness's own defaults.
-    const { model, effort } = resolveHarnessDefaults(
+    const created = await createAndLaunchTask(
+      {
+        repoPath: body.repoPath as string,
+        prompt: rawPrompt,
+        firstTurnPrompt: prompt,
+        harness: body.harness as string,
+        model: body.model as string | undefined,
+        effort: body.effort as string | undefined,
+        fast: body.fast === true,
+        brief: body.briefEnabled === true,
+        mode,
+        base: body.base as string | undefined,
+        attachments: body.attachments,
+        autopilot: isRecord(body.autopilot)
+          ? { autoMerge: body.autopilot.autoMerge === true, autoFix: body.autopilot.autoFix === true }
+          : undefined,
+        actor: requestActor(req),
+      },
       cfg,
-      harness,
-      body.model as string | undefined,
-      body.effort as string | undefined,
+      adapters,
     );
-    const fast = body.fast === true;
-    const brief = body.briefEnabled === true;
-    const unsupported = unsupportedRequest(def, harness, { effort, fast, brief });
-    if (unsupported) return unsupported;
-    // Two local tasks in one repo means two agents editing the SAME files
-    // with no isolation between them — the exact hazard worktrees exist to
-    // remove. Refuse by name so the fix is obvious. (Worktree tasks are
-    // isolated by construction; the global admission limit still applies.)
-    if (mode === "local") {
-      // A local task adopts the branch the checkout is already on; there is
-      // nothing to fork, so a base could only be honoured by moving the
-      // user's own working copy. Refuse the combination instead of ignoring
-      // half of it.
-      if (body.base !== undefined) {
-        return err("base applies to worktree tasks only — a local task runs on the checkout's current branch", 400);
-      }
-      // a local: the string checks above narrowed body.repoPath, but not
-      // inside this callback — bind it
-      const live = listTasks(false).find((t) => taskMode(t) === "local" && resolve(t.repo_path) === resolve(repoPath));
-      if (live) {
-        return err(
-          `task ${live.id} is already running locally in ${resolve(repoPath)} — archive it first, or create this one as a worktree task`,
-          409,
-        );
-      }
-    }
-    // S3: turn-1 attachments are validated BEFORE the task row exists — a
-    // rejected create never leaves a task behind (named 400s, never silent)
-    let attachments: DecodedAttachment[];
-    try {
-      attachments = decodeAttachments(harness, def, body.attachments);
-    } catch (e) {
-      if (e instanceof AttachError) return err(e.message, e.status);
-      throw e;
-    }
-    let handedOff = false;
-    try {
-      // L4: 5-char ids are birthday-bound (~1.7% collision at 1k tasks) — retry
-      // on a UNIQUE violation instead of 500ing the create request.
-      let task: Task | null = null;
-      // A removal can begin while attachment decoding and defaults are resolved.
-      // Check again at the last point before the row exists.
-      if (isProjectRemovalInProgress(repoPath)) {
-        return err(`project is being removed from Wisp: ${resolve(repoPath)}`, 409);
-      }
-      try { assertTaskCapacity(cfg); } catch (error) { if (error instanceof TaskCapacityError) return err(error.message, 429); throw error; }
-      for (let attempt = 0; attempt < 5 && !task; attempt++) {
-        try {
-          task = createTask({
-            id: newTaskId(),
-            title: rawPrompt.slice(0, TASK_TITLE_MAX),
-            repo_path: repoPath,
-            harness,
-            model,
-            effort,
-            fast,
-            mode,
-            brief,
-            slot: freeSlot(),
-          });
-        } catch (e) {
-          if (!String(e instanceof Error ? e.message : e).includes("UNIQUE constraint")) throw e;
-        }
-      }
-      if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
-      const actor = requestActor(req);
-      recordAudit(task.id, "create", actor, `${harness}${model ? ` ${model}` : ""}, ${mode}`);
-      armRequestedAutopilot(task.id, body.autopilot, actor);
-      const release = reserveTaskCapacity(task.id, cfg);
-      handedOff = true;
-      void backgroundPass(
-        `launch of task ${task.id}`,
-        () => launchTask(task, prompt, def, adapters, cfg, attachments, body.base as string | undefined).finally(release),
-      );
-      return json<ApiTask & Pick<ApiTaskListItem, "autopilot">>({ ...apiTask(task), autopilot: autopilotStatus(task.id) }, 201);
-    } finally {
-      if (!handedOff) releaseDecodedAttachments(attachments);
-    }
+    if ("error" in created) return err(created.error, refusalStatus(created));
+    return json<ApiTask & Pick<ApiTaskListItem, "autopilot">>({ ...apiTask(created.task), autopilot: created.autopilot }, 201);
   })();
 }
 
