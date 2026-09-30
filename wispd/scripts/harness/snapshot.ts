@@ -144,11 +144,9 @@ async function main(): Promise<void> {
   }
 
   console.log(blocks.map((b) => b.join("\n")).join("\n\n"));
-  if (failed) process.exit(1);
-  if (!write && drifted) {
-    console.log("\n--check: committed facts are stale. Re-run without --check, then reconcile the adapters.");
-    process.exit(1);
-  }
+  const stale = !write && drifted;
+  if (stale) console.log("\n--check: committed facts are stale. Re-run without --check, then reconcile the adapters.");
+  if (failed || stale) process.exit(1);
 }
 
 if (import.meta.main) await main();

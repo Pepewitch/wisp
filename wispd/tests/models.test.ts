@@ -300,14 +300,19 @@ describe("defaultModel in adapters.json overrides", () => {
   };
 
   test("a staticModels override without the inherited default drops it and warns instead of failing the boot", () => {
-    for (const [name, list] of [["claude", ["claude-opus-5", "claude-sonnet-5"]], ["droid", ["gpt-6-sol"]]] as const) {
-      const { out, warnings } = validate({ [name]: { staticModels: list } });
-      expect(out[name]!.staticModels).toEqual([...list]);
-      expect(out[name]!.defaultModel).toBeUndefined();
-      expect(warnings).toEqual([
-        `adapters.json: adapter '${name}': staticModels does not include the inherited default 'claude-opus-5-5' — dropping it; set defaultModel to one of your models to pin one`,
-      ]);
-    }
+    const { out, warnings } = validate({ claude: { staticModels: ["claude-opus-5", "claude-sonnet-5"] } });
+    expect(out.claude!.staticModels).toEqual(["claude-opus-5", "claude-sonnet-5"]);
+    expect(out.claude!.defaultModel).toBeUndefined();
+    expect(warnings).toEqual([
+      "adapters.json: adapter 'claude': staticModels does not include the inherited default 'claude-opus-5-5' — dropping it; set defaultModel to one of your models to pin one, or to null for none",
+    ]);
+  });
+
+  test("on a probed harness staticModels is only the fallback, so the default stays for the catalog to gate", () => {
+    const { out, warnings } = validate({ droid: { staticModels: ["gpt-6-sol"] } });
+    expect(out.droid!.defaultModel).toBe("claude-opus-5-5");
+    expect(warnings).toEqual([]);
+    expect(validate({ droid: { staticModels: ["gpt-6-sol"], defaultModel: "kimi-k3" } }).out.droid!.defaultModel).toBe("kimi-k3");
   });
 
   test("a staticModels override that keeps the inherited default keeps it", () => {
@@ -318,15 +323,23 @@ describe("defaultModel in adapters.json overrides", () => {
 
   test("defaultModel: null clears the inherited default; a named one must still be in the list", () => {
     expect(validate({ codex: { defaultModel: null } }).out.codex!.defaultModel).toBeUndefined();
+    const cleared = validate({ claude: { staticModels: ["claude-opus-5"], defaultModel: null } });
+    expect(cleared.out.claude!.defaultModel).toBeUndefined();
+    expect(cleared.warnings).toEqual([]);
     expect(() => validate({ claude: { staticModels: ["claude-sonnet-5"], defaultModel: "claude-opus-5-5" } })).toThrow(
       "adapters.json: adapter 'claude'.defaultModel 'claude-opus-5-5' is not in staticModels — the default must be one of the offered models",
     );
   });
 
-  test("a defaultModel that can never apply warns", () => {
-    const { out, warnings } = validate({ foo: { bin: "foo", exec: [], parse: { format: "text" }, defaultModel: "m" } });
-    expect(out.foo!.defaultModel).toBe("m");
-    expect(warnings).toEqual(["adapters.json: adapter 'foo': defaultModel 'm' has no effect without staticModels or modelDiscovery"]);
+  test("a defaultModel that can never apply warns, and an inherited one is dropped", () => {
+    const named = validate({ foo: { bin: "foo", exec: [], parse: { format: "text" }, defaultModel: "m" } });
+    expect(named.out.foo!.defaultModel).toBe("m");
+    expect(named.warnings).toEqual(["adapters.json: adapter 'foo': defaultModel 'm' has no effect without staticModels or modelDiscovery"]);
+    const inherited = validate({ droid: { modelDiscovery: null } });
+    expect(inherited.out.droid!.defaultModel).toBeUndefined();
+    expect(inherited.warnings).toEqual([
+      "adapters.json: adapter 'droid': the inherited default 'claude-opus-5-5' has no effect without staticModels or modelDiscovery — dropping it; set defaultModel to one of your models to pin one, or to null for none",
+    ]);
   });
 });
 

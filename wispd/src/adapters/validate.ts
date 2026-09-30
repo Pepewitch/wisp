@@ -163,10 +163,14 @@ function validateFastMode(raw: unknown, label: string): AdapterDef["fastMode"] {
 }
 
 /**
- * `defaultModel`, which a builtin may carry as Wisp's own default. A user list
- * that replaces the builtin's `staticModels` without that id drops the
- * inherited default (with a warning) rather than failing the boot, and
- * `defaultModel: null` clears it. A default the user names must be in their list.
+ * `defaultModel`, which a builtin may carry as Wisp's own default. Runs after
+ * the discovery fields: on a probed harness the installed CLI's catalog gates
+ * the default when a task is created, and `staticModels` is only the fallback,
+ * so a user list that lacks it changes nothing. Without discovery, the static
+ * list is the only evidence. There, a user list that replaces the builtin's
+ * without the inherited default drops it (with a warning) rather than failing
+ * the boot, and a default the user names must be in their list.
+ * `defaultModel: null` clears an inherited default.
  */
 function applyDefaultModel(
   raw: Record<string, unknown>,
@@ -174,24 +178,33 @@ function applyDefaultModel(
   label: string,
   warn: (msg: string) => void,
 ): void {
+  const inherited = raw.defaultModel === undefined;
   if (raw.defaultModel === null) {
     delete merged.defaultModel;
-  } else if (raw.defaultModel !== undefined) {
+  } else if (!inherited) {
     if (typeof raw.defaultModel !== "string" || raw.defaultModel.length === 0) {
       throw new Error(`${label}.defaultModel must be a non-empty string or null, got ${typeName(raw.defaultModel)}`);
     }
     merged.defaultModel = raw.defaultModel;
-  } else if (raw.staticModels !== undefined && merged.defaultModel !== undefined && !merged.staticModels?.includes(merged.defaultModel)) {
-    warn(
-      `${label}: staticModels does not include the inherited default '${merged.defaultModel}' — dropping it; set defaultModel to one of your models to pin one`,
-    );
+  }
+  const wanted = merged.defaultModel;
+  if (wanted === undefined || merged.modelDiscovery) return;
+  const silence = "set defaultModel to one of your models to pin one, or to null for none";
+  if (!merged.staticModels) {
+    if (!inherited) {
+      warn(`${label}: defaultModel '${wanted}' has no effect without staticModels or modelDiscovery`);
+      return;
+    }
+    warn(`${label}: the inherited default '${wanted}' has no effect without staticModels or modelDiscovery — dropping it; ${silence}`);
     delete merged.defaultModel;
+    return;
   }
-  if (merged.defaultModel !== undefined && merged.staticModels && !merged.staticModels.includes(merged.defaultModel)) {
-    throw new Error(
-      `${label}.defaultModel '${merged.defaultModel}' is not in staticModels — the default must be one of the offered models`,
-    );
+  if (merged.staticModels.includes(wanted)) return;
+  if (!inherited) {
+    throw new Error(`${label}.defaultModel '${wanted}' is not in staticModels — the default must be one of the offered models`);
   }
+  warn(`${label}: staticModels does not include the inherited default '${wanted}' — dropping it; ${silence}`);
+  delete merged.defaultModel;
 }
 
 function applyCoreFields(
@@ -235,7 +248,6 @@ function applyCoreFields(
     merged.briefs = raw.briefs;
   }
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);
-  applyDefaultModel(raw, merged, label, warn);
   if (raw.allowEmptyResult !== undefined) {
     if (typeof raw.allowEmptyResult !== "boolean") {
       throw new Error(`${label}.allowEmptyResult must be a boolean, got ${typeName(raw.allowEmptyResult)}`);
@@ -471,9 +483,7 @@ function validateAdapter(
   applyEventFields(raw, merged, label);
   applyDiscoveryFields(raw, merged, label);
   applyCompactFields(raw, merged, label);
-  if (merged.defaultModel !== undefined && !merged.staticModels?.length && !merged.modelDiscovery) {
-    warn(`${label}: defaultModel '${merged.defaultModel}' has no effect without staticModels or modelDiscovery`);
-  }
+  applyDefaultModel(raw, merged, label, warn);
   const liveIssue = liveCommandIssue(merged);
   if (liveIssue) {
     throw new Error(`${label}.liveInput '${merged.liveInput}' is incompatible with exec: ${liveIssue}`);
