@@ -22,6 +22,7 @@ import { InterruptConflict } from "../turn-interrupt";
 import { changeWorkflowState } from "../workflows/store";
 import { skipCancelledRound } from "../autopilot/store";
 import type { SendResponse } from "../../../shared/api/task";
+import { recordAudit, requestActor } from "../task-audit";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
@@ -179,6 +180,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
  * way a `now` send is, steered in or started by stopping the running turn.
  */
 export function taskMessageSendNowRoute(
+  req: Request,
   path: string,
   method: string,
   cfg: WispConfig,
@@ -206,6 +208,7 @@ export function taskMessageSendNowRoute(
     try {
       const result = await sendQueuedMessageNow(task.id, message.id, adapters, cfg);
       if (!result) return err("only queued messages can be sent now", 409);
+      recordAudit(task.id, "send-now", requestActor(req), `message ${message.id}${result.interrupted ? " · interrupted the running turn" : ""}`);
       return json<SendResponse>({
         ...apiTask(getTask(task.id)!),
         disposition: result.disposition,

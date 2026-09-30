@@ -536,6 +536,36 @@ async fn client_authorization_and_cookies_never_reach_a_daemon() {
 }
 
 #[tokio::test]
+async fn every_relayed_request_names_desktop_and_the_webview_cannot_claim_otherwise() {
+    let (alpha, _bravo) = two_daemons().await;
+    let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;
+
+    let echoed: serde_json::Value = harness
+        .client
+        .get(harness.route("local", "api/whoami"))
+        .header("x-wisp-client", "cli")
+        .header("x-wisp-task", "forged")
+        .send()
+        .await
+        .expect("request")
+        .json()
+        .await
+        .expect("json");
+
+    let values = |name: &str| -> Vec<String> {
+        echoed["headers"]
+            .as_array()
+            .expect("headers")
+            .iter()
+            .filter(|pair| pair[0] == name)
+            .map(|pair| pair[1].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(values("x-wisp-client"), vec!["desktop".to_string()]);
+    assert!(values("x-wisp-task").is_empty());
+}
+
+#[tokio::test]
 async fn an_upstream_set_cookie_never_reaches_the_webview() {
     let (alpha, _bravo) = two_daemons().await;
     let (harness, _ids) = Harness::start(Some(&alpha), &[]).await;

@@ -258,6 +258,27 @@ making known status disappear.
 Non-GitHub origins, fork pull requests, no match, and unavailable GitHub CLI or
 credentials stay invisible; none of them changes task state.
 
+```
+wisp audit <task> [--limit <1-500>] [--json]
+```
+
+Who did what to the task, newest first (the newest 100 unless `--limit` says
+otherwise; `GET /api/tasks/<id>/audit?limit=<n>` on the API). One line per
+action: when, what (`create`, `send`, `steer`, `send-now`, `interrupt`,
+`archive`, `force-archive`, `fresh-session`, `push`, `autopilot` for a switch
+turned on or off, `autopilot-resume`/`-skip`/`-send-now`, `workflow-start`,
+`-update`, `-pause`, `-resume`, `-complete`, a `merge` autopilot made, and
+`fail`), who, and what it was about. The actor is `web`, `desktop` or `cli`
+for the client that asked; `agent:<id>` for the CLI run by the agent inside task
+`<id>` (a turn's environment carries `WISP_TASK_ID`, so running `wisp` from a
+task's agent attributes the call to that task); `autopilot` or `workflow:<id>`
+for the daemon acting on a switch someone armed, including every message they
+queued; `system` for the daemon on its own account; and `api` for a client that
+did not name itself. The client name is the caller's own report: it records
+which client acted, not who is allowed to. Each task keeps its newest 1000
+entries, and `purge` deletes them with the task (the daemon log names who
+purged it).
+
 ## Web slash palette
 
 - `/tokens` — Wisp's persisted token totals by settled turn. This is task

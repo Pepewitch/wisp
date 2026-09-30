@@ -145,7 +145,7 @@ function taskRoutes(
   if (attachmentResponse !== null) return attachmentResponse;
   const messageResponse = taskMessageRoute(req, path, method);
   if (messageResponse !== null) return messageResponse;
-  const sendNowResponse = taskMessageSendNowRoute(path, method, cfg, adapters, compacts);
+  const sendNowResponse = taskMessageSendNowRoute(req, path, method, cfg, adapters, compacts);
   if (sendNowResponse !== null) return sendNowResponse;
   if (path === "/api/tasks" && method === "GET") return listTasksRoute(url);
   if (path === "/api/tasks" && method === "POST") return createTaskRoute(req, cfg, adapters);

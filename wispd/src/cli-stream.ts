@@ -1,3 +1,4 @@
+import { cliClientHeaders } from "./cli-api";
 import { print, printError } from "./cli-print";
 import { wispCommand } from "./command";
 import { loadConfig } from "./config";
@@ -10,7 +11,7 @@ export async function apiStream(path: string): Promise<Response> {
   const url = `http://${cfg.host}:${cfg.port}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, { headers: { authorization: `Bearer ${cfg.token}` } });
+    res = await fetch(url, { headers: { authorization: `Bearer ${cfg.token}`, ...cliClientHeaders() } });
   } catch {
     printError(`cannot reach wispd at ${url} — is it running? start it with: ${command} serve`);
     process.exit(1);

@@ -9,6 +9,7 @@ import { taskMode, type Task } from "../types";
 import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "./archive";
+import { requestActor } from "../task-audit";
 import { err, json, jsonObjectBody } from "./http";
 
 export type RepoEntry = string | RepoConfig;
@@ -311,7 +312,11 @@ export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Respo
       if (body.archiveTasks) {
         const activeTasks = listTasks().filter((task) => resolve(task.repo_path) === resolved);
         // "Archive all its tasks" was the owner's consent to switching autopilot off too
-        const result = await archiveTaskRows(activeTasks, false, cfg, { stopAutopilot: true });
+        const result = await archiveTaskRows(activeTasks, false, cfg, {
+          stopAutopilot: true,
+          actor: requestActor(req),
+          reason: "project removed from Wisp",
+        });
         if ("error" in result) {
           return err(`could not archive task '${result.task.title}': ${result.error}`, result.status);
         }

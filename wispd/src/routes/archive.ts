@@ -10,6 +10,7 @@ import { taskMode, type Task } from "../types";
 import { archivePreflight, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
 import { autopilotArchiveWarning } from "../autopilot/store";
 import { updateTaskAndEmit } from "../task-update";
+import { recordAudit, type TaskAuditActor } from "../task-audit";
 
 const PREFLIGHT_CONCURRENCY = 4;
 
@@ -39,6 +40,10 @@ export interface ArchivedTaskResult {
  */
 export interface ArchiveOptions {
   stopAutopilot?: boolean
+  /** who asked, for the task audit; `api` when the caller did not say */
+  actor?: TaskAuditActor
+  /** why, when it was not a request about this task (a project removal) */
+  reason?: string
 }
 
 async function prepareArchive(snapshot: Task, force: boolean, options: ArchiveOptions): Promise<PreparedArchive | ArchiveRefusal> {
@@ -142,6 +147,7 @@ export async function archiveTaskRows(
     // teardown. The emit follows the commit, so no client can observe an
     // archived task whose cleanup nothing is responsible for.
     archiveTaskWithCleanup(task.id, preflight?.leftBehind ?? null, job);
+    recordAudit(task.id, force ? "force-archive" : "archive", options.actor ?? "api", options.reason ?? null);
     updateTaskAndEmit(task.id, {});
     return { task, branch: task.branch, note: preflight?.leftBehind ?? null };
   });

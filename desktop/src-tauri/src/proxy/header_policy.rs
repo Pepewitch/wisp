@@ -63,7 +63,16 @@ pub(super) const REQUEST_HEADER_DENYLIST: &[&str] = &[
     "x-forwarded-for",
     "x-forwarded-host",
     "x-forwarded-proto",
+    // This proxy names the client itself (CLIENT_HEADER); the webview cannot
+    // claim to be the CLI, or an agent inside a task.
+    "x-wisp-client",
+    "x-wisp-task",
 ];
+
+/// What every relayed request says it is, for the daemon's task audit. The
+/// daemon records it as the caller's own report: accountability, not
+/// authentication, which stays with the injected bearer credential.
+pub(super) const CLIENT_HEADER: (&str, &str) = ("x-wisp-client", "desktop");
 
 /// Upstream headers that must never reach the webview.
 ///
@@ -253,6 +262,8 @@ pub(super) fn upstream_request(
         builder = builder.header(name.clone(), value.clone());
     }
     // Set, never append: whatever the caller sent is already gone, and exactly
-    // one Authorization header leaves this process.
-    builder.header(AUTHORIZATION, bearer(credential))
+    // one Authorization header (and one client name) leaves this process.
+    builder
+        .header(CLIENT_HEADER.0, HeaderValue::from_static(CLIENT_HEADER.1))
+        .header(AUTHORIZATION, bearer(credential))
 }

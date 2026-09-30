@@ -21,6 +21,17 @@ export class CliApiError extends Error {
 
 let daemonConfig: WispConfig | undefined;
 
+/**
+ * Which client this is, for the daemon's task audit (task-audit.ts). Inside a
+ * Wisp task's turn `WISP_TASK_ID` is set, so a call there is an agent driving
+ * Wisp and says which task it runs in. A self-report for accountability, not
+ * authentication: the bearer token is what the daemon trusts.
+ */
+export function cliClientHeaders(env: Record<string, string | undefined> = process.env): Record<string, string> {
+  const task = env.WISP_TASK_ID?.trim();
+  return { "x-wisp-client": "cli", ...(task ? { "x-wisp-task": task } : {}) };
+}
+
 export async function daemonRequest(
   path: string,
   method = "GET",
@@ -37,7 +48,7 @@ export async function daemonRequest(
   try {
     response = await fetch(url, {
       method,
-      headers: { authorization: `Bearer ${cfg.token}`, "content-type": contentType },
+      headers: { authorization: `Bearer ${cfg.token}`, "content-type": contentType, ...cliClientHeaders() },
       body,
       signal,
     });

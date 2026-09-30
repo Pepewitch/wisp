@@ -62,6 +62,7 @@ import {
   turnForTask,
   type TaskAgentSelection,
 } from "./store";
+import { recordAudit } from "./task-audit";
 import { TurnRecorder } from "./recording/turn-recorder";
 import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
@@ -681,11 +682,8 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
 export function failStaleCreatingTasks(): void {
   for (const task of creatingTasks()) {
     console.error(`[wisp] failing task ${task.id}: still 'creating' at startup (previous daemon died mid-creation)`);
-    transition(
-      task.id,
-      "failed",
-      "daemon died while this task was being created (still 'creating' at startup); create a new task to retry",
-    );
+    transition(task.id, "failed", "daemon died while this task was being created (still 'creating' at startup); create a new task to retry");
+    recordAudit(task.id, "fail", "system", "still being created when the daemon started");
   }
 }
 

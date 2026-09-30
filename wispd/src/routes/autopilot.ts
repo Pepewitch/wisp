@@ -9,6 +9,7 @@
 import type { AutopilotUpdate } from "../../../shared/autopilot"
 import { AutopilotError, autopilotHistory, autopilotStatus, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
 import { getTask } from "../store"
+import { autopilotSwitchDetail, recordAudit, requestActor } from "../task-audit"
 import { typeName } from "../validate"
 import { err, json, jsonObjectBody } from "./http"
 
@@ -30,8 +31,10 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
     if (match[2] === "history") return req.method === "GET" ? json({ history: autopilotHistory(taskId) }) : err("Method not allowed", 405)
     if (match[2]) {
       if (req.method !== "POST") return err("Method not allowed", 405)
-      const act = { resume: resumeAutopilot, "send-now": sendPendingFix, skip: skipPendingFix }[match[2] as "resume" | "send-now" | "skip"]
-      return json(act(taskId))
+      const verb = match[2] as "resume" | "send-now" | "skip"
+      const status = { resume: resumeAutopilot, "send-now": sendPendingFix, skip: skipPendingFix }[verb](taskId)
+      recordAudit(taskId, `autopilot-${verb}`, requestActor(req))
+      return json(status)
     }
     if (req.method === "GET") return json(autopilotStatus(taskId))
     if (req.method !== "PUT") return err("Method not allowed", 405)
@@ -39,7 +42,11 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
     if (body instanceof Response) return body
     const invalid = autopilotUpdateError(body)
     if (invalid) return err(invalid, 400)
-    return json(setAutopilot(taskId, body as AutopilotUpdate))
+    const before = autopilotStatus(taskId)
+    const after = setAutopilot(taskId, body as AutopilotUpdate)
+    const moved = autopilotSwitchDetail(before, after)
+    if (moved) recordAudit(taskId, "autopilot", requestActor(req), moved)
+    return json(after)
   } catch (error) {
     if (error instanceof AutopilotError) return err(error.message, error.status)
     throw error

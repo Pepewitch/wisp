@@ -17,6 +17,7 @@ import { githubRepository } from "../pull-request-github"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
+import { recordAudit } from "../task-audit"
 import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
@@ -667,10 +668,12 @@ export class AutopilotRuntime {
     if (pr.state === "MERGED") {
       const ours = checkpoint.mergeAttempt?.head === pr.head
       rebindAfterMerge(row, { pr: pr.number, base: pr.baseRefName, byWisp: ours }, now, pr.head)
+      if (ours) recordAudit(row.task_id, "merge", "autopilot", `#${pr.number} at ${pr.head.slice(0, 7)} into ${pr.baseRefName}`, now)
       return
     }
     // Closing a PR is how its owner abandons an approach: never move on to another.
     finishAutopilot(row, "closed", `Auto-merge off — #${pr.number} was closed`, now)
+    recordAudit(row.task_id, "autopilot", "autopilot", `auto-merge and auto-fix off: #${pr.number} was closed`, now)
   }
 
   private async baseRules(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules> {

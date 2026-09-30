@@ -177,7 +177,10 @@ ready:
 6. Strip upstream `Set-Cookie` and client `Cookie` headers. The desktop does not
    use the daemon's browser-session exchange.
 7. Replace, rather than append, upstream `Authorization` with the credential
-   selected by native connection state. Never log it.
+   selected by native connection state. Never log it. Likewise replace
+   `X-Wisp-Client` with `desktop` and drop any `X-Wisp-Task`, so the daemon's
+   task audit records Desktop's actions as Desktop's. That header is a
+   self-report for accountability, not authentication.
 8. When a saved remote URL changes, require a newly entered token before any
    network probe. Never reuse or send the old origin's saved credential to the
    new URL. A blank token may retain a credential only when the normalized URL

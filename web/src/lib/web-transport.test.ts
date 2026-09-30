@@ -38,6 +38,7 @@ describe("the same-origin web transport", () => {
       method: "POST",
       headers: {
         authorization: "Bearer synthetic-browser-token",
+        "x-wisp-client": "web",
         "content-type": "application/json",
       },
       body: JSON.stringify({ title: "Updated" }),
@@ -60,6 +61,7 @@ describe("the same-origin web transport", () => {
       method: "POST",
       headers: {
         authorization: "Bearer synthetic-browser-token",
+        "x-wisp-client": "web",
         "content-type": "application/octet-stream",
       },
       body: file,
@@ -86,6 +88,7 @@ describe("the same-origin web transport", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual({
       authorization: "Bearer fresh-synthetic-token",
+      "x-wisp-client": "web",
     })
   })
 
