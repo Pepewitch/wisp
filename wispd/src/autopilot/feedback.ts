@@ -389,6 +389,9 @@ export function pairedChecks(pr: PrSnapshot, items: FeedbackItem[], delivered: R
   return names
 }
 
+/** "@a", "@a and @b", "@a, @b and @c". */
+const listed = (names: string[]): string => names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`
+
 export interface ReviewerPasses {
   /** bots whose comment would be sent while their own check on the head is still running */
   running: string[]
@@ -407,7 +410,9 @@ export interface ReviewerPasses {
  * silence the rest.
  */
 export function reviewerPasses(pr: PrSnapshot, items: FeedbackItem[], times: { headSeenMs: number; nowMs: number }): ReviewerPasses {
-  const bots = new Set(items.flatMap((item) => item.kind === "comment" && item.comment.bot && item.comment.author ? [item.comment.author] : []))
+  // every Actions job reports as github-actions: its check is CI, never one reviewer's pass
+  const bots = new Set(items.flatMap((item) =>
+    item.kind === "comment" && item.comment.bot && item.comment.author && item.comment.author !== "github-actions" ? [item.comment.author] : []))
   const running = new Set<string>()
   const finished: string[] = []
   for (const check of pr.checks) {
@@ -417,7 +422,7 @@ export function reviewerPasses(pr: PrSnapshot, items: FeedbackItem[], times: { h
   }
   const names = [...running].sort()
   const wait = names.length > 0 && times.nowMs - times.headSeenMs < PASS_WAIT_MS
-    ? `Waiting for ${names.slice(0, 2).map((bot) => `@${bot}`).join(" and ")} to finish reviewing ${pr.head.slice(0, 7)}`
+    ? `Waiting for ${listed(names.map((bot) => `@${bot}`))} to finish reviewing ${pr.head.slice(0, 7)}`
     : null
   return { running: names, finished, wait }
 }

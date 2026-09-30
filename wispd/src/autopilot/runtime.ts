@@ -410,9 +410,6 @@ export class AutopilotRuntime {
       recordWorkflow(row.id, "rerun", reason, now.toISOString(), null, { pr: pr.number, sha: pr.head })
       return say("waiting", reason, MOVING_MS)
     }
-    // A reviewer bot still at work on this head: the whole round waits for its pass.
-    const passes = reviewerPasses(pr, items, { headSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
-    if (passes.wait) { forgetPending(checkpoint); return say("waiting", passes.wait, MOVING_MS) }
     // CI's part, unless that evidence already went out (alone, or in a round
     // with review feedback: the round's key is then a combined one) or was skipped.
     const sent = (key: string) => seenWake(row.id, key) || (checkpoint.sentCi ?? []).includes(key)
@@ -437,6 +434,9 @@ export class AutopilotRuntime {
       pauseAutopilot(getWorkflow(row.id) ?? row, `Auto-fix gave up after ${MAX_ROUNDS} rounds — resume to try again`, now)
       return null
     }
+    // A reviewer bot still at work on this head: the whole round, CI's part too, waits for its pass.
+    const passes = reviewerPasses(pr, items, { headSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
+    if (passes.wait) { forgetPending(checkpoint); return say("waiting", passes.wait, MOVING_MS) }
     // A short delay after the task goes idle, after the newest review words
     // (a reviewer's burst goes as one), and after a reviewer bot's check
     // ends (it may rewrite its summary a moment later): time to read what

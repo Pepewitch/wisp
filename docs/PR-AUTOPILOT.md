@@ -265,7 +265,8 @@ below).
   for it ("Waiting for @bot to finish reviewing abc1234"), and then two
   minutes more, since a bot may rewrite its summary a moment after its check
   ends. It waits at most 20 minutes from when Wisp first saw the head, then
-  sends what is there.
+  sends what is there. `github-actions` is never a reviewer at work: every
+  Actions job reports as it, so its checks are CI.
 - **Resolving threads.** The agent may resolve a thread started by you or by a
   bot, once it has pushed a fix for it. It replies "Addressed in <sha>" on
   anyone else's thread and never resolves it. It never resolves a thread it

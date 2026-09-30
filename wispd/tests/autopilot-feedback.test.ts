@@ -296,6 +296,18 @@ describe("what GitHub leaves undecided goes to the review judge", () => {
     expect(at([{ ...running, app: "other-bot" }])).toEqual({ running: [], finished: [], wait: null });
     const person = comment({ id: "IC_2", body: "Please also cover the zero case." });
     expect(reviewerPasses(pr({ comments: [person], checks: [running] }), items({ comments: [person], checks: [running] }), soon)).toMatchObject({ running: [], wait: null });
+    // every Actions job reports as github-actions: running CI is never a reviewer's pass
+    const actions = comment({ id: "IC_3", author: "github-actions", bot: true, association: "NONE", body: "Coverage dropped 4%." });
+    const ci: PrCheck = { ...running, name: "test", app: "github-actions" };
+    expect(reviewerPasses(pr({ comments: [actions], checks: [ci] }), [{ kind: "comment", id: "comment:IC_3", fingerprint: "x", at: actions.createdAt, comment: actions, check: null }], soon))
+      .toMatchObject({ running: [], wait: null });
+    // every bot at work is named
+    const bots = ["alpha-reviewer", "beta-reviewer", "gamma-reviewer"];
+    const summaries = bots.map((author, index) => board({ id: `IC_B${index}`, author }));
+    const checks = bots.map((app) => ({ ...running, name: app, app }));
+    const ledger = Object.fromEntries(summaries.map((summary) => [`comment:${summary.id}`, { fp: summary.editedAt!, kind: "needs_changes" as const, confidence: 0.95, model: "jev-1.13.0" }]));
+    expect(reviewerPasses(pr({ comments: summaries, checks }), items({ comments: summaries, checks }, { judged: ledger }), soon).wait)
+      .toBe(`Waiting for @alpha-reviewer, @beta-reviewer and @gamma-reviewer to finish reviewing ${HEAD.slice(0, 7)}`);
   });
 
   test("a bot's review body the judge read as needing changes is sent; its overview otherwise is not", () => {

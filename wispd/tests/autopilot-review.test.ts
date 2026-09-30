@@ -11,29 +11,42 @@ import { HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed
 
 afterEach(forgetTasks);
 
-describe("auto-fix for review feedback", () => {
-  const SOON = "2026-09-23T12:09:30Z";
-  const said = (over: Partial<PrComment> = {}): PrComment => ({
-    id: "RC_1", author: "owner", association: "OWNER", bot: false, body: "Rename this to `retryLimit`.",
-    createdAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#discussion_r1", hidden: false, ...over,
-  });
-  const thread = (over: Partial<PrThread> = {}, comments = [said()]): PrThread => ({
-    id: "PRRT_1", resolved: false, outdated: false, path: "src/retry.ts", line: 40,
-    starter: { author: comments[0]!.author, bot: comments[0]!.bot, body: comments[0]!.body }, comments, ...over,
-  });
-  const blocking: PrReview = {
-    id: "PRR_1", author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "Verdict: not safe to merge\n\n1. The retry never stops.",
-    commit: HEAD, submittedAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#pullrequestreview-1",
+const SOON = "2026-09-23T12:09:30Z";
+const said = (over: Partial<PrComment> = {}): PrComment => ({
+  id: "RC_1", author: "owner", association: "OWNER", bot: false, body: "Rename this to `retryLimit`.",
+  createdAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#discussion_r1", hidden: false, ...over,
+});
+const thread = (over: Partial<PrThread> = {}, comments = [said()]): PrThread => ({
+  id: "PRRT_1", resolved: false, outdated: false, path: "src/retry.ts", line: 40,
+  starter: { author: comments[0]!.author, bot: comments[0]!.bot, body: comments[0]!.body }, comments, ...over,
+});
+const blocking: PrReview = {
+  id: "PRR_1", author: "owner", association: "OWNER", bot: false, state: "COMMENTED", body: "Verdict: not safe to merge\n\n1. The retry never stops.",
+  commit: HEAD, submittedAt: SOON, editedAt: null, url: "https://github.com/o/r/pull/7#pullrequestreview-1",
+};
+
+function reviewTask() {
+  const { dir, file, adapters } = capture();
+  const task = doneTask({ harness: "capture" });
+  setTaskFields(task.id, { worktree_path: dir, turn_count: 1 });
+  return { task, file, adapters };
+}
+const evidenceOf = (file: string) => readFileSync(readFileSync(file, "utf8").match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
+
+const summaryBody = "## Summary\n\n| Severity | Count |\n|---|---|\n| 🟡 Medium | 1 |\n\nGuard the empty list in `pick()`.";
+const summary = (over: Partial<PrComment> = {}): PrComment => said({ id: "IC_5", author: "pr-reviewer", association: "NONE", bot: true, body: summaryBody, createdAt: "2026-09-23T11:00:00Z", ...over });
+const reviewer = { name: "pr-reviewer", status: "COMPLETED", conclusion: "SUCCESS", required: false, url: "https://ci/pr-reviewer", app: "pr-reviewer" };
+function judge(kind: "needs_changes" | "all_clear" | "error" = "needs_changes") {
+  const asked: string[] = [];
+  const client = async (request: { text: string }) => {
+    asked.push(request.text);
+    if (kind === "error") throw new Error("Jev answered HTTP 529");
+    return { kind, confidence: 0.96, probabilities: { [kind]: 0.96 }, model: "jev-1.13.0", inputTokens: 700 };
   };
+  return { asked, client };
+}
 
-  function reviewTask() {
-    const { dir, file, adapters } = capture();
-    const task = doneTask({ harness: "capture" });
-    setTaskFields(task.id, { worktree_path: dir, turn_count: 1 });
-    return { task, file, adapters };
-  }
-  const evidenceOf = (file: string) => readFileSync(readFileSync(file, "utf8").match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
-
+describe("auto-fix for review feedback", () => {
   test("a bot's blocking comment is never merged past, relayed from a stranger or posted on its own", async () => {
     const task = doneTask();
     const clock = { now: START + 10 * 60_000 };
@@ -126,19 +139,6 @@ describe("auto-fix for review feedback", () => {
   });
 
   describe("with the review judge", () => {
-    const summaryBody = "## Summary\n\n| Severity | Count |\n|---|---|\n| 🟡 Medium | 1 |\n\nGuard the empty list in `pick()`.";
-    const summary = (over: Partial<PrComment> = {}): PrComment => said({ id: "IC_5", author: "pr-reviewer", association: "NONE", bot: true, body: summaryBody, createdAt: "2026-09-23T11:00:00Z", ...over });
-    const reviewer = { name: "pr-reviewer", status: "COMPLETED", conclusion: "SUCCESS", required: false, url: "https://ci/pr-reviewer", app: "pr-reviewer" };
-    function judge(kind: "needs_changes" | "all_clear" | "error" = "needs_changes") {
-      const asked: string[] = [];
-      const client = async (request: { text: string }) => {
-        asked.push(request.text);
-        if (kind === "error") throw new Error("Jev answered HTTP 529");
-        return { kind, confidence: 0.96, probabilities: { [kind]: 0.96 }, model: "jev-1.13.0", inputTokens: 700 };
-      };
-      return { asked, client };
-    }
-
     test("a bot's summary it reads as needing changes is a round before any merge, logged, and asked about once", async () => {
       const { task, file, adapters } = reviewTask();
       const clock = { now: START + 10 * 60_000 };
@@ -163,55 +163,6 @@ describe("auto-fix for review feedback", () => {
       // the same version is never asked about again
       await pass(rt, task.id, clock);
       expect(asked).toHaveLength(1);
-    });
-
-    test("a summary marked in progress while the bot's check runs is not sent; the rewrite after its pass is", async () => {
-      const { task, file, adapters } = reviewTask();
-      const clock = { now: START + 10 * 60_000 };
-      const at = (minutes: number) => new Date(START + minutes * 60_000).toISOString();
-      // the bot's pass on this head has begun: its summary still lists the last head's findings under a banner
-      const stale = summary({ editedAt: at(9), body: `_A new review is in progress._\n\n${summaryBody}` });
-      const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
-      const { state, github } = fakeGitHub({ pr: snapshot({ comments: [stale], checks: [...snapshot().checks, running] }) });
-      const { asked, client } = judge();
-      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: client });
-      setAutopilot(task.id, { autoFix: true });
-      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-      await pass(rt, task.id, clock);
-      expect(asked).toHaveLength(1);
-      expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: `Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}`, pendingFix: null });
-      // its check ends a moment before it rewrites the summary: the round waits two minutes after the check too
-      clock.now = START + 12 * 60_000;
-      state.pr = { ...state.pr, checks: [...snapshot().checks, { ...reviewer, completedAt: at(12) }] };
-      await pass(rt, task.id, clock);
-      expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 comment");
-      const fresh = "## Summary\n\n| Severity | Count |\n|---|---|\n| 🟡 Medium | 1 |\n\nThe cache key ignores the locale.";
-      state.pr = { ...state.pr, comments: [summary({ editedAt: at(12.5), body: fresh })] };
-      clock.now = START + 15 * 60_000;
-      await pass(rt, task.id, clock);
-      await until(() => existsSync(file), "the round");
-      const evidence = evidenceOf(file);
-      expect(evidence).toContain("The cache key ignores the locale.");
-      expect(evidence).not.toContain("A new review is in progress");
-      expect(autopilotStatus(task.id).fixRounds).toBe(1);
-      await until(() => getTask(task.id)?.state === "done", "the round to settle");
-    });
-
-    test("a bot's check that never ends holds its comment twenty minutes from the head, then it is sent", async () => {
-      const { task, file, adapters } = reviewTask();
-      const clock = { now: START + 19 * 60_000 };
-      const running = { ...reviewer, status: "QUEUED", conclusion: null };
-      const { github } = fakeGitHub({ pr: snapshot({ comments: [summary({ editedAt: "2026-09-23T12:01:00Z" })], checks: [...snapshot().checks, running] }) });
-      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
-      setAutopilot(task.id, { autoFix: true });
-      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
-      await pass(rt, task.id, clock);
-      expect(autopilotStatus(task.id).reason).toBe(`Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}`);
-      clock.now = START + 20 * 60_000;
-      await pass(rt, task.id, clock);
-      await until(() => existsSync(file), "the round");
-      expect(evidenceOf(file)).toContain("Guard the empty list in `pick()`.");
-      await until(() => getTask(task.id)?.state === "done", "the round to settle");
     });
 
     test("auto-merge alone: a problem about this head needs you; one about an earlier head waits for the bot's next pass", async () => {
@@ -511,5 +462,89 @@ describe("auto-fix for review feedback", () => {
     state.pr = { ...state.pr, threads: [thread({}, [said(), said({ id: "RC_2", body: "And the zero case.", createdAt: new Date(clock.now - 30_000).toISOString() })])] };
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 review thread");
+  });
+});
+
+describe("auto-fix and a reviewer bot at work", () => {
+  test("a summary marked in progress while the bot's check runs is not sent; the rewrite after its pass is", async () => {
+    const { task, file, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const at = (minutes: number) => new Date(START + minutes * 60_000).toISOString();
+    // the bot's pass on this head has begun: its summary still lists the last head's findings under a banner
+    const stale = summary({ editedAt: at(9), body: `_A new review is in progress._\n\n${summaryBody}` });
+    const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
+    const { state, github } = fakeGitHub({ pr: snapshot({ comments: [stale], checks: [...snapshot().checks, running] }) });
+    const { asked, client } = judge();
+    const rt = runtime(github, clock, adapters, undefined, undefined, { judge: client });
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(asked).toHaveLength(1);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: `Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}`, pendingFix: null });
+    // its check ends a moment before it rewrites the summary: the round waits two minutes after the check too
+    clock.now = START + 12 * 60_000;
+    state.pr = { ...state.pr, checks: [...snapshot().checks, { ...reviewer, completedAt: at(12) }] };
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: 1 comment");
+    const fresh = "## Summary\n\n| Severity | Count |\n|---|---|\n| 🟡 Medium | 1 |\n\nThe cache key ignores the locale.";
+    state.pr = { ...state.pr, comments: [summary({ editedAt: at(12.5), body: fresh })] };
+    clock.now = START + 15 * 60_000;
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the round");
+    const evidence = evidenceOf(file);
+    expect(evidence).toContain("The cache key ignores the locale.");
+    expect(evidence).not.toContain("A new review is in progress");
+    expect(autopilotStatus(task.id).fixRounds).toBe(1);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("a bot's check that never ends holds its comment twenty minutes from the head, then it is sent", async () => {
+    const { task, file, adapters } = reviewTask();
+    const clock = { now: START + 19 * 60_000 };
+    const running = { ...reviewer, status: "QUEUED", conclusion: null };
+    const { github } = fakeGitHub({ pr: snapshot({ comments: [summary({ editedAt: "2026-09-23T12:01:00Z" })], checks: [...snapshot().checks, running] }) });
+    const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe(`Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}`);
+    clock.now = START + 20 * 60_000;
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the round");
+    expect(evidenceOf(file)).toContain("Guard the empty list in `pick()`.");
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("a red check waits with the bot's comment, and both go out as one round after its pass", async () => {
+    const { task, file, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const red = { name: "test", status: "COMPLETED", conclusion: "FAILURE", required: true, url: "https://ci/test", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false };
+    const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
+    const { state, github } = fakeGitHub({ pr: snapshot({ comments: [summary({ editedAt: "2026-09-23T12:01:00Z" })], checks: [red, running] }) });
+    const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe(`Waiting for @pr-reviewer to finish reviewing ${HEAD.slice(0, 7)}`);
+    expect(existsSync(file)).toBe(false);
+    state.pr = { ...state.pr, checks: [red, { ...reviewer, completedAt: "2026-09-23T12:10:00Z" }] };
+    clock.now = START + 13 * 60_000;
+    await pass(rt, task.id, clock);
+    await until(() => existsSync(file), "the round");
+    expect(readFileSync(file, "utf8")).toContain("CI failed on this PR: test failing. New review feedback on this PR: 1 comment.");
+    expect(autopilotStatus(task.id).fixRounds).toBe(1);
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+  });
+
+  test("with the rounds spent, auto-fix pauses at once rather than waiting on a bot's pass", async () => {
+    const { task, adapters } = reviewTask();
+    const clock = { now: START + 10 * 60_000 };
+    const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
+    const { github } = fakeGitHub({ pr: snapshot({ comments: [summary({ editedAt: "2026-09-23T12:01:00Z" })], checks: [...snapshot().checks, running] }) });
+    const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+    setAutopilot(task.id, { autoFix: true });
+    seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, rounds: 5 });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-fix gave up after 5 rounds — resume to try again" });
   });
 });
