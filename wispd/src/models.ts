@@ -1,8 +1,9 @@
 /**
  * `wisp models` (P5c) — per configured adapter: the effective model for a new
- * task (explicit --model > config.json harnessDefaults > the harness's own
- * default), the harness's own default when the CLI reveals one, and the model
- * list the installed CLI exposes.
+ * task (explicit --model > config.json harnessDefaults > Wisp's adapter
+ * default where the CLI offers it > the harness's own default), the harness's
+ * own default when the CLI reveals one, and the model list the installed CLI
+ * exposes.
  *
  * Harness wire knowledge (HOW to ask each CLI) lives in adapters.ts's
  * MODEL_DISCOVERY named strategies; this module only composes their results
@@ -10,7 +11,7 @@
  * Where a harness exposes nothing (or can't be probed), the report says so
  * out loud; nothing here invents or hardcodes a model id.
  */
-import { discoverModels, offeredModels, type AdapterDef, type ModelDiscovery } from "./adapters";
+import { discoverModels, offeredModels, wispDefaultModel, type AdapterDef, type ModelDiscovery } from "./adapters";
 import type { HarnessDefaults } from "./config";
 import type { SpawnFn } from "./doctor";
 
@@ -63,19 +64,20 @@ function effectiveLine(info: HarnessModelInfo): string {
   // call it "<harness default>" and send the reader to config.json.
   const harnessDefault =
     offeredModels(def, discovery?.models ?? null, discovery?.defaultModel ?? null)?.defaultModel ?? null;
+  const label = wispDefaultModel(def, discovery?.models ?? null) ? "Wisp default" : "harness default";
   // detailLines prints the full probe error; the verdict line stays terse
   const whyNoDefault = probeError ? "unknown (probe failed)" : `not exposed by ${def.bin}`;
   if (configModel && harnessDefault && configModel !== harnessDefault) {
-    return `${name}: effective ${configModel} (from config; harness default ${harnessDefault})`;
+    return `${name}: effective ${configModel} (from config; ${label} ${harnessDefault})`;
   }
   if (configModel && harnessDefault) {
-    return `${name}: effective ${configModel} (from config; same as the harness default)`;
+    return `${name}: effective ${configModel} (from config; same as the ${label})`;
   }
   if (configModel) {
     return `${name}: effective ${configModel} (from config; harness default ${whyNoDefault})`;
   }
   if (harnessDefault) {
-    return `${name}: effective ${harnessDefault} (harness default; no config override)`;
+    return `${name}: effective ${harnessDefault} (${label}; no config override)`;
   }
   const reason = probeError ? `could not probe ${def.bin}` : `${def.bin} exposes no default`;
   return `${name}: effective <harness default> — ${reason}; no config override (pin one via config.json harnessDefaults or pass --model)`;
@@ -84,13 +86,22 @@ function effectiveLine(info: HarnessModelInfo): string {
 function detailLines(info: HarnessModelInfo): string[] {
   const { name, def, configModel, discovery, probeError } = info;
   const offered = offeredModels(def, discovery?.models ?? null, discovery?.defaultModel ?? null);
+  const wispDefault = wispDefaultModel(def, discovery?.models ?? null);
   const out: string[] = [];
-  if (offered?.defaultModel) {
-    out.push(
-      offered.curated
-        ? `  harness default: ${offered.defaultModel} (pinned by the adapter; ${def.bin} names none)`
-        : `  harness default: ${offered.defaultModel}`,
-    );
+  if (wispDefault) {
+    const own = discovery?.defaultModel && discovery.defaultModel !== wispDefault ? `; ${def.bin}'s own: ${discovery.defaultModel}` : "";
+    out.push(`  wisp default: ${wispDefault} (pinned by the adapter${own})`);
+  } else {
+    if (def.defaultModel && discovery?.models?.length) {
+      out.push(`  wisp default ${def.defaultModel} is not offered by this ${def.bin} — its own default applies`);
+    }
+    if (offered?.defaultModel) {
+      out.push(
+        offered.curated
+          ? `  harness default: ${offered.defaultModel} (pinned by the adapter; ${def.bin} names none)`
+          : `  harness default: ${offered.defaultModel}`,
+      );
+    }
   }
   if (configModel) {
     let line = `  config default: ${configModel} — new tasks get this unless --model is passed (config.json harnessDefaults)`;
@@ -121,7 +132,9 @@ function detailLines(info: HarnessModelInfo): string[] {
 }
 
 export function formatModelsReport(infos: HarnessModelInfo[]): string[] {
-  const lines = ["precedence for new tasks: explicit --model > config.json harnessDefaults > the harness's own default"];
+  const lines = [
+    "precedence for new tasks: explicit --model > config.json harnessDefaults > Wisp default (where the CLI offers it) > the harness's own default",
+  ];
   for (const info of infos) {
     lines.push("", effectiveLine(info), ...detailLines(info));
   }

@@ -172,10 +172,12 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    metadata and must still be offered. Never narrow by reachability: a local
    server that is switched off right now is still a configured model, and the
    picker would flicker with the network.
-   `staticModels` is the documented exception for CLIs that enumerate none;
-   `defaultModel` must be *in* the static list (validate enforces it) and
-   loses to both a probed default and the user's `harnessDefaults` config.
-   Cursor is static *by owner decision*: the pinned list is the product.
+   `staticModels` is the documented exception for CLIs that enumerate none.
+   `defaultModel` is Wisp's own default for new tasks. It loses to the user's
+   `harnessDefaults` config and beats the CLI's own default, but only where
+   the installed CLI offers the id (a probed catalog that lacks it falls back
+   to the CLI's default). With `staticModels` it must be *in* that list
+   (validate enforces it). Set one only where the owner named it.
 7. **`probe`** — out-of-turn reads (`context`, the harness's own `usage`).
    The strategy declares which commands it can answer; a surface never fakes
    the other one. The two JSON-RPC envelopes (`factory` adds droid's

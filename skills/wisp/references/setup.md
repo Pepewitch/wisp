@@ -206,7 +206,11 @@ with no task id, e.g. from inside a running turn) falls back to
 ## Models and effort
 
 `wisp models` prints, per harness, the effective model for new tasks
-(`--model` > `harnessDefaults` > harness default) and the models on offer.
+(`--model` > `harnessDefaults` > Wisp default > harness default) and the
+models on offer. The Wisp default is the builtin adapter's pick (claude and
+droid: `claude-opus-5-5`, codex: `gpt-6.1-sol`, cursor: `grok-4.7-high`); it
+applies only when the installed CLI offers that id, so an older CLI keeps its
+own default.
 That list is the installed CLI's own enumeration where it has one, and the
 adapter's pinned selection where it does not — the latter is labelled
 `pinned by the adapter`, because it is a subset and other ids the CLI accepts

@@ -81,6 +81,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // task env reaches the agent's tool shell: tests/harness-facts/droid.json taskEnv
     briefs: true,
     modelDiscovery: "droid-models",
+    // Wisp's default for new droid tasks (owner decision, 2026-09-30).
+    defaultModel: "claude-opus-5-5",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
     // context out of band. Droid still has NO usage/limits RPC in 0.217.0.
     // Sending `/limits` through exec is not a local command: it runs a model
@@ -134,6 +136,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // read accepted Opus 5.5 on that version. Fable 5.1 replaced legacy Fable
     // 5, and Opus 5.5 replaced Opus 5 in the curated current lineup.
     staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    // Wisp's default for new claude tasks (owner decision, 2026-09-30).
+    defaultModel: "claude-opus-5-5",
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
     // attaching turn the prompt positional is omitted and prompt + base64
     // blocks ride one NDJSON stdin line
@@ -270,6 +274,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // task env reaches the agent's tool shell: tests/harness-facts/codex.json taskEnv
     briefs: true,
     modelDiscovery: "codex-models",
+    // Wisp's default for new codex tasks (owner decision, 2026-09-30).
+    defaultModel: "gpt-6.1-sol",
     // A3 (SP1, live-verified 0.149.0): the app-server reads account usage out
     // of band. There is NO per-thread context read (token usage is a
     // notification, never an answer), so /context is honestly absent here.
@@ -321,6 +327,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // hiddenModels), so a filter here only made models cursor accepts
     // unreachable from the UI.
     modelDiscovery: "cursor-models",
+    // Wisp's default for new cursor tasks (owner decision, 2026-09-30).
+    defaultModel: "grok-4.7-high",
     // A strategy, not a field mapping: cursor's result event carries the
     // WHOLE turn's assistant texts concatenated, not the final message
     // (byte-verified on 2026.08.31 against 2026.08.31-4057e58; fixture

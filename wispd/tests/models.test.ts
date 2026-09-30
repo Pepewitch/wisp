@@ -3,7 +3,9 @@ import {
   BUILTIN_ADAPTERS,
   DROID_MODEL_PROBE_SENTINEL,
   discoverModels,
+  offeredModels,
   validateAdapters,
+  wispDefaultModel,
   type AdapterDef,
 } from "../src/adapters";
 import type { SpawnFn } from "../src/doctor";
@@ -270,15 +272,37 @@ describe("probeModels", () => {
   });
 });
 
+describe("wispDefaultModel", () => {
+  test("Wisp's default applies only where the offered list contains it", () => {
+    const probed = { defaultModel: "wanted" };
+    expect(wispDefaultModel(probed, ["cli-default", "wanted"])).toBe("wanted");
+    expect(wispDefaultModel(probed, ["cli-default"])).toBeNull();
+    // no probe yet proves nothing about a probed harness
+    expect(wispDefaultModel(probed, null)).toBeNull();
+    expect(wispDefaultModel({ staticModels: ["a", "wanted"], defaultModel: "wanted" }, null)).toBe("wanted");
+    expect(wispDefaultModel({}, ["a"])).toBeNull();
+
+    expect(offeredModels(probed, ["cli-default", "wanted"], "cli-default")?.defaultModel).toBe("wanted");
+    expect(offeredModels(probed, ["cli-default"], "cli-default")?.defaultModel).toBe("cli-default");
+    expect(offeredModels({ staticModels: ["a", "wanted"], defaultModel: "wanted" }, null, null)).toEqual({
+      list: ["a", "wanted"],
+      defaultModel: "wanted",
+      curated: true,
+    });
+  });
+});
+
 describe("formatModelsReport — the effective-choice line", () => {
   const render = (
     adapters: Record<string, AdapterDef>,
     harnessDefaults: Parameters<typeof probeModels>[1],
     spawn: SpawnFn,
   ) => probeModels(adapters, harnessDefaults, spawn).then(formatModelsReport);
+  // The CLI's-own-default paths, with Wisp's adapter default taken out of the way.
+  const cliDefaultOnly = (name: string): AdapterDef => ({ ...BUILTIN_ADAPTERS[name]!, defaultModel: undefined });
 
   test("config override beats a known harness default (the P5c example line)", async () => {
-    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "kimi-k3" } }, droidSpawn({}));
+    const lines = await render({ droid: cliDefaultOnly("droid") }, { droid: { model: "kimi-k3" } }, droidSpawn({}));
     expect(lines).toContain("droid: effective kimi-k3 (from config; harness default gpt-5.6-sol)");
     expect(lines).toContain("  harness default: gpt-5.6-sol");
     expect(lines).toContain(
@@ -287,22 +311,46 @@ describe("formatModelsReport — the effective-choice line", () => {
   });
 
   test("config override equal to the harness default says so", async () => {
-    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "gpt-5.6-sol" } }, droidSpawn({}));
+    const lines = await render({ droid: cliDefaultOnly("droid") }, { droid: { model: "gpt-5.6-sol" } }, droidSpawn({}));
     expect(lines).toContain("droid: effective gpt-5.6-sol (from config; same as the harness default)");
   });
 
   test("config override with no discoverable harness default names that gap", async () => {
-    const lines = await render({ claude: BUILTIN_ADAPTERS.claude }, { claude: { model: "opus-5" } }, failIfSpawned);
+    const lines = await render({ claude: cliDefaultOnly("claude") }, { claude: { model: "opus-5" } }, failIfSpawned);
     expect(lines).toContain("claude: effective opus-5 (from config; harness default not exposed by claude)");
   });
 
   test("no config override: the harness default wins and says no override exists", async () => {
-    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, {}, droidSpawn({}));
+    const lines = await render({ droid: cliDefaultOnly("droid") }, {}, droidSpawn({}));
     expect(lines).toContain("droid: effective gpt-5.6-sol (harness default; no config override)");
   });
 
-  test("neither config nor a discoverable default: the report is honest and points at the fix", async () => {
+  test("no config override: Wisp's adapter default beats the CLI's own and names it", async () => {
+    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, {}, droidSpawn({}));
+    expect(lines).toContain("droid: effective claude-opus-5-5 (Wisp default; no config override)");
+    expect(lines).toContain("  wisp default: claude-opus-5-5 (pinned by the adapter; droid's own: gpt-5.6-sol)");
+  });
+
+  test("config still beats Wisp's adapter default", async () => {
+    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, { droid: { model: "kimi-k3" } }, droidSpawn({}));
+    expect(lines).toContain("droid: effective kimi-k3 (from config; Wisp default claude-opus-5-5)");
+  });
+
+  test("a Wisp default the installed CLI does not offer falls back to the CLI's own", async () => {
+    const errorText = "Invalid model\nAvailable built-in models:\n  auto, gpt-5.6-sol, kimi-k3\n";
+    const lines = await render({ droid: BUILTIN_ADAPTERS.droid }, {}, droidSpawn({ errorText }));
+    expect(lines).toContain("droid: effective gpt-5.6-sol (harness default; no config override)");
+    expect(lines).toContain("  wisp default claude-opus-5-5 is not offered by this droid — its own default applies");
+  });
+
+  test("claude's curated list carries Wisp's default", async () => {
     const lines = await render({ claude: BUILTIN_ADAPTERS.claude }, {}, failIfSpawned);
+    expect(lines).toContain("claude: effective claude-opus-5-5 (Wisp default; no config override)");
+    expect(lines).toContain("  wisp default: claude-opus-5-5 (pinned by the adapter)");
+  });
+
+  test("neither config nor a discoverable default: the report is honest and points at the fix", async () => {
+    const lines = await render({ claude: cliDefaultOnly("claude") }, {}, failIfSpawned);
     expect(lines).toContain(
       "claude: effective <harness default> — claude exposes no default; no config override (pin one via config.json harnessDefaults or pass --model)",
     );
@@ -353,7 +401,7 @@ describe("formatModelsReport — the effective-choice line", () => {
   test("header states the precedence; blocks are separated by blank lines", async () => {
     const lines = await render({ claude: BUILTIN_ADAPTERS.claude }, {}, failIfSpawned);
     expect(lines[0]).toBe(
-      "precedence for new tasks: explicit --model > config.json harnessDefaults > the harness's own default",
+      "precedence for new tasks: explicit --model > config.json harnessDefaults > Wisp default (where the CLI offers it) > the harness's own default",
     );
     expect(lines[1]).toBe("");
   });

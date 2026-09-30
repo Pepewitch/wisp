@@ -6,7 +6,7 @@
  */
 import { resolve } from "node:path";
 import type { AutopilotStatus } from "../../../shared/autopilot";
-import type { AdapterDef } from "../adapters";
+import { wispDefaultModel, type AdapterDef } from "../adapters";
 import {
   AttachError,
   decodeAttachments,
@@ -23,6 +23,7 @@ import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../t
 import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task-audit";
 import { TASK_TITLE_MAX } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
+import type { ModelProbeCache } from "../model-probes";
 import { launchTask } from "./task-launch";
 
 export interface NewTaskInput {
@@ -152,13 +153,18 @@ export async function createAndLaunchTask(
   input: NewTaskInput,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
+  models?: ModelProbeCache,
 ): Promise<NewTask | NewTaskRefusal> {
   const { repoPath, harness } = input;
   const def = adapters[harness];
   if (!def) return refuse("invalid", `unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`);
   if (!(await pathExists(repoPath))) return refuse("invalid", `repoPath does not exist: ${repoPath}`);
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
-  const { model, effort } = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
+  // Explicit values win; then config harnessDefaults; then Wisp's default
+  // where this install offers it; then the harness's own defaults (null).
+  const resolved = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
+  const model = resolved.model ?? wispDefaultModel(def, models?.snapshot(harness).models?.list ?? null);
+  const effort = resolved.effort;
   const unsupported = unsupportedRequest(def, harness, { effort, fast: input.fast, brief: input.brief });
   if (unsupported) return refuse("invalid", unsupported);
   const local = localTaskRefusal(input);

@@ -209,7 +209,7 @@ function applyCoreFields(
     }
     merged.defaultModel = raw.defaultModel;
   }
-  if (merged.defaultModel !== undefined && !(merged.staticModels ?? []).includes(merged.defaultModel)) {
+  if (merged.defaultModel !== undefined && merged.staticModels && !merged.staticModels.includes(merged.defaultModel)) {
     throw new Error(
       `${label}.defaultModel '${merged.defaultModel}' is not in staticModels — the default must be one of the offered models`,
     );

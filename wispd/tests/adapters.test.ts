@@ -1007,6 +1007,9 @@ describe("validateAdapters (a prior audit)", () => {
     expect(
       validateAdapters({ foo: { ...base, staticModels: ["a", "b"], defaultModel: "b" } }).foo!.defaultModel,
     ).toBe("b");
+    // a probed harness has no list to check against at load; wispDefaultModel
+    // gates it on the installed CLI's catalog instead
+    expect(validateAdapters({ foo: { ...base, defaultModel: "b" } }).foo!.defaultModel).toBe("b");
   });
 
   test("parse.strategy must name a builtin strategy", () => {

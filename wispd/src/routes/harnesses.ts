@@ -17,7 +17,7 @@ export function offeredCachedModels(def: AdapterDef, cached: ModelCacheEntry): C
   const probed = cached.models;
   const offered = offeredModels(def, probed?.list ?? null, probed?.defaultModel ?? null);
   if (!offered) return probed;
-  if (!offered.curated) return probed;
+  if (!offered.curated) return probed && { ...probed, defaultModel: offered.defaultModel };
   return {
     list: offered.list,
     defaultModel: offered.defaultModel,

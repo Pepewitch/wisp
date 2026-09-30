@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { taskMessageAttachmentsFingerprint } from "../src/attachments";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { ModelProbeCache } from "../src/model-probes";
+import { offeredCachedModels } from "../src/routes/harnesses";
 import { createTurnDiagnosticWriter } from "../src/recording/diagnostic";
 import { route, serve } from "../src/daemon";
 import { testRouteContext } from "./helpers/daemon-context";
@@ -1098,6 +1099,14 @@ describe("daemon API contracts", () => {
       models: null,
       modelsError: "probe failed",
     });
+  });
+
+  test("the picker's default is Wisp's where the probed catalog offers it, else the CLI's", () => {
+    const codex = BUILTIN_ADAPTERS.codex!;
+    const probed = (list: string[]) => ({ models: { list, defaultModel: "gpt-6-sol", probedAt: "2026-09-30T00:00:00.000Z" } });
+    expect(offeredCachedModels(codex, probed(["gpt-6-sol", "gpt-6.1-sol"]))?.defaultModel).toBe("gpt-6.1-sol");
+    expect(offeredCachedModels(codex, probed(["gpt-6-sol"]))?.defaultModel).toBe("gpt-6-sol");
+    expect(offeredCachedModels(codex, { models: null })).toBeNull();
   });
 
   test("task creation rejects missing fields, unknown harnesses, and unknown repositories verbatim", async () => {

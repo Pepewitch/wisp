@@ -22,7 +22,8 @@ const COMMAND_USAGE = {
   serve: `  ${COMMAND} serve                                   run the daemon`,
   new: `  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…
                                                        create a task (repo defaults to cwd;
-                                                       model/effort fall back to config.json harnessDefaults;
+                                                       model/effort fall back to config.json harnessDefaults,
+                                                       then Wisp's default model for the harness;
                                                        --fast runs in the harness's faster lane for the same
                                                        model, and is refused by a harness without one;
                                                        --local runs in the repo itself instead of a worktree,
@@ -86,7 +87,7 @@ const COMMAND_USAGE = {
   init: `  ${COMMAND} init [--port <port>]                    create or validate ${COMMAND === "wisp-dev" ? "~/.wisp-dev" : "~/.wisp"} without starting the daemon;
                                                --port applies only when creating a new config`,
   models: `  ${COMMAND} models                                  model options per harness: the effective choice for new
-                                               tasks (--model > config default > harness default) and the
+                                               tasks (--model > config default > Wisp default > harness default) and the
                                                model list the installed CLI exposes, when it exposes one`,
   limits: `  ${COMMAND} limits [--refresh] [--json]             plan usage per harness (the top bar's usage popover);
                                                --refresh skips the daemon's five-minute cache`,

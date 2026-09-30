@@ -138,12 +138,13 @@ export interface AdapterDef {
    */
   staticModels?: string[];
   /**
-   * The default model for a STATIC list (slice 9, cursor: Grok 4.6). Only
-   * meaningful with staticModels — a probed list's own defaultModel always
-   * wins, and config harnessDefaults wins over both (defaultModelFor's
-   * order). Omit when the harness should pick: asserting a default is a
-   * product statement, and wisp only makes it where the owner named one.
-   * validateAdapter requires the value to be IN staticModels.
+   * Wisp's default model for new tasks on this harness. Config
+   * harnessDefaults wins over it; it wins over the CLI's own default, but
+   * only where the installed CLI offers the id (wispDefaultModel), so an
+   * older CLI keeps its own default instead of failing on an unknown model.
+   * Omit when the harness should pick: asserting a default is a product
+   * statement, and wisp only makes it where the owner named one. With
+   * staticModels, validateAdapter requires the value to be IN that list.
    */
   defaultModel?: string;
   /**
