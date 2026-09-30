@@ -120,8 +120,8 @@ export interface OpenPullRequest {
 
 export interface AutopilotGitHub {
   snapshot(repository: string, number: number, cwd: string, signal: AbortSignal): Promise<PrSnapshot>
-  /** Several PRs of one repository in one request (batch.ts): the ones that could be read. */
-  snapshots?(repository: string, numbers: number[], cwd: string, signal: AbortSignal): Promise<Map<number, PrSnapshot>>
+  /** Several PRs of one repository in one request (batch.ts): each one read, or GitHub's error about it. */
+  snapshots?(repository: string, numbers: number[], cwd: string, signal: AbortSignal): Promise<Map<number, PrSnapshot | Error>>
   openPullRequests(repository: string, branches: string[], cwd: string, signal: AbortSignal): Promise<{ defaultBranch: string; viewer: string; pulls: OpenPullRequest[] }>
   /** Context names the base branch requires, from classic protection and rulesets. */
   requiredChecks(repository: string, base: string, cwd: string, signal: AbortSignal): Promise<BaseRules>
@@ -360,13 +360,47 @@ export function parseSnapshot(raw: unknown): PrSnapshot {
   }
 }
 
-/** A batch's snapshots by PR number. One that cannot be read is left out, and its look reads it alone. */
-export function parseSnapshots(raw: unknown, numbers: number[]): Map<number, PrSnapshot> {
+/** GitHub's errors about one aliased PR of a batch (`path: ["repository", "p2", …]`), by alias; null if any error is about something else. */
+function aliasErrors(raw: unknown): Map<string, string> | null {
+  const errors = isRecord(raw) && Array.isArray(raw.errors) ? raw.errors : []
+  const byAlias = new Map<string, string>()
+  for (const error of errors) {
+    const path = isRecord(error) && Array.isArray(error.path) ? error.path : []
+    if (path[0] !== "repository" || typeof path[1] !== "string" || !/^p\d+$/.test(path[1])) return null
+    if (!byAlias.has(path[1])) byAlias.set(path[1], isRecord(error) ? str(error.message).slice(0, 200) : "")
+  }
+  return byAlias
+}
+
+/**
+ * Whether a failed batch still answered: gh exits 1 on any GraphQL error, and
+ * a PR that cannot be found errors on its own alias alone, with the other
+ * PRs' data beside it.
+ */
+function partialAnswer(result: RunResult, raw: unknown): boolean {
+  if (result.exitCode !== 1 || result.truncated || result.timedOut || result.cancelled || result.cleanupError) return false
+  const errors = aliasErrors(raw)
+  return errors !== null && errors.size > 0 && isRecord(raw) && isRecord(raw.data) && isRecord(raw.data.repository)
+}
+
+/**
+ * A batch's snapshots by PR number. A PR GitHub answered with an error is
+ * that error, and its look fails with it as a read of its own would; one that
+ * could not be parsed (inconsistent, too many checks) is left out, and its
+ * look reads it alone.
+ */
+export function parseSnapshots(raw: unknown, numbers: number[]): Map<number, PrSnapshot | Error> {
   const data = isRecord(raw) && isRecord(raw.data) ? raw.data : null
   const repo = data && isRecord(data.repository) ? data.repository : null
-  const found = new Map<number, PrSnapshot>()
+  const found = new Map<number, PrSnapshot | Error>()
   if (!data || !repo) return found
+  const errors = aliasErrors(raw) ?? new Map<string, string>()
   numbers.forEach((number, index) => {
+    const error = errors.get(`p${index}`)
+    if (error !== undefined) {
+      found.set(number, new Error(`GitHub unavailable${error ? `: ${error}` : ""}`))
+      return
+    }
     try {
       const snapshot = parseSnapshot({ data: { ...data, repository: { ...repo, pullRequest: repo[`p${index}`] } } })
       if (snapshot.number === number) found.set(number, snapshot)
@@ -537,29 +571,36 @@ export function createGhAutopilot(options: { run?: GhRun; budget?: GitHubBudget 
   const api = (resource: GitHubResource, args: string[], cwd: string, signal: AbortSignal, estimate = 1, maxBytes?: number) =>
     accounted(resource, estimate, () => gh(["api", "--include", ...args], cwd, signal, 20_000, maxBytes), true)
 
-  async function json(resource: GitHubResource, args: string[], cwd: string, signal: AbortSignal, estimate?: number, maxBytes?: number): Promise<unknown> {
-    const { result, reply } = await api(resource, args, cwd, signal, estimate, maxBytes)
+  /** `partial`: a batch whose failure is errors about some of its aliases alone still answers for the rest. */
+  interface JsonOptions { estimate?: number; maxBytes?: number; partial?: boolean }
+
+  async function json(resource: GitHubResource, args: string[], cwd: string, signal: AbortSignal, options: JsonOptions = {}): Promise<unknown> {
+    const { result, reply } = await api(resource, args, cwd, signal, options.estimate, options.maxBytes)
     const detail = failure(result)
-    if (detail !== null) throw new Error(`GitHub unavailable${detail ? `: ${detail.slice(0, 200)}` : ""}`)
+    if (detail !== null && !(options.partial && partialAnswer(result, reply.json))) {
+      throw new Error(`GitHub unavailable${detail ? `: ${detail.slice(0, 200)}` : ""}`)
+    }
     if (reply.json === undefined) throw new Error("GitHub unavailable: its answer was not JSON")
     return reply.json
   }
 
-  const graphql = (repository: string, query: string, cwd: string, signal: AbortSignal, estimate: number, extra: string[] = [], maxBytes?: number) => {
+  const graphql = (repository: string, query: string, cwd: string, signal: AbortSignal, options: JsonOptions & { extra?: string[] }) => {
     const [owner, name] = split(repository)
-    return json("graphql", ["graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, ...extra, "-f", `query=${query}`], cwd, signal, estimate, maxBytes)
+    return json("graphql", ["graphql", "-f", `owner=${owner}`, "-f", `name=${name}`, ...options.extra ?? [], "-f", `query=${query}`], cwd, signal, options)
   }
 
   return {
     async snapshot(repository, number, cwd, signal) {
-      return parseSnapshot(await graphql(repository, SNAPSHOT, cwd, signal, SNAPSHOT_POINTS, ["-F", `number=${number}`]))
+      return parseSnapshot(await graphql(repository, SNAPSHOT, cwd, signal, { estimate: SNAPSHOT_POINTS, extra: ["-F", `number=${number}`] }))
     },
     async snapshots(repository, numbers, cwd, signal) {
-      const raw = await graphql(repository, snapshotsQuery(numbers), cwd, signal, SNAPSHOT_POINTS * numbers.length, [], 4_000_000 * numbers.length)
+      const raw = await graphql(repository, snapshotsQuery(numbers), cwd, signal, {
+        estimate: SNAPSHOT_POINTS * numbers.length, maxBytes: 4_000_000 * numbers.length, partial: true,
+      })
       return parseSnapshots(raw, numbers)
     },
     async openPullRequests(repository, branches, cwd, signal) {
-      return parseOpenPulls(await graphql(repository, openPullsQuery(branches), cwd, signal, 1), branches)
+      return parseOpenPulls(await graphql(repository, openPullsQuery(branches), cwd, signal, { estimate: 1 }), branches)
     },
     async requiredChecks(repository, base, cwd, signal) {
       const path = `repos/${repository}`

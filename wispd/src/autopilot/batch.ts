@@ -2,8 +2,9 @@
  * One pass's due PRs, read a few at a time: rows of the same repository share
  * one GraphQL request (github.ts `snapshots`) instead of one each. A batch is
  * read when its first row's look starts, so its neighbours' looks, which run
- * beside it, get their PR as it is now; anything missing, failed or no longer
- * fresh, a look reads alone as before.
+ * beside it, get their PR as it is now. A PR GitHub answered with an error
+ * (not found, say) fails its own look, and the rest of the batch still
+ * counts; one missing, unparsed or no longer fresh, a look reads alone.
  */
 import { unlessPaused } from "../github-budget"
 import { getTask } from "../store"
@@ -18,7 +19,7 @@ const SHARED_TTL_MS = 20_000
 interface Batch {
   task: Task
   numbers: number[]
-  read?: Promise<{ at: number; snapshots: Map<number, PrSnapshot> }>
+  read?: Promise<{ at: number; snapshots: Map<number, PrSnapshot | Error> }>
 }
 
 export class SnapshotBatches {
@@ -34,8 +35,8 @@ export class SnapshotBatches {
     for (const row of rows) {
       const checkpoint = checkpointOf(row)
       const task = getTask(row.task_id)
-      // the rows whose look reads their bound PR first
-      if (!checkpoint.pr || checkpoint.stopHold || !task || task.archived) continue
+      // the rows whose look reads their bound PR first (a paused row only checks it is still open, on its own slow cadence)
+      if (row.state !== "active" || !checkpoint.pr || checkpoint.stopHold || !task || task.archived) continue
       const list = byRepo.get(task.repo_path) ?? []
       if (!list.some((entry) => entry.number === checkpoint.pr)) list.push({ rowId: row.id, number: checkpoint.pr, task })
       byRepo.set(task.repo_path, list)
@@ -50,22 +51,29 @@ export class SnapshotBatches {
     }
   }
 
-  /** The row's PR from its batch, or null: the look then reads it alone. A GitHub pause still stops the look. */
+  /**
+   * The row's PR from its batch, or null: the look then reads it alone. A PR
+   * GitHub answered with an error throws it, as a read of its own would. A
+   * GitHub pause still stops the look.
+   */
   async take(rowId: string, number: number, signal: AbortSignal): Promise<PrSnapshot | null> {
     const entry = this.batches.get(rowId)
     if (!entry || entry.number !== number) return null
     this.batches.delete(rowId)
     entry.batch.read ??= this.read(entry.batch, signal)
     const { at, snapshots } = await entry.batch.read
-    return this.deps.now() - at < SHARED_TTL_MS ? snapshots.get(number) ?? null : null
+    if (this.deps.now() - at >= SHARED_TTL_MS) return null
+    const snapshot = snapshots.get(number)
+    if (snapshot instanceof Error) throw snapshot
+    return snapshot ?? null
   }
 
-  private async read(batch: Batch, signal: AbortSignal): Promise<{ at: number; snapshots: Map<number, PrSnapshot> }> {
+  private async read(batch: Batch, signal: AbortSignal): Promise<{ at: number; snapshots: Map<number, PrSnapshot | Error> }> {
     const at = this.deps.now()
     const repository = await this.deps.repository(batch.task, signal)
     if (!repository) return { at, snapshots: new Map() }
     const snapshots = await this.deps.github.snapshots!(repository, batch.numbers, batch.task.repo_path, signal)
-      .catch(unlessPaused(new Map<number, PrSnapshot>()))
+      .catch(unlessPaused(new Map<number, PrSnapshot | Error>()))
     return { at, snapshots }
   }
 }

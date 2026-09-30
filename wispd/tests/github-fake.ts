@@ -133,6 +133,8 @@ export function fakeGh(options: { clock: { now: number }; pr: (number: number) =
     /** the next `gh pr merge` fails with this message */
     refuseMerge: null as string | null,
     merged: new Set<number>(),
+    /** PRs GitHub cannot find (deleted, or a number that never existed) */
+    missing: new Set<number>(),
   };
   const resetAt = () => state.windowStart + HOUR_MS;
   const roll = () => {
@@ -167,11 +169,20 @@ export function fakeGh(options: { clock: { now: number }; pr: (number: number) =
     state.used.graphql += cost;
     state.calls.push({ at: options.clock.now, kind: "graphql", cost, prs, refused: false });
     const repository: Record<string, unknown> = { defaultBranchRef: { name: "main" }, squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: true, viewerDefaultMergeMethod: "SQUASH" };
-    if (single) repository.pullRequest = rawPull(options.pr(Number(single.slice("number=".length))));
-    for (const [, alias, number] of aliased) repository[`p${alias}`] = rawPull(options.pr(Number(number)));
+    // A PR GitHub cannot find is null in the data, with an error on its own
+    // path, and the rest of the answer beside it; gh then exits 1 and prints the message.
+    const errors: Record<string, unknown>[] = [];
+    const answer = (field: string, number: number) => {
+      if (!state.missing.has(number)) return rawPull(options.pr(number));
+      errors.push({ type: "NOT_FOUND", path: ["repository", field], message: `Could not resolve to a PullRequest with the number of ${number}.` });
+      return null;
+    };
+    if (single) repository.pullRequest = answer("pullRequest", Number(single.slice("number=".length)));
+    for (const [, alias, number] of aliased) repository[`p${alias}`] = answer(`p${alias}`, Number(number));
     for (const [, alias] of query.matchAll(/\b([bt]\d+): pullRequests\(/g)) repository[alias!] = { nodes: [] };
     const rateLimit = { cost, remaining: state.limit - state.used.graphql, limit: state.limit, resetAt: new Date(resetAt()).toISOString() };
-    return reply(200, rateHeaders("graphql"), { data: { rateLimit, viewer: { login: "owner" }, repository } });
+    const body = { data: { rateLimit, viewer: { login: "owner" }, repository }, ...(errors.length > 0 ? { errors } : {}) };
+    return reply(200, rateHeaders("graphql"), body, errors.map((error) => `gh: ${String(error.message)}`).join("\n"));
   }
 
   function rest(path: string): RunResult {

@@ -446,12 +446,15 @@ spends from the same one. Wisp keeps to a share of it:
 - **Everyone's use.** When GitHub reports less than a fifth of a limit left,
   whoever spent it, Wisp stretches its waits in proportion: twice as long at
   a tenth left.
-- **GitHub's word.** A primary limit (the hour is spent) or a secondary one (a
-  403 or 429 for too many requests too fast) pauses every read Wisp makes
-  until GitHub's reset or `retry-after`, or for a minute, doubling on
-  repeats, when it gives neither. A pause is not a failure: a merge GitHub
-  refused for the rate does not count toward the three that pause
-  auto-merge, and is tried again after it.
+- **GitHub's word.** A primary limit (the hour is spent) pauses Wisp's calls
+  on that limit alone until GitHub's reset, at most an hour, after which the
+  next answer says again what is left: REST used up by other tools leaves
+  GraphQL reads and merges going. A secondary limit (a 403 or 429 for too
+  many requests too fast) pauses every call for its `retry-after`, kept
+  between one and fifteen minutes; without one, a minute, doubling on
+  repeats. A pause is not a failure: a merge GitHub refused for the rate
+  does not count toward the three that pause auto-merge, and is tried again
+  after it.
 - **Where it shows.** The PR's status says `Paused: GitHub rate limit, resumes
   14:05`, or `Paused: Wisp's share of the GitHub rate limit is used up,
   resumes 14:05`, in the daemon host's time. The sidebar's PR status keeps
@@ -464,7 +467,9 @@ spends from the same one. Wisp keeps to a share of it:
   are read five to a request. GitHub prices each PR's part as it would alone
   (2 points for one, 10 for five, as `rateLimit(dryRun: true)` reports), so
   this saves requests and `gh` processes, not points: twelve armed PRs in one
-  repository take 3 requests a pass instead of 12, for the same 24 points.
+  repository take 3 requests a pass instead of 12, for the same 24 points. A
+  PR GitHub cannot find fails its own check, and the rest of its batch still
+  counts.
 
 Forty armed PRs whose checks never stop running would spend about 4,800
 points an hour at a look a minute; Wisp holds them to its 1,250.

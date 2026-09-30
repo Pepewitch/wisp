@@ -161,8 +161,14 @@ export function githubBudgetCheck(report: GitHubBudgetReport | undefined, now: D
   const summary = `Wisp spent ${spent} of its ${Math.round(report.share * 100)}% share in the last hour; ${
     left.length > 0 ? `GitHub reports ${left.join(", ")}` : "GitHub has reported no limits yet"}`;
   const slowed = report.stretch > 1 ? `; Wisp is spacing its checks ×${report.stretch.toFixed(1)}` : "";
-  if (report.paused) {
-    return warn("github budget", `paused until ${clockTime(Date.parse(report.paused.until))}: ${PAUSE_WHY[report.paused.why]} — ${summary}`);
+  const paused = report.resources.flatMap((entry) => (entry.paused ? [{ ...entry.paused, resource: entry.resource }] : []));
+  if (paused.length > 0) {
+    // a secondary limit pauses both: say it once
+    const said = paused[0]!.why === "secondary"
+      ? [{ ...paused[0]!, what: "all GitHub calls" }]
+      : paused.map((entry) => ({ ...entry, what: `${entry.resource === "graphql" ? "GraphQL" : "REST"} calls` }));
+    const parts = said.map((entry) => `${entry.what} paused until ${clockTime(Date.parse(entry.until))}: ${PAUSE_WHY[entry.why]}`);
+    return warn("github budget", `${parts.join("; ")} — ${summary}`);
   }
   const low = current.some((entry) => entry.remaining! < report.floor * entry.limit!);
   return low

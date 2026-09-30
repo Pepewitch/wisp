@@ -3,14 +3,14 @@ import type { ProbeSpawnFn } from "../src/adapters";
 import { nextDelay } from "../src/autopilot/cadence";
 import { createGhAutopilot, SNAPSHOT, snapshotsQuery, type AutopilotGitHub } from "../src/autopilot/github";
 import { MOVING_MS, WAITING_ON_YOU_MS } from "../src/autopilot/runtime";
-import { autopilotRow, autopilotStatus, checkpointOf, setAutopilot } from "../src/autopilot/store";
+import { autopilotRow, autopilotStatus, checkpointOf, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { loadConfig } from "../src/config";
 import { githubBudgetCheck } from "../src/doctor-background";
-import { clockTime, ghReply, GitHubBudget, limitSignal, WISP_SHARE } from "../src/github-budget";
+import { clockTime, ghReply, GitHubBudget, GitHubPausedError, limitSignal, MERGE_POINTS, WISP_SHARE } from "../src/github-budget";
 import { PullRequestCache } from "../src/pull-requests";
 import { db } from "../src/store";
 import type { Task } from "../src/types";
-import { doneTask, forgetTasks, fakeGitHub, pass, runtime, seed, snapshot, START } from "./autopilot-harness";
+import { doneTask, forgetTasks, fakeGitHub, HEAD, pass, runtime, seed, snapshot, START } from "./autopilot-harness";
 import { fakeGh, graphqlCost } from "./github-fake";
 
 afterEach(forgetTasks);
@@ -107,12 +107,43 @@ describe("the budget", () => {
     expect(budget.stretch()).toBe(1);
     budget.settle("core", ghReply(included(200, headers(500), {}), "", false), 0);
     expect(budget.stretch()).toBeCloseTo(2, 5);
-    // nothing left: nothing goes out until the reset
+    // nothing left: no REST call goes out until the reset, and GraphQL, a limit of its own, carries on
     budget.settle("core", ghReply(included(200, headers(0), {}), "", false), 0);
-    expect(() => budget.reserve("graphql", 1)).toThrow(`Paused: GitHub rate limit, resumes ${clockTime(START + HOUR)}`);
-    clock.now = START + HOUR;
+    expect(() => budget.reserve("core", 1)).toThrow(`Paused: GitHub rate limit, resumes ${clockTime(START + HOUR)}`);
     expect(budget.isOpen("graphql")).toBe(true);
+    expect(budget.report().resources.map((entry) => entry.paused?.why ?? null)).toEqual([null, "primary"]);
+    clock.now = START + HOUR;
+    expect(budget.isOpen("core")).toBe(true);
     expect(budget.stretch()).toBe(1);
+  });
+
+  test("a secondary limit stops both limits, and every pause is bounded whatever GitHub's numbers say", () => {
+    const clock = { now: START };
+    const budget = new GitHubBudget(() => clock.now);
+    const refuse = (resource: "graphql" | "core", status: number, headers: Record<string, string>, message: string) => {
+      try {
+        budget.settle(resource, ghReply(included(status, headers, { message }), `gh: ${message} (HTTP ${status})`, true), 0);
+      } catch (error) {
+        return error as { until: number; why: string; sent: boolean };
+      }
+      throw new Error("expected a pause");
+    };
+    // retry-after 0 would retry at once: a secondary pause lasts at least a minute, on both limits
+    expect(refuse("core", 403, { "Retry-After": "0" }, "You have exceeded a secondary rate limit")).toMatchObject({ until: START + 60_000, why: "secondary", sent: true });
+    expect(budget.isOpen("graphql")).toBe(false);
+    clock.now = START + 60_000;
+    expect(budget.isOpen("graphql")).toBe(true);
+    // ten days of retry-after is fifteen minutes
+    expect(refuse("graphql", 429, { "Retry-After": "864000" }, "Too many requests").until).toBe(clock.now + 15 * 60_000);
+    clock.now += 15 * 60_000;
+    expect(budget.isOpen("core")).toBe(true);
+    // a reset a day away (a skewed clock) pauses an hour, then the limit is read again; one already past, a minute
+    const tomorrow = String(Math.floor((clock.now + 24 * HOUR) / 1000));
+    expect(refuse("graphql", 403, { "X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": tomorrow }, "API rate limit exceeded").until).toBe(clock.now + HOUR);
+    const yesterday = String(Math.floor((clock.now - 24 * HOUR) / 1000));
+    expect(refuse("core", 403, { "X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": yesterday }, "API rate limit exceeded").until).toBe(clock.now + 60_000);
+    clock.now += HOUR;
+    expect(budget.isOpen("graphql") && budget.isOpen("core")).toBe(true);
   });
 
   test("a patient wait doubles from a minute up to its cap, and any other look starts it over", () => {
@@ -231,12 +262,64 @@ describe("autopilot on the budget", () => {
     expect(autopilotStatus(task!.id)).toMatchObject({ state: "waiting", reason: `Paused: GitHub rate limit, resumes ${clockTime(clock.now + 60_000)}` });
     expect(row.state).toBe("active");
     expect(checkpointOf(row).mergeFailures).toBeUndefined();
-    expect(checkpointOf(row).mergeAttempt).toBeUndefined();
+    // it went out, so its attempt stays for the next look to confirm or forget
+    expect(checkpointOf(row).mergeAttempt?.head).toBe(HEAD);
     clock.now += 60_000;
     dueNow([task!], clock);
     await rt.tick();
     expect(gh.state.merged.has(9601)).toBe(true);
     expect(autopilotStatus(task!.id).reason).toBe("#9601 merged by Wisp · Waiting for the task's next PR");
+  });
+
+  test("a merge attempt survives a pause unless the merge never went out", async () => {
+    const clock = { now: START + 10 * 60_000 };
+    const budget = new GitHubBudget(() => clock.now);
+    const gh = fakeGh({ clock, pr: (number) => snapshot({ number, url: `https://github.com/o/r/pull/${number}`, state: gh.state.merged.has(number) ? "MERGED" : "OPEN" }) });
+    const rt = runtime(createGhAutopilot({ run: gh.run, budget }), clock, {}, loadConfig(), undefined, { budget });
+    // held back before gh ran: no merge happened, so no attempt is left to be mistaken for one
+    const reserve = budget.reserve.bind(budget);
+    let holdMerge = true;
+    budget.reserve = (resource, estimate) => {
+      if (holdMerge && estimate === MERGE_POINTS) { holdMerge = false; throw new GitHubPausedError(clock.now + 60_000, "share") }
+      reserve(resource, estimate);
+    };
+    const [held] = armed(1, 9801, clock);
+    await rt.tick();
+    expect(autopilotStatus(held!.id).reason).toStartWith("Paused: Wisp's share of the GitHub rate limit is used up");
+    expect(checkpointOf(autopilotRow(held!.id)!).mergeAttempt).toBeUndefined();
+    expect(gh.state.calls.some((call) => call.kind === "merge")).toBe(false);
+    forgetTasks();
+    // a daemon that stopped mid-merge comes back to a rate limit: the attempt it left is kept,
+    // so the merge it may have made is still known as Wisp's once GitHub answers
+    const [restarted] = armed(1, 9802, clock);
+    const row = autopilotRow(restarted!.id)!;
+    writeAutopilotCheckpoint(row, { ...checkpointOf(row), state: "merging", mergeAttempt: { head: HEAD, at: new Date(clock.now).toISOString() } }, new Date(clock.now));
+    gh.state.merged.add(9802);
+    gh.state.refusal = { until: clock.now + 120_000, status: 403, headers: { "Retry-After": "120" }, message: "You have exceeded a secondary rate limit." };
+    await rt.tick();
+    expect(autopilotStatus(restarted!.id).reason).toStartWith("Paused: GitHub rate limit");
+    expect(checkpointOf(autopilotRow(restarted!.id)!).mergeAttempt?.head).toBe(HEAD);
+    clock.now += 120_000;
+    dueNow([restarted!], clock);
+    await rt.tick();
+    expect(autopilotStatus(restarted!.id)).toMatchObject({ reason: "#9802 merged by Wisp · Waiting for the task's next PR", lastMerged: { pr: 9802, byWisp: true } });
+  });
+
+  test("one PR GitHub cannot find fails its own look, not the batch it was read in", async () => {
+    const clock = { now: START };
+    const { gh, rt } = setup(clock);
+    const tasks = armed(5, 9701, clock);
+    gh.state.missing.add(9703);
+    await rt.tick();
+    const reads = gh.state.calls.filter((call) => call.kind === "graphql");
+    // one request for all five, and no second read of the others (or of the missing one)
+    expect(reads.map((call) => ({ cost: call.cost, prs: call.prs }))).toEqual([{ cost: 10, prs: 5 }]);
+    expect(tasks.map((task) => autopilotStatus(task.id).reason)).toEqual([
+      "Waiting for checks (1 running)", "Waiting for checks (1 running)",
+      "GitHub unavailable: Could not resolve to a PullRequest with the number of 9703.",
+      "Waiting for checks (1 running)", "Waiting for checks (1 running)",
+    ]);
+    expect(autopilotRow(tasks[2]!.id)!.failures).toBe(1);
   });
 
   test("PRs of one repository are read five to a request: a quarter of the requests for the same points", async () => {
@@ -312,7 +395,7 @@ describe("the PR overview and wisp doctor", () => {
     clock.now += 2000;
     await cache.status(task);
     expect(gh.state.calls.length).toBe(sent);
-    expect(budget.report().paused).toMatchObject({ why: "secondary" });
+    expect(budget.report().resources.map((entry) => entry.paused?.why)).toEqual(["secondary", "secondary"]);
   });
 
   test("wisp doctor shows Wisp's spend, what GitHub reports is left, and a pause", () => {
@@ -327,7 +410,12 @@ describe("the PR overview and wisp doctor", () => {
     expect(() => budget.settle("graphql", ghReply(included(403, { "Retry-After": "60" }, { message: "secondary rate limit" }), "", true), 0)).toThrow("Paused: GitHub rate limit");
     const paused = githubBudgetCheck(budget.report(), now)!;
     expect(paused.status).toBe("warn");
-    expect(paused.message).toStartWith(`paused until ${clockTime(START + 60_000)}: GitHub's secondary rate limit`);
+    expect(paused.message).toStartWith(`all GitHub calls paused until ${clockTime(START + 60_000)}: GitHub's secondary rate limit`);
+    // a primary limit names the one limit it stops
+    clock.now = START + 60_000;
+    const reset = String(Math.floor((START + HOUR) / 1000));
+    expect(() => budget.settle("core", ghReply(included(403, { "X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": reset }, { message: "API rate limit exceeded" }), "", true), 0)).toThrow();
+    expect(githubBudgetCheck(budget.report(), new Date(clock.now))!.message).toStartWith(`REST calls paused until ${clockTime(START + HOUR)}: GitHub's hourly rate limit is used up`);
     expect(githubBudgetCheck(undefined, now)).toBeNull();
   });
 });

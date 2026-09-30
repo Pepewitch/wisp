@@ -5,7 +5,8 @@
  * runs through it. So Wisp measures what each call costs (GraphQL's
  * `rateLimit`, REST's `x-ratelimit-*` headers), keeps its own spend to a share
  * of each limit, slows down when the account runs low whoever spent it, and
- * sends nothing at all while GitHub has said to stop.
+ * sends nothing while GitHub has said to stop: to that limit, for a primary
+ * limit; to either, for a secondary one.
  *
  * In memory only: a restart forgets Wisp's own spend, and the first answer
  * after it reports how much of the hour is left.
@@ -28,12 +29,18 @@ const EASE_FROM = 0.5
 const SHARE_REOPEN = 0.9
 /** The most any wait is stretched. */
 const MAX_STRETCH = 20
-/** GitHub asks for at least a minute after a secondary limit with no `retry-after`; repeats double it. */
+/**
+ * A secondary limit pauses at least a minute (GitHub's advice with no
+ * `retry-after`; repeats double it) and at most fifteen, whatever its
+ * `retry-after` says: a zero would retry at once, a huge one would never.
+ */
 const SECONDARY_WAIT_MS = 60_000
 const SECONDARY_WAIT_MAX_MS = 15 * 60_000
-/** A primary limit whose reset time is unknown: look again in a minute. */
+/** A primary limit whose reset time is unknown or already past: look again in a minute. */
 const UNKNOWN_RESET_MS = 60_000
 const HOUR_MS = 60 * 60_000
+/** A primary limit pauses until its reset, at most an hour: a skewed clock then reads the limit again. */
+const PRIMARY_WAIT_MAX_MS = HOUR_MS
 /** A personal account's hourly limit, until GitHub reports the real one. */
 const DEFAULT_LIMIT = 5000
 /** `gh pr merge` reads the PR and merges it through GraphQL, and reports no cost: an estimate. */
@@ -128,9 +135,15 @@ export function limitSignal(reply: GhReply, now: number): LimitSignal | null {
   return null
 }
 
-/** Nothing goes to GitHub until `until`: GitHub said so, or Wisp's share of the hour is spent. */
+export type PauseReason = "primary" | "secondary" | "share"
+
+/**
+ * Nothing goes to GitHub until `until`: GitHub said so, or Wisp's share of
+ * the hour is spent. `sent`: the call went out and GitHub refused it, rather
+ * than being held back before it went.
+ */
 export class GitHubPausedError extends Error {
-  constructor(readonly until: number, readonly why: "primary" | "secondary" | "share") {
+  constructor(readonly until: number, readonly why: PauseReason, readonly sent = false) {
     super(`${why === "share" ? "Paused: Wisp's share of the GitHub rate limit is used up" : "Paused: GitHub rate limit"}, resumes ${clockTime(until)}`)
     this.name = "GitHubPausedError"
   }
@@ -156,10 +169,10 @@ export interface GitHubBudgetReport {
   floor: number
   /** how much Wisp stretches its waits right now (1: not at all) */
   stretch: number
-  /** set while Wisp sends GitHub nothing: why, and until when */
-  paused: { why: "primary" | "secondary" | "share"; until: string } | null
   resources: {
     resource: GitHubResource
+    /** set while Wisp sends this limit nothing: why, and until when (a secondary limit pauses both) */
+    paused: { why: PauseReason; until: string } | null
     /** Wisp's own spend over the last hour: points for graphql, requests for core */
     spentLastHour: number
     requestsLastHour: number
@@ -179,10 +192,19 @@ export class GitHubBudget {
   /** the share was used up, and has not yet come back under SHARE_REOPEN */
   private readonly shut: Record<GitHubResource, boolean> = { graphql: false, core: false }
   private readonly samples = new Map<GitHubResource, RateSample>()
-  private paused: { until: number; why: "primary" | "secondary" } | null = null
+  /** a primary limit is one hourly limit's: REST spent by other tools leaves GraphQL reads (and merges) going */
+  private readonly primaryUntil: Record<GitHubResource, number> = { graphql: 0, core: 0 }
+  /** a secondary limit is about the account going too fast: it stops everything */
+  private secondaryUntil = 0
   private secondaryStrikes = 0
 
   constructor(private readonly clock: () => number = Date.now) {}
+
+  /** What stops calls to `resource` at `now`, from GitHub: a secondary limit first, then this limit's primary. */
+  private pausedBy(resource: GitHubResource, now: number): { until: number; why: "primary" | "secondary" } | null {
+    if (now < this.secondaryUntil) return { until: this.secondaryUntil, why: "secondary" }
+    return now < this.primaryUntil[resource] ? { until: this.primaryUntil[resource], why: "primary" } : null
+  }
 
   /**
    * Before a call goes out, with what it is expected to cost. Throws
@@ -191,7 +213,8 @@ export class GitHubBudget {
    */
   reserve(resource: GitHubResource, estimate: number): void {
     const now = this.clock()
-    if (this.paused && now < this.paused.until) throw new GitHubPausedError(this.paused.until, this.paused.why)
+    const paused = this.pausedBy(resource, now)
+    if (paused) throw new GitHubPausedError(paused.until, paused.why)
     const room = this.room(resource) - this.reserved[resource] - estimate
     if (this.spent(resource, now) > room) {
       this.shut[resource] = true
@@ -204,7 +227,7 @@ export class GitHubBudget {
   /** Whether a call of about one point may go out now, without reserving it. */
   isOpen(resource: GitHubResource): boolean {
     const now = this.clock()
-    if (this.paused && now < this.paused.until) return false
+    if (this.pausedBy(resource, now)) return false
     return this.spent(resource, now) + this.reserved[resource] < this.room(resource)
   }
 
@@ -239,7 +262,8 @@ export class GitHubBudget {
       if (!reply.failed) this.secondaryStrikes = 0
       return
     }
-    let until = signal.until
+    // a time already past (`retry-after: 0`, a reset behind a skewed clock) says nothing about when
+    let until = signal.until !== null && signal.until > now ? signal.until : null
     if (signal.kind === "secondary" && until === null) {
       until = now + Math.min(SECONDARY_WAIT_MS * 2 ** this.secondaryStrikes, SECONDARY_WAIT_MAX_MS)
       this.secondaryStrikes++
@@ -248,8 +272,9 @@ export class GitHubBudget {
       const known = this.samples.get(resource)
       until = known && known.resetAt > now ? known.resetAt : now + UNKNOWN_RESET_MS
     }
-    this.pause(until, signal.kind)
-    throw new GitHubPausedError(this.paused!.until, this.paused!.why)
+    this.pause(resource, until, signal.kind)
+    const paused = this.pausedBy(resource, now)!
+    throw new GitHubPausedError(paused.until, paused.why, true)
   }
 
   /**
@@ -272,22 +297,21 @@ export class GitHubBudget {
 
   report(): GitHubBudgetReport {
     const now = this.clock()
-    let paused: GitHubBudgetReport["paused"] = this.paused && now < this.paused.until
-      ? { why: this.paused.why, until: new Date(this.paused.until).toISOString() }
-      : null
     const resources = RESOURCES.map((resource) => {
       const cap = this.cap(resource)
       const spentLastHour = this.spent(resource, now)
-      if (!paused && !this.isOpen(resource)) paused = { why: "share", until: new Date(this.freesAt(resource, this.room(resource), now)).toISOString() }
+      const github = this.pausedBy(resource, now)
+      const paused: { why: PauseReason; until: number } | null = github ??
+        (this.isOpen(resource) ? null : { why: "share", until: this.freesAt(resource, this.room(resource), now) })
       const sample = this.samples.get(resource)
       return {
-        resource, spentLastHour, cap,
+        resource, paused: paused ? { why: paused.why, until: new Date(paused.until).toISOString() } : null, spentLastHour, cap,
         requestsLastHour: this.spends.filter((spend) => spend.resource === resource).length,
         limit: sample?.limit ?? null, remaining: sample?.remaining ?? null,
         resetAt: sample ? new Date(sample.resetAt).toISOString() : null, checkedAt: sample ? new Date(sample.at).toISOString() : null,
       }
     })
-    return { share: WISP_SHARE, floor: REMAINING_FLOOR, stretch: this.stretch(), paused, resources }
+    return { share: WISP_SHARE, floor: REMAINING_FLOOR, stretch: this.stretch(), resources }
   }
 
   private spend(resource: GitHubResource, points: number, at: number): void {
@@ -298,11 +322,23 @@ export class GitHubBudget {
     if (!Number.isFinite(sample.resetAt)) return
     this.samples.set(resource, sample)
     // nothing left: the next call would be refused, so none goes out until the reset
-    if (sample.remaining <= 0 && sample.resetAt > sample.at) this.pause(sample.resetAt, "primary")
+    if (sample.remaining <= 0 && sample.resetAt > sample.at) this.pause(resource, sample.resetAt, "primary")
   }
 
-  private pause(until: number, why: "primary" | "secondary"): void {
-    if (!this.paused || this.paused.until < until || this.paused.until <= this.clock()) this.paused = { until, why }
+  /**
+   * Hold calls back until `until`, bounded: a secondary limit to between a
+   * minute and fifteen, a primary one to at most an hour, after which the next
+   * answer says again how much is left. A later limit can only lengthen a
+   * pause, within the same bounds, so none outlasts them.
+   */
+  private pause(resource: GitHubResource, until: number, why: "primary" | "secondary"): void {
+    const now = this.clock()
+    if (why === "secondary") {
+      const bounded = now + Math.min(Math.max(until - now, SECONDARY_WAIT_MS), SECONDARY_WAIT_MAX_MS)
+      this.secondaryUntil = Math.max(this.secondaryUntil, bounded)
+    } else {
+      this.primaryUntil[resource] = Math.max(this.primaryUntil[resource], Math.min(until, now + PRIMARY_WAIT_MAX_MS))
+    }
   }
 
   private cap(resource: GitHubResource): number {

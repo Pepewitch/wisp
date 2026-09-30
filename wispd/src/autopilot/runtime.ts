@@ -171,11 +171,8 @@ export class AutopilotRuntime {
 
   /** The task's GitHub repository, asked of git once per repository path a pass. */
   private repositoryOf(task: Task, signal: AbortSignal): Promise<string | null> {
-    const known = this.origins.get(task.repo_path)
-    if (known) return known
-    const asked = (this.options.repository ?? originRepository)(task, signal)
-    this.origins.set(task.repo_path, asked)
-    return asked
+    if (!this.origins.has(task.repo_path)) this.origins.set(task.repo_path, (this.options.repository ?? originRepository)(task, signal))
+    return this.origins.get(task.repo_path)!
   }
 
   start(): void {
@@ -238,8 +235,8 @@ export class AutopilotRuntime {
       if (!current || current.state !== "active") return
       const checkpoint = checkpointOf(current)
       if (error instanceof GitHubPausedError) {
-        // GitHub (or Wisp's own share) said wait: no failure, and back at the minute it resumes
-        if (checkpoint.mergeAttempt && !checkpoint.mergeAttempt.reported) delete checkpoint.mergeAttempt
+        // GitHub (or Wisp's own share) said wait: no failure, and back at the minute it resumes. A merge
+        // attempt stays: one that may have gone out (before a restart, say) is confirmed by the next look.
         const delayMs = Math.max(error.until - this.now().getTime(), 1000)
         this.saveCheck(current, { state: "waiting", reason: error.message, checkpoint, failures: current.failures, delayMs, stretch: 1, patient: false })
         return
@@ -682,6 +679,8 @@ export class AutopilotRuntime {
     // read retries soon. The read itself is shared by looks side by side.
     const at = this.now().getTime()
     const rules = this.github.requiredChecks(repository, base, cwd, signal).catch((error: unknown) => {
+      // REST paused: the last rules read stand in until it resumes; with none, the look pauses
+      if (error instanceof GitHubPausedError && hit) { this.required.set(key, hit); return hit.rules }
       if (error instanceof GitHubPausedError) { this.required.delete(key); throw error }
       const none: BaseRules = { checks: [], classicProtection: null }
       this.required.set(key, { rules: Promise.resolve(none), at: at - REQUIRED_TTL_MS + 60_000 })
@@ -732,7 +731,11 @@ export class AutopilotRuntime {
       // only after the row says how it ended, so its turn is told the branch
       // is finished instead of being asked to push to a merged PR.
       await whileMerging(task.id, async () => {
-        const result = await this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, controller.signal)
+        const result = await this.github.merge({ repository, number: pr.number, method: pr.mergeMethod, head: pr.head }, task.repo_path, controller.signal).catch((error: unknown) => {
+          // held back before it went out: there was no merge, so there is no attempt to confirm
+          if (error instanceof GitHubPausedError && !error.sent) endMergeAttempt(getWorkflow(row.id) ?? row, false)
+          throw error
+        })
         const after = await this.github.snapshot(repository, pr.number, task.repo_path, controller.signal).catch(() => null)
         this.afterMerge(row, attempt, pr, result, after)
       }, () => { startNextQueuedMessage(task.id, this.adapters, this.cfg) })
