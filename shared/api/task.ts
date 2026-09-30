@@ -333,3 +333,49 @@ export interface TaskUsage {
   turns: TurnUsage[];
   has_older_turns: boolean;
 }
+
+/**
+ * GET /api/search: exact text across this daemon's tasks. A snippet says which
+ * of five places answered: a title, a turn's prompt, its result, a message, or
+ * the agent's own prose from inside a turn.
+ */
+export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose";
+
+export interface SearchSnippet {
+  kind: SearchSnippetKind;
+  /** the turn a prompt/result snippet came from; null for a title or a message */
+  turn: number | null;
+  /** one collapsed line around the first match, ellipsised at either end */
+  text: string;
+  /** where the match sits inside `text`, so a client highlights what it was given */
+  offset: number;
+  length: number;
+}
+
+export interface SearchTaskHit {
+  id: string;
+  title: string;
+  repo_path: string;
+  updated_at: string;
+  /**
+   * The task's own state and archived flag travel with the hit, so a result
+   * row renders from the response alone, archived or not yet listed.
+   */
+  state: TaskState;
+  archived: boolean;
+  /** total occurrences across every searched field of this task */
+  matches: number;
+  snippets: SearchSnippet[];
+}
+
+export interface SearchResponse {
+  query: string;
+  tasks: SearchTaskHit[];
+  /** a daemon scan cap was reached: this answer is not the whole ledger */
+  truncated: boolean;
+  /**
+   * Present only while the agent-prose index is catching up on turns that
+   * ended before it existed; a miss meanwhile is not a definitive miss.
+   */
+  indexing?: { remainingTurns: number };
+}

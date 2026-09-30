@@ -17,6 +17,7 @@ import type {
   TaskState,
   TurnStatus,
 } from "../../../shared/api/task";
+import type { ActivityEvent } from "../../../shared/api/activity";
 import type {
   HarnessLimits as DaemonHarnessLimits,
   HarnessLimitsEntry as DaemonHarnessLimitsEntry,
@@ -33,6 +34,10 @@ export type {
   BackgroundGroup,
   CleanupSummary,
   CompactAnswer,
+  SearchResponse,
+  SearchSnippet,
+  SearchSnippetKind,
+  SearchTaskHit,
   SendDisposition,
   SendWhen,
   TaskMode,
@@ -46,6 +51,7 @@ export type {
   TurnUsage,
   UsageSummary,
 } from "../../../shared/api/task";
+export type { ActivityEvent, ActivityStatus, QuestionPrompt } from "../../../shared/api/activity";
 export type {
   ContextBreakdown,
   HarnessUsageReport,
@@ -64,6 +70,18 @@ export type {
   SuffixPrompt,
 } from "../../../shared/api/settings";
 export type { InstallMethod, UpdateState } from "../../../shared/api/update";
+export type {
+  PullRequestChecks,
+  PullRequestInfo,
+  PullRequestLifecycle,
+  PullRequestMergeState,
+  PullRequestOverview,
+  PullRequestOverviewEntry,
+  PullRequestReview,
+  PullRequestStatus,
+} from "../../../shared/api/pull-requests";
+export type { WispEvent } from "../../../shared/api/events";
+export type { ShellInfo } from "../../../shared/api/terminals";
 
 /**
  * A daemon shape as this client reads it: `K` are the fields it must not rely
@@ -71,65 +89,6 @@ export type { InstallMethod, UpdateState } from "../../../shared/api/update";
  * reads it.
  */
 type FromAnyDaemon<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
-
-export type ActivityStatus = "running" | "completed" | "failed" | "stopped" | "unknown"
-
-interface ActivityEventBase {
-  id: string
-  parentId: string | null
-  timestamp?: string | number | null
-}
-
-/** Harness-neutral activity emitted by the daemon's adapter boundary. */
-export type ActivityEvent =
-  | (ActivityEventBase & { kind: "text"; text: string })
-  /** A message steered into the turn, at the point the harness accepted it.
-   *  `id` is the message row's id; `text` is a one-line log preview only. */
-  | (ActivityEventBase & { kind: "message"; text: string })
-  | (ActivityEventBase & { kind: "thinking"; text: string | null })
-  | (ActivityEventBase & {
-      kind: "tool"
-      phase: "started" | "completed"
-      name: string
-      input?: unknown
-      output?: string | null
-      error?: string | null
-    })
-  | (ActivityEventBase & {
-      kind: "subagent"
-      phase: "started" | "updated" | "completed"
-      status: ActivityStatus
-      agentId?: string | null
-      title?: string | null
-      agentType?: string | null
-      model?: string | null
-      effort?: string | null
-      prompt?: string | null
-      result?: string | null
-      error?: string | null
-      durationMs?: number | null
-      background?: boolean
-    })
-  /** The harness stopped to ask a multiple-choice question. `id` is the tool
-   *  call the answer resolves; the three phases replay in log order. */
-  | (ActivityEventBase & {
-      kind: "question"
-      phase: "asked" | "answered" | "cancelled"
-      /** Why a cancelled question was released, which is what the card says. */
-      reason?: "superseded" | "stopped"
-      questions?: QuestionPrompt[]
-      answers?: { index: number; answer: string }[]
-    })
-
-/** One question, as every harness that has this tool describes it. */
-export interface QuestionPrompt {
-  index: number
-  topic: string | null
-  question: string
-  multiSelect: boolean
-  /** 2–4 labels. An own answer is always offered on top of these. */
-  options: string[]
-}
 
 /**
  * A task from GET /api/tasks or GET /api/tasks/:id. The list-only facts
@@ -236,53 +195,6 @@ export type StatusEntry =
   | { branch: string; dirtyFiles: number; ahead: number; unpushed: boolean; worktreeReason: null }
   | { branch: string; worktreeReason: string };
 
-export type PullRequestLifecycle = "draft" | "open" | "merged" | "closed";
-export type PullRequestChecks = "none" | "pending" | "passed" | "failed" | "unknown";
-export type PullRequestReview = "none" | "required" | "approved" | "changes-requested" | "unknown";
-export type PullRequestMergeState =
-  | "ready"
-  | "unstable"
-  | "blocked"
-  | "behind"
-  | "conflicting"
-  | "unknown";
-
-export interface PullRequestInfo {
-  number: number;
-  url: string;
-  title: string;
-  lifecycle: PullRequestLifecycle;
-  queuedToMerge: boolean;
-  checks: PullRequestChecks;
-  review: PullRequestReview;
-  mergeState: PullRequestMergeState;
-  updatedAt: string;
-}
-
-/** GET /api/tasks/:id/pull-request — provider failures never masquerade as "none". */
-export type PullRequestStatus =
-  | {
-      kind: "found"
-      provider: "github"
-      pullRequest: PullRequestInfo
-      /** How many MORE this task has; absent when this is the only one. */
-      others?: number
-    }
-  | { kind: "none"; provider: "github" }
-  | { kind: "unsupported"; provider: null }
-  | { kind: "unavailable"; provider: "github" | null };
-
-export interface PullRequestOverviewEntry {
-  status: PullRequestStatus;
-  checkedAt: string;
-  stale: boolean;
-}
-
-/** GET /api/pull-requests — live tasks only; archived rows are deliberately absent. */
-export interface PullRequestOverview {
-  tasks: Record<string, PullRequestOverviewEntry>;
-}
-
 /** GET /api/tasks/:id/diff (200 path; 409s are mapped to a muted note by the hook). */
 export interface DiffResponse {
   /** unified diff: git diff <base> plus new-file patches for `untracked` */
@@ -322,27 +234,6 @@ export type WorktreeFileResponse =
       truncated: boolean;
     }
   | { kind: "binary"; path: string; bytes: number };
-
-/** GET /api/events frames (one JSON WispEvent per SSE data frame). */
-export type WispEvent =
-  | {
-      type: "task";
-      taskId: string;
-      state: string;
-      stateDetail: string | null;
-      seq: number;
-      title?: string;
-      updatedAt?: string;
-    }
-  | { type: "turn"; taskId: string; n: number; status: string }
-  | { type: "message"; taskId: string; messageId: string }
-  | { type: "workflow"; taskId: string }
-  | { type: "brief"; taskId: string }
-  | { type: "terminals"; taskId: string }
-  | { type: "project"; action: "add" | "remove"; path: string }
-  | { type: "harnesses" }
-  | { type: "settings" }
-  | { type: "harness-limits"; harness: string };
 
 /**
  * GET/PATCH /api/settings. Each section is absent on a daemon older than it:
@@ -489,24 +380,6 @@ export interface HarnessesResponse {
   };
 }
 
-/** One shell tab as the daemon keeps it (GET /api/tasks/:id/terminals). */
-export interface ShellInfo {
-  /** the socket's `?shell=` id; reused once its tab is closed */
-  id: number;
-  /** counts up per task and is never reused */
-  number: number;
-  name: string | null;
-  /** the window title the shell set (OSC 0/2) */
-  title: string | null;
-  /** the foreground program; null while the shell is at its prompt */
-  program: string | null;
-  /** the login shell's name, e.g. `zsh` */
-  shell: string;
-  /** set when the shell ended by itself and has not been replaced */
-  exitCode: number | null;
-  createdAt: string;
-}
-
 /** GET /api/tasks/:id/skills. `commands` and `commandError` are absent from a daemon predating command discovery. */
 export type TaskSkills = FromAnyDaemon<DaemonTaskSkills, "commands" | "commandError">;
 
@@ -526,60 +399,4 @@ export interface ActivityLogStreamFrames {
   append: { turn: number; activity: ActivityEvent[] }
   "turn-end": { turn: number; status: TurnStatus }
   state: { state: TaskState; state_detail: string | null }
-}
-
-/**
- * GET /api/search — exact text across this daemon's tasks.
- *
- * The daemon searches five places and says which one answered: a task title, a
- * turn's prompt, a turn's concluding result, a queued or steered message, and
- * the agent's own prose from inside a turn (`prose`, projected into an index
- * when the turn ends). Tool calls and reasoning are still outside; the sidebar
- * states that scope rather than implying a whole-transcript index.
- *
- * Archived tasks are searched and flagged, never dropped: the sidebar shows
- * them only when its own Show-archived switch is on, and says how many it is
- * holding back when it is off.
- */
-export type SearchSnippetKind = "title" | "prompt" | "result" | "message" | "prose"
-
-export interface SearchSnippet {
-  kind: SearchSnippetKind
-  /** the turn a prompt/result came from; null for a title or a message */
-  turn: number | null
-  text: string
-  /** the match's position inside `text` — the client highlights what it was given */
-  offset: number
-  length: number
-}
-
-export interface SearchTaskHit {
-  id: string
-  title: string
-  repo_path: string
-  updated_at: string
-  /**
-   * The task's own state and archived flag travel WITH the hit, so a result
-   * row renders from the response alone. Resolving hits against the client's
-   * task list instead had two holes: an archived task is not in that list at
-   * all while Show archived is off, and a task created since the last list
-   * fetch would be dropped from results without a word.
-   */
-  state: TaskState
-  archived: boolean
-  matches: number
-  snippets: SearchSnippet[]
-}
-
-export interface SearchResponse {
-  query: string
-  tasks: SearchTaskHit[]
-  /** a daemon scan cap was reached: this answer is not the whole ledger */
-  truncated: boolean
-  /**
-   * Present only while the agent-prose index is catching up on turns that
-   * ended before it existed. A miss during that window is not a definitive
-   * miss, and the pane says so instead of letting it read as one.
-   */
-  indexing?: { remainingTurns: number }
 }

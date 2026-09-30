@@ -29,53 +29,18 @@ import {
 import { reportPullRequest, reportPullRequestOverview, type PullRequestFound } from "./pull-request-notify";
 import { bunProbeSpawn } from "./probes";
 import type { Task } from "./types";
+import type { PullRequestOverview, PullRequestOverviewEntry, PullRequestStatus } from "../../shared/api/pull-requests";
 
-export type PullRequestLifecycle = "draft" | "open" | "merged" | "closed";
-export type PullRequestChecks = "none" | "pending" | "passed" | "failed" | "unknown";
-export type PullRequestReview = "none" | "required" | "approved" | "changes-requested" | "unknown";
-export type PullRequestMergeState =
-  | "ready"
-  | "unstable"
-  | "blocked"
-  | "behind"
-  | "conflicting"
-  | "unknown";
-
-export interface PullRequestInfo {
-  number: number;
-  url: string;
-  title: string;
-  lifecycle: PullRequestLifecycle;
-  queuedToMerge: boolean;
-  checks: PullRequestChecks;
-  review: PullRequestReview;
-  mergeState: PullRequestMergeState;
-  updatedAt: string;
-}
-
-export type PullRequestStatus =
-  | {
-      kind: "found";
-      provider: "github";
-      pullRequest: PullRequestInfo;
-      /** How many MORE this task has. Absent when this is the only one. */
-      others?: number;
-    }
-  | { kind: "none"; provider: "github" }
-  | { kind: "unsupported"; provider: null }
-  | { kind: "unavailable"; provider: "github" | null };
-
-export interface PullRequestOverviewEntry {
-  status: PullRequestStatus;
-  /** Time of the provider answer being displayed, not the latest failed attempt. */
-  checkedAt: string;
-  /** The last provider refresh failed, so status is the last successful answer. */
-  stale: boolean;
-}
-
-export interface PullRequestOverview {
-  tasks: Record<string, PullRequestOverviewEntry>;
-}
+export type {
+  PullRequestChecks,
+  PullRequestInfo,
+  PullRequestLifecycle,
+  PullRequestMergeState,
+  PullRequestOverview,
+  PullRequestOverviewEntry,
+  PullRequestReview,
+  PullRequestStatus,
+} from "../../shared/api/pull-requests";
 
 export const PULL_REQUEST_TIMEOUT_MS = 10_000;
 /** Shorter than the UI's 30s interval, so each visible-task tick can be fresh. */

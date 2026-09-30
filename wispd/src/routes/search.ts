@@ -43,7 +43,7 @@ async function answer(query: string, signal: AbortSignal): Promise<Response> {
   // Two facts, one answer: what matched, and whether the agent-prose index has
   // finished catching up on turns older than it (turn-text-backfill.ts).
   const remainingTurns = turnTextIndexStatus().remaining;
-  return json({
+  return json<SearchResponse>({
     ...found,
     ...(remainingTurns > 0 ? { indexing: { remainingTurns } } : {}),
   });
