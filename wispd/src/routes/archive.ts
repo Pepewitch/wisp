@@ -8,8 +8,9 @@ import { archiveTaskWithCleanup, type ArchiveCleanupJob } from "../archive-jobs"
 import { getTask } from "../store";
 import { taskMode, type Task } from "../types";
 import { archivePreflight, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
-import { autopilotArchiveWarning } from "../autopilot/store";
+import { autopilotArchiveWarning, autopilotStatus } from "../autopilot/store";
 import { updateTaskAndEmit } from "../task-update";
+import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task-audit";
 
 const PREFLIGHT_CONCURRENCY = 4;
 
@@ -39,6 +40,10 @@ export interface ArchivedTaskResult {
  */
 export interface ArchiveOptions {
   stopAutopilot?: boolean
+  /** who asked, for the task audit; `api` when the caller did not say */
+  actor?: TaskAuditActor
+  /** why, when it was not a request about this task (a project removal) */
+  reason?: string
 }
 
 async function prepareArchive(snapshot: Task, force: boolean, options: ArchiveOptions): Promise<PreparedArchive | ArchiveRefusal> {
@@ -141,7 +146,13 @@ export async function archiveTaskRows(
     // One transaction: the flip the user sees and the job that owns its
     // teardown. The emit follows the commit, so no client can observe an
     // archived task whose cleanup nothing is responsible for.
+    const armed = autopilotStatus(task.id);
     archiveTaskWithCleanup(task.id, preflight?.leftBehind ?? null, job);
+    const actor = options.actor ?? "api";
+    recordAudit(task.id, force ? "force-archive" : "archive", actor, options.reason ?? null);
+    // the archive trigger completes auto-merge / auto-fix: say who switched them off
+    const stopped = autopilotSwitchDetail(armed, { ...armed, autoMerge: false, autoFix: false });
+    if (stopped) recordAudit(task.id, "autopilot", actor, `${stopped} by archiving`);
     updateTaskAndEmit(task.id, {});
     return { task, branch: task.branch, note: preflight?.leftBehind ?? null };
   });

@@ -5,6 +5,7 @@ import { validateWorkflowParams } from "../workflows/definitions";
 import { installedWorkflows, workflowById } from "../workflows/plugins";
 import { changeWorkflowState, createWorkflow, getWorkflow, listWorkflows, updateWorkflow, workflow, workflowHistory } from "../workflows/store";
 import { err, json, jsonObjectBody } from "./http";
+import { recordAudit, requestActor } from "../task-audit";
 
 async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   const task = getTask(taskId);
@@ -16,7 +17,9 @@ async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   if (body instanceof Response) return body;
   const definition = workflowById(body.type)?.definition;
   if (!definition) return err("Unknown workflow type", 400);
-  return json(createWorkflow(task.id, definition, validateWorkflowParams(definition, body.params ?? {})), 201);
+  const created = createWorkflow(task.id, definition, validateWorkflowParams(definition, body.params ?? {}));
+  recordAudit(task.id, "workflow-start", requestActor(req), `${created.id} (${created.type})`);
+  return json(created, 201);
 }
 
 export async function workflowRoute(req: Request, path: string): Promise<Response> {
@@ -32,16 +35,22 @@ export async function workflowRoute(req: Request, path: string): Promise<Respons
     if (row.type === AUTOPILOT_TYPE) return err("Auto-merge is controlled from the task (PUT /api/tasks/:id/autopilot)", 409);
     const body = await jsonObjectBody(req);
     if (body instanceof Response) return body;
+    const audit = (action: "workflow-update" | "workflow-pause" | "workflow-resume" | "workflow-complete"): void =>
+      recordAudit(row.task_id, action, requestActor(req), `${row.id} (${row.type})`);
     if (req.method === "POST" && match[2]) {
       const action = match[2];
-      return json(changeWorkflowState(row.id, action === "resume" ? "active" : action === "pause" ? "paused" : "completed",
-        action === "resume" ? "Resumed; waiting for a fresh check" : action === "pause" ? "Paused by request" : "Completed by request"));
+      const changed = changeWorkflowState(row.id, action === "resume" ? "active" : action === "pause" ? "paused" : "completed",
+        action === "resume" ? "Resumed; waiting for a fresh check" : action === "pause" ? "Paused by request" : "Completed by request");
+      audit(`workflow-${action as "pause" | "resume" | "complete"}`);
+      return json(changed);
     }
     if (req.method === "PATCH" && !match[2]) {
       const def = workflowById(row.type)?.definition;
       if (!def || def.version !== row.version) return err("Workflow definition changed; arm a new instance", 409);
       if (!isRecord(body.params) || !Number.isSafeInteger(body.revision)) return err("params and revision are required", 400);
-      return json(updateWorkflow(row.id, validateWorkflowParams(def, { ...workflow(row).params, ...body.params }), Number(body.revision)));
+      const updated = updateWorkflow(row.id, validateWorkflowParams(def, { ...workflow(row).params, ...body.params }), Number(body.revision));
+      audit("workflow-update");
+      return json(updated);
     }
     return err("Method not allowed", 405);
   } catch (error) {

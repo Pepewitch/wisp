@@ -9,6 +9,7 @@ import type { WispConfig } from "../src/config";
 import { processStartTime } from "../src/procid";
 import { acquireDiagnosticExport } from "../src/recording/diagnostic";
 import { FACTORY_PROTOCOL_VERSION } from "../src/probes";
+import { taskAudit } from "../src/task-audit";
 import {
   failStaleCreatingTasks,
   finalizeTurn,
@@ -1193,6 +1194,8 @@ describe("startup sweep for stale 'creating' tasks (a prior audit)", () => {
     const rows = undeliveredOutbox().filter((r) => r.task_id === wedged.id);
     expect(rows.length).toBe(1);
     expect(rows[0]!.event).toBe("failed");
+    // and the task's audit says the daemon did it, not a client
+    expect(taskAudit(wedged.id)).toEqual([expect.objectContaining({ action: "fail", actor: "system" })]);
   });
 
   test("leaves tasks in every other state alone", () => {

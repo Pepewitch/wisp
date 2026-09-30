@@ -62,6 +62,7 @@ import {
   turnForTask,
   type TaskAgentSelection,
 } from "./store";
+import { recordAudit } from "./task-audit";
 import { TurnRecorder } from "./recording/turn-recorder";
 import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
@@ -70,6 +71,7 @@ import { finalizeTurn } from "./turn-finalize";
 import { pendingBriefRun, recordBriefRun } from "./brief-store";
 import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
+  AGENT_TURN_ENV,
   BRIEF_RUN_ENV,
   briefReminder,
   attachmentLines,
@@ -243,7 +245,8 @@ export function startTurn(
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
       env: {
         ...envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
-        // only this turn's own binding: envForCwd has already dropped any inherited one
+        // only this turn's own bindings: envForCwd has already dropped any inherited ones
+        [AGENT_TURN_ENV]: "1",
         ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
       },
       // Its own process GROUP, so a stop reaches the builds, servers, and
@@ -681,11 +684,8 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
 export function failStaleCreatingTasks(): void {
   for (const task of creatingTasks()) {
     console.error(`[wisp] failing task ${task.id}: still 'creating' at startup (previous daemon died mid-creation)`);
-    transition(
-      task.id,
-      "failed",
-      "daemon died while this task was being created (still 'creating' at startup); create a new task to retry",
-    );
+    transition(task.id, "failed", "daemon died while this task was being created (still 'creating' at startup); create a new task to retry");
+    recordAudit(task.id, "fail", "system", "still being created when the daemon started");
   }
 }
 

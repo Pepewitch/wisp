@@ -3,6 +3,7 @@ import { trackHomeWork } from "../home-lifetime";
 import { deleteTaskFromCaches, type TaskCache } from "../task-cache";
 import type { Task } from "../types";
 import { err, json, jsonObjectBody } from "./http";
+import { requestActor } from "../task-audit";
 
 export function retentionRoute(
   req: Request,
@@ -19,6 +20,8 @@ export function retentionRoute(
         if (body instanceof Response) return body;
         if (body.confirmTaskId !== task.id) return err("Confirm permanent deletion by providing confirmTaskId matching this task. Export anything you want to keep first.", 400);
         await purgeTask(task);
+        // The task's audit went with it, so the daemon log is what says who.
+        console.log(`[wisp] task ${task.id} permanently deleted by ${requestActor(req)}`);
         deleteTaskFromCaches(task.id, taskCaches);
         return json({ ok: true });
       }

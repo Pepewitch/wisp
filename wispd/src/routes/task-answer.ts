@@ -2,6 +2,7 @@ import { observeAnswer, settleAnswerObservation } from "../brief-inputs";
 import { emit } from "../events";
 import { activeLiveInput } from "../live-input";
 import { assertTaskNotStopping, InterruptConflict } from "../turn-interrupt";
+import { recordAudit, requestActor } from "../task-audit";
 import type { Task } from "../types";
 import { err, json, jsonObjectBody } from "./http";
 
@@ -78,6 +79,7 @@ export function answerQuestionResponse(task: Task, req: Request): Promise<Respon
       settleAnswerObservation(observation, "delivered");
       emit({ type: "brief", taskId: task.id });
     }
+    recordAudit(task.id, "answer", requestActor(req), `question ${body.questionId}`);
     return json({ ok: true });
   })();
 }

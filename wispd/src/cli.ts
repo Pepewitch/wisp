@@ -10,6 +10,7 @@ import {
 } from "./cli-api";
 import { workflowCommand } from "./cli-workflow";
 import { PR_USAGE, prCommand } from "./cli-pr";
+import { AUDIT_USAGE, auditCommand } from "./cli-audit";
 import { briefCommand } from "./cli-brief";
 import { createCommand } from "./cli-create";
 import { parseArgs, type Flags } from "./cli-args";
@@ -510,6 +511,14 @@ export const COMMANDS = {
       await prCommand(positional, flags, api);
     } catch (error) {
       if (error instanceof Error && error.message === PR_USAGE) { printError(PR_USAGE); process.exit(1); }
+      exitApi(error);
+    }
+  },
+  audit: async (positional, flags) => {
+    try {
+      await auditCommand(positional, flags, api);
+    } catch (error) {
+      if (error instanceof Error && error.message === AUDIT_USAGE) { printError(AUDIT_USAGE); process.exit(1); }
       exitApi(error);
     }
   },

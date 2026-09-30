@@ -7,6 +7,7 @@ import type { WispConfig } from "../src/config";
 import { latestHumanInput } from "../src/brief-inputs";
 import { activeLiveInput } from "../src/live-input";
 import { answerQuestionResponse } from "../src/routes/task-answer";
+import { taskAudit } from "../src/task-audit";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
@@ -165,7 +166,7 @@ describe("Droid live AskUser and interrupt", () => {
     const post = (answers: unknown) =>
       answerQuestionResponse(getTask(task.id)!, new Request("http://127.0.0.1/answer", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-wisp-client": "web" },
         body: JSON.stringify({ questionId: "ask-1", answers }),
       }));
     const observations = () => db.query(`SELECT state FROM task_answer_observations WHERE task_id = ?`).all(task.id);
@@ -175,9 +176,11 @@ describe("Droid live AskUser and interrupt", () => {
     expect(((await empty.json()) as { error: string }).error).toContain("answer every question first");
     expect(observations()).toEqual([]);
     expect(getTask(task.id)!.input_rev).toBe(0);
+    expect(taskAudit(task.id)).toEqual([]);
 
     expect((await post([{ index: 1, answer: "Japan" }])).status).toBe(200);
     expect(observations()).toEqual([{ state: "delivered" }]);
+    expect(taskAudit(task.id)).toEqual([expect.objectContaining({ action: "answer", actor: "web", detail: "question ask-1" })]);
     // briefs were never on for this task: switching them on later still sees what was said last
     expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", text: "Japan", question: "Where to?", delivery: "delivered" });
     await until(() => getTask(task.id)?.state === "done");

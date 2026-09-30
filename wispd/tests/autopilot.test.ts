@@ -14,6 +14,7 @@ import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
 import { db, getTask, setTaskFields, transition } from "../src/store";
+import { taskAudit } from "../src/task-audit";
 import { taskPreambleLines, wispSection } from "../src/turn-input";
 import type { Task } from "../src/types";
 import { pauseTaskWorkflows, recordWorkflow } from "../src/workflows/store";
@@ -81,6 +82,10 @@ describe("the loop", () => {
       state: "waiting", reason: "#7 merged by Wisp · Waiting for the task's next PR", pr: null, autoMerge: true,
       lastMerged: { pr: 7, byWisp: true },
     });
+    // the task's audit says who merged it
+    expect(taskAudit(task.id).filter((entry) => entry.action === "merge")).toEqual([
+      expect.objectContaining({ actor: "autopilot", detail: `#7 at ${HEAD.slice(0, 7)} into main` }),
+    ]);
     // the agent hears once that its branch is finished, and never again; the standing note stays
     const merged = autopilotTurnNotes(task.id);
     expect(merged.notes[0]).toBe("PR #7 was merged by Wisp. Its branch is finished: start any further change on a new branch from origin/main.");

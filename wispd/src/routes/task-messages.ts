@@ -22,6 +22,7 @@ import { InterruptConflict } from "../turn-interrupt";
 import { changeWorkflowState } from "../workflows/store";
 import { skipCancelledRound } from "../autopilot/store";
 import type { SendResponse } from "../../../shared/api/task";
+import { recordAudit, requestActor } from "../task-audit";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
 
 /**
@@ -156,16 +157,23 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
         return err("task is archived — archived tasks are read-only", 409);
       }
       const updated = updateQueuedTaskMessage(message.id, task.id, body.message);
-      return updated ? json(apiTaskMessage(updated)) : err("only queued messages can be edited", 409);
+      if (!updated) return err("only queued messages can be edited", 409);
+      recordAudit(task.id, "edit", requestActor(req), `message ${message.id}`);
+      return json(apiTaskMessage(updated));
     })();
   }
   if (method === "DELETE") {
     const cancelled = cancelQueuedTaskMessage(message.id, task.id);
     if (!cancelled) return err("only queued messages can be cancelled", 409);
+    const actor = requestActor(req);
+    recordAudit(task.id, "cancel", actor, `message ${message.id}`);
     // Cancelling a queued auto-fix round means "don't send this one" (Skip);
     // any other workflow's generated instruction pauses its workflow.
-    if (message.workflow_id && !skipCancelledRound(message.workflow_id, message.id)) {
-      changeWorkflowState(message.workflow_id, "paused", "Generated instruction cancelled by user");
+    if (message.workflow_id && skipCancelledRound(message.workflow_id, message.id)) {
+      recordAudit(task.id, "autopilot-skip", actor, `message ${message.id} cancelled`);
+    } else if (message.workflow_id) {
+      const paused = changeWorkflowState(message.workflow_id, "paused", "Generated instruction cancelled by user");
+      recordAudit(task.id, "workflow-pause", actor, `${paused.id} (${paused.type}) · its message ${message.id} was cancelled`);
     }
     removeMessageAttachments(task.id, message.id);
     return json(apiTaskMessage(cancelled));
@@ -179,6 +187,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
  * way a `now` send is, steered in or started by stopping the running turn.
  */
 export function taskMessageSendNowRoute(
+  req: Request,
   path: string,
   method: string,
   cfg: WispConfig,
@@ -206,6 +215,7 @@ export function taskMessageSendNowRoute(
     try {
       const result = await sendQueuedMessageNow(task.id, message.id, adapters, cfg);
       if (!result) return err("only queued messages can be sent now", 409);
+      recordAudit(task.id, "send-now", requestActor(req), `message ${message.id}${result.interrupted ? " · interrupted the running turn" : ""}`);
       return json<SendResponse>({
         ...apiTask(getTask(task.id)!),
         disposition: result.disposition,

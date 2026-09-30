@@ -7,6 +7,7 @@ import { createTask, createTurn, db, finishTurn, freeSlot, getTask, newTaskId, s
 import { exportTask, purgeTask, taskStorage } from "../src/task-retention";
 import { archiveTaskWithCleanup, clearArchiveCleanup } from "../src/archive-jobs";
 import { retentionRoute } from "../src/routes/retention";
+import { recordAudit, taskAudit } from "../src/task-audit";
 import { deliverOutbox, taskDeliveryActive } from "../src/outbox";
 import type { TaskCache } from "../src/task-cache";
 
@@ -89,6 +90,8 @@ test("purge leaves no row keyed by the task behind, even where foreign keys are 
     [workflow, f.id],
   );
   db.run(`INSERT INTO workflow_history (workflow_id, at, kind, detail) VALUES (?, 'now', 'fixture', 'kept')`, [workflow]);
+  recordAudit(f.id, "archive", "web");
+  expect(taskAudit(f.id)).toHaveLength(1);
   // A profile whose old orphans kept enforcement off (enforceForeignKeys):
   // nothing cascades there, so purge must name every table itself.
   const enforced = (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys;
@@ -101,7 +104,7 @@ test("purge leaves no row keyed by the task behind, even where foreign keys are 
   const keyed = (db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
     .map(({ name }) => name)
     .filter((name) => (db.query(`PRAGMA table_info(${name})`).all() as { name: string }[]).some((c) => c.name === "task_id"));
-  expect(keyed).toEqual(expect.arrayContaining(["task_contexts", "workflows", "turns", "task_messages"]));
+  expect(keyed).toEqual(expect.arrayContaining(["task_contexts", "workflows", "turns", "task_messages", "task_audit"]));
   for (const table of keyed) {
     expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE task_id = ?`).get(f.id), table).toEqual({ n: 0 });
   }

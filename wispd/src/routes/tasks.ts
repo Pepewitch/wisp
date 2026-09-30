@@ -54,6 +54,8 @@ import {
 } from "./send-agent";
 import { conversationDetail, conversationResponse, taskUsageResponse } from "./task-conversation";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
+import { autopilotSwitchDetail, recordAudit, recordSendAudit, requestActor, type TaskAuditActor } from "../task-audit";
+import { taskAuditRoute } from "./task-audit";
 
 /** GET /api/tasks */
 export function listTasksRoute(url: URL): Response {
@@ -139,10 +141,12 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
  * auto-merge note. Never fatal: the task row already exists, and failing the
  * request here would strand it in `creating`. The response says what took.
  */
-function armRequestedAutopilot(taskId: string, requested: unknown): void {
+function armRequestedAutopilot(taskId: string, requested: unknown, actor: TaskAuditActor): void {
   if (!isRecord(requested) || (requested.autoMerge !== true && requested.autoFix !== true)) return;
   try {
-    setAutopilot(taskId, { autoMerge: requested.autoMerge === true, autoFix: requested.autoFix === true });
+    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge === true, autoFix: requested.autoFix === true });
+    const detail = autopilotSwitchDetail(null, armed);
+    if (detail) recordAudit(taskId, "autopilot", actor, detail);
   } catch (error) {
     console.warn(`[wisp] task ${taskId}: could not arm auto-merge: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -261,7 +265,9 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
         }
       }
       if (!task) return err("could not allocate a unique task id after 5 attempts", 500);
-      armRequestedAutopilot(task.id, body.autopilot);
+      const actor = requestActor(req);
+      recordAudit(task.id, "create", actor, `${harness}${model ? ` ${model}` : ""}, ${mode}`);
+      armRequestedAutopilot(task.id, body.autopilot, actor);
       const release = reserveTaskCapacity(task.id, cfg);
       handedOff = true;
       void backgroundPass(
@@ -344,6 +350,7 @@ async function sendTaskResponse(
       agent,
       operation ? "next-turn-only" : body.when === "now" ? "now" : body.when === "next-turn" ? "hold" : "allow-steer",
     );
+    recordSendAudit(task.id, result, requestActor(req));
     return json<SendResponse>({
       ...apiTask(getTask(task.id)!),
       disposition: result.disposition,
@@ -398,6 +405,7 @@ function basicTaskAction(
       } catch (error) {
         return err(String(error instanceof Error ? error.message : error), 409);
       }
+      recordAudit(task.id, "interrupt", requestActor(req));
       return json({ ok: true });
     })();
   }
@@ -409,6 +417,7 @@ function basicTaskAction(
       { harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
       true,
     );
+    recordAudit(task.id, "fresh-session", requestActor(req));
     emit({ type: "task", taskId: task.id, state: task.state, stateDetail: task.state_detail, seq: task.seq });
     return json(apiTask(updated));
   }
@@ -417,13 +426,16 @@ function basicTaskAction(
       if (task.archived) return err("task is archived — archived tasks are read-only", 409);
       if (!task.worktree_path || !task.branch) return err("task has no worktree/branch", 409);
       try {
-        return json({ ok: true, output: await pushBranch(task.worktree_path, task.branch) });
+        const output = await pushBranch(task.worktree_path, task.branch);
+        recordAudit(task.id, "push", requestActor(req), task.branch);
+        return json({ ok: true, output });
       } finally {
         // a push emits no task event, yet it is exactly what moves `unpushed`
         invalidateStatus(task.id);
       }
     })();
   }
+  if (action === "audit" && method === "GET") return taskAuditRoute(task, url);
   if (action === "attach" && method === "GET") {
     const def = adapters[task.harness];
     if (!def || !task.session_id) return json<AttachResponse>({ argv: null, cwd: null, message: "no session yet" });
@@ -492,6 +504,7 @@ export function taskRoute(
       // Renaming is metadata, not a state transition: keep seq/outbox stable,
       // but wake every UI with enough data to patch without broad refetches.
       const updated = updateTaskAndEmit(task.id, { title, custom_title: 1 }, "title")!;
+      recordAudit(task.id, "rename", requestActor(req), title);
       return json(apiTask(updated));
     })();
   }
@@ -619,6 +632,7 @@ export function taskRoute(
       if (!task.session_id) return err("no session yet — compaction needs a session to compact; run a turn first", 409);
       try {
         const result = await compacts.compact(task, def);
+        recordAudit(task.id, "compact", requestActor(req), result.newSessionId ? "new session" : null);
         // The compaction happened outside any turn, so no stream reported the
         // model call that followed it and wisp does not know the new size. The
         // reading it replaces is now a number about a conversation that no
@@ -664,7 +678,7 @@ export function taskRoute(
       const stopAutopilot = parsed.stopAutopilot ?? false;
       if (typeof stopAutopilot !== "boolean") return err(`stopAutopilot must be a boolean, got ${typeName(stopAutopilot)}`, 400);
       const archiveTask = getTask(task.id) ?? task;
-      const result = await archiveTaskRows([archiveTask], force, cfg, { stopAutopilot });
+      const result = await archiveTaskRows([archiveTask], force, cfg, { stopAutopilot, actor: requestActor(req) });
       if ("error" in result) return err(result.error, result.status);
       const archived = result.archived[0]!;
       return json({ ok: true, branch: archived.branch, note: archived.note });

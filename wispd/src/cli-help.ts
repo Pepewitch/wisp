@@ -50,6 +50,9 @@ const COMMAND_USAGE = {
                                                     (${COMMAND} workflow --help lists their parameters)`,
   pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | resume | send-now | skip | history] [--json]
                                                     auto-merge and auto-fix for the task's PR (history: what it did)`,
+  audit: `  ${COMMAND} audit <task> [--limit <1-500>] [--json]  who did what to the task, newest first (default: the newest 100):
+                                                    web, desktop, cli, agent:<task> (an agent running in that task),
+                                                    autopilot, workflow:<id>, system, or api (an unnamed client)`,
   brief: `  ${COMMAND} brief show [task] [--json]              the agent's latest task brief, its turn, and how current it is
   ${COMMAND} brief enable|disable [task]             ask each turn's agent for a short brief (off by default;
                                                     enabling starts with the next turn and never starts one)

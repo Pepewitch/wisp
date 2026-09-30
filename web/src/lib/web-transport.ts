@@ -51,6 +51,14 @@ export function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) ?? ""
 }
 
+/**
+ * Names this client for the daemon's task audit ("who archived this?"). A
+ * self-report for accountability, not authentication: the bearer token is what
+ * the daemon trusts. Desktop never sends it from the webview; its native proxy
+ * sets `desktop` on everything it relays.
+ */
+const CLIENT_HEADER = { "x-wisp-client": "web" } as const
+
 /** The bearer header, or nothing when this browser has no token yet. */
 function authHeaders(): Record<string, string> {
   const token = getToken()
@@ -174,7 +182,7 @@ async function request<T>(
 ): Promise<T> {
   for (;;) {
     throwIfAborted(options.signal)
-    const headers: Record<string, string> = { ...authHeaders() }
+    const headers: Record<string, string> = { ...authHeaders(), ...CLIENT_HEADER }
 
     let body: string | undefined
     if (options.body !== undefined) {
@@ -204,6 +212,7 @@ async function upload<T>(path: string, body: Blob, signal?: AbortSignal): Promis
       method: "POST",
       headers: {
         ...authHeaders(),
+        ...CLIENT_HEADER,
         "content-type": "application/octet-stream",
       },
       body,
