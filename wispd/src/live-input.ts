@@ -254,10 +254,13 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
   return claude;
 }
 
-/** How long an answer waits for a model call its own queued input may still start. */
-const FOLLOW_ON_MS = 1_500;
-/** How long a lingering process with nothing left in the background waits for the model call that end may wake. */
-const LINGER_QUIET_MS = 10_000;
+/**
+ * `followOnMs`: how long an answer waits for a model call input written during
+ * it may still start. `quietMs`: how long a lingering process with nothing left
+ * in the background waits for a call that end may wake before its input closes.
+ * A test seam; production never changes them.
+ */
+export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000 };
 
 /** Live Claude processes by task, from spawn until the runner sees them exit. */
 const claudeProcesses = new Map<string, ClaudeLiveProcess>();
@@ -296,10 +299,18 @@ export class ClaudeLiveProcess {
   private readonly followUp = createBackgroundFollowUp();
   private current: LiveTurn;
   private phaseValue: "turn" | "settling" | "lingering" = "turn";
+  /**
+   * Its input is closing or closed: set the moment `close` is asked for, not
+   * when the write chain gets to it, so no turn is handed a process that is
+   * about to exit. The exit watcher starts the next turn with `--resume`.
+   */
+  private closing = false;
   private between: LiveOutputSink | null = null;
   /** Lines held while a settle is in flight and a model call has already begun. */
   private held: string[] | null = null;
-  private followOn: ReturnType<typeof setTimeout> | null = null;
+  private followOn: { turnId: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  /** Bumped whenever the follow-on wait is cancelled or re-armed, so a wait already firing can tell. */
+  private followOnGeneration = 0;
   private quiet: ReturnType<typeof setTimeout> | null = null;
   private settling: Promise<void> = Promise.resolve();
   /** What the last task notification since the turn settled said, for the follow-up turn's reason. */
@@ -320,9 +331,12 @@ export class ClaudeLiveProcess {
     this.open(this.current, "spawned");
   }
 
-  /** `lingering` once the settled turn is recorded and the process may take the next one. */
-  get phase(): "turn" | "settling" | "lingering" {
-    return this.phaseValue;
+  /**
+   * `lingering` once the settled turn is recorded and the process may take the
+   * next one; `closing` once its input is closing, when it may not.
+   */
+  get phase(): "turn" | "settling" | "lingering" | "closing" {
+    return this.closing ? "closing" : this.phaseValue;
   }
 
   /** The turn this process is serving, or the settled one it last served. */
@@ -348,9 +362,25 @@ export class ClaudeLiveProcess {
 
   /** Take the next turn while lingering: its prompt goes to the live process. */
   adopt(turn: LiveTurn, prompt: string, attachments: StoredAttachment[]): Promise<void> {
-    if (this.phaseValue !== "lingering") throw new Error("the live Claude process is not waiting for a turn");
+    if (this.phase !== "lingering") throw new Error("the live Claude process is not waiting for a turn");
+    const settled = this.current;
+    const between = this.between;
     this.open(turn, "adopted");
-    return this.input(envelopeFor(this.strategy, this.options.def, prompt, attachments));
+    return this.input(envelopeFor(this.strategy, this.options.def, prompt, attachments)).catch((error) => {
+      // It never took the prompt: an exit the watcher has not seen yet, or a
+      // process that stopped reading. Back to the settled turn, input closed,
+      // so the exit watcher starts the next turn on a resumed process.
+      this.closing = true;
+      this.clearTimers();
+      if (liveInputs.get(this.taskId)?.turnId === turn.turnId) liveInputs.delete(this.taskId);
+      if (liveTurns.get(this.taskId) === turn.turnId) liveTurns.delete(this.taskId);
+      if (this.current.turnId === turn.turnId) {
+        this.current = settled;
+        this.between = between;
+        this.phaseValue = "lingering";
+      }
+      throw error;
+    });
   }
 
   /** The process is going away on purpose: nothing it prints from now on opens a turn. */
@@ -422,6 +452,8 @@ export class ClaudeLiveProcess {
 
   private input(line: string): Promise<void> {
     this.followUp.noteInput();
+    // More input, so any wait for the call it may get starts over.
+    if (this.followOn) this.armFollowOn(this.followOn.turnId);
     return this.write(line);
   }
 
@@ -440,6 +472,8 @@ export class ClaudeLiveProcess {
   }
 
   private close(): Promise<void> {
+    this.closing = true;
+    this.clearTimers();
     return this.serialize(async () => {
       if (this.closed) return;
       this.closed = true;
@@ -451,19 +485,29 @@ export class ClaudeLiveProcess {
     const verdict = this.followUp.closesTurn(result);
     if (verdict === "close") void closeLiveInput(this.taskId, this.current.turnId);
     else if (verdict === "linger") this.linger();
-    else if (verdict === "wait" && this.options.linger && !this.followOn) {
-      // Input written during this call may still get a call of its own, which
-      // starts at once when it does. Settling first would file its answer as
-      // background work's.
-      const turnId = this.current.turnId;
-      this.followOn = setTimeout(() => {
+    // Input written during this call may still get a call of its own, which
+    // starts at once when it does. Settling first would file its answer as
+    // background work's.
+    else if (verdict === "wait" && this.options.linger && !this.followOn) this.armFollowOn(this.current.turnId);
+  }
+
+  private armFollowOn(turnId: number): void {
+    this.clearFollowOn();
+    const generation = this.followOnGeneration;
+    const timer = setTimeout(() => {
+      // One more I/O cycle first: a `system/init` already in the pipe is the
+      // call starting, and it cancels this wait before anything settles. Input
+      // written meanwhile re-arms it; either one bumps the generation.
+      setImmediate(() => {
+        if (generation !== this.followOnGeneration) return;
         this.followOn = null;
         if (this.phaseValue !== "turn" || this.current.turnId !== turnId) return;
         this.followUp.inputAnswered();
         if (this.followUp.activeCount() > 0) this.linger();
         else void closeLiveInput(this.taskId, turnId);
-      }, FOLLOW_ON_MS);
-    }
+      });
+    }, lingerTiming.followOnMs);
+    this.followOn = { turnId, timer };
   }
 
   /** Settle the current turn and keep the process for its background work. */
@@ -472,7 +516,7 @@ export class ClaudeLiveProcess {
     const turn = this.current;
     // Without the hooks (or while a Stop owns the turn) the turn stays open
     // as it always did; stdin stays open either way.
-    if (!hooks || this.closed || !hooks.canLinger(turn.turnId)) return;
+    if (!hooks || this.closing || !hooks.canLinger(turn.turnId)) return;
     this.clearTimers();
     this.phaseValue = "settling";
     this.followUp.inputAnswered();
@@ -511,7 +555,7 @@ export class ClaudeLiveProcess {
    * nothing more to do. Ending its input lets it exit.
    */
   private checkQuiet(): void {
-    if (this.phaseValue !== "lingering" || this.followUp.activeCount() > 0) {
+    if (this.phase !== "lingering" || this.followUp.activeCount() > 0) {
       if (this.quiet) clearTimeout(this.quiet);
       this.quiet = null;
       return;
@@ -519,13 +563,14 @@ export class ClaudeLiveProcess {
     if (this.quiet) return;
     this.quiet = setTimeout(() => {
       this.quiet = null;
-      if (this.phaseValue === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
-    }, LINGER_QUIET_MS);
+      if (this.phase === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
+    }, lingerTiming.quietMs);
     this.quiet.unref?.();
   }
 
   private clearFollowOn(): void {
-    if (this.followOn) clearTimeout(this.followOn);
+    this.followOnGeneration += 1;
+    if (this.followOn) clearTimeout(this.followOn.timer);
     this.followOn = null;
   }
 

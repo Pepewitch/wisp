@@ -29,19 +29,34 @@ export function snapshotTaskStates(
 }
 
 /**
+ * The tasks whose running turn is one background work woke on its own after
+ * the agent's answer (a monitor event, a background command finishing).
+ */
+export function snapshotBackgroundRuns(
+  tasks: readonly Pick<ApiTask, "id" | "state" | "latest_turn_background">[]
+): Set<string> {
+  return new Set(tasks.filter((task) => task.state === WATCHED_FROM && task.latest_turn_background).map((task) => task.id))
+}
+
+/**
  * Every task whose previous observation was `running` and whose current row
  * is anything else. Archived rows are skipped: archiving interrupts the turn,
- * and telling someone about a task they just put away is noise.
+ * and telling someone about a task they just put away is noise. So is a turn
+ * background work woke, which nobody asked for, when it ends done: the one
+ * seen running (`backgroundRuns`; any, without it) and the latest are both one.
+ * One that ends needing the person, or failing, is still news.
  */
 export function finishedTransitions(
   previous: TaskStateSnapshot,
-  tasks: readonly ApiTask[]
+  tasks: readonly ApiTask[],
+  backgroundRuns?: ReadonlySet<string>
 ): TaskTransition[] {
   const transitions: TaskTransition[] = []
   for (const task of tasks) {
     const from = previous.get(task.id)
     if (from !== WATCHED_FROM || task.state === WATCHED_FROM || task.archived)
       continue
+    if (task.state === "done" && task.latest_turn_background && (backgroundRuns?.has(task.id) ?? true)) continue
     transitions.push({ task, from, to: task.state })
   }
   return transitions
@@ -107,20 +122,26 @@ export interface TaskTransitionTracker {
 
 export function createTaskTransitionTracker(): TaskTransitionTracker {
   const snapshots = new Map<string, TaskStateSnapshot>()
+  const backgroundRuns = new Map<string, ReadonlySet<string>>()
   const autopilot = new Map<string, ReadonlyMap<string, string>>()
   const announced = new Map<string, Map<string, string>>()
   return {
     observe(connectionId, tasks) {
       const previous = snapshots.get(connectionId)
+      const previousBackground = backgroundRuns.get(connectionId)
       const previousAutopilot = autopilot.get(connectionId) ?? new Map<string, string>()
       const told = announced.get(connectionId) ?? new Map<string, string>()
       announced.set(connectionId, told)
       snapshots.set(connectionId, snapshotTaskStates(tasks))
+      backgroundRuns.set(connectionId, snapshotBackgroundRuns(tasks))
       autopilot.set(connectionId, snapshotAutopilot(tasks))
-      return previous ? [...finishedTransitions(previous, tasks), ...autopilotTransitions(previousAutopilot, tasks, told)] : []
+      return previous
+        ? [...finishedTransitions(previous, tasks, previousBackground), ...autopilotTransitions(previousAutopilot, tasks, told)]
+        : []
     },
     forget(connectionId) {
       snapshots.delete(connectionId)
+      backgroundRuns.delete(connectionId)
       autopilot.delete(connectionId)
       announced.delete(connectionId)
     },

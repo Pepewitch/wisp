@@ -75,10 +75,14 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   because closing stdin makes the CLI kill that work. The lingering process is
   the settled turn's background work (its group stays recorded, so Stop,
   archive and the badge treat it as such), it takes the next message as a new
-  turn row, and a model call the work wakes becomes a follow-up turn; a turn
-  never reopens. A message for another agent stops it first. Only this daemon
-  owns its stdin: after a restart it is ordinary background work until it
-  exits. See `ClaudeLiveProcess` in `live-input.ts` and `turn-process.ts`.
+  turn row, and a model call the work wakes becomes a follow-up turn
+  (`turns.origin = 'background'`, which raises no finish notification and
+  never opens over a task that needs the person); a turn never reopens. A
+  message for another agent stops it first, and so does a closing input: the
+  next turn then waits for the exit and resumes. Only the daemon that spawned
+  it owns its stdin, so boot recovery stops any it finds rather than resume
+  the session beside it. See `ClaudeLiveProcess` in `live-input.ts` and
+  `turn-process.ts`.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design

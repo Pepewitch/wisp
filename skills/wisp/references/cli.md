@@ -186,8 +186,9 @@ process as background work, which `show` names in the harness's own words
 under its group. The Claude process stays alive for it, so the next `send`
 becomes a new turn in that same process, and a model call the background work
 wakes on its own (a monitor event, the process finishing) is recorded as a
-turn of its own. A message for a different agent or model stops that work
-first.
+turn of its own, which sends no finish notification or webhook. A message for
+a different agent or model stops that work first, and so does a daemon
+restart, which cannot hand the old process the next message.
 `interrupt` explicitly stops the active turn and all tracked task groups and waits
 for completion, escalating if needed. Sending and archiving are refused while
 Stop is pending or incomplete; retry Stop after resolving the reported failure.

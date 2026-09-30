@@ -69,6 +69,10 @@ describe("the words for work outliving its turn", () => {
     expect(backgroundLingers(background)).toBe(true)
   })
 
+  it("says only that work runs when an older daemon sends no detail", () => {
+    expect(backgroundLabel({ state: "running", groups: 2 })).toBe("Background work running")
+  })
+
   it("counts every task one lingering process holds", () => {
     const background = lingering()
     background.details![0]!.tasks!.push({ name: "watch tests", kind: "local_bash", turn: 5, since: minutesAgo(1) })
@@ -76,10 +80,10 @@ describe("the words for work outliving its turn", () => {
     expect(backgroundDetail(background, Date.now())!.split("\n")).toHaveLength(2)
   })
 
-  it("keeps the process-group wording for a group no harness is describing", () => {
+  it("counts a group no harness is describing by its live processes", () => {
     const background = lingering()
     delete background.details![0]!.tasks
-    expect(backgroundLabel(background)).toBe("1 background process running")
+    expect(backgroundLabel(background)).toBe("3 background processes running")
     expect(backgroundDetail(background, Date.now())).toMatch(/^turn 5: claude, node · 3m 0\ds past the turn$/)
     expect(backgroundLingers(background)).toBe(false)
   })

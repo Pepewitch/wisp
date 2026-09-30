@@ -1,7 +1,7 @@
 import { appendFileSync, openSync } from "node:fs";
 import { join } from "node:path";
 import type { AdapterDef } from "./adapters";
-import { attachmentManifest, formatAttachNote, type StoredAttachment } from "./attachments";
+import { attachmentManifest, formatAttachNote, restoreMessageAttachments, type StoredAttachment } from "./attachments";
 import { LOG_DIR, transcriptBudgetBytes, type WispConfig } from "./config";
 import { emit } from "./events";
 import { backgroundPass, homeIsDraining } from "./home-lifetime";
@@ -15,17 +15,29 @@ import {
   type LiveOutputSink,
   type LiveTurn,
 } from "./live-input";
-import { closeDescriptors, fileOverCap } from "./process-watch";
+import { closeDescriptors, fileOverCap, pidIdentity } from "./process-watch";
 import { settlePipes } from "./pipe-drain";
-import { signalProcessTree } from "./process-tree";
+import { processGroupEnded, signalProcessTree } from "./process-tree";
 import type { LineTarget } from "./recording/turn-recorder";
 import { TurnRecorder } from "./recording/turn-recorder";
-import { createTurn, db, getTask, getTurn, nextTurnNumber, runningTurn, setTaskFields, setTurnKillDetail, transition } from "./store";
-import { processStop, processStopPending, refreshProcessGroups, transferProcessGroup } from "./task-processes";
+import {
+  createTurn,
+  db,
+  getTask,
+  getTurn,
+  nextTurnNumber,
+  reconcileTaskState,
+  requeueStartedTaskMessage,
+  runningTurn,
+  setTaskFields,
+  setTurnKillDetail,
+  transition,
+} from "./store";
+import { processStop, processStopPending, refreshProcessGroups, settledGroupLeaders, transferProcessGroup } from "./task-processes";
 import { finalizeTurn } from "./turn-finalize";
 import { isTaskStopping, waitForInterrupt } from "./turn-interrupt";
 import type { TurnNotes } from "./autopilot/store";
-import type { Task } from "./types";
+import type { Task, TurnOrigin } from "./types";
 
 /**
  * A spawned harness process and the turn rows it serves.
@@ -84,6 +96,12 @@ export interface TurnProcess {
   settled: boolean;
   /** Being stopped so a turn for another agent can start. */
   ending: boolean;
+  /**
+   * A turn being handed to the lingering process: settles once its prompt is
+   * written, or once the turn is undone because the process could not take it.
+   * The exit watcher waits for it before reading which turn it was serving.
+   */
+  adopting?: Promise<void>;
 }
 
 /** Live Claude processes that may linger past a turn and take the next one, by task. */
@@ -154,7 +172,14 @@ export function adoptable(proc: TurnProcess): boolean {
  * and process group there. Sync on purpose, like startTurn's spawn block: the
  * row and the move must not be split by the event loop.
  */
-export function openSlot(proc: TurnProcess, taskId: string, n: number, prompt: string, attachments: StoredAttachment[]): TurnSlot {
+export function openSlot(
+  proc: TurnProcess,
+  taskId: string,
+  n: number,
+  prompt: string,
+  attachments: StoredAttachment[],
+  origin: TurnOrigin | null = null,
+): TurnSlot {
   const outPath = join(LOG_DIR, `${taskId}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${taskId}-turn${n}.err.log`);
   const outFd = openSync(outPath, "a");
@@ -168,7 +193,7 @@ export function openSlot(proc: TurnProcess, taskId: string, n: number, prompt: s
   let turnId: number;
   try {
     turnId = db.transaction(() => {
-      const id = createTurn(taskId, n, prompt, proc.child.pid, outPath, proc.pidStartTime, attachmentManifest(attachments), "recorder-v1", proc.agent);
+      const id = createTurn(taskId, n, prompt, proc.child.pid, outPath, proc.pidStartTime, attachmentManifest(attachments), "recorder-v1", proc.agent, origin);
       transferProcessGroup(proc.slot.turnId, id);
       return id;
     })();
@@ -185,7 +210,13 @@ export function openSlot(proc: TurnProcess, taskId: string, n: number, prompt: s
   return proc.slot;
 }
 
-/** A message's turn on the lingering process: written to its stdin, as a steer would be, but as a turn of its own. */
+/**
+ * A message's turn on the lingering process: written to its stdin, as a steer
+ * would be, but as a turn of its own. When the process cannot take it after
+ * all (it exited as the prompt was written, before the watcher saw the exit),
+ * the turn is undone and the message goes back to the queue, so the exit
+ * watcher starts it on a resumed process instead of failing it.
+ */
 export function adoptTurn(
   proc: TurnProcess,
   task: Task,
@@ -194,9 +225,11 @@ export function adoptTurn(
   prompt: string,
   attachments: StoredAttachment[],
   autopilot: TurnNotes | null,
+  messageId: string | undefined,
 ): void {
+  const settled = proc.slot;
+  const before = getTask(task.id);
   const slot = openSlot(proc, task.id, n, message, attachments);
-  autopilot?.delivered();
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   const turn: LiveTurn = { turnId: slot.turnId, turn: n, sink: slot.sink };
@@ -207,7 +240,45 @@ export function adoptTurn(
   } catch (error) {
     write = Promise.reject(error);
   }
-  void write.catch((error) => failLiveTurn(proc.child, slot.turnId, slot.sink, new LiveTransportError("live input setup", error)));
+  proc.adopting = write.then(
+    () => autopilot?.delivered(),
+    (error) => {
+      if (messageId && proc.slot === slot && undoAdoption(proc, settled, slot, messageId, before)) {
+        console.error(`[wisp] task ${task.id}: the lingering harness could not take turn ${n} (${String(error)}); message ${messageId} is queued again`);
+        return;
+      }
+      failLiveTurn(proc.child, slot.turnId, slot.sink, new LiveTransportError("live input setup", error));
+    },
+  );
+}
+
+/**
+ * Take back a turn the harness never received: its row goes, its message and
+ * attachments return to the queue, and the task reads what the settled turn
+ * left it. The next turn reuses its number, as after a failed start.
+ */
+function undoAdoption(proc: TurnProcess, settled: TurnSlot, slot: TurnSlot, messageId: string, before: Task | null): boolean {
+  slot.recorder?.finish();
+  closeDescriptors(slot.fds);
+  const requeued = db.transaction(() => {
+    const message = requeueStartedTaskMessage(messageId, proc.taskId, slot.n);
+    if (!message) return false;
+    transferProcessGroup(slot.turnId, settled.turnId);
+    // Nothing in it happened, so the row goes rather than settling as a failure.
+    db.run(`DELETE FROM turns WHERE id = ? AND status = 'running'`, [slot.turnId]);
+    setTaskFields(proc.taskId, { turn_count: slot.n - 1 });
+    return true;
+  })();
+  if (!requeued) return false;
+  restoreMessageAttachments(proc.taskId, messageId, slot.n);
+  liveChildren.delete(slot.turnId);
+  liveChildren.set(settled.turnId, proc.child);
+  proc.slot = settled;
+  proc.settled = true;
+  if (before) reconcileTaskState(proc.taskId, before.state, before.state_detail);
+  // Alive but deaf: stop it, so its exit watcher starts the message on a resumed process.
+  if (childRunning(proc.child)) endLingeringProcess(proc, "it could not take the next message");
+  return true;
 }
 
 export function lingerHooks(proc: TurnProcess): ClaudeLingerHooks {
@@ -252,12 +323,14 @@ async function settleLingeringTurn(proc: TurnProcess, turnId: number): Promise<v
  */
 function openFollowUpTurn(proc: TurnProcess, reason: string): LiveTurn | null {
   const task = getTask(proc.taskId);
-  if (!task || task.archived || proc.ending || !childRunning(proc.child) || homeIsDraining() || isTaskStopping(task.id) ||
-    processStopPending(task.id) || runningTurn(task.id)) return null;
+  // Only over a task that is done: one that needs the person or failed says
+  // so until the person acts, and a call nobody asked for must not clear that.
+  if (!task || task.archived || task.state !== "done" || proc.ending || !childRunning(proc.child) || homeIsDraining() ||
+    isTaskStopping(task.id) || processStopPending(task.id) || runningTurn(task.id)) return null;
   const n = nextTurnNumber(task.id, task.turn_count);
   let slot: TurnSlot;
   try {
-    slot = openSlot(proc, task.id, n, reason, []);
+    slot = openSlot(proc, task.id, n, reason, [], "background");
   } catch (error) {
     console.error(`[wisp] task ${task.id}: could not record a background follow-up as turn ${n}: ${String(error)}`);
     return null;
@@ -318,6 +391,45 @@ export function endLingeringProcess(proc: TurnProcess, why: string): void {
   const timer = setTimeout(() => childRunning(proc.child) && killChildTree(proc.child, "SIGKILL"), KILL_GRACE_MS);
   timer.unref?.();
   void proc.child.exited.finally(() => clearTimeout(timer));
+}
+
+/**
+ * Boot: stop every harness an earlier daemon kept alive past its turn for
+ * background work. This daemon cannot write to its stdin, so it can never take
+ * the next message; a send would start `--resume` beside it while it keeps
+ * writing the background work's own calls into the same session. Only a
+ * leader whose identity is confirmed is signalled, and never one this daemon
+ * started itself. Its group goes with it, as Stop would take it.
+ */
+export async function stopOrphanedHarnesses(graceMs = KILL_GRACE_MS): Promise<void> {
+  const leaders = settledGroupLeaders();
+  if (!leaders.length) return;
+  await Promise.all(leaders.map(({ turnId, taskId }) => stopOrphanedHarness(turnId, taskId, graceMs)));
+  await refreshProcessGroups();
+}
+
+async function stopOrphanedHarness(turnId: number, taskId: string, graceMs: number): Promise<void> {
+  const turn = getTurn(turnId);
+  const pid = turn?.pid;
+  if (!turn || !pid || liveChildren.has(turnId) || turnProcesses.get(taskId)?.child.pid === pid) return;
+  const ours = async (): Promise<boolean> => (await pidIdentity(pid, turn.pid_start_time, turn.started_at)) === "alive";
+  if (!(await ours())) return;
+  console.error(
+    `[wisp] task ${taskId}: turn ${turn.n}'s harness (pid ${pid}) outlived the previous daemon for the background work it started; ` +
+      "stopping it, so the next turn does not run beside it in the same session",
+  );
+  try {
+    appendFileSync(turn.log_file, "· Wisp restarted and stopped the background work this turn left running: the new daemon could not give its process the next message\n");
+  } catch {
+    // The log line is a courtesy; the stop is what matters.
+  }
+  const signal = async (sig: "SIGTERM" | "SIGKILL"): Promise<void> => {
+    if (await ours()) signalProcessTree(pid, sig, () => process.kill(pid, sig));
+  };
+  await signal("SIGTERM");
+  if (await processGroupEnded(pid, graceMs)) return;
+  await signal("SIGKILL");
+  await processGroupEnded(pid, Math.max(graceMs, 1000));
 }
 
 export function childRunning(child: ReturnType<typeof Bun.spawn>): boolean {
@@ -403,8 +515,10 @@ export async function watchTurn(
   const exitCode = await child.exited;
   if (capTimer !== null) clearInterval(capTimer);
   // A settle in flight records its turn (and may open the follow-up a held
-  // call belongs to) before anything below reads which turn this was.
+  // call belongs to), and a turn being handed over is taken or undone, before
+  // anything below reads which turn this was.
   await proc.claude?.settled();
+  await proc.adopting;
   const slot = proc.slot;
   await refreshProcessGroups(taskId, slot.turnId);
   await waitForInterrupt(slot.turnId);

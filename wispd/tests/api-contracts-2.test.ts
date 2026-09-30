@@ -219,6 +219,8 @@ describe("daemon API contracts, batch 2", () => {
       "n",
       "omitted_bytes",
       "omitted_records",
+      // null for a message's turn, "background" for one background work woke
+      "origin",
       "pid",
       "pid_start_time",
       "prompt",

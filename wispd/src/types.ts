@@ -12,6 +12,7 @@ import type {
   TurnCaptureMode,
   TurnCaptureState,
   TurnDiagnosticState,
+  TurnOrigin,
   TurnStatus,
 } from "../../shared/api/task";
 export { TASK_MODES, TASK_STATES } from "../../shared/api/task";
@@ -41,6 +42,7 @@ export type {
   TurnDiagnosticState,
   TurnInput,
   TurnInputMode,
+  TurnOrigin,
   TurnStatus,
 } from "../../shared/api/task";
 
@@ -183,6 +185,8 @@ export interface Turn {
   /** Fast mode as requested for this turn; SQLite's 0/1. */
   requested_fast: number;
   prompt: string;
+  /** Who asked for it: NULL for a message, 'background' for a call background work woke (migration 21). */
+  origin: TurnOrigin | null;
   result: string | null;
   status: TurnStatus;
   pid: number | null;
@@ -323,9 +327,8 @@ export interface OutboxRow {
 export function backgroundSummary(task: ApiTask): string {
   switch (task.background?.state) {
     case "running": {
-      // The count the web's label gives: what the harness named, else the groups.
-      const details = task.background.details;
-      const count = details.length ? details.reduce((sum, group) => sum + (group.tasks?.length || 1), 0) : task.background.groups;
+      // The web label's count: processes the harness named, else each group's live members.
+      const count = task.background.details.reduce((sum, group) => sum + (group.tasks?.length || Math.max(1, group.processes)), 0);
       return count > 0 ? ` · ${count} background process${count === 1 ? "" : "es"} running` : " · background work running";
     }
     case "unknown": return " · background status unknown";

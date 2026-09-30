@@ -356,8 +356,8 @@ describe("completed work with a background process", () => {
     const send = vi.fn()
     const view = render(<><StateDot state={backgroundTask.state} background={backgroundTask.background} />
       <SteerBox task={backgroundTask} onSend={send} /></>, { wrapper: runtimeWrapper(transport) })
-    expect(screen.getByRole("img", { name: "Done · 1 background process running" })).toHaveClass("border-state-background")
-    expect(stateWord(backgroundTask)).toBe("Done · 1 background process running")
+    expect(screen.getByRole("img", { name: "Done · Background work running" })).toHaveClass("border-state-background")
+    expect(stateWord(backgroundTask)).toBe("Done · Background work running")
     const box = screen.getByPlaceholderText("Ask for changes, or / for commands")
     fireEvent.change(box, { target: { value: "continue working" } })
     fireEvent.keyDown(box, { key: "Enter" })

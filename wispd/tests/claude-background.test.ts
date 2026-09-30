@@ -1,15 +1,28 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import type { AdapterDef } from "../src/adapters";
+import { IMAGE_INPUT_STRATEGIES, type AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
-import { activeLiveInput } from "../src/live-input";
+import { activeLiveInput, ClaudeLiveProcess, closeLiveInput, lingerTiming } from "../src/live-input";
 import { processGroupAlive, signalProcessGroup } from "../src/process-tree";
-import { hasRunningTurn, interruptTurn, startTurn, submitTaskMessage } from "../src/runner";
-import { archiveTaskRows } from "../src/routes/archive";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
-import { BACKGROUND_SETTLE_MS, backgroundWork } from "../src/task-processes";
+import { processStartTime } from "../src/procid";
+import { hasRunningTurn, interruptTurn, recoverOrphanedTurns, startTurn, submitTaskMessage } from "../src/runner";
+import { archiveTaskRows } from "../src/domain/archive";
+import {
+  createTask,
+  createTurn,
+  db,
+  freeSlot,
+  getTask,
+  getTaskMessage,
+  listTasksWithLatestTurn,
+  newTaskId,
+  setTaskFields,
+  settleTurn,
+  turnsFor,
+} from "../src/store";
+import { BACKGROUND_SETTLE_MS, backgroundWork, recordProcessGroup, refreshProcessGroups } from "../src/task-processes";
 import { taskPreambleLines } from "../src/turn-input";
 
 const cfg: WispConfig = {
@@ -87,6 +100,11 @@ function claudeDef(lines: string[]): AdapterDef {
     parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
     attach: null,
   };
+}
+
+/** The webhook events a task has queued, oldest first. */
+function outboxEvents(taskId: string): string[] {
+  return (db.query("SELECT event FROM outbox WHERE task_id = ? ORDER BY id").all(taskId) as { event: string }[]).map((row) => row.event);
 }
 
 /** Every task this file started, so a failed case cannot leave its fake harness running. */
@@ -511,6 +529,11 @@ describe("Claude background work outliving its turn", () => {
     expect(readFileSync(first!.log_file, "utf8")).toContain('"task_notification"');
     expect(readFileSync(followUp!.log_file, "utf8")).toContain("SLEEPER_DONE");
     expect(getTask(task.id)!.state).toBe("done");
+    // Nobody asked for the follow-up: it is marked as background work's, and
+    // its finish is no news — the answer's done is the only webhook event.
+    expect([first!.origin, followUp!.origin]).toEqual([null, "background"]);
+    expect(listTasksWithLatestTurn(false, false).find((row) => row.task.id === task.id)?.latestTurn.background).toBe(true);
+    expect(outboxEvents(task.id)).toEqual(["done"]);
   });
 
   // A message written while the answering call runs is either folded into it
@@ -575,5 +598,229 @@ describe("Claude background work outliving its turn", () => {
 
     await interruptTurn(task.id, 500);
     await until(() => !processGroupAlive(second.pid!));
+  });
+});
+
+/** Run `body` with the lingering process's timers shortened, restoring them after. */
+async function withTiming(timing: Partial<typeof lingerTiming>, body: () => Promise<void>): Promise<void> {
+  const saved = { ...lingerTiming };
+  Object.assign(lingerTiming, timing);
+  try {
+    await body();
+  } finally {
+    Object.assign(lingerTiming, saved);
+  }
+}
+
+/** The fake's second life, once `marker` exists in its worktree: a plain answer, then EOF. */
+function resumedRun(marker: string, answer: string): string {
+  return `if [ -f ${marker} ]; then IFS= read -r first; ${init("session-resumed")}; ${emit({ type: "result", result: answer, session_id: "session-resumed" })}; IFS= read -r unexpected && exit 9; exit 0; fi`;
+}
+
+/**
+ * The lingering process can stop taking input while still alive: Wisp closed
+ * its stdin once nothing was left in the background, or it exited on its own
+ * and nobody has noticed yet. A message then must reach the agent through a
+ * resumed process, never be written into the one that is going away.
+ */
+describe("a lingering process that can no longer take the next message", () => {
+  const answered = [
+    "IFS= read -r first",
+    init("session-going"),
+    emit({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "dev", task_type: "local_bash", description: "dev" }] }),
+    emit({ type: "system", subtype: "task_started", task_id: "dev", is_backgrounded: true, task_type: "local_bash", description: "dev" }),
+    emit({ type: "result", result: "FIRST", session_id: "session-going" }),
+  ];
+
+  // Reproduced in review: a CLI that takes a moment to exit after its stdin
+  // closes was handed the next turn, the write failed on the closed input, and
+  // the task failed with the message marked delivered.
+  test("once its input is closing, the next message waits for its exit and starts on a resumed process", async () => {
+    await withTiming({ quietMs: 150 }, async () => {
+      const def = claudeDef([
+        resumedRun("resume", "SECOND"),
+        ...answered,
+        // the background work ends without waking the model: nothing is left
+        emit({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+        emit({ type: "system", subtype: "task_notification", task_id: "dev", status: "completed" }),
+        "while IFS= read -r line; do :; done",
+        "touch closed",
+        "sleep 1.5",
+      ]);
+      const task = makeTask();
+      startTurn(task, "start and finish", def, cfg);
+      await until(() => existsSync(join(task.worktree_path!, "closed")));
+      const first = turnsFor(task.id)[0]!;
+      expect(first).toMatchObject({ status: "done", result: "FIRST" });
+      expect(processGroupAlive(first.pid!)).toBe(true);
+
+      writeFileSync(join(task.worktree_path!, "resume"), "");
+      const sent = await submitTaskMessage(getTask(task.id)!, "one more thing", def, cfg);
+      expect(sent.disposition).toBe("queued-next");
+      await until(() => turnsFor(task.id)[1]?.status === "done");
+
+      const second = turnsFor(task.id)[1]!;
+      expect(second).toMatchObject({ status: "done", result: "SECOND", prompt: "one more thing" });
+      expect(second.pid).not.toBe(first.pid);
+      expect(getTaskMessage(sent.message.id)).toMatchObject({ status: "delivered", delivery: "started", turn_n: 2 });
+      expect(getTask(task.id)!.state).toBe("done");
+    });
+  });
+
+  test("a message it could not take after all goes back to the queue and starts on a resumed process", async () => {
+    const def = claudeDef([
+      resumedRun("resume", "SECOND"),
+      ...answered,
+      // still running, but no longer reading: the write of the next prompt fails
+      "exec 0<&-",
+      "touch deaf",
+      "sleep 30",
+    ]);
+    const task = makeTask();
+    startTurn(task, "start and stop listening", def, cfg);
+    await until(() => existsSync(join(task.worktree_path!, "deaf")) && turnsFor(task.id)[0]?.status === "done" &&
+      backgroundWork(task.id, BACKGROUND_SETTLE_MS).state === "running");
+    const first = turnsFor(task.id)[0]!;
+
+    writeFileSync(join(task.worktree_path!, "resume"), "");
+    const sent = await submitTaskMessage(getTask(task.id)!, "one more thing", def, cfg);
+    await until(() => turnsFor(task.id)[1]?.status === "done");
+
+    // no failed turn and no lost message: the undone turn's number went to the resumed one
+    const turns = turnsFor(task.id);
+    expect(turns.map((turn) => [turn.n, turn.status, turn.result])).toEqual([[1, "done", "FIRST"], [2, "done", "SECOND"]]);
+    expect(turns[1]!.pid).not.toBe(first.pid);
+    expect(processGroupAlive(first.pid!)).toBe(false);
+    expect(getTaskMessage(sent.message.id)).toMatchObject({ status: "delivered", delivery: "started", turn_n: 2 });
+    expect(getTask(task.id)!.state).toBe("done");
+  });
+});
+
+describe("a harness an earlier daemon kept alive", () => {
+  // The new daemon cannot write to its stdin. Left running, it keeps writing
+  // its background work's calls into the session while a send resumes the
+  // same session beside it.
+  test("is stopped at boot, while this daemon's own lingering process is kept", async () => {
+    const own = makeTask();
+    startTurn(own, "start the dev server", claudeDef([
+      "IFS= read -r first",
+      init("session-own"),
+      emit({ type: "system", subtype: "task_started", task_id: "dev", is_backgrounded: true, task_type: "local_bash", description: "dev" }),
+      emit({ type: "result", result: "SERVER_UP", session_id: "session-own" }),
+      ...UNTIL_EOF,
+    ]), cfg);
+    await until(() => turnsFor(own.id)[0]?.status === "done" && backgroundWork(own.id, BACKGROUND_SETTLE_MS).state === "running");
+    const ownPid = turnsFor(own.id)[0]!.pid!;
+
+    // What the previous daemon left: a settled turn whose harness still leads its group.
+    const orphan = makeTask();
+    const harness = Bun.spawn({ cmd: ["sleep", "30"], detached: true, stdout: "ignore", stderr: "ignore" });
+    const log = join(orphan.worktree_path!, "turn1.out.log");
+    writeFileSync(log, "");
+    const turnId = createTurn(orphan.id, 1, "start the dev server", harness.pid, log, processStartTime(harness.pid), null, "recorder-v1");
+    recordProcessGroup(turnId);
+    settleTurn(turnId, { status: "done", exitCode: null, result: "SERVER_UP" }, orphan.id, "done", "SERVER_UP");
+    await refreshProcessGroups(orphan.id);
+    expect(backgroundWork(orphan.id).state).toBe("running");
+
+    await recoverOrphanedTurns({ fake: claudeDef(["exit 0"]) }, cfg);
+
+    await harness.exited;
+    expect(harness.signalCode).toBe("SIGTERM");
+    expect(backgroundWork(orphan.id).state).toBe("none");
+    expect(readFileSync(log, "utf8")).toContain("Wisp restarted and stopped the background work this turn left running");
+    expect(turnsFor(orphan.id)[0]).toMatchObject({ status: "done", result: "SERVER_UP" });
+    // never a process this daemon owns
+    expect(processGroupAlive(ownPid)).toBe(true);
+    await interruptTurn(own.id, 500);
+    await until(() => !processGroupAlive(ownPid));
+  });
+});
+
+describe("a call background work wakes over a task that is not done", () => {
+  test("does not clear needs-input: it stays with the settled turn", async () => {
+    await withTiming({ quietMs: 150 }, async () => {
+      const def: AdapterDef = {
+        ...claudeDef([
+          "IFS= read -r first",
+          init("session-ask"),
+          emit({ type: "system", subtype: "task_started", task_id: "dev", is_backgrounded: true, task_type: "local_bash", description: "dev" }),
+          emit({ type: "result", result: "MAY I?", permission_denials: [{ tool_name: "Bash" }], session_id: "session-ask" }),
+          "while [ ! -f finish ]; do sleep 0.05; done",
+          emit({ type: "system", subtype: "background_tasks_changed", tasks: [] }),
+          emit({ type: "system", subtype: "task_notification", task_id: "dev", status: "completed", summary: "dev finished" }),
+          init("session-ask"),
+          emit({ type: "result", result: "WOKE", origin: { kind: "task-notification" }, num_turns: 1, session_id: "session-ask" }),
+          ...UNTIL_EOF,
+        ]),
+      };
+      def.parse = { ...def.parse, needsInput: "permission_denials" };
+      const task = makeTask();
+      startTurn(task, "ask first", def, cfg);
+      await until(() => getTask(task.id)!.state === "needs-input" && backgroundWork(task.id, BACKGROUND_SETTLE_MS).state === "running");
+      writeFileSync(join(task.worktree_path!, "finish"), "");
+      await until(() => backgroundWork(task.id).state === "none");
+
+      expect(turnsFor(task.id)).toHaveLength(1);
+      expect(turnsFor(task.id)[0]).toMatchObject({ status: "done", result: "MAY I?" });
+      expect(getTask(task.id)!.state).toBe("needs-input");
+      expect(readFileSync(turnsFor(task.id)[0]!.log_file, "utf8")).toContain("WOKE");
+    });
+  });
+});
+
+/**
+ * The answer's settle waits a moment for a call that input written during it
+ * may still get. Input written during that wait starts it over: otherwise the
+ * steer's own call would begin just after the wait and read as background work.
+ */
+describe("the wait for a call input written during the answer may get", () => {
+  test("starts over when more input arrives", async () => {
+    await withTiming({ followOnMs: 400 }, async () => {
+      const taskId = `unit-${newTaskId()}`;
+      const settles: number[] = [];
+      const recorded: string[] = [];
+      const sink = { recordEvent() {}, recordStdoutLine: (line: string) => recorded.push(line), recordNote() {}, recordFrameDrop() {} };
+      const stdin = { write: () => 0, flush: () => 0, end: () => 0 };
+      const claude = new ClaudeLiveProcess({
+        child: { stdin } as never,
+        task: { id: taskId } as never,
+        def: claudeDef([]),
+        turnId: 1,
+        turn: 1,
+        recorder: sink,
+        prompt: "start it",
+        attachments: [],
+        initialMessageId: "m0",
+        linger: {
+          canLinger: () => true,
+          settle: async (turnId: number) => void settles.push(turnId),
+          between: () => sink,
+          wake: () => null,
+          idle: () => {},
+        },
+      } as never, IMAGE_INPUT_STRATEGIES["claude-stream-json"]!, stdin as never);
+      const steer = (text: string) =>
+        activeLiveInput(taskId)!.send({ id: `m-${text}`, task_id: taskId, text, attachments_json: null, origin: "human" } as never);
+      try {
+        await claude.start();
+        claude.line(JSON.stringify({ type: "system", subtype: "init" }));
+        claude.line(JSON.stringify({ type: "system", subtype: "task_started", task_id: "dev", is_backgrounded: true }));
+        await steer("and the port");
+        claude.line(JSON.stringify({ type: "result", result: "FIRST" }));
+        await Bun.sleep(250);
+        await steer("and the host");
+        // past the first wait's end, before the second's
+        await Bun.sleep(250);
+        expect(settles).toEqual([]);
+        claude.line(JSON.stringify({ type: "system", subtype: "init" }));
+        claude.line(JSON.stringify({ type: "result", result: "BOTH" }));
+        await until(() => settles.length > 0, 3000);
+        expect(settles).toEqual([1]);
+      } finally {
+        claude.ended();
+        await closeLiveInput(taskId, 1);
+      }
+    });
   });
 });

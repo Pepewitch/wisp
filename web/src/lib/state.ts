@@ -65,9 +65,11 @@ export function stateWord(task: ApiTask): string {
 }
 
 /**
- * "Done · 1 background process running". The count is what the tooltip lists
- * one line each: the tasks the harness itself named, when Wisp kept it alive
- * past its answer for them, and otherwise the process groups a turn left.
+ * "Done · 1 background process running". Every count is of real processes:
+ * the ones the harness itself names, when Wisp kept it alive past its answer
+ * for them (the harness and its helpers are not the work), and otherwise the
+ * live members of each group a turn left. A daemon that sends no detail gets
+ * the bare words, because a group count is not a process count.
  */
 export function backgroundLabel(background: ApiTask["background"]): string | null {
   if (background?.state === "running") {
@@ -80,9 +82,7 @@ export function backgroundLabel(background: ApiTask["background"]): string | nul
 }
 
 function backgroundCount(background: NonNullable<ApiTask["background"]>): number {
-  const details = background.details
-  if (!details?.length) return background.groups
-  return details.reduce((count, group) => count + (group.tasks?.length || 1), 0)
+  return (background.details ?? []).reduce((count, group) => count + (group.tasks?.length || Math.max(1, group.processes)), 0)
 }
 
 /** True when the harness process that holds this work was kept alive for it, and takes the next message. */

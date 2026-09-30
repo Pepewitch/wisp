@@ -77,6 +77,7 @@ import {
   FORCE_ARCHIVE_ESCALATED_DETAIL,
   killedForArchive,
   sameAgent,
+  stopOrphanedHarnesses,
   turnProcesses,
   watchTurn,
   type TurnProcess,
@@ -207,7 +208,7 @@ export function startTurn(
   const framed = framedMessage(messageOrigin(sourceMessageId), message);
   const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   if (lingering) {
-    adoptTurn(lingering, task, n, message, prompt, attachments, autopilot);
+    adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId);
     return;
   }
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
@@ -401,10 +402,10 @@ function attachCapture(
       claudeStrategy: input.claudeStrategy,
       linger: lingers ? lingerHooks(proc) : undefined,
     });
-    if (lingers) {
-      proc.claude = liveClaudeProcess(task.id);
-      turnProcesses.set(task.id, proc);
-    }
+    // Every Claude process has its protocol side, which the exit watcher
+    // forgets; only one with the hooks can outlive a turn and take the next.
+    if (def.liveInput === "claude-stream-json") proc.claude = liveClaudeProcess(task.id);
+    if (lingers) turnProcesses.set(task.id, proc);
   } catch (error) {
     failLiveTurn(child, slot.turnId, sink, error);
   }
@@ -605,6 +606,8 @@ export function startNextQueuedMessage(
  */
 export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>, cfg: WispConfig): Promise<void> {
   await refreshProcessGroups();
+  // before any queued message can start a turn beside one of them
+  await stopOrphanedHarnesses();
   releaseOrphanedTaskMessageClaims();
   // an answer recorded but not settled before the crash may or may not have arrived
   markPendingAnswersUncertain();

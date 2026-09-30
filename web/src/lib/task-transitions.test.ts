@@ -74,6 +74,40 @@ describe("finished task transitions", () => {
   })
 })
 
+/**
+ * A monitor event or a background command finishing wakes a model call after
+ * the agent's answer, and Wisp records it as a turn of its own. Nobody asked
+ * for it, so its end raises no "finished" banner.
+ */
+describe("a turn background work woke", () => {
+  const background = (id: string, state: TaskState, on = true): ApiTask => ({ ...task(id, state), latest_turn_background: on })
+
+  it("is not news when it ends done, through the tracker Desktop's banners use", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("local", [background("t1", "done", false)])
+    expect(tracker.observe("local", [background("t1", "running")])).toEqual([])
+    expect(tracker.observe("local", [background("t1", "done")])).toEqual([])
+  })
+
+  it("still is when it needs the person or fails", () => {
+    const previous = snapshotTaskStates([background("t1", "running"), background("t2", "running")])
+    expect(finishedTransitions(previous, [background("t1", "needs-input"), background("t2", "failed")]).map((t) => t.to))
+      .toEqual(["needs-input", "failed"])
+  })
+
+  it("does not hide the person's own turn that finished before one started", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("local", [background("t1", "running", false)])
+    // the person's turn ended, and a background call opened and closed before the next look
+    expect(tracker.observe("local", [background("t1", "done")]).map((t) => [t.task.id, t.to])).toEqual([["t1", "done"]])
+  })
+
+  it("an ordinary turn still announces itself", () => {
+    const previous = snapshotTaskStates([task("t1", "running")])
+    expect(finishedTransitions(previous, [background("t1", "done", false)])).toHaveLength(1)
+  })
+})
+
 describe("task transition tracker", () => {
   it("seeds silently, then reports per connection, and forgets on request", () => {
     const tracker = createTaskTransitionTracker()

@@ -39,8 +39,8 @@ const namedPids = new Map<number, string>();
  * Settled turn id → what the harness process still holding its group says it
  * is running. Set only while Wisp deliberately keeps that process alive past
  * the turn's answer (live-input's lingering Claude process). Memory only, like
- * `liveNames`: a restarted daemon no longer owns the process's input, so it
- * reports the group as ordinary background work until it ends.
+ * `liveNames`: a restarted daemon no longer owns the process's input, and
+ * boot recovery stops the process (turn-process stopOrphanedHarnesses).
  */
 const harnessTasks = new Map<number, () => HarnessBackgroundTask[]>();
 let refreshing: Promise<void> = Promise.resolve();
@@ -183,6 +183,20 @@ export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
   const details = describe(background);
   if (background.some(row => row.state === "unknown" || row.stop_requested)) return { state: "unknown", groups: background.length, details };
   return { state: background.length ? "running" : "none", groups: background.length, details };
+}
+
+/**
+ * Live recorded groups led by their SETTLED turn's own harness process. Only a
+ * harness kept alive for its background work past the turn's answer (the
+ * lingering Claude process) leaves one: every other turn settles when its
+ * harness exits. Found at boot, it outlived the daemon that owned its input.
+ */
+export function settledGroupLeaders(): { turnId: number; taskId: string; pgid: number }[] {
+  return db.query(
+    `SELECT g.turn_id AS turnId, g.task_id AS taskId, g.pgid AS pgid FROM turn_process_groups g
+     JOIN turns t ON t.id = g.turn_id
+     WHERE g.state != 'none' AND t.status != 'running' AND t.pid = g.pgid`,
+  ).all() as { turnId: number; taskId: string; pgid: number }[];
 }
 
 export function hasRecordedGroup(turnId: number): boolean {

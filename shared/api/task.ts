@@ -29,6 +29,13 @@ export const TASK_MODES = ["worktree", "local"] as const;
 export type TaskMode = (typeof TASK_MODES)[number];
 
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
+/**
+ * Who asked for a turn when it was not a message: `background` is a model call
+ * that work the agent started in the background woke on its own after its
+ * answer (a Monitor event, a background command finishing). Nobody asked for
+ * it, so its finish raises no notification.
+ */
+export type TurnOrigin = "background";
 /** Durable selection of the turn-capture semantics used when a process starts. */
 export type TurnCaptureMode = "recorder-v1";
 export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
@@ -54,8 +61,8 @@ export interface BackgroundGroup {
    * What the harness itself says this group is running, when Wisp kept the
    * harness process alive past the turn's answer because work it started in
    * the background was still going (a Claude `run_in_background` command, a
-   * Monitor, a background agent). Absent for any other group, and after a
-   * daemon restart: the new daemon no longer owns that process's input.
+   * Monitor, a background agent). Absent for any other group. A restarted
+   * daemon stops such a process at boot: it cannot give it the next message.
    */
   tasks?: HarnessBackgroundTask[];
 }
@@ -198,6 +205,8 @@ export interface ApiTaskListItem extends ApiTask {
   latest_turn_exit_code: number | null;
   /** Whether the latest turn delivered a result; "exited N" requires it. */
   latest_turn_has_result: boolean;
+  /** The latest turn was one background work woke (TurnOrigin), not a message: its finish is not news. */
+  latest_turn_background: boolean;
 }
 
 /** A turn as the API serves it: internal JSON columns parsed, never relayed raw. */
@@ -212,6 +221,8 @@ export interface ApiTurn {
   requested_effort: string | null;
   requested_fast: boolean;
   prompt: string;
+  /** Null for a message's turn; see TurnOrigin. */
+  origin: TurnOrigin | null;
   /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
   operation?: "compact";
   result: string | null;

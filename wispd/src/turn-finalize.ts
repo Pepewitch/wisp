@@ -214,6 +214,14 @@ async function finalizeInterruptedTurn(
   );
 }
 
+/**
+ * Whether a successful turn's settle notifies. One that background work woke
+ * answered nobody, so it is not news; one that needs the person still is.
+ */
+function isNews(turn: Turn | null, parsed: ParsedTurn): boolean {
+  return parsed.needsInput || turn?.origin !== "background";
+}
+
 /** Finalize from a recorder checkpoint, or from whole files for a durable legacy turn. */
 export async function finalizeTurn(
   taskId: string,
@@ -276,6 +284,7 @@ export async function finalizeTurn(
       taskId,
       parsed.needsInput ? "needs-input" : "done",
       parsed.result ? summarize(parsed.result) : null,
+      isNews(currentTurn, parsed),
     );
     return;
   }
