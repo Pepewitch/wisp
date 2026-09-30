@@ -17,13 +17,15 @@ unsupervised daemon dies with its shell or container. Any of:
 
 Liveness: `GET /api/health`. The authenticated `GET /api/diagnostics` also
 reports the running daemon's `pid`, `startedAt` and `uptimeSeconds`, so a
-restart shows even to a poller that never saw the daemon go away. `wisp doctor` is the full self-check (harness CLIs and their auth, git
+restart shows even to a poller that never saw the daemon go away, and as
+`github` its GitHub spend over the last hour, what GitHub reports is left, and
+any rate-limit pause ([GitHub's rate limit](../../../docs/PR-AUTOPILOT.md#githubs-rate-limit)). `wisp doctor` is the full self-check (harness CLIs and their auth, git
 identity, every registered project, `gh` and `gh auth status`, config files
 and token length, daemon reachability, terminal origins, unclean restarts, the
-last self-update, background loops and webhook delivery) and exits 1 naming
+last self-update, background loops, webhook delivery and the GitHub budget) and exits 1 naming
 what failed. Its harness and auth probes are spawned in the CLI's own process,
 so they describe the invoking shell's environment; the `daemon`, `terminal
-origins`, `background loops` and `webhooks` checks ask the running daemon
+origins`, `background loops`, `webhooks` and `github budget` checks ask the running daemon
 directly. A daemon that exits without its graceful stop (a crash, a kill, an
 out-of-memory end) is logged at the next boot and recorded in
 `daemon-exits.json`; doctor warns when two or more happened in the last hour.

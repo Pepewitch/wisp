@@ -32,6 +32,21 @@ function seedAndMeasureDatabase(home: string, repo: string, base: string, worktr
   return JSON.parse(child.stdout.toString().trim().split("\n").pop()!) as Measurement[];
 }
 
+/** Armed PRs of one repository for the GitHub pass: enough for several batched requests. */
+const ARMED_PRS = 12;
+
+/** One autopilot pass against a fake GitHub, on a home of its own that is deleted afterwards. */
+function measureGitHub(): Measurement[] {
+  const home = assertBenchHome(mkdtempSync(join(tmpdir(), HOME_PREFIX)));
+  try {
+    const child = Bun.spawnSync([process.execPath, join(import.meta.dir, "github.ts"), String(ARMED_PRS)], { env: benchEnv(home), stdout: "pipe", stderr: "pipe" });
+    if (child.exitCode !== 0) throw new Error(`the GitHub pass failed:\n${child.stderr.toString()}`);
+    return JSON.parse(child.stdout.toString().trim().split("\n").pop()!) as Measurement[];
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 function check(results: Measurement[], budgets: Record<string, number>): string[] {
   const failures: string[] = [];
   const measured = new Map(results.map((result) => [result.name, result]));
@@ -74,6 +89,7 @@ try {
   const token = initHome(home, port);
   results.push(...seedAndMeasureDatabase(home, fixture.repo, fixture.base, fixture.worktrees));
   results.push(...(await daemonMeasurements(home, port, token, LIVE_TASKS)));
+  results.push(...measureGitHub());
   if (args.includes("--json") && jsonOut) writeFileSync(jsonOut, `${JSON.stringify(results, null, 2)}\n`);
   const failures = check(results, budgets);
   console.log(`\nbench finished in ${((performance.now() - started) / 1000).toFixed(1)} s`);

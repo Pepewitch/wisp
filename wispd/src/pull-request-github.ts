@@ -1,4 +1,6 @@
 import type { ProbeSpawnFn } from "./adapters";
+import type { SpawnResult } from "./doctor";
+import { ghReply, githubBudget, type GitHubBudget } from "./github-budget";
 import { pickPullRequest } from "./pull-request-branches";
 import type {
   PullRequestChecks,
@@ -17,6 +19,7 @@ export async function githubPullRequest(
   branches: string[],
   run: ProbeSpawnFn,
   signal: AbortSignal,
+  budget: GitHubBudget = githubBudget,
 ): Promise<PullRequestStatus> {
   const heads = branches.length > 0 ? branches : [task.branch!];
   const statuses = await githubPullRequestBatch(
@@ -25,6 +28,7 @@ export async function githubPullRequest(
     task.repo_path,
     run,
     signal,
+    budget,
   );
   return pickPullRequest(
     heads.map(
@@ -43,9 +47,16 @@ export async function githubPullRequestBatch(
   cwd: string,
   run: ProbeSpawnFn,
   signal: AbortSignal,
+  budget: GitHubBudget = githubBudget,
 ): Promise<Map<string, PullRequestStatus>> {
   const [owner, name] = repository.split("/");
   if (!owner || !name) return unavailableBranches(branches);
+  // Paused by GitHub, or Wisp's share spent: the last answer stays on screen, marked stale.
+  try {
+    budget.reserve("graphql", 1);
+  } catch {
+    return unavailableBranches(branches);
+  }
   const nodeSelection = "nodes { ...PullRequestFields }";
   // headRefName matches a fork's branch of the same name too: a page, not one
   // row, so a stranger's fork PR named like the task's branch cannot stand in
@@ -73,6 +84,7 @@ export async function githubPullRequestBatch(
     .join("\n");
   const query = `
     query($owner: String!, $name: String!) {
+      rateLimit { cost remaining limit resetAt }
       repository(owner: $owner, name: $name) {
         ${selections}
       }
@@ -91,22 +103,36 @@ export async function githubPullRequestBatch(
       mergeStateStatus
       statusCheckRollup { state }
     }`;
-  const result = await run(
-    [
-      "gh",
-      "api",
-      "graphql",
-      "-f",
-      `owner=${owner}`,
-      "-f",
-      `name=${name}`,
-      "-f",
-      `query=${query}`,
-    ],
-    { cwd, signal },
-  );
+  let result: SpawnResult;
+  try {
+    result = await run(
+      [
+        "gh",
+        "api",
+        "graphql",
+        "--include",
+        "-f",
+        `owner=${owner}`,
+        "-f",
+        `name=${name}`,
+        "-f",
+        `query=${query}`,
+      ],
+      { cwd, signal },
+    );
+  } catch (error) {
+    budget.settle("graphql", null, 1);
+    throw error;
+  }
+  const reply = ghReply(result.stdout, result.stderr, result.exitCode !== 0);
+  try {
+    // GitHub's answer is recorded; a rate limit in it pauses autopilot too
+    budget.settle("graphql", reply, 1);
+  } catch {
+    return unavailableBranches(branches);
+  }
   if (result.exitCode !== 0) return unavailableBranches(branches);
-  return parsePullRequestBatch(result.stdout, repository, branches) ??
+  return parsePullRequestBatch(reply.json, repository, branches) ??
     unavailableBranches(branches);
 }
 
@@ -139,16 +165,10 @@ function repositorySlug(owner: string, rawName: string): string | null {
 }
 
 function parsePullRequestBatch(
-  stdout: string,
+  envelope: unknown,
   repository: string,
   branches: string[],
 ): Map<string, PullRequestStatus> | null {
-  let envelope: unknown;
-  try {
-    envelope = JSON.parse(stdout);
-  } catch {
-    return null;
-  }
   if (!isRecord(envelope) || !isRecord(envelope.data)) return null;
   const repositoryData = envelope.data.repository;
   if (!isRecord(repositoryData)) return null;

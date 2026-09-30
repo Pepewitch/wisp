@@ -2,6 +2,7 @@ import { platform } from "node:os";
 import { wispCommand } from "./command";
 import { DAEMON_EXITS_PATH, recentUncleanExits, uncleanExits } from "./daemon-run";
 import type { DoctorCheck } from "./doctor";
+import { clockTime, type GitHubBudgetReport } from "./github-budget";
 import type { DaemonDiagnostics } from "./routes/diagnostics";
 import { trunc } from "./text";
 import { readUpdateAttempt, UPDATE_RECORD_PATH } from "./update-record";
@@ -134,5 +135,37 @@ export async function checkDaemonDiagnostics(
       ),
     );
   } else checks.push(ok("webhooks", "no failing deliveries"));
+  const github = githubBudgetCheck(report.github, now);
+  if (github) checks.push(github);
   return checks;
+}
+
+const PAUSE_WHY = {
+  primary: "GitHub's hourly rate limit is used up",
+  secondary: "GitHub's secondary rate limit (too many requests too fast)",
+  share: "Wisp's own share of the hourly limit is used up",
+} as const;
+
+/**
+ * Wisp's GitHub spend over the last hour against its share, what GitHub
+ * reports is left of the hour (everyone's use), and any pause. Absent from a
+ * daemon older than this build: then nothing is said.
+ */
+export function githubBudgetCheck(report: GitHubBudgetReport | undefined, now: Date = new Date()): DoctorCheck | null {
+  if (!report || !Array.isArray(report.resources)) return null;
+  const unit = (resource: string) => (resource === "graphql" ? "GraphQL points" : "REST requests");
+  const spent = report.resources.map((entry) => `${entry.spentLastHour} of ${entry.cap} ${unit(entry.resource)}`).join(" and ");
+  const current = report.resources.filter((entry) =>
+    entry.limit !== null && entry.remaining !== null && entry.resetAt !== null && Date.parse(entry.resetAt) > now.getTime());
+  const left = current.map((entry) => `${entry.remaining} of ${entry.limit} ${unit(entry.resource)} left until ${clockTime(Date.parse(entry.resetAt!))}`);
+  const summary = `Wisp spent ${spent} of its ${Math.round(report.share * 100)}% share in the last hour; ${
+    left.length > 0 ? `GitHub reports ${left.join(", ")}` : "GitHub has reported no limits yet"}`;
+  const slowed = report.stretch > 1 ? `; Wisp is spacing its checks ×${report.stretch.toFixed(1)}` : "";
+  if (report.paused) {
+    return warn("github budget", `paused until ${clockTime(Date.parse(report.paused.until))}: ${PAUSE_WHY[report.paused.why]} — ${summary}`);
+  }
+  const low = current.some((entry) => entry.remaining! < report.floor * entry.limit!);
+  return low
+    ? warn("github budget", `GitHub's hourly limit is running low (other tools count too) — ${summary}${slowed}`)
+    : ok("github budget", `${summary}${slowed}`);
 }

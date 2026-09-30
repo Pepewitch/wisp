@@ -27,6 +27,7 @@ import {
   unavailableBranches,
 } from "./pull-request-github";
 import { reportPullRequest, reportPullRequestOverview, type PullRequestFound } from "./pull-request-notify";
+import { githubBudget, type GitHubBudget } from "./github-budget";
 import { bunProbeSpawn } from "./probes";
 import type { Task } from "./types";
 import type { PullRequestOverview, PullRequestOverviewEntry, PullRequestStatus } from "../../shared/api/pull-requests";
@@ -66,6 +67,8 @@ export interface PullRequestCacheOptions {
    * Called with the already-selected PR whenever a public read reports one.
    */
   onPullRequestFound?: PullRequestFound;
+  /** What GitHub reads spend from; the daemon's own budget by default. Its stretch lengthens both caches. */
+  budget?: GitHubBudget;
 }
 
 interface CachedPullRequest {
@@ -127,8 +130,10 @@ export class PullRequestCache {
   private readonly overviewBackoffMaxMs: number;
   private readonly now: () => Date;
   private readonly onPullRequestFound: PullRequestFound | undefined;
+  private readonly budget: GitHubBudget;
 
   constructor(options: PullRequestCacheOptions = {}) {
+    this.budget = options.budget ?? githubBudget;
     this.run = options.run ?? bunProbeSpawn;
     this.timeoutMs = options.timeoutMs ?? PULL_REQUEST_TIMEOUT_MS;
     this.ttlMs = options.ttlMs ?? PULL_REQUEST_CACHE_TTL_MS;
@@ -161,7 +166,7 @@ export class PullRequestCache {
       });
     }
     const hit = this.entries.get(task.id);
-    if (hit && this.now().getTime() - hit.at < this.ttlMs) {
+    if (hit && this.now().getTime() - hit.at < this.ttlMs * this.budget.stretch()) {
       this.entries.delete(task.id);
       this.entries.set(task.id, hit);
       return Promise.resolve(hit.status);
@@ -196,7 +201,7 @@ export class PullRequestCache {
         }
         queriedProvider = true;
         return this.branches(task, controller.signal).then((branches) =>
-          githubPullRequest(task, repository, branches, this.run, controller.signal),
+          githubPullRequest(task, repository, branches, this.run, controller.signal, this.budget),
         );
       })
       .catch((): PullRequestStatus => ({ kind: "unavailable", provider: null }));
@@ -269,7 +274,7 @@ export class PullRequestCache {
           this.overviewNextRefreshAt = completedAt + backoff;
         } else {
           this.overviewGlobalFailures = 0;
-          this.overviewNextRefreshAt = completedAt + this.overviewTtlMs;
+          this.overviewNextRefreshAt = completedAt + this.overviewTtlMs * this.budget.stretch();
           for (const repository of refresh.successfulRepositories) {
             this.overviewRepositoryBackoff.delete(repository);
           }
@@ -444,6 +449,7 @@ export class PullRequestCache {
         group.cwd,
         this.run,
         signal,
+        this.budget,
       ).catch(() => unavailableBranches(branches));
       for (const branch of branches) {
         const status = branchStatuses.get(branch) ?? {
@@ -611,15 +617,10 @@ export class PullRequestCache {
 function unavailableRepository(
   group: OverviewRepositoryGroup,
 ): RepositoryOverviewRefresh {
+  const unavailable = { kind: "unavailable", provider: "github" } as const;
+  const tasks = [...group.branches.values()].flat();
   return {
-    statuses: new Map(
-      [...group.branches.values()].flatMap((tasks) =>
-        tasks.map((task) => [
-          task.id,
-          { kind: "unavailable", provider: "github" } as const,
-        ]),
-      ),
-    ),
+    statuses: new Map(tasks.map((task) => [task.id, unavailable])),
     failed: true,
   };
 }

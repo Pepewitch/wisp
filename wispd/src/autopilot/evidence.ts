@@ -7,6 +7,7 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { TASKS_DIR } from "../config"
+import { GitHubPausedError } from "../github-budget"
 import type { PrCheck } from "./checks"
 import { feedbackSummary, type FeedbackItem } from "./feedback"
 import type { FixPlan } from "./fix"
@@ -33,6 +34,8 @@ async function report(check: PrCheck, repository: string, github: AutopilotGitHu
     }
     return { text: "(a commit status: only its link is available)", read: true }
   } catch (error) {
+    // a GitHub pause stops the whole round, rather than sending it with a log missing
+    if (error instanceof GitHubPausedError) throw error
     return { text: `(could not read it: ${error instanceof Error ? error.message : String(error)})`, read: false }
   }
 }
