@@ -213,7 +213,7 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   },
 
   /**
-   * Cursor (verified against 2026.09.18-9a7762b): `cursor-agent models`
+   * Cursor (verified against 2026.09.28-64d2043): `cursor-agent models`
    * prints one `<id> - <display name>` record per model after authentication.
    *
    * The WHOLE catalog is offered, in the CLI's own order. This used to keep

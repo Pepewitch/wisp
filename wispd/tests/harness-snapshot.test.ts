@@ -6,10 +6,13 @@
  * print without any test ever launching one.
  */
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AdapterDef, ModelProbeSpawnFn } from "../src/adapters";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { adapterFlags, diffFacts, worstSeverity } from "../scripts/harness/diff";
-import { EXTRACTORS, effortValuesFromRejection, flagsFromHelp } from "../scripts/harness/extract";
+import { EXTRACTORS, effortValuesFromRejection, flagsFromHelp, markersPresent } from "../scripts/harness/extract";
 import { mergeSurfaces, renderChanges, renderLivePins } from "../scripts/harness/snapshot";
 import type { HarnessFacts, Surface } from "../scripts/harness/facts";
 
@@ -119,14 +122,33 @@ describe("extractors", () => {
   });
 
   test("marker presence splits declared markers by whether the binary still ships them", async () => {
-    const spawn = routedSpawn([
-      { match: (c) => c[0] === "grep" && c.includes("usage limit"), exitCode: 0 },
-      { match: (c) => c[0] === "grep", exitCode: 1 },
-      { match: () => true, stdout: "" },
-    ]);
-    const surfaces = await EXTRACTORS.droid!({ def: BUILTIN_ADAPTERS.droid!, binPath: "/bin/fake", spawn });
-    expect(surfaces.markerPresence!.lists!.present).toEqual(["usage limit"]);
-    expect(surfaces.markerPresence!.lists!.missing).toContain("out of credits");
+    const dir = mkdtempSync(join(tmpdir(), "wisp-markers-"));
+    try {
+      const bin = join(dir, "droid");
+      writeFileSync(bin, Buffer.concat([Buffer.from([0, 0xff, 0x7f]), Buffer.from("Error: USAGE Limit reached\0")]));
+      const surfaces = await EXTRACTORS.droid!({ def: BUILTIN_ADAPTERS.droid!, binPath: bin, spawn: routedSpawn([]) });
+      expect(surfaces.markerPresence!.lists!.present).toEqual(["usage limit"]);
+      expect(surfaces.markerPresence!.lists!.missing).toContain("out of credits");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("marker search finds a phrase split across a chunk boundary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-markers-"));
+    try {
+      const bin = join(dir, "codex");
+      // Past Bun's stream chunk size, so the phrase straddles at least one boundary.
+      const pad = Buffer.alloc(3 * 1024 * 1024 - 5, 0);
+      writeFileSync(bin, Buffer.concat([pad, Buffer.from("rate limit"), pad]));
+      expect(await markersPresent(bin, ["rate limit", "spend cap"])).toEqual({ present: ["rate limit"], missing: ["spend cap"] });
+      for (let shift = 1; shift < 10; shift++) {
+        writeFileSync(bin, Buffer.concat([Buffer.alloc(64 * 1024 * shift - shift, 0), Buffer.from("rate limit")]));
+        expect((await markersPresent(bin, ["rate limit"])).present).toEqual(["rate limit"]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

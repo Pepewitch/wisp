@@ -55,33 +55,44 @@ export function effortValuesFromRejection(text: string): string[] {
 }
 
 /**
- * Does this phrase still exist in the shipped binary? A fixed, case-insensitive
- * `grep -a` over the executable, one spawn per phrase — cheap (~0.5s on a
- * 270 MB binary) and, unlike reading the file into memory, bounded.
+ * Which phrases still exist in the shipped binary? One streamed pass over the
+ * executable, ASCII case-folded, with each chunk overlapping the last by the
+ * longest phrase so a match across a chunk boundary is never lost.
+ *
+ * This replaces one `grep -aiqF` per phrase: BSD grep's case-insensitive
+ * search takes ~10s on a 240 MB binary, which hits the probe timeout. Reading
+ * in chunks keeps memory bounded without that cost.
  *
  * This is a genuine observation about the CLI, not a restatement of the
  * adapter: a limit marker the binary can no longer emit is a marker that will
  * never fire, and a renamed one silently stops classifying quota failures.
  */
-async function markersPresent(ctx: ExtractCtx, phrases: string[]): Promise<{ present: string[]; missing: string[] }> {
-  const present: string[] = [];
-  const missing: string[] = [];
-  for (const phrase of phrases) {
-    if (!ctx.binPath) {
-      missing.push(phrase);
-      continue;
+export async function markersPresent(binPath: string | null, phrases: string[]): Promise<{ present: string[]; missing: string[] }> {
+  const found = new Set<string>();
+  if (binPath) {
+    const needles = phrases.map((p) => p.toLowerCase());
+    const overlap = Math.max(0, ...needles.map((n) => n.length - 1));
+    const decoder = new TextDecoder("latin1");
+    let carry = "";
+    for await (const chunk of Bun.file(binPath).stream()) {
+      const text = carry + decoder.decode(chunk).toLowerCase();
+      needles.forEach((n, i) => {
+        if (text.includes(n)) found.add(phrases[i]!);
+      });
+      if (found.size === phrases.length) break;
+      carry = overlap > 0 ? text.slice(-overlap) : "";
     }
-    const res = await ctx.spawn(["grep", "-aiqF", "--", phrase, ctx.binPath]);
-    (res.exitCode === 0 ? present : missing).push(phrase);
   }
-  return { present: present.sort(), missing: missing.sort() };
+  const present = phrases.filter((p) => found.has(p)).sort();
+  const missing = phrases.filter((p) => !found.has(p)).sort();
+  return { present, missing };
 }
 
 /** The marker-presence surface, or nothing when the adapter declares no markers. */
 async function markerSurface(ctx: ExtractCtx): Promise<Record<string, Surface>> {
   const declared = [...(ctx.def.limitMarkers ?? []), ...(ctx.def.transientMarkers ?? [])];
   if (declared.length === 0) return {};
-  const { present, missing } = await markersPresent(ctx, declared);
+  const { present, missing } = await markersPresent(ctx.binPath, declared);
   return {
     markerPresence: {
       cost: "free",

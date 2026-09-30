@@ -68,8 +68,8 @@ describe("droid-models strategy", () => {
   test("the model list is parsed from the real invalid-model error capture", async () => {
     const d = await discoverModels(BUILTIN_ADAPTERS.droid, droidSpawn({}));
     expect(d.models).not.toBeNull();
-    // the fixture block lists 56 ids and repeats itself; the parse dedupes the repeat
-    expect(d.models!.length).toBe(56);
+    // the fixture block lists 57 ids and repeats itself; the parse dedupes the repeat
+    expect(d.models!.length).toBe(57);
     expect(d.models).toContain("auto");
     expect(d.models).toContain("claude-opus-5-5");
     expect(d.models).toContain("gpt-6-astra");

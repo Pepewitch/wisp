@@ -15,7 +15,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.18-9a7762b",
+      "verifiedAgainst": "2026.09.28-64d2043",
       "source": "flag tokens parsed out of 'cursor-agent --help'",
       "lists": {
         "values": [
@@ -58,7 +58,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.18-9a7762b",
+      "verifiedAgainst": "2026.09.28-64d2043",
       "source": "'cursor-agent models' (requires an authenticated CLI)",
       "note": "runtime discovery offers this whole catalog; pruning the picker is the user's, via settings' hiddenModels",
       "lists": {
@@ -162,6 +162,11 @@
           "claude-opus-5-thinking-medium-fast",
           "claude-opus-5-thinking-xhigh",
           "claude-opus-5-thinking-xhigh-fast",
+          "claude-sonnet-5-5-high",
+          "claude-sonnet-5-5-low",
+          "claude-sonnet-5-5-max",
+          "claude-sonnet-5-5-medium",
+          "claude-sonnet-5-5-xhigh",
           "claude-sonnet-5-high",
           "claude-sonnet-5-low",
           "claude-sonnet-5-max",
