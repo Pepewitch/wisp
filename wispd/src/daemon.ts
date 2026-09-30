@@ -40,6 +40,7 @@ import {
   foreignOriginMessage, judgeCredential, originVerdict, postSession, remoteAddress, throttledMessage, throttledResponse,
 } from "./routes/auth";
 import { beginDaemonRun, endDaemonRun, type DaemonRun } from "./daemon-run";
+import { intervalService, startedService, stopServices, type DaemonContext } from "./daemon-context";
 import { acceptsGzip, err, finishResponse, json, routeFailure } from "./routes/http";
 import { pageSecurityHeaders, pageSecurityPolicy } from "./routes/security-headers";
 import { getTask, initializeStore } from "./store";
@@ -632,6 +633,8 @@ async function serveOwned(
     onPullRequestFound: pullRequestTitleSync(cfg),
   });
   const updates = options.updateManager ?? new UpdateManager();
+  const caches = { models: modelCache, probes: probeCache, skills: skillCache, compacts: compactor, pullRequests, updates, limits: limitsCache };
+  const ctx: DaemonContext = { cfg, adapters, lifetime, caches, services: [] };
   // P5b loud fallback: only here does the merged adapter set exist to check
   // harnessDefaults against — warn at every boot, never crash
   checkHarnessDefaults(cfg, adapters);
@@ -732,24 +735,30 @@ async function serveOwned(
     if (terminalMatch && req.method === "GET") return terminalUpgrade(req, url, terminalMatch[1]!, server, cfg, authThrottle);
     // a refused credential answers before any route runs
     return credentialRefusal(bearerToken(req), cfg, authThrottle, remoteAddress(req, server)) ?? lifetime.run(() => lifetime.track(Promise.resolve()
-      .then(() => route(req, url, path, cfg, adapters, modelCache, probeCache, skillCache, compactor, pullRequests, updates, limitsCache))
+      .then(() => route(req, url, path, ctx))
       .catch((e: unknown) => routeFailure(req.method, path, e))));
   }
-  const outboxTimer = startOutboxLoop(cfg);
-  const stuckTimer = startStuckLoop(cfg);
-  const cleanupTimer = startArchiveCleanupLoop();
-  const attachmentUploadTimer = startAttachmentUploadCleanupLoop();
+  // Every loop and runtime is registered as it starts, in the order it stops:
+  // all the timers first, then the runtimes a stop has to wait for.
+  const { services } = ctx;
+  services.push(
+    intervalService("outbox", startOutboxLoop(cfg)),
+    intervalService("stuck turns", startStuckLoop(cfg)),
+    intervalService("archive cleanup", startArchiveCleanupLoop()),
+    intervalService("attachment uploads", startAttachmentUploadCleanupLoop()),
+  );
   // Catch-up work for turns that ended before the prose index existed. After
   // Bun.serve on purpose: listening never waits on a disk sweep.
-  const proseTimer = options.proseBackfill === false ? null : startTurnTextBackfillLoop(adapters);
-  const turnLogTimer = startTurnLogRetentionLoop(cfg);
-  const processLoop = startProcessGroupLoop();
-  const workflows = new WorkflowRuntime(cfg, adapters);
-  workflows.start();
-  const autopilot = new AutopilotRuntime(cfg, adapters);
-  autopilot.start();
-  const limitsRefresh = new LimitsTurnRefresh(limitsCache, cfg, adapters);
-  limitsRefresh.start();
+  if (options.proseBackfill !== false) services.push(intervalService("prose backfill", startTurnTextBackfillLoop(adapters)));
+  services.push(
+    intervalService("turn log retention", startTurnLogRetentionLoop(cfg)),
+    // a read-only cache refresh: abandoned, never waited on
+    { name: "model discovery", stop: () => modelCache.stop() },
+    { name: "process groups", ...startProcessGroupLoop() },
+    startedService("workflows", new WorkflowRuntime(cfg, adapters)),
+    startedService("autopilot", new AutopilotRuntime(cfg, adapters)),
+    startedService("plan limits refresh", new LimitsTurnRefresh(limitsCache, cfg, adapters)),
+  );
   const stopServer = server.stop.bind(server);
   let stopPromise: Promise<void> | undefined;
   const stopDaemon = (closeActiveConnections: boolean | undefined, exiting: boolean): Promise<void> => {
@@ -759,21 +768,12 @@ async function serveOwned(
       // First: a stop that was asked for is clean even if it then runs past
       // its deadline. What leaves the marker behind is a run that never got here.
       endDaemonRun(run);
-      clearInterval(outboxTimer);
-      clearInterval(stuckTimer);
-      clearInterval(cleanupTimer);
-      clearInterval(attachmentUploadTimer);
-      if (proseTimer !== null) clearInterval(proseTimer);
-      clearInterval(turnLogTimer);
       // Stop admitting requests first, but keep ownership through handlers and
       // detached work. Closing a socket does not cancel its task launch/hook.
+      // The timers are cleared in the same synchronous step, before anything
+      // yields, so no loop can start a pass once the stop has begun.
       const stopped = stopServer(closeActiveConnections);
-      // a read-only cache refresh: abandoned, never waited on
-      modelCache.stop();
-      await processLoop.stop();
-      await workflows.stop();
-      await autopilot.stop();
-      await limitsRefresh.stop();
+      await stopServices(services);
       // An exiting process does not wait for running turns: their harnesses
       // keep running, and the next boot re-adopts them.
       await lifetime.drain({ exiting });

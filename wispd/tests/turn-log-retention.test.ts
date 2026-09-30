@@ -8,6 +8,7 @@ import { retainTurnLogs } from "../src/turn-log-retention";
 import { acquireTaskRetention, purgeTask } from "../src/task-retention";
 import { acquireTranscriptRead } from "../src/transcript-access";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import { apiTurn } from "../src/routes/http";
 import { searchTasks } from "../src/store-search";
 import { HomeLifetime } from "../src/home-lifetime";
@@ -185,7 +186,7 @@ test("disabled retention and draining homes delete nothing; config budgets are d
 test("HTTP log, activity stream and real wisp log report eviction instead of empty output", async () => {
   const f = fixture();
   await retainTurnLogs(cfg, now);
-  const call = (req: Request) => { const url = new URL(req.url); return route(req, url, url.pathname, cfg, {}); };
+  const call = (req: Request) => { const url = new URL(req.url); return route(req, url, url.pathname, testRouteContext(cfg, {})); };
   const response = await call(new Request(`http://fixture/api/tasks/${f.id}/log?turn=1`));
   expect(await response.json()).toMatchObject({ capture_state: "evicted", notice: expect.stringContaining("Transcript evicted") });
   for (const format of ["activity", "human", "raw"]) {

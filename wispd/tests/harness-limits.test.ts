@@ -25,6 +25,7 @@ import {
   factoryKey,
 } from "../src/harness-limits";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import { PROBE_SCRATCH_DIR, WISP_HOME, type WispConfig } from "../src/config";
 import { limitsLines, resetsIn } from "../src/cli-limits";
 
@@ -636,7 +637,7 @@ describe("GET /api/harness-limits", () => {
   const cfg = { token: "t", repos: [], harnessDefaults: {} } as unknown as WispConfig;
   const call = (path: string, cache: HarnessLimitsCache) => {
     const url = new URL(`http://127.0.0.1${path}`);
-    return route(new Request(url), url, url.pathname, cfg, { claude, cursor: BUILTIN_ADAPTERS.cursor! }, undefined, undefined, undefined, undefined, undefined, undefined, cache);
+    return route(new Request(url), url, url.pathname, testRouteContext(cfg, { claude, cursor: BUILTIN_ADAPTERS.cursor! }, { limits: cache }));
   };
 
   test("answers every harness with a limits read, and refresh=1 skips the cache", async () => {

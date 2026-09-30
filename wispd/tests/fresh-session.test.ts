@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import {
   createTask,
   createTurn,
@@ -67,8 +68,7 @@ function call(path: string, body?: unknown): Promise<Response> {
       }),
       url,
       url.pathname,
-      cfg,
-      adapters,
+      testRouteContext(cfg, adapters),
     ),
   );
 }

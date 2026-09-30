@@ -31,6 +31,7 @@ import {
 } from "../src/attachments";
 import { TASKS_DIR, type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { createTask, freeSlot, listTasks, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
 
 /** Magic-byte heads; the sniffer reads prefixes only, so the tails are filler. */
@@ -407,8 +408,7 @@ function call(cfg_: WispConfig, adapters: Record<string, AdapterDef>, path: stri
       new Request(url, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }),
       url,
       url.pathname,
-      cfg_,
-      adapters,
+      testRouteContext(cfg_, adapters),
     ),
   );
 }
@@ -416,7 +416,7 @@ function call(cfg_: WispConfig, adapters: Record<string, AdapterDef>, path: stri
 /** GET helper hitting route() directly. */
 function get(cfg_: WispConfig, adapters: Record<string, AdapterDef>, path: string): Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
-  return Promise.resolve(route(new Request(url), url, url.pathname, cfg_, adapters));
+  return Promise.resolve(route(new Request(url), url, url.pathname, testRouteContext(cfg_, adapters)));
 }
 
 async function errorOf(res: Response): Promise<string> {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ProbeSpawnFn } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import type { SpawnResult } from "../src/doctor";
 import {
   pickPullRequest,
@@ -1261,13 +1262,7 @@ test("GET /api/tasks/:id/pull-request serves the normalized provider-neutral sta
     new Request(url),
     url,
     url.pathname,
-    cfg,
-    {},
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    pullRequests,
+    testRouteContext(cfg, {}, { pullRequests }),
   );
 
   expect(response.status).toBe(200);
@@ -1314,13 +1309,7 @@ test("GET /api/pull-requests serves the batched live-task overview", async () =>
     new Request(url),
     url,
     url.pathname,
-    cfg,
-    {},
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    pullRequests,
+    testRouteContext(cfg, {}, { pullRequests }),
   );
 
   expect(response.status).toBe(200);

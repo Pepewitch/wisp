@@ -30,6 +30,7 @@ import { STOPPING } from "../src/interrupt-state";
 import { assertTaskNotStopping } from "../src/turn-interrupt";
 import { archiveTaskRows } from "../src/routes/archive";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import * as processSnapshot from "../src/process-snapshot";
 import { BACKGROUND_SETTLE_MS, backgroundWork, recordProcessGroup, refreshProcessGroups, assertTaskProcessesEnded } from "../src/task-processes";
 
@@ -229,7 +230,7 @@ describe("interrupting a turn stops its descendants", () => {
       const url = new URL(`http://localhost/api/tasks/${task.id}/send`);
       const response = await route(new Request(url, {
         method: "POST", body: JSON.stringify({ message: "cannot race through HTTP either" }),
-      }), url, url.pathname, cfg, { fake: def });
+      }), url, url.pathname, testRouteContext(cfg, { fake: def }));
       expect(response.status).toBe(409);
       expect((await response.json()).error).toContain("Could not fully stop turn");
       await expect(killTurnForArchive(task.id, 50)).rejects.toThrow("Could not fully stop turn");

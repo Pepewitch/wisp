@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { type WispConfig } from "../src/config";
 import { emit } from "../src/events";
 import { invalidateStatus, STATUS_CACHE_MAX_AGE_MS } from "../src/routes/projects";
@@ -43,7 +44,7 @@ function cfg(repos: WispConfig["repos"] = []): WispConfig {
 function call(path: string, init?: RequestInit, repos: WispConfig["repos"] = []): Response | Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
   const headers = { authorization: `Bearer ${token}`, ...(init?.body ? { "content-type": "application/json" } : {}) };
-  return route(new Request(url, { ...init, headers }), url, url.pathname, cfg(repos), {});
+  return route(new Request(url, { ...init, headers }), url, url.pathname, testRouteContext(cfg(repos), {}));
 }
 
 async function body<T>(res: Response | Promise<Response>): Promise<T> {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { authorized, postSession, route } from "../src/daemon";
+import { testRouteContext } from "./helpers/daemon-context";
 import { ALLOWED_ORIGINS_ENV, originVerdict, SESSION_BODY_MAX_BYTES } from "../src/routes/auth";
 import { closeTurnBroker, openTurnBroker, TurnBroker } from "../src/recording/broker";
 import { createTask, createTurn, finishTurn, freeSlot, newTaskId, transition } from "../src/store";
@@ -38,7 +39,7 @@ const FAKE_DEF: AdapterDef = {
 /** Call the daemon's router the way serve() does after auth. */
 function call(path: string, init?: RequestInit): Response | Promise<Response> {
   const url = new URL(`http://wisp.test${path}`);
-  return route(new Request(url, init), url, url.pathname, cfg, { fake: FAKE_DEF });
+  return route(new Request(url, init), url, url.pathname, testRouteContext(cfg, { fake: FAKE_DEF }));
 }
 
 function makeTask() {
@@ -904,7 +905,7 @@ describe("GET /api/tasks/:id/log/stream with input it cannot render cleanly", ()
     try {
       const url = (format: string) => new URL(`http://wisp.test/api/tasks/${task.id}/log/stream?format=${format}&turn=1`);
       const open = async (format: string) => {
-        const res = await route(new Request(url(format)), url(format), url(format).pathname, cfg, { fake: throwing });
+        const res = await route(new Request(url(format)), url(format), url(format).pathname, testRouteContext(cfg, { fake: throwing }));
         const reader = res.body!.getReader();
         readers.push(reader);
         return sseReader(reader);
@@ -943,7 +944,7 @@ describe("GET /api/tasks/:id/log/stream with input it cannot render cleanly", ()
     const logged = spyOn(console, "error").mockImplementation(() => {});
     try {
       const url = new URL(`http://wisp.test/api/tasks/${task.id}/log/stream?format=activity&turn=1`);
-      const res = await route(new Request(url), url, url.pathname, cfg, { fake: FAKE_DEF, broken });
+      const res = await route(new Request(url), url, url.pathname, testRouteContext(cfg, { fake: FAKE_DEF, broken }));
       expect(res.status).toBe(200);
       const reader = res.body!.getReader();
       let ended = false;

@@ -11,6 +11,7 @@ import { auditCommand, formatAudit } from "../src/cli-audit";
 import { offlineAnswer } from "../src/cli-help";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import { webTerminalEnv } from "../src/terminal";
 import { envForCwd, taskEnv } from "../src/turn-input";
 import { hasRunningTurn, startTurn } from "../src/runner";
@@ -51,8 +52,7 @@ function call(path: string, method: string, headers: Record<string, string>, bod
     }),
     url,
     url.pathname,
-    cfg,
-    adapters,
+    testRouteContext(cfg, adapters),
   ));
 }
 

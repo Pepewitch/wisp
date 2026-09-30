@@ -20,7 +20,10 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - `wispd/src/daemon.ts` takes exclusive ownership of the Wisp home, loads config
   and adapters, performs recovery, starts background loops, serves the generated
   web bundle, owns browser auth and terminal WebSocket upgrades, then delegates
-  ordinary API requests.
+  ordinary API requests. What one daemon owns is its `DaemonContext`
+  (`wispd/src/daemon-context.ts`): the caches the routes read, and every loop
+  and runtime it started, stopped in registration order on the way out. A new
+  cache or loop is added there, never in module scope.
 - Ownership comes FIRST, before the port preflight and before any recovery: an
   address being free says nothing about who owns a home, and two owners
   reconcile each other's live state (ENG-02). It is an exclusive SQLite lock on

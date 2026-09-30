@@ -22,6 +22,7 @@ import {
 } from "../src/attachments";
 import { loadConfig, TASKS_DIR, UPLOADS_DIR } from "../src/config";
 import { route } from "../src/routes";
+import { testRouteContext } from "./helpers/daemon-context";
 import {
   createTask,
   createTaskMessage,
@@ -53,7 +54,7 @@ function uploadRequest(bytes: BlobPart, name = "shot.png"): { request: Request; 
 
 async function upload(bytes: BlobPart, name = "shot.png") {
   const { request, url } = uploadRequest(bytes, name);
-  const response = await route(request, url, url.pathname, loadConfig(), BUILTIN_ADAPTERS);
+  const response = await route(request, url, url.pathname, testRouteContext(loadConfig(), BUILTIN_ADAPTERS));
   return {
     response,
     body: (await response.json()) as {
@@ -281,8 +282,7 @@ describe("raw attachment upload", () => {
       new Request(url, { method: "DELETE" }),
       url,
       url.pathname,
-      loadConfig(),
-      BUILTIN_ADAPTERS,
+      testRouteContext(loadConfig(), BUILTIN_ADAPTERS),
     );
     expect(response.status).toBe(200);
     expect(readdirSync(UPLOADS_DIR)).toEqual([]);
