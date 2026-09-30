@@ -85,7 +85,7 @@ function ContextReport({ context }: { context: ContextBreakdown }) {
         label="MCP servers"
         rows={context.mcpServers.map((m) => [
           m.name,
-          [m.toolCount !== null ? `${m.toolCount} tools` : null, m.tokens !== null ? fmt(m.tokens) : null]
+          [m.toolCount !== null ? `${m.toolCount} tools` : null, fmt(m.tokens)]
             .filter(Boolean)
             .join(" · "),
         ])}
@@ -119,7 +119,7 @@ function UsageReport({ usage }: { usage: HarnessUsageReport }) {
           usage.credits.unlimited
             ? "unlimited"
             : usage.credits.hasCredits
-              ? (usage.credits.balance ?? "available")
+              ? (usage.credits.balance === null ? "available" : String(usage.credits.balance))
               : "none",
         ] as [string, string])
       : null,

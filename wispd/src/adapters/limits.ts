@@ -1,5 +1,6 @@
 import { VERSION } from "../version";
 import type { AdapterDef, ProbeSpawnFn, RpcFactory } from "./types";
+import type { HarnessLimits, LimitsStatus, LimitWindow } from "../../../shared/api/harness";
 
 /**
  * Account plan limits: how much of each usage window a harness's account has
@@ -12,36 +13,7 @@ import type { AdapterDef, ProbeSpawnFn, RpcFactory } from "./types";
  * named `LimitsError`, never an empty report that reads as "nothing used".
  */
 
-export type LimitsStatus = "ok" | "needs-key" | "account-mismatch" | "unavailable" | "error";
-
-/** One usage window, as the harness reports it. */
-export interface LimitWindow {
-  /** stable within the harness, so a client can key rows */
-  id: string;
-  /** what the harness calls the window: `5h`, `7d`, `weekly`, a model name */
-  label: string;
-  /** a separate allowance inside one account (droid's standard/core, a codex per-model limit) */
-  pool: string | null;
-  /** the one model this window limits (claude's per-model week); null for a window every model draws from */
-  model: string | null;
-  usedPercent: number;
-  /** null when the window has not started (droid's idle 5h) or the harness named no reset */
-  resetsAt: string | null;
-  /** the window's length when the harness states or implies it; null when it varies (a month) */
-  windowMins: number | null;
-}
-
-export interface HarnessLimits {
-  /** the plan name, when the harness reports one */
-  plan: string | null;
-  windows: LimitWindow[];
-  /**
-   * droid only: whether the API key's account was checked against the one
-   * droid's own login uses. `unchecked` means droid's cache file could not be
-   * read, so the numbers are the key's account and nothing more is known.
-   */
-  account?: "verified" | "unchecked";
-}
+export type { HarnessLimits, LimitsStatus, LimitWindow } from "../../../shared/api/harness";
 
 /** A read that answered with something other than limits. `status` is what the client should say. */
 export class LimitsError extends Error {

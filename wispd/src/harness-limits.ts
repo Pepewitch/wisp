@@ -9,6 +9,8 @@
  * backoff so a broken or slow harness cannot be spawned on every poll.
  */
 import { createHash } from "node:crypto";
+import type { HarnessLimitsEntry } from "../../shared/api/harness";
+import type { SecretKeySource } from "../../shared/api/settings";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import {
@@ -38,7 +40,7 @@ export const LIMITS_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
 export const LIMITS_BACKOFF_HEADROOM_MS = 10_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
 
-export type FactoryKeySource = "settings" | "environment";
+export type FactoryKeySource = SecretKeySource;
 
 /**
  * The Factory API key for droid's limits: one saved in Settings wins, then
@@ -54,16 +56,7 @@ export function factoryKey(
   return fromEnv ? { key: fromEnv, source: "environment" } : null;
 }
 
-/** One harness's answer, as the route serves it. */
-export interface HarnessLimitsEntry {
-  name: string;
-  status: LimitsStatus;
-  limits: HarnessLimits | null;
-  /** why there are no limits to show; null when status is ok */
-  message: string | null;
-  fetchedAt: string;
-  cached: boolean;
-}
+export type { HarnessLimitsEntry } from "../../shared/api/harness";
 
 export interface HarnessLimitsCacheOptions {
   spawnOnce?: ProbeSpawnFn;

@@ -15,6 +15,7 @@ import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
 import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
+import type { WispPreferences } from "../../shared/api/settings";
 
 /** Per-harness turn defaults (P5b): applied at task creation when the request passes no explicit value. */
 export interface HarnessDefaults {
@@ -674,17 +675,10 @@ function persistConfig(value: Record<string, unknown>): void {
   }
 }
 
-// a type alias, not an interface, so the settings object is assignable to
-// patchConfig's Record<string, unknown> without a cast
-export type WispSettings = {
-  autoRenameTasksFromPullRequests: boolean;
-  hiddenModels: Record<string, string[]>;
-};
-
 /** The public daemon-wide preferences, with legacy configs inheriting defaults. */
 export function wispSettings(
   cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests" | "hiddenModels">,
-): WispSettings {
+): WispPreferences {
   return {
     autoRenameTasksFromPullRequests:
       cfg.autoRenameTasksFromPullRequests !== false,
@@ -717,7 +711,7 @@ export function patchConfig(keys: Record<string, unknown>): void {
  */
 export function persistWispSettings(
   cfg: WispConfig,
-  settings: WispSettings,
+  settings: WispPreferences,
 ): void {
   patchConfig(settings);
   cfg.autoRenameTasksFromPullRequests =

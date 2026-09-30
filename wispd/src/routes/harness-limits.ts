@@ -1,6 +1,7 @@
 import type { AdapterDef } from "../adapters";
 import type { WispConfig } from "../config";
 import type { HarnessLimitsCache } from "../harness-limits";
+import type { HarnessLimitsResponse } from "../../../shared/api/harness";
 import { json } from "./http";
 
 /**
@@ -19,5 +20,5 @@ export async function harnessLimitsRoute(
   cache: HarnessLimitsCache,
 ): Promise<Response> {
   const refresh = url.searchParams.get("refresh") === "1";
-  return json({ harnesses: await cache.read(cfg, adapters, { refresh }) });
+  return json<HarnessLimitsResponse>({ harnesses: await cache.read(cfg, adapters, { refresh }) });
 }

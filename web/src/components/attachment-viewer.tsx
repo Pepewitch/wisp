@@ -27,7 +27,8 @@ import type { TurnAttachment } from "@/lib/types"
  * is the one that shows without this component syncing state in an effect.
  */
 type AttachmentViewerProps = {
-  files: TurnAttachment[]
+  /** Stored attachments, or a composer's pending ones (any sniffed media type). */
+  files: (Omit<TurnAttachment, "mediaType"> & { mediaType: string })[]
   /** which file is showing; null = closed */
   index: number | null
   onIndex: (next: number) => void

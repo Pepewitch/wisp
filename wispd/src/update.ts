@@ -24,10 +24,12 @@ import {
   readBoundedText,
 } from "./update-download";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
-import { errorTail, readUpdateAttempt, recordUpdateAttempt, UPDATE_RECORD_PATH, type UpdateAttempt } from "./update-record";
+import { errorTail, readUpdateAttempt, recordUpdateAttempt, UPDATE_RECORD_PATH } from "./update-record";
+import type { InstallMethod, UpdateAttempt, UpdateState, UpdateStatus } from "../../shared/api/update";
 
 export { compareVersions } from "../../shared/release-version";
 export type { UpdateAttempt } from "./update-record";
+export type { InstallMethod, UpdateState, UpdateStatus } from "../../shared/api/update";
 export {
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
@@ -45,23 +47,6 @@ const MAX_MANIFEST_BYTES = 64 * 1024;
 export const UPDATE_COMMAND_MAX_BYTES = DEFAULT_MAX_BYTES;
 const UPDATE_COMMAND_TIMEOUT_MS = 15 * 60 * 1000;
 const SHA256 = /^[0-9a-f]{64}$/;
-
-export type InstallMethod = "homebrew" | "managed-linux" | "unsupported";
-export type UpdateState = "up-to-date" | "available" | "installing" | "restarting" | "failed" | "unavailable";
-
-export interface UpdateStatus {
-  currentVersion: string;
-  currentApiProtocolVersion: number;
-  latestVersion: string | null;
-  latestApiProtocolVersion: number | null;
-  state: UpdateState;
-  installMethod: InstallMethod;
-  canAutoUpdate: boolean;
-  message: string | null;
-  checkedAt: string | null;
-  /** The last self-update this home ran, from any daemon run; null before the first. */
-  lastAttempt: UpdateAttempt | null;
-}
 
 export interface ReleaseInfo {
   version: string;

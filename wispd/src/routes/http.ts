@@ -1,7 +1,7 @@
 import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
-import { parseAttachmentManifest, type AttachmentRecord } from "../attachments";
-import { turnCaptureState, turnDiagnosticState, type ApiTask, type Task, type TaskMessage, type Turn } from "../types";
+import { parseAttachmentManifest } from "../attachments";
+import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn } from "../types";
 import { logFailure } from "../failure-log";
 import { safeString } from "../text";
 import { typeName } from "../validate";
@@ -19,16 +19,6 @@ export function apiTask(t: Task): ApiTask {
   const { brief_enabled, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
   return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, briefEnabled: brief_enabled === 1, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
-
-export type ApiTaskMessage = Omit<
-  TaskMessage,
-  "attachments_json" | "claim" | "claim_turn_n" | "attachment_hash" | "delivery_uncertain" | "deferred" | "fast" | "origin" | "source_seq"
-> & {
-  attachments: AttachmentRecord[];
-  delivery_uncertain: boolean;
-  deferred: boolean;
-  fast: boolean;
-};
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
   const {
@@ -52,28 +42,6 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
   };
 }
 
-/**
- * A turn as the API serves it: the internal columns parsed, never relayed raw —
- * `attachments_json` becomes `attachments` (A1a) and `usage_json` becomes
- * `usage`, normalized through the harness's own `usageFormat` strategy (Theme
- * B). A client never sees either column: they are internal encodings, and a
- * client that parsed them would be coupled to them. `def` is the task's
- * adapter; undefined (a harness the daemon no longer knows) serves usage null
- * rather than guessing at a shape.
- */
-export type ApiTurn = Omit<
-  Turn,
-  "attachments_json" | "usage_json" | "outcome_json" | "capture_categories_json" | "requested_fast"
-> & {
-  /** Adapter-declared lifecycle the client can present without parsing private harness logs. */
-  operation?: "compact";
-  attachments: AttachmentRecord[];
-  usage: UsageSummary | null;
-  capture_categories: Record<string, { records: number; bytes: number }> | null;
-  /** Fast mode as requested for this turn, a boolean like the task's. */
-  requested_fast: boolean;
-};
-
 /** Parse and normalize one stored usage blob without exposing its storage shape. */
 export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageSummary | null {
   let rawUsage: unknown = null;
@@ -87,6 +55,15 @@ export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageS
   return def ? formatUsage(def, rawUsage) : null;
 }
 
+/**
+ * A turn as the API serves it: the internal columns parsed, never relayed raw —
+ * `attachments_json` becomes `attachments` (A1a) and `usage_json` becomes
+ * `usage`, normalized through the harness's own `usageFormat` strategy (Theme
+ * B). A client never sees either column: they are internal encodings, and a
+ * client that parsed them would be coupled to them. `def` is the task's
+ * adapter; undefined (a harness the daemon no longer knows) serves usage null
+ * rather than guessing at a shape.
+ */
 export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
   const {
     attachments_json,
@@ -125,7 +102,12 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
  */
 const jsonBodies = new WeakMap<Response, string>();
 
-export function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
+/**
+ * A JSON response. A route serving a shape from shared/api names it
+ * (`json<SearchResponse>(…)`), so a payload that drifts from the contract the
+ * web client reads fails typecheck here rather than rendering wrong there.
+ */
+export function json<T = unknown>(data: T, status = 200, headers: Record<string, string> = {}): Response {
   const text = JSON.stringify(data);
   const response = new Response(text, {
     status,

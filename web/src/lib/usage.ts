@@ -1,5 +1,5 @@
 import { formatTokens } from "@/lib/format";
-import type { TurnUsage, UsageSummary } from "@/lib/types";
+import type { UsageSummary } from "@/lib/types";
 
 const USAGE_FIELDS = [
   { key: "inputTokens", label: "in" },
@@ -14,11 +14,11 @@ const USAGE_FIELDS = [
 }[];
 
 /** A missing report is not a zero-token turn. */
-export function reportedUsageTurns(
-  turns: TurnUsage[] | undefined,
-): (TurnUsage & { usage: UsageSummary })[] {
+export function reportedUsageTurns<T extends { usage: UsageSummary | null }>(
+  turns: T[] | undefined,
+): (T & { usage: UsageSummary })[] {
   return (turns ?? []).filter(
-    (turn): turn is TurnUsage & { usage: UsageSummary } => turn.usage !== null,
+    (turn): turn is T & { usage: UsageSummary } => turn.usage !== null,
   );
 }
 

@@ -1,15 +1,76 @@
 /**
- * Client-side mirror of the daemon's API shapes (src/types.ts, src/daemon.ts).
- * The state list pairs with TASK_STATES in src/types.ts — keep in sync by hand,
- * same contract as the classic web/index.html.
+ * The daemon's API as this client reads it. Shapes from shared/api are the
+ * ones the daemon types its route payloads with, so a daemon change that
+ * breaks this client fails typecheck. This file re-exports them and, where a
+ * newer client also talks to an older daemon, declares the client's view: the
+ * same shape with the fields such a daemon omits made optional. The types
+ * still declared in full here mirror the daemon by hand until they move there.
  */
-import type { AutopilotStatus } from "../../../shared/autopilot";
-export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck", "failed"] as const;
-export type TaskState = (typeof TASK_STATES)[number];
+import type {
+  ApiTaskListItem,
+  ApiTaskMessage,
+  ApiTurn,
+  BackgroundWork,
+  ConversationDetail as DaemonConversationDetail,
+  SendResponse as DaemonSendResponse,
+  TaskDetail as DaemonTaskDetail,
+  TaskState,
+  TurnStatus,
+} from "../../../shared/api/task";
+import type {
+  HarnessLimits as DaemonHarnessLimits,
+  HarnessLimitsEntry as DaemonHarnessLimitsEntry,
+  LimitWindow as DaemonLimitWindow,
+  ProbeCommand as ProbeCommandName,
+  TaskSkills as DaemonTaskSkills,
+} from "../../../shared/api/harness";
+import type { WispPreferences, WispSettings as DaemonWispSettings } from "../../../shared/api/settings";
+import type { UpdateStatus as DaemonUpdateStatus } from "../../../shared/api/update";
 
-export type TurnStatus = "running" | "done" | "failed" | "interrupted";
-export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
-export type TurnDiagnosticState = "complete" | "partial" | "evicted" | "disabled" | "unavailable";
+export { TASK_STATES } from "../../../shared/api/task";
+export type {
+  AttachResponse,
+  BackgroundGroup,
+  CleanupSummary,
+  CompactAnswer,
+  SendDisposition,
+  SendWhen,
+  TaskMode,
+  TaskState,
+  TaskUsage,
+  TurnAttachment,
+  TurnCaptureState,
+  TurnDiagnosticState,
+  TurnInput,
+  TurnStatus,
+  TurnUsage,
+  UsageSummary,
+} from "../../../shared/api/task";
+export type {
+  ContextBreakdown,
+  HarnessUsageReport,
+  LimitsStatus as HarnessLimitsStatus,
+  ProbeAnswer,
+  ProbeCommand as ProbeCommandName,
+  ProbeReport,
+  SkillEntry,
+  SlashCommandEntry,
+} from "../../../shared/api/harness";
+export type {
+  FactoryKeyTest,
+  ReviewJudgeStatus,
+  ReviewJudgeTest,
+  SecretKeyStatus,
+  SuffixPrompt,
+} from "../../../shared/api/settings";
+export type { InstallMethod, UpdateState } from "../../../shared/api/update";
+
+/**
+ * A daemon shape as this client reads it: `K` are the fields it must not rely
+ * on, because a daemon older than the field omits it, or this client never
+ * reads it.
+ */
+type FromAnyDaemon<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 export type ActivityStatus = "running" | "completed" | "failed" | "stopped" | "unknown"
 
@@ -70,221 +131,69 @@ export interface QuestionPrompt {
   options: string[]
 }
 
-/** Task as GET /api/tasks serializes it (archived is a boolean at the boundary). */
-export interface CleanupSummary {
-  state: "pending" | "running" | "needs-attention" | "complete";
-  step: string; error: string | null; retryAt: string | null; revision: number;
-  uncertain: boolean; confirmStopped: boolean;
-}
-
-/** One tracked process group that outlived its turn — see wispd/src/types.ts. */
-export interface BackgroundGroup {
-  turn: number
-  pgid: number
-  processes: number
-  since: string | null
-  state: "running" | "unknown"
-  stopRequested: boolean
-  names: string[]
-}
-
 /**
- * What a message sent now does to the running turn: steered into it, started
- * once it ends on its own (its answer is already out), or started by stopping
- * it. A message for any other agent than the one named here can only start a
- * new turn, so it stops this one too.
+ * A task from GET /api/tasks or GET /api/tasks/:id. The list-only facts
+ * (has_workflow, autopilot, latest_turn_*) are absent from the detail routes.
  */
-export interface TurnInput {
-  mode: "steer" | "wait" | "interrupt"
-  context_n: number
-  harness: string
-  model: string | null
-  effort: string | null
-  fast: boolean
-}
-
-/** When a composer send should reach the agent (/send `when`). */
-export type SendWhen = "now" | "next-turn"
-
-export interface ApiTask {
-  /** The running turn's input; null while idle, absent from a daemon older than the queue toggle. */
-  turn_input?: TurnInput | null;
-  attachmentsRetained?: boolean;
-  deletionPending?: boolean;
-  cleanup?: CleanupSummary;
-  /** Absent on older daemons; the turn outcome remains in state. */
-  background?: {
-    state: "none" | "running" | "unknown" | "stopping"
-    groups: number
+export type ApiTask = FromAnyDaemon<
+  Omit<ApiTaskListItem, "background"> & {
     /** Absent on daemons before background detail; render the bare state then. */
-    details?: BackgroundGroup[]
-  }
-  id: string;
-  title: string;
-  repo_path: string;
-  worktree_path: string | null;
-  branch: string | null;
-  base_commit: string | null;
-  /**
-   * Ref the worktree forked from — `origin/main`, the project's configured
-   * base, or a per-task override. null for a local task (it adopts the
-   * checkout's branch) and for a repo with no remote to name.
-   */
-  base_ref?: string | null;
-  harness: string;
-  model: string | null;
-  effort: string | null;
-  /**
-   * Fast mode: turns run in the harness's faster lane for the same model.
-   * Absent on a daemon that predates the field, which reads as off — the same
-   * thing it means everywhere else.
-   */
-  fast?: boolean;
-  slot: number;
-  state: TaskState;
-  state_detail: string | null;
-  context_n?: number;
-  session_id: string | null;
-  /**
-   * Tokens the harness's model was carrying on its last call in this session,
-   * read off the turn stream — never asked for, because asking costs context
-   * on the harnesses that can answer. null/absent = not observed: a fresh
-   * context, a task whose first turn has not settled, or a harness whose
-   * stream only ever reports a per-turn billing total.
-   */
-  context_tokens?: number | null;
-  seq: number;
-  turn_count: number;
-  archived: boolean;
-  mode: TaskMode | null;
-  created_at: string;
-  updated_at: string;
-  /** List endpoint only; true while at least one active or paused workflow is attached. */
-  has_workflow?: boolean;
-  /** auto-merge for the task's PR; null or absent when it was never armed (or the daemon predates it) */
-  autopilot?: AutopilotStatus | null;
-  /** Task briefs are on for this task. Absent on a daemon older than the feature. */
-  briefEnabled?: boolean;
-  /** the model the task's latest turn actually ran on (P5b) — list endpoint only */
-  latest_turn_model?: string | null;
-  /** the latest turn's exit code (Theme B) — the fact behind the "Exited N" word */
-  latest_turn_exit_code?: number | null;
-  /** whether the latest turn delivered a result (Theme B) — "Exited N" requires it */
-  latest_turn_has_result?: boolean;
-}
+    background: FromAnyDaemon<BackgroundWork, "details">;
+  },
+  | "base_ref"
+  | "fast"
+  | "context_n"
+  | "context_tokens"
+  | "briefEnabled"
+  | "attachmentsRetained"
+  | "deletionPending"
+  | "background"
+  | "turn_input"
+  | "has_workflow"
+  | "autopilot"
+  | "latest_turn_model"
+  | "latest_turn_exit_code"
+  | "latest_turn_has_result"
+>;
 
-/**
- * One turn's usage, normalized at the API boundary through the adapter's
- * usageFormat strategy (Theme B). Only the numbers the harness actually
- * reported are present — no invented zeros, no sums, and never money. `null`
- * on the turn means the harness reported nothing, which the UI says rather
- * than renders as blanks.
- */
-export interface UsageSummary {
-  inputTokens?: number;
-  cachedInputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  cacheWriteTokens?: number;
-}
+/** A turn from the conversation routes. */
+export type Turn = FromAnyDaemon<
+  ApiTurn,
+  | "context_n"
+  | "harness"
+  | "requested_model"
+  | "requested_effort"
+  | "requested_fast"
+  | "pid"
+  | "pid_start_time"
+  | "interrupt_detail"
+  | "kill_detail"
+  | "exit_code"
+  | "capture_mode"
+  | "capture_state"
+  | "captured_bytes"
+  | "omitted_bytes"
+  | "omitted_records"
+  | "capture_categories"
+  | "capture_detail"
+  | "diagnostic_state"
+  | "diagnostic_bytes"
+  | "diagnostic_first_seq"
+  | "diagnostic_last_seq"
+  | "diagnostic_detail"
+  | "diagnostic_evicted_at"
+>;
 
-/** Narrow task-wide usage row returned only when the `/tokens` panel opens. */
-export interface TurnUsage {
-  id: number;
-  n: number;
-  usage: UsageSummary | null;
-}
+/** A queued, steered or delivered message. */
+export type TaskMessage = FromAnyDaemon<
+  ApiTaskMessage,
+  "workflow_id" | "context_n" | "harness" | "model" | "effort" | "fast" | "deferred"
+>;
 
-export interface TaskUsage {
-  total: UsageSummary;
-  reporting_turns: number;
-  turns: TurnUsage[];
-  has_older_turns: boolean;
-}
-
-/**
- * One stored image on a turn (A1a). No URL and no path: the bytes come from
- * `GET /api/tasks/:id/attachments/:turn/:name`, authenticated like every other
- * read, and the name is the lookup key the daemon checks against that turn's
- * manifest.
- */
-export interface TurnAttachment {
-  name: string;
-  size: number;
-  mediaType: string;
-}
-
-export interface Turn {
-  id: number;
-  task_id: string;
-  n: number;
-  context_n?: number;
-  harness?: string;
-  requested_model?: string | null;
-  requested_effort?: string | null;
-  prompt: string;
-  /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
-  operation?: "compact";
-  result: string | null;
-  status: TurnStatus;
-  /** the model the turn ACTUALLY ran on; null = the harness never reported one */
-  model: string | null;
-  /** the harness's own usage numbers, normalized (Theme B); null = none reported */
-  usage: UsageSummary | null;
-  capture_mode?: "recorder-v1" | null;
-  capture_state?: TurnCaptureState;
-  captured_bytes?: number;
-  omitted_bytes?: number;
-  omitted_records?: number;
-  capture_categories?: Record<string, { records: number; bytes: number }> | null;
-  capture_detail?: string | null;
-  diagnostic_state?: TurnDiagnosticState;
-  diagnostic_bytes?: number | null;
-  diagnostic_first_seq?: number | null;
-  diagnostic_last_seq?: number | null;
-  diagnostic_detail?: string | null;
-  diagnostic_evicted_at?: string | null;
-  /**
-   * The images this turn carried (A1a). Always present, `[]` for a turn that
-   * carried none. It survives archive, which deletes the bytes — so a non-empty
-   * list on an archived task means "there was an image here and it is gone",
-   * which the conversation has to say rather than render a broken thumbnail.
-   */
-  attachments: TurnAttachment[];
-  log_file: string;
-  started_at: string;
-  ended_at: string | null;
-}
-
-export interface TaskMessage {
-  id: string
-  task_id: string
-  workflow_id?: string | null
-  context_n?: number
-  harness?: string
-  model?: string | null
-  effort?: string | null
-  text: string
-  status: "queued" | "delivered" | "cancelled"
-  delivery: "started" | "steered" | null
-  turn_n: number | null
-  /** Delivery may have succeeded before its acknowledgement or turn record was lost. */
-  delivery_uncertain: boolean
-  /** Held for the next turn by the composer's queue toggle; absent from older daemons. */
-  deferred?: boolean
-  attachments: TurnAttachment[]
-  created_at: string
-  updated_at: string
-}
-
-export type SendDisposition = "started" | "steered" | "queued-next"
-
-export interface SendResponse extends ApiTask {
-  disposition: SendDisposition
-  message: TaskMessage
-  operation?: "compact"
-  /** The running turn was stopped so this message could start. */
-  interrupted?: boolean
+export interface SendResponse
+  extends ApiTask,
+    Pick<DaemonSendResponse, "disposition" | "operation" | "interrupted"> {
+  message: TaskMessage;
 }
 
 /**
@@ -295,43 +204,23 @@ export interface SendResponse extends ApiTask {
  */
 export type WorktreeReason = string | null;
 
-export type InstallMethod = "homebrew" | "managed-linux" | "unsupported"
-export type UpdateState = "up-to-date" | "available" | "installing" | "restarting" | "failed" | "unavailable"
-
 /** GET /api/update and the accepted POST /api/update response. */
-export interface UpdateStatus {
-  currentVersion: string
-  latestVersion: string | null
-  currentApiProtocolVersion: number
-  latestApiProtocolVersion: number | null
-  state: UpdateState
-  installMethod: InstallMethod
-  canAutoUpdate: boolean
-  message: string | null
-  checkedAt: string | null
-}
+export type UpdateStatus = FromAnyDaemon<DaemonUpdateStatus, "lastAttempt">;
 
-/** GET /api/tasks/:id/conversation — task history with no filesystem or Git work. */
-export interface ConversationDetail extends ApiTask {
+/**
+ * GET /api/tasks/:id/conversation. `messages` and `pending_question_id` are
+ * absent on a daemon that predates them; `has_older_turns` is absent when a
+ * legacy daemon returned full history.
+ */
+export interface ConversationDetail
+  extends ApiTask,
+    Partial<Pick<DaemonConversationDetail, "pending_question_id" | "has_older_turns" | "older_turns_before">> {
   turns: Turn[];
-  /**
-   * The ONE question the harness is blocked on right now, if any. Absent on a
-   * daemon that predates questionnaires. The log says which questions are
-   * unreleased; only the live driver knows which one can still be answered,
-   * and a transcript can hold more than one of the first kind.
-   */
-  pending_question_id?: string | null;
   messages?: TaskMessage[];
-  /** Present on bounded responses. Absent means a legacy daemon returned full history. */
-  has_older_turns?: boolean;
-  /** Exclusive cursor for the next older page. */
-  older_turns_before?: number | null;
 }
 
 /** GET /api/tasks/:id — the legacy Git-aware detail contract retained for clients and CLI. */
-export interface TaskDetail extends ConversationDetail {
-  /** null whenever there is nothing to measure, including an unreadable worktree */
-  diffstat: string | null;
+export interface TaskDetail extends ConversationDetail, Pick<DaemonTaskDetail, "diffstat"> {
   worktreeReason: WorktreeReason;
 }
 
@@ -455,71 +344,20 @@ export type WispEvent =
   | { type: "settings" }
   | { type: "harness-limits"; harness: string };
 
-/** GET/PATCH /api/settings, the daemon-wide preferences safe to expose. */
-export interface WispSettings {
-  autoRenameTasksFromPullRequests: boolean;
-  /**
-   * harness name -> model ids kept OUT of the model picker on this daemon. A
-   * denylist, so a model a later probe discovers shows up on its own. Absent
-   * on a daemon older than this field — read it as "nothing hidden" and hide
-   * the Settings section, never as "hide everything".
-   */
-  hiddenModels?: Record<string, string[]>;
-  /** The optional review judge. Absent on a daemon older than 0.6.1: hide its section. */
-  reviewJudge?: ReviewJudgeStatus;
-  /** The Factory API key droid's plan limits are read with. Absent on an older daemon: hide its section. */
-  usageLimits?: { factoryKey: SecretKeyStatus };
-}
-
-/** A write-only daemon secret as a client may see it: whether it is set, where from, and its last four characters. */
-export interface SecretKeyStatus {
-  configured: boolean;
-  /** "settings" was saved through PATCH /api/settings, and wins over the daemon's environment. */
-  source: "settings" | "environment" | null;
-  /** "…abcd" */
-  hint: string | null;
-}
-
 /**
- * POST /api/settings/factory-key/test: droid's limits read now with the
- * current key. `account` says whether the key was matched against droid's
- * own login; `unchecked` means droid's account file was not readable.
+ * GET/PATCH /api/settings. Each section is absent on a daemon older than it:
+ * read a missing `hiddenModels` as "nothing hidden" and hide the section,
+ * never as "hide everything".
  */
-export type FactoryKeyTest =
-  | { ok: true; ms: number; account: "verified" | "unchecked" }
-  | { ok: false; error: string; status?: HarnessLimitsStatus };
+export type WispSettings = FromAnyDaemon<DaemonWispSettings, "hiddenModels" | "reviewJudge" | "usageLimits">;
 
-export type HarnessLimitsStatus = "ok" | "needs-key" | "account-mismatch" | "unavailable" | "error";
+/** One plan-usage window. `model` is absent from an older daemon: read that as every model. */
+export type LimitWindow = FromAnyDaemon<DaemonLimitWindow, "model">;
 
-/** One plan-usage window, copied from the harness (wispd/src/adapters/limits.ts). */
-export interface LimitWindow {
-  id: string;
-  /** the harness's own name for it: `5h`, `7d`, `weekly`, a model name */
-  label: string;
-  /** a separate allowance inside one account (droid's standard/core); null for the only one */
-  pool: string | null;
-  /** the one model this window limits (claude's per-model week); null, or absent from an older daemon, for every model */
-  model?: string | null;
-  usedPercent: number;
-  /** null when the window has not started, or the harness named no reset */
-  resetsAt: string | null;
-  windowMins: number | null;
-}
-
-export interface HarnessLimitsEntry {
-  name: string;
-  status: HarnessLimitsStatus;
-  limits: {
-    plan: string | null;
-    windows: LimitWindow[];
-    /** droid only: whether the key's account was checked against droid's login */
-    account?: "verified" | "unchecked";
-  } | null;
-  /** why there are no limits to show; null when status is ok */
-  message: string | null;
-  fetchedAt: string;
-  cached: boolean;
-}
+/** One harness's plan limits, its windows read as this client's LimitWindow. */
+export type HarnessLimitsEntry = Omit<DaemonHarnessLimitsEntry, "limits"> & {
+  limits: (Omit<DaemonHarnessLimits, "windows"> & { windows: LimitWindow[] }) | null;
+};
 
 /** GET /api/harness-limits */
 export interface HarnessLimitsResponse {
@@ -530,17 +368,7 @@ export interface HarnessLimitsResponse {
  * PATCH /api/settings. The review judge's `jevApiKey` goes through its own,
  * uncached mutation (`useSaveReviewJudgeKey`), never this one.
  */
-export type WispSettingsPatch = Partial<Pick<WispSettings, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
-
-/** The review judge as the daemon reports it: whether a key is set and its last four characters, never the key. */
-export interface ReviewJudgeStatus extends SecretKeyStatus {
-  model: string;
-  /** This calendar month on this daemon, probes included. */
-  usage: { month: string; calls: number; errors: number; inputTokens: number; costUsd: number };
-}
-
-/** POST /api/settings/review-judge/test: one small call with the daemon's current key. */
-export type ReviewJudgeTest = { ok: true; ms: number; model: string } | { ok: false; error: string };
+export type WispSettingsPatch = Partial<Pick<WispPreferences, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
 
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then
@@ -562,21 +390,6 @@ export interface RepoInfo {
   /** false for a repo wisp only knows from task history — it has no config entry to edit */
   configured: boolean;
 }
-
-/** A daemon-wide reusable prompt appended to a task or steer submission. */
-export interface SuffixPrompt {
-  id: string;
-  name: string;
-  prompt: string;
-  createdAt: string;
-}
-
-/**
- * Where a task's turns run. `worktree` is an isolated checkout wisp creates and
- * removes; `local` is the repo itself, which archive must never touch. Rows
- * written before the column existed come back as `worktree`.
- */
-export type TaskMode = "worktree" | "local";
 
 /** The probed model cache for one harness (null when the probe never ran or failed). */
 export interface ProbedModels {
@@ -694,111 +507,8 @@ export interface ShellInfo {
   createdAt: string;
 }
 
-/** A3: the only out-of-turn reads any harness has proven to have (SP1). */
-export type ProbeCommandName = "context" | "usage";
-
-/** droid's `get_context_breakdown`, normalized (src/adapters/probe.ts). */
-export interface ContextBreakdown {
-  model: string | null;
-  budgetTokens: number | null;
-  usedTokens: number | null;
-  freeTokens: number | null;
-  categories: { name: string; tokens: number | null }[];
-  skills: { name: string; tokens: number | null }[];
-  mcpServers: { name: string; toolCount: number | null; tokens: number | null }[];
-}
-
-/** codex's `account/rateLimits/read` + `account/usage/read`, normalized. */
-export interface HarnessUsageReport {
-  planType: string | null;
-  primary: { usedPercent: number | null; windowMins: number | null; resetsAt: string | null } | null;
-  secondary: { usedPercent: number | null; windowMins: number | null; resetsAt: string | null } | null;
-  credits: { hasCredits: boolean; unlimited: boolean; balance: string | null } | null;
-  lifetimeTokens: number | null;
-}
-
-/**
- * POST /api/tasks/:id/probe's report: claude hands back markdown (render
- * as-is); droid and codex hand back structured JSON and Wisp owns the table —
- * and the vocabulary.
- */
-export type ProbeReport =
-  | { format: "markdown"; text: string }
-  | { format: "context"; context: ContextBreakdown }
-  | { format: "usage"; usage: HarnessUsageReport };
-
-/** The route's whole answer: what ran, when, and whether the cache served it. */
-export interface ProbeAnswer {
-  command: ProbeCommandName;
-  probedAt: string;
-  /** true = the 120s cache answered and no harness process was spawned */
-  cached: boolean;
-  report: ProbeReport;
-}
-/**
- * A5: POST /api/tasks/:id/compact's answer — only what the harness honestly
- * reported. removedCount is null when the harness doesn't count (codex);
- * sessionReplaced is droid minting a new session id; note carries the one
- * sentence beyond the numbers (codex recorded it as a turn).
- */
-export interface CompactAnswer {
-  ok: true;
-  removedCount: number | null;
-  sessionReplaced: boolean;
-  note: string | null;
-}
-/**
- * GET /api/tasks/:id/attach — the harness's own interactive resume command for
- * the task's stored session, assembled by the daemon from the adapter's
- * `attach` template. `argv: null` means there is nothing honest to show (no
- * session yet, or a harness that declares no attach command); `message` says
- * which. `cwd` is the directory the command belongs in (the task's worktree).
- */
-export interface AttachResponse {
-  argv: string[] | null;
-  cwd: string | null;
-  message: string | null;
-}
-
-/**
- * A4: one skill as the palette renders it. description is null on a name-only
- * skill (droid's schema allows it — SP2): the row renders without a hint
- * rather than with invented text, and is never dropped for lacking one.
- */
-export interface SkillEntry {
-  name: string;
-  description: string | null;
-}
-
-/** A custom slash command discovered from the harness's own registry. */
-export interface SlashCommandEntry {
-  name: string;
-  description: string | null;
-  argumentHint: string | null;
-  executable: boolean;
-}
-
-/**
- * GET /api/tasks/:id/skills — the harness's OWN registries for Tier 3, never
- * hardcoded lists. `commands` stays separate because a custom command can be
- * executable or take arguments. `errors` are malformed-skill reports the harness handed
- * back (codex); `partialNote` marks a knowingly-incomplete list (claude
- * before its first turn: user/project skills only); `invoke` says how a pick
- * becomes prompt text — "/name" (slash) or a plain-text ask (prompt), because
- * codex has no headless slash surface and a pick must not pretend otherwise.
- */
-export interface TaskSkills {
-  skills: SkillEntry[];
-  /** Optional for compatibility with daemons predating command discovery. */
-  commands?: SlashCommandEntry[];
-  /** Optional for compatibility; command failure does not erase valid skills. */
-  commandError?: string | null;
-  errors: string[];
-  partialNote: string | null;
-  invoke: "slash" | "prompt" | null;
-  probedAt: string;
-  cached: boolean;
-}
+/** GET /api/tasks/:id/skills. `commands` and `commandError` are absent from a daemon predating command discovery. */
+export type TaskSkills = FromAnyDaemon<DaemonTaskSkills, "commands" | "commandError">;
 
 /** Named frames of GET /api/tasks/:id/log/stream. */
 export interface LogStreamFrames {

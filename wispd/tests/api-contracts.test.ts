@@ -781,7 +781,7 @@ describe("daemon API contracts", () => {
 
     await expectError(base, "/api/tasks/tnope9/attach", 404, "no such task: tnope9");
     const noSession = makeTask();
-    expect(await json(await api(base, `/api/tasks/${noSession.id}/attach`))).toEqual({ argv: null, message: "no session yet" });
+    expect(await json(await api(base, `/api/tasks/${noSession.id}/attach`))).toEqual({ argv: null, cwd: null, message: "no session yet" });
 
     const attachWorktree = mkdtempSync(join(tmpdir(), "wisp-attach-worktree-"));
     const attached = makeTask();
