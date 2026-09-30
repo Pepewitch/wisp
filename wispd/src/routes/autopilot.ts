@@ -7,7 +7,7 @@
  * GET  /api/tasks/:id/autopilot/history     what it did, newest first: { history: AutopilotHistoryEntry[] }
  */
 import type { AutopilotUpdate } from "../../../shared/autopilot"
-import { AutopilotError, autopilotHistory, autopilotStatus, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
+import { AutopilotError, autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
 import { getTask } from "../store"
 import { autopilotSwitchDetail, recordAudit, requestActor } from "../task-audit"
 import { typeName } from "../validate"
@@ -23,6 +23,14 @@ export function autopilotUpdateError(body: Record<string, unknown>): string | nu
   return null
 }
 
+/** What a resume releases: a pause, a Stop hold, a merge-failure count, or a finished PR. */
+function isHeld(taskId: string): boolean {
+  const row = autopilotRow(taskId)
+  if (!row) return false
+  const checkpoint = checkpointOf(row)
+  return row.state === "paused" || Boolean(checkpoint.stopHold || checkpoint.mergeFailures || checkpoint.done)
+}
+
 export async function autopilotRoute(req: Request, path: string): Promise<Response> {
   const match = path.match(AUTOPILOT_PATH)!
   const taskId = match[1]!
@@ -32,8 +40,10 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
     if (match[2]) {
       if (req.method !== "POST") return err("Method not allowed", 405)
       const verb = match[2] as "resume" | "send-now" | "skip"
+      const held = verb === "resume" && isHeld(taskId)
       const status = { resume: resumeAutopilot, "send-now": sendPendingFix, skip: skipPendingFix }[verb](taskId)
-      recordAudit(taskId, `autopilot-${verb}`, requestActor(req))
+      // a resume with nothing paused or held only asks for a fresh look; send-now and skip refuse unless a round waits
+      if (verb !== "resume" || held) recordAudit(taskId, `autopilot-${verb}`, requestActor(req))
       return json(status)
     }
     if (req.method === "GET") return json(autopilotStatus(taskId))

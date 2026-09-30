@@ -6,6 +6,7 @@ import { assertCleanupHookEnded } from "../archive-hooks";
 import { cleanupProgress, cleanupSummary, isHook, notifyCleanup, updateProgress } from "../archive-progress";
 import { kickCleanup } from "../archive-worker";
 import { err, json, jsonObjectBody } from "./http";
+import { recordAudit, requestActor } from "../task-audit";
 
 async function logTail(id: string): Promise<string> {
   let file;
@@ -49,6 +50,7 @@ export async function cleanupRoute(req: Request, id: string): Promise<Response> 
     return true;
   })();
   if (!changed) return err("Cleanup changed while you were checking it. Refresh and review the current step.", 409);
+  recordAudit(id, "cleanup", requestActor(req), `${String(body.action)} at ${p.phase}`);
   notifyCleanup(id);
   kickCleanup();
   return json(cleanupSummary(id), 202);

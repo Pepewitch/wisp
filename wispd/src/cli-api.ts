@@ -2,6 +2,7 @@ import type { StagedAttachmentPayload } from "./attachments";
 import { wispCommand } from "./command";
 import { printError } from "./cli-print";
 import { loadConfig, type WispConfig } from "./config";
+import { AGENT_TURN_ENV } from "./turn-input";
 
 export class CliApiError extends Error {
   constructor(
@@ -22,13 +23,15 @@ export class CliApiError extends Error {
 let daemonConfig: WispConfig | undefined;
 
 /**
- * Which client this is, for the daemon's task audit (task-audit.ts). Inside a
- * Wisp task's turn `WISP_TASK_ID` is set, so a call there is an agent driving
- * Wisp and says which task it runs in. A self-report for accountability, not
- * authentication: the bearer token is what the daemon trusts.
+ * Which client this is, for the daemon's task audit (task-audit.ts). Only a
+ * harness turn's environment carries the agent-turn marker, so a call there is
+ * an agent driving Wisp and says which task it runs in. A task's terminal has
+ * `WISP_TASK_ID` too, but a person typing there is plain `cli`. A self-report
+ * for accountability, not authentication: the bearer token is what the daemon
+ * trusts.
  */
 export function cliClientHeaders(env: Record<string, string | undefined> = process.env): Record<string, string> {
-  const task = env.WISP_TASK_ID?.trim();
+  const task = env[AGENT_TURN_ENV] === "1" ? env.WISP_TASK_ID?.trim() : undefined;
   return { "x-wisp-client": "cli", ...(task ? { "x-wisp-task": task } : {}) };
 }
 

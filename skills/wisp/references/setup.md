@@ -195,7 +195,9 @@ harmless preferences.
   [PR-AUTOPILOT.md](../../../docs/PR-AUTOPILOT.md).
 
 Every harness turn also runs with `WISP_TASK_ID`, `WISP_TASK_SLOT`,
-`WISP_WORKTREE`, and `WISP_REPO` set in its environment. `wisp brief` (used
+`WISP_WORKTREE`, and `WISP_REPO` set in its environment (a task's terminal
+gets the same four), plus `WISP_AGENT_TURN=1`, which only a turn has: `wisp`
+run there is recorded in the task audit as that task's agent. `wisp brief` (used
 with no task id, e.g. from inside a running turn) falls back to
 `$WISP_TASK_ID` when one is running in the harness's own shell.
 

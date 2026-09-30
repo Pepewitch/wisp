@@ -71,6 +71,7 @@ import { finalizeTurn } from "./turn-finalize";
 import { pendingBriefRun, recordBriefRun } from "./brief-store";
 import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
+  AGENT_TURN_ENV,
   BRIEF_RUN_ENV,
   briefReminder,
   attachmentLines,
@@ -244,7 +245,8 @@ export function startTurn(
       stdin: isLive || stdinStrategy ? "pipe" : "ignore",
       env: {
         ...envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
-        // only this turn's own binding: envForCwd has already dropped any inherited one
+        // only this turn's own bindings: envForCwd has already dropped any inherited ones
+        [AGENT_TURN_ENV]: "1",
         ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
       },
       // Its own process GROUP, so a stop reaches the builds, servers, and

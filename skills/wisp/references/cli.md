@@ -264,16 +264,21 @@ wisp audit <task> [--limit <1-500>] [--json]
 
 Who did what to the task, newest first (the newest 100 unless `--limit` says
 otherwise; `GET /api/tasks/<id>/audit?limit=<n>` on the API). One line per
-action: when, what (`create`, `send`, `steer`, `send-now`, `interrupt`,
-`archive`, `force-archive`, `fresh-session`, `push`, `autopilot` for a switch
-turned on or off, `autopilot-resume`/`-skip`/`-send-now`, `workflow-start`,
-`-update`, `-pause`, `-resume`, `-complete`, a `merge` autopilot made, and
-`fail`), who, and what it was about. The actor is `web`, `desktop` or `cli`
-for the client that asked; `agent:<id>` for the CLI run by the agent inside task
-`<id>` (a turn's environment carries `WISP_TASK_ID`, so running `wisp` from a
-task's agent attributes the call to that task); `autopilot` or `workflow:<id>`
-for the daemon acting on a switch someone armed, including every message they
-queued; `system` for the daemon on its own account; and `api` for a client that
+action: when, what, who, and what it was about. The actions are `create`,
+`rename`, `send`, `steer`, `send-now`, `edit` and `cancel` (a queued message),
+`answer` (an agent's question), `interrupt`, `compact`, `archive`,
+`force-archive`, `cleanup` (resolving an archive cleanup), `fresh-session`,
+`push`, `autopilot` (a switch turned on or off, including by archiving),
+`autopilot-resume`/`-skip`/`-send-now`, `workflow-start`, `-update`, `-pause`,
+`-resume` and `-complete`, a `merge` autopilot made, and `fail`.
+
+The actor is `web`, `desktop` or `cli` for the client that asked. It is
+`agent:<id>` for `wisp` run by the agent during one of task `<id>`'s turns
+(a turn's environment carries `WISP_AGENT_TURN=1` beside `WISP_TASK_ID`); a
+person typing in a task's terminal has `WISP_TASK_ID` but not the marker, so
+reads as `cli`. `autopilot` or `workflow:<id>` is the daemon acting on a switch
+someone armed, including every message they queued that was not cancelled
+unsent; `system` is the daemon on its own account; and `api` is a client that
 did not name itself. The client name is the caller's own report: it records
 which client acted, not who is allowed to. Each task keeps its newest 1000
 entries, and `purge` deletes them with the task (the daemon log names who

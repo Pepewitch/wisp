@@ -20,6 +20,13 @@ export function taskEnv(task: Task): Record<string, string> {
 export const BRIEF_RUN_ENV = "WISP_BRIEF_RUN"
 
 /**
+ * Set only in a harness turn's environment, never in a task's terminal or its
+ * setup and archive scripts, which share taskEnv. The CLI reads it to tell an
+ * agent driving Wisp from a person typing in the task's terminal (cli-api.ts).
+ */
+export const AGENT_TURN_ENV = "WISP_AGENT_TURN"
+
+/**
  * The single line an eligible turn is given. Short on purpose — the schema,
  * the limits and the example live in `wisp brief --help`, read only when the
  * agent needs them — and scoped to THIS turn, never phrased as a standing
@@ -116,7 +123,9 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   // a turn, a setup script, a terminal — builds its environment here, so a
   // daemon started from inside some agent's shell cannot hand that agent's
   // binding to anything. The runner adds a turn's OWN binding after this.
-  const { [BRIEF_RUN_ENV]: _inherited, ...rest } = env
+  // The agent-turn marker is dropped for the same reason: only the runner
+  // may say a child is a turn.
+  const { [BRIEF_RUN_ENV]: _inherited, [AGENT_TURN_ENV]: _turn, ...rest } = env
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 

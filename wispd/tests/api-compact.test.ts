@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
 import { ADAPTERS_PATH, CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
+import { taskAudit } from "../src/task-audit";
 import { createTask, createTurn, freeSlot, getTask, messagesFor, newTaskId, setTaskContextFields, setTaskFields, transition } from "../src/store";
 
 /**
@@ -108,6 +109,10 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     const again = await api(base, `/api/tasks/${id}/compact`);
     expect(again.status).toBe(200);
     expect(state.calls).toEqual(["droid.load_session", "droid.compact_session", "droid.load_session", "droid.compact_session"]);
+    expect(taskAudit(id).filter((entry) => entry.action === "compact")).toEqual([
+      expect.objectContaining({ actor: "api", detail: "new session" }),
+      expect.objectContaining({ actor: "api", detail: "new session" }),
+    ]);
   });
 
   test("a message is refused, not steered or queued, while action compaction is in flight", async () => {

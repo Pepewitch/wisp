@@ -504,6 +504,7 @@ export function taskRoute(
       // Renaming is metadata, not a state transition: keep seq/outbox stable,
       // but wake every UI with enough data to patch without broad refetches.
       const updated = updateTaskAndEmit(task.id, { title, custom_title: 1 }, "title")!;
+      recordAudit(task.id, "rename", requestActor(req), title);
       return json(apiTask(updated));
     })();
   }
@@ -631,6 +632,7 @@ export function taskRoute(
       if (!task.session_id) return err("no session yet — compaction needs a session to compact; run a turn first", 409);
       try {
         const result = await compacts.compact(task, def);
+        recordAudit(task.id, "compact", requestActor(req), result.newSessionId ? "new session" : null);
         // The compaction happened outside any turn, so no stream reported the
         // model call that followed it and wisp does not know the new size. The
         // reading it replaces is now a number about a conversation that no

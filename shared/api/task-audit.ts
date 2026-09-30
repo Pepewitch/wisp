@@ -3,7 +3,8 @@
  *
  * An actor is one of:
  * - `web`, `desktop`, `cli`: the client that sent the request;
- * - `agent:<taskId>`: the CLI run by an agent inside that Wisp task;
+ * - `agent:<taskId>`: the CLI run by an agent during one of that task's turns
+ *   (a person typing in the task's terminal is `cli`);
  * - `autopilot`, `workflow:<id>`: the daemon acting for a switch the owner armed;
  * - `system`: the daemon on its own account (boot recovery and the like);
  * - `api`: a caller that did not say which client it is.
@@ -16,12 +17,18 @@ export type TaskAuditActor = string
 
 export const TASK_AUDIT_ACTIONS = [
   "create",
+  "rename",
   "send",
   "steer",
   "send-now",
+  "edit",
+  "cancel",
+  "answer",
   "interrupt",
+  "compact",
   "archive",
   "force-archive",
+  "cleanup",
   "fresh-session",
   "push",
   "autopilot",

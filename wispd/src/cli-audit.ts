@@ -1,4 +1,4 @@
-import type { TaskAuditEntry, TaskAuditResponse } from "../../shared/task-audit"
+import type { TaskAuditEntry, TaskAuditResponse } from "../../shared/api/task-audit"
 import type { Flags } from "./cli-args"
 import { print, printJson } from "./cli-print"
 import { wispCommand } from "./command"

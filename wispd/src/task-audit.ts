@@ -10,7 +10,7 @@
  * task keeps its newest AUDIT_KEEP entries.
  */
 import type { AutopilotStatus } from "../../shared/autopilot";
-import type { TaskAuditAction, TaskAuditActor, TaskAuditEntry } from "../../shared/task-audit";
+import type { TaskAuditAction, TaskAuditActor, TaskAuditEntry } from "../../shared/api/task-audit";
 import { AUTOPILOT_TYPE } from "./autopilot/type";
 import { db } from "./store";
 import type { SendResult } from "./types";
@@ -51,10 +51,34 @@ export function workflowActor(workflowId: string, type: string): TaskAuditActor 
   return type === AUTOPILOT_TYPE ? "autopilot" : `workflow:${workflowId}`;
 }
 
+/** One row, then the per-task trim. Runs inside the caller's transaction. */
+function insertAudit(taskId: string, action: TaskAuditAction, actor: TaskAuditActor, detail: string | null, at: Date): void {
+  db.query("INSERT INTO task_audit (task_id, at, action, actor, detail) VALUES (?, ?, ?, ?, ?)").run(
+    taskId,
+    at.toISOString(),
+    action,
+    actor.slice(0, 80),
+    detail === null ? null : detail.slice(0, DETAIL_MAX),
+  );
+  const cutoff = db
+    .query("SELECT id FROM task_audit WHERE task_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?")
+    .get(taskId, AUDIT_KEEP) as { id: number } | null;
+  if (cutoff) db.query("DELETE FROM task_audit WHERE task_id = ? AND id <= ?").run(taskId, cutoff.id);
+}
+
 /**
- * Record one action. Never throws: the action it describes has already
- * happened, and failing its request now would misreport the outcome.
+ * Never throws: the action being recorded has already happened, and failing
+ * its request now would misreport the outcome.
  */
+function writeAudit(taskId: string, action: TaskAuditAction, actor: TaskAuditActor, write: () => void): void {
+  try {
+    db.transaction(write)();
+  } catch (error) {
+    console.warn(`[wisp] task ${taskId}: could not record ${action} by ${actor}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** Record one action. Never throws. */
 export function recordAudit(
   taskId: string,
   action: TaskAuditAction,
@@ -62,37 +86,22 @@ export function recordAudit(
   detail: string | null = null,
   at = new Date(),
 ): void {
-  try {
-    db.transaction(() => {
-      db.query("INSERT INTO task_audit (task_id, at, action, actor, detail) VALUES (?, ?, ?, ?, ?)").run(
-        taskId,
-        at.toISOString(),
-        action,
-        actor.slice(0, 80),
-        detail === null ? null : detail.slice(0, DETAIL_MAX),
-      );
-      const cutoff = db
-        .query("SELECT id FROM task_audit WHERE task_id = ? ORDER BY id DESC LIMIT 1 OFFSET ?")
-        .get(taskId, AUDIT_KEEP) as { id: number } | null;
-      if (cutoff) db.query("DELETE FROM task_audit WHERE task_id = ? AND id <= ?").run(taskId, cutoff.id);
-    })();
-  } catch (error) {
-    console.warn(`[wisp] task ${taskId}: could not record ${action} by ${actor}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  writeAudit(taskId, action, actor, () => insertAudit(taskId, action, actor, detail, at));
 }
 
 /**
  * A send, once per message: a client retrying with its clientMessageId is
- * handed the same message back, which is not a second send.
+ * handed the same message back, which is not a second send. Never throws.
  */
 export function recordSendAudit(taskId: string, result: SendResult, actor: TaskAuditActor): void {
   const detail = `message ${result.message.id}`;
-  const seen = db
-    .query("SELECT 1 FROM task_audit WHERE task_id = ?1 AND action IN ('send', 'steer') AND (detail = ?2 OR instr(detail, ?2 || ' ') = 1)")
-    .get(taskId, detail);
-  if (seen) return;
   const action = result.disposition === "steered" ? "steer" : "send";
-  recordAudit(taskId, action, actor, result.interrupted ? `${detail} · interrupted the running turn` : detail);
+  writeAudit(taskId, action, actor, () => {
+    const seen = db
+      .query("SELECT 1 FROM task_audit WHERE task_id = ?1 AND action IN ('send', 'steer') AND (detail = ?2 OR instr(detail, ?2 || ' ') = 1)")
+      .get(taskId, detail);
+    if (!seen) insertAudit(taskId, action, actor, result.interrupted ? `${detail} · interrupted the running turn` : detail, new Date());
+  });
 }
 
 /** Which auto-merge / auto-fix switches moved, or null when neither did. */
@@ -104,7 +113,11 @@ export function autopilotSwitchDetail(before: AutopilotStatus | null, after: Aut
   return moved.length > 0 ? moved.join(", ") : null;
 }
 
-/** Newest first: the recorded actions, and every message a workflow or autopilot wrote. */
+/**
+ * Newest first: the recorded actions, and every message a workflow or
+ * autopilot queued, unless it was cancelled with no chance it arrived (a person's
+ * cancellation is its own `cancel` entry).
+ */
 export function taskAudit(taskId: string, limit = 100): TaskAuditEntry[] {
   const bounded = Math.max(1, Math.min(AUDIT_READ_MAX, Math.trunc(limit)));
   const rows = db.query(`
@@ -114,7 +127,7 @@ SELECT m.created_at AS at, 'send' AS action,
   CASE WHEN w.type = ?2 THEN 'autopilot' ELSE 'workflow:' || m.workflow_id END AS actor,
   'message ' || m.id AS detail, 1 AS source, m.rowid AS id
 FROM task_messages m LEFT JOIN workflows w ON w.id = m.workflow_id
-WHERE m.task_id = ?1 AND m.workflow_id IS NOT NULL
+WHERE m.task_id = ?1 AND m.workflow_id IS NOT NULL AND (m.status <> 'cancelled' OR m.delivery_uncertain = 1)
 ORDER BY at DESC, source DESC, id DESC
 LIMIT ?3`).all(taskId, AUTOPILOT_TYPE, bounded) as (TaskAuditEntry & { source: number; id: number })[];
   return rows.map(({ at, action, actor, detail }) => ({ at, action, actor, detail }));
