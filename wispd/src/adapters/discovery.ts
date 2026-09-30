@@ -213,7 +213,7 @@ export const MODEL_DISCOVERY: Record<string, ModelDiscoveryFn> = {
   },
 
   /**
-   * Cursor (verified against 2026.09.18-9a7762b): `cursor-agent models`
+   * Cursor (verified against 2026.09.28-64d2043): `cursor-agent models`
    * prints one `<id> - <display name>` record per model after authentication.
    *
    * The WHOLE catalog is offered, in the CLI's own order. This used to keep
@@ -342,6 +342,25 @@ export async function discoverModels(
 }
 
 /**
+ * Wisp's own default model for a harness, when this install can run it.
+ *
+ * The adapter's `defaultModel` is a product choice made in code, so it only
+ * applies where the installed CLI offers it: an older CLI whose catalog lacks
+ * the id gets null (and therefore its own default) rather than a turn that
+ * fails on an unknown model. A curated list was validated to contain it; a
+ * missing probe proves nothing, so it also yields null for a probed harness.
+ */
+export function wispDefaultModel(
+  def: Pick<AdapterDef, "staticModels" | "defaultModel">,
+  probedList: string[] | null,
+): string | null {
+  const wanted = def.defaultModel;
+  if (!wanted) return null;
+  if (probedList && probedList.length > 0) return probedList.includes(wanted) ? wanted : null;
+  return def.staticModels?.includes(wanted) ? wanted : null;
+}
+
+/**
  * Which models a harness offers, from one rule both the picker and
  * `wisp models` use.
  *
@@ -349,7 +368,8 @@ export async function discoverModels(
  * install can actually run. An adapter's curated `staticModels` fills in only
  * for a CLI that enumerates none (currently claude), and is marked `curated` so
  * a caller can say so out loud rather than presenting a pinned subset as the
- * whole truth.
+ * whole truth. The default is Wisp's own where the list offers it, else the
+ * CLI's.
  */
 export function offeredModels(
   def: Pick<AdapterDef, "staticModels" | "defaultModel">,
@@ -357,13 +377,12 @@ export function offeredModels(
   probedDefault: string | null,
 ): OfferedModels | null {
   if (probedList && probedList.length > 0) {
-    return { list: probedList, defaultModel: probedDefault, curated: false };
+    return { list: probedList, defaultModel: wispDefaultModel(def, probedList) ?? probedDefault, curated: false };
   }
   if (!def.staticModels || def.staticModels.length === 0) return null;
   return {
-    // a real probe's default still wins when the probe named one
     list: def.staticModels,
-    defaultModel: probedDefault ?? def.defaultModel ?? null,
+    defaultModel: wispDefaultModel(def, null) ?? probedDefault,
     curated: true,
   };
 }

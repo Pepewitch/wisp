@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH, LOG_DIR, type WispConfig } from "../src/config";
 import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
+import { ModelProbeCache } from "../src/model-probes";
 import { acceptsGzip, route, serve } from "../src/daemon";
 import { testRouteContext } from "./helpers/daemon-context";
 import { finishResponse, json, JSON_GZIP_MIN_CHARS } from "../src/routes/http";
@@ -394,10 +395,12 @@ describe("S1 create-modal and project APIs", () => {
     expect((await configured.json()) as { effort: string | null; model: string | null })
       .toMatchObject({ effort: "low", model: "kimi-k3" });
 
-    // claude accepts an effort now rather than 400-ing on it
+    // claude accepts an effort now rather than 400-ing on it; with no model
+    // asked for and none configured, it gets Wisp's default from the curated list
     const claudeEffort = await call({ repoPath: repo, prompt: "claude effort", harness: "claude", effort: "xhigh" });
     expect(claudeEffort.status).toBe(201);
-    expect(((await claudeEffort.json()) as { effort: string | null }).effort).toBe("xhigh");
+    expect((await claudeEffort.json()) as { effort: string | null; model: string | null })
+      .toMatchObject({ effort: "xhigh", model: "claude-opus-5-5" });
 
     const unsupported = await call({ repoPath: repo, prompt: "unsupported", harness: "plain", effort: "high" });
     expect(unsupported.status).toBe(400);
@@ -406,6 +409,49 @@ describe("S1 create-modal and project APIs", () => {
     const unsupportedDefault = await call({ repoPath: repo, prompt: "unsupported default", harness: "plain" });
     expect(unsupportedDefault.status).toBe(400);
     expect(((await unsupportedDefault.json()) as { error: string }).error).toBe("harness 'plain' has no effort support");
+  });
+
+  test("a task with no model gets Wisp's default only where the installed CLI offers it", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-web-default-model-"));
+    const cfg: WispConfig = {
+      instanceId: "123e4567-e89b-42d3-a456-426614174000",
+      port: 18710,
+      host: "127.0.0.1",
+      token,
+      webhooks: [],
+      repos: [],
+      stuckMinutes: 10,
+      logMaxBytes: 5_000_000,
+      setupTimeoutMinutes: 10,
+      envAllowlist: {},
+      harnessDefaults: {},
+    };
+    const adapters = { droid: BUILTIN_ADAPTERS.droid! };
+    const created = async (catalog: string): Promise<string | null> => {
+      const models = new ModelProbeCache(adapters, {
+        spawn: async (cmd) =>
+          cmd.includes("--help")
+            ? { exitCode: 0, stdout: "  -m, --model <id>  Model ID to use (default: gpt-6-sol)\n", stderr: "" }
+            : { exitCode: 1, stdout: "", stderr: `Invalid model\nAvailable built-in models:\n  ${catalog}\n` },
+      });
+      await models.refresh();
+      const url = new URL("http://wisp.test/api/tasks");
+      const response = await route(
+        new Request(url, {
+          method: "POST",
+          body: JSON.stringify({ repoPath: repo, prompt: "default model", harness: "droid" }),
+          headers: { "content-type": "application/json" },
+        }),
+        url,
+        url.pathname,
+        testRouteContext(cfg, adapters, { models }),
+      );
+      expect(response.status).toBe(201);
+      return ((await response.json()) as { model: string | null }).model;
+    };
+    expect(await created("auto, gpt-6-sol, claude-opus-5-5")).toBe("claude-opus-5-5");
+    // an older droid without the id keeps its own default instead of failing the turn
+    expect(await created("auto, gpt-6-sol")).toBeNull();
   });
 
   test("projects round-trip through the API, preserve unknown config keys, and update names idempotently", async () => {

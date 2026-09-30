@@ -102,7 +102,8 @@ wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast]
 
 Create and start a task. `repo` defaults to the current directory.
 `--model`/`--effort` fall back to `harnessDefaults` in `~/.wisp/config.json`,
-then to the harness's own default. `--fast` runs the same model in the
+then to Wisp's default model for that harness (when the installed CLI offers
+it), then to the harness's own default. `--fast` runs the same model in the
 harness's faster lane; a harness without one refuses it. `--local` runs in
 the repo checkout itself instead of a worktree. `--base` forks this task's
 worktree from `<ref>` instead of the project's base branch — any commit-ish

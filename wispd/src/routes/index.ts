@@ -59,6 +59,7 @@ function taskRoutes(
   skills: TaskSkillCache,
   compacts: TaskCompactor,
   pullRequests: PullRequestCache,
+  models: ModelProbeCache,
 ): Response | Promise<Response> | null {
   if (path === "/api/events" && method === "GET") return eventStream();
   const diagnosticLogMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/log\/diagnostic$/);
@@ -80,7 +81,7 @@ function taskRoutes(
   const sendNowResponse = taskMessageSendNowRoute(req, path, method, cfg, adapters, compacts);
   if (sendNowResponse !== null) return sendNowResponse;
   if (path === "/api/tasks" && method === "GET") return listTasksRoute(url);
-  if (path === "/api/tasks" && method === "POST") return createTaskRoute(req, cfg, adapters);
+  if (path === "/api/tasks" && method === "POST") return createTaskRoute(req, cfg, adapters, models);
   if (path === "/api/pull-requests" && method === "GET") {
     return pullRequests.overview(listTasks()).then((overview) => json(overview));
   }
@@ -162,7 +163,7 @@ export function route(req: Request, url: URL, path: string, ctx: RouteContext): 
   const updateResponse = updateRoute(req, path, m, updates);
   if (updateResponse !== null) return updateResponse;
 
-  const taskResponse = taskRoutes(req, url, path, m, cfg, adapters, probes, skills, compacts, pullRequests);
+  const taskResponse = taskRoutes(req, url, path, m, cfg, adapters, probes, skills, compacts, pullRequests, models);
   if (taskResponse !== null) return taskResponse;
 
   const projectResponse = projectRoutes(req, path, m, cfg);

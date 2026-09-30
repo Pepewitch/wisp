@@ -6,7 +6,7 @@
  */
 import { resolve } from "node:path";
 import type { AutopilotStatus } from "../../../shared/autopilot";
-import type { AdapterDef } from "../adapters";
+import { wispDefaultModel, type AdapterDef } from "../adapters";
 import {
   AttachError,
   decodeAttachments,
@@ -23,6 +23,7 @@ import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../t
 import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task-audit";
 import { TASK_TITLE_MAX } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
+import type { ModelProbeCache } from "../model-probes";
 import { launchTask } from "./task-launch";
 
 export interface NewTaskInput {
@@ -32,7 +33,7 @@ export interface NewTaskInput {
   /** what the first turn is sent, when it is more than `prompt` (a suffix prompt) */
   firstTurnPrompt?: string;
   harness: string;
-  /** explicit values win over config harnessDefaults, then the harness's own */
+  /** explicit values win over config harnessDefaults, then Wisp's default, then the harness's own */
   model?: string;
   effort?: string;
   fast: boolean;
@@ -152,13 +153,21 @@ export async function createAndLaunchTask(
   input: NewTaskInput,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
+  /** The daemon's probe cache; null only where there is none (Wisp's default then never applies to a probed harness). */
+  models: ModelProbeCache | null,
 ): Promise<NewTask | NewTaskRefusal> {
   const { repoPath, harness } = input;
   const def = adapters[harness];
   if (!def) return refuse("invalid", `unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`);
   if (!(await pathExists(repoPath))) return refuse("invalid", `repoPath does not exist: ${repoPath}`);
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
-  const { model, effort } = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
+  // Explicit values win; then config harnessDefaults; then Wisp's default
+  // where this install offers it; then the harness's own defaults (null).
+  // A probed harness with no snapshot yet (first boot, or a cache dropped by
+  // an adapter change) gets the CLI's own default until the probe lands.
+  const resolved = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
+  const model = resolved.model ?? wispDefaultModel(def, models?.snapshot(harness).models?.list ?? null);
+  const effort = resolved.effort;
   const unsupported = unsupportedRequest(def, harness, { effort, fast: input.fast, brief: input.brief });
   if (unsupported) return refuse("invalid", unsupported);
   const local = localTaskRefusal(input);

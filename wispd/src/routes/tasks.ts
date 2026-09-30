@@ -3,6 +3,7 @@ import { taskLogResponse } from "./task-log";
 import { TaskCapacityError } from "../task-admission";
 import { cleanupRoute } from "./cleanup";
 import { buildAttachArgv, isCompactPrompt, ProbeError, probeCommands, type AdapterDef } from "../adapters";
+import type { ModelProbeCache } from "../model-probes";
 import {
   AttachError,
   decodeAttachments,
@@ -135,7 +136,12 @@ const refusalStatus = (refusal: NewTaskRefusal): number =>
   refusal.kind === "attachment" ? refusal.status : REFUSAL_STATUS[refusal.kind];
 
 /** POST /api/tasks: parse the request; the domain operation owns every rule after that. */
-export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<string, AdapterDef>): Promise<Response> {
+export function createTaskRoute(
+  req: Request,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+  models: ModelProbeCache | null,
+): Promise<Response> {
   return (async () => {
     const parsed = await jsonObjectBody(req);
     if (parsed instanceof Response) return parsed;
@@ -174,6 +180,7 @@ export function createTaskRoute(req: Request, cfg: WispConfig, adapters: Record<
       },
       cfg,
       adapters,
+      models,
     );
     if ("error" in created) return err(created.error, refusalStatus(created));
     return json<ApiTask & Pick<ApiTaskListItem, "autopilot">>({ ...apiTask(created.task), autopilot: created.autopilot }, 201);

@@ -63,6 +63,7 @@ export {
   MODEL_DISCOVERY,
   opencodeCatalog,
   positivelyNotAgentCapable,
+  wispDefaultModel,
   type OpencodeCatalogEntry,
 } from "./discovery";
 export { PROBE_STRATEGIES, ProbeError, probeCommands, runProbe } from "./probe";

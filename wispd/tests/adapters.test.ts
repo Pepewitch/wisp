@@ -997,7 +997,7 @@ describe("validateAdapters (a prior audit)", () => {
   test("defaultModel must be a non-empty string from staticModels", () => {
     const base = { bin: "x", exec: [], parse: { format: "text" } as const };
     expect(thrownMessage(() => validateAdapters({ foo: { ...base, defaultModel: "" } }))).toBe(
-      "adapters.json: adapter 'foo'.defaultModel must be a non-empty string, got string",
+      "adapters.json: adapter 'foo'.defaultModel must be a non-empty string or null, got string",
     );
     expect(
       thrownMessage(() => validateAdapters({ foo: { ...base, staticModels: ["a"], defaultModel: "b" } })),
@@ -1007,6 +1007,9 @@ describe("validateAdapters (a prior audit)", () => {
     expect(
       validateAdapters({ foo: { ...base, staticModels: ["a", "b"], defaultModel: "b" } }).foo!.defaultModel,
     ).toBe("b");
+    // a probed harness has no list to check against at load; wispDefaultModel
+    // gates it on the installed CLI's catalog instead
+    expect(validateAdapters({ foo: { ...base, defaultModel: "b" } }).foo!.defaultModel).toBe("b");
   });
 
   test("parse.strategy must name a builtin strategy", () => {

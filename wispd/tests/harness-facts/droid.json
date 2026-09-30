@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "0.225.1",
+      "verifiedAgainst": "0.229.0",
       "source": "droid's own rejection of an invalid reasoning effort",
       "lists": {
         "observed": [
@@ -36,7 +36,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "0.225.1",
+      "verifiedAgainst": "0.229.0",
       "source": "flag tokens parsed out of 'droid exec -o stream-json --skip-permissions-unsafe --help'",
       "lists": {
         "values": [
@@ -87,7 +87,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "0.225.1",
+      "verifiedAgainst": "0.229.0",
       "source": "case-insensitive fixed-string search of the installed droid binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -106,7 +106,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "0.225.1",
+      "verifiedAgainst": "0.229.0",
       "source": "'droid exec --help' default plus droid's invalid-model error text",
       "lists": {
         "ids": [
@@ -121,12 +121,15 @@
           "claude-opus-4-8-fast",
           "claude-opus-5",
           "claude-opus-5-5",
+          "claude-opus-5-5-fast",
           "claude-opus-5-fast",
           "claude-sonnet-4-5-20250929",
           "claude-sonnet-4-6",
           "claude-sonnet-5",
+          "claude-sonnet-5-5",
           "deepseek-v4-flash-0731",
           "deepseek-v4-pro",
+          "deepseek-v4.1-flash",
           "gemini-3-flash-preview",
           "gemini-3.1-pro-preview",
           "gemini-3.5-flash",
@@ -158,8 +161,6 @@
           "grok-4.6",
           "grok-4.7",
           "inkling",
-          "kimi-k2.6",
-          "kimi-k2.7-code",
           "kimi-k3",
           "minimax-m2.7",
           "minimax-m3",
@@ -169,7 +170,7 @@
         ]
       },
       "scalars": {
-        "default": "gpt-5.6-sol"
+        "default": "gpt-6-sol"
       }
     },
     "steering": {

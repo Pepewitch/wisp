@@ -22,7 +22,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     resume: ["-s", "{session}"],
     model: ["-m", "{model}"],
     effort: ["-r", "{effort}"],
-    // Rechecked against droid 0.225.1's invalid-effort rejection. This is the
+    // Rechecked against droid 0.229.0's invalid-effort rejection. This is the
     // cross-model union; the valid subset still depends on the selected model.
     // `--help` only says "defaults per model", so the level is left unset by
     // default and droid picks per model — the menu offers, it does not force.
@@ -76,11 +76,13 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // added only from real captures, never invented shapes.
     transientMarkers: ["floating point nan", "not-a-number"],
     // `droid resume <id>` is the interactive form of the same stored session
-    // (verified against droid 0.225.1's top-level help).
+    // (verified against droid 0.229.0's top-level help).
     attach: ["resume", "{session}"],
     // task env reaches the agent's tool shell: tests/harness-facts/droid.json taskEnv
     briefs: true,
     modelDiscovery: "droid-models",
+    // Wisp's default for new droid tasks (owner decision, 2026-09-30).
+    defaultModel: "claude-opus-5-5",
     // A3 (SP1, live-verified 0.205.0): the JSON-RPC session mode reads
     // context out of band. Droid still has NO usage/limits RPC in 0.217.0.
     // Sending `/limits` through exec is not a local command: it runs a model
@@ -108,7 +110,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     auth: { check: ["auth", "status"], fix: "run 'claude auth login'" },
     // Required for the structured activity stream: without it claude emits
     // only the outer Task call/result and Wisp cannot show what the child did.
-    // Reverified against claude-code 2.1.280: print/stream-json, verbose,
+    // Reverified against claude-code 2.1.285: print/stream-json, verbose,
     // subagent forwarding, permission bypass, resume, model and effort retain
     // the same headless contract.
     exec: [
@@ -130,10 +132,12 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Baked ids rechecked on claude-code 2.1.280; the zero-token `/model`
+    // Baked ids rechecked on claude-code 2.1.285; the zero-token `/model`
     // read accepted Opus 5.5 on that version. Fable 5.1 replaced legacy Fable
     // 5, and Opus 5.5 replaced Opus 5 in the curated current lineup.
     staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    // Wisp's default for new claude tasks (owner decision, 2026-09-30).
+    defaultModel: "claude-opus-5-5",
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
     // attaching turn the prompt positional is omitted and prompt + base64
     // blocks ride one NDJSON stdin line
@@ -197,7 +201,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     compactPrompt: "/compact",
   },
   codex: {
-    // Zero-token argv/help reverified against codex-cli 0.156.1. `codex exec`
+    // Zero-token argv/help reverified against codex-cli 0.159.2. `codex exec`
     // is one headless turn;
     // resume is a SUBCOMMAND, not a flag (`codex exec resume <id> "<prompt>"`),
     // and codex applies the parent `exec` options to it — so appending
@@ -270,6 +274,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // task env reaches the agent's tool shell: tests/harness-facts/codex.json taskEnv
     briefs: true,
     modelDiscovery: "codex-models",
+    // Wisp's default for new codex tasks (owner decision, 2026-09-30).
+    defaultModel: "gpt-6.1-sol",
     // A3 (SP1, live-verified 0.149.0): the app-server reads account usage out
     // of band. There is NO per-thread context read (token usage is a
     // notification, never an answer), so /context is honestly absent here.
@@ -321,6 +327,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // hiddenModels), so a filter here only made models cursor accepts
     // unreachable from the UI.
     modelDiscovery: "cursor-models",
+    // Wisp's default for new cursor tasks (owner decision, 2026-09-30).
+    defaultModel: "grok-4.7-high",
     // A strategy, not a field mapping: cursor's result event carries the
     // WHOLE turn's assistant texts concatenated, not the final message
     // (byte-verified on 2026.08.31 against 2026.08.31-4057e58; fixture
@@ -357,7 +365,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
   },
   // Owner request ("i want to support opencode cli"), 2026-09-10. Live
   // behavior remains pinned to opencode 1.18.29; its zero-token help, catalog,
-  // effort, and marker surfaces were rechecked on 1.18.31. Fields that could
+  // effort, and marker surfaces were rechecked on 1.18.33. Fields that could
   // not be read off the installed CLI are absent rather than guessed (§4 of
   // docs/ADDING-A-HARNESS.md).
   //
