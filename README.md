@@ -9,6 +9,10 @@
 
 Self-hosted · No Wisp account · Desktop, browser, phone, and CLI
 
+<br />
+
+<img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." />
+
 </div>
 
 Working on several things with coding agents usually means juggling terminals,
