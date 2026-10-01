@@ -5,7 +5,7 @@ import { initTitleTips } from "./title-tips"
 /** jsdom has no hover media query; this is a pointer that can hover. */
 beforeAll(() => {
   vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("hover"), media: query }))
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] })
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "performance"] })
   initTitleTips()
 })
 afterAll(() => {
@@ -50,6 +50,17 @@ describe("titles shown as Wisp's own tooltip", () => {
     expect(tip()?.textContent).toBe("Add project")
     expect(tip()?.dataset.state).toBe("instant")
     out(add)
+  })
+
+  it("closes when its control leaves the page under a still pointer", () => {
+    vi.advanceTimersByTime(1000)
+    const row = button("Archive this task")
+    over(row)
+    vi.advanceTimersByTime(450)
+    expect(tip()?.dataset.state).toBe("unfold")
+    row.remove()
+    vi.advanceTimersByTime(250)
+    expect(tip()?.dataset.state).toBe("out")
   })
 
   it("never shows a title that is empty, and leaves a touch alone", () => {

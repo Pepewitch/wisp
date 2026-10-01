@@ -30,6 +30,8 @@ let timer = 0
 let hideTimer = 0
 let warmUntil = 0
 let watch: MutationObserver | null = null
+/** while shown: the owner can leave the DOM under a still pointer (a row re-rendered, a panel closed) */
+let alive = 0
 
 export function initTitleTips(): void {
   if (typeof document === "undefined" || tip) return
@@ -74,6 +76,8 @@ function onFocusIn(event: FocusEvent): void {
   // only a keyboard focus: a click focuses too, and a tip under the cursor
   // that just pressed the button is noise
   if (!target || !isKeyboardFocus(target)) return
+  // a field you are typing into keeps its own space; no tip over the caret
+  if (target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return
   const next = target.closest("[title]")
   if (next) arm(next)
 }
@@ -141,11 +145,16 @@ function show(instant: boolean): void {
   void box.offsetWidth
   box.dataset.state = instant ? "instant" : "unfold"
   shown = true
+  window.clearInterval(alive)
+  alive = window.setInterval(() => {
+    if (owner && !owner.isConnected) release()
+  }, 250)
 }
 
 /** Give the title back and close the tip. `quiet`: a new owner is taking over at once. */
 function release(quiet = false): void {
   window.clearTimeout(timer)
+  window.clearInterval(alive)
   watch?.disconnect()
   watch = null
   if (owner) {

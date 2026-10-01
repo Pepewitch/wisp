@@ -1344,6 +1344,44 @@ PR. Two sections share ONE scroller:
 The gallery's *Autopilot tab* section draws every state from the real
 components and models, one `data-frame` per state for screenshots.
 
+## 5l. Motion — quick in, quicker out
+
+Motion is part of how Wisp feels made, never decoration. It has one
+vocabulary, defined once in `web/src/index.css` (*Motion*), and every rule
+there turns instant under `prefers-reduced-motion`.
+
+- **Tokens, not literals.** `--ease-out` arrives and settles; `--ease-spring`
+  starts quick, goes ~4% past and rests; `--ease-glide` is a size change you
+  can watch. `--dur-in` 180 ms, `--dur-out` 110 ms, `--dur-size` 200 ms. Never
+  a bare `duration-300` or a hand-tuned `cubic-bezier` in a `className`.
+- **Quick in, quicker out.** Leaving is always faster than arriving, and it
+  never springs.
+- **The spring is for small things you summoned:** a tooltip, a menu, a
+  popover, a hover card. A modal is a big surface and eases in without one.
+- **Grow from the source.** An anchored popup scales out of its trigger
+  (base-ui's `--transform-origin`). The shared rule keys on
+  `[data-side][data-align]` and the `data-starting-style` /
+  `data-ending-style` base-ui sets, so a new menu or popover gets it for free.
+  It animates the `scale` property, never `transform`, so a positioner's own
+  translate is never fought. A drawer swipes and is left out.
+- **Size glides; it does not jump.** The composer animates its height
+  (`useAutosizeTextarea` measures, CSS moves) and reveals a new line rather
+  than scrolling to it.
+- **What you read never moves.** Streaming text, diffs and transcript rows
+  appear without motion; only the containers around them move.
+
+### Tooltips are a `title`
+
+Name a control with a plain `title`, plus an `aria-label` when it is an icon.
+`web/src/lib/title-tips.ts` shows every `title` as Wisp's own tooltip: it holds
+the attribute aside while the tip is shown, so the browser draws nothing; the
+tip opens as a hairline on the side facing the control, then unfolds. The
+first one waits 450 ms; a neighbour right after opens at once, without the
+unfold. Keyboard focus shows it too, except in a text field. Never wrap a
+control in a tooltip component or draw one by hand. A tip is neutral: the
+accent stays in its five places (§1). A device with no hover keeps the OS
+behaviour.
+
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its
@@ -1528,8 +1566,8 @@ point.
   `web/src/index.css` named by meaning, not by hue — and check it against
   the budget in §1 first.
 - **Elevation and stacking are scales, not literals.** Three depths
-  (`shadow-float` / `shadow-popover` / `shadow-modal`) and five layers
-  (`z-(--z-pane)` through `z-(--z-menu)`), both defined once in
+  (`shadow-float` / `shadow-popover` / `shadow-modal`) and the layers
+  (`z-(--z-pane)` through `z-(--z-tooltip)`), both defined once in
   `web/src/index.css`. Never write `shadow-[0_16px_40px_…]` or a bare
   `z-50`. A portalled popup does NOT win by being last in the DOM — DOM order
   only breaks ties between EQUAL z-indexes, so a surface that names no layer
