@@ -837,7 +837,7 @@ describe("connection tab status", () => {
     await waitFor(() =>
       expect(local).toHaveAttribute("title", "Server reachable · Live updates disconnected")
     )
-    expect(local.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
+    expect(local.querySelector("[data-live]")).toHaveClass("border-muted-foreground", "bg-transparent")
     // The inactive remote does not inherit the selected connection's stream loss.
     expect(remote).toHaveAttribute("title", "Live")
     act(() => EventSourceStub.instances[0]!.onerror?.())
@@ -882,6 +882,24 @@ describe("connection tab status", () => {
       expect(reconnectConnection).toHaveBeenCalledWith({ connectionId: REMOTE.id })
     )
     expect(selectConnection).not.toHaveBeenCalled()
+  })
+
+  it("keeps task state off an inactive tab: the one mark is connection health", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify([{ id: "t1", state: "needs-input", archived: false }]))
+    ))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={client}>
+        <DesktopApplicationProvider initial={bootstrap([LOCAL, REMOTE])} bridge={bridge()}>
+          <DesktopConnectionChrome />
+        </DesktopApplicationProvider>
+      </QueryClientProvider>
+    )
+    const chip = screen.getByRole("tab", { name: "Remote one" }).parentElement!
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    expect(chip.querySelectorAll("[data-state]")).toHaveLength(0)
+    expect(chip.querySelectorAll("[data-live]")).toHaveLength(1)
   })
 
   it("keeps both tabs green during a stream handoff, then warns if updates stall", () => {
@@ -931,7 +949,7 @@ describe("connection tab status", () => {
 
     act(() => vi.advanceTimersByTime(3_000))
     expect(switchedLocal).toHaveAttribute("title", "Server reachable · Live updates delayed")
-    expect(switchedLocal.querySelector("[data-live]")).toHaveClass("bg-state-needs-input")
+    expect(switchedLocal.querySelector("[data-live]")).toHaveClass("border-muted-foreground", "bg-transparent")
     act(() => EventSourceStub.instances[1]!.onopen?.())
     expect(switchedLocal).toHaveAttribute("title", "Live")
     act(() => connectionStore(REMOTE.id).set("events", true))

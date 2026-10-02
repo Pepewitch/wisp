@@ -6,7 +6,7 @@ export function ConnectionGallerySpecimen() {
     <section className="mt-9">
       <div className="mb-4 flex items-center gap-3">
         <Eyebrow>
-          Desktop connections — identity, selection and quiet attention
+          Desktop connections — identity, selection and health
         </Eyebrow>
         <Rule />
       </div>
@@ -16,10 +16,10 @@ export function ConnectionGallerySpecimen() {
           Local is always first and uses a computer; remotes use a cloud.
           Selection stays neutral. The connection dot is green while the server
           and live updates work, rings green while updates connect, and turns
-          yellow when updates are delayed. When the server cannot be reached,
-          a red crossed-out cloud replaces the dot. Click either to reconnect.
-          An inactive daemon also earns its highest-priority task-state dot,
-          so attention is visible without mounting another conversation tree.
+          to a hollow grey ring when updates are delayed. When the server
+          cannot be reached, a red crossed-out cloud replaces the dot. Click
+          either to reconnect. The tab says nothing about tasks: one mark, one
+          meaning, whether or not the tab is selected.
         </p>
       </div>
     </section>
