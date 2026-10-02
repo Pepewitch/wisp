@@ -1,39 +1,30 @@
 /**
- * The Wisp mark: a spirit held in violet glass.
+ * The Wisp mark: the spirit itself.
  *
- * THE IDEA. An icosahedron of violet glass, seen down a 3-fold axis so its
- * silhouette is a hard hexagon. Its faces are translucent, so the far side and
- * the edges behind it show through; its edges are traced in LIGHT, never in
- * black. Inside it burns a flame — taller than wide and sitting a little high,
- * because a symmetric glow reads as a lamp and an asymmetric one reads as alive.
+ * THE IDEA. Wisp is a companion that follows the work through, drawn as the
+ * thing its name is: a will-o'-the-wisp, a small flame spirit lit from inside.
+ * The old mark held that flame in a violet glass icosahedron; this one lets it
+ * out. It has a face because it is a companion, and only two eyes because a
+ * calm face is the whole personality: no mouth, no brows.
  *
- * That flame is the wisp. The solid is only the vessel: a will-o'-the-wisp is a
- * light in the dark, and the mark is that light, contained.
+ * ONE SILHOUETTE, S1. A round, calm base and a tongue of flame swept back as if
+ * it were moving, with a small second flick on the right shoulder. The sweep and
+ * the flick are what keep it from reading as a drop of water: a drop is
+ * symmetric and has one point.
  *
- * THE MATERIAL is violet, full stop. Not graphite with a violet accent — the
- * greys in this project are the dark theme, not the brand. Facets are separated
- * by tone and gradient alone; there is not one black line in the mark, because a
- * dark seam reads as folded cardboard while a bright one reads as light caught
- * on an edge.
+ * TWO RENDERINGS of one character. From 64px up the spirit is 3D: a raymarched
+ * model, lit from inside, its top a real flame that licks and sheds sparks. Those
+ * renders are source art in brand/source/, made outside this repository, and
+ * build.ts only composes them. Below 64px the 3D turns to a glowing blob, so
+ * everything small is THIS file: S1 as flat shapes, a body and two eyes. (A
+ * lighter heart low in the flat body was tried and read as a muzzle; the light
+ * from inside belongs to the 3D and to the vector spirit below.)
  *
- * TWO FORMS. `lanternSvg` is the hero: translucency, luminous edges, the flame,
- * an optional bloom. `markSvg` is its reduction for small sizes — flat fills, no
- * filters, no strokes. Both are the same solid on the same axis, and both put
- * their brightest tone at the centre, so the reduction still reads as lit from
- * inside. See the note on REDUCTION below; getting that mapping wrong is what
- * turns a violet mark into a pale smudge at 16px.
+ * Everything is in S1's own 256-unit drawing space and fitted into any square,
+ * as absolute M/L/C/Z path data only, so the same shapes feed SVG, the React
+ * component and the Finder icon's PDF without an arc or a transform anywhere.
  */
 
-import {
-  EDGES,
-  VERTICES,
-  pathOf,
-  project,
-  viewTransform,
-  type Facet,
-  type V2,
-  type ViewOpts,
-} from "./geometry";
 import { ADVANCE, GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
 /**
@@ -50,18 +41,20 @@ export const VIOLET = {
   white: "#F4ECFF",
 } as const;
 
-/** Palette for everything that is not the solid itself. */
+/** Palette for everything that is not the spirit itself. */
 export const PALETTE = {
   violet: VIOLET.brand,
   /** `--background`: the void the app is painted on */
   ink: "#0b0b0d",
+  /** the ground of the 3D renders in brand/source/, and the plate the app icons sit on */
+  plate: "#0e0d13",
   /** `--foreground`: the wordmark on a dark ground */
   paper: "#eaeaee",
   /** the wordmark on a light ground */
   inkText: "#18181b",
+  /** the eyes: near-black, a breath of violet so they belong to the body */
+  eye: "#120d1c",
 } as const;
-
-const RAMP = [VIOLET.abyss, VIOLET.deep, VIOLET.mid, VIOLET.brand, VIOLET.light, VIOLET.white];
 
 const channels = (hex: string): [number, number, number] => [
   parseInt(hex.slice(1, 3), 16),
@@ -81,256 +74,116 @@ export function mix(a: string, b: string, t: number): string {
   return `#${c(r1, r2)}${c(g1, g2)}${c(b1, b2)}`;
 }
 
-/** Sample the violet ramp at `t` in 0..1. */
-export function ramp(t: number): string {
-  const k = Math.max(0, Math.min(0.9999, t)) * (RAMP.length - 1);
-  const i = Math.floor(k);
-  return mix(RAMP[i], RAMP[i + 1], k - i);
+/**
+ * The flat body colour. Not `brand` itself: one favicon serves a dark tab bar
+ * and a white one, and #AF87F1 is a pale smudge on white. A third of the way
+ * down toward `mid` holds on both.
+ */
+export const BODY = mix(VIOLET.brand, VIOLET.mid, 0.36);
+
+// ── S1, in its own drawing space ─────────────────────────────────────────────
+
+/** The silhouette, in 256 units. Absolute M/C/Z only. */
+const S1 =
+  "M 124 222 C 88 222 60 196 60 158 C 60 120 84 100 90 72 C 94 54 88 40 74 26 " +
+  "C 116 34 136 62 136 96 C 146 90 158 84 170 74 C 184 100 192 126 192 158 C 192 194 162 222 124 222 Z";
+/** S1's ink box: what gets fitted into a square. */
+const BOX = { x0: 60, y0: 26, x1: 192, y1: 222 } as const;
+/** The eyes: two upright pills, set where the round base is widest. */
+const EYES = [108, 146] as const;
+const EYE = { cy: 152, w: 16, h: 28 } as const;
+/** Bézier approximation of a quarter circle. */
+const KAPPA = 0.5523;
+
+type Pt = [number, number];
+type Seg = { op: "M" | "L" | "C" | "Z"; pts: Pt[] };
+
+function parseS1(d: string): Seg[] {
+  const segs: Seg[] = [];
+  for (const m of d.matchAll(/([MLCZ])([^MLCZ]*)/g)) {
+    const nums = (m[2].match(/-?[\d.]+/g) ?? []).map(Number);
+    const pts: Pt[] = [];
+    for (let i = 0; i < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+    segs.push({ op: m[1] as Seg["op"], pts });
+  }
+  return segs;
 }
 
-const centreOf = (polygon: V2[]): V2 =>
-  polygon.reduce<V2>((a, p) => [a[0] + p[0] / polygon.length, a[1] + p[1] / polygon.length], [0, 0]);
+/** An upright pill (a stadium) as four quarter-circle Béziers and two lines. */
+function pill(cx: number, cy: number, w: number, h: number): Seg[] {
+  const r = w / 2;
+  const k = Math.max(0, h / 2 - r);
+  const q = r * KAPPA;
+  return [
+    { op: "M", pts: [[cx - r, cy - k]] },
+    { op: "C", pts: [[cx - r, cy - k - q], [cx - q, cy - k - r], [cx, cy - k - r]] },
+    { op: "C", pts: [[cx + q, cy - k - r], [cx + r, cy - k - q], [cx + r, cy - k]] },
+    { op: "L", pts: [[cx + r, cy + k]] },
+    { op: "C", pts: [[cx + r, cy + k + q], [cx + q, cy + k + r], [cx, cy + k + r]] },
+    { op: "C", pts: [[cx - q, cy + k + r], [cx - r, cy + k + q], [cx - r, cy + k]] },
+    { op: "Z", pts: [] },
+  ];
+}
 
-// ── the hero: the lantern ────────────────────────────────────────────────────
-
-/** Opacities and strengths of the hero form. */
-export const LANTERN = {
-  /** front faces — translucent enough to show the far side through them */
-  shell: 0.62,
-  /** the far side, seen through the front */
-  backing: 0.5,
-  /** edges facing us */
-  edgeFront: 0.62,
-  /** edges behind, dimmer, so depth reads */
-  edgeBack: 0.3,
-  /** the flame */
-  core: 1,
-  coreSize: 0.32,
-  /** ambient added to every lambert term */
-  ambient: 0.1,
-  /** specular strength */
-  specular: 1,
-} as const;
-
-export type LanternOpts = ViewOpts & {
-  size?: number;
+export type Fit = {
+  /** the square's side, in output units */
+  size: number;
+  /** empty space around S1's ink box, as a fraction of the side */
   margin?: number;
-  /** outer bloom radius as a fraction of size. 0 on light grounds — see below. */
-  bloom?: number;
-  /** unique id prefix, so two lanterns can share one document */
-  id?: string;
+  /** decimals in the emitted path data */
   precision?: number;
 };
 
-/**
- * The lantern's markup, without the `<svg>` wrapper, so the lockup can drop it
- * beside the wordmark in one document.
- *
- * On `bloom`: a blurred violet halo behind the solid is what makes it glow on a
- * dark ground, and on a white one the same halo reads as a printing artifact. So
- * it is a parameter, not a constant, and the light-ground assets ship with it at
- * zero rather than hunting for one value that suits both.
- */
-export function lanternBody(o: LanternOpts & { size: number }): { defs: string; body: string } {
-  const size = o.size;
-  const p = o.precision ?? 2;
-  const id = o.id ?? "w";
-  const view: ViewOpts = { axis: o.axis ?? "face", roll: o.roll, tilt: o.tilt };
-  const { facets, silhouette, vertexLight, toScreen } = project({
-    ...view,
-    size,
-    margin: o.margin ?? 0.06,
-  });
+/** Map S1's drawing space into a square: height-limited, centred. */
+function fitter(fit: Fit): (p: Pt) => Pt {
+  const margin = fit.margin ?? 0.04;
+  const height = BOX.y1 - BOX.y0;
+  const width = BOX.x1 - BOX.x0;
+  const scale = (fit.size * (1 - margin * 2)) / height;
+  const ox = (fit.size - width * scale) / 2 - BOX.x0 * scale;
+  const oy = (fit.size - height * scale) / 2 - BOX.y0 * scale;
+  return ([x, y]) => [ox + x * scale, oy + y * scale];
+}
 
-  const defs: string[] = [];
-  const under: string[] = [];
-  const mid: string[] = [];
-  const over: string[] = [];
-
-  if (o.bloom) {
-    defs.push(
-      `<filter id="${id}bl" x="-90%" y="-90%" width="280%" height="280%">` +
-        `<feGaussianBlur stdDeviation="${(size * o.bloom).toFixed(2)}"/></filter>`,
-    );
-    under.push(
-      `<path d="${pathOf(silhouette, p)}" fill="${VIOLET.brand}" filter="url(#${id}bl)" opacity="0.5"/>`,
-    );
-  }
-
-  // the far side first — this is what you see THROUGH the front faces
-  for (const f of facets.filter((x) => !x.front)) {
-    const tone = mix(VIOLET.abyss, VIOLET.mid, 0.25 + f.lambert * 0.4);
-    mid.push(`<path d="${pathOf(f.polygon, p)}" fill="${tone}" opacity="${LANTERN.backing}"/>`);
-  }
-
-  // Edges, split into the ones facing us and the ones behind. The far ones are
-  // laid down before the front faces cover them, which is what sells the glass.
-  const xf = viewTransform(view);
-  const screenVerts = VERTICES.map((v) => toScreen(xf(v)));
-  const edgeIsFront = (a: number, b: number): boolean =>
-    facets.some((f) => f.front && f.tri.includes(a) && f.tri.includes(b));
-
-  const backEdges: string[] = [];
-  const frontEdges: string[] = [];
-  for (const [a, b] of EDGES) {
-    const pa = screenVerts[a];
-    const pb = screenVerts[b];
-    const d = `M${pa[0].toFixed(p)} ${pa[1].toFixed(p)}L${pb[0].toFixed(p)} ${pb[1].toFixed(p)}`;
-    (edgeIsFront(a, b) ? frontEdges : backEdges).push(d);
-  }
-  if (backEdges.length > 0) {
-    mid.push(
-      `<path d="${backEdges.join("")}" stroke="${VIOLET.mid}" stroke-width="${(size * 0.006).toFixed(2)}" fill="none" opacity="${LANTERN.edgeBack}"/>`,
-    );
-  }
-
-  // the flame, seen through the shell
-  defs.push(
-    `<radialGradient id="${id}core">` +
-      `<stop offset="0" stop-color="${VIOLET.white}"/>` +
-      `<stop offset="0.30" stop-color="${VIOLET.light}"/>` +
-      `<stop offset="0.62" stop-color="${VIOLET.brand}" stop-opacity="0.45"/>` +
-      `<stop offset="1" stop-color="${VIOLET.brand}" stop-opacity="0"/></radialGradient>`,
-  );
-  const cr = LANTERN.coreSize * size;
-  mid.push(
-    `<ellipse cx="${(size / 2).toFixed(1)}" cy="${(size * 0.455).toFixed(1)}"` +
-      ` rx="${(cr * 0.74).toFixed(1)}" ry="${(cr * 1.12).toFixed(1)}"` +
-      ` fill="url(#${id}core)" opacity="${LANTERN.core}"/>`,
-  );
-
-  // the front faces, translucent, each with its own gradient
-  for (const f of facets.filter((x) => x.front)) {
-    mid.push(
-      `<path d="${pathOf(f.polygon, p)}" fill="${facetGradient(f, vertexLight, defs, `${id}f${f.index}`)}" opacity="${LANTERN.shell}"/>`,
-    );
-  }
-
-  if (frontEdges.length > 0) {
-    over.push(
-      `<path d="${frontEdges.join("")}" stroke="${VIOLET.light}" stroke-width="${(size * 0.007).toFixed(2)}" stroke-linecap="round" fill="none" opacity="${LANTERN.edgeFront}"/>`,
-    );
-  }
-
-  return {
-    defs: defs.length > 0 ? `<defs>${defs.join("")}</defs>` : "",
-    body: under.join("") + mid.join("") + over.join(""),
+function emitPath(segs: Seg[], map: (p: Pt) => Pt, precision: number): string {
+  const n = (v: number): string => {
+    const s = v.toFixed(precision);
+    return s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s;
   };
+  return segs
+    .map(({ op, pts }) => (op === "Z" ? "Z" : op + pts.map((p) => map(p).map(n).join(" ")).join(" ")))
+    .join("");
 }
 
-/**
- * A facet's fill: a gradient between its darkest and brightest corner, using the
- * smooth vertex normals. This is what replaced the outlines — adjacent facets
- * differ in tone along their shared edge, so the edge reads without anything
- * being drawn on it.
- */
-function facetGradient(f: Facet, vertexLight: number[], defs: string[], gid: string): string {
-  const base = Math.min(1, f.lambert + LANTERN.ambient);
-  const corners = f.tri.map((k) => base * 0.45 + vertexLight[k] * 0.55);
-  let lo = 0;
-  let hi = 0;
-  corners.forEach((c, k) => {
-    if (c < corners[lo]) lo = k;
-    if (c > corners[hi]) hi = k;
-  });
-  const a = f.polygon[lo];
-  const b = f.polygon[hi];
-  const cold = ramp(Math.max(0, Math.min(1, corners[lo])));
-  const hot = mix(
-    ramp(Math.max(0, Math.min(1, corners[hi]))),
-    "#ffffff",
-    Math.min(0.85, f.specular * LANTERN.specular),
-  );
-  defs.push(
-    `<linearGradient id="${gid}" gradientUnits="userSpaceOnUse"` +
-      ` x1="${a[0].toFixed(1)}" y1="${a[1].toFixed(1)}" x2="${b[0].toFixed(1)}" y2="${b[1].toFixed(1)}">` +
-      `<stop offset="0" stop-color="${cold}"/><stop offset="1" stop-color="${hot}"/></linearGradient>`,
-  );
-  return `url(#${gid})`;
-}
+export type Shape = { d: string; fill: string };
 
-/** The lantern as a standalone SVG. */
-export function lanternSvg(o: LanternOpts = {}): string {
-  const size = o.size ?? 96;
-  const { defs, body } = lanternBody({ ...o, size });
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="Wisp">${defs}${body}</svg>
-`;
-}
-
-// ── the reduction ───────────────────────────────────────────────────────────
-
-/**
- * Tone mapping for the small form, and the numbers that matter most in this file.
- *
- * The obvious mapping — lambert straight onto the ramp — climbs most facets to
- * near-white, and at 16px the mark becomes a pale smudge that disappears on
- * paper. So lambert is squeezed into a NARROW BAND low in the ramp: the mark
- * stays unmistakably violet, with deep violet shadows and highlights that stop
- * short of white.
- *
- * `centre` then boosts facets near the middle of the silhouette, which puts the
- * brightest tone where the hero's flame is. That is how the reduction keeps the
- * lit-from-inside read using flat fills only — no overlay, no filter, nothing
- * that turns to mush when it is four pixels wide.
- */
-const REDUCTION = { lo: 0.1, hi: 0.55, centre: 0.26 } as const;
-
-export type MarkOpts = ViewOpts & {
-  size?: number;
-  margin?: number;
-  precision?: number;
-  /**
-   * Monochrome mode: every facet takes THIS colour, separated by opacity
-   * instead of tone. One opaque fill for all ten would erase the facet
-   * boundaries and leave a plain hexagon, so the tone ramp becomes an alpha
-   * ramp — which survives on a background this generator cannot know about.
-   */
-  flat?: string;
+export type MarkOpts = Fit & {
+  /** body colour; BODY unless a monochrome use asks otherwise */
+  body?: string;
+  /** eye colour; on a monochrome mark, the ground the eyes are cut to */
+  eyes?: string;
+  /** eye size relative to S1's; small renders need them a little larger to stay open */
+  eyeScale?: number;
 };
 
-const FLAT_ALPHA = { floor: 0.3, ceiling: 1 } as const;
-
-/** The reduction's facets, painted back to front. */
-export function markFacets(opts: MarkOpts = {}): { d: string; fill: string; opacity?: number }[] {
-  const size = opts.size ?? 64;
-  const { facets } = project({
-    size,
-    axis: opts.axis ?? "face",
-    roll: opts.roll,
-    tilt: opts.tilt,
-    margin: opts.margin ?? 0.05,
-  });
-  const front = facets.filter((f) => f.front);
-
-  const middle: V2 = [size / 2, size / 2];
-  const distances = front.map((f) => {
-    const c = centreOf(f.polygon);
-    return Math.hypot(c[0] - middle[0], c[1] - middle[1]);
-  });
-  const furthest = Math.max(...distances) || 1;
-
-  return front.map((f, i) => {
-    const nearness = 1 - distances[i] / furthest;
-    const t = REDUCTION.lo + (REDUCTION.hi - REDUCTION.lo) * f.lambert + REDUCTION.centre * nearness;
-    const d = pathOf(f.polygon, opts.precision ?? 2);
-    if (opts.flat) {
-      const alpha =
-        FLAT_ALPHA.floor +
-        (FLAT_ALPHA.ceiling - FLAT_ALPHA.floor) * Math.max(0, Math.min(1, t / 0.8));
-      return { d, fill: opts.flat, opacity: Number(alpha.toFixed(3)) };
-    }
-    return { d, fill: ramp(t) };
-  });
+/** The flat mark's shapes, painted in order: body, then eyes. */
+export function markShapes(opts: MarkOpts): Shape[] {
+  const map = fitter(opts);
+  const p = opts.precision ?? 2;
+  const k = opts.eyeScale ?? 1;
+  const shapes: Shape[] = [{ d: emitPath(parseS1(S1), map, p), fill: opts.body ?? BODY }];
+  const eyes = EYES.map((cx) => pill(cx, EYE.cy, EYE.w * k, EYE.h * k)).flat();
+  shapes.push({ d: emitPath(eyes, map, p), fill: opts.eyes ?? PALETTE.eye });
+  return shapes;
 }
 
-const facetPath = (f: { d: string; fill: string; opacity?: number }, indent = ""): string =>
-  `${indent}<path d="${f.d}" fill="${f.fill}"${f.opacity === undefined ? "" : ` opacity="${f.opacity}"`}/>`;
+const shapePath = (s: Shape, indent = ""): string => `${indent}<path d="${s.d}" fill="${s.fill}"/>`;
 
-/** The reduction alone, on a transparent ground. */
-export function markSvg(opts: MarkOpts & { label?: string } = {}): string {
+/** The flat mark alone, on a transparent ground. */
+export function markSvg(opts: Partial<MarkOpts> & { label?: string } = {}): string {
   const size = opts.size ?? 64;
-  const body = markFacets(opts)
-    .map((f) => facetPath(f, "  "))
+  const body = markShapes({ ...opts, size })
+    .map((s) => shapePath(s, "  "))
     .join("\n");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="${opts.label ?? "Wisp"}">
 ${body}
@@ -339,14 +192,15 @@ ${body}
 }
 
 /**
- * The favicon: the reduction, emitted as tightly as an SVG can be, because this
- * one is inlined into web/index.html as a data URI and every byte ships in
- * the bundle. One decimal is already sub-pixel at 32px.
+ * The favicon: the flat mark, emitted as tightly as an SVG can be, because this
+ * one is inlined into web/index.html as a data URI and every byte ships in the
+ * bundle. At 16px the eyes would close, so they are a little larger, and the
+ * margin is almost nothing: every pixel of a tab icon is spent on the spirit.
  */
 export function faviconSvg(): string {
   const size = 32;
-  const body = markFacets({ size, precision: 1 })
-    .map((f) => facetPath(f))
+  const body = markShapes({ size, margin: 0.02, precision: 1, eyeScale: 1.3 })
+    .map((s) => shapePath(s))
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${body}</svg>`;
 }
@@ -368,6 +222,64 @@ export function faviconDataUri(svgText: string): string {
     .replace(/>/g, "%3E")
     .replace(/"/g, "'");
   return `data:image/svg+xml,${escaped}`;
+}
+
+// ── the vector spirit: lit from inside ───────────────────────────────────────
+
+export type SpiritOpts = Fit & {
+  /** a soft halo behind the body: glows on the void, prints as a smudge on white */
+  bloom?: number;
+  /** "dark" keeps the 3D's light violet; "light" carries it down so it holds on paper */
+  ground?: "dark" | "light";
+  /** prefix for gradient ids; distinct per emitted file (see the lockups) */
+  id?: string;
+};
+
+/**
+ * S1 in vector with the 3D's light: a heart low and forward, glow around it,
+ * the body colour at the edge. For wherever a flat mark is too little and a
+ * raster is not wanted (an SVG on GitHub, a doc). The 3D renders stay the hero.
+ */
+export function spiritBody(o: SpiritOpts): { defs: string; body: string } {
+  const map = fitter(o);
+  const p = o.precision ?? 2;
+  const id = o.id ?? "s";
+  const light = o.ground === "light";
+  const edge = light ? VIOLET.mid : mix(VIOLET.brand, VIOLET.mid, 0.3);
+  const glow = light ? VIOLET.brand : VIOLET.light;
+  const core = light ? VIOLET.light : VIOLET.white;
+  const [hx, hy] = map([124, 190]);
+  const [, top] = map([0, BOX.y0]);
+  const [, bottom] = map([0, BOX.y1]);
+  const r = ((bottom - top) * 0.62).toFixed(2);
+  let defs =
+    `<radialGradient id="${id}-heart" gradientUnits="userSpaceOnUse" cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="${r}">` +
+    `<stop offset="0" stop-color="${core}"/><stop offset="0.3" stop-color="${glow}"/><stop offset="1" stop-color="${edge}"/></radialGradient>`;
+  let halo = "";
+  if (o.bloom) {
+    // centred in the square and inside it: a halo that runs past the viewBox is
+    // cut off in a visible square on the ground behind it
+    const cx = o.size / 2;
+    const cy = o.size / 2;
+    const hr = (o.size / 2 - 0.5).toFixed(2);
+    defs +=
+      `<radialGradient id="${id}-halo" gradientUnits="userSpaceOnUse" cx="${cx}" cy="${cy}" r="${hr}">` +
+      `<stop offset="0" stop-color="${VIOLET.brand}" stop-opacity="${(o.bloom * 5).toFixed(3)}"/><stop offset="1" stop-color="${VIOLET.brand}" stop-opacity="0"/></radialGradient>`;
+    halo = `<circle cx="${cx}" cy="${cy}" r="${hr}" fill="url(#${id}-halo)"/>`;
+  }
+  const eyes = EYES.map((cx) => pill(cx, EYE.cy, EYE.w, EYE.h)).flat();
+  const body =
+    halo +
+    `<path d="${emitPath(parseS1(S1), map, p)}" fill="url(#${id}-heart)"/>` +
+    `<path d="${emitPath(eyes, map, p)}" fill="${PALETTE.eye}"/>`;
+  return { defs: `<defs>${defs}</defs>`, body };
+}
+
+export function spiritSvg(o: Partial<SpiritOpts> = {}): string {
+  const size = o.size ?? 96;
+  const { defs, body } = spiritBody({ ...o, size });
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="Wisp">${defs}${body}</svg>
+`;
 }
 
 // ── the lockup ──────────────────────────────────────────────────────────────
@@ -414,15 +326,15 @@ export type LockupOpts = {
   gap?: number;
   /** tracking as a fraction of the em; Geist at display size wants it tight */
   tracking?: number;
-  /** bloom behind the solid — leave unset for light grounds */
+  /** bloom behind the spirit — leave unset for light grounds */
   bloom?: number;
-  /** carry the flat reduction instead of the lantern */
-  reduced?: boolean;
+  /** which ground the spirit's light is tuned for */
+  ground?: "dark" | "light";
   /**
-   * Prefix for the lantern's gradient and filter ids. Distinct per emitted file:
-   * the two lockups are separate documents on GitHub, but anyone inlining both
-   * into one page would otherwise have the second one's gradients resolve to the
-   * first one's definitions.
+   * Prefix for the spirit's gradient ids. Distinct per emitted file: the two
+   * lockups are separate documents on GitHub, but anyone inlining both into one
+   * page would otherwise have the second one's gradients resolve to the first
+   * one's definitions.
    */
   id?: string;
 };
@@ -430,22 +342,20 @@ export type LockupOpts = {
 /**
  * Mark + wordmark, horizontally.
  *
- * "Wisp" is a wider word than "wisp" was — the capital adds ~140 units of
- * advance and a lot of ink at the top left — so the em comes down slightly and
- * the gap stays tight, keeping the mark from looking like a bullet point beside
- * it. See the alignment note inside.
+ * S1 is taller than it is wide and its flame leans left, so the mark's square
+ * carries air on the right; the gap is tighter than the old hexagon's to keep
+ * the word from drifting away from it. See the alignment note inside.
  */
 export function lockupSvg(opts: LockupOpts = {}): string {
   const markSize = 100;
   const em = markSize * (opts.fontRatio ?? 0.56);
-  const gap = markSize * (opts.gap ?? 0.2);
+  const gap = markSize * (opts.gap ?? 0.04);
   const tracking = (opts.tracking ?? -0.02) * UPEM;
   const scale = em / UPEM;
 
-  // Optical, not metric. With a lowercase word the x-height band was the right
-  // thing to centre on; "Wisp" starts with a capital, so the mass now reaches
-  // the cap line and centring on x-height leaves the mark visibly low. The band
-  // is the cap band, nudged 4% for the descender hanging below the baseline.
+  // Optical, not metric. "Wisp" starts with a capital, so the mass reaches the
+  // cap line; centring on x-height would leave the mark visibly low. The band is
+  // the cap band, nudged 4% for the descender hanging below the baseline.
   const band = METRICS.capHeight * scale * 1.04;
   const baseline = markSize / 2 + band / 2;
   const originX = markSize + gap;
@@ -458,21 +368,10 @@ export function lockupSvg(opts: LockupOpts = {}): string {
   });
   void ADVANCE; // the ink box, not the advance, sets the viewBox — trailing space would be uneven
 
-  let defs = "";
-  let markBody: string;
-  if (opts.reduced) {
-    markBody = markFacets({ size: markSize })
-      .map((f) => facetPath(f))
-      .join("");
-  } else {
-    const lantern = lanternBody({ size: markSize, bloom: opts.bloom, id: opts.id ?? "m" });
-    defs = lantern.defs;
-    markBody = lantern.body;
-  }
-
+  const spirit = spiritBody({ size: markSize, margin: 0.02, bloom: opts.bloom, ground: opts.ground, id: opts.id ?? "m" });
   const width = inkRight;
   const height = opts.height ?? markSize;
   const wordmark = `<path d="${glyphs.join("")}" fill="${opts.fg ?? PALETTE.paper}"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width.toFixed(2)} ${markSize}" width="${Math.round((width * height) / markSize)}" height="${height}" role="img" aria-label="Wisp">${defs}${markBody}${wordmark}</svg>
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width.toFixed(2)} ${markSize}" width="${Math.round((width * height) / markSize)}" height="${height}" role="img" aria-label="Wisp">${spirit.defs}${spirit.body}${wordmark}</svg>
 `;
 }

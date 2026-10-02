@@ -13,12 +13,12 @@
  * two assets off the headless-Chrome path the rest of brand/ depends on, so
  * they regenerate anywhere `bun` runs.
  *
- * The drawing is the flat reduction on the same rounded plate the macOS app
- * icon uses — below roughly 24px the lantern's translucency falls under a
- * pixel, which is the whole point of the reduction. See mark.ts.
+ * The drawing is the flat spirit on the same rounded plate the macOS app icon
+ * uses: below 64px the 3D spirit turns to a glowing blob, which is the whole
+ * point of the flat form. See mark.ts.
  */
 
-import { markFacets, PALETTE, VIOLET } from "./mark";
+import { markShapes, PALETTE, VIOLET } from "./mark";
 
 /** Apple's 1024pt icon grid, as proportions: an 824pt plate, 185pt radius. */
 const PLATE = { inset: 0.0977, radius: 0.2237, mark: 0.58 } as const;
@@ -60,26 +60,27 @@ function plate(ground: string): string {
   ].join("\n");
 }
 
-/** `M…L…Z` polygons out of geometry.ts, as PDF path operators. */
-function facetPath(d: string): string {
-  const points = d
-    .replace(/Z$/, "")
-    .split(/(?=[ML])/)
-    .map((step) => step.slice(1).split(" ").map(Number));
-  return points.map(([x, y], i) => `${n(x)} ${n(y)} ${i ? "l" : "m"}`).join("\n");
+/** The mark's absolute `M`/`L`/`C`/`Z` path data, as PDF path operators. */
+function shapePath(d: string): string {
+  const ops: Record<string, string> = { M: "m", L: "l", C: "c" };
+  return [...d.matchAll(/([MLCZ])([^MLCZ]*)/g)]
+    .map(([, op, rest]) => {
+      if (op === "Z") return "h";
+      const nums = (rest.match(/-?[\d.]+/g) ?? []).map(Number);
+      return `${nums.map(n).join(" ")} ${ops[op]}`;
+    })
+    .join("\n");
 }
 
-function body(ground: string, flat?: string): { content: string; alphas: number[] } {
+function body(ground: string, mono?: string): { content: string; alphas: number[] } {
   const markSize = (SIZE - SIZE * PLATE.inset * 2) * PLATE.mark;
   const offset = (SIZE - markSize) / 2;
-  const facets = markFacets({ size: markSize, flat, precision: 2 });
-  const alphas = [...new Set(facets.map((f) => f.opacity ?? 1))];
+  // monochrome (the dev icon): one ink for the body, the eyes cut back to the ground
+  const shapes = markShapes({ size: markSize, precision: 2, body: mono, eyes: mono ? ground : undefined });
   const lines = [plate(ground), "q", `1 0 0 1 ${n(offset)} ${n(offset)} cm`];
-  for (const facet of facets) {
-    lines.push(`/GS${alphas.indexOf(facet.opacity ?? 1)} gs`, fill(facet.fill), facetPath(facet.d), "f");
-  }
+  for (const shape of shapes) lines.push("/GS0 gs", fill(shape.fill), shapePath(shape.d), "f");
   lines.push("Q");
-  return { content: lines.join("\n"), alphas };
+  return { content: lines.join("\n"), alphas: [1] };
 }
 
 /** Assemble the objects into a cross-referenced, byte-stable PDF document. */
@@ -116,7 +117,7 @@ function document(content: string, alphas: number[]): string {
  */
 export function cliIconPdf(variant: "prod" | "dev"): string {
   // PDF's origin is bottom-left and the mark's is top-left; flip once, around
-  // the page, and every coordinate below is the geometry module's own.
+  // the page, and every coordinate below is the mark module's own.
   const { content, alphas } =
     variant === "dev" ? body(VIOLET.white, VIOLET.deep) : body(PALETTE.ink);
   const flipped = `q\n1 0 0 -1 0 ${SIZE} cm\n${content}\nQ`;

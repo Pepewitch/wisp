@@ -1,13 +1,16 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="brand/wisp-logo-dark.svg" />
-  <img src="brand/wisp-logo-light.svg" alt="Wisp" width="179" height="72" />
-</picture>
+<img src="brand/readme-header.png" alt="Wisp" width="800" height="260" />
 
-**Run coding agents in parallel. Keep their work separate.**
+**Start the work. Wisp follows through.**
+
+Run coding agents in parallel. Keep their work separate.
 
 Self-hosted · No Wisp account · Desktop, browser, phone, and CLI
+
+<br />
+
+<img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." />
 
 </div>
 
