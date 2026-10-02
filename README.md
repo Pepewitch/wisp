@@ -1,6 +1,6 @@
-<div align="center">
+https://github.com/user-attachments/assets/93c9376d-e671-44b8-9f34-82a747d929da
 
-<p><img src="brand/readme-header.png" alt="Wisp. Start the work. Wisp follows through." width="880" /></p>
+<div align="center">
 
 <p>Run your coding agents in parallel, each task in its own worktree.<br />
 Wisp follows every task through: red CI and review comments go back to the agent,<br />
@@ -9,8 +9,6 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
 <p>Self-hosted · No Wisp account · Works with Droid, Claude Code, Codex, Cursor, and OpenCode</p>
 
 </div>
-
-https://github.com/user-attachments/assets/93c9376d-e671-44b8-9f34-82a747d929da
 
 <p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks on a web app: a feature, a debug, an exploration, a flaky CI test and a deploy. The dark-mode task's conversation, its brief, and its auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
 
