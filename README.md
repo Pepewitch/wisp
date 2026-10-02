@@ -2,106 +2,111 @@
 
 <p><img src="brand/readme-header.png" alt="Wisp. Start the work. Wisp follows through." width="880" /></p>
 
-<p>Run coding agents in parallel. Keep their work separate.<br />
-Self-hosted · No Wisp account · Desktop, browser, phone, and CLI</p>
+<p>Run your coding agents in parallel, each task in its own worktree.<br />
+Wisp follows every task through: red CI and review comments go back to the agent,<br />
+the PR merges when it's ready, and a brief is waiting for you when you're back.</p>
 
-<p><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
+<p>Self-hosted · No Wisp account · Works with Droid, Claude Code, Codex, Cursor, and OpenCode</p>
 
 </div>
 
-Working on several things with coding agents usually means juggling terminals,
-remembering which branch belongs to which task, and checking whether an agent
-is finished or waiting for you.
+<!-- the 44-second film: replace this line with its github.com/user-attachments/assets/… URL -->
 
-Wisp gives each task its own Git worktree and branch, with one place to follow
-progress, review diffs, and send follow-up instructions. Keep using your
-existing **Droid, Claude Code, Codex, Cursor, or OpenCode** installation.
+<p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
 
-## Why Wisp
+## What Wisp does
 
-- **Work in parallel without sharing a checkout.** Give one agent a bug fix
-  and another a feature. Their edits stay on separate task branches.
-- **Pick up where you left off.** Read the conversation, inspect changes, open
-  a terminal, or steer the next step. Tasks keep running when you close the UI.
-- **Use the interface that fits.** Work locally in Desktop or the browser,
-  script tasks from the CLI, and check in from your phone over a
-  [private connection](docs/REMOTE-ACCESS.md).
+- **Run agents side by side.** Start several tasks at once, each with the
+  agent you already use, signed in as you. Every task gets its own Git worktree
+  and branch, so their edits never collide.
+- **Follow every PR to the end.** With auto-fix on, Wisp sends failing CI,
+  merge conflicts and review comments back to the agent until the PR is green.
+  With auto-merge on, Wisp merges it once its checks pass and reviews allow.
+  Both are switches on the task. [How it works](docs/PR-AUTOPILOT.md)
+- **Keep watch while you're away.** A heartbeat wakes a task on a schedule
+  until its goal is met: "check staging until the smoke test passes." Each
+  wake-up is an agent turn. A scheduled steer sends your next instruction at
+  the time you pick.
+  [Workflows](docs/WORKFLOWS.md)
+- **Read a brief, not a transcript.** At the end of each turn the agent
+  reports what it did, what's left, and any decision it needs from you, with
+  the option it recommends. Answer in one line. [Briefs](skills/wisp/references/cli.md#task-briefs)
+- **See the whole picture.** Read the conversation, review the diff, open a
+  terminal in the worktree, and see the diagrams agents draw rendered right in
+  the chat.
+- **Check in from anywhere.** The desktop app on macOS posts a banner when a
+  task's PR needs you and when Wisp merges it. The same UI runs in any browser
+  and on your phone over a [private connection](docs/REMOTE-ACCESS.md), and the
+  `wisp` CLI scripts it all. Tasks keep running when you close the window.
+- **Yours, end to end.** Wisp runs on your Mac or your Linux server, with your
+  agents and your GitHub account. There is no Wisp account and no Wisp cloud.
 
 ## Install
 
-Bring Git, a repository, and at least one installed and authenticated coding
-agent. Wisp itself needs no Node or Bun runtime.
+You need Git, a repository, and at least one coding agent installed and signed
+in. Wisp itself needs no Node or Bun.
 
-### macOS, Apple Silicon
+**macOS, Apple Silicon**
 
 ```sh
 brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop
 open -a Wisp
 ```
 
-This installs both the CLI/daemon and Desktop. Name both: Homebrew trusts only
-the fully qualified names you install from a non-official tap, so installing
-the Cask alone stops on the Formula it depends on. In the app, finish Local
-setup, add a repository, and create a task. For CLI-only installation and
-troubleshooting, see the [macOS guide](docs/INSTALL-MACOS.md).
+The app walks you through setup: add a repository and start your first task.
+Name both packages; Homebrew only trusts fully qualified names from a
+third-party tap. More in the [macOS guide](docs/INSTALL-MACOS.md).
 
-### Linux, x86_64
+**Linux, x86_64**
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://raw.githubusercontent.com/Pepewitch/wisp/v0.6.6/scripts/install.sh | sh
 ```
 
-The installer verifies the download, installs under your home directory, and
-starts a systemd user service when available. It does not use `sudo`.
-For inspecting the script first, running without systemd, or fixing PATH,
-see the [Linux guide](docs/INSTALL.md).
+The installer verifies the download, installs under your home directory
+without `sudo`, and starts a systemd user service when it can. More in the
+[Linux guide](docs/INSTALL.md).
 
-### Your first CLI task
-
-With the daemon running, substitute your repository path and agent:
+## Start from the CLI
 
 ```sh
 wisp project add /path/to/repo
-wisp doctor --harness droid
-wisp new /path/to/repo "Find a small bug, fix it, and run the tests." --harness droid
+wisp doctor --harness claude
+wisp new /path/to/repo "Fix the flaky retry test and open a PR." --harness claude --auto-fix
 wisp token
 ```
 
-Open the URL from `wisp token` and paste its token to follow the task in your
-browser. Keep that token private. `wisp help` lists the CLI commands.
+`wisp token` prints the address of the web UI and a token to sign in with.
+Keep the token private. `wisp help` lists every command.
 
 ## Before you run an agent
 
-**A worktree is not a sandbox.** Wisp runs agents as your OS user with their
-tool-approval bypass enabled. They can access files, credentials, and the
-network outside the task checkout. Use trusted repositories, review changes,
-and use a separate OS account or disposable VM for untrusted work.
+**A worktree is not a sandbox.** Agents run as your OS user with their
+approval prompts off, so they can reach files, credentials and the network
+outside the task's checkout. Use repositories you trust, review what changes,
+and give untrusted work its own OS account or a disposable VM. Auto-merge
+merges under your GitHub account: turn it on for work you'd merge yourself
+once CI is green.
 
-Wisp is pre-1.0 and intended for single-user use. Linux release gates cover
-Ubuntu 24.04 x86_64; the binary requires glibc 2.17+ (no musl build).
-Desktop targets Apple Silicon and macOS 12.3+, with limited OS qualification.
-Intel Macs and Windows are unsupported. Desktop releases are signed and
-notarized. Publishable macOS CLI/daemon releases now use the same Developer ID
-trust chain and a stable `dev.wisp.daemon` code-signing identity inside a
-branded background application bundle; v0.5.13 and earlier CLI releases were
-unbundled and ad-hoc signed.
+Wisp is pre-1.0 and built for one person. The desktop app needs Apple Silicon
+and macOS 12.3 or later. On Linux, Wisp needs x86_64 and glibc 2.17 or later,
+and is tested on Ubuntu 24.04. Intel Macs and Windows aren't supported.
 
-## Go further
+## Learn more
 
+- [Auto-merge and auto-fix](docs/PR-AUTOPILOT.md)
+- [Workflows: heartbeats and scheduled steers](docs/WORKFLOWS.md)
+- [Task briefs](skills/wisp/references/cli.md#task-briefs)
+- [Phone and remote access](docs/REMOTE-ACCESS.md)
 - [CLI reference](skills/wisp/references/cli.md)
-- [Task workflows: heartbeats and scheduled steers](docs/WORKFLOWS.md)
-- [Auto-merge and auto-fix: merge a task's PR once it is ready, fix its red CI and review feedback](docs/PR-AUTOPILOT.md)
-- [Task briefs: an optional short report from the agent at the end of each turn](skills/wisp/references/cli.md#task-briefs)
-- [Remote and phone access](docs/REMOTE-ACCESS.md)
-- [Storage, archive, and cleanup](docs/ARCHIVE-CLEANUP.md)
-- [Security and vulnerability reporting](SECURITY.md)
-- [Changelog](CHANGELOG.md), [release notes](https://github.com/Pepewitch/wisp/releases) and [tested limits](docs/v0.6/QUALIFICATION.md)
+- [Storage, archive and cleanup](docs/ARCHIVE-CLEANUP.md)
+- [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · [Releases](https://github.com/Pepewitch/wisp/releases)
 
-## Contribute
+## Contributing
 
-Bug reports, documentation fixes, and small PRs are welcome.
-Start with [Contributing](CONTRIBUTING.md) for local setup and checks, or
-[Architecture](docs/ARCHITECTURE.md) to understand the code.
+Bug reports, documentation fixes and small PRs are welcome. Start with
+[CONTRIBUTING.md](CONTRIBUTING.md) for local setup and checks, or
+[ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together.
 
-[MIT](LICENSE) © 2026 pepewitch.
+[MIT](LICENSE) © 2026 pepewitch
