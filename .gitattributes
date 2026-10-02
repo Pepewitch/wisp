@@ -1,0 +1,3 @@
+# PDFs are binary documents: their cross-reference lines must end in a space,
+# which a whitespace check (git diff --check, the release gate) would refuse.
+*.pdf binary

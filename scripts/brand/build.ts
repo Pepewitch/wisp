@@ -1,12 +1,12 @@
 /**
- * Generate every brand asset in brand/ from the geometry, and keep the app's
- * favicon in sync with it.
+ * Generate every brand asset in brand/ from the mark and the 3D source renders,
+ * and keep the app's favicon in sync with it.
  *
  *   bun run scripts/brand/build.ts            # write brand/ + patch index.html
  *   bun run scripts/brand/build.ts --check    # fail if anything is stale (CI)
  *
- * SVGs need nothing but bun. PNGs (social preview, desktop and home-screen icons)
- * are rasterised with headless Chrome, the same binary scripts/capture-app.ts
+ * SVGs need nothing but bun. PNGs (social preview, README header, desktop and
+ * home-screen icons) are composed from brand/source/ with headless Chrome, the same binary scripts/capture-app.ts
  * already depends on; without it the SVGs still regenerate and the PNGs are
  * left alone, with a warning, so this never becomes a hard dependency of the
  * gate on a machine that has no browser.
@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 
 import { cliIconPdf } from "./cli-icon";
-import { faviconDataUri, faviconSvg, lanternSvg, lockupSvg, markFacets, markSvg, PALETTE } from "./mark";
+import { faviconDataUri, faviconSvg, lockupSvg, markShapes, markSvg, PALETTE, spiritSvg } from "./mark";
 import { samePng } from "./png";
 import { GLYPHS, METRICS, UPEM } from "./wordmark-data";
 
@@ -29,6 +29,14 @@ const CHROME_TIMEOUT_MS = 60_000;
 const PNG_END = Buffer.from("0000000049454e44ae426082", "hex");
 const ROOT = join(import.meta.dir, "../..");
 const BRAND = join(ROOT, "brand");
+/**
+ * The 3D spirit, rendered outside this repository and committed as source art,
+ * the way a designer's exported artwork would be: the icon master (a square on
+ * the plate colour, the spirit inside an 80% circle), and two stages with a floor
+ * and its reflection, one per wide layout. Composing them is this file's job;
+ * making them is not. See brand/README.md, "The 3D sources".
+ */
+const SOURCE = join(BRAND, "source");
 const DESKTOP_ICONS = join(ROOT, "desktop/src-tauri/icons");
 const INDEX_HTML = join(ROOT, "web/index.html");
 const GEIST_WOFF2 = join(
@@ -38,6 +46,8 @@ const GEIST_WOFF2 = join(
 
 /** Social preview: GitHub renders it at 1280×640; we ship exactly that, at 2×. */
 const OG = { width: 1280, height: 640, scale: 2 } as const;
+/** README header: drawn at 800×260 on GitHub, shipped at 2×. */
+const README_HEADER = { width: 800, height: 260, scale: 2 } as const;
 /** iOS home screen. Opaque plate — iOS masks the corners itself, and a
  *  transparent icon there comes out as a black square. */
 const TOUCH_ICON = 180;
@@ -72,20 +82,19 @@ console.log("brand assets");
 const favicon = faviconSvg();
 await emit(join(BRAND, "favicon.svg"), favicon);
 
-// Two forms of one mark: the lantern wherever there are pixels to spend, the
-// flat reduction wherever there are not. Same solid, same axis, same light in
-// the middle — see the header of mark.ts.
-//
-// The lantern ships twice because its bloom is ground-dependent: a violet halo
-// glows on the void and reads as a printing artifact on white.
-await emit(join(BRAND, "wisp-mark.svg"), lanternSvg({ size: 96 }));
-await emit(join(BRAND, "wisp-mark-glow.svg"), lanternSvg({ size: 96, bloom: 0.06, id: "gl" }));
+// One character, two renderings: the 3D spirit wherever there are pixels to
+// spend (the PNGs below, composed from brand/source/), and S1 flat wherever
+// there are not. The vector spirit carries the 3D's light in SVG for the places
+// a raster is not wanted. Its bloom is ground-dependent: a violet halo glows on
+// the void and reads as a printing artifact on white, so it ships twice.
+await emit(join(BRAND, "wisp-mark.svg"), spiritSvg({ size: 96, ground: "light", id: "wm" }));
+await emit(join(BRAND, "wisp-mark-glow.svg"), spiritSvg({ size: 96, bloom: 0.06, id: "gl" }));
 await emit(join(BRAND, "wisp-mark-flat.svg"), markSvg({ size: 64 }));
 
 // One lockup per ground. The mark is identical in both — only the wordmark's
 // ink changes, because #eaeaee text on white is unreadable and vice versa.
 await emit(join(BRAND, "wisp-logo-dark.svg"), lockupSvg({ height: 72, fg: PALETTE.paper, bloom: 0.06, id: "ld" }));
-await emit(join(BRAND, "wisp-logo-light.svg"), lockupSvg({ height: 72, fg: PALETTE.inkText, id: "ll" }));
+await emit(join(BRAND, "wisp-logo-light.svg"), lockupSvg({ height: 72, fg: PALETTE.inkText, ground: "light", id: "ll" }));
 
 // Legacy Finder icons for old unbundled `wisp` binaries and local builds.
 // Current release daemons carry the application icon in their signed bundle.
@@ -98,10 +107,10 @@ await emit(join(BRAND, "cli-icon-dev.pdf"), cliIconPdf("dev"));
 
 /**
  * The app draws the mark at 17–24px in its header and gallery, which is squarely
- * reduction territory — the lantern's translucency and edge tracing fall under a
- * pixel there. Emitting the component from here rather than hand-copying the
- * paths means `bun run brand:check` catches it drifting, the same way it catches
- * a stale favicon.
+ * flat territory: the 3D spirit turns to a glowing blob well before that. Emitting
+ * the component from here rather than hand-copying the paths means
+ * `bun run brand:check` catches it drifting, the same way it catches a stale
+ * favicon.
  *
  * Formatted to match web/.prettierrc (no semicolons, double quotes, 2 spaces)
  * so `bun run lint` stays green without a formatting pass.
@@ -112,15 +121,14 @@ const markComponent = `/**
  * GENERATED by scripts/brand/build.ts — do not edit. Run \`bun run brand\` after
  * changing the generator; \`bun run brand:check\` fails if this file is stale.
  *
- * This is the flat reduction from scripts/brand/mark.ts, not the lantern: below
- * roughly 24px the lantern's translucency and luminous edges fall under a pixel
- * and turn to noise. Fills are literal because the mark is violet by definition
- * — it does not inherit \`currentColor\`.
+ * This is S1 flat from scripts/brand/mark.ts, not the 3D spirit: below 64px the
+ * 3D turns to a glowing blob. Fills are literal because the mark is violet by
+ * definition — it does not inherit \`currentColor\`.
  */
 export function WispMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden className={className}>
-${markFacets({ size: 24, precision: 2 })
+${markShapes({ size: 24, margin: 0.02, precision: 2, eyeScale: 1.15 })
   .map((f) => `      <path d="${f.d}" fill="${f.fill}" />`)
   .join("\n")}
     </svg>
@@ -239,103 +247,108 @@ if (!existsSync(CHROME)) {
   const shoot = (html: string, out: string, width: number, height: number, scale: number) =>
     shootTo(html, join(BRAND, out), width, height, scale);
 
-  /** The mark on its opaque plate, at any size. Shared by the two app icons. */
-  const plate = (size: number, bloom: number, id: string, ratio = 0.8) =>
-    `<!doctype html><meta charset="utf-8"><style>
-html,body{margin:0;width:${size}px;height:${size}px;background:${PALETTE.ink};overflow:hidden}
-div{display:grid;place-items:center;width:100%;height:100%}
-svg{width:${Math.round(size * ratio)}px;height:${Math.round(size * ratio)}px;display:block}
-</style><div>${lanternSvg({ size: Math.round(size * 0.71), bloom, id })}</div>`;
+  const source = async (name: string): Promise<string> =>
+    `data:image/png;base64,${(await readFile(join(SOURCE, name))).toString("base64")}`;
+  const iconArt = await source("spirit-3d-icon.png");
 
-  // One opaque, mask-safe plate for Android launchers. The complete lantern
-  // fits inside the central 80%-diameter circle, including a round mask.
+  /**
+   * The icon master on its opaque plate, at any size. The master is already the
+   * plate: its ground is PALETTE.plate and the spirit sits inside the central
+   * 80% circle, so one picture serves iOS (which masks the corners itself, and
+   * turns a transparent icon into a black square) and Android's maskable icons
+   * (any mask shape keeps the whole spirit).
+   */
+  const plate = (size: number) =>
+    `<!doctype html><meta charset="utf-8"><style>
+html,body{margin:0;width:${size}px;height:${size}px;background:${PALETTE.plate};overflow:hidden}
+img{display:block;width:100%;height:100%}
+</style><img src="${iconArt}" alt="">`;
+
   for (const size of [192, 512]) {
-    await shoot(plate(size, 0.055, "pwa", 0.64), `pwa-icon-${size}.png`, size, size, 1);
+    await shoot(plate(size), `pwa-icon-${size}.png`, size, size, 1);
   }
 
   // Regenerate PWA icons on Linux without changing legacy macOS-rendered PNGs.
   if (!process.argv.includes("--pwa-only")) {
 
-  // apple touch icon: the mark inset on an opaque plate
-  await shoot(plate(TOUCH_ICON, 0.055, "ti"), "apple-touch-icon.png", TOUCH_ICON, TOUCH_ICON, 1);
+  // apple touch icon: the plate, full bleed
+  await shoot(plate(TOUCH_ICON), "apple-touch-icon.png", TOUCH_ICON, TOUCH_ICON, 1);
 
   // macOS desktop app icon. Not the same shape as the touch icon: macOS draws
   // app icons on a rounded plate inset inside a transparent square (Apple's
   // 1024pt grid puts an 824pt plate in the middle), and the transparent margin
-  // is also what makes the file RGBA — Tauri's icon pipeline rejects RGB.
+  // is also what makes the file RGBA — Tauri's icon pipeline rejects RGB. The
+  // master fills the plate a little past its edges, so the spirit, not the
+  // plate's margin, is what a Dock-sized icon shows.
   const plateInset = Math.round(APP_ICON * 0.0977);
   const plateSize = APP_ICON - plateInset * 2;
+  const bleed = Math.round(plateSize * 0.08);
   await shootTo(
     `<!doctype html><meta charset="utf-8"><style>
 html,body{margin:0;width:${APP_ICON}px;height:${APP_ICON}px;background:transparent;overflow:hidden}
 .plate{position:absolute;inset:${plateInset}px;border-radius:${Math.round(plateSize * 0.2237)}px;
-  background:${PALETTE.ink};display:grid;place-items:center}
-svg{width:${Math.round(plateSize * 0.62)}px;height:${Math.round(plateSize * 0.62)}px;display:block}
-</style><div class="plate">${lanternSvg({ size: 512, bloom: 0.055, id: "ai" })}</div>`,
+  background:${PALETTE.plate};overflow:hidden}
+img{position:absolute;inset:-${bleed}px;width:calc(100% + ${bleed * 2}px);height:calc(100% + ${bleed * 2}px);display:block}
+</style><div class="plate"><img src="${iconArt}" alt=""></div>`,
     join(DESKTOP_ICONS, "icon.png"),
     APP_ICON,
     APP_ICON,
     1,
   );
 
+  // README header: the 3D spirit on its stage and the wordmark beside it, a card
+  // with rounded, transparent corners so it sits on GitHub's light page as a
+  // card rather than a hard dark slab (the hero under it has the same corners).
+  // The promise stays text in README.md, under the image, where it can be read,
+  // searched and translated.
+  const readmeStage = await source("spirit-3d-readme.png");
+  await shoot(
+    `<!doctype html><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+html,body{margin:0;width:${README_HEADER.width}px;height:${README_HEADER.height}px;background:transparent;overflow:hidden}
+.card{position:absolute;inset:0;border-radius:16px;overflow:hidden;background:${PALETTE.plate}}
+.stage{position:absolute;inset:0;width:100%;height:100%;display:block}
+.word{position:absolute;left:362px;top:50%;transform:translateY(-58%)}
+.word svg{display:block}
+</style>
+<div class="card"><img class="stage" src="${readmeStage}" alt="">
+<div class="word">${wordmarkSvg(66, PALETTE.paper)}</div></div>`,
+    "readme-header.png",
+    README_HEADER.width,
+    README_HEADER.height,
+    README_HEADER.scale,
+  );
+
   // Social preview. Sized for the worst case rather than the best: a link
   // unfurled in a feed is often 500px wide, so nothing here is smaller than
   // 17px and the headline carries the whole message on its own.
-  const heroMark = lanternSvg({ size: 300, bloom: 0.055, id: "og" });
+  const ogStage = await source("spirit-3d-og.png");
   const wordmarkOnly = wordmarkSvg(52, PALETTE.paper);
-  const dots = (
-    [
-      ["running", "#AF87F1"],
-      ["done", "#57b983"],
-      ["needs input", "#ddb055"],
-    ] as const
-  )
-    .map(
-      ([label, colour]) =>
-        `<span class="state"><i style="background:${colour}"></i>${label}</span>`,
-    )
-    .join("");
 
   await shoot(
     `<!doctype html><meta charset="utf-8"><style>
 ${fontFace}
 *{box-sizing:border-box}
-html,body{margin:0;width:${OG.width}px;height:${OG.height}px;background:${PALETTE.ink};overflow:hidden;
+html,body{margin:0;width:${OG.width}px;height:${OG.height}px;background:${PALETTE.plate};overflow:hidden;
   font-family:'Geist',ui-sans-serif,system-ui;-webkit-font-smoothing:antialiased}
-.sheet{position:relative;width:100%;height:100%;display:grid;grid-template-columns:1fr 520px;align-items:center}
-/* one soft violet field behind the solid — the only gradient in the system, and
-   it exists because a 1280×640 raster can afford what a 16px favicon cannot */
-.glow{position:absolute;right:150px;top:50%;width:640px;height:640px;transform:translateY(-50%);
-  background:radial-gradient(circle,rgba(175,135,241,0.20) 0%,rgba(175,135,241,0.07) 42%,rgba(175,135,241,0) 68%)}
-.hairline{position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,#AF87F1 0%,#2b2b34 38%,rgba(43,43,52,0) 72%)}
-.copy{padding:0 0 0 84px;position:relative;display:flex;flex-direction:column;align-items:flex-start}
+.stage{position:absolute;inset:0;width:100%;height:100%;display:block}
+.copy{position:absolute;left:84px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:flex-start;max-width:640px}
 .copy svg{display:block}
-h1{font-size:48px;line-height:1.1;letter-spacing:-0.026em;font-weight:600;color:${PALETTE.paper};margin:26px 0 0}
-h1 em{font-style:normal;color:#a2a2ad}
-p{font-size:21px;line-height:1.5;letter-spacing:-0.008em;color:#74747f;margin:18px 0 0;max-width:590px}
-/* the footer rides in the flow, not pinned to the bottom edge: pinned, it left
-   a dead band across the lower third at feed size */
-.rule{width:132px;height:1px;background:#2b2b34;margin:32px 0 0}
-.meta{display:flex;gap:24px;align-items:center;margin-top:22px;flex-wrap:wrap}
-.state{display:inline-flex;align-items:center;gap:9px;font-size:17px;color:#a2a2ad;letter-spacing:0.002em}
-.state i{width:8px;height:8px;border-radius:50%;display:block}
-.harnesses{font-size:17px;color:#55555f;letter-spacing:0.002em;margin-top:14px}
-.harnesses b{color:#74747f;font-weight:500}
-.hero{display:grid;place-items:center;position:relative}
-.hero svg{display:block;filter:drop-shadow(0 26px 60px rgba(0,0,0,0.6))}
+h1{font-size:54px;line-height:1.08;letter-spacing:-0.028em;font-weight:600;color:${PALETTE.paper};margin:30px 0 0}
+h1 em{font-style:normal;color:#b9b2c9}
+p{font-size:21px;line-height:1.5;letter-spacing:-0.008em;color:#85818f;margin:20px 0 0;max-width:560px}
+.rule{width:132px;height:1px;background:#2d2b36;margin:32px 0 0}
+.meta{font-size:17px;color:#a29db0;letter-spacing:0.002em;margin-top:20px}
+.harnesses{font-size:17px;color:#64606f;letter-spacing:0.002em;margin-top:10px}
 </style>
-<div class="sheet">
-  <div class="hairline"></div>
-  <div class="glow"></div>
-  <div class="copy">
-    ${wordmarkOnly}
-    <h1>Every coding agent,<br><em>one daemon.</em></h1>
-    <p>An isolated git worktree per task, and a state machine that cannot lie about it.</p>
-    <div class="rule"></div>
-    <div class="meta">${dots}</div>
-    <div class="harnesses"><b>droid · claude · codex</b> · CLI, web UI, webhooks</div>
-  </div>
-  <div class="hero">${heroMark}</div>
+<img class="stage" src="${ogStage}" alt="">
+<div class="copy">
+  ${wordmarkOnly}
+  <h1>Start the work.<br><em>Wisp follows through.</em></h1>
+  <p>Coding agents in parallel, each task in its own worktree. Autopilot fixes red CI and merges the PR when it is ready.</p>
+  <div class="rule"></div>
+  <div class="meta">Self-hosted · No Wisp account · Desktop, browser, phone and CLI</div>
+  <div class="harnesses">droid · claude · codex · cursor · opencode</div>
 </div>`,
     "og.png",
     OG.width,

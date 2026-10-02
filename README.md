@@ -1,11 +1,10 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="brand/wisp-logo-dark.svg" />
-  <img src="brand/wisp-logo-light.svg" alt="Wisp" width="179" height="72" />
-</picture>
+<img src="brand/readme-header.png" alt="Wisp" width="800" height="260" />
 
-**Run coding agents in parallel. Keep their work separate.**
+**Start the work. Wisp follows through.**
+
+Run coding agents in parallel. Keep their work separate.
 
 Self-hosted · No Wisp account · Desktop, browser, phone, and CLI
 
