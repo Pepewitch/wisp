@@ -10,7 +10,7 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
 
 </div>
 
-https://github.com/user-attachments/assets/5bf7807e-c246-492b-853b-170d3651c5b9
+https://github.com/user-attachments/assets/93c9376d-e671-44b8-9f34-82a747d929da
 
 <p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks on a web app: a feature, a debug, an exploration, a flaky CI test and a deploy. The dark-mode task's conversation, its brief, and its auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
 
