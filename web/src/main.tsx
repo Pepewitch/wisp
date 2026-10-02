@@ -15,10 +15,12 @@ import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { initTheme } from "@/lib/theme"
 import { initPwa } from "@/lib/pwa"
+import { initTitleTips } from "@/lib/title-tips"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 
 // before the first render, so a light preference does not arrive mid-paint
 initTheme()
+initTitleTips()
 
 const reloadWebApp = () => window.location.reload()
 const desktopBootstrap = isTauri() ? desktopBridge.bootstrap() : null

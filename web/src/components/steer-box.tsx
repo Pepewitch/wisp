@@ -641,6 +641,8 @@ function SteerComposer({
         enterKeyHint={softKeyboard ? "enter" : undefined}
         className={cn(
           "max-h-[40vh] w-full resize-none scroll-slim bg-transparent leading-relaxed",
+          // the height glides to each new line (useAutosizeTextarea measures, this moves)
+          "transition-[height] duration-(--dur-size) ease-(--ease-glide) motion-reduce:transition-none",
           "text-foreground placeholder:text-faint focus:outline-none",
           // A short floor on touch: the box grows into the draft, and the room
           // it does not need yet belongs to the transcript, which the keyboard
