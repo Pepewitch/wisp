@@ -12,7 +12,7 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
 
 https://github.com/user-attachments/assets/5bf7807e-c246-492b-853b-170d3651c5b9
 
-<p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
+<p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks on a web app: a feature, a debug, an exploration, a flaky CI test and a deploy. The dark-mode task's conversation, its brief, and its auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
 
 ## What Wisp does
 
