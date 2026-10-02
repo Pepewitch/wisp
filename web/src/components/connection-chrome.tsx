@@ -30,7 +30,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
 } from "@/components/menu"
-import { Button, StateDot, Tab } from "@/components/primitives"
+import { Button, Tab } from "@/components/primitives"
 import type { ConnectionStreamStatus } from "@/lib/conn"
 import {
   MAX_DESKTOP_CONNECTIONS,
@@ -43,7 +43,6 @@ import { useDesktopConnections } from "@/lib/desktop-connections"
 import { useConnectionStreamStatus } from "@/hooks/useConnectionStreamStatus"
 import { STATE_LABEL } from "@/lib/state"
 import { uiIntentsFor } from "@/lib/ui-intents"
-import type { TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const DIRECT_CONNECTION_LIMIT = 4
@@ -116,13 +115,19 @@ function connectionStatusTitle(
     : "Server reachable · Live updates delayed"
 }
 
+/**
+ * Delayed updates are a degraded connection, not a call to act, so they get a
+ * hollow ring rather than the needs-input yellow the task list uses right below.
+ */
 function connectionDotColor(
   live: boolean,
   opening: boolean,
   updatesDown: boolean
 ): string {
   if (live || opening) return "bg-state-done"
-  return updatesDown ? "bg-state-needs-input" : "bg-muted-foreground/60"
+  return updatesDown
+    ? "border-2 border-muted-foreground bg-transparent"
+    : "bg-muted-foreground/60"
 }
 
 /**
@@ -142,11 +147,16 @@ function connectionDotColor(
  * The reconnect button carries ONE status mark: the dot while the server
  * answers, or the crossed-out cloud when it does not. A red dot beside a red
  * cloud said the same failure twice, and only one of the two was clickable.
+ *
+ * That mark is connection health and nothing else. Inactive tabs used to add
+ * their busiest task's state dot beside it, so a tab showed two dots that
+ * changed when it was selected, and a yellow "updates delayed" sat beside a
+ * yellow "needs input". Task state lives in the sidebar, the switcher's hints
+ * and desktop notifications.
  */
 export function ConnectionTab({
   connection,
   active,
-  attention,
   reachability = "unknown",
   onSelect,
   onReconnect,
@@ -155,7 +165,6 @@ export function ConnectionTab({
 }: {
   connection: DesktopConnectionMetadata
   active: boolean
-  attention?: Exclude<TaskState, "done"> | null
   reachability?: ConnectionReachability
   onSelect: () => void
   onReconnect: () => void
@@ -202,7 +211,6 @@ export function ConnectionTab({
           <ConnectionGlyph kind={connection.kind} />
         </span>
         <span className="truncate">{connection.name}</span>
-        {attention && <span className="sr-only">{STATE_LABEL[attention]}</span>}
         {unavailable && <span className="sr-only">{issue}</span>}
       </Tab>
       <button
@@ -235,7 +243,6 @@ export function ConnectionTab({
           </span>
         )}
       </button>
-      {attention && <StateDot state={attention} className="ml-0.5" />}
       {actions}
     </span>
   )
@@ -281,9 +288,6 @@ export function ConnectionChromeSpecimen() {
             key={connection.id}
             connection={connection}
             active={index === 0}
-            attention={
-              index === 1 ? "needs-input" : index === 2 ? "running" : null
-            }
             reachability={index === 2 ? "offline" : "online"}
             onSelect={() => undefined}
             onReconnect={() => undefined}
@@ -395,15 +399,11 @@ function DesktopConnections() {
         >
           {split.direct.map((entry) => {
             const active = entry.metadata.id === desktop.active.metadata.id
-            const attention = !active
-              ? desktop.attention.get(entry.metadata.id)
-              : null
             return (
               <ConnectionTab
                 key={entry.metadata.id}
                 connection={entry.metadata}
                 active={active}
-                attention={attention}
                 reachability={desktop.reachability.get(entry.metadata.id)}
                 onSelect={() => void desktop.select(entry.metadata.id)}
                 onReconnect={() => {
