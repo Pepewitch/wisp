@@ -47,7 +47,7 @@ const GEIST_WOFF2 = join(
 /** Social preview: GitHub renders it at 1280×640; we ship exactly that, at 2×. */
 const OG = { width: 1280, height: 640, scale: 2 } as const;
 /** README header: drawn at 800×260 on GitHub, shipped at 2×. */
-const README_HEADER = { width: 800, height: 260, scale: 2 } as const;
+const README_HEADER = { width: 880, height: 300, scale: 2 } as const;
 /** iOS home screen. Opaque plate — iOS masks the corners itself, and a
  *  transparent icon there comes out as a black square. */
 const TOUCH_ICON = 180;
@@ -296,23 +296,29 @@ img{position:absolute;inset:-${bleed}px;width:calc(100% + ${bleed * 2}px);height
     1,
   );
 
-  // README header: the 3D spirit on its stage and the wordmark beside it, a card
-  // with rounded, transparent corners so it sits on GitHub's light page as a
-  // card rather than a hard dark slab (the hero under it has the same corners).
-  // The promise stays text in README.md, under the image, where it can be read,
-  // searched and translated.
+  // README header: the social card's lockup at README size. The spirit on its
+  // stage, and beside it the name and the promise, the group centred in the card
+  // (the spirit's flame leans left, so the group is measured flame tip to text end).
+  // A card with rounded, transparent corners, so it sits on GitHub's light page as
+  // a card rather than a hard dark slab; 880 wide like the hero under it, so on
+  // GitHub both clamp to the same column and their edges line up. The image's alt
+  // text carries the promise for anyone who cannot see it.
   const readmeStage = await source("spirit-3d-readme.png");
   await shoot(
     `<!doctype html><meta charset="utf-8"><style>
+${fontFace}
 *{box-sizing:border-box}
-html,body{margin:0;width:${README_HEADER.width}px;height:${README_HEADER.height}px;background:transparent;overflow:hidden}
-.card{position:absolute;inset:0;border-radius:16px;overflow:hidden;background:${PALETTE.plate}}
+html,body{margin:0;width:${README_HEADER.width}px;height:${README_HEADER.height}px;background:transparent;overflow:hidden;
+  font-family:'Geist',ui-sans-serif,system-ui;-webkit-font-smoothing:antialiased}
+.card{position:absolute;inset:0;border-radius:18px;overflow:hidden;background:${PALETTE.plate}}
 .stage{position:absolute;inset:0;width:100%;height:100%;display:block}
-.word{position:absolute;left:362px;top:50%;transform:translateY(-58%)}
-.word svg{display:block}
+.copy{position:absolute;left:339px;top:50%;transform:translateY(-54%)}
+.name{font-size:22px;line-height:1;font-weight:600;letter-spacing:-0.02em;color:#8f88a6;margin:0 0 14px}
+h1{font-size:37px;line-height:1.12;font-weight:600;letter-spacing:-0.03em;color:${PALETTE.paper};margin:0}
+h1 em{font-style:normal;color:#a49dba}
 </style>
 <div class="card"><img class="stage" src="${readmeStage}" alt="">
-<div class="word">${wordmarkSvg(66, PALETTE.paper)}</div></div>`,
+<div class="copy"><div class="name">Wisp</div><h1>Start the work.<br><em>Wisp follows through.</em></h1></div></div>`,
     "readme-header.png",
     README_HEADER.width,
     README_HEADER.height,

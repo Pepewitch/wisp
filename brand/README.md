@@ -95,7 +95,7 @@ way a designer's exported artwork would be:
 |---|---|
 | `spirit-3d-icon.png` | 1024×1024, the icon master: the spirit on `PALETTE.plate`, inside the central 80% circle |
 | `spirit-3d-og.png` | 2560×1280, the spirit on the right of a stage with a floor and its reflection |
-| `spirit-3d-readme.png` | 1600×520, the same stage, the spirit left of centre to leave room for the wordmark |
+| `spirit-3d-readme.png` | 1760×600, the same stage, the spirit left of centre to leave room for the name and the promise |
 
 Their ground is exactly `PALETTE.plate` with no vignette, so the generator can
 put them on a plate of that colour without a seam. Replacing one means rendering
@@ -120,7 +120,7 @@ off in a visible square on the ground behind it.
 | `wisp-mark-flat.svg` | 64 viewBox | the flat spirit, for small or flat use |
 | `wisp-logo-dark.svg` | 72 tall | lockup for dark grounds (bloom, light wordmark) |
 | `wisp-logo-light.svg` | 72 tall | lockup for light grounds (no bloom, dark wordmark) |
-| `readme-header.png` | 1600×520 | the README's header: the 3D spirit and the wordmark on a card with rounded, transparent corners, drawn at 800×260 |
+| `readme-header.png` | 1760×600 | the README's header: the social card's lockup (the 3D spirit, the name, the promise) on a card with rounded, transparent corners, drawn at 880×300 to match the hero's width |
 | `apple-touch-icon.png` | 180×180 | iOS home screen — opaque plate on purpose |
 | `pwa-icon-192.png` | 192×192 | web app installation, opaque plate |
 | `pwa-icon-512.png` | 512×512 | web app installation and Android maskable icon |
