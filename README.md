@@ -10,7 +10,7 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
 
 </div>
 
-<!-- the 44-second film: replace this line with its github.com/user-attachments/assets/… URL -->
+https://github.com/user-attachments/assets/5bf7807e-c246-492b-853b-170d3651c5b9
 
 <p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks running on the wisp repository: the task list, one agent's conversation, and that task's brief and auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
 
