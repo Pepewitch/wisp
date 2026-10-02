@@ -2,20 +2,75 @@
 
 This ledger separates release evidence from the version label. The 0.6 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.6.6 is the current release; earlier 0.6 records are retained
+coverage. 0.6.7 is the current release; earlier 0.6 records are retained
 below. The 0.5 records remain in
 [the 0.5 ledger](../v0.5/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.6.6.
+still apply to 0.6.7.
+
+## 0.6.7 publication
+
+**Published and promoted on 2026-10-02.**
+[Wisp 0.6.7](https://github.com/Pepewitch/wisp/releases/tag/v0.6.7) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 23:00:33 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`59c28ec519a0cb1c5158558b05616b1f98fd9e3d`](https://github.com/Pepewitch/wisp/commit/59c28ec519a0cb1c5158558b05616b1f98fd9e3d),
+landed through [PR #362](https://github.com/Pepewitch/wisp/pull/362). It carries
+the spirit as Wisp's mark: the Desktop app icon, the PWA icons, the favicon
+and the top-bar mark ([#359](https://github.com/Pepewitch/wisp/pull/359)); one
+motion vocabulary: tooltips that unfold, popups that grow from their trigger,
+and a composer that grows with its draft
+([#358](https://github.com/Pepewitch/wisp/pull/358)); and connection tabs that
+carry one mark, their connection's health
+([#364](https://github.com/Pepewitch/wisp/pull/364)). It also carries the other
+changes listed in the release notes since 0.6.6, among them DOMPurify 3.4.16
+([#363](https://github.com/Pepewitch/wisp/pull/363)).
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/37074523689)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/37074260302) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `59c28ec` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 23:04:04 UTC with Homebrew tap commit
+[`d1322909a4cb8adf56f9c7868690285e4a147b5c`](https://github.com/Pepewitch/homebrew-tap/commit/d1322909a4cb8adf56f9c7868690285e4a147b5c).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.6.7.
+
+Before tagging, the local `release:check` passed at release-branch commit
+`e865dc0` (squashed into `59c28ec`). Three earlier runs on 2026-10-02 had
+failed its `check` gate, each on different subprocess-heavy tests at the
+5-second timeout, while the machine carried a load average of 11 to 35 from
+other work. The same tests passed alone and in CI, and the passing run was
+on a quiet machine.
+
+0.6.7 adds no database migration. `brand/`, `desktop/src-tauri/icons/`, and
+`scripts/brand/` changed since 0.6.6, so `release:check` rendered every PNG
+brand asset with headless Chrome and verified it against the committed file;
+the brand gate passed. This is a fully automated publication: no maintainer
+qualification was performed, and this record does not claim any. That covers
+fresh-install or upgrade receipts, a Desktop updater journey across this
+version, a look at the new app icon and the motion in the published Desktop
+app, the token-spending harness probes, and the paid evaluator panel. The published assets
+and release body remain immutable; this ledger records the completed outcome
+separately.
 
 ## 0.6.6 publication
 
 **Published and promoted on 2026-09-30.**
-[Wisp 0.6.6](https://github.com/Pepewitch/wisp/releases/tag/v0.6.6) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.6.6](https://github.com/Pepewitch/wisp/releases/tag/v0.6.6) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 10:54:41 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`73a777fc68c8ce5ef649d0dfc04002a27de987e0`](https://github.com/Pepewitch/wisp/commit/73a777fc68c8ce5ef649d0dfc04002a27de987e0),
@@ -44,8 +99,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 10:56:45 UTC with Homebrew tap commit
 [`2d38d80f5fe3b1177dc72a53826df05c05f90f87`](https://github.com/Pepewitch/homebrew-tap/commit/2d38d80f5fe3b1177dc72a53826df05c05f90f87).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.6.6.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.6.6 until 0.6.7 was promoted.
 
 0.6.6 adds database migrations 20 and 21, so a 0.6.5 daemon cannot reopen a
 profile that 0.6.6 has opened. No PNG asset or brand-generator input changed
