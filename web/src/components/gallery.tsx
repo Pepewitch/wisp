@@ -1,4 +1,5 @@
 import { ActivityList } from "@/components/activity-list"
+import { AttachmentPreviewSpecimens } from "@/components/attachment-preview-specimens"
 import { ConnectionGallerySpecimen } from "@/components/connection-gallery-specimen"
 import {
   ACCENTS,
@@ -484,6 +485,7 @@ function InteractionSpecimens() {
       </Section>
 
       <PromptBubbleSpecimens />
+      <AttachmentPreviewSpecimens />
     </>
   )
 }

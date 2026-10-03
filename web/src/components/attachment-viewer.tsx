@@ -18,10 +18,9 @@ import type { TurnAttachment } from "@/lib/types"
  * not a new one. Left and right step through the rest of the turn's media.
  * Filename and size are one muted caption line: no chip, no badge.
  *
- * Only the kinds with something to SHOW come here. A pdf or a text file is a
- * download in the row it sits in — an app that renders a person's pasted file
- * inline on the daemon's own origin would be doing something the daemon's
- * `content-disposition: attachment` deliberately refuses.
+ * Only the kinds with a picture to SHOW come here. A text file opens in the
+ * reading popup (`attachment-text-viewer.tsx`), drawn as text nodes; a pdf is
+ * a download in the row it sits in.
  *
  * Fully controlled. `index` lives with whoever opened it, so the clicked file
  * is the one that shows without this component syncing state in an effect.
