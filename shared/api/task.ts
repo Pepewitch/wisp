@@ -10,6 +10,7 @@
  *
  * Type-only apart from the two state lists, which both sides iterate.
  */
+import type { OutputImage } from "./outputs";
 import type { AttachmentMediaType } from "../attachment-sniff";
 import type { AutopilotStatus } from "../autopilot";
 
@@ -242,6 +243,8 @@ export interface ApiTurn {
    * "there was an attachment here and it is gone".
    */
   attachments: TurnAttachment[];
+  /** Task-owned images returned or explicitly published by the agent. */
+  outputs: OutputImage[];
   /** Null means the turn predates, or did not opt into, the bounded recorder. */
   capture_mode: TurnCaptureMode | null;
   capture_state: TurnCaptureState;

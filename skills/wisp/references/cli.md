@@ -22,6 +22,21 @@ the list and exporting what you need. A stale count refuses. Failed deletions
 are named while the rest continue; any failure exits nonzero.
 `wisp purge <task> --confirm <task>` remains the single-task form.
 
+## Image outputs
+
+```sh
+wisp output add ./plot.png --turn <n> [--task <task>] [--json]
+wisp output list <task> --turn <n> [--json]
+wisp output save <task> <image-id> --turn <n> --out <new-file>
+```
+
+`add` uploads an image for inline preview and download in the task reply.
+The task defaults to `WISP_TASK_ID`; use the turn number in Wisp's reminder.
+Images are copied into task storage, remain available after archive, and
+are included in export. PNG, JPEG, GIF and WebP are supported, up to 8 MiB
+per image and 32 images / 64 MiB per turn. `save` refuses to overwrite a file.
+See [Image outputs](../../../docs/IMAGE-OUTPUTS.md) for native capture support.
+
 ## Workflows
 
 ```sh

@@ -1,3 +1,5 @@
+import { samplePng } from "../../scripts/harness/image-output-probe";
+import { publishOutputImage } from "../../src/outputs";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { attachmentManifest, writeTurnAttachments } from "../../src/attachments";
@@ -40,6 +42,7 @@ createTask({
 });
 setTaskFields(TASK_ID, { worktree_path: worktree, turn_count: 1 });
 const turnId = createTurn(TASK_ID, 1, prompt, null, logFile, null, attachmentManifest(stored));
+if (label === "browser") publishOutputImage(turnId, samplePng(), "sample.png", "native");
 finishTurn(turnId, "done", 0, output.trim());
 transition(TASK_ID, "done", `transport fixture ${label}`);
 

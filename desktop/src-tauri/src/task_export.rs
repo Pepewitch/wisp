@@ -23,17 +23,21 @@ pub fn validate(task_id: &str, data: &str) -> Result<(), String> {
 }
 
 pub fn save(path: &Path, data: &str) -> Result<(), String> {
+    save_bytes(path, data.as_bytes())
+}
+
+pub(crate) fn save_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     let result = (|| -> std::io::Result<()> {
         let mut file = tempfile::NamedTempFile::new_in(
             path.parent()
                 .ok_or_else(|| std::io::Error::other("no parent"))?,
         )?;
-        file.write_all(data.as_bytes())?;
+        file.write_all(data)?;
         file.as_file().sync_all()?;
         file.persist(path).map_err(|e| e.error)?;
         Ok(())
     })();
-    result.map_err(|_| "Could not save the export. Check available space and choose a writable folder, then retry.".into())
+    result.map_err(|_| "Could not save the file. Check available space and choose a writable folder, then retry.".into())
 }
 
 #[cfg(test)]

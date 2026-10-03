@@ -3,7 +3,7 @@ import { readFileSync } from "fs"
 import { homedir } from "os"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { viteSingleFile } from "vite-plugin-singlefile"
+import { inlineBuildAssets } from "./scripts/inline-build-assets.ts"
 import { defineConfig } from "vitest/config"
 
 /**
@@ -36,13 +36,7 @@ export default defineConfig(({ command, mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      webBuild
-        ? viteSingleFile({
-            useRecommendedBuildConfig: false,
-            inlinePattern: ["chunks/*.css"],
-            deleteInlinedFiles: true,
-          })
-        : viteSingleFile(),
+      inlineBuildAssets(webBuild),
     ],
     // the daemon serves the built file at / — relative asset URLs keep the
     // singlefile honest even for anything that cannot be inlined
@@ -59,7 +53,13 @@ export default defineConfig(({ command, mode }) => {
             assetsInlineLimit: () => true,
             assetsDir: "chunks",
           }
-        : {}),
+        : {
+            assetsInlineLimit: () => true,
+            cssCodeSplit: false,
+            assetsDir: "",
+            chunkSizeWarningLimit: 100_000_000,
+            rolldownOptions: { output: { codeSplitting: false } },
+          }),
     },
     server: {
       proxy: {

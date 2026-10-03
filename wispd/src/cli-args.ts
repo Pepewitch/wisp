@@ -5,7 +5,7 @@ interface Parsed {
 export type Flags = Parsed["flags"];
 
 /** Everything else is boolean, so --force never eats a positional argument. */
-const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm", "archived-before", "confirm-count", "limit"]);
+const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm", "archived-before", "confirm-count", "limit", "task", "turn", "out"]);
 const REPEAT_FLAGS = new Set(["attach", "image", "copy"]);
 for (const flag of ["every", "prompt", "at", "lifetime", "max-wakeups", "params", "file", "replace"]) VALUE_FLAGS.add(flag);
 

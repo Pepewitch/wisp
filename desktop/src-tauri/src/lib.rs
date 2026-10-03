@@ -30,6 +30,7 @@ pub mod external;
 pub mod local;
 pub mod navigation;
 pub mod notifications;
+pub mod output_image;
 pub mod probe;
 pub mod proxy;
 pub mod random;
@@ -108,6 +109,7 @@ pub fn run() {
             commands::reset_desktop_data,
             commands::pick_local_project,
             commands::save_task_export,
+            commands::save_output_image,
             commands::setup_local_wisp,
             commands::apply_local_wisp_setup,
             commands::open_external_url,

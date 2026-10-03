@@ -202,6 +202,15 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       );
       return;
     }
+    if (evt.type === "outputs") {
+      // Ordinary conversation refetches replace only the newest page. Patch
+      // the owning row too, including any older turn the person has loaded.
+      opts.client.setQueryData<ConversationDetail>(qk.task(evt.taskId), (current) =>
+        current?.turns ? { ...current, turns: current.turns.map((turn) => turn.n === evt.n ? { ...turn, outputs: evt.outputs } : turn) } : current,
+      );
+      void opts.client.invalidateQueries({ queryKey: qk.task(evt.taskId) });
+      return;
+    }
     if (evt.type === "message") {
       clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/messages/`);
       if (evt.taskId === opts.getSelectedId()) invalidateSelectedMessages();

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { createConnectionQueryKeys } from "@/lib/query"
+import { connectEventsBridge, type SseLike } from "@/lib/sse"
 import { ApiError, type DaemonTransport } from "@/lib/transport"
 import type { ApiTask, PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
@@ -168,6 +169,37 @@ describe("usePullRequestStatus", () => {
 })
 
 describe("useTaskDetail", () => {
+  it("keeps an output published to loaded older history after the latest page refetches, on its owning connection", async () => {
+    mocks.request.mockReset()
+    const page = (first: number, hasOlder: boolean) => ({
+      id: "tdetail",
+      turns: Array.from({ length: 50 }, (_, i) => ({ n: first + i, outputs: [] })),
+      messages: [], has_older_turns: hasOlder, older_turns_before: hasOlder ? first : null,
+    })
+    mocks.request.mockResolvedValueOnce(page(51, true)).mockResolvedValueOnce(page(1, false))
+      .mockResolvedValue(page(51, true))
+    const { client, wrapper } = harness("output-owner")
+    const result = renderHook(() => useTaskDetail("tdetail"), { wrapper })
+    await waitFor(() => expect(result.result.current.data?.turns).toHaveLength(50))
+    await act(async () => { await result.result.current.loadOlderTurns() })
+    await waitFor(() => expect(result.result.current.data?.turns).toHaveLength(100))
+    const otherKey = createConnectionQueryKeys("other-connection").task("tdetail")
+    client.setQueryData(otherKey, page(1, false))
+    const stream: SseLike = { readyState: 1, onmessage: null, onopen: null, onerror: null, close: vi.fn(), addEventListener: vi.fn() }
+    const close = connectEventsBridge({ client, transport: fakeDaemonTransport("output-owner"),
+      qk: createConnectionQueryKeys("output-owner"), getSelectedId: () => "tdetail", factory: () => stream })
+    const outputs = [{ id: "a".repeat(64), name: "plot.png", size: 489, mediaType: "image/png", source: "published" }]
+    await act(async () => { stream.onmessage!({ data: JSON.stringify({ type: "outputs", taskId: "tdetail", n: 1, outputs }) }) })
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(result.result.current.isFetching).toBe(false))
+    expect(result.result.current.data?.turns).toHaveLength(100)
+    expect(result.result.current.data?.turns[0]?.outputs).toEqual(outputs)
+    expect(mocks.request.mock.calls[2][0]).toBe("/api/tasks/tdetail/conversation?limit=50")
+    expect(client.getQueryData(otherKey)).toEqual(page(1, false))
+    expect(client.getQueryState(otherKey)?.isInvalidated).toBe(false)
+    close(); result.unmount(); client.clear()
+  })
+
   it("reads the DB-only conversation endpoint for the selected task", async () => {
     mocks.request.mockReset()
     mocks.request.mockResolvedValue({ id: "tdetail" })

@@ -128,6 +128,7 @@ function desktopBridge(): DesktopBridge {
     removeConnection: async () => undefined,
     resetDesktopData: async () => undefined,
     saveTaskExport: async () => true,
+    saveOutputImage: async () => true,
     pickLocalProject: async () => null,
     setupLocalWisp: async () => setup,
     applyLocalWispSetup: async () => setup,

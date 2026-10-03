@@ -2,6 +2,8 @@
  * GET /api/events frames: one JSON WispEvent per SSE data frame. Events are a
  * realtime convenience, not a ledger; a restarted daemon starts silent.
  */
+import type { OutputImage } from "./outputs";
+
 export type WispEvent =
   | {
       type: "task";
@@ -14,6 +16,7 @@ export type WispEvent =
       updatedAt?: string;
     }
   | { type: "turn"; taskId: string; n: number; status: string }
+  | { type: "outputs"; taskId: string; n: number; outputs: OutputImage[] }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
   /** The task's brief or its switch changed; clients re-ask GET /api/tasks/:id/brief. Never carries the payload. */

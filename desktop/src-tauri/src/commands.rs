@@ -261,3 +261,34 @@ pub async fn save_task_export(
         .map_err(|_| "Export could not finish. Retry saving.".to_string())??;
     Ok(true)
 }
+
+/// Save an image only after a native user-selected destination, never a JS path.
+#[tauri::command]
+pub async fn save_output_image(
+    app: tauri::AppHandle,
+    name: String,
+    data: String,
+) -> Result<bool, String> {
+    let bytes = crate::output_image::decode(&name, &data)?;
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&name)
+        .add_filter("Image", &["png", "jpg", "jpeg", "gif", "webp"])
+        .save_file(move |picked| {
+            let _ = send.send(picked);
+        });
+    let Some(path) = receive
+        .await
+        .map_err(|_| "The Save panel closed unexpectedly.".to_string())?
+    else {
+        return Ok(false);
+    };
+    let path = path
+        .into_path()
+        .map_err(|_| "Choose a local file destination.".to_string())?;
+    tokio::task::spawn_blocking(move || crate::task_export::save_bytes(&path, &bytes))
+        .await
+        .map_err(|_| "Could not finish saving the image.".to_string())??;
+    Ok(true)
+}

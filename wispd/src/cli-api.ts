@@ -109,6 +109,32 @@ export async function discardAttachment(uploadId: string): Promise<void> {
   await daemonRequest(`/api/attachments/${encodeURIComponent(uploadId)}`, "DELETE");
 }
 
+/** Download only a task-owned output route, authenticated on the CLI's daemon connection. */
+export async function downloadOutputImage(path: string): Promise<Uint8Array> {
+  if (!/^\/api\/tasks\/[a-z0-9]+\/outputs\/[1-9]\d*\/[a-f0-9]{64}$/.test(path)) throw new Error("invalid output image route");
+  const cfg = daemonConfig ??= loadConfig();
+  const url = `http://${cfg.host}:${cfg.port}${path}`;
+  const response = await fetch(url, { headers: { authorization: `Bearer ${cfg.token}`, ...cliClientHeaders() }, signal: AbortSignal.timeout(30_000), redirect: "error" });
+  if (!response.ok) throw new CliApiError(`could not download output image: ${response.status} ${response.statusText}`, url, false, response.status);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("output image is empty");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 8 * 1024 * 1024) {
+        await reader.cancel();
+        throw new Error("output image exceeds the 8 MiB limit");
+      }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  return Buffer.concat(chunks, size);
+}
+
 export function exitApi(error: unknown): never {
   if (error instanceof CliApiError && error.unreachable) {
     printError(

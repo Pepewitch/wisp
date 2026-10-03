@@ -120,6 +120,7 @@ export type ApiTask = FromAnyDaemon<
 /** A turn from the conversation routes. */
 export type Turn = FromAnyDaemon<
   ApiTurn,
+  | "outputs"
   | "origin"
   | "context_n"
   | "harness"

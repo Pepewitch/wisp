@@ -113,7 +113,7 @@ export const ATTACHMENT_CACHE_CONTROL = "private, no-store";
  * become a script rather than a file. The web app never navigates to these
  * URLs anyway — it fetches them with its bearer credential and renders a blob.
  */
-async function serveAttachment(filePath: string, name: string, missingMessage: string): Promise<Response> {
+export async function serveAttachment(filePath: string, name: string, missingMessage: string): Promise<Response> {
   const file = Bun.file(filePath);
   if (!(await file.exists())) return err(missingMessage, 410);
   const head = new Uint8Array(await file.slice(0, SNIFF_WINDOW_BYTES).arrayBuffer());

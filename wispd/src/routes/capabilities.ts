@@ -9,6 +9,7 @@ export const DAEMON_CAPABILITIES = Object.freeze({
   taskLogStreaming: true,
   terminal: true,
   attachments: true,
+  outputs: true,
   managedUpdates: true,
   archiveCleanup: true,
   bulkPurge: true,

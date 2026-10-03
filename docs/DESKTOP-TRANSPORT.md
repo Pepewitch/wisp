@@ -296,6 +296,8 @@ check_desktop_update     check the one native-owned release channel
 install_desktop_update   install only the exact pending confirmed version
 relaunch_desktop         relaunch only after native installation completes
 reveal_worktree_file     select one Local worktree file in Finder, never open it
+save_task_export         bounded export bytes to a user-selected native Save destination
+save_output_image        bounded PNG/JPEG/GIF/WebP bytes to a user-selected native Save destination
 ```
 
 `open_external_url` and the Desktop updater commands carry no connection. A link in a
@@ -357,3 +359,9 @@ Two consequences the shared React shell must handle:
 - A `409` carrying `x-wisp-proxy-error: identity-changed` means a different
   daemon now answers a saved address. It is connection state, not a task
   refusal, and `reconnect_connection` is the remedy.
+
+Image outputs preview through the connection-qualified asset route. Desktop
+downloads fetch from that same immutable route and open a native Save panel;
+the native command accepts a filename and bounded base64 image bytes, never a
+daemon URL, credential, or filesystem destination from JavaScript. Browser
+downloads reuse their authenticated blob URL. See [Image outputs](IMAGE-OUTPUTS.md).

@@ -40,6 +40,7 @@ tauri-build = { version = "2.6", features = [] }
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 block2 = "0.6"
+base64 = "0.22"
 bytes = "1"
 futures-util = "0.3"
 getrandom = "0.4"
