@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { closeSync, existsSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { samplePng } from "../scripts/harness/image-output-probe";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { externalizeOutputImages } from "../src/adapters/output-images";
-import { LOG_DIR, loadConfig } from "../src/config";
+import { LOG_DIR, TASKS_DIR, loadConfig } from "../src/config";
 import { subscribe } from "../src/events";
 import { decodeOutputImage, MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishOutputImage } from "../src/outputs";
 import { TurnRecorder } from "../src/recording/turn-recorder";
@@ -37,7 +37,7 @@ test("publication is manifest-scoped, byte-sniffed, deduplicated, and emits an o
     expect(publishOutputImage(f.turnId, samplePng(), "duplicate.png", "native")).toEqual(image);
     expect(apiTurn(getTurn(f.turnId)!).outputs).toEqual([image]);
     expect(apiTurn(getTurn(f.turnId)!)).not.toHaveProperty("outputs_json");
-    expect(events).toEqual([{ type: "outputs", taskId: f.task.id, n: 1 }]);
+    expect(events).toEqual([{ type: "outputs", taskId: f.task.id, n: 1, outputs: [image] }]);
     const response = await request(f.task.id, `/${image.id}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -73,6 +73,21 @@ test("count and byte limits cannot grow a turn indefinitely", () => {
   const image = publishOutputImage(g.turnId, samplePng(), "plot.png", "published");
   db.query("UPDATE turns SET outputs_json = ? WHERE id = ?").run(JSON.stringify(Array.from({ length: 8 }, (_, n) => ({ ...image, id: n.toString(16).padStart(64, "0"), size: MAX_OUTPUT_IMAGE_BYTES }))), g.turnId);
   expect(() => publishOutputImage(g.turnId, samplePng(), "extra.png", "native")).toThrow("turn output limit");
+});
+
+test("failed manifest persistence removes new output files and preserves previously registered bytes", () => {
+  const f = fixture();
+  const existing = publishOutputImage(f.turnId, samplePng(), "keep.png", "published");
+  db.exec(`CREATE TEMP TRIGGER reject_output_${f.turnId} BEFORE UPDATE OF outputs_json ON turns WHEN NEW.id = ${f.turnId} BEGIN SELECT RAISE(ABORT, 'output persistence refused'); END`);
+  try {
+    for (let n = 0; n < 33; n++) {
+      expect(() => publishOutputImage(f.turnId, Buffer.concat([samplePng(), Buffer.from([n])]), "new.png", "native")).toThrow("output persistence refused");
+    }
+    expect(parseOutputManifest(getTurn(f.turnId)!.outputs_json)).toEqual([existing]);
+    expect(readdirSync(join(TASKS_DIR, f.task.id, "outputs", "turn-1"))).toEqual([existing.id]);
+    expect(readFileSync(outputImagePath(f.task.id, 1, existing.id))).toEqual(samplePng());
+    expect(publishOutputImage(f.turnId, samplePng(), "retry.png", "native")).toEqual(existing);
+  } finally { db.exec(`DROP TRIGGER reject_output_${f.turnId}`); }
 });
 
 // Sanitized shapes from the synthetic MCP probe: Codex 0.159.2 and Claude 2.1.288.

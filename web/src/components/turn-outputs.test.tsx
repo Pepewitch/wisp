@@ -5,12 +5,27 @@ import { clearAssetCache } from "@/lib/asset-src"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { completeAuth, sameOriginWebTransport } from "@/lib/web-transport"
 import { runtimeWrapper } from "@/test/runtime"
-import { TurnOutputs } from "./turn-outputs"
+import { OutputImagePreview, TurnOutputs } from "./turn-outputs"
+
+const download = vi.hoisted(() => ({ save: vi.fn() }))
+vi.mock("@/lib/output-download", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/output-download")>()
+  return { ...original, saveOutputImage: (...args: Parameters<typeof original.saveOutputImage>) =>
+    download.save.getMockImplementation() ? download.save(...args) : original.saveOutputImage(...args) }
+})
 
 const image: OutputImage = { id: "a".repeat(64), name: "plot.png", size: 489, mediaType: "image/png", source: "native" }
 const path = `/api/tasks/tfixture/outputs/2/${image.id}`
 
-afterEach(() => { clearAssetCache(); localStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+afterEach(() => { clearAssetCache(); localStorage.clear(); download.save.mockReset(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it("preserves the native Save panel's string failure reason so the user can recover", async () => {
+  const reason = "Could not save the file. Check available space and choose a writable folder, then retry."
+  download.save.mockRejectedValue(reason)
+  render(<OutputImagePreview image={image} src="blob:output-preview" />, { wrapper: runtimeWrapper(sameOriginWebTransport) })
+  fireEvent.click(screen.getByRole("button", { name: "Download" }))
+  expect(await screen.findByRole("alert")).toHaveTextContent(reason)
+})
 
 it("Browser fetches output bytes with its bearer, previews inline, expands and downloads the same blob", async () => {
   completeAuth("synthetic-output-token")

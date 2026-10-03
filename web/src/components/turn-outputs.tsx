@@ -29,7 +29,7 @@ export function OutputImagePreview({ image, src, unavailable = false, removed = 
             {src && !missing && <button type="button" disabled={saving} onClick={async () => {
               setSaving(true); setSaveError(null)
               try { await saveOutputImage(image.name, src) }
-              catch (error) { setSaveError(error instanceof Error ? error.message : "Could not save image.") }
+              catch (error) { setSaveError(error instanceof Error ? error.message : typeof error === "string" ? error : "Could not save image.") }
               finally { setSaving(false) }
             }} className="ml-auto cursor-pointer hover:text-foreground disabled:cursor-wait">{saving ? "Saving…" : "Download"}</button>}
             {missing && <span>Image unavailable</span>}

@@ -248,7 +248,7 @@ describe("the /api/events → queryClient bridge", () => {
   it("an output event refreshes its owning conversation without invalidating unrelated data", () => {
     const h = bridge("t1");
     seed(h.client);
-    h.sources[0]!.emit({ type: "outputs", taskId: "t1", n: 2 });
+    h.sources[0]!.emit({ type: "outputs", taskId: "t1", n: 2, outputs: [] });
     expect(invalidated(h.client, qk.task("t1"))).toBe(true);
     expect(invalidated(h.client, qk.diff("t1"))).toBe(false);
     expect(invalidated(h.client, qk.status)).toBe(false);

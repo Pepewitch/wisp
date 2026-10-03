@@ -45,7 +45,8 @@ export function publishOutputImage(turnId: number, bytes: Uint8Array, name: stri
   const id = createHash("sha256").update(bytes).digest("hex");
   const safeName = name.replaceAll("\\", "/").split("/").at(-1)!.replace(/[\p{C}"<>]/gu, "_").slice(0, 120).trim() || "image";
   let added = false;
-  const image = db.transaction(() => {
+  let rollbackTarget: string | null = null;
+  const persist = db.transaction(() => {
     const turn = getTurn(turnId);
     if (!turn) throw new OutputError("no such turn", 404);
     const task = getTask(turn.task_id);
@@ -64,14 +65,23 @@ export function publishOutputImage(turnId: number, bytes: Uint8Array, name: stri
     try {
       writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" });
       renameSync(temporary, target);
+      if (!existing) rollbackTarget = target;
       if (!existing) db.query("UPDATE turns SET outputs_json = ? WHERE id = ?").run(JSON.stringify([...outputs, image]), turn.id);
     } finally { rmSync(temporary, { force: true }); }
     added = !existing;
     return image;
-  })();
+  });
+  let image: OutputImage;
+  try { image = persist(); }
+  catch (error) {
+    // A failed UPDATE or COMMIT must not leave bytes outside the manifest's
+    // quotas. Previously manifested files remain available on failed retries.
+    if (rollbackTarget) rmSync(rollbackTarget, { force: true });
+    throw error;
+  }
   if (added) {
     const turn = getTurn(turnId)!;
-    emit({ type: "outputs", taskId: turn.task_id, n: turn.n });
+    emit({ type: "outputs", taskId: turn.task_id, n: turn.n, outputs: parseOutputManifest(turn.outputs_json) });
   }
   return image;
 }
