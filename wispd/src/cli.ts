@@ -1,3 +1,4 @@
+import { outputCommand, saveCommand } from "./cli-output";
 import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-help";
 import { print, printError, printRaw } from "./cli-print";
 import {
@@ -190,6 +191,7 @@ function printTurn(
     const files = turn.attachments.map((attachment) => `${attachment.name} (${formatBytes(attachment.size)})`).join(", ");
     print(`  attached: ${files}${task.archived && !task.attachmentsRetained ? " — removed when this task was archived" : ""}`);
   }
+  for (const image of turn.outputs ?? []) print(`  output: ${image.name} (${formatBytes(image.size)})\n    ${saveCommand(task.id, turn.n, image)}`);
   if (turn.usage) print(`  usage: ${usageLine(turn.usage)}`);
   if (turn.result) print(`  agent: ${turn.result.slice(0, 400)}`);
 }
@@ -555,6 +557,7 @@ export const COMMANDS = {
   export: (positional, flags) => retentionCommand("export", positional[0], flags, api),
   purge: (positional, flags) => retentionCommand("purge", positional[0], flags, api),
   project: (positional, flags) => projectCommand(positional, flags),
+  output: (positional, flags) => outputCommand(positional, flags),
   attach: (positional) => attachCommand(positional[0]),
   token: (_positional, flags) => tokenCommand(flags),
   init: (_positional, flags) => initCommand(flags),

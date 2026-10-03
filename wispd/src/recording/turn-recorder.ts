@@ -6,6 +6,7 @@ import {
   type OutcomeCheckpointV1,
   type ParsedTurn,
 } from "../adapters";
+import { externalizeOutputImages } from "../adapters/output-images";
 import { JsonLineBuffer } from "../adapters/live/json-lines";
 import { transcriptBudgetBytes, type WispConfig } from "../config";
 import { setTurnCaptureCheckpoint } from "../store";
@@ -259,11 +260,13 @@ export class TurnRecorder {
   }
 
   private recordParsed(event: Record<string, unknown>, originalBytes?: number): void {
-    const projected = boundJsonRecord(event, {}, originalBytes);
+    if (this.finished) return;
+    const externalized = externalizeOutputImages(event, this.def, this.turnId, (note) => this.recordNote(note));
+    const projected = boundJsonRecord(externalized, {}, externalized === event ? originalBytes : undefined);
     const bounded = projected.value && !Array.isArray(projected.value) && typeof projected.value === "object"
       ? projected.value as Record<string, unknown>
       : null;
-    this.recordProjectedLine(projected.json, event, bounded, categoryOf(bounded, "stdout"));
+    this.recordProjectedLine(projected.json, externalized, bounded, categoryOf(bounded, "stdout"));
   }
 
   /**

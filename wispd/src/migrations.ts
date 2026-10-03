@@ -25,6 +25,7 @@ import { WORKFLOW_HISTORY_TRAIL } from "./migration-history-trail";
 import { LIVE_ROW_INDEXES } from "./migration-live-row-indexes";
 import { OUTBOX_DEAD_LETTER } from "./migration-outbox-dead-letter";
 import { TASK_AUDIT } from "./migration-task-audit";
+import { TURN_OUTPUTS } from "./migration-turn-outputs";
 import { TURN_ORIGIN } from "./migration-turn-origin";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
@@ -715,6 +716,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   OUTBOX_DEAD_LETTER,
   TASK_AUDIT,
   TURN_ORIGIN,
+  TURN_OUTPUTS,
 ];
 
 /** The newest schema this build knows how to run. */

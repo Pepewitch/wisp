@@ -202,6 +202,8 @@ export interface Turn {
    * deletes. Never served raw: `apiTurn` parses it into `attachments`.
    */
   attachments_json: string | null;
+  /** Task-owned image outputs, served as parsed metadata by apiTurn. */
+  outputs_json: string | null;
   /**
    * The harness's own usage report for this turn, raw JSON (Theme B) — one
    * blob, not per-field columns, because every harness reports a different

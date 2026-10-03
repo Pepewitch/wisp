@@ -202,6 +202,10 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       );
       return;
     }
+    if (evt.type === "outputs") {
+      void opts.client.invalidateQueries({ queryKey: qk.task(evt.taskId) });
+      return;
+    }
     if (evt.type === "message") {
       clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/messages/`);
       if (evt.taskId === opts.getSelectedId()) invalidateSelectedMessages();

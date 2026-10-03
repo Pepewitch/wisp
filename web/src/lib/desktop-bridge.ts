@@ -168,6 +168,7 @@ export interface DesktopBridge {
   removeConnection(connectionId: string): Promise<void>
   resetDesktopData(): Promise<void>
   saveTaskExport(taskId: string, data: string): Promise<boolean>
+  saveOutputImage(name: string, data: string): Promise<boolean>
   pickLocalProject(): Promise<string | null>
   setupLocalWisp(): Promise<LocalSetupReport>
   applyLocalWispSetup(expectedStep: LocalSetupStep): Promise<LocalSetupReport>
@@ -573,6 +574,7 @@ export function createDesktopBridge(
       nativeInvoke<void>("remove_connection", { connectionId }),
     resetDesktopData: () => nativeInvoke<void>("reset_desktop_data"),
     saveTaskExport: (taskId, data) => nativeInvoke<boolean>("save_task_export", { taskId, data }),
+    saveOutputImage: (name, data) => nativeInvoke<boolean>("save_output_image", { name, data }),
     pickLocalProject: () =>
       nativeInvoke<string | null>("pick_local_project", {
         connectionId: LOCAL_CONNECTION_ID,

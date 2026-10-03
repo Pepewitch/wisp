@@ -100,6 +100,7 @@ import {
   nativeImageAttachments,
   taskEnv,
   taskPreambleLines,
+  outputReminder,
   withWispSection,
 } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn } from "./types";
@@ -204,7 +205,7 @@ export function startTurn(
   // process keeps the environment it was spawned with, so it cannot carry a
   // new binding; the brief waits for the next spawned turn.
   const brief = lingering ? null : pendingBriefRun(task.id, def, command);
-  const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : [])];
+  const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : []), ...(command ? [] : [outputReminder(n)])];
   const framed = framedMessage(messageOrigin(sourceMessageId), message);
   const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   if (lingering) {

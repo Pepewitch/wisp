@@ -129,6 +129,11 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 
+/** An explicit turn number also works when the harness process is reused. */
+export function outputReminder(turn: number): string {
+  return `To show an image you created as a file in the task reply, run ${wispCommand()} output add <image-path> --turn ${turn}. This copies it into task-owned storage for inline preview and download. Publish only images you intend to share (PNG, JPEG, GIF or WebP, up to 8 MiB each).`;
+}
+
 /** The first turn's framing, in Wisp's voice; the runner puts it in the turn's one Wisp section. */
 export function taskPreambleLines(task: Task): string[] {
   return [

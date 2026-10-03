@@ -22,6 +22,7 @@ function archivedTask(): ConversationDetail {
       result: "Keep the final answer", status: "done", model: null, usage: null,
       capture_mode: null, capture_state: "evicted", captured_bytes: 0,
       capture_detail: "Transcript evicted by archived-task log retention.",
+      outputs: [{ id: "a".repeat(64), name: "retained.png", size: 489, mediaType: "image/png", source: "native" }],
       attachments: [], log_file: "/synthetic/log", started_at: "2026-01-01T00:00:00Z",
       ended_at: "2026-01-01T00:01:00Z",
     }],
@@ -53,6 +54,7 @@ it.each(["browser", "desktop"] as const)("names evicted activity through the %s 
   expect(screen.getByText(/Transcript evicted by archived-task log retention/)).toBeInTheDocument()
   expect(screen.getByText("Keep the prompt")).toBeInTheDocument()
   expect(screen.getByText("Keep the final answer")).toBeInTheDocument()
+  expect(screen.getByRole("img", { name: "retained.png" })).toBeInTheDocument()
   expect(screen.queryByText("No activity in this turn")).not.toBeInTheDocument()
   expect(screen.queryByText("Show activity")).not.toBeInTheDocument()
   expect(openStream).not.toHaveBeenCalled()

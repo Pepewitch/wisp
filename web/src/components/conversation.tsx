@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react"
 
+import { TurnOutputs } from "@/components/turn-outputs"
 import { ActivityList } from "@/components/activity-list"
 import { ConversationFloat } from "@/components/conversation-float"
 import { FindBar } from "@/components/find-in-task"
@@ -425,6 +426,7 @@ const TurnBlock = memo(function TurnBlock({
       <TurnCaptureNotice taskId={taskId} turn={turn} />
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
+      <TurnOutputs taskId={taskId} turn={turn.n} outputs={turn.outputs ?? []} removed={archived} />
 
       <TurnProgress turn={turn} hasLiveItems={Boolean(live?.items.length)} />
 

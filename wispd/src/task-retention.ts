@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { outputImagePath, parseOutputManifest } from "./outputs";
 import { formatBytes, parseAttachmentManifest, turnAttachmentPath, messageAttachmentPath } from "./attachments";
 import { readdir, lstat, rm, open } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
@@ -105,6 +106,10 @@ export async function exportTask(task: Task): Promise<TaskExport> {
     const paths = new Set(list.files);
     for (const turn of turns) for (const record of parseAttachmentManifest(turn.attachments_json)) {
       const path = turnAttachmentPath(task.id, turn.n, record.name);
+      if (!paths.has(path)) result.missing.push(exportPath(path));
+    }
+    for (const turn of turns) for (const image of parseOutputManifest(turn.outputs_json)) {
+      const path = outputImagePath(task.id, turn.n, image.id);
       if (!paths.has(path)) result.missing.push(exportPath(path));
     }
     for (const message of messages) for (const record of parseAttachmentManifest(message.attachments_json)) {

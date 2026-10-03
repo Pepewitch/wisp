@@ -14,6 +14,7 @@ export type WispEvent =
       updatedAt?: string;
     }
   | { type: "turn"; taskId: string; n: number; status: string }
+  | { type: "outputs"; taskId: string; n: number }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
   /** The task's brief or its switch changed; clients re-ask GET /api/tasks/:id/brief. Never carries the payload. */

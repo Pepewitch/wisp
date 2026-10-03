@@ -1,5 +1,6 @@
 import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
+import { parseOutputManifest } from "../outputs";
 import { parseAttachmentManifest } from "../attachments";
 import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn } from "../types";
 import { logFailure } from "../failure-log";
@@ -67,6 +68,7 @@ export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageS
 export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
   const {
     attachments_json,
+    outputs_json,
     usage_json,
     outcome_json: _outcome,
     capture_categories_json,
@@ -90,6 +92,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
     capture_state: turnCaptureState(t),
     diagnostic_state: turnDiagnosticState(t),
     attachments: parseAttachmentManifest(attachments_json),
+    outputs: parseOutputManifest(outputs_json),
     usage: apiTurnUsage(usage_json, def),
     capture_categories: captureCategories,
     requested_fast: requested_fast !== 0,

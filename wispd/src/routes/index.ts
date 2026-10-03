@@ -29,6 +29,7 @@ import {
   listSuffixPromptsRoute,
   updateSuffixPromptRoute,
 } from "./suffix-prompts";
+import { outputRoute } from "./outputs";
 import { attachmentRoute, taskMessageRoute, taskMessageSendNowRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
@@ -74,6 +75,8 @@ function taskRoutes(
     if (!task) return err(`no such task: ${logStreamMatch[1]}`, 404);
     return logStream(task, url, adapters);
   }
+  const outputResponse = outputRoute(req, url, path, method);
+  if (outputResponse !== null) return outputResponse;
   const attachmentResponse = attachmentRoute(path, method);
   if (attachmentResponse !== null) return attachmentResponse;
   const messageResponse = taskMessageRoute(req, path, method);

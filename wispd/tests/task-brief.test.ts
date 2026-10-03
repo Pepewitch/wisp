@@ -9,7 +9,7 @@ import { briefRoute } from "../src/routes/task-brief";
 import { startTurn } from "../src/runner";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
 import { createTaskMessage } from "../src/store-messages";
-import { briefReminder, deliveredMessage, framedMessage, taskPreambleLines, wispSection, withWispSection } from "../src/turn-input";
+import { briefReminder, deliveredMessage, framedMessage, outputReminder, taskPreambleLines, wispSection, withWispSection } from "../src/turn-input";
 import { wispCommand } from "../src/command";
 
 const cfg: WispConfig = {
@@ -109,12 +109,12 @@ afterEach(() => {
 });
 
 describe("the reminder and the binding", () => {
-  test("a disabled task's harness input and environment are exactly as before", async () => {
+  test("a disabled task receives no brief reminder or binding", async () => {
     // a daemon started from inside some agent's shell must not pass that agent's binding on
     process.env.WISP_BRIEF_RUN = "br_inherited";
     const task = makeTask(false);
     const { prompt, runId } = await begin(task.id, "fix the bug");
-    expect(prompt).toBe(withWispSection(taskPreambleLines(getTask(task.id)!), "fix the bug"));
+    expect(prompt).toBe(withWispSection([...taskPreambleLines(getTask(task.id)!), outputReminder(1)], "fix the bug"));
     expect(runId).toBe("");
     expect(db.query(`SELECT 1 FROM brief_runs WHERE task_id = ?`).get(task.id)).toBeNull();
     await finish(task.id);
@@ -139,7 +139,7 @@ describe("the reminder and the binding", () => {
 
     // a later ordinary turn: the reminder goes before the message, never into it
     const second = await begin(task.id, "and the autosave path");
-    expect(second.prompt).toBe(`<wisp>${briefReminder()}</wisp>\n\nand the autosave path`);
+    expect(second.prompt).toBe(withWispSection([briefReminder(), outputReminder(2)], "and the autosave path"));
     expect(second.runId).not.toBe(runId);
     await finish(task.id);
   });
@@ -187,7 +187,7 @@ describe("the reminder and the binding", () => {
     await until(() => {
       try { worktreeFile(task.id, "run.txt"); return true; } catch { return false; }
     });
-    expect(worktreeFile(task.id, "prompt.txt")).toBe("<wisp>scheduled steer</wisp>\n\nUse the staged rollout");
+    expect(worktreeFile(task.id, "prompt.txt")).toBe(withWispSection([outputReminder(2), "scheduled steer"], "Use the staged rollout"));
     expect(turnsFor(task.id).at(-1)!.prompt).toBe("Use the staged rollout");
     await finish(task.id);
   });

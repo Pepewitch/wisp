@@ -5435,6 +5435,7 @@ name = "wisp-desktop"
 version = "0.6.7"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "block2",
  "bytes",
  "futures-util",

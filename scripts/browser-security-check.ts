@@ -31,6 +31,7 @@
  * Everything it touches is disposable: a temporary WISP_HOME, an ephemeral
  * port, a fresh Chrome profile, and a synthetic checkout, attachment, and shell; no provider harness is called.
  */
+import { checkOutputImages } from "./browser-security-outputs";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -567,6 +568,7 @@ async function main(): Promise<void> {
     await checkMermaidRecovery(page, started.origin, mermaidPath);
     await checkLazyTerminal(page);
     await checkHostileContent(page, { check, waitInPage });
+    await checkOutputImages(page, check, (name) => screenshot(page!, name));
     await checkPwa(page, started.origin);
     // Reset this fixture's selection before the clean-app navigation below.
     await page.evaluate(`Object.keys(localStorage).filter(key => key !== 'wisp_token').forEach(key => localStorage.removeItem(key))`);

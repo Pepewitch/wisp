@@ -31,7 +31,8 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
   the option it recommends. Answer in one line. [Briefs](skills/wisp/references/cli.md#task-briefs)
 - **See the whole picture.** Read the conversation, review the diff, open a
   terminal in the worktree, and see the diagrams agents draw rendered right in
-  the chat.
+  the chat. [Publish image outputs](docs/IMAGE-OUTPUTS.md) for inline previews
+  and downloads.
 - **Check in from anywhere.** The desktop app on macOS posts a banner when a
   task's PR needs you and when Wisp merges it. The same UI runs in any browser
   and on your phone over a [private connection](docs/REMOTE-ACCESS.md), and the

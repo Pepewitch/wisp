@@ -108,7 +108,7 @@ async function loadAsset(
  * renders the `<img>` either way: an empty src shows its alt text, which is
  * the attachment's filename.
  */
-export function useAssetSrc(path: string | null): string | null {
+export function useAssetStatus(path: string | null): { src: string | null; failed: boolean } {
   const transport = useDaemonTransport()
   const generation = useSyncExternalStore(subscribe, snapshot, snapshot)
   // A transport whose own hop is credentialed (the desktop proxy) needs no
@@ -121,7 +121,7 @@ export function useAssetSrc(path: string | null): string | null {
   const cached = key === null ? null : (cache.get(key)?.url ?? null)
   // Tagged with its key, so a resolved URL is never rendered for the image
   // that replaced it.
-  const [, setLoaded] = useState<{ key: string; url: string } | null>(null)
+  const [loaded, setLoaded] = useState<{ key: string; failed: boolean; generation: number } | null>(null)
 
   useEffect(() => {
     if (key === null || direct !== null) return
@@ -137,10 +137,11 @@ export function useAssetSrc(path: string | null): string | null {
     let live = true
     if (cached === null) {
       void loadAsset(transport, key, path).then(
-        (url) => {
-          if (live) setLoaded({ key, url })
+        () => {
+          if (live) setLoaded({ key, failed: false, generation })
         },
         () => {
+          if (live) setLoaded({ key, failed: true, generation })
           // A refused or missing attachment renders as its alt text. The
           // manifest, not the bytes, is what tells the user it existed.
         }
@@ -151,5 +152,9 @@ export function useAssetSrc(path: string | null): string | null {
     }
   }, [transport, path, key, direct, cached, generation])
 
-  return direct ?? cached
+  return { src: direct ?? cached, failed: loaded?.key === key && loaded.generation === generation && loaded.failed && cached === null }
+}
+
+export function useAssetSrc(path: string | null): string | null {
+  return useAssetStatus(path).src
 }
