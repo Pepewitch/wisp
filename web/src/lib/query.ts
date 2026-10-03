@@ -46,6 +46,8 @@ export interface ConnectionQueryKeys {
     id: string,
     path: string
   ): readonly [string, "worktree-file", string, string]
+  /** A sent attachment's text, keyed by its daemon path (which names task and turn). */
+  attachmentText(path: string): readonly [string, "attachment-text", string]
   skills(id: string): readonly [string, "skills", string]
   terminals(id: string): readonly [string, "terminals", string]
   /** The session id rides the key: a compaction's replacement id refetches. */
@@ -80,6 +82,8 @@ export function createConnectionQueryKeys(
     diff: (id: string) => Object.freeze([connectionId, "diff", id] as const),
     worktreeFile: (id: string, path: string) =>
       Object.freeze([connectionId, "worktree-file", id, path] as const),
+    attachmentText: (path: string) =>
+      Object.freeze([connectionId, "attachment-text", path] as const),
     skills: (id: string) =>
       Object.freeze([connectionId, "skills", id] as const),
     terminals: (id: string) =>

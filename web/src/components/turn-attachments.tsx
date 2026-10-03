@@ -1,8 +1,11 @@
 import { useState } from "react"
 
+import { AttachmentTablePreview, TextAttachmentRow } from "@/components/attachment-table"
+import { AttachmentTextViewer } from "@/components/attachment-text-viewer"
 import { AttachmentViewer } from "@/components/attachment-viewer"
 import { useAssetSrc } from "@/lib/asset-src"
 import { attachmentKind, attachmentUrl, formatBytes } from "@/lib/attachments"
+import { delimiterFor } from "@/lib/delimited"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
@@ -22,10 +25,9 @@ function AttachmentThumb({ path, name }: { path: string; name: string }) {
 }
 
 /**
- * A pdf or a text file, as the one thing it can honestly be here: a download.
- * The daemon serves these with `content-disposition: attachment`, so rendering
- * one inline would be the app disagreeing with its own server about whether
- * someone's pasted file may draw on this origin.
+ * A pdf, as the one thing it can honestly be here: a download. The daemon
+ * serves it with `content-disposition: attachment`, and drawing a pdf means
+ * handing its bytes to a renderer on this origin.
  *
  * The href is a blob URL the transport already fetched with its credential, so
  * this is a save, not a second authenticated request. While it resolves the row
@@ -53,14 +55,32 @@ function AttachmentFileRow({
   )
 }
 
+function TextAttachment({
+  path,
+  attachment,
+  onOpen,
+}: {
+  path: string
+  attachment: TurnAttachment
+  onOpen: () => void
+}) {
+  const delimiter = delimiterFor(attachment.name)
+  if (delimiter) {
+    return <AttachmentTablePreview path={path} attachment={attachment} delimiter={delimiter} onOpen={onOpen} />
+  }
+  return <TextAttachmentRow attachment={attachment} onOpen={onOpen} />
+}
+
 /**
  * A past turn's attachments, under its prompt bubble (A1a). Right-aligned with
  * the bubble, because these were part of what the person sent.
  *
  * Images are thumbnails: content, not status, so they render as bare images —
  * no chip, no frame, no count badge. Clicking one opens the presentation view,
- * which a video shares. A pdf or a text file has no picture to draw, so it is
- * one muted row that says its kind and downloads on click.
+ * which a video shares. A text file is one muted row that opens it in the
+ * reading popup; a csv or tsv shows its first rows inline, with a way into the
+ * rest. Either is drawn as text nodes only, never as markup. A pdf is a muted
+ * row that downloads.
  *
  * The archived case is the honest half. Archive deletes the bytes (Q4) but the
  * manifest survives on the turn row, so this component knows a file was here
@@ -85,6 +105,7 @@ export function AttachmentGallery({
   // the open file lives here rather than inside the viewer, so clicking a
   // thumbnail sets it once instead of the viewer syncing to a prop
   const [openIndex, setOpenIndex] = useState<number | null>(null)
+  const [openText, setOpenText] = useState<TurnAttachment | null>(null)
   if (attachments.length === 0) return null
 
   if (archived || removedReason) {
@@ -135,6 +156,8 @@ export function AttachmentGallery({
             >
               {a.name} · video · {formatBytes(a.size)}
             </button>
+          ) : kindOf(a) === "text" ? (
+            <TextAttachment key={a.name} path={pathFor(a.name)} attachment={a} onOpen={() => setOpenText(a)} />
           ) : (
             <AttachmentFileRow key={a.name} path={pathFor(a.name)} attachment={a} />
           ),
@@ -147,6 +170,7 @@ export function AttachmentGallery({
         onClose={() => setOpenIndex(null)}
         pathFor={pathFor}
       />
+      <AttachmentTextViewer attachment={openText} pathFor={pathFor} onClose={() => setOpenText(null)} />
     </>
   )
 }

@@ -1,7 +1,7 @@
-import { Dialog } from "@base-ui/react/dialog"
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 
 import { PaneErrorBoundary } from "@/components/error-boundary"
+import { PREVIEW_FOOTER_ACTION, PreviewFooter, PreviewPopup } from "@/components/preview-popup"
 import { Prose } from "@/components/prose"
 import { Tab } from "@/components/primitives"
 import { formatBytes } from "@/lib/attachments"
@@ -83,57 +83,64 @@ export function FileViewer({
   const effectiveMode = mode === "diff" && canDiff ? "diff" : "file"
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
-        <Dialog.Popup
-          data-testid="file-viewer"
-          className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
-        >
-          <Dialog.Title className="sr-only">
-            {fileLocation(file?.path ?? path, line, endLine) ?? "File"}
-          </Dialog.Title>
-          {canDiff && (
-            <div role="tablist" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
-              <Tab role="tab" aria-selected={effectiveMode === "file"} active={effectiveMode === "file"} onClick={() => setMode("file")}>
-                File
-              </Tab>
-              <Tab role="tab" aria-selected={effectiveMode === "diff"} active={effectiveMode === "diff"} onClick={() => setMode("diff")}>
-                Diff
-              </Tab>
-            </div>
-          )}
-          <div className="scroll-slim min-h-0 flex-1 overflow-auto rounded-md border border-border bg-code px-4 py-3">
-            {/* Keyed by task: an error reading one task's file must not still be
-                on screen once a different task's viewer opens. */}
-            <PaneErrorBoundary key={taskId ?? "none"} label="this file" fill={false}>
-              <ViewerContent
-                pending={query.isPending}
-                error={query.isError ? query.error : null}
-                file={file}
-                mode={effectiveMode}
-                diff={diff}
-                diffTruncated={diffTruncated}
-                onOpen={onOpen}
-                line={line}
-                endLine={endLine}
-              />
-            </PaneErrorBoundary>
+    <PreviewPopup
+      open={open}
+      onClose={onClose}
+      testId="file-viewer"
+      title={fileLocation(file?.path ?? path, line, endLine) ?? "File"}
+      tabs={
+        canDiff && (
+          <div role="tablist" aria-label="File view" className="flex shrink-0 items-center gap-0.5">
+            <Tab role="tab" aria-selected={effectiveMode === "file"} active={effectiveMode === "file"} onClick={() => setMode("file")}>
+              File
+            </Tab>
+            <Tab role="tab" aria-selected={effectiveMode === "diff"} active={effectiveMode === "diff"} onClick={() => setMode("diff")}>
+              Diff
+            </Tab>
           </div>
-          <ViewerFooter
-            path={fileLocation(file?.path ?? path, line, endLine)}
-            file={file}
-            mode={effectiveMode}
-            diffTruncated={diffTruncated}
-            onReveal={onReveal}
-          />
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+        )
+      }
+      footer={
+        <ViewerFooter
+          path={fileLocation(file?.path ?? path, line, endLine)}
+          file={file}
+          mode={effectiveMode}
+          diffTruncated={diffTruncated}
+          action={
+            onReveal && file && (
+              <button type="button" onClick={() => onReveal(file.path)} className={PREVIEW_FOOTER_ACTION}>
+                Reveal in Finder
+              </button>
+            )
+          }
+        />
+      }
+    >
+      {/* Keyed by task: an error reading one task's file must not still be
+          on screen once a different task's viewer opens. */}
+      <PaneErrorBoundary key={taskId ?? "none"} label="this file" fill={false}>
+        <ViewerContent
+          pending={query.isPending}
+          error={query.isError ? query.error : null}
+          file={file}
+          mode={effectiveMode}
+          diff={diff}
+          diffTruncated={diffTruncated}
+          onOpen={onOpen}
+          line={line}
+          endLine={endLine}
+        />
+      </PaneErrorBoundary>
+    </PreviewPopup>
   )
 }
 
-function ViewerContent({
+/**
+ * What the viewer draws for one text file: Markdown rendered, a known
+ * language highlighted, anything else as plain mono. Exported so a text
+ * attachment reads exactly like a worktree file does.
+ */
+export function ViewerContent({
   pending,
   error,
   file,
@@ -255,18 +262,21 @@ function fileLocation(
   return `${path}#L${line}${endLine === undefined ? "" : `-L${endLine}`}`
 }
 
-function ViewerFooter({
+/** The viewer's caption line. `children` add facts after the size; `action` sits at the right. */
+export function ViewerFooter({
   path,
   file,
   mode,
   diffTruncated,
-  onReveal,
+  action,
+  children,
 }: {
   path: string | null
   file: WorktreeFileResponse | undefined
   mode: "file" | "diff"
   diffTruncated: boolean
-  onReveal?: (path: string) => void
+  action?: ReactNode
+  children?: ReactNode
 }) {
   const highlightingSkipped = file?.kind === "text"
     && mode === "file"
@@ -277,7 +287,7 @@ function ViewerFooter({
     && isMarkdown(file.path)
     && file.text.length > DOCUMENT_PREVIEW_LIMIT
   return (
-    <div className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+    <PreviewFooter>
       <span data-testid="file-viewer-path" className="truncate font-mono">{path}</span>
       {file && (
         <>
@@ -285,6 +295,7 @@ function ViewerFooter({
           <span className="shrink-0">{formatBytes(file.bytes)}</span>
         </>
       )}
+      {children}
       {file?.kind === "text" && file.truncated && (
         <span className="shrink-0 text-faint">· preview capped</span>
       )}
@@ -297,19 +308,8 @@ function ViewerFooter({
       {mode === "diff" && diffTruncated && (
         <span className="shrink-0 text-faint">· diff capped; unmarked lines may have changes</span>
       )}
-      {onReveal && file && (
-        <button
-          type="button"
-          onClick={() => onReveal(file.path)}
-          className={cn(
-            "ml-auto shrink-0 transition-colors hover:text-foreground",
-            "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-          )}
-        >
-          Reveal in Finder
-        </button>
-      )}
-    </div>
+      {action}
+    </PreviewFooter>
   )
 }
 

@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { TurnAttachment } from "@/lib/types"
 import type { DaemonTransport } from "@/lib/transport"
@@ -89,21 +89,18 @@ describe("TurnAttachments", () => {
     expect(screen.getByTestId("attachment-viewer").textContent).toContain("2 of 2")
   })
 
-  it("A1d: a video opens in the same viewer; a pdf and a text file are downloads", () => {
+  it("A1d: a video opens in the same viewer; a pdf is a download", () => {
     const mixed: TurnAttachment[] = [
       { name: "clip.mp4", size: 47 * 1024 * 1024, mediaType: "video/mp4" },
       { name: "spec.pdf", size: 2048, mediaType: "application/pdf" },
-      { name: "orders.csv", size: 4096, mediaType: "text/plain" },
     ]
     mount(<TurnAttachments taskId="tk9zdy" turn={3} attachments={mixed} archived={false} />)
 
-    // the two that cannot be shown are links that SAVE — the daemon serves them
-    // as attachments, and the app does not disagree with its own server
+    // a pdf is a link that SAVES — the daemon serves it as an attachment
     const pdf = screen.getByTitle("Download spec.pdf")
     expect(pdf.getAttribute("href")).toBe("/api/tasks/tk9zdy/attachments/3/spec.pdf")
     expect(pdf.getAttribute("download")).toBe("spec.pdf")
     expect(pdf.textContent).toBe("spec.pdf · pdf · 2 KB")
-    expect(screen.getByTitle("Download orders.csv").textContent).toBe("orders.csv · text · 4 KB")
 
     fireEvent.click(screen.getByLabelText("View clip.mp4"))
     const viewer = screen.getByTestId("attachment-viewer")
@@ -111,6 +108,109 @@ describe("TurnAttachments", () => {
     expect(screen.getByTestId("attachment-video").getAttribute("src")).toBe(
       "/api/tasks/tk9zdy/attachments/3/clip.mp4",
     )
+  })
+
+  describe("text attachments", () => {
+    const served = new Map<string, string>()
+    beforeEach(() => {
+      served.clear()
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) =>
+          served.has(url) ? new Response(served.get(url)) : new Response("gone", { status: 404 }),
+        ),
+      )
+    })
+    afterEach(() => vi.unstubAllGlobals())
+
+    const path = (name: string) => `/api/tasks/tk9zdy/attachments/3/${encodeURIComponent(name)}`
+
+    it("a text file's row opens the reading popup on its text, with a download", async () => {
+      served.set(path("notes.txt"), "first line\nsecond line\n")
+      mount(
+        <TurnAttachments
+          taskId="tk9zdy"
+          turn={3}
+          attachments={[{ name: "notes.txt", size: 23, mediaType: "text/plain" }]}
+          archived={false}
+        />,
+      )
+      const row = screen.getByRole("button", { name: "Preview notes.txt" })
+      expect(row.textContent).toBe("notes.txt · text · 23 B")
+      expect(screen.queryByTestId("attachment-text-viewer")).toBeNull()
+
+      fireEvent.click(row)
+      const viewer = await screen.findByTestId("attachment-text-viewer")
+      await waitFor(() => expect(viewer.textContent).toContain("second line"))
+      expect(within(viewer).getByText("Download").closest("a")).toHaveAttribute("download", "notes.txt")
+      // a plain text file has nothing to tabulate
+      expect(within(viewer).queryByRole("tab")).toBeNull()
+    })
+
+    it("a csv shows its first five rows inline, and View all opens Table and Raw", async () => {
+      const csv = ["sku,qty", ...Array.from({ length: 8 }, (_, i) => `S-${i + 1},${i + 1}`)].join("\n")
+      served.set(path("orders.csv"), csv)
+      mount(
+        <TurnAttachments
+          taskId="tk9zdy"
+          turn={3}
+          attachments={[{ name: "orders.csv", size: csv.length, mediaType: "text/plain" }]}
+          archived={false}
+        />,
+      )
+      const card = await screen.findByTestId("attachment-table")
+      expect(within(card).getAllByRole("row")).toHaveLength(1 + 5)
+      expect(card.textContent).toContain("8 rows × 2 cols")
+      expect(within(card).queryByText("S-6")).toBeNull()
+
+      fireEvent.click(within(card).getByRole("button", { name: "Preview orders.csv" }))
+      const viewer = await screen.findByTestId("attachment-text-viewer")
+      expect(within(viewer).getAllByRole("row")).toHaveLength(1 + 8)
+      expect(within(viewer).getByRole("tab", { name: "Table" })).toHaveAttribute("aria-selected", "true")
+
+      fireEvent.click(within(viewer).getByRole("tab", { name: "Raw" }))
+      expect(within(viewer).queryByRole("table")).toBeNull()
+      expect(viewer.textContent).toContain("S-8,8")
+    })
+
+    it("a table wider than twelve columns draws twelve and says how many it left out", async () => {
+      const header = Array.from({ length: 20 }, (_, i) => `c${i + 1}`).join("\t")
+      const row = Array.from({ length: 20 }, (_, i) => `v${i + 1}`).join("\t")
+      const tsv = `${header}\n${row}\n`
+      served.set(path("wide.tsv"), tsv)
+      mount(
+        <TurnAttachments
+          taskId="tk9zdy"
+          turn={3}
+          attachments={[{ name: "wide.tsv", size: tsv.length, mediaType: "text/plain" }]}
+          archived={false}
+        />,
+      )
+      const card = await screen.findByTestId("attachment-table")
+      expect(within(card).getAllByRole("columnheader")).toHaveLength(12 + 1)
+      expect(within(card).getByTestId("table-hidden-columns").textContent).toBe("+8 cols")
+      expect(within(card).getByTestId("table-columns-shown").textContent).toBe("(12 shown)")
+      expect(within(card).queryByText("c13")).toBeNull()
+
+      fireEvent.click(within(card).getByRole("button", { name: "Preview wide.tsv" }))
+      const viewer = await screen.findByTestId("attachment-text-viewer")
+      expect(within(viewer).getByTestId("table-hidden-columns").textContent).toBe("+8 cols")
+      expect(viewer.textContent).toContain("first 12 cols shown")
+    })
+
+    it("a csv whose bytes never arrive stays the plain row, never an empty card", async () => {
+      mount(
+        <TurnAttachments
+          taskId="tk9zdy"
+          turn={3}
+          attachments={[{ name: "missing.csv", size: 10, mediaType: "text/plain" }]}
+          archived={false}
+        />,
+      )
+      await waitFor(() => expect(fetch).toHaveBeenCalled())
+      expect(screen.queryByTestId("attachment-table")).toBeNull()
+      expect(screen.getByRole("button", { name: "Preview missing.csv" }).textContent).toBe("missing.csv · text · 10 B")
+    })
   })
 
   it("an archived turn names its attachments and says they were removed — no thumbnail, not silence", () => {
