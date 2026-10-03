@@ -8,7 +8,7 @@ const HOUR = 3_600_000
 const at = (hours: number) => new Date(Date.now() + hours * HOUR).toISOString()
 const fetchedAt = new Date(Date.now() - 40_000).toISOString()
 
-const window = (over: Partial<LimitWindow> & Pick<LimitWindow, "id" | "label" | "usedPercent">): LimitWindow => ({
+const limitWindow = (over: Partial<LimitWindow> & Pick<LimitWindow, "id" | "label" | "usedPercent">): LimitWindow => ({
   pool: null,
   resetsAt: null,
   windowMins: null,
@@ -22,9 +22,9 @@ const USAGE_LIMITS_SPECIMEN: HarnessLimitsEntry[] = [
     limits: {
       plan: null,
       windows: [
-        window({ id: "session", label: "5h", usedPercent: 33, resetsAt: at(3.8), windowMins: 300 }),
-        window({ id: "week", label: "7d", usedPercent: 84, resetsAt: at(98), windowMins: 10_080 }),
-        window({ id: "week:opus", label: "Opus", model: "Opus", usedPercent: 0, resetsAt: at(98), windowMins: 10_080 }),
+        limitWindow({ id: "session", label: "5h", usedPercent: 33, resetsAt: at(3.8), windowMins: 300 }),
+        limitWindow({ id: "week", label: "7d", usedPercent: 84, resetsAt: at(98), windowMins: 10_080 }),
+        limitWindow({ id: "week:opus", label: "Opus", model: "Opus", usedPercent: 0, resetsAt: at(98), windowMins: 10_080 }),
       ],
     },
     message: null,
@@ -38,12 +38,12 @@ const USAGE_LIMITS_SPECIMEN: HarnessLimitsEntry[] = [
       plan: null,
       account: "verified",
       windows: [
-        window({ id: "standard:fiveHour", label: "5h", pool: "standard", usedPercent: 12, resetsAt: at(2.5), windowMins: 300 }),
-        window({ id: "standard:weekly", label: "weekly", pool: "standard", usedPercent: 40, resetsAt: at(70), windowMins: 10_080 }),
-        window({ id: "standard:monthly", label: "monthly", pool: "standard", usedPercent: 71, resetsAt: at(400) }),
-        window({ id: "core:fiveHour", label: "5h", pool: "core", usedPercent: 0, windowMins: 300 }),
-        window({ id: "core:weekly", label: "weekly", pool: "core", usedPercent: 100, resetsAt: at(20), windowMins: 10_080 }),
-        window({ id: "core:monthly", label: "monthly", pool: "core", usedPercent: 5, resetsAt: at(400) }),
+        limitWindow({ id: "standard:fiveHour", label: "5h", pool: "standard", usedPercent: 12, resetsAt: at(2.5), windowMins: 300 }),
+        limitWindow({ id: "standard:weekly", label: "weekly", pool: "standard", usedPercent: 40, resetsAt: at(70), windowMins: 10_080 }),
+        limitWindow({ id: "standard:monthly", label: "monthly", pool: "standard", usedPercent: 71, resetsAt: at(400) }),
+        limitWindow({ id: "core:fiveHour", label: "5h", pool: "core", usedPercent: 0, windowMins: 300 }),
+        limitWindow({ id: "core:weekly", label: "weekly", pool: "core", usedPercent: 100, resetsAt: at(20), windowMins: 10_080 }),
+        limitWindow({ id: "core:monthly", label: "monthly", pool: "core", usedPercent: 5, resetsAt: at(400) }),
       ],
     },
     message: null,
@@ -55,7 +55,7 @@ const USAGE_LIMITS_SPECIMEN: HarnessLimitsEntry[] = [
     status: "ok",
     limits: {
       plan: "team",
-      windows: [window({ id: "codex:primary", label: "7d", usedPercent: 21, resetsAt: at(130), windowMins: 10_080 })],
+      windows: [limitWindow({ id: "codex:primary", label: "7d", usedPercent: 21, resetsAt: at(130), windowMins: 10_080 })],
     },
     message: null,
     fetchedAt,
@@ -88,14 +88,14 @@ const ring = (...windows: LimitWindow[]): RingReading | null =>
 
 const RINGS: { label: string; reading: RingReading | null }[] = [
   { label: "No task, or no limits read", reading: null },
-  { label: "33% · neutral", reading: ring(window({ id: "a", label: "5h", usedPercent: 33, windowMins: 300 })) },
-  { label: "84% · amber", reading: ring(window({ id: "b", label: "5h", usedPercent: 84, windowMins: 300 })) },
-  { label: "Reached · destructive", reading: ring(window({ id: "c", label: "5h", usedPercent: 99, windowMins: 300 })) },
+  { label: "33% · neutral", reading: ring(limitWindow({ id: "a", label: "5h", usedPercent: 33, windowMins: 300 })) },
+  { label: "84% · amber", reading: ring(limitWindow({ id: "b", label: "5h", usedPercent: 84, windowMins: 300 })) },
+  { label: "Reached · destructive", reading: ring(limitWindow({ id: "c", label: "5h", usedPercent: 99, windowMins: 300 })) },
   {
     label: "10%, but 7d reached · destructive",
     reading: ring(
-      window({ id: "d", label: "5h", usedPercent: 10, windowMins: 300 }),
-      window({ id: "e", label: "7d", usedPercent: 100, windowMins: 10_080 }),
+      limitWindow({ id: "d", label: "5h", usedPercent: 10, windowMins: 300 }),
+      limitWindow({ id: "e", label: "7d", usedPercent: 100, windowMins: 10_080 }),
     ),
   },
 ]
