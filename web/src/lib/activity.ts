@@ -251,7 +251,7 @@ export function summarizeStep(step: ToolActivityItem): StepSummary {
   }
 }
 
-const FIELDS = ["description", "file_path", "path", "notebook_path", "command", "pattern", "query", "url"]
+const FIELDS = ["description", "summary", "file_path", "path", "notebook_path", "command", "pattern", "query", "url"]
 
 function bestField(value: unknown): string {
   if (typeof value === "string") return value
@@ -259,7 +259,7 @@ function bestField(value: unknown): string {
   const input = value as Record<string, unknown>
   for (const key of FIELDS) {
     const field = input[key]
-    if (typeof field === "string" && field.trim()) return key === "description" ? field.trim() : field
+    if (typeof field === "string" && field.trim()) return key === "description" || key === "summary" ? field.trim() : field
   }
   const first = Object.values(input).find((field) => typeof field === "string" && field.trim())
   if (typeof first === "string") return first

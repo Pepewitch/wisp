@@ -193,7 +193,7 @@ export const SUBAGENT_SPECIMEN: ActivityItem[] = [
         name: "Execute",
         input: {
           command: "bun test tests/activity.test.ts",
-          description: "Run the activity adapter tests",
+          summary: "Run the activity adapter tests",
         },
         output: null,
         error: "Exited 1",
