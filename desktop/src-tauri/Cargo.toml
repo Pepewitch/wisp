@@ -17,6 +17,8 @@
 #   UNUserNotificationCenter directly. The official Tauri notification plugin
 #   can post a banner but cannot report a click on desktop, and a click that
 #   opens the right task is the whole point of a task notification.
+#   `NSUserDefaults` and `NSValue` are for `typing`, which turns off WebKit's
+#   smart dashes in the shell's webview.
 [package]
 name = "wisp-desktop"
 version = "0.6.8"
@@ -51,6 +53,8 @@ objc2-foundation = { version = "0.3", features = [
   "NSDictionary",
   "NSError",
   "NSString",
+  "NSUserDefaults",
+  "NSValue",
 ] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = [
   "std",

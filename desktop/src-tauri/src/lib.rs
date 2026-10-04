@@ -18,6 +18,8 @@
 //!   goes to the browser instead.
 //! * [`notifications`] — macOS task notifications and the click that brings
 //!   the window back to the task that finished.
+//! * [`typing`] — text typed into the webview arrives as typed: no smart
+//!   dashes turning `--flag` into `—flag`.
 //! * [`updater`] — fixed-channel signed application discovery, installation,
 //!   status, and explicit relaunch.
 //!
@@ -38,6 +40,7 @@ pub mod registry;
 pub mod secrets;
 pub mod setup;
 pub mod task_export;
+pub mod typing;
 pub mod updater;
 pub mod urls;
 mod window_launch;
@@ -72,6 +75,7 @@ pub fn context() -> tauri::Context<tauri::Wry> {
 /// it `create: false`), and a startup failure is a native message naming the
 /// problem, then a clean exit, never a window and never an unexplained crash.
 pub fn run() {
+    typing::disable_smart_dashes();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(updater::plugin())
