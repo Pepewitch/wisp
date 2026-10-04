@@ -315,6 +315,12 @@ describe("the sidebar pull-request status", () => {
     expect(screen.getByText(`Auto-merge on · PR #${PR.number} · Waiting for checks (2 running)`)).toBeInTheDocument()
   })
 
+  it("breaks a long unbroken title inside its hover card", () => {
+    const title = "https://example.slack.com/archives/C0C6D4RC022/p1791032688470749?thread_ts=1791032688.470749"
+    mount(<TaskCard task={{ ...TASK, title }} />)
+    expect(screen.getByText(title).closest(".wrap-anywhere")).not.toBeNull()
+  })
+
   it("names a queued PR in the sidebar tooltip", () => {
     mount(
       <TaskRow
