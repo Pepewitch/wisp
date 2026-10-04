@@ -409,8 +409,10 @@ export function TaskCard({
   // under the branch of record — the two CAN disagree, so the card says which.
   const others = pullRequest?.status.kind === "found" ? (pullRequest.status.others ?? 0) : 0
 
+  // A title is often a pasted URL — one unbroken run longer than the card is
+  // wide — so every line here may break mid-word rather than spill out.
   return (
-    <div>
+    <div className="wrap-anywhere">
       <div className="text-[12.5px] leading-snug font-medium text-foreground">{task.title}</div>
 
       <div className="mt-2 flex items-center gap-1.5">
