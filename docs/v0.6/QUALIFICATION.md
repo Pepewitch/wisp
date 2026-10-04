@@ -2,20 +2,71 @@
 
 This ledger separates release evidence from the version label. The 0.6 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.6.7 is the current release; earlier 0.6 records are retained
+coverage. 0.6.8 is the current release; earlier 0.6 records are retained
 below. The 0.5 records remain in
 [the 0.5 ledger](../v0.5/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.6.7.
+still apply to 0.6.8.
+
+## 0.6.8 publication
+
+**Published and promoted on 2026-10-04.**
+[Wisp 0.6.8](https://github.com/Pepewitch/wisp/releases/tag/v0.6.8) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 07:38:45 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`6127ae06e4c5afcd156ce8de730b2fb06c84f332`](https://github.com/Pepewitch/wisp/commit/6127ae06e4c5afcd156ce8de730b2fb06c84f332),
+landed through [PR #369](https://github.com/Pepewitch/wisp/pull/369). It carries
+image outputs from agents, shown under the turn's reply in Browser and
+Desktop and listed and saved by the CLI
+([#368](https://github.com/Pepewitch/wisp/pull/368)); text attachments that
+open in a viewer, with csv and tsv row previews
+([#366](https://github.com/Pepewitch/wisp/pull/366)); and tool activity titled
+by its description ([#367](https://github.com/Pepewitch/wisp/pull/367)). It
+also carries the other changes listed in the release notes since 0.6.7.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/37185968395)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/37185878832) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `6127ae0` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 07:40:51 UTC with Homebrew tap commit
+[`4d1b653fa2961bccc308d21f2e58b0344c2d87ef`](https://github.com/Pepewitch/homebrew-tap/commit/4d1b653fa2961bccc308d21f2e58b0344c2d87ef).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.6.8.
+
+0.6.8 adds database migration 22, so a 0.6.7 daemon cannot reopen a profile that
+0.6.8 has opened. No PNG asset or brand-generator input changed since 0.6.7, so
+the PNG assets were not re-rendered. Before tagging, the local `release:check`
+passed on its first run at release-branch commit `d218846` (squashed into
+`6127ae0`).
+
+This is a fully automated publication: no maintainer qualification was
+performed, and this record does not claim any. That covers fresh-install or
+upgrade receipts, a Desktop updater journey across this version, migration 22
+applied to an existing profile by the published daemon, a live image output
+captured from Codex or Claude or published with `wisp output add` against the
+published daemon, text and csv attachment previews and native image Save in
+the published Desktop app, the token-spending harness probes, and the paid
+evaluator panel. The published assets and release body remain immutable; this
+ledger records the completed outcome separately.
 
 ## 0.6.7 publication
 
 **Published and promoted on 2026-10-02.**
-[Wisp 0.6.7](https://github.com/Pepewitch/wisp/releases/tag/v0.6.7) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.6.7](https://github.com/Pepewitch/wisp/releases/tag/v0.6.7) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 23:00:33 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`59c28ec519a0cb1c5158558b05616b1f98fd9e3d`](https://github.com/Pepewitch/wisp/commit/59c28ec519a0cb1c5158558b05616b1f98fd9e3d),
@@ -45,8 +96,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 23:04:04 UTC with Homebrew tap commit
 [`d1322909a4cb8adf56f9c7868690285e4a147b5c`](https://github.com/Pepewitch/homebrew-tap/commit/d1322909a4cb8adf56f9c7868690285e4a147b5c).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.6.7.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.6.7 until 0.6.8 was promoted.
 
 Before tagging, the local `release:check` passed at release-branch commit
 `e865dc0` (squashed into `59c28ec`). Three earlier runs on 2026-10-02 had
