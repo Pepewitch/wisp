@@ -456,9 +456,9 @@ Unknown/custom adapters degrade to unstructured human prose, never leaked JSON
 and never a fabricated lifecycle.
 
 `web/src/lib/activity.ts`'s `summarizeStep()` prefers a nonblank string
-`description` for the tool row title, then falls back to the useful input
-(`file_path` → `path` → `command` → `pattern` → …). Expanding the row shows
-the input arguments, including the command, plus output and errors.
+`description`, then `summary`, for the tool row title, then falls back to the
+useful input (`file_path` → `path` → `command` → `pattern` → …). Expanding the
+row shows the input arguments, including the command, plus output and errors.
 
 The right edge of an activity row carries **one short fact** ("ok",
 "7 passed", "wrote 5 lines") and nothing else. Real results are arbitrary
