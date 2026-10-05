@@ -3,6 +3,7 @@ import { useEffect } from "react"
 
 import { useAssetSrc } from "@/lib/asset-src"
 import { attachmentKind, formatBytes } from "@/lib/attachments"
+import { useOpenOrigin } from "@/lib/open-origin"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
@@ -46,6 +47,8 @@ export function AttachmentViewer({
   localSrcFor,
 }: AttachmentViewerProps) {
   const open = index !== null && index >= 0 && index < files.length
+  // grows out of the clicked thumbnail, like the reading popup
+  const origin = useOpenOrigin(open)
 
   useEffect(() => {
     if (!open || files.length < 2) return
@@ -70,7 +73,8 @@ export function AttachmentViewer({
         <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           data-testid="attachment-viewer"
-          className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
+          style={origin}
+          className="wisp-zoom fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
           {current && (
             <>

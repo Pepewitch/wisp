@@ -1,14 +1,15 @@
 import { Dialog } from "@base-ui/react/dialog"
 import type { ReactNode } from "react"
 
+import { useOpenOrigin } from "@/lib/open-origin"
 import { cn } from "@/lib/utils"
 
 /**
  * The centred 80vw/80vh reading popup: a worktree file from Changes, or a text
  * attachment from the transcript. Escape and backdrop dismiss come from the
  * primitive, on the same `z-(--z-backdrop)` / `z-(--z-modal)` pair every
- * dialog uses. Tabs sit above the code surface; one muted caption line sits
- * under it.
+ * dialog uses. It grows out of what you clicked (`lib/open-origin.ts`). Tabs
+ * sit above the code surface; one muted caption line sits under it.
  *
  * `flush` drops the surface's padding for content that draws its own edges,
  * like a table whose header rule should meet the border.
@@ -32,13 +33,15 @@ export function PreviewPopup({
   footer: ReactNode
   children: ReactNode
 }) {
+  const origin = useOpenOrigin(open)
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
           data-testid={testId}
-          className="fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
+          style={origin}
+          className="wisp-zoom fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
           <Dialog.Title className="sr-only">{title}</Dialog.Title>
           {tabs}
