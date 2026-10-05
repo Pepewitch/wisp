@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react"
+import { memo, useState, type CSSProperties, type ReactNode } from "react"
 
 /**
  * Where a preview popup grows from: the point you clicked to open it.
@@ -55,3 +55,16 @@ export function useOpenOrigin(open: boolean): CSSProperties | undefined {
   if (!point) return undefined
   return { "--open-x": `${point.x}px`, "--open-y": `${point.y}px` } as CSSProperties
 }
+
+/**
+ * Keeps showing what a popup last showed while it closes. A controlled popup's
+ * owner clears its state on close (the index, the path, the attachment), and
+ * without this the box would shrink away empty: the zoom out would be an
+ * invisible one. While `closing`, the last render stands.
+ */
+export const HoldWhileClosing = memo(
+  function HoldWhileClosing({ children }: { closing: boolean; children: ReactNode }) {
+    return children
+  },
+  (_, next) => next.closing,
+)

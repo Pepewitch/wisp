@@ -1,7 +1,7 @@
-import { fireEvent, renderHook } from "@testing-library/react"
+import { fireEvent, render, renderHook, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
-import { useOpenOrigin } from "./open-origin"
+import { HoldWhileClosing, useOpenOrigin } from "./open-origin"
 
 describe("useOpenOrigin", () => {
   it("takes the press that opened the popup and keeps it through the close", () => {
@@ -16,5 +16,15 @@ describe("useOpenOrigin", () => {
     fireEvent.pointerDown(document.body, { clientX: 5, clientY: 5 })
     rerender({ open: false })
     expect(result.current).toEqual({ "--open-x": "120px", "--open-y": "340px" })
+  })
+})
+
+describe("HoldWhileClosing", () => {
+  it("keeps the last content on screen while the popup closes", () => {
+    const { rerender } = render(<HoldWhileClosing closing={false}>plan.md</HoldWhileClosing>)
+    rerender(<HoldWhileClosing closing>{null}</HoldWhileClosing>)
+    expect(screen.getByText("plan.md")).toBeTruthy()
+    rerender(<HoldWhileClosing closing={false}>notes.md</HoldWhileClosing>)
+    expect(screen.getByText("notes.md")).toBeTruthy()
   })
 })

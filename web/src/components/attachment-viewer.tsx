@@ -3,7 +3,7 @@ import { useEffect } from "react"
 
 import { useAssetSrc } from "@/lib/asset-src"
 import { attachmentKind, formatBytes } from "@/lib/attachments"
-import { useOpenOrigin } from "@/lib/open-origin"
+import { HoldWhileClosing, useOpenOrigin } from "@/lib/open-origin"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
@@ -76,35 +76,37 @@ export function AttachmentViewer({
           style={origin}
           className="wisp-zoom fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
-          {current && (
-            <>
-              <Dialog.Title className="sr-only">{current.name}</Dialog.Title>
-              {attachmentKind(current.mediaType) === "video" ? (
-                <video
-                  src={src ?? undefined}
-                  controls
-                  data-testid="attachment-video"
-                  className="max-h-[calc(80vh-2rem)] w-full rounded-md bg-black object-contain"
-                />
-              ) : (
-                <img
-                  src={src ?? undefined}
-                  alt={current.name}
-                  className="max-h-[calc(80vh-2rem)] w-full rounded-md object-contain"
-                />
-              )}
-              <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-                <span className="truncate font-mono">{current.name}</span>
-                <span className="shrink-0 text-faint">·</span>
-                <span className="shrink-0">{formatBytes(current.size)}</span>
-                {files.length > 1 && (
-                  <span className="ml-auto shrink-0 text-faint">
-                    {index! + 1} of {files.length}
-                  </span>
+          <HoldWhileClosing closing={!open}>
+            {current && (
+              <>
+                <Dialog.Title className="sr-only">{current.name}</Dialog.Title>
+                {attachmentKind(current.mediaType) === "video" ? (
+                  <video
+                    src={src ?? undefined}
+                    controls
+                    data-testid="attachment-video"
+                    className="max-h-[calc(80vh-2rem)] w-full rounded-md bg-black object-contain"
+                  />
+                ) : (
+                  <img
+                    src={src ?? undefined}
+                    alt={current.name}
+                    className="max-h-[calc(80vh-2rem)] w-full rounded-md object-contain"
+                  />
                 )}
-              </div>
-            </>
-          )}
+                <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+                  <span className="truncate font-mono">{current.name}</span>
+                  <span className="shrink-0 text-faint">·</span>
+                  <span className="shrink-0">{formatBytes(current.size)}</span>
+                  {files.length > 1 && (
+                    <span className="ml-auto shrink-0 text-faint">
+                      {index! + 1} of {files.length}
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </HoldWhileClosing>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

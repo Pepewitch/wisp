@@ -1,7 +1,7 @@
 import { Dialog } from "@base-ui/react/dialog"
 import type { ReactNode } from "react"
 
-import { useOpenOrigin } from "@/lib/open-origin"
+import { HoldWhileClosing, useOpenOrigin } from "@/lib/open-origin"
 import { cn } from "@/lib/utils"
 
 /**
@@ -43,17 +43,19 @@ export function PreviewPopup({
           style={origin}
           className="wisp-zoom fixed top-1/2 left-1/2 z-(--z-modal) flex max-h-[80vh] w-[80vw] -translate-x-1/2 -translate-y-1/2 flex-col gap-2 outline-none"
         >
-          <Dialog.Title className="sr-only">{title}</Dialog.Title>
-          {tabs}
-          <div
-            className={cn(
-              "scroll-slim min-h-0 flex-1 overflow-auto rounded-md border border-border bg-code",
-              !flush && "px-4 py-3",
-            )}
-          >
-            {children}
-          </div>
-          {footer}
+          <HoldWhileClosing closing={!open}>
+            <Dialog.Title className="sr-only">{title}</Dialog.Title>
+            {tabs}
+            <div
+              className={cn(
+                "scroll-slim min-h-0 flex-1 overflow-auto rounded-md border border-border bg-code",
+                !flush && "px-4 py-3",
+              )}
+            >
+              {children}
+            </div>
+            {footer}
+          </HoldWhileClosing>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
