@@ -539,6 +539,7 @@
   --dur-in: 180ms;   /* a popup arriving */
   --dur-out: 110ms;  /* leaving is always quicker than arriving */
   --dur-size: 200ms; /* a box changing size: the composer as the draft grows */
+  --dur-zoom: 220ms; /* a preview growing out of what you clicked */
 }
 
 /* Menus, popovers and hover cards grow out of the control that opened them
@@ -581,6 +582,28 @@
 [role="alertdialog"][data-ending-style] {
   opacity: 0;
   scale: 0.985;
+  transition-duration: var(--dur-out);
+}
+/* A preview (a file, an image, a text attachment) grows out of the thing you
+   clicked and shrinks back into it: the same ease, a longer way to travel.
+   lib/open-origin.ts sets --open-x/--open-y to the click in viewport px; the
+   popup is centred, so its left edge sits at 50vw - 50% and the origin is the
+   click less that. With no point it grows from its own centre. */
+[role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction]) {
+  transform-origin:
+    calc(var(--open-x, 50vw) - 50vw + 50%)
+    calc(var(--open-y, 50dvh) - 50dvh + 50%);
+  transition:
+    opacity var(--dur-in) var(--ease-out),
+    scale var(--dur-zoom) var(--ease-out);
+}
+[role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction])[data-starting-style] {
+  opacity: 0;
+  scale: 0.4;
+}
+[role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction])[data-ending-style] {
+  opacity: 0;
+  scale: 0.6;
   transition-duration: var(--dur-out);
 }
 .bg-scrim {
@@ -678,8 +701,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* as specific as the rules above, or those win */
   [data-side][data-align],
-  [role="dialog"],
+  [role="dialog"]:not([data-side]):not([data-swipe-direction]),
+  [role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction]),
   [role="alertdialog"],
   .bg-scrim {
     transition: none;
