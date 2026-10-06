@@ -24,14 +24,18 @@ Cheaper views, each answering one question:
 `wisp send`, `wisp interrupt`, and `wisp fresh` steer from the CLI;
 [cli.md](cli.md#tasks) says how a message reaches a running turn and what
 each command leaves running. Switching an existing task's harness, model, or
-effort is a browser and Desktop composer control. After a harness switch the
-new agent starts without the old context, so restate the goal in the next
-message as you would in a new prompt.
+effort happens in the browser or Desktop composer, or through the API
+([cli.md](cli.md#tasks)). From the CLI alone, ask the user to switch it, or
+start a new task from the old task's branch with
+`wisp new <repo> "<prompt>" --harness <h> --base <branch>`; only committed
+work carries over. After a harness switch the new agent starts without the
+old context, so restate the goal in the next message as you would in a new
+prompt.
 
 ## Being told instead of checking
 
-- `webhooks` in `~/.wisp/config.json` POST every done, needs-input, stuck,
-  and failed transition ([setup.md](setup.md)).
+- `webhooks` in `~/.wisp/config.json` POST task state changes to your URLs
+  ([setup.md](setup.md) lists which).
 - `wisp workflow` attaches durable follow-up to a task: `schedule-steer`
   sends one message at a set time, and `heartbeat` wakes the agent on a
   timer, which can spend tokens on every wake ([workflows](cli.md#workflows)).

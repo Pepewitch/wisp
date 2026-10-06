@@ -26,7 +26,9 @@ wisp log <id> <N> --raw |
 Each output line is one questionnaire event. An `asked` line carries the
 `questions`, each with its `question`, its `options`, and whether it is
 `multiSelect`. A later `answered` or `cancelled` line with the same `id`
-closes it, so the open questionnaire is the `asked` line nothing closes.
+closes it. The open questionnaires are the `asked` lines nothing closes;
+subagents can ask too, so there may be several, and one `send` answers them
+all.
 
 Why `-R` and `fromjson?`: the raw stream is one JSON event per line, plus
 plain-text lines Wisp writes into it (`· attached: …`, `· steer …`, a marker
@@ -36,9 +38,10 @@ where the middle of a long turn was not retained), and the tail that
 `-R` reads each line as text, `fromjson?` parses it or drops it, and `objects`
 keeps only event objects.
 
-The end of the transcript is enough here, because a turn blocked on a question
-has written nothing since. Do not add `-f`: it follows a running turn until it
-ends, and this one is waiting for you.
+That tail is usually enough, because a turn blocked on a question writes
+little after it. If nothing prints, check `wisp ls` again: the question may
+have been answered meanwhile. If the task is still asking,
+[read further back](#read-further-back).
 
 ## When the turn has ended
 
@@ -60,10 +63,26 @@ ends, and this one is waiting for you.
   wisp log <id> <N> --raw | jq -cR 'fromjson? | objects | select(.type == "result") | .permission_denials'
   ```
 
-If the end of the transcript does not reach back far enough, `--raw -f` prints
-a settled turn's whole retained stream and then exits.
+## Read further back
+
+When the tail does not reach the event, save the turn's whole retained stream
+to a file, then run the recipe's `jq` command with the file as its last
+argument. `--raw -f` prints the stream from its start and exits once a settled
+turn's stream ends; a turn still blocked on a question has not ended, so stop
+it after a few seconds:
+
+```sh
+f="${TMPDIR:-/tmp}/turn.jsonl"
+wisp log <id> <N> --raw -f > "$f"                      # a settled turn: exits by itself
+wisp log <id> <N> --raw -f > "$f" & sleep 5; kill $!   # a turn still asking
+```
+
+Redirect to a file, not a pipe ([cli.md](cli.md#tasks) says why).
 
 ## Answer
+
+Answer only what the task's prompt or the user has already settled. Relay any
+other question to the user with its options, and send their reply.
 
 ```sh
 wisp send <id> "1. Library ABC. 2. Keep the current API; the CLI depends on it."
