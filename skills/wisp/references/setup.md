@@ -101,7 +101,9 @@ repair path with `brew reinstall --cask Pepewitch/tap/wisp-desktop`. An in-app
 replacement does not update Homebrew's Caskroom receipt; use `brew update` and
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` when that receipt
 needs to catch up to the already-installed app. See
-[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
+[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md). Release evidence
+and pending human updater journeys are recorded in
+[the qualification ledger](../../../docs/v0.6/QUALIFICATION.md).
 
 Before uninstalling, remove each remote or use **Reset desktop data** if saved
 credentials should be deleted. `brew uninstall --cask wisp-desktop` removes

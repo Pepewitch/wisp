@@ -153,6 +153,9 @@ excerpt, attached files), diffstat of the worktree. `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
 per-harness (`--raw` for the retained harness stream, `-f` to follow live).
+Without `-f` it prints only the end of the turn's transcript, its last 16 KiB,
+starting partway through a line; `--raw -f` prints the retained stream from
+its start, follows it until the turn ends, then prints `— turn N <status> —`.
 Recorder-capable live turns continue beyond the retained transcript budget:
 `-f` still receives their current activity. Past the budget, a turn keeps its
 beginning and its most recent activity, which is appended when the turn ends,
@@ -234,7 +237,10 @@ effort. That is a composer control in the browser and Desktop app, and a
 `POST /api/tasks/<id>/send` field set (`harness`, `model`, `effort`,
 `startFreshContext`) on the API. Changing harness requires both an explicit
 `model` (`400` without it) and `startFreshContext: true` (`409` without it,
-because the new harness cannot inherit the previous provider session). A
+because the new harness cannot inherit the previous provider session). The
+earlier conversation stays visible behind a divider in the timeline, and each
+turn keeps the harness and model that ran it: `wisp log` renders a turn in its
+own harness's format, and `wisp show` lists each turn's own model. A
 same-harness model or effort change keeps the session and applies to the next
 turn. The `harnesses` route advertises `taskAgentSwitching`, so a newer client
 hides the control against an older daemon instead of failing silently.
