@@ -31,20 +31,20 @@ wisp send tq2szu "the fix should match this mock" --attach ./mock.png
 | harness | delivery | types |
 |---|---|---|
 | claude | native: base64 image blocks + the prompt on one stdin stream-json line | png, jpeg, gif, webp |
-| codex | native: `-i <path>… --` on the argv | png, jpeg, gif, webp |
-| droid | path in the prompt: the harness's file-reading tool decodes the file | png, jpeg only |
-| cursor | same path-in-the-prompt strategy as droid | png, jpeg only |
+| codex | native: `localImage` items naming the stored file, over `codex app-server` | png, jpeg, gif, webp |
+| droid | native: base64 images on the JSON-RPC user message | png, jpeg only |
+| cursor | path in the prompt: the harness's file-reading tool decodes the file | png, jpeg only |
 | opencode | native: `-f <path>… --` on the argv | png, jpeg, gif, webp |
 
-For droid/cursor, wisp prepends a preamble naming the absolute path(s) and
-asking the model to say plainly if it cannot see the image — whether a model
-has vision is not something those CLIs expose, so a model that can't see must
-say so in the turn output instead of guessing. gif/webp are refused up front
-for these two harnesses with a named reason.
+For cursor, wisp prepends a preamble naming the absolute path(s) and asking
+the model to say plainly if it cannot see the image — whether a model has
+vision is not something that CLI exposes, so a model that can't see must say
+so in the turn output instead of guessing. gif/webp are refused up front for
+droid and cursor with a named reason.
 
 pdf, text, and video attachments are not native to any adapter: every harness
-receives them the same way droid/cursor receive images — a path in the prompt
-that the harness's own file-reading tool reads.
+receives them the same way cursor receives images — a path in the prompt that
+the harness's own file-reading tool reads.
 
 ## Lifecycle
 
