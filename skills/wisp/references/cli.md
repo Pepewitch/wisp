@@ -132,7 +132,7 @@ the model is shown when Wisp received an explicit or configured choice, and
 omitted when the harness will choose its own default.
 
 ```
-wisp ls [-a]
+wisp ls [-a|--all]
 ```
 
 One line per task (`-a` includes archived): id, state icon
@@ -144,7 +144,7 @@ the harness never reported one), turn count, age, title, and `state_detail`.
 ```
 wisp show <task>
 wisp result <task> [turn]
-wisp log <task> [turn] [-f|--follow] [--raw|--diagnostic]
+wisp log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
 ```
 
 `show`: state + state_detail, harness/model/effort, session id, worktree,
@@ -153,6 +153,12 @@ excerpt, attached files), diffstat of the worktree. `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
 per-harness (`--raw` for the retained harness stream, `-f` to follow live).
+Without `-f` it prints only the end of the turn's transcript, its last 16 KiB;
+a longer transcript's tail starts partway through a line (`--raw` shows a
+leading `…`). `--raw -f` prints the retained stream from its start, follows it
+until the turn ends, then prints `— turn N <status> —`. Redirect it to a file
+rather than a pipe: when the pipe's reader falls behind, the CLI can exit
+after the first 64 KiB without an error.
 Recorder-capable live turns continue beyond the retained transcript budget:
 `-f` still receives their current activity. Past the budget, a turn keeps its
 beginning and its most recent activity, which is appended when the turn ends,
@@ -179,8 +185,9 @@ wisp wait <task> [--timeout <sec>]
 ```
 
 Blocks until the task settles: exit 0 done, 2 needs-input, 1 failed, 3 on
-timeout (default ≈ 1 day). Waits through `stuck`. Client-side 2-second poll,
-so a daemon restart mid-wait costs one poll.
+timeout (default ≈ 1 day). Waits through `stuck`. It polls every 2 seconds.
+Exit 1 also reports a CLI error: a bad `--timeout`, an unknown task, or a poll
+that cannot reach the daemon, so run the wait again after a daemon restart.
 
 ```
 wisp send <task> "message" [--attach <path>]…
@@ -234,7 +241,10 @@ effort. That is a composer control in the browser and Desktop app, and a
 `POST /api/tasks/<id>/send` field set (`harness`, `model`, `effort`,
 `startFreshContext`) on the API. Changing harness requires both an explicit
 `model` (`400` without it) and `startFreshContext: true` (`409` without it,
-because the new harness cannot inherit the previous provider session). A
+because the new harness cannot inherit the previous provider session). The
+earlier conversation stays visible behind a divider in the timeline, and each
+turn keeps the harness and model that ran it: `wisp log` renders a turn in its
+own harness's format, and `wisp show` lists each turn's own model. A
 same-harness model or effort change keeps the session and applies to the next
 turn. The `harnesses` route advertises `taskAgentSwitching`, so a newer client
 hides the control against an older daemon instead of failing silently.

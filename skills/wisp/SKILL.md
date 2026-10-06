@@ -1,166 +1,80 @@
 ---
 name: wisp
-description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor, opencode) through a Wisp daemon — a separate worktree per task (checkout separation, not a sandbox), honest states, image attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline; also covers the optional browser and desktop operator interfaces.
+description: Delegate coding tasks to coding-agent harnesses (droid, claude, codex, cursor, opencode) through a Wisp daemon — a separate worktree per task (checkout separation, not a sandbox), honest states, attachments. Load whenever you want to hand off, parallelize, or supervise implementation work instead of doing it inline, including checking on, answering, steering, or landing tasks that already exist; also covers the optional browser and desktop operator interfaces. Not for changing Wisp's own code; use wisp-dev for that.
 ---
 
 # Wisp — driving the task daemon
 
-Wisp runs coding agents in separate git worktrees (one per task) behind a
-daemon, wispd. Drive agent automation through the `wisp` CLI; the daemon owns
-all state. The browser and desktop app are operator interfaces over that same
-authority, not alternate task stores. Never edit a task worktree yourself
-except to review and merge.
+Wisp runs each task's coding agent in its own git worktree behind a daemon,
+wispd, which owns all state; drive it through the `wisp` CLI. Never edit a
+task's worktree: review it, and land its branch from your own checkout.
 
-A worktree is checkout separation, **not a sandbox**: the harness runs as the
-daemon's user with its credentials and its network, and can read and write
-outside the worktree. For a repository you do not trust, use a separate OS
-account or a disposable VM — a prompt saying "work only here" enforces nothing.
+A worktree is checkout separation, **not a sandbox**: the agent runs as the
+daemon's user, with its credentials and network, and can write outside the
+worktree; a prompt saying "work only here" enforces nothing. Use a separate
+OS account or a disposable VM for untrusted repos.
 
-## The core loop
+## Prompts
 
-    wisp doctor                                   # 0. daemon + harnesses healthy?
-    wisp new <repo> "prompt" --harness droid      # 1. create (repo defaults to cwd)
-    wisp wait <id> --timeout 900                  # 2. block until it settles
-    wisp result <id>                              # 3. read the agent's answer
-    wisp send <id> "message"                      # 4. steer (optional, repeatable)
-    wisp archive <id>                             # 5. cleanup, after the work lands
+Prompts must be self-contained: the task's agent sees only the repository,
+and no conversation carries over. Restate the goal, the relevant paths, and
+the constraints; name the exact test or build that proves the change; and say
+"commit your changes to the task branch when done". When tasks run in
+parallel, name in each prompt the files the others will change. Inside double
+quotes the shell runs backticks and expands `$`, so put a long prompt in a
+file outside the repository and pass it as `"$(cat <file>)"`.
 
-## 1. Prerequisites
+## Delegate: you start the task and need its outcome
 
-wispd must be running. `wisp doctor` checks harness CLIs, auth, git, config,
-and daemon reachability, exiting nonzero and naming what failed. Daemon down →
-start it under the host's supervisor, never a bare `wisp serve &` (recipes:
-[references/setup.md](references/setup.md)).
+    wisp doctor                                 # daemon and harnesses healthy?
+    wisp new <repo> "prompt" --harness droid    # prints the task id
+    wisp wait <id> --timeout 300                # 0 done · 2 needs-input · 1 failed or error · 3 timed out
+    wisp result <id>                            # the agent's answer
+    wisp send <id> "message"                    # steer or continue (optional)
+    wisp archive <id>                           # only after the work has landed
 
-On Apple Silicon, `brew install Pepewitch/tap/wisp Pepewitch/tap/wisp-desktop`
-installs the optional Wisp Desktop app together with the separate daemon
-Formula it depends on; Homebrew's tap trust covers only the names passed to it,
-so the Cask alone fails on that Formula. Desktop Local uses the standard Wisp
-profile; each saved remote tab is a separate reachable daemon. Installation,
-connections, native project picking, and removal behavior are in the setup
-reference.
+## Supervise: the tasks already exist, or you watch several
 
-Desktop and daemon releases are independent. In Desktop, use the **Updates**
-popover: **Wisp Desktop** is the global signed application update and the named
-**Local daemon** row always applies to the built-in Local connection, even
-when a remote tab is selected. Update saved remote daemons on their own host.
-The historical public alpha.8 release predates self-update; bootstrap a
-current signed release through Homebrew with
-`brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop`. Release evidence
-and pending human updater journeys are recorded in
-[the qualification ledger](../../docs/v0.6/QUALIFICATION.md).
+    wisp ls                                     # every task: state, turn, state_detail
+    wisp show <id>                              # turns, branch, diffstat, background work
+    wisp result <id> [turn]                     # check which turn it printed
+    wisp send <id> "message"                    # answer or steer; never stops work
+    wisp interrupt <id>                         # stop a runaway turn; the session survives
 
-## 2. Creating tasks
+Take one snapshot, act on what needs you, and stop; the next check starts
+again from `wisp ls`. Inside a Wisp task, `$WISP_TASK_ID` is your own task:
+leave it alone. Never poll `wisp ls` or tail `wisp log` to wait: `wisp wait`
+blocks without spending tokens. Give it a `--timeout` shorter than your own
+command time limit (without one it waits about a day). Exit 3 means the wait
+timed out, not that the task failed; on exit 1 the printed line says whether
+the task failed or the CLI hit an error, such as an unreachable daemon.
+Report what you found or do other work rather than re-waiting in a loop.
 
-    wisp new <repo> "prompt" --harness <droid|claude|codex|cursor|opencode>
-        [--model <m>] [--effort <level>] [--local] [--attach <path>]…
+## States
 
-- Prompts MUST be self-contained: the task worktree sees only the repo, and no
-  conversation context carries over. Restate the goal, relevant file paths,
-  and constraints in the prompt itself.
-- Every prompt must include verification commands (the exact test/build that
-  proves the change) and commit instructions ("commit your changes to the task
-  branch when done").
-- Model and effort come from `harnessDefaults` in `~/.wisp/config.json` unless
-  you pass the flags; explicit always wins. The `created …` output shows the
-  model when Wisp received one. If it omits the model, the harness will choose
-  its own default. Use `wisp models` and pass `--model` when the task requires
-  a pinned choice.
-- `--local` runs in the repo itself instead of a worktree (archiving it never
-  removes anything). More harnesses: `~/.wisp/adapters.json`.
+- `creating`, `running`: nothing needs you yet.
+- [`done`](references/integrating.md): read the result. Land and archive only tasks you started or were asked to land; report the rest.
+- [`needs-input`](references/needs-input.md): waiting on you, even when no question shows.
+- [`stuck`](references/failures.md#stuck): quiet for a while, or a Stop that did not finish.
+- [`failed`](references/failures.md#failed): `state_detail` names the cause.
+- [`exited N`](references/failures.md#exited-n): `failed`, but with a result; review it before redoing.
 
-## 3. Waiting for a task
+## Flags and references
 
-    wisp wait <id> [--timeout <sec>]
+`wisp help <command>` prints the installed version's exact usage, even with
+the daemon down. It is authoritative for flags: trust it over any copied list,
+this file's included. Read a reference only when its trigger applies:
 
-Exit codes: 0 done · 2 needs-input · 1 failed · 3 timeout. This is THE way to
-await a task: it blocks, burns no tokens, and waits through `stuck` (a quiet
-task often comes back). NEVER tail logs or poll `wisp ls` to wait. Push-based
-alternative: `webhooks` in `~/.wisp/config.json` POSTs every done /
-needs-input / stuck / failed transition at-least-once (dedup on task_id+seq).
-
-## 4. Reading results
-
-- `wisp result <id> [turn]` — the agent's full answer (default: latest turn
-  with a result). Read this first.
-- `wisp show <id>` — state, state_detail, per-turn model/usage/attachments,
-  worktree + branch, diffstat.
-- `wisp log <id> [turn] [-f] [--raw]` — the activity feed. Only when debugging
-  the agent's behavior, never for waiting or for the final answer. `-f` follows
-  current activity even after the bounded retained transcript is full.
-
-## 5. Steering
-
-- `wisp send <id> "message" [--attach <path>]…` — a follow-up turn in the same
-  session (the harness remembers prior turns; send also re-arms a done task).
-- `wisp interrupt <id>` — stop a runaway turn. The session survives.
-- `wisp fresh <id>` — the next turn starts a fresh harness session.
-- Changing the harness, model, or effort of an EXISTING task is a browser and
-  Desktop composer control, not a CLI flag. A same-harness model or effort
-  change rides the next turn with the provider session intact. Switching
-  harness starts a fresh context under the same task id: the old history stays
-  readable behind a divider in the timeline, but the new harness sees none of
-  it, so the next message must restate the goal like a new prompt. Each turn
-  records the harness that actually ran it, so logs and `wisp show` report the
-  turn's own harness rather than the task's current one.
-
-## 6. Attachments
-
-    wisp new <repo> "fix the layout bug in this screenshot" --harness codex --attach ./shot.png
-    wisp send <id> "now compare against this mock" --attach ./mock.png
-
-`--attach` repeats — up to 10 files per turn, 50 MB total (`--image` is the
-old name and still works). Detected by magic bytes, not the extension:
-png/jpeg/gif/webp images (5 MB each), pdf (20 MB), utf-8 text (20 MB), and
-mp4/mov/webm video (50 MB). All five builtin harnesses accept every kind;
-droid/cursor receive images as file paths to read (png/jpeg only, claude/codex/
-opencode get images natively), and every harness receives pdf/text/video the
-same path-in-the-prompt way. Attachments are stored outside the worktree and
-never appear in the task's diff. Delivery, limits, and lifecycle:
-[references/images.md](references/images.md).
-
-## 7. Integrating work
-
-Each task works on branch `wisp/<id>-<words>` — the words are a readable tag
-derived from the id, not from the prompt (`wisp show` prints worktree and
-branch).
-
-1. Review the diff: `git -C <repo> diff main...<branch>`.
-2. Merge the branch locally into main yourself, or `wisp push <id>` to push
-   it to origin.
-3. `wisp archive <id>` — cleanup + remove the worktree. It REFUSES on a
-   running turn, a Stop still in progress, background work not yet verified
-   stopped, or unsaved work (dirty tree or unpushed commits): resolve the
-   refusal and retry.
-   `-f` kills a running turn and commits leftovers onto the branch as
-   `wisp: uncommitted work at archive` (the branch is always kept). Teardown
-   finishes in the background after the response; a failure lands in
-   `state_detail`. Archived tasks are read-only; the conversation still reads.
-
-## 8. Failure literacy
-
-States: `creating`, `running`, `done`, `needs-input`, `stuck` (reversible),
-`failed`. `state_detail` names the cause; a `limit: ` prefix means a
-quota/usage limit — switch harness or model, or wait for the quota window.
-Droid `AskUser` stays in the current turn and appears as an answerable
-questionnaire card when the installed Droid sends its structured request.
-Older Droid versions fall back to `needs-input`; reply with `wisp send`.
-`wisp ls`/`show` may print `exited N` instead of `failed`: the turn delivered
-its result but the harness CLI exited nonzero — check the diff before redoing
-anything. Tasks NEVER silently succeed: a bare exit 0 with no parsed result is
-recorded as a failure, so trust the state, not hopes.
-
-## 9. Parallelism
-
-Tasks run in parallel worktrees and don't collide on disk, but concurrent
-tasks editing the same files will conflict at merge time: when launching them,
-say so in each prompt and name the shared files to avoid. When main moves,
-rebase task branches by sending a follow-up turn:
-`wisp send <id> "rebase your branch onto origin/main and re-run the verification"`.
-
-## Reference files
-
-- [references/cli.md](references/cli.md) — every command, flag, and output
-- [references/images.md](references/images.md) — attachments in full
-- [references/setup.md](references/setup.md) — daemon ops, config files,
-  browser/Desktop setup, connections, projects, models/effort, the HTTP API
+- [supervise.md](references/supervise.md): tasks you did not just start, or
+  several at once; steering, switching harness or model, briefs, webhooks
+- [needs-input.md](references/needs-input.md): a task is `needs-input`,
+  especially when no question shows
+- [failures.md](references/failures.md): a task is `stuck`, `failed`, or
+  `exited N`
+- [integrating.md](references/integrating.md): a task is `done` and its work
+  should land; auto-merge, auto-fix, archive refusals, purge, merge conflicts
+- [cli.md](references/cli.md): what a command or flag does beyond its help
+  text, such as `--base`, `--fast`, `--brief`, `--local`, or `wisp workflow`
+- [images.md](references/images.md): attaching files with `--attach`
+- [setup.md](references/setup.md): `wisp doctor` fails or the daemon is down;
+  install, config, models and effort, browser and Desktop, the HTTP API

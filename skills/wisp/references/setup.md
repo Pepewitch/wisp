@@ -2,6 +2,11 @@
 
 ## The daemon
 
+When a command fails with `cannot reach wispd`, restart the daemon through its
+supervisor, which the `supervisor` check in `wisp doctor` names (for example
+`brew services restart wisp`, or `systemctl --user restart wisp`). The
+error's own hint, `wisp serve`, starts it unsupervised.
+
 `wisp serve` runs wispd in the foreground. It must be supervised, because an
 unsupervised daemon dies with its shell or container. Any of:
 
@@ -101,7 +106,9 @@ repair path with `brew reinstall --cask Pepewitch/tap/wisp-desktop`. An in-app
 replacement does not update Homebrew's Caskroom receipt; use `brew update` and
 `brew upgrade --cask --greedy Pepewitch/tap/wisp-desktop` when that receipt
 needs to catch up to the already-installed app. See
-[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md).
+[`docs/DESKTOP-UPDATES.md`](../../../docs/DESKTOP-UPDATES.md). Release evidence
+and pending human updater journeys are recorded in
+[the qualification ledger](../../../docs/v0.6/QUALIFICATION.md).
 
 Before uninstalling, remove each remote or use **Reset desktop data** if saved
 credentials should be deleted. `brew uninstall --cask wisp-desktop` removes
@@ -145,8 +152,9 @@ harmless preferences.
   use (so a config written for another Wisp version never bricks the daemon);
   unknown keys warn. Keys: `instanceId` (a generated, non-secret
   Wisp-home identity), `port` (8710), `host` (127.0.0.1), `token`,
-  `webhooks` (URLs POSTed on every done/needs-input/stuck/failed transition,
-  at-least-once, dedup on task_id+seq), `repos` (each entry: `path`, `name`,
+  `webhooks` (URLs POSTed on each done/needs-input/stuck/failed transition,
+  not for a turn that background work woke on its own; at-least-once, dedup
+  on task_id+seq), `repos` (each entry: `path`, `name`,
   `setupScript`, `archiveScript`, `baseBranch`, `copyFiles` — see
   `wisp project set` in [cli.md](cli.md)), `stuckMinutes` (10),
   `maxConcurrentTasks` (100), `turnTranscriptBytes` (25 MB; `logMaxBytes` is
