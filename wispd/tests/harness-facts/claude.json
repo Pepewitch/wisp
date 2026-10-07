@@ -4,14 +4,15 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "2.1.285",
-      "source": "the '--effort <level>' line of 'claude --help'",
+      "verifiedAgainst": "2.1.291",
+      "source": "the '--effort <level>' line of 'claude --help', plus 'ultracode' when the binary's /effort options name it",
       "lists": {
         "observed": [
           "high",
           "low",
           "max",
           "medium",
+          "ultracode",
           "xhigh"
         ]
       }
@@ -31,7 +32,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2.1.285",
+      "verifiedAgainst": "2.1.291",
       "source": "flag tokens parsed out of 'claude --help'",
       "lists": {
         "values": [
@@ -50,7 +51,6 @@
           "--bg",
           "--brief",
           "--chrome",
-          "--client-data-url",
           "--cloud",
           "--continue",
           "--dangerously-skip-permissions",
@@ -118,7 +118,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "2.1.285",
+      "verifiedAgainst": "2.1.291",
       "source": "case-insensitive fixed-string search of the installed claude binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -133,7 +133,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2.1.285",
+      "verifiedAgainst": "2.1.291",
       "source": "model ids matching /claude-(fable|opus|sonnet|haiku)-[0-9a-z.-]+/ in the installed claude binary",
       "note": "an unfiltered binary scan: it includes legacy, dated and vendor-suffixed ids the picker never offers. Sound for proving a pinned id still exists; NOT a list to add from.",
       "lists": {
@@ -142,7 +142,6 @@
           "claude-fable-5-1",
           "claude-fable-5-mythos-5",
           "claude-haiku-3-5",
-          "claude-haiku-3-55",
           "claude-haiku-4-5",
           "claude-haiku-4-5-20251001",
           "claude-haiku-4-5-20251001-v1",

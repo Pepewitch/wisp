@@ -127,7 +127,15 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // 2.1.240, documented in 2.1.246). Without it a configured
     // reasoningEffort was rejected at task creation rather than forwarded.
     effort: ["--effort", "{effort}"],
-    effortLevels: ["low", "medium", "high", "xhigh", "max"],
+    // `ultracode` is claude's own effort value, missing from `--help` but
+    // listed in its `/effort` "Valid options" ("…, max, auto, ultracode
+    // [on|off]"). On 2.1.291 `--effort ultracode` sets xhigh effort with
+    // ultracode (a multi-agent workflow on every substantive task). `get_settings`
+    // reports it applied on opus-5-5, sonnet-5 and fable-5-1, and again on
+    // `--resume`. haiku-4-5 reports it unavailable and runs as if unset, the
+    // way it already ignores every effort level. A pass-through like the rest:
+    // claude does the mapping, so no client has to know what the level means.
+    effortLevels: ["low", "medium", "high", "xhigh", "max", "ultracode"],
     // See staticModels on AdapterDef: claude enumerates no models, so this is
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at

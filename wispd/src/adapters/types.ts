@@ -51,7 +51,9 @@ export interface AdapterDef {
    *  - droid 0.202.0  — `-r bogus` prints "Allowed values: none, dynamic, off,
    *    minimal, low, medium, high, xhigh, max" and exits before any API call.
    *  - claude 2.1.246 — `--help` documents `--effort <level>` as
-   *    "(low, medium, high, xhigh, max)".
+   *    "(low, medium, high, xhigh, max)". claude 2.1.291 also takes
+   *    `ultracode`, which `--help` omits; its `/effort` "Valid options" list
+   *    names it (see builtins.ts).
    *  - codex 0.149.0  — an invalid model_reasoning_effort is rejected by the
    *    API with "Supported values are: 'none', 'minimal', 'low', 'medium',
    *    'high', 'xhigh', and 'max'".

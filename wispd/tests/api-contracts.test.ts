@@ -992,13 +992,15 @@ describe("daemon API contracts", () => {
       hasEffort: true,
       defaults: {},
     });
-    // the picker offers levels the CLI named, and they differ per harness
+    // the picker offers levels the CLI named, and they differ per harness;
+    // claude's `ultracode` rides the same list, so no client special-cases it
     expect(body.harnesses.find((harness) => harness.name === "claude")?.effortLevels).toEqual([
       "low",
       "medium",
       "high",
       "xhigh",
       "max",
+      "ultracode",
     ]);
     expect(body.harnesses.find((harness) => harness.name === "droid")?.effortLevels).toContain("dynamic");
     // claude enumerates no models, so its curated list stands in for a probe

@@ -114,6 +114,24 @@ describe("extractors", () => {
     expect(surfaces.effortLevels!.lists!.observed).toEqual(["high", "low", "max", "medium", "xhigh"]);
   });
 
+  test("claude adds ultracode, which --help omits, when the binary's /effort options name it", async () => {
+    const help = "  --effort <level>   Effort level for the current session\n                     (low, medium, high, xhigh, max)";
+    const spawn = routedSpawn([
+      { match: (c) => c.includes("ultracode [on|off]"), stdout: "1\n" },
+      { match: () => true, stdout: help },
+    ]);
+    // the marker scan reads the binary itself, so binPath has to exist
+    const dir = mkdtempSync(join(tmpdir(), "wisp-claude-bin-"));
+    const binPath = join(dir, "claude");
+    writeFileSync(binPath, "");
+    try {
+      const surfaces = await EXTRACTORS.claude!({ def: BUILTIN_ADAPTERS.claude!, binPath, spawn });
+      expect(surfaces.effortLevels!.lists!.observed).toEqual(["high", "low", "max", "medium", "ultracode", "xhigh"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("cursor parses '<id> - <display name>' and ignores the heading", async () => {
     const listing = "Available models\n\nauto - Auto (default)\ncomposer-2.5 - Composer 2.5\n";
     const spawn = routedSpawn([{ match: (c) => c.includes("models"), stdout: listing }]);
