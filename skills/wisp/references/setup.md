@@ -241,7 +241,10 @@ prunable by taste.
 model. Levels per harness:
 
 - droid: none, dynamic, off, minimal, low, medium, high, xhigh, max
-- claude: low, medium, high, xhigh, max
+- claude: low, medium, high, xhigh, max, ultracode — `ultracode` is xhigh
+  plus Claude Code's ultracode mode (a multi-agent workflow on every
+  substantive task, at many times the tokens); a model without ultracode
+  support, such as Haiku 4.5, runs as if no effort were set
 - codex: none, minimal, low, medium, high, xhigh, max, ultra
 - cursor: no effort flag — effort is a bracket override on the model id
   (`claude-opus-4-8[effort=high]`), so pass it via `--model`

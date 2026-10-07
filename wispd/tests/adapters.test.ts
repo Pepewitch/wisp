@@ -96,7 +96,7 @@ describe("buildArgv", () => {
   // differ — droid alone has dynamic/off, claude alone lacks none/minimal.
   test("each adapter declares the effort levels its CLI actually accepts", () => {
     expect(droid.effortLevels).toEqual(["none", "dynamic", "off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-    expect(claude.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(claude.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"]);
     // opencode's ladder is the union of the `variants` keys across its own
     // catalog, and it alone has no `none` level.
     expect(BUILTIN_ADAPTERS.opencode!.effortLevels).toEqual([

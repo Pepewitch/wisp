@@ -184,6 +184,9 @@ async function codexEffort(ctx: ExtractCtx): Promise<Record<string, Surface>> {
  * Probing with an invalid `--effort` would be a gamble: if a future claude
  * accepted the value instead of failing pre-flight, the probe would start a
  * real turn and spend tokens. Reading the help text cannot.
+ *
+ * `--help` omits `ultracode`, so it is read out of the binary instead: the
+ * `/effort` command's own "Valid options" list ends "ultracode [on|off]".
  */
 async function claudeEffort(ctx: ExtractCtx): Promise<Record<string, Surface>> {
   const res = await ctx.spawn([ctx.def.bin, "--help"]);
@@ -192,18 +195,23 @@ async function claudeEffort(ctx: ExtractCtx): Promise<Record<string, Surface>> {
   const values = (match?.[1] ?? "")
     .split(",")
     .map((v) => v.trim())
-    .filter((v) => /^[a-z][a-z0-9_-]*$/i.test(v))
-    .sort();
+    .filter((v) => /^[a-z][a-z0-9_-]*$/i.test(v));
   if (values.length === 0) return {};
+  if (ctx.binPath) {
+    const marker = await ctx.spawn(["grep", "-c", "-aF", ULTRACODE_MARKER, ctx.binPath]);
+    if (Number.parseInt(marker.stdout.trim(), 10) > 0) values.push("ultracode");
+  }
   return {
     effortLevels: {
       cost: "free",
       verifiedAgainst: null,
-      source: "the '--effort <level>' line of 'claude --help'",
-      lists: { observed: values },
+      source: "the '--effort <level>' line of 'claude --help', plus 'ultracode' when the binary's /effort options name it",
+      lists: { observed: values.sort() },
     },
   };
 }
+
+const ULTRACODE_MARKER = "ultracode [on|off]";
 
 /** claude enumerates no models; its ids are read out of the shipped binary. */
 async function claudeModels(ctx: ExtractCtx): Promise<Record<string, Surface>> {
