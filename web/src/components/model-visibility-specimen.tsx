@@ -43,6 +43,7 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: false,
     hasImage: true,
+    hasBriefs: true,
     defaults: {},
     models: {
       list: ["auto", "composer-2.5", "cursor-muse-1", "claude-opus-4-8-high", "gpt-5.6-sol"],
