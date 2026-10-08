@@ -71,7 +71,10 @@ wisp new … --brief                  # create a task with briefs already on
 wisp brief --help                   # what an agent reads before publishing
 ```
 
-Briefs are off unless you switch them on for a task. While on, each ordinary
+From the CLI and the API, briefs are off unless you switch them on for a task.
+The web and desktop composers start each new task at its model's default,
+which is on unless switched off in Settings → Models → Manage… (see
+`modelTaskDefaults` in [setup.md](setup.md)). While on, each ordinary
 turn on a harness that supports them (claude, codex, droid, cursor) carries one
 line asking the agent to run `wisp brief set --stdin` before it ends; a
 `/command` after the first turn, a steer, and a questionnaire answer carry no

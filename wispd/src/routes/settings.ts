@@ -12,6 +12,8 @@ import { LIMIT_STRATEGIES } from "../adapters";
 import { factoryKey, type HarnessLimitsCache } from "../harness-limits";
 import { typeName } from "../validate";
 import type { FactoryKeyTest, ReviewJudgeStatus, ReviewJudgeTest, SecretKeyStatus, WispPreferences, WispSettings } from "../../../shared/api/settings";
+import { sameModelTaskDefaults } from "../../../shared/model-task-defaults";
+import { validateModelTaskDefaults } from "../model-task-defaults";
 import { err, json, jsonObjectBody } from "./http";
 
 /** Key-order-insensitive, because two equal curations must compare equal. */
@@ -129,10 +131,20 @@ export function settingsRoute(
 
     const rename = parsed.autoRenameTasksFromPullRequests;
     const hidden = parsed.hiddenModels;
+    const taskDefaults = parsed.modelTaskDefaults;
     const jev = parsed.jevApiKey;
     const factoryRaw = parsed.factoryApiKey;
-    if (rename === undefined && hidden === undefined && jev === undefined && factoryRaw === undefined) {
-      return err("autoRenameTasksFromPullRequests, hiddenModels, jevApiKey or factoryApiKey is required", 400);
+    if (
+      rename === undefined &&
+      hidden === undefined &&
+      taskDefaults === undefined &&
+      jev === undefined &&
+      factoryRaw === undefined
+    ) {
+      return err(
+        "autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, jevApiKey or factoryApiKey is required",
+        400,
+      );
     }
     const key = jev === undefined ? undefined : validKey("jevApiKey", jev);
     if (key instanceof Response) return key;
@@ -154,6 +166,13 @@ export function settingsRoute(
         return err(e instanceof Error ? e.message : String(e), 400);
       }
     }
+    if (taskDefaults !== undefined) {
+      try {
+        next.modelTaskDefaults = validateModelTaskDefaults(taskDefaults, "modelTaskDefaults");
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e), 400);
+      }
+    }
 
     const keyChanged = key !== undefined && key !== (cfg.jevApiKey ?? null);
     const factoryChanged = factoryValue !== undefined && factoryValue !== (cfg.factoryApiKey ?? null);
@@ -161,7 +180,8 @@ export function settingsRoute(
       !keyChanged &&
       !factoryChanged &&
       next.autoRenameTasksFromPullRequests === current.autoRenameTasksFromPullRequests &&
-      sameHiddenModels(next.hiddenModels, current.hiddenModels)
+      sameHiddenModels(next.hiddenModels, current.hiddenModels) &&
+      sameModelTaskDefaults(next.modelTaskDefaults, current.modelTaskDefaults)
     ) {
       // no-op: rewriting config.json and waking every client would be noise
       return json(settingsView(cfg));

@@ -324,6 +324,7 @@ describe("daemon API contracts", () => {
       expect(await json(initial)).toEqual({
         autoRenameTasksFromPullRequests: true,
         hiddenModels: {},
+        modelTaskDefaults: {},
         reviewJudge: JUDGE_OFF,
         usageLimits: LIMITS_OFF,
       });
@@ -335,6 +336,7 @@ describe("daemon API contracts", () => {
       expect(await json(updated)).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        modelTaskDefaults: {},
         reviewJudge: JUDGE_OFF,
         usageLimits: LIMITS_OFF,
       });
@@ -345,6 +347,7 @@ describe("daemon API contracts", () => {
       expect(await json(await api(base, "/api/settings"))).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        modelTaskDefaults: {},
         reviewJudge: JUDGE_OFF,
         usageLimits: LIMITS_OFF,
       });
@@ -360,6 +363,7 @@ describe("daemon API contracts", () => {
       expect(await json(noop)).toEqual({
         autoRenameTasksFromPullRequests: false,
         hiddenModels: {},
+        modelTaskDefaults: {},
         reviewJudge: JUDGE_OFF,
         usageLimits: LIMITS_OFF,
       });
@@ -369,7 +373,7 @@ describe("daemon API contracts", () => {
         base,
         "/api/settings",
         400,
-        "autoRenameTasksFromPullRequests, hiddenModels, jevApiKey or factoryApiKey is required",
+        "autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, jevApiKey or factoryApiKey is required",
         "PATCH",
         {},
       );
@@ -403,6 +407,7 @@ describe("daemon API contracts", () => {
         autoRenameTasksFromPullRequests: false,
         // trimmed, deduped and sorted, so an idempotent PATCH can be detected
         hiddenModels: { opencode: ["a/model", "b/model", "z/model"] },
+        modelTaskDefaults: {},
         reviewJudge: JUDGE_OFF,
         usageLimits: LIMITS_OFF,
       });
@@ -638,6 +643,53 @@ describe("task briefs at the create boundary", () => {
       harness: "opencode",
       briefEnabled: true,
     });
+  });
+});
+
+describe("model task defaults over the API", () => {
+  test("model task defaults patch independently, normalize, and no-op when unchanged", async () => {
+    const base = await startServer();
+    const events: WispEvent[] = [];
+    const unsubscribe = subscribe((event) => events.push(event));
+
+    try {
+      const updated = await api(base, "/api/settings", "PATCH", {
+        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true, autoFix: false } } },
+      });
+      expect(updated.status).toBe(200);
+      expect(await json(updated)).toMatchObject({
+        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
+      });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
+        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
+      });
+      expect(events).toContainEqual({ type: "settings" });
+
+      // another client PATCHing only hiddenModels leaves the defaults alone
+      const kept = await api(base, "/api/settings", "PATCH", { hiddenModels: { cursor: ["auto"] } });
+      expect(await json(kept)).toMatchObject({
+        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
+      });
+
+      // the same overrides spelled with explicit built-in values are a no-op
+      events.length = 0;
+      const noop = await api(base, "/api/settings", "PATCH", {
+        modelTaskDefaults: { codex: { "gpt-5": { autoMerge: true, brief: false, autoFix: false } }, droid: {} },
+      });
+      expect(noop.status).toBe(200);
+      expect(events).toEqual([]);
+
+      await expectError(
+        base,
+        "/api/settings",
+        400,
+        "modelTaskDefaults['codex']['gpt-5'].autoMerge must be a boolean, got string",
+        "PATCH",
+        { modelTaskDefaults: { codex: { "gpt-5": { autoMerge: "yes" } } } },
+      );
+    } finally {
+      unsubscribe();
+    }
   });
 });
 

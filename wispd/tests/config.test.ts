@@ -178,6 +178,34 @@ describe("validateConfig (a prior audit)", () => {
     });
   });
 
+  test("modelTaskDefaults keeps only overrides of the built-in defaults", () => {
+    expect(
+      validateConfig({
+        modelTaskDefaults: {
+          codex: {
+            "gpt-5": { brief: false, autoFix: true, autoMerge: false },
+            // every value is the built-in default, so nothing is stored for it
+            "gpt-5-mini": { brief: true, autoFix: false },
+          },
+          droid: {},
+          // a switch from a newer Wisp is dropped rather than refused
+          nosuch: { " x ": { autoMerge: true, someday: true } },
+        },
+      }),
+    ).toEqual({
+      modelTaskDefaults: {
+        codex: { "gpt-5": { brief: false, autoFix: true } },
+        nosuch: { x: { autoMerge: true } },
+      },
+    });
+    expect(thrownMessage(() => validateConfig({ modelTaskDefaults: [] }))).toBe(
+      "config.json: modelTaskDefaults must be an object mapping harness names to objects of model ids, got array",
+    );
+    expect(thrownMessage(() => validateConfig({ modelTaskDefaults: { codex: { "gpt-5": { brief: "no" } } } }))).toBe(
+      "config.json: modelTaskDefaults['codex']['gpt-5'].brief must be a boolean, got string",
+    );
+  });
+
   test("host accepts only the exact loopback bind", () => {
     expect(validateConfig({ host: LOOPBACK_HOST })).toEqual({ host: LOOPBACK_HOST });
     for (const host of ["0.0.0.0", "::", "::1", "localhost", "192.0.2.1", ""]) {
@@ -252,7 +280,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });

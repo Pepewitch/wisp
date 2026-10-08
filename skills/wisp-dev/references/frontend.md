@@ -1007,6 +1007,16 @@ highlight (`:has([data-highlighted])`, because the button is a sibling of the
 row base-ui owns) or its own focus. On a coarse pointer it is not rendered at
 all — a finger reveals nothing by hovering, and the manager does the job there.
 
+Each manager row also carries the model's **task defaults**: `Brief`, `Fix`
+and `Merge` chips (`modelTaskDefaults` in daemon settings, built-in defaults
+in `shared/model-task-defaults.ts`: brief on, both autopilot switches off). A
+chip appears only where the composer would offer that switch, and a missing
+one keeps its slot so the columns line up. The composer starts each switch at
+the chosen model's default and follows it until the switch is pressed; the
+draft keeps only pressed switches, so a default changed mid-draft still
+lands, and picking another model forgets the presses the way it reseeds
+effort.
+
 ### 5h. The top bar's right end is one cluster
 
 The pointer shell's top bar has app chrome at both ends and they answer

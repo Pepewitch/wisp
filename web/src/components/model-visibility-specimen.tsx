@@ -8,6 +8,7 @@ import { Eyebrow, POPOVER_SURFACE, Rule } from "@/components/primitives"
 import { hiddenTotal, type HiddenModels } from "@/lib/model-visibility"
 import type { HarnessInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import type { ModelTaskDefaultsMap } from "../../../shared/model-task-defaults"
 
 /** Enough of a catalog to show what a curated list saves you. */
 const HARNESSES: HarnessInfo[] = [
@@ -16,6 +17,7 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: true,
     hasImage: true,
+    hasBriefs: true,
     defaults: { model: "claude-opus-5" },
     models: {
       list: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
@@ -28,6 +30,7 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: true,
     hasImage: true,
+    hasBriefs: true,
     defaults: { model: "gpt-5.6-luna" },
     models: {
       list: ["gpt-5.6-luna", "gpt-5.6-luna-codex", "gpt-6-astra", "gpt-6-astra-mini", "o4-mini"],
@@ -55,6 +58,11 @@ const HIDDEN: HiddenModels = {
   cursor: ["auto", "composer-2.5", "cursor-muse-1", "claude-opus-4-8-high", "gpt-5.6-sol"],
 }
 
+const TASK_DEFAULTS: ModelTaskDefaultsMap = {
+  claude: { "claude-opus-5": { autoFix: true, autoMerge: true } },
+  codex: { "gpt-5.6-luna": { brief: false } },
+}
+
 const encode = (harness: string, model: string) => `${harness}\t${model}`
 
 /**
@@ -64,6 +72,7 @@ const encode = (harness: string, model: string) => `${harness}\t${model}`
  */
 export function ModelVisibilitySpecimen() {
   const [hidden, setHidden] = useState<HiddenModels>(HIDDEN)
+  const [taskDefaults, setTaskDefaults] = useState<ModelTaskDefaultsMap>(TASK_DEFAULTS)
   const [revealed, setRevealed] = useState(false)
   const selected = { harness: "claude", model: "claude-opus-5" }
 
@@ -124,6 +133,7 @@ export function ModelVisibilitySpecimen() {
           harnesses={HARNESSES}
           hidden={hidden}
           onApply={setHidden}
+          taskDefaults={{ defaults: taskDefaults, briefs: true, autopilot: true, onApply: setTaskDefaults }}
           empty="No harnesses reported by the daemon."
           error={null}
         />

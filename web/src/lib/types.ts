@@ -244,7 +244,10 @@ export type WorktreeFileResponse =
  * read a missing `hiddenModels` as "nothing hidden" and hide the section,
  * never as "hide everything".
  */
-export type WispSettings = FromAnyDaemon<DaemonWispSettings, "hiddenModels" | "reviewJudge" | "usageLimits">;
+export type WispSettings = FromAnyDaemon<
+  DaemonWispSettings,
+  "hiddenModels" | "modelTaskDefaults" | "reviewJudge" | "usageLimits"
+>;
 
 /** One plan-usage window. `model` is absent from an older daemon: read that as every model. */
 export type LimitWindow = FromAnyDaemon<DaemonLimitWindow, "model">;
@@ -263,7 +266,9 @@ export interface HarnessLimitsResponse {
  * PATCH /api/settings. The review judge's `jevApiKey` goes through its own,
  * uncached mutation (`useSaveReviewJudgeKey`), never this one.
  */
-export type WispSettingsPatch = Partial<Pick<WispPreferences, "autoRenameTasksFromPullRequests" | "hiddenModels">>;
+export type WispSettingsPatch = Partial<
+  Pick<WispPreferences, "autoRenameTasksFromPullRequests" | "hiddenModels" | "modelTaskDefaults">
+>;
 
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then

@@ -21,27 +21,46 @@ function daemon(features: Record<string, boolean>) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe("the create composer's brief choice", () => {
-  it("is off for a new task and sends nothing until switched on", async () => {
+  it("starts at the model's default and sends nothing once switched off", async () => {
     const wrapper = daemon({ taskBriefs: true })
-    const { result } = renderHook(() => useBriefChoice(HARNESS, null), { wrapper })
+    const { result } = renderHook(() => useBriefChoice(HARNESS, null, true), { wrapper })
     await waitFor(() => expect(result.current.toggle).not.toBeNull())
-    expect(result.current.body).toEqual({})
+    expect(result.current.body).toEqual({ briefEnabled: true })
     render(<>{result.current.toggle}</>, { wrapper })
-    act(() => fireEvent.click(screen.getByRole("button", { name: "Task brief" })))
-    await waitFor(() => expect(result.current.body).toEqual({ briefEnabled: true }))
+    act(() => fireEvent.click(screen.getByRole("button", { name: "Task brief on" })))
+    await waitFor(() => expect(result.current.body).toEqual({}))
+    expect(result.current.chosen).toBe(false)
   })
 
-  it("keeps a restored draft's choice", async () => {
+  it("follows a changed default until toggled, and forgets the toggle on reset", async () => {
     const wrapper = daemon({ taskBriefs: true })
-    const { result } = renderHook(() => useBriefChoice(HARNESS, { brief: true }), { wrapper })
-    await waitFor(() => expect(result.current.body).toEqual({ briefEnabled: true }))
+    const { result, rerender } = renderHook(({ fallback }) => useBriefChoice(HARNESS, null, fallback), {
+      wrapper,
+      initialProps: { fallback: false },
+    })
+    await waitFor(() => expect(result.current.toggle).not.toBeNull())
+    expect(result.current.body).toEqual({})
+    rerender({ fallback: true })
+    expect(result.current.body).toEqual({ briefEnabled: true })
+    render(<>{result.current.toggle}</>, { wrapper })
+    act(() => fireEvent.click(screen.getByRole("button", { name: "Task brief on" })))
+    await waitFor(() => expect(result.current.value).toBe(false))
+    act(() => result.current.reset())
+    expect(result.current.value).toBe(true)
+  })
+
+  it("keeps a restored draft's choice over the default", async () => {
+    const wrapper = daemon({ taskBriefs: true })
+    const { result } = renderHook(() => useBriefChoice(HARNESS, { brief: false }, true), { wrapper })
+    await waitFor(() => expect(result.current.toggle).not.toBeNull())
+    expect(result.current.body).toEqual({})
   })
 
   it("is not offered by an older daemon or for a harness that cannot publish", async () => {
-    const older = renderHook(() => useBriefChoice(HARNESS, { brief: true }), { wrapper: daemon({}) })
+    const older = renderHook(() => useBriefChoice(HARNESS, { brief: true }, true), { wrapper: daemon({}) })
     await waitFor(() => expect(older.result.current.toggle).toBeNull())
     expect(older.result.current.body).toEqual({})
-    const plain = renderHook(() => useBriefChoice({ ...HARNESS, hasBriefs: false }, { brief: true }), { wrapper: daemon({ taskBriefs: true }) })
+    const plain = renderHook(() => useBriefChoice({ ...HARNESS, hasBriefs: false }, { brief: true }, true), { wrapper: daemon({ taskBriefs: true }) })
     await waitFor(() => expect(plain.result.current.toggle).toBeNull())
     expect(plain.result.current.body).toEqual({})
   })

@@ -3,8 +3,9 @@ import { Dialog } from "@base-ui/react/dialog"
 
 import { Check, Search } from "@/components/icons"
 import { Button, Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
-import { useHarnesses } from "@/hooks/queries"
+import { useHarnesses, useHarnessFeatures } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
+import { useModelTaskDefaults } from "@/hooks/useModelTaskDefaults"
 import { failureReason } from "@/lib/api"
 import {
   defaultModelFor,
@@ -27,6 +28,24 @@ import {
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { HarnessInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import {
+  modelTaskDefaultsFor,
+  setModelTaskDefault,
+  type ModelTaskDefaults,
+  type ModelTaskDefaultsMap,
+} from "../../../shared/model-task-defaults"
+
+/**
+ * The per-model switches a new task starts with. Each is offered only where
+ * the composer would offer it: a brief on a daemon with briefs and a harness
+ * that can publish one, auto-fix and auto-merge on a daemon with autopilot.
+ */
+export interface TaskDefaultsControl {
+  defaults: ModelTaskDefaultsMap
+  briefs: boolean
+  autopilot: boolean
+  onApply: (next: ModelTaskDefaultsMap) => void
+}
 
 /**
  * Which models the picker offers — the manager behind the composer's
@@ -101,7 +120,16 @@ function ModelVisibilityBody({
   const { connectionId } = useDaemonRuntime()
   const harnessQuery = useHarnesses(open)
   const { hidden, setHidden, error } = useHiddenModels()
+  const taskDefaults = useModelTaskDefaults()
+  const features = useHarnessFeatures()
   const harnesses = useMemo(() => orderHarnesses(harnessQuery.data ?? []), [harnessQuery.data])
+  const briefs = features.data?.taskBriefs === true
+  const autopilot = features.data?.taskAutopilot === true
+  const defaultsControl: TaskDefaultsControl | undefined =
+    taskDefaults.supported && (briefs || autopilot)
+      ? { defaults: taskDefaults.defaults, briefs, autopilot, onApply: taskDefaults.setDefaults }
+      : undefined
+  const failure = error ?? taskDefaults.error
 
   /**
    * A preference that seeds nothing is a lie, so hiding the starred model
@@ -121,8 +149,9 @@ function ModelVisibilityBody({
       harnesses={harnesses}
       hidden={hidden}
       onApply={apply}
+      taskDefaults={defaultsControl}
       empty={harnessQuery.isPending ? "Reading harnesses…" : "No harnesses reported by the daemon."}
-      error={error == null ? null : failureReason(error)}
+      error={failure == null ? null : failureReason(failure)}
     />
   )
 }
@@ -132,6 +161,7 @@ export function ModelCuration({
   harnesses,
   hidden,
   onApply,
+  taskDefaults,
   empty,
   error,
   className,
@@ -139,6 +169,8 @@ export function ModelCuration({
   harnesses: HarnessInfo[]
   hidden: HiddenModels
   onApply: (next: HiddenModels) => void
+  /** absent on a daemon that cannot store per-model task defaults */
+  taskDefaults?: TaskDefaultsControl
   empty: string
   error: string | null
   className?: string
@@ -174,6 +206,7 @@ export function ModelCuration({
               filtering={needle !== ""}
               first={index === 0}
               onApply={onApply}
+              taskDefaults={taskDefaults}
             />
           ))
         )}
@@ -184,6 +217,12 @@ export function ModelCuration({
         run — <code>wisp create --model</code> still works, and a task already on a hidden model keeps
         its model.
       </p>
+      {taskDefaults && (
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {taskDefaultsLegend(taskDefaults)} set what a new task on that model starts with in the
+          composer. You can still switch them for any one task.
+        </p>
+      )}
       <p className="mt-2 text-[11px] text-faint">
         {totals.shown} of {totals.total} shown · applies immediately
       </p>
@@ -203,6 +242,7 @@ function HarnessBlock({
   filtering,
   first,
   onApply,
+  taskDefaults,
 }: {
   harness: HarnessInfo
   hidden: HiddenModels
@@ -210,6 +250,7 @@ function HarnessBlock({
   filtering: boolean
   first: boolean
   onApply: (next: HiddenModels) => void
+  taskDefaults?: TaskDefaultsControl
 }) {
   const options = modelOptionsFor(harness)
   const rows = options.filter(matches)
@@ -250,13 +291,15 @@ function HarnessBlock({
       {isUsable(harness) ? (
         <div className="pb-1">
           {rows.map((model) => (
-            <ModelToggle
-              key={model}
-              harness={harness}
-              model={model}
-              hidden={isHidden(hidden, harness.name, model)}
-              onClick={() => onApply(toggleModel(hidden, harness.name, model))}
-            />
+            <div key={model} className="flex items-center hover:bg-hover">
+              <ModelToggle
+                harness={harness}
+                model={model}
+                hidden={isHidden(hidden, harness.name, model)}
+                onClick={() => onApply(toggleModel(hidden, harness.name, model))}
+              />
+              {taskDefaults && <TaskDefaultSwitches harness={harness} model={model} control={taskDefaults} />}
+            </div>
           ))}
         </div>
       ) : (
@@ -314,8 +357,8 @@ function ModelToggle({
       // `menu-row` is what gives a coarse pointer its 44px floor (index.css),
       // the same floor the picker's own rows take
       className={cn(
-        "menu-row flex h-7 w-full items-center gap-2.5 px-2.5 text-left",
-        "hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+        "menu-row flex h-7 min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left",
+        "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
       )}
     >
       <Check className={cn("size-3 shrink-0", hidden && "opacity-0")} />
@@ -331,5 +374,69 @@ function ModelToggle({
         <span className="shrink-0 text-[10.5px] text-faint">default</span>
       )}
     </button>
+  )
+}
+
+const TASK_DEFAULT_SWITCHES: { key: keyof ModelTaskDefaults; label: string; name: string }[] = [
+  { key: "brief", label: "Brief", name: "Task brief" },
+  { key: "autoFix", label: "Fix", name: "Auto-fix" },
+  { key: "autoMerge", label: "Merge", name: "Auto-merge" },
+]
+
+function offered(control: TaskDefaultsControl, harness: HarnessInfo, key: keyof ModelTaskDefaults): boolean {
+  return key === "brief" ? control.briefs && harness.hasBriefs === true : control.autopilot
+}
+
+function taskDefaultsLegend(control: TaskDefaultsControl): string {
+  const names = [
+    control.briefs && "Brief (task brief)",
+    control.autopilot && "Fix (auto-fix)",
+    control.autopilot && "Merge (auto-merge)",
+  ].filter((name): name is string => typeof name === "string")
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]!
+}
+
+/**
+ * A row's task defaults: an outlined chip is "on for every new task on this
+ * model". A switch the composer would not offer for this harness keeps its
+ * slot, so the columns line up down the list.
+ */
+function TaskDefaultSwitches({
+  harness,
+  model,
+  control,
+}: {
+  harness: HarnessInfo
+  model: string
+  control: TaskDefaultsControl
+}) {
+  const values = modelTaskDefaultsFor(control.defaults, harness.name, model)
+  return (
+    <span className="flex shrink-0 gap-0.5 pr-1.5">
+      {TASK_DEFAULT_SWITCHES.map(({ key, label, name }) =>
+        offered(control, harness, key) ? (
+          <button
+            key={key}
+            type="button"
+            role="switch"
+            aria-checked={values[key]}
+            aria-label={`${name} for new ${harness.name} · ${model} tasks`}
+            title={`${name} ${values[key] ? "on" : "off"} for new tasks on ${model}`}
+            onClick={() => control.onApply(setModelTaskDefault(control.defaults, harness.name, model, key, !values[key]))}
+            className={cn(
+              "flex h-[20px] w-[42px] items-center justify-center rounded-md border text-[10.5px] transition-colors",
+              "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+              values[key]
+                ? "border-border-strong bg-surface text-foreground"
+                : "border-transparent text-faint hover:text-muted-foreground",
+            )}
+          >
+            {label}
+          </button>
+        ) : (
+          <span key={key} aria-hidden className="w-[42px]" />
+        ),
+      )}
+    </span>
   )
 }
