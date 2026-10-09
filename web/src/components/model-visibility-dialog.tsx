@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
-import { Check, Search } from "@/components/icons"
+import { Check, More, Search } from "@/components/icons"
+import { Menu, MenuCheckboxItem, MenuNote } from "@/components/menu"
 import { Button, Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
 import { useHarnesses, useHarnessFeatures } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
+import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useModelTaskDefaults } from "@/hooks/useModelTaskDefaults"
 import { failureReason } from "@/lib/api"
 import {
@@ -219,8 +221,9 @@ export function ModelCuration({
       </p>
       {taskDefaults && (
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          {taskDefaultsLegend(taskDefaults)} set what a new task on that model starts with in the
-          composer. You can still switch them for any one task.
+          New tasks start with a task brief and without auto-fix or auto-merge. To change that for one
+          model, use the <span className="text-fg-secondary">…</span> on its row; the row then says how it
+          differs. The composer can still switch them for any one task.
         </p>
       )}
       <p className="mt-2 text-[11px] text-faint">
@@ -291,14 +294,14 @@ function HarnessBlock({
       {isUsable(harness) ? (
         <div className="pb-1">
           {rows.map((model) => (
-            <div key={model} className="flex items-center hover:bg-hover">
+            <div key={model} className="model-row flex items-center hover:bg-hover">
               <ModelToggle
                 harness={harness}
                 model={model}
                 hidden={isHidden(hidden, harness.name, model)}
                 onClick={() => onApply(toggleModel(hidden, harness.name, model))}
               />
-              {taskDefaults && <TaskDefaultSwitches harness={harness} model={model} control={taskDefaults} />}
+              {taskDefaults && <TaskDefaultsMenu harness={harness} model={model} control={taskDefaults} />}
             </div>
           ))}
         </div>
@@ -377,31 +380,27 @@ function ModelToggle({
   )
 }
 
-const TASK_DEFAULT_SWITCHES: { key: keyof ModelTaskDefaults; label: string; name: string }[] = [
-  { key: "brief", label: "Brief", name: "Task brief" },
-  { key: "autoFix", label: "Fix", name: "Auto-fix" },
-  { key: "autoMerge", label: "Merge", name: "Auto-merge" },
-]
-
-function offered(control: TaskDefaultsControl, harness: HarnessInfo, key: keyof ModelTaskDefaults): boolean {
-  return key === "brief" ? control.briefs && harness.hasBriefs === true : control.autopilot
-}
-
-function taskDefaultsLegend(control: TaskDefaultsControl): string {
-  const names = [
-    control.briefs && "Brief (task brief)",
-    control.autopilot && "Fix (auto-fix)",
-    control.autopilot && "Merge (auto-merge)",
-  ].filter((name): name is string => typeof name === "string")
-  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]!
+/**
+ * How this model's new tasks differ from the usual start (a brief, no
+ * autopilot), naming only the switches the composer would offer here.
+ */
+function differences(values: ModelTaskDefaults, brief: boolean, autopilot: boolean): string | null {
+  const parts = [
+    brief && !values.brief && "No brief",
+    autopilot && values.autoFix && "Auto-fix",
+    autopilot && values.autoMerge && "Auto-merge",
+  ].filter((part): part is string => typeof part === "string")
+  return parts.length > 0 ? parts.join(" · ") : null
 }
 
 /**
- * A row's task defaults: an outlined chip is "on for every new task on this
- * model". A switch the composer would not offer for this harness keeps its
- * slot, so the columns line up down the list.
+ * A row's task defaults: a quiet note only when the model differs from the
+ * usual start, and a "…" menu to change it. The "…" is not a resting control,
+ * for the same reason as the picker's eye (`.model-row-action` in index.css):
+ * on every one of 150 rows it would be noise. A finger cannot hover, so on a
+ * coarse pointer it always shows.
  */
-function TaskDefaultSwitches({
+function TaskDefaultsMenu({
   harness,
   model,
   control,
@@ -411,32 +410,38 @@ function TaskDefaultSwitches({
   control: TaskDefaultsControl
 }) {
   const values = modelTaskDefaultsFor(control.defaults, harness.name, model)
+  const brief = control.briefs && harness.hasBriefs === true
+  if (!brief && !control.autopilot) return null
+  const note = differences(values, brief, control.autopilot)
+  const set = (key: keyof ModelTaskDefaults) => (value: boolean) =>
+    control.onApply(setModelTaskDefault(control.defaults, harness.name, model, key, value))
   return (
-    <span className="flex shrink-0 gap-0.5 pr-1.5">
-      {TASK_DEFAULT_SWITCHES.map(({ key, label, name }) =>
-        offered(control, harness, key) ? (
-          <button
-            key={key}
-            type="button"
-            role="switch"
-            aria-checked={values[key]}
-            aria-label={`${name} for new ${harness.name} · ${model} tasks`}
-            title={`${name} ${values[key] ? "on" : "off"} for new tasks on ${model}`}
-            onClick={() => control.onApply(setModelTaskDefault(control.defaults, harness.name, model, key, !values[key]))}
-            className={cn(
-              "flex h-[20px] w-[42px] items-center justify-center rounded-md border text-[10.5px] transition-colors",
-              "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-              values[key]
-                ? "border-border-strong bg-surface text-foreground"
-                : "border-transparent text-faint hover:text-muted-foreground",
-            )}
-          >
-            {label}
-          </button>
-        ) : (
-          <span key={key} aria-hidden className="w-[42px]" />
-        ),
-      )}
-    </span>
+    <>
+      {note && <span className="shrink-0 pl-2 text-[10.5px] text-muted-foreground">{note}</span>}
+      <Menu
+        iconOnly
+        icon={<More />}
+        label={`New task defaults for ${harness.name} · ${model}`}
+        align="end"
+        className={cn("mx-1 h-[22px] w-[22px]", !hasCoarsePointer() && "model-row-action")}
+      >
+        <MenuNote>New tasks on {model} start with</MenuNote>
+        {brief && (
+          <MenuCheckboxItem checked={values.brief} onCheckedChange={set("brief")}>
+            Task brief
+          </MenuCheckboxItem>
+        )}
+        {control.autopilot && (
+          <>
+            <MenuCheckboxItem checked={values.autoFix} onCheckedChange={set("autoFix")}>
+              Auto-fix
+            </MenuCheckboxItem>
+            <MenuCheckboxItem checked={values.autoMerge} onCheckedChange={set("autoMerge")}>
+              Auto-merge
+            </MenuCheckboxItem>
+          </>
+        )}
+      </Menu>
+    </>
   )
 }

@@ -190,8 +190,8 @@ harmless preferences.
   brief, auto-fix and auto-merge switches, per harness and model:
   `"modelTaskDefaults": { "codex": { "gpt-5.6-luna": { "brief": false, "autoMerge": true } } }`.
   Only overrides are stored: a model not listed starts with a brief and
-  neither autopilot switch. Edited from the same Models manager (the Brief,
-  Fix and Merge chips on each row). The composer still lets you switch them
+  neither autopilot switch. Edited from the same Models manager (the `…` on a
+  model's row; a row says how its model differs). The composer still lets you switch them
   for one task, and `wisp new` and the API ignore this setting: they only use
   what they are given explicitly.
 - `adapters.json` — declare extra harnesses or override builtin fields (a

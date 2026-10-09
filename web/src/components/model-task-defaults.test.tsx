@@ -61,34 +61,53 @@ beforeEach(() => localStorage.clear())
 afterEach(() => clearConnectionDrafts("test-connection"))
 
 describe("per-model task defaults in the Models modal", () => {
-  it("shows a brief that is on by default, and PATCHes only the overrides", async () => {
+  const openDefaults = async (name: string) =>
+    fireEvent.click(await screen.findByRole("button", { name: `New task defaults for ${name}` }))
+
+  it("starts with a brief, edits from the row menu, and PATCHes only the overrides", async () => {
     const sent: { path: string; body: unknown }[] = []
     render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon({}, sent) })
 
-    const brief = await screen.findByRole("switch", { name: "Task brief for new claude · claude-sonnet-5 tasks" })
+    await openDefaults("claude · claude-sonnet-5")
+    const brief = await screen.findByRole("menuitemcheckbox", { name: "Task brief" })
     expect(brief).toHaveAttribute("aria-checked", "true")
-    const merge = screen.getByRole("switch", { name: "Auto-merge for new claude · claude-sonnet-5 tasks" })
+    const merge = screen.getByRole("menuitemcheckbox", { name: "Auto-merge" })
     expect(merge).toHaveAttribute("aria-checked", "false")
-    // cursor cannot publish a brief, so its row offers no brief switch
-    expect(screen.queryByRole("switch", { name: "Task brief for new cursor · auto tasks" })).toBeNull()
-    expect(screen.getByRole("switch", { name: "Auto-fix for new cursor · auto tasks" })).toBeInTheDocument()
 
     fireEvent.click(brief)
     await waitFor(() => expect(sent).toHaveLength(1))
     expect(sent[0]!.body).toEqual({ modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false } } } })
 
-    // the second click builds on the first rather than on the pre-click map
-    fireEvent.click(merge)
+    // the menu stays open, and the second click builds on the first rather
+    // than on the pre-click map
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Auto-merge" }))
     await waitFor(() => expect(sent).toHaveLength(2))
     expect(sent[1]!.body).toEqual({
       modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false, autoMerge: true } } },
     })
   })
 
-  it("offers no switches on a daemon that cannot store them", async () => {
+  it("names only how a model differs from the usual start", async () => {
+    render(<ModelVisibilityDialog open onOpenChange={() => {}} />, {
+      wrapper: daemon({
+        claude: { "claude-opus-5": { autoFix: true, autoMerge: true } },
+        cursor: { auto: { brief: false } },
+      }),
+    })
+    expect(await screen.findByText("Auto-fix · Auto-merge")).toBeInTheDocument()
+    // cursor's harness here cannot publish a brief, so "No brief" would describe nothing
+    expect(screen.queryByText("No brief")).toBeNull()
+    expect(screen.getAllByText(/Auto-fix|Auto-merge|No brief/)).toHaveLength(1)
+
+    await openDefaults("cursor · auto")
+    expect(await screen.findByRole("menuitemcheckbox", { name: "Auto-fix" })).toBeInTheDocument()
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+  })
+
+  it("offers no menu on a daemon that cannot store them", async () => {
     render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon(undefined) })
     await screen.findByText("claude-sonnet-5")
-    expect(screen.queryByRole("switch")).toBeNull()
+    expect(screen.queryByRole("button", { name: /^New task defaults for/ })).toBeNull()
   })
 })
 
