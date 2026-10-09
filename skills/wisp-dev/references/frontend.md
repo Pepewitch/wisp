@@ -1007,6 +1007,23 @@ highlight (`:has([data-highlighted])`, because the button is a sibling of the
 row base-ui owns) or its own focus. On a coarse pointer it is not rendered at
 all — a finger reveals nothing by hovering, and the manager does the job there.
 
+Each manager row also carries the model's **task defaults**
+(`modelTaskDefaults` in daemon settings, built-in defaults in
+`shared/model-task-defaults.ts`: brief on, both autopilot switches off). They
+are said only by exception: a row whose model starts like every other shows
+nothing, and one that differs ends in a muted note (`No brief`,
+`Auto-fix · Auto-merge`). A `…` on the row opens a menu of
+`MenuCheckboxItem`s, offering only the switches the composer would offer
+there. The `…` is a `.model-row-action` like the picker's eye (hover, focus,
+or open), except that a coarse pointer always shows it, because the manager
+is where touch edits these. A column of switches on every row was tried and
+dropped: three labels repeated down 150 rows is the chip clutter §1 rules
+out. The composer starts each switch at
+the chosen model's default and follows it until the switch is pressed; the
+draft keeps only pressed switches, so a default changed mid-draft still
+lands, and picking another model forgets the presses the way it reseeds
+effort.
+
 ### 5h. The top bar's right end is one cluster
 
 The pointer shell's top bar has app chrome at both ends and they answer

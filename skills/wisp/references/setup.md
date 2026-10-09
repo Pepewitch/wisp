@@ -168,7 +168,7 @@ harmless preferences.
   linked pull request; default on),
   `setupTimeoutMinutes` (10; also caps an archive script's run), `terminalShell`
   (an optional absolute executable path for embedded login terminals),
-  `envAllowlist`, `harnessDefaults`, `hiddenModels`, `jevApiKey` (the
+  `envAllowlist`, `harnessDefaults`, `hiddenModels`, `modelTaskDefaults`, `jevApiKey` (the
   autopilot review judge's key), `factoryApiKey` (droid's Factory key for
   `wisp limits`) — the last two are write-only: set through Settings or
   `PATCH /api/settings`, never read back over the API.
@@ -186,6 +186,14 @@ harmless preferences.
   picker's footer, and it is a denylist, so a model a later probe discovers
   shows up on its own. A harness with every model hidden drops out of the
   picker until one is shown again.
+- `modelTaskDefaults` example — where the composer starts a new task's task
+  brief, auto-fix and auto-merge switches, per harness and model:
+  `"modelTaskDefaults": { "codex": { "gpt-5.6-luna": { "brief": false, "autoMerge": true } } }`.
+  Only overrides are stored: a model not listed starts with a brief and
+  neither autopilot switch. Edited from the same Models manager (the `…` on a
+  model's row; a row says how its model differs). The composer still lets you switch them
+  for one task, and `wisp new` and the API ignore this setting: they only use
+  what they are given explicitly.
 - `adapters.json` — declare extra harnesses or override builtin fields (a
   harness is a headless one-shot command plus resume/model/effort templates).
 - `suffix-prompts.json` — reusable prompt suffixes, created/edited in the

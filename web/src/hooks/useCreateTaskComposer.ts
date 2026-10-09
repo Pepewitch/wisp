@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
 import { useBriefChoice } from "@/hooks/useBriefChoice"
+import { useChoiceTaskDefaults } from "@/hooks/useModelTaskDefaults"
 import { useSuffixPrompts } from "@/hooks/queries"
 import { usePendingAttachments } from "@/lib/attachments"
 import {
@@ -30,11 +31,12 @@ export function useCreateTaskComposer(
   const [mode, setMode] = useState<TaskMode>(saved?.mode ?? "worktree")
   // A base override belongs to this task, not the project's resolved default.
   const [base, setBase] = useState(saved?.base ?? "")
-  const autopilot = useAutopilotChoice(mode, saved?.autopilot)
+  const taskDefaults = useChoiceTaskDefaults(choice)
+  const autopilot = useAutopilotChoice(mode, saved?.autopilot, taskDefaults)
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(saved?.suffixPromptId ?? null)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
-  const brief = useBriefChoice(harness, saved)
+  const brief = useBriefChoice(harness, saved, taskDefaults.brief)
   const modelAvailable = !!harness && !!choice && modelOptionsFor(harness).includes(choice.model)
   const suffixPrompts = useSuffixPrompts(suffixPromptId !== null)
   // If discovery failed, let the daemon make the final decision at submit.
@@ -52,9 +54,9 @@ export function useCreateTaskComposer(
 
   useEffect(() => {
     writeCreateTaskDraft(connectionId, repoPath, {
-      prompt, choice, effort, fast, brief: brief.value, mode, base, suffixPromptId, autopilot: autopilot.value,
+      prompt, choice, effort, fast, brief: brief.chosen, mode, base, suffixPromptId, autopilot: autopilot.chosen,
     })
-  }, [connectionId, repoPath, prompt, choice, effort, fast, brief.value, mode, base, suffixPromptId, autopilot.value])
+  }, [connectionId, repoPath, prompt, choice, effort, fast, brief.chosen, mode, base, suffixPromptId, autopilot.chosen])
   useEffect(() => {
     writePendingAttachmentCount(connectionId, createTaskScope(repoPath), attachments.list.length)
   }, [connectionId, repoPath, attachments.list.length])
@@ -63,6 +65,9 @@ export function useCreateTaskComposer(
     const destination = harnesses.find((candidate) => candidate.name === name)
     setEffort(destination?.defaults.reasoningEffort ?? "")
     if (!destination?.hasFastMode) setFast(false)
+    // another model brings its own task defaults, the way it brings its effort
+    brief.reset()
+    autopilot.reset()
   }
 
   return {

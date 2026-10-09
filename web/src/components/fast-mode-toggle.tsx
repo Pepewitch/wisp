@@ -51,7 +51,8 @@ export function FastModeToggle({
 /**
  * Task briefs, chosen before the first turn: the same glyph-until-chosen shape
  * as fast mode (§5c-ii), because it too changes what every turn is sent — one
- * short line asking the agent for a brief. Off for every new task.
+ * short line asking the agent for a brief. Starts at the chosen model's
+ * default from the Models modal, which is on unless switched off there.
  */
 export function BriefToggle({ value, touch = false, onChange }: { value: boolean; touch?: boolean; onChange: (value: boolean) => void }) {
   return (

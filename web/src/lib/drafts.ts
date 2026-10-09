@@ -13,12 +13,17 @@ export interface CreateTaskDraft {
   choice: { harness: string; model: string } | null
   effort: string
   fast: boolean
-  /** ask each turn for a task brief; optional so a draft from before the toggle reads as off */
+  /**
+   * The brief toggle as pressed in this draft. Absent follows the model's
+   * default, so a default changed in the Models modal still reaches a draft
+   * nobody has toggled.
+   */
   brief?: boolean
   mode: "worktree" | "local"
   base: string
   suffixPromptId: string | null
-  autopilot: { autoMerge: boolean; autoFix: boolean }
+  /** only the autopilot switches flipped in this draft; the rest follow the model's defaults */
+  autopilot?: { autoMerge?: boolean; autoFix?: boolean }
 }
 
 function key(connectionId: string, taskId: string | null): string {

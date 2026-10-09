@@ -87,7 +87,9 @@
 }
 .model-row:hover .model-row-action,
 .model-row:focus-within .model-row-action,
-.model-row:has([data-highlighted]) .model-row-action {
+.model-row:has([data-highlighted]) .model-row-action,
+/* the Models modal's task-defaults "…" stays put while its menu is open */
+.model-row-action[data-popup-open] {
   opacity: 1;
 }
 

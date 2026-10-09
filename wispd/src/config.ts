@@ -16,6 +16,8 @@ import { wispCommand } from "./command";
 import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
 import type { WispPreferences } from "../../shared/api/settings";
+import type { ModelTaskDefaultsMap } from "../../shared/model-task-defaults";
+import { validateModelTaskDefaults } from "./model-task-defaults";
 
 /** Per-harness turn defaults (P5b): applied at task creation when the request passes no explicit value. */
 export interface HarnessDefaults {
@@ -123,6 +125,13 @@ export interface WispConfig {
    * `--model`, and a task already running on one keeps it.
    */
   hiddenModels?: Record<string, string[]>;
+  /**
+   * harness name -> model id -> where the composer starts a new task's brief,
+   * auto-fix and auto-merge switches. Overrides of the built-in defaults only
+   * (shared/model-task-defaults.ts); the daemon itself never applies them, so
+   * `wisp create` and the API keep their explicit-only behavior.
+   */
+  modelTaskDefaults?: ModelTaskDefaultsMap;
   /** minutes .wisp/setup.sh may run before it's killed and the task fails loudly (a prior audit) */
   setupTimeoutMinutes: number;
   /** repo path or repo basename -> untracked files to copy into new worktrees (e.g. [".env"]) */
@@ -244,6 +253,7 @@ const DEFAULTS: WispConfig = {
   turnLogRetentionDays: 90,
   autoRenameTasksFromPullRequests: true,
   hiddenModels: {},
+  modelTaskDefaults: {},
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
@@ -269,6 +279,7 @@ const CONFIG_KEYS = [
   "turnLogRetentionDays",
   "autoRenameTasksFromPullRequests",
   "hiddenModels",
+  "modelTaskDefaults",
   "setupTimeoutMinutes",
   "envAllowlist",
   "harnessDefaults",
@@ -488,6 +499,9 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = warnO
   if (raw.hiddenModels !== undefined) {
     out.hiddenModels = validateHiddenModels(raw.hiddenModels, "config.json: hiddenModels");
   }
+  if (raw.modelTaskDefaults !== undefined) {
+    out.modelTaskDefaults = validateModelTaskDefaults(raw.modelTaskDefaults, "config.json: modelTaskDefaults");
+  }
   num("setupTimeoutMinutes");
   if (raw.envAllowlist !== undefined) {
     if (!isRecord(raw.envAllowlist)) {
@@ -677,12 +691,13 @@ function persistConfig(value: Record<string, unknown>): void {
 
 /** The public daemon-wide preferences, with legacy configs inheriting defaults. */
 export function wispSettings(
-  cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests" | "hiddenModels">,
+  cfg: Pick<WispConfig, "autoRenameTasksFromPullRequests" | "hiddenModels" | "modelTaskDefaults">,
 ): WispPreferences {
   return {
     autoRenameTasksFromPullRequests:
       cfg.autoRenameTasksFromPullRequests !== false,
     hiddenModels: cfg.hiddenModels ?? {},
+    modelTaskDefaults: cfg.modelTaskDefaults ?? {},
   };
 }
 
@@ -717,6 +732,7 @@ export function persistWispSettings(
   cfg.autoRenameTasksFromPullRequests =
     settings.autoRenameTasksFromPullRequests;
   cfg.hiddenModels = settings.hiddenModels;
+  cfg.modelTaskDefaults = settings.modelTaskDefaults;
 }
 
 function mintToken(): string {

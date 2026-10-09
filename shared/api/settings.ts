@@ -3,6 +3,7 @@
  * write-only secrets' status, and the reusable suffix prompts.
  */
 import type { LimitsStatus } from "./harness";
+import type { ModelTaskDefaultsMap } from "../model-task-defaults";
 
 // A type alias, not an interface, so the daemon can hand it to patchConfig's
 // Record<string, unknown> without a cast.
@@ -14,6 +15,12 @@ export type WispPreferences = {
    * model a later probe discovers shows up on its own.
    */
   hiddenModels: Record<string, string[]>;
+  /**
+   * harness name -> model id -> where a new task's brief, auto-fix and
+   * auto-merge switches start in the composer. Only values that differ from
+   * the built-in defaults (brief on, both autopilot switches off) are kept.
+   */
+  modelTaskDefaults: ModelTaskDefaultsMap;
 };
 
 /** Where a write-only secret came from: saved through PATCH /api/settings, or the daemon's environment. */

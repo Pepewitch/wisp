@@ -110,7 +110,7 @@ function SettingsSections({ specimen = false }: { specimen?: boolean }) {
       {specimen ? (
         <Section
           label="Models"
-          hint="Which models each harness offers in the picker. Wisp-wide behavior for every client connected to this daemon."
+          hint="Which models each harness offers in the picker, and whether a new task on each starts with a brief, auto-fix or auto-merge. Wisp-wide behavior for every client connected to this daemon."
         >
           <ModelsRow shown={14} total={187} onManage={() => {}} />
         </Section>
@@ -187,7 +187,7 @@ function ModelsSection() {
   return (
     <Section
       label="Models"
-      hint="Which models each harness offers in the picker. Wisp-wide behavior for every client connected to this daemon."
+      hint="Which models each harness offers in the picker, and whether a new task on each starts with a brief, auto-fix or auto-merge. Wisp-wide behavior for every client connected to this daemon."
     >
       <ModelsRow shown={totals.shown} total={totals.total} onManage={() => setManaging(true)} />
       <ModelVisibilityDialog open={managing} onOpenChange={setManaging} />
