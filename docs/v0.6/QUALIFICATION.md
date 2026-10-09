@@ -2,20 +2,76 @@
 
 This ledger separates release evidence from the version label. The 0.6 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.6.8 is the current release; earlier 0.6 records are retained
+coverage. 0.6.9 is the current release; earlier 0.6 records are retained
 below. The 0.5 records remain in
 [the 0.5 ledger](../v0.5/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.6.8.
+still apply to 0.6.9.
+
+## 0.6.9 publication
+
+**Published and promoted on 2026-10-09.**
+[Wisp 0.6.9](https://github.com/Pepewitch/wisp/releases/tag/v0.6.9) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 09:56:04 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`6d7dd68d982353bc9b91b7f231d2f2e1f502e46a`](https://github.com/Pepewitch/wisp/commit/6d7dd68d982353bc9b91b7f231d2f2e1f502e46a),
+landed through [PR #378](https://github.com/Pepewitch/wisp/pull/378). It carries
+per-model task brief, auto-fix and auto-merge defaults, with the brief now on
+by default ([#377](https://github.com/Pepewitch/wisp/pull/377)); the
+`ultracode` Claude effort level
+([#376](https://github.com/Pepewitch/wisp/pull/376)); and a Desktop composer
+that keeps `--` as typed ([#371](https://github.com/Pepewitch/wisp/pull/371)).
+It also carries the source-map-js and KaTeX advisory fixes
+([#379](https://github.com/Pepewitch/wisp/pull/379)) and the other changes
+listed in the release notes since 0.6.8.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/37913293701)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/37913087502) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `6d7dd68` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 09:58:18 UTC with Homebrew tap commit
+[`03f9c7f6438b9fa15d98dba230c7db645b9d4978`](https://github.com/Pepewitch/homebrew-tap/commit/03f9c7f6438b9fa15d98dba230c7db645b9d4978).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.6.9.
+
+0.6.9 adds no database migration. No PNG asset or brand-generator input changed
+since 0.6.8, so the PNG assets were not re-rendered. Before tagging, the local
+`release:check` passed at release-branch commit `56ffaa1` (squashed into
+`6d7dd68`). Its first run, on the branch before the advisory fix landed,
+failed one UI test on a 5-second timeout in code the release did not change;
+every later run passed. The release PR's `npm` advisory check failed on newly
+published source-map-js and KaTeX advisories until #379 landed on `main` and
+the release branch was rebased onto it.
+
+This is a fully automated publication: no maintainer qualification was
+performed, and this record does not claim any. That covers fresh-install or
+upgrade receipts, a Desktop updater journey across this version, per-model
+defaults set in the published Desktop or Browser app and applied to a new task,
+a live Claude turn at `ultracode` effort against the published daemon, typing
+`--` in the published Desktop composer under the macOS smart-dashes setting,
+Mermaid math rendered with KaTeX 0.18 in the published bundles, the
+token-spending harness probes, and the paid evaluator panel. The published
+assets and release body remain immutable; this ledger records the completed
+outcome separately.
 
 ## 0.6.8 publication
 
 **Published and promoted on 2026-10-04.**
-[Wisp 0.6.8](https://github.com/Pepewitch/wisp/releases/tag/v0.6.8) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.6.8](https://github.com/Pepewitch/wisp/releases/tag/v0.6.8) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 07:38:45 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`6127ae06e4c5afcd156ce8de730b2fb06c84f332`](https://github.com/Pepewitch/wisp/commit/6127ae06e4c5afcd156ce8de730b2fb06c84f332),
@@ -43,8 +99,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 07:40:51 UTC with Homebrew tap commit
 [`4d1b653fa2961bccc308d21f2e58b0344c2d87ef`](https://github.com/Pepewitch/homebrew-tap/commit/4d1b653fa2961bccc308d21f2e58b0344c2d87ef).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.6.8.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.6.8 until 0.6.9 was promoted.
 
 0.6.8 adds database migration 22, so a 0.6.7 daemon cannot reopen a profile that
 0.6.8 has opened. No PNG asset or brand-generator input changed since 0.6.7, so
