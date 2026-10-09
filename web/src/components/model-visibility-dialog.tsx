@@ -46,7 +46,8 @@ export interface TaskDefaultsControl {
   defaults: ModelTaskDefaultsMap
   briefs: boolean
   autopilot: boolean
-  onApply: (next: ModelTaskDefaultsMap) => void
+  /** Takes an edit rather than a map, so back-to-back clicks each build on the one before. */
+  onApply: (edit: (current: ModelTaskDefaultsMap) => ModelTaskDefaultsMap) => void
 }
 
 /**
@@ -129,7 +130,7 @@ function ModelVisibilityBody({
   const autopilot = features.data?.taskAutopilot === true
   const defaultsControl: TaskDefaultsControl | undefined =
     taskDefaults.supported && (briefs || autopilot)
-      ? { defaults: taskDefaults.defaults, briefs, autopilot, onApply: taskDefaults.setDefaults }
+      ? { defaults: taskDefaults.defaults, briefs, autopilot, onApply: taskDefaults.updateDefaults }
       : undefined
   const failure = error ?? taskDefaults.error
 
@@ -414,7 +415,8 @@ function TaskDefaultsMenu({
   if (!brief && !control.autopilot) return null
   const note = differences(values, brief, control.autopilot)
   const set = (key: keyof ModelTaskDefaults) => (value: boolean) =>
-    control.onApply(setModelTaskDefault(control.defaults, harness.name, model, key, value))
+    control.onApply((current) => setModelTaskDefault(current, harness.name, model, key, value))
+  const touch = hasCoarsePointer()
   return (
     <>
       {note && <span className="shrink-0 pl-2 text-[10.5px] text-muted-foreground">{note}</span>}
@@ -423,7 +425,8 @@ function TaskDefaultsMenu({
         icon={<More />}
         label={`New task defaults for ${harness.name} · ${model}`}
         align="end"
-        className={cn("mx-1 h-[22px] w-[22px]", !hasCoarsePointer() && "model-row-action")}
+        touch={touch}
+        className={touch ? undefined : "model-row-action mx-1 h-[22px] w-[22px]"}
       >
         <MenuNote>New tasks on {model} start with</MenuNote>
         {brief && (

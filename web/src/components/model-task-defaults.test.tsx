@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { QueryClient } from "@tanstack/react-query"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { clearConnectionDrafts } from "@/lib/drafts"
@@ -33,7 +34,11 @@ const harness = (name: string, models: string[], hasBriefs = true): HarnessInfo 
 const HARNESSES = [harness("claude", ["claude-opus-5", "claude-sonnet-5"]), harness("cursor", ["auto"], false)]
 const FEATURES = { taskBriefs: true, taskAutopilot: true }
 
-function daemon(modelTaskDefaults: Record<string, unknown> | undefined, sent: { path: string; body: unknown }[] = []) {
+function daemon(
+  modelTaskDefaults: Record<string, unknown> | undefined,
+  sent: { path: string; body: unknown }[] = [],
+  options: { client?: QueryClient; held?: (() => void)[] } = {},
+) {
   let settings: Record<string, unknown> = {
     autoRenameTasksFromPullRequests: true,
     hiddenModels: {},
@@ -44,6 +49,9 @@ function daemon(modelTaskDefaults: Record<string, unknown> | undefined, sent: { 
       if (init?.method === "PATCH") {
         sent.push({ path, body: init.body })
         settings = { ...settings, ...(init.body as object) }
+        const answer = settings
+        if (options.held) await new Promise<void>((release) => options.held!.push(release))
+        return answer
       }
       return settings
     }
@@ -54,6 +62,7 @@ function daemon(modelTaskDefaults: Record<string, unknown> | undefined, sent: { 
   })
   return runtimeWrapper(
     fakeDaemonTransport("test-connection", { request: request as unknown as DaemonTransport["request"] }),
+    options.client,
   )
 }
 
@@ -85,6 +94,33 @@ describe("per-model task defaults in the Models modal", () => {
     expect(sent[1]!.body).toEqual({
       modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false, autoMerge: true } } },
     })
+  })
+
+  it("keeps every click while earlier writes are still unanswered", async () => {
+    const sent: { path: string; body: unknown }[] = []
+    const held: (() => void)[] = []
+    render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon({}, sent, { held }) })
+
+    await openDefaults("claude · claude-sonnet-5")
+    const item = (name: string) => screen.getByRole("menuitemcheckbox", { name })
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Task brief" }))
+    fireEvent.click(item("Auto-merge"))
+    fireEvent.click(item("Auto-fix"))
+    await waitFor(() => expect(item("Task brief")).toHaveAttribute("aria-checked", "false"))
+    expect(item("Auto-merge")).toHaveAttribute("aria-checked", "true")
+    expect(item("Auto-fix")).toHaveAttribute("aria-checked", "true")
+
+    // one write at a time, in click order, each answered before the next leaves
+    for (let n = 1; n <= 3; n++) {
+      await waitFor(() => expect(held).toHaveLength(1))
+      expect(sent).toHaveLength(n)
+      act(() => held.shift()!())
+    }
+    expect(sent.at(-1)!.body).toEqual({
+      modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false, autoMerge: true, autoFix: true } } },
+    })
+    await waitFor(() => expect(item("Auto-fix")).toHaveAttribute("aria-checked", "true"))
+    expect(item("Task brief")).toHaveAttribute("aria-checked", "false")
   })
 
   it("names only how a model differs from the usual start", async () => {
@@ -135,6 +171,31 @@ describe("the composer seeds from the chosen model's defaults", () => {
     const body = sent.find((call) => call.path === "/api/tasks")!.body as Record<string, unknown>
     expect(body.briefEnabled).toBe(true)
     expect(body.autopilot).toBeUndefined()
+  })
+
+  it("follows a default changed mid-draft, except for a switch already pressed", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(dialog, { wrapper: daemon({}, [], { client }) })
+    expect(await screen.findByRole("button", { name: "Task brief on" })).toBeInTheDocument()
+    fireEvent.change(prompt(), { target: { value: "half a thought" } })
+
+    const setDefaults = (modelTaskDefaults: Record<string, unknown>) =>
+      act(() =>
+        client.setQueryData<Record<string, unknown>>(["test-connection", "settings"], (old) => ({
+          ...old,
+          modelTaskDefaults,
+        })),
+      )
+    setDefaults({ claude: { "claude-opus-5": { brief: false, autoFix: true } } })
+    expect(await screen.findByRole("button", { name: "Task brief" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Auto-fix" })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole("button", { name: "Task brief" }))
+    expect(await screen.findByRole("button", { name: "Task brief on" })).toBeInTheDocument()
+    setDefaults({ claude: { "claude-opus-5": { brief: false, autoMerge: true } } })
+    expect(await screen.findByRole("button", { name: "Auto-merge" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Task brief on" })).toBeInTheDocument()
+    expect(prompt().value).toBe("half a thought")
   })
 
   it("starts from the model's own defaults and reseeds when another model is picked", async () => {

@@ -184,6 +184,8 @@ describe("validateConfig (a prior audit)", () => {
         modelTaskDefaults: {
           codex: {
             "gpt-5": { brief: false, autoFix: true, autoMerge: false },
+            // the same model once trimmed, so its switches join the entry above
+            " gpt-5 ": { autoMerge: true },
             // every value is the built-in default, so nothing is stored for it
             "gpt-5-mini": { brief: true, autoFix: false },
           },
@@ -194,7 +196,7 @@ describe("validateConfig (a prior audit)", () => {
       }),
     ).toEqual({
       modelTaskDefaults: {
-        codex: { "gpt-5": { brief: false, autoFix: true } },
+        codex: { "gpt-5": { brief: false, autoFix: true, autoMerge: true } },
         nosuch: { x: { autoMerge: true } },
       },
     });

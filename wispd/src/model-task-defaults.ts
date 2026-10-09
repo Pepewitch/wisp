@@ -33,7 +33,8 @@ export function validateModelTaskDefaults(raw: unknown, label: string): ModelTas
         defaults[key] = value;
       }
       const id = model.trim();
-      if (id !== "") byModel[id] = defaults;
+      // ids that differ only by whitespace name one model, so their switches merge
+      if (id !== "") byModel[id] = { ...byModel[id], ...defaults };
     }
     out[harness] = byModel;
   }
