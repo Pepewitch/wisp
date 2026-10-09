@@ -21,7 +21,7 @@
 #   smart dashes in the shell's webview.
 [package]
 name = "wisp-desktop"
-version = "0.6.8"
+version = "0.6.9"
 edition = "2021"
 rust-version = "1.82"
 description = "Native core for the Wisp desktop shell"
