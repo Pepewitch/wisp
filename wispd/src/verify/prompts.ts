@@ -180,7 +180,7 @@ export function recipePrompt(input: RecipePromptInput): string {
     "## Prove it before you save it",
     "For every area: follow your own instructions from a clean start — launch, health check, drive one feature, capture its evidence, clean up. Fix what fails and try again. Mark an area `status: proven` only when that run worked end to end; otherwise leave it `unproven` and say why in AREA.md.",
     `Publish one screenshot per proven UI area with \`${COMMAND} output add <file.png> --turn <n>\`, so the person activating the draft can see it work.`,
-    ...(input.mode === "fix" && input.complaints.length > 0 ? ["", "## What the reviewers reported", ...input.complaints.slice(0, 8).map((complaint) => `- ${complaint}`)] : []),
+    ...(input.complaints.length > 0 ? ["", "## What the reviewers reported", ...input.complaints.slice(0, 8).map((complaint) => `- ${complaint}`)] : []),
     ...(input.note ? ["", "## From the person who asked", input.note] : []),
     "",
     "## When you finish",

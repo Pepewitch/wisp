@@ -21,9 +21,9 @@ import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
 import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
-import { latestDraft, recipeVersion } from "../verify/recipe"
+import { activeRecipe, latestDraft, recipeVersion } from "../verify/recipe"
 import { nudgeReviewer, retireReviewer, startRecipeTask, startReviewer, verifyAgent, type ReviewerStart } from "../verify/reviewer"
-import { finishRound, latestRound, MAX_REVIEW_ROUNDS, staleRunningRounds, type RoundRow } from "../verify/rounds"
+import { finishRound, latestRound, MAX_REVIEW_ROUNDS, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, verifyTaskOf } from "../verify/status"
 import { taskIsIdle } from "./idle"
 import { projectName } from "../verify/project"
@@ -53,6 +53,19 @@ function retire(look: ReviewLook, round: RoundRow): void {
   void retireReviewer(round, look.start.cfg).catch((error: unknown) => {
     console.error(`[wisp] auto-review: could not archive reviewer ${round.reviewer_task_id}: ${error instanceof Error ? error.message : String(error)}`)
   })
+}
+
+/**
+ * Auto-review was switched off, the task archived, or the row finished: a
+ * reviewer still at work has nothing to report to. Its round ends and the
+ * reviewer goes the way a finished one does.
+ */
+export function abandonReviews(taskId: string, why: string, cfg: ReviewerStart["cfg"], now = new Date()): void {
+  for (const round of runningRounds(taskId)) {
+    if (!finishRound(round.id, { state: "superseded", summary: why }, now)) continue
+    recordWorkflow(round.workflow_id, "review", `Round ${round.round} on ${short(round.head)} ended: ${why}`, now.toISOString(), null, { pr: round.pr, sha: round.head })
+    void retireReviewer({ ...round, state: "superseded" }, cfg).catch(() => {})
+  }
 }
 
 /**
@@ -273,7 +286,8 @@ async function recipeHold(look: ReviewLook, round: RoundRow): Promise<null> {
   }
   if (!look.hasSlot(task)) return look.say("waiting", "Waiting for a free task slot to fix the verification recipe", MOVING_MS)
   const started = await startRecipeTask(look.start, {
-    repoPath: task.repo_path, projectName: projectName(look.start.cfg, task.repo_path), mode: "fix", area: round.recipe_area, note: null,
+    // no recipe yet: what the reviewer could not do is set one up
+    repoPath: task.repo_path, projectName: projectName(look.start.cfg, task.repo_path), mode: activeRecipe(task.repo_path) ? "fix" : "setup", area: round.recipe_area, note: null,
     complaints: [feedback], agent: verifyAgent(look.start.cfg, look.start.adapters, task.repo_path, task), roundId: round.id, actor: "autopilot",
   })
   if ("error" in started) return look.say("waiting", `Could not start a recipe fix: ${started.error}`, MOVING_MS)

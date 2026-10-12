@@ -169,6 +169,9 @@ describe("auto-review", () => {
 
   test("a recipe the reviewer could not follow holds the PR, spends no round, and is fixed before a re-run", async () => {
     const repo = mkdtempSync(join(tmpdir(), "wisp-review-repo-"));
+    // an active recipe whose web area the reviewer will find broken
+    saveDraft(repo, "tfirst", [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }]);
+    await activateDraft(repo, "test");
     const { clock, launched, ids, task, rt } = setup({ repo });
     await pass(rt, task.id, clock);
     const round = latest(task.id);
@@ -184,7 +187,7 @@ describe("auto-review", () => {
 
     // the fixer saves a draft: a person has to activate it
     transition(fixer.id, "done");
-    saveDraft(repo, fixer.id, [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }]);
+    saveDraft(repo, fixer.id, [{ path: "RECIPE.md", content: "# r\n\nPORT matters." }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }]);
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you" });
     expect(autopilotStatus(task.id).reason).toContain("has a fixed draft — activate it");
@@ -194,6 +197,17 @@ describe("auto-review", () => {
     expect(launched).toHaveLength(3);
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0, state: "running" });
     expect(checkpointOf(autopilotRow(task.id)!).reviewRounds).toBe(1);
+  });
+
+  test("with no recipe at all, what the reviewer could not do is set one up", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-review-repo-"));
+    const { clock, launched, ids, task, rt } = setup({ repo });
+    await pass(rt, task.id, clock);
+    verdict(latest(task.id), { verdict: "inconclusive", cause: "recipe", recipeFeedback: "no way to start the app is documented" });
+    await pass(rt, task.id, clock);
+    expect(launched[1]!).toMatchObject({ verifyRole: "recipe", prompt: expect.stringContaining("Set up verification") });
+    expect(launched[1]!.firstTurnPrompt).toContain("no way to start the app is documented");
+    expect(verifyTaskOf(ids[1]!)).toMatchObject({ mode: "setup" });
   });
 
   test("a reviewer that ends without a verdict is asked once, then the round needs you; resume asks a new reviewer", async () => {
@@ -214,6 +228,15 @@ describe("auto-review", () => {
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(2);
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0 });
+  });
+
+  test("switching auto-review off ends a reviewer still at work", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    setAutopilot(task.id, { autoReview: false });
+    await pass(rt, task.id, clock);
+    expect(getRound(round.id)).toMatchObject({ state: "superseded", summary: "auto-review was switched off" });
   });
 
   test("auto-review alone is done for now once the head passes", async () => {

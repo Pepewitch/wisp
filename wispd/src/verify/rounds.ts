@@ -115,13 +115,6 @@ export function markNudged(id: string): void {
   db.run("UPDATE auto_review_rounds SET nudged = 1 WHERE id = ?", [id])
 }
 
-/** Counted rounds that ended with a verdict for one PR. */
-export function countedRounds(workflowId: string, pr: number): number {
-  const row = db.query(`SELECT COUNT(*) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND counted = 1
-    AND state IN ('pass', 'fail', 'inconclusive', 'running')`).get(workflowId, pr) as { n: number }
-  return row.n
-}
-
 /** Reviewer feedback about the recipe, from rounds that blamed it after a moment (an activation), newest first. */
 export function recipeComplaints(repoPath: string, since: string | null): { round: RoundRow; area: string | null; feedback: string }[] {
   const target = resolve(repoPath)

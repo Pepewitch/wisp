@@ -41,7 +41,7 @@ import {
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 import { busyReason, forgetIdle, forgetPending, lastActivity, nextPrReason, observe } from "./look"
-import { autoReviewLook } from "./auto-review"
+import { abandonReviews, autoReviewLook } from "./auto-review"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -219,8 +219,9 @@ export class AutopilotRuntime {
       return
     }
     const task = getTask(row.task_id)
-    if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return }
     const params = paramsOf(row)
+    this.endUnwantedReviews(row.task_id, task, params.autoReview, now)
+    if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return }
     if (!anySwitch(params)) { changeWorkflowState(row.id, "completed", "Auto-merge off", now); return }
     // A round reserved but never started goes back; the next look plans it
     // afresh from current evidence rather than sending a stale one.
@@ -276,6 +277,12 @@ export class AutopilotRuntime {
 
     const pr = await this.batches?.take(row.id, checkpoint.pr, signal) ?? await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
     await this.lookAt({ row, task, checkpoint, pr, repository, configured, idle, save, autoFix: params.autoFix, autoMerge: params.autoMerge, autoReview: params.autoReview, signal })
+  }
+
+  /** A reviewer at work for a switch that is off, or for a task that is gone, stops. */
+  private endUnwantedReviews(taskId: string, task: Task | null, autoReview: boolean, now: Date): void {
+    if (task && !task.archived && autoReview) return
+    abandonReviews(taskId, task && !task.archived ? "auto-review was switched off" : "the task was archived", this.cfg, now)
   }
 
   /** Everything after the bound PR has been read: settle it, fix it, or merge it. */

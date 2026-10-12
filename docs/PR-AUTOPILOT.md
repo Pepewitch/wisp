@@ -36,6 +36,9 @@ The row's hover card says which switch is on, for which PR, and why. The rail is
 about auto-merge and auto-fix only: a task that failed or waits for your answer
 says so with its own state dot.
 
+A third switch, **Auto-review**, has an independent reviewer task verify each
+PR head before it can merge. See [Auto-review](AUTO-REVIEW.md).
+
 Auto-merge merges into the branch it targets under your GitHub account.
 Arm it for work you would merge yourself once CI is green; leave it off for
 critical changes you want to read first.

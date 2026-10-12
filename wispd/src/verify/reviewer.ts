@@ -6,7 +6,6 @@
  * makes it a reviewer is its role, its round, and the token its turns carry:
  * only a turn of that task can submit the round's verdict.
  */
-import { resolve } from "node:path"
 import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
 import type { TaskBriefV1 } from "../../../shared/task-brief"
 import type { AdapterDef } from "../adapters"
@@ -243,6 +242,3 @@ export async function retireReviewer(round: RoundRow, cfg: WispConfig): Promise<
 export function authorNote(author: Task, which: string): string {
   return authorReviewNote({ which, hasRecipe: activeRecipe(author.repo_path) !== null })
 }
-
-/** Is this repository path the project the recipe task was started for? */
-export const sameProject = (a: string, b: string): boolean => resolve(a) === resolve(b)
