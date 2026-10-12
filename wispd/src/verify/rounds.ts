@@ -80,6 +80,22 @@ export function staleRunningRounds(workflowId: string, head: string): RoundRow[]
   return db.query("SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND state = 'running' AND head != ?").all(workflowId, head) as RoundRow[]
 }
 
+/**
+ * Running rounds nobody will act on: their autopilot row finished (switched
+ * off, PR closed, task archived) or no longer has auto-review on.
+ */
+export function orphanedRounds(): RoundRow[] {
+  return db.query(`SELECT r.* FROM auto_review_rounds r LEFT JOIN workflows w ON w.id = r.workflow_id
+    WHERE r.state = 'running' AND (w.id IS NULL OR w.state = 'completed'
+      OR COALESCE(json_extract(w.params_json, '$.autoReview'), 0) != 1)`).all() as RoundRow[]
+}
+
+/** Finished rounds whose reviewer task is still on the books: what the sweep archives. */
+export function unretiredRounds(): RoundRow[] {
+  return db.query(`SELECT r.* FROM auto_review_rounds r JOIN tasks t ON t.id = r.reviewer_task_id
+    WHERE r.state != 'running' AND t.archived = 0 ORDER BY r.created_at LIMIT 20`).all() as RoundRow[]
+}
+
 /** Every round still running for a task, whatever the head. */
 export function runningRounds(taskId: string): RoundRow[] {
   return db.query("SELECT * FROM auto_review_rounds WHERE task_id = ? AND state = 'running'").all(taskId) as RoundRow[]

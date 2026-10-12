@@ -10,7 +10,7 @@ says whether it is good enough to merge.
 ```sh
 wisp new . "Add a dark mode toggle, open a PR" --harness claude --auto-merge --auto-fix --auto-review
 wisp pr <task> review on          # or: review off
-wisp review show <task>           # the rounds for the task's PR, newest first
+wisp review show <task>           # the rounds for the task's current PR, newest first (--pr <n> or --all for others)
 wisp review show <task> --round 2 # one round in full: findings, evidence, reviewer task
 ```
 
@@ -36,7 +36,9 @@ switches, and each one opens its reviewer task.
 4. **It verifies and submits a verdict** with `wisp review submit`. Images it
    published with `wisp output add` are attached as evidence.
 5. **Wisp acts on the verdict**, and archives the reviewer once its turn ends.
-   Its transcript stays readable under archived tasks.
+   Its transcript stays readable under archived tasks. A reviewer whose round
+   no longer matters (auto-review switched off, the PR closed, the task
+   archived) is stopped and archived the same way.
 
 A push while a reviewer runs makes its round moot: the reviewer is stopped and
 the new head gets a fresh one.
@@ -61,8 +63,13 @@ images. If the author's turn ends with no new push, the task needs you
 ("Still rejected after review round 1, with no new push").
 
 **Three rounds per PR.** After three counted rounds that did not pass, auto-review
-pauses. **Resume** gives it three more. A new PR after a merge starts at
-round 1 again.
+pauses. **Resume** gives it three more, and the numbering goes on ("round 4 of 6").
+A new PR after a merge starts at round 1 again.
+
+**Ask again without a push.** When a rejection needs you, **Resume** (in the
+Autopilot tab, or `wisp pr <task> resume`) has a fresh reviewer look at the same
+head once more, without spending a round: for a reviewer that got it wrong, or
+an environment that misbehaved.
 
 **Each reviewer is fresh.** It is told its round number and what earlier rounds
 found (in full with `wisp review show <task> --round <n>`), so it checks those
@@ -71,8 +78,8 @@ findings are fixed. It does not take their word for anything else.
 **A reviewer that gives no verdict.** If its turn ends without one, Wisp asks once.
 If the next turn also ends without a verdict, the round ends as an error and
 the task needs you. **Resume** starts a new reviewer for the same head, without
-spending a round. A reviewer that stops to ask a question needs you too:
-answer it in its own task.
+spending a round. A reviewer that stops to ask a question, or gets stuck, needs
+you too: answer or look at it in its own task.
 
 Only the reviewer can submit its round's verdict. Each round has a token that
 only the reviewer's turns carry (`WISP_REVIEW_TOKEN`). That stops an agent from
@@ -148,7 +155,9 @@ when a draft is waiting, a recipe task is working, or a reviewer reported a
 problem with the recipe.
 
 **Every change is a draft you activate.** The recipe decides what merges, so
-lowering the bar is never an agent's call alone. Activation replaces the whole
+lowering the bar is never an agent's call alone: an agent can propose a draft,
+and `wisp verify activate` run from an agent's turn is refused. A draft is saved
+only from its own recipe task's turn. Activation replaces the whole
 recipe with the draft in one commit, and every verdict records the version it
 was judged against.
 
@@ -169,6 +178,9 @@ author's to fix, and it spends no round:
 
 - **Auto-fix acts first.** A red check or a conflict goes back to the author
   before any reviewer starts.
+- **The reviewer's words stay data.** Its summary and findings reach the author
+  in `REVIEW-FEEDBACK.md`, and earlier reviewers' words reach the next one,
+  quoted and labelled as another agent's: evidence to weigh, never instructions.
 - **Then auto-review.** The merge gate only runs once the current head has a
   pass. The `merging` history entry says "auto-review passed (round N)".
 - **Auto-review alone** reviews each head and needs you for a rejection. With a

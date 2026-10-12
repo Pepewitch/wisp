@@ -21,13 +21,13 @@ import { createAndLaunchTask } from "../domain/task-create"
 import { emit } from "../events"
 import type { ModelProbeCache } from "../model-probes"
 import { getTask, listTasks } from "../store"
-import { requestActor } from "../task-audit"
+import { requestActor, TASK_HEADER } from "../task-audit"
 import { announceWorkflow, recordWorkflow } from "../workflows/store"
 import { projectName } from "../verify/project"
 import { activateDraft, readRecipeFile, recipeFiles, RecipeError, saveDraft, type RecipeFile } from "../verify/recipe"
 import { startRecipeTask, submitVerdict, VerdictError, verdictError } from "../verify/reviewer"
 import { recipeComplaints, roundsOf, roundView } from "../verify/rounds"
-import { busyVerifyTask, verificationStatus, verifyTaskOf } from "../verify/status"
+import { busyVerifyTask, draftTaskExists, verificationStatus, verifyTaskOf } from "../verify/status"
 import { err, json, jsonObjectBody } from "./http"
 
 export const AUTO_REVIEW_PATH = /^\/api\/tasks\/([a-z0-9]+)\/auto-review(?:\/(verdict))?$/
@@ -126,7 +126,8 @@ export function verificationRoute(
   if (sub === "/checkout" && method === "GET") {
     const project = projectPath(url.searchParams.get("path"))
     if (project instanceof Response) return project
-    const draft = url.searchParams.get("draft") ?? undefined
+    const draft = draftParam(url)
+    if (draft instanceof Response) return draft
     return json({ files: recipeFiles(project, draft) })
   }
   if (method !== "POST") return err("Method not allowed", 405)
@@ -136,10 +137,20 @@ export function verificationRoute(
   return err("not found", 404)
 }
 
+const DRAFT_ID = /^[a-z0-9]{1,40}$/
+
+/** The `draft` query: a recipe task's id, or absent for the active recipe. */
+function draftParam(url: URL): string | undefined | Response {
+  const draft = url.searchParams.get("draft")
+  if (draft === null || draft === "") return undefined
+  return DRAFT_ID.test(draft) ? draft : err("draft must be a recipe task's id", 400)
+}
+
 function fileRoute(url: URL): Response {
   const project = projectPath(url.searchParams.get("path"))
   if (project instanceof Response) return project
-  const draft = url.searchParams.get("draft") ?? undefined
+  const draft = draftParam(url)
+  if (draft instanceof Response) return draft
   const file = url.searchParams.get("file")
   if (!file) return json({ files: recipeFiles(project, draft).map((entry) => entry.path) })
   const content = readRecipeFile(project, file, draft)
@@ -180,7 +191,10 @@ async function activateRoute(req: Request): Promise<Response> {
   const project = projectPath(body.path)
   if (project instanceof Response) return project
   try {
-    const activated = await activateDraft(project, requestActor(req))
+    // the recipe decides what merges: an agent may propose a draft, never activate one
+    const actor = requestActor(req)
+    if (actor.startsWith("agent:")) return err("A person activates a verification recipe draft; an agent can only propose one", 403)
+    const activated = await activateDraft(project, actor, draftTaskExists)
     emit({ type: "project", action: "update", path: project })
     // a PR held on a broken recipe can be reviewed again now
     kickProject(project)
@@ -199,6 +213,8 @@ async function draftRoute(req: Request): Promise<Response> {
   const task = getTask(body.task)
   const record = task ? verifyTaskOf(task.id) : null
   if (!task || task.verify_role !== "recipe" || !record) return err("Only a verification recipe task can save a draft", 403)
+  // and only from that task's own turn: the CLI names the turn's task in a header
+  if (req.headers.get(TASK_HEADER)?.trim() !== task.id) return err("A draft is saved from its recipe task's own turn", 403)
   if (task.archived) return err("This recipe task is archived", 409)
   if (!existsSync(record.project_path)) return err(`The project is gone: ${record.project_path}`, 409)
   const files = filesOf(body.files)

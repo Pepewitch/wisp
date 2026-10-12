@@ -4,7 +4,9 @@
  * A reviewer is an ordinary task in its own worktree at the PR's head, so a
  * person can open it, read what it did, and answer it like any other. What
  * makes it a reviewer is its role, its round, and the token its turns carry:
- * only a turn of that task can submit the round's verdict.
+ * the verdict must show that token. That keeps an author agent from passing
+ * its own work by mistake or as a shortcut; it is no boundary against a
+ * hostile process running as the same user, which can read Wisp's database.
  */
 import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
 import type { TaskBriefV1 } from "../../../shared/task-brief"
@@ -66,7 +68,7 @@ export interface ReviewerStart {
  * round behind.
  */
 export async function startReviewer(start: ReviewerStart, input: {
-  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean
+  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; budget: number
 }): Promise<{ round: RoundRow } | { wait: string }> {
   const { author, pr } = input
   const recipe = activeRecipe(author.repo_path)
@@ -77,7 +79,7 @@ export async function startReviewer(start: ReviewerStart, input: {
   const row = createRound({ taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, round: input.round, counted: input.counted, recipeVersion: version })
   const prompt = reviewerPrompt({
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
-    round: input.round, counted: input.counted, goal: authorGoal(author), repoPath: author.repo_path, changed, previous, authorTaskId: author.id,
+    round: input.round, budget: input.budget, counted: input.counted, goal: authorGoal(author), repoPath: author.repo_path, changed, previous, authorTaskId: author.id,
     recipe: {
       version,
       index: recipe ? readRecipeFile(author.repo_path, RECIPE_INDEX) : null,

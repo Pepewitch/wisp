@@ -3,7 +3,7 @@ import { patchConfig, type RepoConfig, type WispConfig } from "../config";
 import { validateVerifyAgent } from "../config-verify";
 import { activeRecipe, latestDraft, recipeActivatedAt } from "../verify/recipe";
 import { recipeComplaints } from "../verify/rounds";
-import { busyVerifyTask } from "../verify/status";
+import { busyVerifyTask, draftTaskExists } from "../verify/status";
 import { emit, subscribe } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
 import { beginProjectRemoval } from "../project-removals";
@@ -147,7 +147,7 @@ async function verificationSummary(repoPath: string): Promise<{ state: "none" | 
   return {
     state: recipe ? "active" : "none",
     areas: recipe?.areas.length ?? 0,
-    draft: latestDraft(repoPath) !== null,
+    draft: latestDraft(repoPath, draftTaskExists) !== null,
     attention: recipeComplaints(repoPath, activatedAt).length > 0,
     busy: busyVerifyTask(repoPath) !== null,
   };

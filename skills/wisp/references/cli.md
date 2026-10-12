@@ -119,7 +119,7 @@ a head it has not passed. A rejection goes back to the author (with auto-fix) at
 most three rounds per PR. See [Auto-review](../../../docs/AUTO-REVIEW.md).
 
 ```
-wisp review show <task> [--round <n>] [--json]   # rounds for the task's PR; one round in full
+wisp review show <task> [--round <n>] [--pr <n> | --all] [--json]   # the current PR's rounds; one in full
 wisp review submit --stdin                       # a reviewer's verdict (wisp review submit --help)
 wisp verify status [project] [--json]            # the project's recipe, a draft, the recipe task
 wisp verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
@@ -128,8 +128,10 @@ wisp verify show [file] | checkout <dir> | draft save <dir>
 ```
 
 The recipe lives in the Wisp home, never in the repository. `checkout` and
-`draft save` are what a recipe task runs; only a recipe task may save a draft,
-and a person activates it.
+`draft save` are what a recipe task runs; only a recipe task's own turn may
+save a draft, and only a person activates it (an agent's `activate` is refused).
+Resume on a task whose reviewer needs you has a fresh reviewer look at the same
+head again without spending a round.
 
 ## Tasks
 

@@ -105,6 +105,8 @@ export function autopilotSpeaker(status: AutopilotStatus): "auto-merge" | "auto-
 export function autopilotAction(status: AutopilotStatus | null | undefined): "resume" | "continue" | "round" | null {
   if (!status || !autopilotOn(status)) return null
   if (status.state === "paused") return "resume"
+  // a reviewer that gave no verdict, or a rejection to look at again: Resume asks a fresh reviewer
+  if (status.state === "needs-you" && status.by === "auto-review" && status.autoReview) return "resume"
   if (status.state === "held") return "continue"
   return status.autoFix && status.pendingFix ? "round" : null
 }

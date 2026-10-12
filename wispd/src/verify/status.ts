@@ -14,6 +14,9 @@ import { recipeComplaints } from "./rounds"
 
 export type VerifyMode = VerificationTask["mode"]
 
+/** Whether a draft's recipe task still exists: a purged task's draft is no one's proposal. */
+export const draftTaskExists = (taskId: string): boolean => getTask(taskId) !== null
+
 interface VerifyTaskRow {
   task_id: string
   project_path: string
@@ -58,7 +61,7 @@ export async function verificationStatus(repoPath: string, cfg: WispConfig): Pro
     if (complaint.area && names.has(complaint.area) && !byArea.has(complaint.area)) byArea.set(complaint.area, complaint.feedback)
   }
   const loose = complaints.find((complaint) => !complaint.area || !names.has(complaint.area))
-  const draft = latestDraft(repoPath)
+  const draft = latestDraft(repoPath, draftTaskExists)
   const reviewer = repoConfigFor(cfg, repoPath)?.verify
   return {
     state: recipe ? "active" : "none",

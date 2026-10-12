@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import type { AutopilotStatus } from "../../../shared/autopilot"
 import { verificationTitle, verificationTone } from "./auto-review-words"
-import { autopilotArchiveWords, autopilotChoiceLabel, autopilotRail, autopilotSpeaker, autopilotSwitches, reviewRoundsWords } from "./autopilot-words"
+import { autopilotAction, autopilotArchiveWords, autopilotChoiceLabel, autopilotRail, autopilotSpeaker, autopilotSwitches, reviewRoundsWords } from "./autopilot-words"
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, pr: 7, state: "waiting", reason: "Reviewing", about: "pr", by: "auto-merge",
@@ -43,5 +43,14 @@ describe("a project's verification, in one line", () => {
     expect(verificationTitle({ ...quiet, draft: true })).toBe("Verification: draft ready to activate")
     expect(verificationTone({ ...quiet, draft: true, busy: true })).toBe("busy")
     expect(verificationTitle({ ...quiet, draft: true, busy: true, attention: true })).toBe("Verification needs attention")
+  })
+})
+
+describe("the one action auto-review asks for", () => {
+  it("offers Resume when the reviewer needs you: no verdict, or a rejection to look at again", () => {
+    const needsYou = { ...OFF, autoReview: true, state: "needs-you" as const, by: "auto-review" as const }
+    expect(autopilotAction(needsYou)).toBe("resume")
+    // another switch's needs-you has its own fix, not a Resume
+    expect(autopilotAction({ ...needsYou, autoMerge: true, by: "auto-merge" })).toBeNull()
   })
 })

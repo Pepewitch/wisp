@@ -53,7 +53,8 @@ const COMMAND_USAGE = {
                                                     (${COMMAND} workflow --help lists their parameters)`,
   pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | review on|off | resume | send-now | skip | history] [--json]
                                                     auto-merge, auto-fix and auto-review for the task's PR (history: what it did)`,
-  review: `  ${COMMAND} review show <task> [--round <n>] [--json] auto-review rounds for the task's PR, newest first
+  review: `  ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json]
+                                                    auto-review rounds for the task's current PR, newest first
                                                     (--round: one round in full, with findings and evidence)
   ${COMMAND} review submit --stdin                    what a reviewer agent runs to give its verdict (${COMMAND} review submit --help)`,
   verify: `  ${COMMAND} verify status [project] [--json]        the project's verification recipe: areas, draft, recipe task, reviewer

@@ -16,7 +16,7 @@ import { REVIEW_TOKEN_ENV } from "./turn-input"
 
 const COMMAND = wispCommand()
 
-export const REVIEW_USAGE = `usage: ${COMMAND} review show <task> [--round <n>] [--json] | ${COMMAND} review submit --stdin`
+export const REVIEW_USAGE = `usage: ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json] | ${COMMAND} review submit --stdin`
 
 
 const STDIN_LIMIT_BYTES = 64 * 1024
@@ -54,9 +54,13 @@ export function formatRound(round: AutoReviewRound, full: boolean): string {
 async function show(positional: string[], flags: Flags): Promise<void> {
   const task = positional[1] ?? process.env.WISP_TASK_ID
   if (!task) say(REVIEW_USAGE, 2)
-  const { rounds } = await api(`/api/tasks/${encodeURIComponent(task)}/auto-review`) as AutoReviewRoundsResponse
+  const { rounds: every } = await api(`/api/tasks/${encodeURIComponent(task)}/auto-review`) as AutoReviewRoundsResponse
+  // the task's current PR (its newest round's), unless --all asks for every PR it has had
+  const pr = typeof flags.pr === "string" ? Number(flags.pr) : every[0]?.pr
+  const rounds = flags.all === true ? every : every.filter((round) => round.pr === pr)
   const number = typeof flags.round === "string" ? Number(flags.round) : null
   if (number !== null && (!Number.isSafeInteger(number) || number < 1)) say("--round takes a round number, e.g. --round 2", 2)
+  // a round's number repeats when a head is re-run: the newest of that number, its verdict first
   const picked = number === null ? rounds : rounds.filter((round) => round.round === number).slice(0, 1)
   if (flags.json) { printJson(number === null ? rounds : picked[0] ?? null); return }
   if (picked.length === 0) { print(number === null ? "no auto-review rounds for this task" : `no round ${number} for this task`); return }

@@ -33,6 +33,8 @@ export const RECIPE_MAX_FILES = 300
 export const RECIPE_MAX_BYTES = 4 * 1024 * 1024
 export const RECIPE_MAX_FILE_BYTES = 512 * 1024
 const AREA_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
+/** A draft is named for the recipe task that saved it: a task id, and nothing that could climb out of drafts/. */
+const DRAFT_ID = /^[a-z0-9]{1,40}$/
 const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/
 const MAX_DEPTH = 8
 
@@ -73,7 +75,10 @@ export function projectDir(repoPath: string): string {
 
 export const recipeDir = (repoPath: string): string => join(projectDir(repoPath), "verify")
 const draftsDir = (repoPath: string): string => join(projectDir(repoPath), "drafts")
-const draftDir = (repoPath: string, taskId: string): string => join(draftsDir(repoPath), taskId)
+function draftDir(repoPath: string, taskId: string): string {
+  if (!DRAFT_ID.test(taskId)) throw new RecipeError(`not a draft: ${taskId.slice(0, 40)}`, 404)
+  return join(draftsDir(repoPath), taskId)
+}
 
 /**
  * A recipe-relative path that is safe to write and to show: forward slashes,
@@ -170,23 +175,35 @@ function areasOf(files: RecipeFile[]): RecipeArea[] {
   return areas.sort((a, b) => a.name.localeCompare(b.name))
 }
 
-/** Every file under a directory, relative and sorted; `.git` and anything that is not a plain file are left out. */
-function listFiles(root: string, prefix = ""): string[] {
+/**
+ * Every file under a directory, relative and sorted: hidden entries (`.git`)
+ * and anything that is not a plain file or directory are left out, and the
+ * walk stops at a recipe's own limits, so a damaged directory can never make
+ * a read unbounded.
+ */
+function listFiles(root: string, prefix = "", out: string[] = []): string[] {
   const dir = join(root, prefix)
-  if (!existsSync(dir)) return []
-  const out: string[] = []
+  if (!existsSync(dir)) return out
   for (const name of readdirSync(dir).sort()) {
-    if (prefix === "" && name === ".git") continue
+    if (out.length >= RECIPE_MAX_FILES || name.startsWith(".")) continue
     const relative = prefix ? `${prefix}/${name}` : name
     const stat = lstatSync(join(root, relative))
-    if (stat.isDirectory()) out.push(...listFiles(root, relative))
+    if (stat.isDirectory() && relative.split("/").length < MAX_DEPTH) listFiles(root, relative, out)
     else if (stat.isFile()) out.push(relative)
   }
   return out
 }
 
 function readFiles(root: string): RecipeFile[] {
-  return listFiles(root).map((path) => ({ path, content: readFileSync(join(root, path), "utf8") }))
+  const files: RecipeFile[] = []
+  let total = 0
+  for (const path of listFiles(root)) {
+    const size = lstatSync(join(root, path)).size
+    if (size > RECIPE_MAX_FILE_BYTES || total + size > RECIPE_MAX_BYTES) continue
+    total += size
+    files.push({ path, content: readFileSync(join(root, path), "utf8") })
+  }
+  return files
 }
 
 /** The active recipe's files and areas, or null when the project has none yet. */
@@ -199,12 +216,13 @@ export function activeRecipe(repoPath: string): RecipeSnapshot | null {
 
 /** Every file of the active recipe (or of one task's draft), for a checkout. */
 export function recipeFiles(repoPath: string, draftTask?: string): RecipeFile[] {
+  if (draftTask !== undefined && !DRAFT_ID.test(draftTask)) return []
   return readFiles(draftTask ? draftDir(repoPath, draftTask) : recipeDir(repoPath))
 }
 
 /** One file of the active recipe or of a draft, or null when there is no such file. */
 export function readRecipeFile(repoPath: string, path: string, draftTask?: string): string | null {
-  if (recipePathError(path)) return null
+  if (recipePathError(path) || (draftTask !== undefined && !DRAFT_ID.test(draftTask))) return null
   const file = join(draftTask ? draftDir(repoPath, draftTask) : recipeDir(repoPath), path)
   try {
     const stat = lstatSync(file)
@@ -266,15 +284,24 @@ export function saveDraft(repoPath: string, taskId: string, files: RecipeFile[],
   return { taskId, savedAt: now.toISOString(), files: files.map((file) => file.path).sort(), areas: areasOf(files) }
 }
 
-/** The newest saved draft, or null. */
-export function latestDraft(repoPath: string): RecipeDraft | null {
+/**
+ * The newest saved draft, or null. A draft whose recipe task is gone (purged)
+ * is no one's proposal any more: it is thrown away rather than offered.
+ */
+export function latestDraft(repoPath: string, taskExists: (taskId: string) => boolean = () => true): RecipeDraft | null {
   const root = draftsDir(repoPath)
   if (!existsSync(root)) return null
   let newest: RecipeDraft | null = null
   for (const name of readdirSync(root)) {
     if (!name.endsWith(".json")) continue
     const taskId = name.slice(0, -".json".length)
+    if (!DRAFT_ID.test(taskId)) continue
     const dir = draftDir(repoPath, taskId)
+    if (!taskExists(taskId)) {
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(join(root, name), { force: true })
+      continue
+    }
     if (!existsSync(join(dir, RECIPE_INDEX))) continue
     let savedAt: string
     try {
@@ -289,9 +316,30 @@ export function latestDraft(repoPath: string): RecipeDraft | null {
   return newest
 }
 
-/** Throw every draft away (activation took one; the rest are older). */
-function discardDrafts(repoPath: string): void {
-  rmSync(draftsDir(repoPath), { recursive: true, force: true })
+/** When a draft was saved, from its record; "" when the record is unreadable (it sorts oldest). */
+function savedAtOf(record: string): string {
+  try {
+    return (JSON.parse(readFileSync(record, "utf8")) as { savedAt: string }).savedAt ?? ""
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Throw away the activated draft and every draft saved before it. A draft
+ * saved while the activation ran is newer, and stays to be activated next.
+ */
+export function discardDrafts(repoPath: string, activated: Pick<RecipeDraft, "taskId" | "savedAt">): void {
+  const root = draftsDir(repoPath)
+  if (!existsSync(root)) return
+  for (const name of readdirSync(root)) {
+    if (!name.endsWith(".json")) continue
+    const taskId = name.slice(0, -".json".length)
+    if (!DRAFT_ID.test(taskId)) continue
+    if (taskId !== activated.taskId && savedAtOf(join(root, name)) > activated.savedAt) continue
+    rmSync(join(root, taskId), { recursive: true, force: true })
+    rmSync(join(root, name), { force: true })
+  }
 }
 
 const activations = new Map<string, Promise<unknown>>()
@@ -300,10 +348,10 @@ const activations = new Map<string, Promise<unknown>>()
  * Make the newest draft the active recipe: its files replace the old ones in
  * one commit, so every verdict can name the version that judged it.
  */
-export function activateDraft(repoPath: string, by: string): Promise<{ version: string; areas: RecipeArea[]; changed: boolean }> {
+export function activateDraft(repoPath: string, by: string, taskExists?: (taskId: string) => boolean): Promise<{ version: string; areas: RecipeArea[]; changed: boolean }> {
   const key = resolve(repoPath)
   const run = (activations.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
-    const draft = latestDraft(repoPath)
+    const draft = latestDraft(repoPath, taskExists)
     if (!draft) throw new RecipeError("There is no draft to activate", 409)
     const files = readFiles(draftDir(repoPath, draft.taskId))
     const invalid = recipeFilesError(files)
@@ -322,7 +370,7 @@ export function activateDraft(repoPath: string, by: string): Promise<{ version: 
     const hasHead = await git(["rev-parse", "--verify", "-q", "HEAD"], root).then(() => true, () => false)
     const changed = pending !== "" || !hasHead
     if (changed) await git(["commit", "-q", "--allow-empty", "-m", `Activate the draft from task ${draft.taskId}`, "-m", `Activated by ${by}.`], root, true)
-    discardDrafts(repoPath)
+    discardDrafts(repoPath, draft)
     return { version: await git(["rev-parse", "--short=12", "HEAD"], root), areas: areasOf(files), changed }
   })
   activations.set(key, run)
@@ -344,9 +392,11 @@ export function matchAreas(areas: RecipeArea[], files: string[]): { matched: Rec
 
 /** The files a PR head changes against its base: the three-dot diff, as GitHub shows it. */
 export async function changedFiles(repoPath: string, base: string, head: string): Promise<string[]> {
+  // names come from GitHub: a branch may start with "-", which git must never read as an option
+  if (base.startsWith("-") || head.startsWith("-")) return []
   for (const ref of [`origin/${base}`, base]) {
     try {
-      const out = await git(["diff", "--name-only", "-z", `${ref}...${head}`], repoPath)
+      const out = await git(["diff", "--name-only", "-z", "--end-of-options", `${ref}...${head}`], repoPath)
       return out.split("\u0000").filter(Boolean)
     } catch {
       // try the next spelling of the base

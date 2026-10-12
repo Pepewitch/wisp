@@ -164,7 +164,47 @@ describe("auto-review", () => {
     resumeAutopilot(task.id, new Date(clock.now));
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(4);
-    expect(latest(task.id).round).toBe(1);
+    // numbering goes on, and the budget is three more
+    expect(latest(task.id)).toMatchObject({ round: 4, counted: 1 });
+    expect(launched[3]!.firstTurnPrompt).toContain("Round 4 of 6");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 of 6 is running");
+  });
+
+  test("Resume has a rejected head looked at again, without a push and without spending a round", async () => {
+    const { clock, launched, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    verdict(latest(task.id), { verdict: "fail", findings: [{ title: "flaky" }] });
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", by: "auto-review" });
+    resumeAutopilot(task.id, new Date(clock.now));
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(latest(task.id)).toMatchObject({ round: 1, counted: 0, state: "running" });
+  });
+
+  test("a reviewer that cannot start yet does not use up a Resume", async () => {
+    const clock = { now: START + 10 * 60_000 };
+    const { github } = fakeGitHub();
+    const { launched, launch } = launcher();
+    let refuse = false;
+    const gated = async (input: NewTaskInput) => refuse
+      ? { kind: "at-capacity" as const, error: "all task slots are busy" }
+      : launch(input);
+    const task = armed();
+    seed(task.id, clock);
+    const rt = runtime(github, clock, {}, undefined, undefined, { launch: gated });
+    await pass(rt, task.id, clock);
+    verdict(latest(task.id), { verdict: "fail", findings: [{ title: "flaky" }] });
+    await pass(rt, task.id, clock);
+    resumeAutopilot(task.id, new Date(clock.now));
+    refuse = true;
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe("Waiting for a free task slot to start the reviewer");
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBe(true);
+    refuse = false;
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBeUndefined();
   });
 
   test("a recipe the reviewer could not follow holds the PR, spends no round, and is fixed before a re-run", async () => {
@@ -230,13 +270,37 @@ describe("auto-review", () => {
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0 });
   });
 
+  test("a round whose row ended is ended by the sweep, and a finished reviewer is archived once its turn is over", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    // every switch off completes the row at once: no look will touch this round again
+    setAutopilot(task.id, { autoMerge: false, autoReview: false });
+    await rt.tick();
+    expect(getRound(round.id)).toMatchObject({ state: "superseded", summary: "auto-review stopped for this task" });
+    await until(() => getTask(round.reviewer_task_id!)!.archived === 1, "the superseded reviewer to be archived");
+  });
+
+  test("a passing reviewer still mid-turn is archived by a later sweep, after the merge moved on", async () => {
+    const { clock, state, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    verdict(round, { verdict: "pass" });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+    expect(getTask(round.reviewer_task_id!)!.archived).toBe(0);
+    transition(round.reviewer_task_id!, "done");
+    await rt.tick();
+    await until(() => getTask(round.reviewer_task_id!)!.archived === 1, "the finished reviewer to be archived");
+  });
+
   test("switching auto-review off ends a reviewer still at work", async () => {
     const { clock, task, rt } = setup();
     await pass(rt, task.id, clock);
     const round = latest(task.id);
     setAutopilot(task.id, { autoReview: false });
     await pass(rt, task.id, clock);
-    expect(getRound(round.id)).toMatchObject({ state: "superseded", summary: "auto-review was switched off" });
+    expect(getRound(round.id)!.state).toBe("superseded");
   });
 
   test("auto-review alone is done for now once the head passes", async () => {

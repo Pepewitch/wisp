@@ -243,7 +243,8 @@ describe("project settings verification", () => {
     mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verify: null }} />)
     const setup = await screen.findByRole("button", { name: "Set up verification" })
     expect(setup).toBeDisabled()
-    expect(setup).toHaveAttribute("title", expect.stringMatching(/Choose a reviewer agent first/))
+    // a disabled button shows no title: the reason is a line beside it
+    expect(screen.getByText(/Choose a reviewer agent first/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Reviewer agent" }))
     fireEvent.click(await screen.findByRole("menuitemradio", { name: /sonnet-5/ }))
     await waitFor(() => expect(screen.getByRole("button", { name: "Set up verification" })).toBeEnabled())

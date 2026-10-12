@@ -91,6 +91,8 @@ export interface AutopilotCheckpoint {
   backoff?: Backoff
   /** counted auto-review rounds for the bound PR (verify/rounds.ts keeps each round) */
   reviewRounds?: number
+  /** rounds spent before the latest Resume of auto-review's pause: each Resume gives three more, and numbering goes on */
+  reviewBase?: number
   /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
   reviewRetry?: boolean
 }
@@ -277,7 +279,7 @@ function reconfigure(row: WorkflowRow, current: AutopilotParams, next: Autopilot
     checkpoint.fixArmedAt = at
   }
   // switching auto-review on again is a fresh start for its round budget
-  if (!current.autoReview && next.autoReview) delete checkpoint.reviewRounds
+  if (!current.autoReview && next.autoReview) { delete checkpoint.reviewRounds; delete checkpoint.reviewBase }
   // A pause a switch made is not the others' to keep once that switch is off.
   const fixOff = current.autoFix && !next.autoFix
   const lift = row.state === "paused" && ((fixOff && checkpoint.by === "auto-fix") || (current.autoReview && !next.autoReview && checkpoint.by === "auto-review"))
@@ -315,7 +317,11 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   delete checkpoint.done
   // Resume after a pause is a fresh start for auto-fix's and auto-review's
   // round budgets too; Continue after a Stop hold is not.
-  if (row.state === "paused") { delete checkpoint.rounds; delete checkpoint.reviewRounds }
+  if (row.state === "paused") {
+    delete checkpoint.rounds
+    // auto-review's numbering goes on (round 4 of 6), its budget starts afresh
+    checkpoint.reviewBase = checkpoint.reviewRounds ?? 0
+  }
   // a reviewer that gave no verdict is asked again
   checkpoint.reviewRetry = true
   checkpoint.state = "waiting"

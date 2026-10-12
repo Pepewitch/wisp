@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROJECTS_DIR } from "../src/config";
 import {
-  activateDraft, activeRecipe, changedFiles, latestDraft, matchAreas, parseAreaFrontmatter, projectDir, readRecipeFile, recipeDir,
+  activateDraft, activeRecipe, changedFiles, discardDrafts, latestDraft, matchAreas, parseAreaFrontmatter, projectDir, readRecipeFile, recipeDir,
   recipeFiles, recipeFilesError, recipePathError, recipeVersion, saveDraft, type RecipeFile,
 } from "../src/verify/recipe";
 
@@ -90,6 +90,31 @@ describe("drafts and activation", () => {
     expect((await activateDraft(path, "web")).changed).toBe(false);
   });
 
+  test("an activation throws away its draft and older ones, never one saved after it", () => {
+    const path = repo();
+    saveDraft(path, "tolder", recipe(area("web", "apps/web/**")), new Date("2026-10-01T00:00:00Z"));
+    saveDraft(path, "tpicked", recipe(area("web", "apps/web/**")), new Date("2026-10-02T00:00:00Z"));
+    // saved while the activation of tpicked was still committing
+    saveDraft(path, "tlater", recipe(area("api", "apps/api/**")), new Date("2026-10-03T00:00:00Z"));
+    discardDrafts(path, { taskId: "tpicked", savedAt: "2026-10-02T00:00:00.000Z" });
+    expect(latestDraft(path)?.taskId).toBe("tlater");
+    expect(recipeFiles(path, "tolder")).toEqual([]);
+  });
+
+  test("a draft whose recipe task is gone is no one's proposal: it is dropped, not offered", () => {
+    const path = repo();
+    saveDraft(path, "tgone", recipe(area("web", "apps/web/**")));
+    expect(latestDraft(path, () => false)).toBeNull();
+    expect(latestDraft(path)).toBeNull();
+  });
+
+  test("a draft name is a task id: anything else is refused or reads as nothing", () => {
+    const path = repo();
+    expect(() => saveDraft(path, "../escape", recipe())).toThrow("not a draft");
+    expect(recipeFiles(path, "../../..")).toEqual([]);
+    expect(readRecipeFile(path, "RECIPE.md", "..")).toBeNull();
+  });
+
   test("an invalid draft is refused when saved", () => {
     expect(() => saveDraft(repo(), "tbad", [{ path: "notes.md", content: "x" }])).toThrow("RECIPE.md");
   });
@@ -138,5 +163,7 @@ describe("matching a diff to areas", () => {
     git("commit", "-q", "-m", "change");
     const head = git("rev-parse", "HEAD");
     expect(await changedFiles(path, "main", head)).toEqual(["apps/web/page.tsx"]);
+    // a branch name git could read as an option is never passed to it
+    expect(await changedFiles(path, "--output=/tmp/x", head)).toEqual([]);
   });
 });

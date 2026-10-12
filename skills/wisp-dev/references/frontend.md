@@ -614,8 +614,9 @@ and the modal says so once at the top rather than four times.
   **Activate draft** (outline: the modal's one primary stays Save), the recipe
   task at work with Open, the **Reviewer agent** (saved with Save as `verify`),
   and a note with **Set up verification** / **Improve** and a per-area **Fix**.
-  A recipe task needs a named agent, so those buttons stay disabled, with a
-  title saying why, while the reviewer is "Each task's own agent". A started
+  A recipe task needs a named agent, so those buttons stay disabled while the
+  reviewer is "Each task's own agent", and a muted line beside them says why
+  (a disabled button shows no title and takes no focus). A started
   task is selected behind the modal, so unsaved edits survive. The sidebar's
   shield button on a project row opens the modal at this section; it carries a
   dot only when there is something to say (red: a reviewer reported the recipe

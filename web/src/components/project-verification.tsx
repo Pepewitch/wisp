@@ -168,9 +168,8 @@ export function VerificationFields(model: VerificationFieldsModel) {
       <Button
         type="button"
         tone="outline"
-        size={mode === "fix" ? "sm" : "md"}
+        size="lg"
         disabled={blocked !== null || starting !== null}
-        title={blocked ?? undefined}
         aria-label={mode === "fix" && area ? `Fix ${area}` : undefined}
         onClick={() => onStart(mode, area)}
       >
@@ -233,11 +232,11 @@ export function VerificationFields(model: VerificationFieldsModel) {
           />
           <span className="ml-auto flex items-center gap-1.5">
             {onOpenTask && (
-              <Button type="button" size="md" onClick={() => onOpenTask(status.draft!.taskId)}>
+              <Button type="button" size="lg" onClick={() => onOpenTask(status.draft!.taskId)}>
                 Open its task
               </Button>
             )}
-            <Button type="button" tone="outline" size="md" disabled={model.activating} onClick={model.onActivate}>
+            <Button type="button" tone="outline" size="lg" disabled={model.activating} onClick={model.onActivate}>
               {model.activating ? "Activating…" : "Activate draft"}
             </Button>
           </span>
@@ -252,7 +251,7 @@ export function VerificationFields(model: VerificationFieldsModel) {
             after={STATE_LABEL[task.state as TaskState] ?? task.state}
           />
           {onOpenTask && (
-            <Button type="button" size="md" className="ml-auto" onClick={() => onOpenTask(task.id)}>
+            <Button type="button" size="lg" className="ml-auto" onClick={() => onOpenTask(task.id)}>
               Open task
             </Button>
           )}
@@ -284,25 +283,27 @@ export function VerificationFields(model: VerificationFieldsModel) {
 
       <div className="flex flex-wrap items-center gap-2">
         {status.state === "none" ? startButton("setup", "Set up verification") : startButton("improve", "Improve")}
-        {message && (
-          <p
-            role={message.tone === "error" ? "alert" : "status"}
-            className={cn("min-w-0 flex-1 text-[11.5px] leading-relaxed", message.tone === "error" ? "text-destructive" : "text-muted-foreground")}
-          >
-            {message.text}
-            {message.taskId && onOpenTask && (
-              <button
-                type="button"
-                onClick={() => onOpenTask(message.taskId!)}
-                className="ml-1.5 rounded-sm text-fg-secondary underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-              >
-                Open
-              </button>
-            )}
-          </p>
-        )}
+        <ActionNote message={message} blocked={blocked} onOpenTask={onOpenTask} />
       </div>
     </div>
+  )
+}
+
+/** What the section says after an action, or why its buttons are disabled (a disabled button shows no title and takes no focus). */
+function ActionNote({ message, blocked, onOpenTask }: { message: VerificationMessage | null; blocked: string | null; onOpenTask?: (taskId: string) => void }) {
+  if (!message) return blocked ? <p className="min-w-0 flex-1 text-[11.5px] leading-relaxed text-muted-foreground">{blocked}</p> : null
+  return (
+    <p
+      role={message.tone === "error" ? "alert" : "status"}
+      className={cn("min-w-0 flex-1 text-[11.5px] leading-relaxed", message.tone === "error" ? "text-destructive" : "text-muted-foreground")}
+    >
+      {message.text}
+      {message.taskId && onOpenTask && (
+        <Button type="button" size="lg" className="ml-1.5" onClick={() => onOpenTask(message.taskId!)}>
+          Open
+        </Button>
+      )}
+    </p>
   )
 }
 

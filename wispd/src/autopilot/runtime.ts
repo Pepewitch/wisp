@@ -9,7 +9,8 @@
 import type { AutopilotState } from "../../../shared/autopilot"
 import type { AdapterDef } from "../adapters"
 import { repoConfigFor, type WispConfig } from "../config"
-import { subscribe } from "../events"
+import { emit, subscribe } from "../events"
+import { resolve } from "node:path"
 import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
@@ -41,7 +42,7 @@ import {
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 import { busyReason, forgetIdle, forgetPending, lastActivity, nextPrReason, observe } from "./look"
-import { abandonReviews, autoReviewLook } from "./auto-review"
+import { abandonReviews, autoReviewLook, sweepReviews } from "./auto-review"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -135,6 +136,9 @@ export class AutopilotRuntime {
         const round = roundOfReviewer(event.taskId)
         if (round && checkAutopilotSoon(round.task_id, this.now())) kick()
       }
+      // a recipe task's state is its project's verification state ("a recipe task is working")
+      const task = getTask(event.taskId)
+      if (task?.verify_role === "recipe") emit({ type: "project", action: "update", path: resolve(task.repo_path) })
     })
     kick()
   }
@@ -162,6 +166,7 @@ export class AutopilotRuntime {
   }
 
   private async runDue(): Promise<void> {
+    await sweepReviews(this.cfg, this.now())
     const rows = dueAutopilots(this.now())
     let cursor = 0
     this.origins = new Map()
