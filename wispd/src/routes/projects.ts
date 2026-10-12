@@ -1,7 +1,7 @@
 import { basename, isAbsolute, resolve } from "node:path";
 import { patchConfig, type RepoConfig, type WispConfig } from "../config";
 import { validateVerifyAgent } from "../config-verify";
-import { activeRecipe, latestDraft, recipeActivatedAt } from "../verify/recipe";
+import { hasDraft, recipeActivatedAt, recipeSummary } from "../verify/recipe";
 import { recipeComplaints } from "../verify/rounds";
 import { busyVerifyTask, draftTaskExists } from "../verify/status";
 import { emit, subscribe } from "../events";
@@ -142,12 +142,12 @@ function cachedTaskStatus(t: Task, fresh: boolean, now: number): Promise<unknown
 
 /** Enough of a project's verification for the sidebar: the full status is GET /api/projects/verification. */
 async function verificationSummary(repoPath: string): Promise<{ state: "none" | "active"; areas: number; draft: boolean; attention: boolean; busy: boolean }> {
-  const recipe = activeRecipe(repoPath);
-  const activatedAt = recipe ? await recipeActivatedAt(repoPath) : null;
+  const recipe = recipeSummary(repoPath);
+  const activatedAt = recipe.active ? await recipeActivatedAt(repoPath) : null;
   return {
-    state: recipe ? "active" : "none",
-    areas: recipe?.areas.length ?? 0,
-    draft: latestDraft(repoPath, draftTaskExists) !== null,
+    state: recipe.active ? "active" : "none",
+    areas: recipe.areas,
+    draft: hasDraft(repoPath, draftTaskExists),
     attention: recipeComplaints(repoPath, activatedAt).length > 0,
     busy: busyVerifyTask(repoPath) !== null,
   };

@@ -101,6 +101,22 @@ describe("drafts and activation", () => {
     expect(recipeFiles(path, "tolder")).toEqual([]);
   });
 
+  test("a newer save by the very task whose draft was activated survives the discard", () => {
+    const path = repo();
+    saveDraft(path, "tsame", recipe(area("web", "apps/web/**")), new Date("2026-10-01T00:00:00Z"));
+    saveDraft(path, "tsame", recipe(area("api", "apps/api/**")), new Date("2026-10-02T00:00:00Z"));
+    discardDrafts(path, { taskId: "tsame", savedAt: "2026-10-01T00:00:00.000Z" });
+    expect(latestDraft(path)?.areas.map((a) => a.name)).toEqual(["api"]);
+  });
+
+  test("one file is read within the size cap too", async () => {
+    const path = repo();
+    saveDraft(path, "tbig", recipe(area("web", "apps/web/**")));
+    await activateDraft(path, "web");
+    await Bun.write(join(recipeDir(path), "areas/web/huge.md"), "x".repeat(600 * 1024));
+    expect(readRecipeFile(path, "areas/web/huge.md")).toBeNull();
+  });
+
   test("a draft whose recipe task is gone is no one's proposal: it is dropped, not offered", () => {
     const path = repo();
     saveDraft(path, "tgone", recipe(area("web", "apps/web/**")));

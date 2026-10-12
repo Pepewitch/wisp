@@ -40,8 +40,10 @@ switches, and each one opens its reviewer task.
    no longer matters (auto-review switched off, the PR closed, the task
    archived) is stopped and archived the same way.
 
-A push while a reviewer runs makes its round moot: the reviewer is stopped and
-the new head gets a fresh one. A PR from a fork is not supported by autopilot at
+A push while a reviewer runs makes its round moot: the reviewer is stopped at
+once, even while the author is still working, and the new head gets a fresh one.
+A pass belongs to the base it was reviewed against: retarget the PR to another
+base and the same head is reviewed again before anything merges. A PR from a fork is not supported by autopilot at
 all, so it never gets a reviewer.
 
 ## Verdicts
@@ -175,7 +177,9 @@ author's to fix, and it spends no round:
 3. When its draft is saved, the task needs you: "Verification recipe (web) has
    a fixed draft — activate it to review abc1234 again".
 4. Once you activate it, a fresh reviewer checks the same head again, under the
-   same round number.
+   same round number. That holds even when the draft changed nothing (the recipe
+   task found the instructions already right and the problem was passing): your
+   activation is the go-ahead. **Resume** also has the held head reviewed again.
 
 ## With the other switches
 

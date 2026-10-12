@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS auto_review_rounds (
   workflow_id TEXT NOT NULL,
   pr INTEGER NOT NULL,
   head TEXT NOT NULL,
+  base TEXT NOT NULL DEFAULT '',
   round INTEGER NOT NULL,
   counted INTEGER NOT NULL DEFAULT 1,
   reviewer_task_id TEXT,

@@ -17,6 +17,8 @@ export interface RoundRow {
   workflow_id: string
   pr: number
   head: string
+  /** the base branch it was reviewed against: a retarget changes the diff, so a pass holds for this base only */
+  base: string
   round: number
   counted: number
   reviewer_task_id: string | null
@@ -41,12 +43,12 @@ export const MAX_REVIEW_ROUNDS = 3
 export const VERDICT_STATES: readonly AutoReviewRoundState[] = ["pass", "fail", "inconclusive", "recipe"]
 
 export function createRound(input: {
-  taskId: string; workflowId: string; pr: number; head: string; round: number; counted: boolean; recipeVersion: string | null
+  taskId: string; workflowId: string; pr: number; head: string; base: string; round: number; counted: boolean; recipeVersion: string | null
 }, now = new Date()): RoundRow {
   const id = randomId("r", 12)
-  db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, round, counted, token, recipe_version, state, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
-  [id, input.taskId, input.workflowId, input.pr, input.head, input.round, input.counted ? 1 : 0, randomBytes(24).toString("base64url"), input.recipeVersion, now.toISOString()])
+  db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
+  [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, randomBytes(24).toString("base64url"), input.recipeVersion, now.toISOString()])
   return getRound(id)!
 }
 
@@ -58,10 +60,10 @@ export function setRoundReviewer(id: string, reviewerTaskId: string): void {
   db.run("UPDATE auto_review_rounds SET reviewer_task_id = ? WHERE id = ?", [reviewerTaskId, id])
 }
 
-/** The newest round about this very head of this PR. */
-export function latestRound(workflowId: string, pr: number, head: string): RoundRow | null {
-  return db.query(`SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND head = ?
-    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, head) as RoundRow | null
+/** The newest round about this very head of this PR, against this base. */
+export function latestRound(workflowId: string, pr: number, head: string, base: string): RoundRow | null {
+  return db.query(`SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND head = ? AND base = ?
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, head, base) as RoundRow | null
 }
 
 /** Every round of a task, newest first; one PR's when given. */
@@ -75,9 +77,9 @@ export function roundOfReviewer(reviewerTaskId: string): RoundRow | null {
   return db.query("SELECT * FROM auto_review_rounds WHERE reviewer_task_id = ? ORDER BY created_at DESC LIMIT 1").get(reviewerTaskId) as RoundRow | null
 }
 
-/** Rounds still running on a head other than this one: a newer push made them moot. */
-export function staleRunningRounds(workflowId: string, head: string): RoundRow[] {
-  return db.query("SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND state = 'running' AND head != ?").all(workflowId, head) as RoundRow[]
+/** Rounds still running on another head or base than the PR's now: a push or a retarget made them moot. */
+export function staleRunningRounds(workflowId: string, head: string, base: string): RoundRow[] {
+  return db.query("SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND state = 'running' AND (head != ? OR base != ?)").all(workflowId, head, base) as RoundRow[]
 }
 
 /**

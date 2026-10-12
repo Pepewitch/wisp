@@ -26,7 +26,8 @@ import { activeRecipe, AREA_INDEX, changedFiles, fetchPullHead, matchAreas, read
 import {
   createRound, finishRound, getRound, markNudged, roundOfReviewer, roundsOf, roundView, setRoundReviewer, VERDICT_STATES, type RoundRow,
 } from "./rounds"
-import { recordVerifyTask, type VerifyMode } from "./status"
+import { busyVerifyTask, recordVerifyTask, type VerifyMode } from "./status"
+import { resolve } from "node:path"
 
 /** Starts a task the way a person's request would: the same admission, audit and launch. */
 export type Launch = (input: NewTaskInput) => Promise<NewTask | NewTaskRefusal>
@@ -78,7 +79,7 @@ export async function startReviewer(start: ReviewerStart, input: {
   // an unreadable diff matches no areas: the reviewer is told so and reads the diff itself
   const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: [] }
   const previous = roundsOf(author.id, pr.number).filter((round) => VERDICT_STATES.includes(round.state)).map(roundView)
-  const row = createRound({ taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, round: input.round, counted: input.counted, recipeVersion: version })
+  const row = createRound({ taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted, recipeVersion: version })
   const prompt = reviewerPrompt({
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
     round: input.round, budget: input.budget, counted: input.counted, goal: authorGoal(author), repoPath: author.repo_path, changed, previous, authorTaskId: author.id,
@@ -109,10 +110,28 @@ export async function startReviewer(start: ReviewerStart, input: {
 }
 
 /** Start a recipe task: setting up the recipe, improving it, or fixing one area a reviewer could not follow. */
+/** Projects whose recipe task is being created right now: checked and claimed before any await. */
+const recipeAdmissions = new Set<string>()
+
 export async function startRecipeTask(start: ReviewerStart, input: {
   repoPath: string; projectName: string; mode: VerifyMode; area: string | null; note: string | null; complaints: string[]
   agent: { harness: string; model?: string; effort?: string }; roundId: string | null; actor: string
 }): Promise<{ task: Task } | { error: string; status: number }> {
+  // One recipe writer per project, for every caller (the API and autopilot's
+  // fix): the check and the claim happen together, before anything awaits.
+  const project = resolve(input.repoPath)
+  const busy = busyVerifyTask(project)
+  if (busy) return { error: `Task ${busy.id} is already working on this project's verification recipe`, status: 409 }
+  if (recipeAdmissions.has(project)) return { error: "A recipe task for this project is already being started", status: 409 }
+  recipeAdmissions.add(project)
+  try {
+    return await launchRecipeTask(start, input)
+  } finally {
+    recipeAdmissions.delete(project)
+  }
+}
+
+async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof startRecipeTask>[1]): Promise<{ task: Task } | { error: string; status: number }> {
   const promptInput: RecipePromptInput = {
     mode: input.mode, projectName: input.projectName, repoPath: input.repoPath, area: input.area, note: input.note,
     complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null,

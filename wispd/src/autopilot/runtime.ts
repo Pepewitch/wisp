@@ -42,7 +42,7 @@ import {
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 import { busyReason, forgetIdle, forgetPending, lastActivity, nextPrReason, observe } from "./look"
-import { abandonReviews, autoReviewLook, sweepReviews } from "./auto-review"
+import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -225,7 +225,7 @@ export class AutopilotRuntime {
     }
     const task = getTask(row.task_id)
     const params = paramsOf(row)
-    this.endUnwantedReviews(row.task_id, task, params.autoReview, now)
+    endUnwantedReviews(row.task_id, task, params.autoReview, this.cfg, now)
     if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return }
     if (!anySwitch(params)) { changeWorkflowState(row.id, "completed", "Auto-merge off", now); return }
     // A round reserved but never started goes back; the next look plans it
@@ -284,12 +284,6 @@ export class AutopilotRuntime {
     await this.lookAt({ row, task, checkpoint, pr, repository, configured, idle, save, autoFix: params.autoFix, autoMerge: params.autoMerge, autoReview: params.autoReview, signal })
   }
 
-  /** A reviewer at work for a switch that is off, or for a task that is gone, stops. */
-  private endUnwantedReviews(taskId: string, task: Task | null, autoReview: boolean, now: Date): void {
-    if (task && !task.archived && autoReview) return
-    abandonReviews(taskId, task && !task.archived ? "auto-review was switched off" : "the task was archived", this.cfg, now)
-  }
-
   /** Everything after the bound PR has been read: settle it, fix it, or merge it. */
   private async lookAt(ctx: {
     row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; repository: string
@@ -304,6 +298,8 @@ export class AutopilotRuntime {
     if (pr.providerAutoMerge) { this.providerPause(row, checkpoint, pr); return }
     if (pr.queued) { save("queued", "Queued to merge", MOVING_MS, "pr"); return }
     observe(checkpoint, pr, now)
+    // a push or retarget ends an obsolete reviewer at once (none run while auto-review is off)
+    supersedeStaleRounds(row, pr, this.cfg, now)
     if (!ctx.idle) {
       forgetIdle(checkpoint)
       save("waiting", busyReason(task), BUSY_MS)
@@ -355,8 +351,9 @@ export class AutopilotRuntime {
     // this look judged and gated are looked at (and judged) first, not merged over.
     const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(unlessPaused(null))
     if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
-    const reviewed = ctx.autoReview ? `auto-review passed (round ${checkpoint.reviewRounds ?? 1})` : undefined
-    await this.merge(row, checkpoint, pr, repository, { turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null, reviewed) })
+    await this.merge(row, checkpoint, pr, repository, {
+      turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null, ctx.autoReview ? `auto-review passed (round ${checkpoint.reviewRounds ?? 1})` : undefined),
+    })
   }
 
   /**

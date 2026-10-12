@@ -165,6 +165,7 @@ async function recipeTaskRoute(req: Request, cfg: WispConfig, adapters: Record<s
   const invalid = taskBodyError(body)
   if (invalid) return err(invalid, 400)
   const request = body as unknown as VerificationTaskBody
+  // the answer a person expects first; startRecipeTask holds the atomic guarantee for every caller
   const busy = busyVerifyTask(project)
   if (busy) return err(`Task ${busy.id} is already working on this project's verification recipe`, 409)
   const chosen = request.harness ? { harness: request.harness, model: request.model, effort: request.effort } : agentFor(cfg, project)

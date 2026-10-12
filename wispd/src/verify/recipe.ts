@@ -214,6 +214,29 @@ export function activeRecipe(repoPath: string): RecipeSnapshot | null {
   return { files: files.map((file) => file.path), areas: areasOf(files) }
 }
 
+/**
+ * What the project list needs and nothing more: whether there is a recipe,
+ * and how many areas. Reads only the area indexes, never helper contents.
+ */
+export function recipeSummary(repoPath: string): { active: boolean; areas: number } {
+  const root = recipeDir(repoPath)
+  if (!existsSync(join(root, RECIPE_INDEX))) return { active: false, areas: 0 }
+  const areasRoot = join(root, "areas")
+  if (!existsSync(areasRoot)) return { active: true, areas: 0 }
+  const areas = readdirSync(areasRoot).filter((name) => AREA_NAME.test(name) && existsSync(join(areasRoot, name, AREA_INDEX))).length
+  return { active: true, areas }
+}
+
+/** Whether any draft waits, without reading its files. */
+export function hasDraft(repoPath: string, taskExists: (taskId: string) => boolean = () => true): boolean {
+  const root = draftsDir(repoPath)
+  if (!existsSync(root)) return false
+  return readdirSync(root).some((name) => {
+    const taskId = name.endsWith(".json") ? name.slice(0, -".json".length) : ""
+    return DRAFT_ID.test(taskId) && taskExists(taskId) && existsSync(join(root, taskId, RECIPE_INDEX))
+  })
+}
+
 /** Every file of the active recipe (or of one task's draft), for a checkout. */
 export function recipeFiles(repoPath: string, draftTask?: string): RecipeFile[] {
   if (draftTask !== undefined && !DRAFT_ID.test(draftTask)) return []
@@ -226,7 +249,8 @@ export function readRecipeFile(repoPath: string, path: string, draftTask?: strin
   const file = join(draftTask ? draftDir(repoPath, draftTask) : recipeDir(repoPath), path)
   try {
     const stat = lstatSync(file)
-    return stat.isFile() ? readFileSync(file, "utf8") : null
+    // the same bound a bulk read keeps: a recipe changed behind Wisp's back cannot make one read unbounded
+    return stat.isFile() && stat.size <= RECIPE_MAX_FILE_BYTES ? readFileSync(file, "utf8") : null
   } catch {
     return null
   }
@@ -254,8 +278,20 @@ export async function recipeVersion(repoPath: string): Promise<string | null> {
   }
 }
 
-/** When the active recipe was last activated, ISO-8601, or null. */
+const activationRecord = (repoPath: string): string => join(projectDir(repoPath), "activated.json")
+
+/**
+ * When a person last activated a draft, ISO-8601, or null. Kept apart from
+ * the recipe's version: an activation that changed nothing (the recipe task
+ * found the instructions already right) is still the person's go-ahead.
+ */
 export async function recipeActivatedAt(repoPath: string): Promise<string | null> {
+  try {
+    const at = (JSON.parse(readFileSync(activationRecord(repoPath), "utf8")) as { at?: unknown }).at
+    if (typeof at === "string") return at
+  } catch {
+    // no record yet: an activation from before it existed, or none
+  }
   const root = recipeDir(repoPath)
   if (!existsSync(join(root, ".git"))) return null
   try {
@@ -336,7 +372,8 @@ export function discardDrafts(repoPath: string, activated: Pick<RecipeDraft, "ta
     if (!name.endsWith(".json")) continue
     const taskId = name.slice(0, -".json".length)
     if (!DRAFT_ID.test(taskId)) continue
-    if (taskId !== activated.taskId && savedAtOf(join(root, name)) > activated.savedAt) continue
+    // the activated task may have saved again while the activation ran: that newer save stays too
+    if (savedAtOf(join(root, name)) > activated.savedAt) continue
     rmSync(join(root, taskId), { recursive: true, force: true })
     rmSync(join(root, name), { force: true })
   }
@@ -392,7 +429,9 @@ export function activateDraft(repoPath: string, by: string, taskExists?: (taskId
       throw error
     }
     discardDrafts(repoPath, draft)
-    return { version: await git(["rev-parse", "--short=12", "HEAD"], root), areas: areasOf(files), changed }
+    const version = await git(["rev-parse", "--short=12", "HEAD"], root)
+    writeFileSync(activationRecord(repoPath), JSON.stringify({ at: new Date().toISOString(), version, by, changed }), { mode: 0o600 })
+    return { version, areas: areasOf(files), changed }
   })
   activations.set(key, run)
   return run

@@ -22,7 +22,7 @@ import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
 import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
-import { activeRecipe, latestDraft, recipeVersion } from "../verify/recipe"
+import { activeRecipe, latestDraft, recipeActivatedAt, recipeVersion } from "../verify/recipe"
 import { nudgeReviewer, retireReviewer, startRecipeTask, startReviewer, verifyAgent, type ReviewerStart } from "../verify/reviewer"
 import { finishRound, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, unretiredRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, draftTaskExists, verifyTaskOf } from "../verify/status"
@@ -71,6 +71,12 @@ export function abandonReviews(taskId: string, why: string, cfg: ReviewerStart["
   }
 }
 
+/** A reviewer at work for a switch that is off, or for a task that is gone, stops. */
+export function endUnwantedReviews(taskId: string, task: Task | null, autoReview: boolean, cfg: ReviewerStart["cfg"], now: Date): void {
+  if (task && !task.archived && autoReview) return
+  abandonReviews(taskId, task && !task.archived ? "auto-review was switched off" : "the task was archived", cfg, now)
+}
+
 /**
  * Kept true on every autopilot pass, whatever the looks did: a round whose
  * row ended (switched off, PR closed, task archived) ends too, and a finished
@@ -90,18 +96,27 @@ export async function sweepReviews(cfg: ReviewerStart["cfg"], now = new Date()):
 }
 
 /**
+ * A push or a retarget makes any round still running on the old head or base
+ * moot. Called as soon as a look has read the PR, before any early return (a
+ * busy author, an auto-fix round): an obsolete reviewer must not keep a task
+ * slot the author needs to repair the new head.
+ */
+export function supersedeStaleRounds(row: WorkflowRow, pr: PrSnapshot, cfg: ReviewerStart["cfg"], now: Date): void {
+  for (const stale of staleRunningRounds(row.id, pr.head, pr.baseRefName)) {
+    const why = stale.head !== pr.head ? `a newer head (${short(pr.head)}) arrived` : `the PR now targets ${pr.baseRefName}`
+    if (!finishRound(stale.id, { state: "superseded", summary: why }, now)) continue
+    recordWorkflow(row.id, "review", `Round ${stale.round} on ${short(stale.head)} superseded: ${why}`, now.toISOString(), null, { pr: pr.number, sha: stale.head })
+    void retireReviewer({ ...stale, state: "superseded" }, cfg).catch(() => {})
+  }
+}
+
+/**
  * One look. Returns "passed" when the head has an independent reviewer's pass
  * (the merge gate goes on), or null when it acted or explained itself.
  */
 export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null> {
   const { row, checkpoint, pr, now } = look
-  // a push made any round still running on an older head moot
-  for (const stale of staleRunningRounds(row.id, pr.head)) {
-    if (finishRound(stale.id, { state: "superseded", summary: `A newer head (${short(pr.head)}) arrived` }, now)) {
-      recordWorkflow(row.id, "review", `Round ${stale.round} on ${short(stale.head)} superseded by a new head`, now.toISOString(), null, { pr: pr.number, sha: stale.head })
-      retire(look, { ...stale, state: "superseded" })
-    }
-  }
+  supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
   const checks = checksGate({
     pr, requiredNames: look.required, nowMs: now.getTime(),
@@ -110,11 +125,11 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
   if (checks?.kind === "wait") return look.say("waiting", `${checks.reason} before auto-review`, MOVING_MS)
   if (checks?.kind === "needs-you") return look.say("needs-you", checks.reason, WAITING_ON_YOU_MS)
 
-  let round = latestRound(row.id, pr.number, pr.head)
+  let round = latestRound(row.id, pr.number, pr.head, pr.baseRefName)
   // Resume asks again: a reviewer that gave no verdict, or a rejection the
   // person wants looked at once more without a push. The flag stays until a
   // reviewer has actually started (a full slot table must not eat it).
-  const retryable = round !== null && ["error", "fail", "inconclusive"].includes(round.state)
+  const retryable = round !== null && ["error", "fail", "inconclusive", "recipe"].includes(round.state)
   if (!retryable) delete checkpoint.reviewRetry
   if (retryable && checkpoint.reviewRetry === true) return startRound(look, round!.round, false)
   if (!round) {
@@ -301,7 +316,10 @@ function bounceMessage(pr: PrSnapshot, round: RoundRow, file: string, images: nu
 async function recipeHold(look: ReviewLook, round: RoundRow): Promise<null> {
   const { task, row, now } = look
   const version = await recipeVersion(task.repo_path)
-  if (version !== null && version !== round.recipe_version) return startRound(look, round.round, false)
+  const activatedAt = await recipeActivatedAt(task.repo_path)
+  // a new version, or a person's activation since this round ended (even one that changed nothing)
+  const activatedSince = activatedAt !== null && round.finished_at !== null && activatedAt > round.finished_at
+  if ((version !== null && version !== round.recipe_version) || activatedSince) return startRound(look, round.round, false)
   const feedback = round.recipe_feedback ?? round.summary ?? "the recipe failed"
   const area = round.recipe_area ? ` (${round.recipe_area})` : ""
   if (latestDraft(task.repo_path, draftTaskExists)) {
