@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
 import { Check, Copy } from "@/components/icons"
+import { writeClipboardText } from "@/lib/clipboard"
 import { cn } from "@/lib/utils"
 
 export function CopyButton({
@@ -31,7 +32,7 @@ export function CopyButton({
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text)
+      await writeClipboardText(text)
       if (!mounted.current) return
       setCopied(true)
       if (reset.current) clearTimeout(reset.current)

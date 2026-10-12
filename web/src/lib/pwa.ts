@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react"
 
+import { isIOS } from "./platform"
+
 interface InstallPrompt extends Event {
   prompt(): Promise<{ outcome: "accepted" | "dismissed" }>
 }
@@ -30,8 +32,7 @@ export function initPwa(): () => void {
     document.head.append(link)
     links.push(link)
   }
-  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  const ios = isIOS()
   const fallback = (): InstallState => installed() ? "installed" :
     !window.isSecureContext ? "https" : ios ? "ios" : "manual"
   publish(fallback())
