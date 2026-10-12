@@ -2,8 +2,12 @@ import { isIOS } from "./platform"
 
 /** `scheme:` as RFC 3986 spells it: what makes iOS read text as a URL. */
 const SCHEME_PREFIX = /^[A-Za-z][A-Za-z0-9+.-]*:/
-/** Characters a URL can never hold, so text with one is prose, not a link. */
-const NOT_A_BARE_URL = /[\s<>"{}|\\^`]/
+/**
+ * Anything iOS would percent-encode: whitespace, non-ASCII (a Thai `Note:ภาษา`
+ * would paste as `Note:%E0%B8…`), the ASCII a URL never holds, and a `%` that
+ * starts no escape.
+ */
+const NOT_A_BARE_URL = /[^\x21-\x7E]|[<>"{}|\\^`]|%(?![0-9A-Fa-f]{2})/
 const WORD_JOINER = "\u2060"
 
 /**
@@ -29,4 +33,14 @@ export function clipboardSafeText(text: string, ios = isIOS()): string {
 
 export function writeClipboardText(text: string): Promise<void> {
   return navigator.clipboard.writeText(clipboardSafeText(text))
+}
+
+/**
+ * The clipboard minus the joiner `clipboardSafeText` may have added, so
+ * copying `error: …` out of a shell and pasting it back does not hand the
+ * shell an invisible first character.
+ */
+export async function readClipboardText(): Promise<string> {
+  const text = await navigator.clipboard.readText()
+  return text.startsWith(WORD_JOINER) ? text.slice(WORD_JOINER.length) : text
 }

@@ -24,6 +24,21 @@ export default defineConfig([
     },
   },
   {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/lib/clipboard.ts", "src/**/*.test.{ts,tsx}"],
+    rules: {
+      // iOS pastes scheme-led text percent-encoded unless lib/clipboard.ts
+      // prepares it first.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[object.object.name='navigator'][object.property.name='clipboard'][property.name=/^(writeText|write)$/]",
+          message: 'Copy through writeClipboardText in @/lib/clipboard so iOS pastes the text as written.',
+        },
+      ],
+    },
+  },
+  {
     files: ["src/**/*.test.{ts,tsx}"],
     rules: {
       ...testMaintainabilityRules,

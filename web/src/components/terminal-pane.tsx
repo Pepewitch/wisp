@@ -5,7 +5,7 @@ import { ShellKillDialog, ShellMenu, ShellTab } from "@/components/shell-tab"
 import { LazyShellView } from "@/components/lazy-shell-view"
 import type { ShellHandle } from "@/components/shell-view"
 import { MAX_SHELLS_PER_TASK, useShellTabs } from "@/hooks/useShellTabs"
-import { writeClipboardText } from "@/lib/clipboard"
+import { readClipboardText, writeClipboardText } from "@/lib/clipboard"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { isApplePlatform, shellTitle } from "@/lib/terminal"
 import { bufferText, selectionWithin } from "@/lib/terminal-clipboard"
@@ -166,7 +166,7 @@ export function TerminalSection({
     const terminal = handles.current.get(activeId)?.terminal
     if (!terminal) return
     try {
-      const text = await navigator.clipboard.readText()
+      const text = await readClipboardText()
       if (text) terminal.paste(text)
       terminal.focus()
     } catch {
