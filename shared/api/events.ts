@@ -23,7 +23,8 @@ export type WispEvent =
   | { type: "brief"; taskId: string }
   /** The task's shell tabs changed — opened, closed, renamed, or now running something else. */
   | { type: "terminals"; taskId: string }
-  | { type: "project"; action: "add" | "remove"; path: string }
+  /** a project was added or removed, or its settings or verification recipe changed */
+  | { type: "project"; action: "add" | "remove" | "update"; path: string }
   | { type: "harnesses" }
   | { type: "settings" }
   /** The daemon checked one harness's plan limits after a turn ended; clients re-ask its shared cache. */

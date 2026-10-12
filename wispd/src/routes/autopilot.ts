@@ -1,6 +1,6 @@
 /**
  * GET  /api/tasks/:id/autopilot             the task's auto-merge / auto-fix status and reason
- * PUT  /api/tasks/:id/autopilot             { autoMerge?, autoFix? } — idempotent
+ * PUT  /api/tasks/:id/autopilot             { autoMerge?, autoFix?, autoReview? } — idempotent
  * POST /api/tasks/:id/autopilot/resume      resume a pause, or release a Stop hold
  * POST /api/tasks/:id/autopilot/send-now    send a pending auto-fix round without its delay
  * POST /api/tasks/:id/autopilot/skip        never send the pending round's evidence
@@ -17,8 +17,8 @@ import { err, json, jsonObjectBody } from "./http"
 export const AUTOPILOT_PATH = /^\/api\/tasks\/([a-z0-9]+)\/autopilot(?:\/(resume|send-now|skip|history))?$/
 
 export function autopilotUpdateError(body: Record<string, unknown>): string | null {
-  for (const key of Object.keys(body)) if (key !== "autoMerge" && key !== "autoFix") return `unknown field '${key}'`
-  for (const key of ["autoMerge", "autoFix"] as const) {
+  for (const key of Object.keys(body)) if (key !== "autoMerge" && key !== "autoFix" && key !== "autoReview") return `unknown field '${key}'`
+  for (const key of ["autoMerge", "autoFix", "autoReview"] as const) {
     if (body[key] !== undefined && typeof body[key] !== "boolean") return `${key} must be a boolean, got ${typeName(body[key])}`
   }
   return null

@@ -42,6 +42,7 @@ import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
 import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
 import { BRIEF_PATH, briefRoute } from "./task-brief";
+import { AUTO_REVIEW_PATH, autoReviewRoute, verificationRoute } from "./auto-review";
 import { settingsRoute } from "./settings";
 import { harnessLimitsRoute } from "./harness-limits";
 import {
@@ -140,6 +141,7 @@ function taskFamilyRoute(
 ): Response | Promise<Response> | null {
   if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
   if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
+  if (AUTO_REVIEW_PATH.test(path)) return autoReviewRoute(req, path);
   if (BRIEF_PATH.test(path)) return briefRoute(req, path, cfg, adapters);
   if (TERMINALS_PATH.test(path)) return terminalsRoute(req, url, path, cfg);
   return null;
@@ -168,6 +170,9 @@ export function route(req: Request, url: URL, path: string, ctx: RouteContext): 
 
   const taskResponse = taskRoutes(req, url, path, m, cfg, adapters, probes, skills, compacts, pullRequests, models);
   if (taskResponse !== null) return taskResponse;
+
+  const verificationResponse = verificationRoute(req, url, path, m, cfg, adapters, models);
+  if (verificationResponse !== null) return verificationResponse;
 
   const projectResponse = projectRoutes(req, path, m, cfg);
   if (projectResponse !== null) return projectResponse;

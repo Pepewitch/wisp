@@ -54,6 +54,9 @@ export function harnessesRoute(
       // /send takes `when`, tasks carry `turn_input`, and a queued message
       // can be sent now: the composer's queue toggle and its send-now action.
       steerDelivery: true,
+      // the Auto-review switch, GET /api/tasks/:id/auto-review, and
+      // /api/projects/verification: each project's verification recipe
+      autoReview: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

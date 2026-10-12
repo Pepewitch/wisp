@@ -119,13 +119,17 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   // be silently discarded as "no override" by resolveBase — a base the user
   // asked for and did not get, which is the failure mode being removed.
   if (typeof body.base === "string" && body.base.trim() === "") return err("base must not be empty", 400);
-  if (body.autopilot !== undefined) {
-    if (!isRecord(body.autopilot)) return err(`autopilot must be an object, got ${typeName(body.autopilot)}`, 400);
-    const invalid = autopilotUpdateError(body.autopilot);
-    if (invalid) return err(`autopilot: ${invalid}`, 400);
-    if ((body.autopilot.autoMerge === true || body.autopilot.autoFix === true) && body.mode === "local") {
-      return err("auto-merge and auto-fix need a worktree task — a local task runs on the checkout's own branch", 400);
-    }
+  return autopilotBodyError(body);
+}
+
+function autopilotBodyError(body: CreateTaskBody): Response | null {
+  if (body.autopilot === undefined) return null;
+  if (!isRecord(body.autopilot)) return err(`autopilot must be an object, got ${typeName(body.autopilot)}`, 400);
+  const invalid = autopilotUpdateError(body.autopilot);
+  if (invalid) return err(`autopilot: ${invalid}`, 400);
+  const armed = body.autopilot.autoMerge === true || body.autopilot.autoFix === true || body.autopilot.autoReview === true;
+  if (armed && body.mode === "local") {
+    return err("auto-merge, auto-fix and auto-review need a worktree task — a local task runs on the checkout's own branch", 400);
   }
   return null;
 }

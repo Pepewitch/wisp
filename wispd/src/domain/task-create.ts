@@ -43,7 +43,14 @@ export interface NewTaskInput {
   base?: string;
   /** turn-1 attachments as they arrived, validated here against the harness */
   attachments?: unknown;
-  autopilot?: { autoMerge: boolean; autoFix: boolean };
+  autopilot?: { autoMerge: boolean; autoFix: boolean; autoReview?: boolean };
+  /** a task Wisp starts for verification (verify/); omitted = an ordinary task */
+  verifyRole?: "reviewer" | "recipe";
+  /**
+   * Runs once the row exists and before anything launches: a daemon-started
+   * task records what it belongs to here, so its first turn already sees it.
+   */
+  prepare?: (task: Task) => void;
   /** who asked, for the task audit */
   actor: TaskAuditActor;
 }
@@ -90,8 +97,8 @@ function localTaskRefusal(input: NewTaskInput): NewTaskRefusal | null {
   if (input.base !== undefined) {
     return refuse("invalid", "base applies to worktree tasks only — a local task runs on the checkout's current branch");
   }
-  if (input.autopilot?.autoMerge || input.autopilot?.autoFix) {
-    return refuse("invalid", "auto-merge and auto-fix need a worktree task — a local task runs on the checkout's own branch");
+  if (input.autopilot?.autoMerge || input.autopilot?.autoFix || input.autopilot?.autoReview) {
+    return refuse("invalid", "auto-merge, auto-fix and auto-review need a worktree task — a local task runs on the checkout's own branch");
   }
   const repo = resolve(input.repoPath);
   const live = listTasks(false).find((t) => taskMode(t) === "local" && resolve(t.repo_path) === repo);
@@ -108,9 +115,9 @@ function localTaskRefusal(input: NewTaskInput): NewTaskRefusal | null {
  * create here would strand it in `creating`. The result says what took.
  */
 function armRequestedAutopilot(taskId: string, requested: NewTaskInput["autopilot"], actor: TaskAuditActor): void {
-  if (!requested || (!requested.autoMerge && !requested.autoFix)) return;
+  if (!requested || (!requested.autoMerge && !requested.autoFix && !requested.autoReview)) return;
   try {
-    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge, autoFix: requested.autoFix });
+    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge, autoFix: requested.autoFix, autoReview: requested.autoReview === true });
     const detail = autopilotSwitchDetail(null, armed);
     if (detail) recordAudit(taskId, "autopilot", actor, detail);
   } catch (error) {
@@ -132,6 +139,7 @@ function insertTaskRow(input: NewTaskInput, model: string | null, effort: string
         fast: input.fast,
         mode: input.mode,
         brief: input.brief,
+        verify_role: input.verifyRole ?? null,
         slot: freeSlot(),
       });
     } catch (e) {
@@ -196,6 +204,7 @@ export async function createAndLaunchTask(
     if (!task) return refuse("no-free-id", "could not allocate a unique task id after 5 attempts");
     recordAudit(task.id, "create", input.actor, `${harness}${model ? ` ${model}` : ""}, ${input.mode}`);
     armRequestedAutopilot(task.id, input.autopilot, input.actor);
+    input.prepare?.(task);
     const release = reserveTaskCapacity(task.id, cfg);
     handedOff = true;
     const prompt = input.firstTurnPrompt ?? input.prompt;

@@ -1,0 +1,356 @@
+/**
+ * A project's verification recipe: how to build, launch and drive the app,
+ * and what evidence proves a change works. Auto-review's reviewer reads it;
+ * the author's turns are pointed at it, so both sides work to one bar.
+ *
+ * It lives in the Wisp home, never in the repository: a repo is shared with
+ * people whose workflow it is not Wisp's place to change. Layout, one
+ * directory per project under PROJECTS_DIR:
+ *
+ *   verify/                 the active recipe, a git repository Wisp commits
+ *     RECIPE.md             the project: global checks, verdict rules, notes
+ *     areas/<name>/AREA.md  one runnable surface; frontmatter names the paths
+ *     areas/<name>/…        free-form: features/, helpers/, anything the area needs
+ *   drafts/<task>/          a recipe task's proposal, waiting to be activated
+ *
+ * The shape follows the verification skills in pstack (MIT), with one more
+ * layer on top: a monorepo has several surfaces, and a change usually touches
+ * one, so a reviewer is handed only the areas the diff touched.
+ *
+ * Every change to the active recipe is a draft a person activated: the recipe
+ * decides what merges, so lowering the bar is never an agent's call alone.
+ */
+import { createHash } from "node:crypto"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { basename, join, resolve } from "node:path"
+import { PROJECTS_DIR } from "../config"
+import { runBounded, READ_TIMEOUT_MS, WRITE_TIMEOUT_MS } from "../subprocess"
+
+export const RECIPE_INDEX = "RECIPE.md"
+export const AREA_INDEX = "AREA.md"
+/** What a draft may hold: generous for markdown and helper scripts, small for a home directory. */
+export const RECIPE_MAX_FILES = 300
+export const RECIPE_MAX_BYTES = 4 * 1024 * 1024
+export const RECIPE_MAX_FILE_BYTES = 512 * 1024
+const AREA_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/
+const SEGMENT = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/
+const MAX_DEPTH = 8
+
+export interface RecipeFile {
+  path: string
+  content: string
+}
+
+export interface RecipeArea {
+  name: string
+  /** globs, relative to the repository root, that put a changed file in this area */
+  paths: string[]
+  /** proven: the recipe task drove it once end to end and saw it work */
+  status: "proven" | "unproven"
+}
+
+export interface RecipeSnapshot {
+  files: string[]
+  areas: RecipeArea[]
+}
+
+export interface RecipeDraft extends RecipeSnapshot {
+  taskId: string
+  savedAt: string
+}
+
+export class RecipeError extends Error {
+  constructor(message: string, readonly status = 400) { super(message) }
+}
+
+const slug = (name: string): string => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "project"
+
+/** One directory per project, named so a person can find it and two repos with one name never share it. */
+export function projectDir(repoPath: string): string {
+  const path = resolve(repoPath)
+  return join(PROJECTS_DIR, `${slug(basename(path))}-${createHash("sha256").update(path).digest("hex").slice(0, 10)}`)
+}
+
+export const recipeDir = (repoPath: string): string => join(projectDir(repoPath), "verify")
+const draftsDir = (repoPath: string): string => join(projectDir(repoPath), "drafts")
+const draftDir = (repoPath: string, taskId: string): string => join(draftsDir(repoPath), taskId)
+
+/**
+ * A recipe-relative path that is safe to write and to show: forward slashes,
+ * no `..`, no absolute or hidden segments, not too deep.
+ */
+export function recipePathError(path: string): string | null {
+  if (typeof path !== "string" || path === "") return "a file path is empty"
+  const segments = path.split("/")
+  if (segments.length > MAX_DEPTH) return `${path}: nested more than ${MAX_DEPTH} levels`
+  for (const segment of segments) {
+    if (!SEGMENT.test(segment)) return `${path}: each part must be letters, digits, '.', '_' or '-', and not start with '.'`
+  }
+  return null
+}
+
+/** The frontmatter of an AREA.md: `paths:` (a comma list, or `- glob` lines) and `status:`. */
+export function parseAreaFrontmatter(text: string): { paths: string[]; status: "proven" | "unproven" } | string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  if (lines[0]?.trim() !== "---") return "starts with no frontmatter (a '---' line, then 'paths: …')"
+  const end = lines.indexOf("---", 1)
+  const closing = end > 0 ? end : lines.findIndex((line, index) => index > 0 && line.trim() === "---")
+  if (closing < 0) return "has frontmatter with no closing '---' line"
+  const paths: string[] = []
+  let status: "proven" | "unproven" = "unproven"
+  let listing = false
+  for (const raw of lines.slice(1, closing)) {
+    const line = raw.trimEnd()
+    const item = line.match(/^\s*-\s+(.+)$/)
+    if (listing && item) { paths.push(unquote(item[1]!)); continue }
+    listing = false
+    const pair = line.match(/^([A-Za-z]+):\s*(.*)$/)
+    if (!pair) continue
+    const [, key, value] = pair
+    if (key === "paths") {
+      if (value!.trim() === "") listing = true
+      else paths.push(...value!.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean))
+    } else if (key === "status") {
+      status = unquote(value!) === "proven" ? "proven" : "unproven"
+    }
+  }
+  const globs = paths.map((glob) => glob.trim()).filter(Boolean)
+  if (globs.length === 0) return "names no paths (frontmatter 'paths: apps/web/**' says which changes belong to the area)"
+  const bad = globs.find((glob) => glob.startsWith("/") || glob.split("/").includes(".."))
+  if (bad) return `has a path outside the repository: ${bad}`
+  return { paths: globs, status }
+}
+
+const unquote = (value: string): string => value.trim().replace(/^["']|["']$/g, "").trim()
+
+/** Every problem with a set of files, or null when they make a recipe. */
+export function recipeFilesError(files: RecipeFile[]): string | null {
+  if (!Array.isArray(files) || files.length === 0) return "a recipe needs at least RECIPE.md"
+  if (files.length > RECIPE_MAX_FILES) return `a recipe holds at most ${RECIPE_MAX_FILES} files, got ${files.length}`
+  const seen = new Set<string>()
+  let total = 0
+  for (const file of files) {
+    const invalid = recipePathError(file.path)
+    if (invalid) return invalid
+    if (seen.has(file.path)) return `${file.path} appears twice`
+    seen.add(file.path)
+    if (typeof file.content !== "string") return `${file.path}: content must be text`
+    const bytes = Buffer.byteLength(file.content)
+    if (bytes > RECIPE_MAX_FILE_BYTES) return `${file.path}: larger than ${RECIPE_MAX_FILE_BYTES / 1024} KiB`
+    if (file.content.includes("\u0000")) return `${file.path}: a recipe holds text files only`
+    total += bytes
+  }
+  if (total > RECIPE_MAX_BYTES) return `a recipe holds at most ${RECIPE_MAX_BYTES / 1024 / 1024} MiB of files`
+  if (!seen.has(RECIPE_INDEX)) return `a recipe needs ${RECIPE_INDEX} at its top level`
+  // a path under areas/ must belong to a named area with its index
+  for (const path of seen) {
+    const parts = path.split("/")
+    if (parts[0] !== "areas") continue
+    if (parts.length < 3) return `${path}: files under areas/ go inside an area's directory (areas/<name>/…)`
+    if (!AREA_NAME.test(parts[1]!)) return `areas/${parts[1]}: an area's name is lowercase letters, digits and '-', at most 40`
+    if (!seen.has(`areas/${parts[1]}/${AREA_INDEX}`)) return `areas/${parts[1]} has no ${AREA_INDEX}`
+  }
+  for (const file of files) {
+    const parts = file.path.split("/")
+    if (parts.length !== 3 || parts[0] !== "areas" || parts[2] !== AREA_INDEX) continue
+    const parsed = parseAreaFrontmatter(file.content)
+    if (typeof parsed === "string") return `${file.path} ${parsed}`
+  }
+  return null
+}
+
+function areasOf(files: RecipeFile[]): RecipeArea[] {
+  const areas: RecipeArea[] = []
+  for (const file of files) {
+    const parts = file.path.split("/")
+    if (parts.length !== 3 || parts[0] !== "areas" || parts[2] !== AREA_INDEX) continue
+    const parsed = parseAreaFrontmatter(file.content)
+    if (typeof parsed !== "string") areas.push({ name: parts[1]!, ...parsed })
+  }
+  return areas.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** Every file under a directory, relative and sorted; `.git` and anything that is not a plain file are left out. */
+function listFiles(root: string, prefix = ""): string[] {
+  const dir = join(root, prefix)
+  if (!existsSync(dir)) return []
+  const out: string[] = []
+  for (const name of readdirSync(dir).sort()) {
+    if (prefix === "" && name === ".git") continue
+    const relative = prefix ? `${prefix}/${name}` : name
+    const stat = lstatSync(join(root, relative))
+    if (stat.isDirectory()) out.push(...listFiles(root, relative))
+    else if (stat.isFile()) out.push(relative)
+  }
+  return out
+}
+
+function readFiles(root: string): RecipeFile[] {
+  return listFiles(root).map((path) => ({ path, content: readFileSync(join(root, path), "utf8") }))
+}
+
+/** The active recipe's files and areas, or null when the project has none yet. */
+export function activeRecipe(repoPath: string): RecipeSnapshot | null {
+  const root = recipeDir(repoPath)
+  if (!existsSync(join(root, RECIPE_INDEX))) return null
+  const files = readFiles(root)
+  return { files: files.map((file) => file.path), areas: areasOf(files) }
+}
+
+/** Every file of the active recipe (or of one task's draft), for a checkout. */
+export function recipeFiles(repoPath: string, draftTask?: string): RecipeFile[] {
+  return readFiles(draftTask ? draftDir(repoPath, draftTask) : recipeDir(repoPath))
+}
+
+/** One file of the active recipe or of a draft, or null when there is no such file. */
+export function readRecipeFile(repoPath: string, path: string, draftTask?: string): string | null {
+  if (recipePathError(path)) return null
+  const file = join(draftTask ? draftDir(repoPath, draftTask) : recipeDir(repoPath), path)
+  try {
+    const stat = lstatSync(file)
+    return stat.isFile() ? readFileSync(file, "utf8") : null
+  } catch {
+    return null
+  }
+}
+
+async function git(args: string[], cwd: string, write = false): Promise<string> {
+  const result = await runBounded({
+    // a recipe repository is Wisp's own: no hooks, no signing prompt, no user identity needed
+    cmd: ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Wisp", "-c", "user.email=wisp@localhost", ...args],
+    cwd, env: { GIT_TERMINAL_PROMPT: "0" }, timeoutMs: write ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS, maxBytes: 1024 * 1024,
+  })
+  if (result.timedOut) throw new Error(`git ${args[0]} timed out`)
+  if (result.exitCode !== 0) throw new Error(`git ${args[0]} failed: ${(result.err || result.out).trim().split("\n")[0] ?? ""}`)
+  return result.out.trim()
+}
+
+/** The active recipe's version (its commit), or null when there is none. */
+export async function recipeVersion(repoPath: string): Promise<string | null> {
+  const root = recipeDir(repoPath)
+  if (!existsSync(join(root, ".git")) || !existsSync(join(root, RECIPE_INDEX))) return null
+  try {
+    return await git(["rev-parse", "--short=12", "HEAD"], root)
+  } catch {
+    return null
+  }
+}
+
+/** When the active recipe was last activated, ISO-8601, or null. */
+export async function recipeActivatedAt(repoPath: string): Promise<string | null> {
+  const root = recipeDir(repoPath)
+  if (!existsSync(join(root, ".git"))) return null
+  try {
+    return new Date(await git(["log", "-1", "--format=%cI"], root)).toISOString()
+  } catch {
+    return null
+  }
+}
+
+/** A recipe task's proposal: replaces any earlier draft from the same task. */
+export function saveDraft(repoPath: string, taskId: string, files: RecipeFile[], now = new Date()): RecipeDraft {
+  const invalid = recipeFilesError(files)
+  if (invalid) throw new RecipeError(invalid)
+  const target = draftDir(repoPath, taskId)
+  const staging = `${target}.saving-${process.pid}-${Date.now()}`
+  rmSync(staging, { recursive: true, force: true })
+  mkdirSync(staging, { recursive: true, mode: 0o700 })
+  for (const file of files) {
+    const path = join(staging, file.path)
+    mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 })
+    writeFileSync(path, file.content, { mode: 0o600 })
+  }
+  writeFileSync(join(draftsDir(repoPath), `${taskId}.json`), JSON.stringify({ taskId, savedAt: now.toISOString() }), { mode: 0o600 })
+  rmSync(target, { recursive: true, force: true })
+  renameSync(staging, target)
+  return { taskId, savedAt: now.toISOString(), files: files.map((file) => file.path).sort(), areas: areasOf(files) }
+}
+
+/** The newest saved draft, or null. */
+export function latestDraft(repoPath: string): RecipeDraft | null {
+  const root = draftsDir(repoPath)
+  if (!existsSync(root)) return null
+  let newest: RecipeDraft | null = null
+  for (const name of readdirSync(root)) {
+    if (!name.endsWith(".json")) continue
+    const taskId = name.slice(0, -".json".length)
+    const dir = draftDir(repoPath, taskId)
+    if (!existsSync(join(dir, RECIPE_INDEX))) continue
+    let savedAt: string
+    try {
+      savedAt = (JSON.parse(readFileSync(join(root, name), "utf8")) as { savedAt: string }).savedAt
+    } catch {
+      savedAt = statSync(dir).mtime.toISOString()
+    }
+    if (newest && newest.savedAt >= savedAt) continue
+    const files = readFiles(dir)
+    newest = { taskId, savedAt, files: files.map((file) => file.path), areas: areasOf(files) }
+  }
+  return newest
+}
+
+/** Throw every draft away (activation took one; the rest are older). */
+function discardDrafts(repoPath: string): void {
+  rmSync(draftsDir(repoPath), { recursive: true, force: true })
+}
+
+const activations = new Map<string, Promise<unknown>>()
+
+/**
+ * Make the newest draft the active recipe: its files replace the old ones in
+ * one commit, so every verdict can name the version that judged it.
+ */
+export function activateDraft(repoPath: string, by: string): Promise<{ version: string; areas: RecipeArea[]; changed: boolean }> {
+  const key = resolve(repoPath)
+  const run = (activations.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    const draft = latestDraft(repoPath)
+    if (!draft) throw new RecipeError("There is no draft to activate", 409)
+    const files = readFiles(draftDir(repoPath, draft.taskId))
+    const invalid = recipeFilesError(files)
+    if (invalid) throw new RecipeError(`The draft is not a valid recipe: ${invalid}`, 409)
+    const root = recipeDir(repoPath)
+    mkdirSync(root, { recursive: true, mode: 0o700 })
+    if (!existsSync(join(root, ".git"))) await git(["init", "-q"], root, true)
+    for (const name of readdirSync(root)) if (name !== ".git") rmSync(join(root, name), { recursive: true, force: true })
+    for (const file of files) {
+      const path = join(root, file.path)
+      mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 })
+      writeFileSync(path, file.content, { mode: 0o600 })
+    }
+    await git(["add", "-A"], root, true)
+    const pending = await git(["status", "--porcelain"], root)
+    const hasHead = await git(["rev-parse", "--verify", "-q", "HEAD"], root).then(() => true, () => false)
+    const changed = pending !== "" || !hasHead
+    if (changed) await git(["commit", "-q", "--allow-empty", "-m", `Activate the draft from task ${draft.taskId}`, "-m", `Activated by ${by}.`], root, true)
+    discardDrafts(repoPath)
+    return { version: await git(["rev-parse", "--short=12", "HEAD"], root), areas: areasOf(files), changed }
+  })
+  activations.set(key, run)
+  return run
+}
+
+/** The areas a set of changed files falls in; a file can be in several. */
+export function matchAreas(areas: RecipeArea[], files: string[]): { matched: RecipeArea[]; unmapped: string[] } {
+  const globs = areas.map((area) => ({ area, globs: area.paths.map((path) => new Bun.Glob(path)) }))
+  const matched = new Set<RecipeArea>()
+  const unmapped: string[] = []
+  for (const file of files) {
+    const hits = globs.filter(({ globs: list }) => list.some((glob) => glob.match(file)))
+    for (const hit of hits) matched.add(hit.area)
+    if (hits.length === 0) unmapped.push(file)
+  }
+  return { matched: areas.filter((area) => matched.has(area)), unmapped }
+}
+
+/** The files a PR head changes against its base: the three-dot diff, as GitHub shows it. */
+export async function changedFiles(repoPath: string, base: string, head: string): Promise<string[]> {
+  for (const ref of [`origin/${base}`, base]) {
+    try {
+      const out = await git(["diff", "--name-only", "-z", `${ref}...${head}`], repoPath)
+      return out.split("\u0000").filter(Boolean)
+    } catch {
+      // try the next spelling of the base
+    }
+  }
+  return []
+}

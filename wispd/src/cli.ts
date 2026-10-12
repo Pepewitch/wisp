@@ -13,6 +13,8 @@ import { workflowCommand } from "./cli-workflow";
 import { PR_USAGE, prCommand } from "./cli-pr";
 import { AUDIT_USAGE, auditCommand } from "./cli-audit";
 import { briefCommand } from "./cli-brief";
+import { reviewCommand } from "./cli-review";
+import { verifyCommand } from "./cli-verify";
 import { createCommand } from "./cli-create";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
@@ -530,6 +532,8 @@ export const COMMANDS = {
     }
   },
   brief: (positional, flags) => briefCommand(positional, flags),
+  review: (positional, flags) => reviewCommand(positional, flags),
+  verify: (positional, flags) => verifyCommand(positional, flags),
   fresh: async (positional) => {
     await api(`/api/tasks/${positional[0]}/fresh-session`, "POST", {});
     print("fresh session armed — next turn starts cold");

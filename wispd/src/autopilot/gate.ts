@@ -37,6 +37,8 @@ export interface GateInput {
   reviewersAwaited?: string[]
   /** a bot's newest words are not judged yet */
   judgePending?: boolean
+  /** with auto-review on: whether an independent reviewer passed this very head (undefined: auto-review is off) */
+  autoReviewPassed?: boolean
 }
 
 const short = (sha: string): string => sha.slice(0, 7)
@@ -46,7 +48,8 @@ function names(checks: PrCheck[]): string {
   return checks.length > 2 ? `${listed} and ${checks.length - 2} more` : listed
 }
 
-function checksGate(input: GateInput): GateResult | null {
+/** The checks alone: also what auto-review waits on before it spends a reviewer on a head. */
+export function checksGate(input: Pick<GateInput, "pr" | "requiredNames" | "headFirstSeenMs" | "nowMs">): GateResult | null {
   const { pr, requiredNames } = input
   // A head Wisp has not timed (NaN) is as fresh as it gets.
   const fresh = !(input.nowMs - input.headFirstSeenMs >= FRESH_HEAD_MS)
@@ -231,7 +234,7 @@ export function sameReviewState(a: PrSnapshot, b: PrSnapshot): boolean {
  * approved this very head, and whether the review judge was consulted. Short
  * enough for one history line; the head itself is recorded beside it.
  */
-export function mergeEvidence(pr: PrSnapshot, requiredNames: ReadonlySet<string>, judged: boolean): string {
+export function mergeEvidence(pr: PrSnapshot, requiredNames: ReadonlySet<string>, judged: boolean, reviewed?: string): string {
   const counted = countingChecks(pr.checks, requiredNames)
   const checks = counted.length === 0 ? "no checks" : `${counted.length} ${requiredNames.size > 0 ? "required " : ""}check${counted.length === 1 ? "" : "s"} passed (${names(counted)})`
   const approvers = [...new Set(pr.reviews
@@ -239,7 +242,13 @@ export function mergeEvidence(pr: PrSnapshot, requiredNames: ReadonlySet<string>
     .map((review) => `@${review.author}`))]
   const approvals = approvers.length === 0 ? "no approval of this head"
     : `approved at this head by ${approvers.slice(0, 3).join(", ")}${approvers.length > 3 ? ` and ${approvers.length - 3} more` : ""}`
-  return [checks, approvals, judged ? "review judge: no open findings" : null].filter(Boolean).join(" · ")
+  return [checks, approvals, judged ? "review judge: no open findings" : null, reviewed ?? null].filter(Boolean).join(" · ")
+}
+
+/** With auto-review on, nothing merges until an independent reviewer passed this very head. */
+function autoReviewGate(input: GateInput): GateResult | null {
+  if (input.autoReviewPassed === undefined || input.autoReviewPassed) return null
+  return { kind: "wait", reason: `Waiting for auto-review of ${short(input.pr.head)}` }
 }
 
 export function mergeGate(input: GateInput): GateResult {
@@ -248,6 +257,6 @@ export function mergeGate(input: GateInput): GateResult {
   if (!input.allowedBases.has(pr.baseRefName)) {
     return { kind: "needs-you", reason: `Targets ${pr.baseRefName}; auto-merge only merges into ${pr.defaultBranch}` }
   }
-  return checksGate(input) ?? reviewGate(pr) ?? judgedGate(input) ?? mergeStateGate(input) ??
+  return checksGate(input) ?? reviewGate(pr) ?? judgedGate(input) ?? autoReviewGate(input) ?? mergeStateGate(input) ??
     (input.published.ok ? { kind: "merge" } : { kind: "needs-you", reason: input.published.reason })
 }

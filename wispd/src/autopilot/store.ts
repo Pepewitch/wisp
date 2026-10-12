@@ -17,6 +17,8 @@ import {
 } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 import { nextDelay, type Backoff } from "./cadence"
+import { authorReviewNote } from "../verify/prompts"
+import { activeRecipe } from "../verify/recipe"
 
 export interface AutopilotCheckpoint {
   pr?: number
@@ -87,12 +89,20 @@ export interface AutopilotCheckpoint {
   greenAt?: string
   /** how long the current patient wait has been backing off (cadence.ts) */
   backoff?: Backoff
+  /** counted auto-review rounds for the bound PR (verify/rounds.ts keeps each round) */
+  reviewRounds?: number
+  /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
+  reviewRetry?: boolean
 }
 
 export interface AutopilotParams {
   autoMerge: boolean
   autoFix: boolean
+  autoReview: boolean
 }
+
+/** Any switch on: the row has something to do. */
+export const anySwitch = (params: AutopilotParams): boolean => params.autoMerge || params.autoFix || params.autoReview
 
 const FAR_FUTURE = "9999-12-31T23:59:59.999Z"
 
@@ -107,7 +117,7 @@ export function checkpointOf(row: WorkflowRow): AutopilotCheckpoint {
 
 export function paramsOf(row: WorkflowRow): AutopilotParams {
   const params = JSON.parse(row.params_json) as Record<string, unknown>
-  return { autoMerge: params.autoMerge === true, autoFix: params.autoFix === true }
+  return { autoMerge: params.autoMerge === true, autoFix: params.autoFix === true, autoReview: params.autoReview === true }
 }
 
 /** The task's unfinished autopilot row, if it has one. */
@@ -122,7 +132,7 @@ function latestRow(taskId: string): WorkflowRow | null {
 }
 
 const OFF: AutopilotStatus = {
-  autoMerge: false, autoFix: false, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
+  autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
   lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
 }
 
@@ -153,14 +163,21 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const pendingFix = row.state === "active" && params.autoFix && state !== "held" && checkpoint.pending
     ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt }
     : null
-  // a switch that is off speaks for nothing
-  const by: AutopilotBy = checkpoint.by === "auto-fix" && params.autoFix ? "auto-fix" : params.autoMerge ? "auto-merge" : "auto-fix"
+  const by = speakerOf(checkpoint, params)
   const lastMerged = checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null
   return {
     done: isDone(row, state, checkpoint),
-    autoMerge: params.autoMerge, autoFix: params.autoFix, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, updatedAt: row.updated_at,
+    autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, updatedAt: row.updated_at,
   }
+}
+
+/** Whose words the reason is: a switch that is off speaks for nothing. */
+function speakerOf(checkpoint: AutopilotCheckpoint, params: AutopilotParams): AutopilotBy {
+  if (checkpoint.by === "auto-fix" && params.autoFix) return "auto-fix"
+  if (checkpoint.by === "auto-review" && params.autoReview) return "auto-review"
+  if (params.autoMerge) return "auto-merge"
+  return params.autoFix ? "auto-fix" : "auto-review"
 }
 
 /**
@@ -212,35 +229,21 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
     const task = getTask(taskId)
     if (!task) throw new AutopilotError("Task not found", 404)
     const row = autopilotRow(taskId)
-    const current = row ? paramsOf(row) : { autoMerge: false, autoFix: false }
-    const next: AutopilotParams = { autoMerge: update.autoMerge ?? current.autoMerge, autoFix: update.autoFix ?? current.autoFix }
+    const current = row ? paramsOf(row) : { autoMerge: false, autoFix: false, autoReview: false }
+    const next: AutopilotParams = {
+      autoMerge: update.autoMerge ?? current.autoMerge, autoFix: update.autoFix ?? current.autoFix, autoReview: update.autoReview ?? current.autoReview,
+    }
     const at = now.toISOString()
-    if (!next.autoMerge && !next.autoFix) {
+    if (!anySwitch(next)) {
       if (row) changeWorkflowState(row.id, "completed", "Auto-merge off", now)
       return
     }
     if (task.archived) throw new AutopilotError("An archived task cannot be switched on", 409)
-    if (task.mode === "local") throw new AutopilotError("Auto-merge and auto-fix need a task with its own branch; this one runs in the project checkout", 409)
-    const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on"].filter(Boolean).join(", ")
+    if (task.mode === "local") throw new AutopilotError("Auto-merge, auto-fix and auto-review need a task with its own branch; this one runs in the project checkout", 409)
+    if (task.verify_role) throw new AutopilotError("A reviewer or verification-recipe task cannot switch these on", 409)
+    const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on", next.autoReview && "Auto-review on"].filter(Boolean).join(", ")
     if (row) {
-      if (current.autoMerge === next.autoMerge && current.autoFix === next.autoFix) return
-      // switching auto-fix off withdraws a round that has not started yet
-      if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
-      const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
-      // a changed switch is looked at afresh before anything is called done
-      delete checkpoint.done
-      // switching auto-fix on again is a fresh start for its round budget
-      if (!current.autoFix && next.autoFix) {
-        delete checkpoint.rounds
-        checkpoint.fixArmedAt = at
-      }
-      // A pause auto-fix made is not auto-merge's to keep once auto-fix is off.
-      const lift = row.state === "paused" && current.autoFix && !next.autoFix && checkpoint.by === "auto-fix"
-      if (lift) Object.assign(checkpoint, { state: "waiting", about: "task", by: "auto-merge" })
-      db.run("UPDATE workflows SET params_json = ?, checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
-        [JSON.stringify(next), JSON.stringify(checkpoint), at, at, row.id])
-      recordWorkflow(row.id, "configured", label, at)
-      if (lift) changeWorkflowState(row.id, "active", "Auto-fix off", now)
+      reconfigure(row, current, next, label, now)
       return
     }
     const id = randomId("w", 12)
@@ -259,6 +262,32 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
   return autopilotStatus(taskId)
 }
 
+/** Change the switches of a row that is already on. */
+function reconfigure(row: WorkflowRow, current: AutopilotParams, next: AutopilotParams, label: string, now: Date): void {
+  if (current.autoMerge === next.autoMerge && current.autoFix === next.autoFix && current.autoReview === next.autoReview) return
+  const at = now.toISOString()
+  // switching auto-fix off withdraws a round that has not started yet
+  if (current.autoFix && !next.autoFix) cancelWorkflowMessages(row.id)
+  const checkpoint = checkpointOf(getWorkflow(row.id) ?? row)
+  // a changed switch is looked at afresh before anything is called done
+  delete checkpoint.done
+  // switching auto-fix on again is a fresh start for its round budget
+  if (!current.autoFix && next.autoFix) {
+    delete checkpoint.rounds
+    checkpoint.fixArmedAt = at
+  }
+  // switching auto-review on again is a fresh start for its round budget
+  if (!current.autoReview && next.autoReview) delete checkpoint.reviewRounds
+  // A pause a switch made is not the others' to keep once that switch is off.
+  const fixOff = current.autoFix && !next.autoFix
+  const lift = row.state === "paused" && ((fixOff && checkpoint.by === "auto-fix") || (current.autoReview && !next.autoReview && checkpoint.by === "auto-review"))
+  if (lift) Object.assign(checkpoint, { state: "waiting", about: "task", by: speakerOf({}, next) })
+  db.run("UPDATE workflows SET params_json = ?, checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
+    [JSON.stringify(next), JSON.stringify(checkpoint), at, at, row.id])
+  recordWorkflow(row.id, "configured", label, at)
+  if (lift) changeWorkflowState(row.id, "active", fixOff ? "Auto-fix off" : "Auto-review off", now)
+}
+
 /**
  * Archiving switches auto-merge and auto-fix off. While they still have a PR
  * to act on, archive asks first: the owner may only have meant to tidy up.
@@ -268,10 +297,12 @@ export function autopilotArchiveWarning(taskId: string): string | null {
   // bound to a PR it has not seen merged or closed: with none, there is nothing to stop
   const pr = row ? checkpointOf(row).pr : undefined
   if (!row || !pr) return null
-  const { autoMerge, autoFix } = paramsOf(row)
-  const both = autoMerge && autoFix
-  const on = both ? "Auto-merge and auto-fix are" : autoMerge ? "Auto-merge is" : "Auto-fix is"
-  return `${on} on for PR #${pr} — archiving switches ${both ? "them" : "it"} off. Archive anyway to stop ${both ? "them" : "it"}, or force-archive.`
+  const { autoMerge, autoFix, autoReview } = paramsOf(row)
+  const names = [autoMerge && "auto-merge", autoFix && "auto-fix", autoReview && "auto-review"].filter((name): name is string => Boolean(name))
+  const several = names.length > 1
+  const listed = several ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]!
+  const on = `${listed[0]!.toUpperCase()}${listed.slice(1)} ${several ? "are" : "is"}`
+  return `${on} on for PR #${pr} — archiving switches ${several ? "them" : "it"} off. Archive anyway to stop ${several ? "them" : "it"}, or force-archive.`
 }
 
 /** Resume a paused row, or release a Stop hold early ("Continue now"). */
@@ -282,9 +313,11 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   delete checkpoint.stopHold
   delete checkpoint.mergeFailures
   delete checkpoint.done
-  // Resume after a pause is a fresh start for auto-fix's round budget too;
-  // Continue after a Stop hold is not.
-  if (row.state === "paused") delete checkpoint.rounds
+  // Resume after a pause is a fresh start for auto-fix's and auto-review's
+  // round budgets too; Continue after a Stop hold is not.
+  if (row.state === "paused") { delete checkpoint.rounds; delete checkpoint.reviewRounds }
+  // a reviewer that gave no verdict is asked again
+  checkpoint.reviewRetry = true
   checkpoint.state = "waiting"
   // until the next look, the reason is about the resume, not the PR
   checkpoint.about = "task"
@@ -497,8 +530,8 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     if (paramsOf(row).autoFix) notes.push(signNote(taskId, `PR #${checkpointOf(row).pr}`))
     return { notes, marked: paramsOf(row).autoFix, delivered() {} }
   }
-  if (row && (paramsOf(row).autoMerge || paramsOf(row).autoFix)) {
-    const { autoMerge, autoFix } = paramsOf(row)
+  if (row && anySwitch(paramsOf(row))) {
+    const { autoMerge, autoFix, autoReview } = paramsOf(row)
     const checkpoint = checkpointOf(row)
     const pr = checkpoint.pr
     const which = pr ? `PR #${pr}` : "this task's pull request"
@@ -511,6 +544,10 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
         `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
         `Wisp merges ${which} once its checks pass and its reviews allow it, so you do not need to wait for CI or merge it yourself. Other pull requests are unaffected.`,
       ].join(" "))
+    }
+    if (autoReview) {
+      const task = getTask(taskId)
+      if (task) notes.push(authorReviewNote({ which, hasRecipe: activeRecipe(task.repo_path) !== null }))
     }
     if (autoFix) notes.push(signNote(taskId, which))
     return {
@@ -581,6 +618,12 @@ export function reserveRound(row: WorkflowRow, round: {
   key: string; prompt: string; reason: string; checkpoint: AutopilotCheckpoint
   /** the task's turn count when the look began: a turn since then makes its evidence stale */
   turnCount: number
+  /** which switch sends it: auto-fix's rounds, or auto-review's bounce */
+  by?: AutopilotBy
+  /** a message id chosen beforehand, when files were stored under it first */
+  messageId?: string
+  /** files the message carries (attachments.ts attachmentManifest), and their fingerprint */
+  attachments?: { json: string; hash: string }
 }, now: Date): string | null {
   const messageId = db.transaction(() => {
     const current = getWorkflow(row.id), task = getTask(row.task_id)
@@ -589,8 +632,10 @@ export function reserveRound(row: WorkflowRow, round: {
     // already finished), a queued message, or a Stop since then wins, and the
     // next look plans again.
     if (!taskIsIdle(task) || task.turn_count !== round.turnCount) return null
-    const id = randomId("m", 12)
-    createTaskMessage({ id, taskId: task.id, text: round.prompt, attachmentHash: "", origin: "workflow" }, false)
+    const id = round.messageId ?? randomId("m", 12)
+    createTaskMessage({
+      id, taskId: task.id, text: round.prompt, attachmentHash: round.attachments?.hash ?? "", attachmentsJson: round.attachments?.json, origin: "workflow",
+    }, false)
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
     db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)
       ON CONFLICT(workflow_id, event_key) DO UPDATE SET message_id = excluded.message_id, prior_checkpoint_json = excluded.prior_checkpoint_json`,
@@ -598,7 +643,7 @@ export function reserveRound(row: WorkflowRow, round: {
     const at = now.toISOString()
     db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, wake_count = wake_count + 1, revision = revision + 1,
       last_checked_at = ?, updated_at = ? WHERE id = ?`,
-    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr", by: "auto-fix" }), round.reason, at, at, row.id])
+    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr", by: round.by ?? "auto-fix" }), round.reason, at, at, row.id])
     recordWorkflow(row.id, "wake", round.reason, at, id)
     return id
   })()

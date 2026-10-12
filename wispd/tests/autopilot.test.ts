@@ -1012,9 +1012,9 @@ describe("API and CLI", () => {
       .toBe("auto-merge: done · PR #7 · Merged by Wisp");
     // off names both switches, and a plain switch-off adds nothing
     expect(formatAutopilot(status({ reason: "Auto-merge off" })))
-      .toBe("auto-merge and auto-fix: off");
+      .toBe("auto-merge, auto-fix and auto-review: off");
     expect(formatAutopilot(status({ pr: 7, reason: "Auto-merge off — #7 was closed" })))
-      .toBe("auto-merge and auto-fix: off · PR #7 · Auto-merge off — #7 was closed");
+      .toBe("auto-merge, auto-fix and auto-review: off · PR #7 · Auto-merge off — #7 was closed");
     const calls: unknown[] = [];
     const api = async (...args: unknown[]) => { calls.push(args); return { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", updatedAt: null }; };
     await prCommand(["tabcde", "merge", "on"], { json: true }, api);

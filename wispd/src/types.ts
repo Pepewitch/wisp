@@ -112,6 +112,12 @@ export interface Task {
   input_seq?: number;
   /** Moves whenever a person's input is added, edited, cancelled or changes delivery. */
   input_rev?: number;
+  /**
+   * A task Wisp started for verification (verify/): 'reviewer' (an
+   * auto-review round) or 'recipe' (setting up or fixing a project's
+   * verification recipe). NULL for every ordinary task.
+   */
+  verify_role?: "reviewer" | "recipe" | null;
   created_at: string;
   updated_at: string;
 }

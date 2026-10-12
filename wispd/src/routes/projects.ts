@@ -1,5 +1,9 @@
 import { basename, isAbsolute, resolve } from "node:path";
 import { patchConfig, type RepoConfig, type WispConfig } from "../config";
+import { validateVerifyAgent } from "../config-verify";
+import { activeRecipe, latestDraft, recipeActivatedAt } from "../verify/recipe";
+import { recipeComplaints } from "../verify/rounds";
+import { busyVerifyTask } from "../verify/status";
 import { emit, subscribe } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
 import { beginProjectRemoval } from "../project-removals";
@@ -136,6 +140,19 @@ function cachedTaskStatus(t: Task, fresh: boolean, now: number): Promise<unknown
   return probe.entry;
 }
 
+/** Enough of a project's verification for the sidebar: the full status is GET /api/projects/verification. */
+async function verificationSummary(repoPath: string): Promise<{ state: "none" | "active"; areas: number; draft: boolean; attention: boolean; busy: boolean }> {
+  const recipe = activeRecipe(repoPath);
+  const activatedAt = recipe ? await recipeActivatedAt(repoPath) : null;
+  return {
+    state: recipe ? "active" : "none",
+    areas: recipe?.areas.length ?? 0,
+    draft: latestDraft(repoPath) !== null,
+    attention: recipeComplaints(repoPath, activatedAt).length > 0,
+    busy: busyVerifyTask(repoPath) !== null,
+  };
+}
+
 /** GET /api/repos */
 export function reposRoute(cfg: WispConfig): Promise<Response> {
   return (async () => {
@@ -169,6 +186,8 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
           // "" is the meaningful default, not a missing value: it renders as
           // the placeholder naming what Wisp resolves on its own.
           baseBranch: config?.baseBranch ?? "",
+          verify: config?.verify ?? null,
+          verification: await verificationSummary(resolved),
           configured: config !== undefined || (entry !== undefined && typeof entry === "string"),
         };
       }),
@@ -184,6 +203,8 @@ interface ProjectUpdateBody {
   archiveScript?: unknown;
   copyFiles?: unknown;
   baseBranch?: unknown;
+  /** who reviews and sets up verification: { harness, model?, effort? }; null or a blank harness clears it */
+  verify?: unknown;
 }
 
 function projectUpdateError(body: ProjectUpdateBody): Response | null {
@@ -201,6 +222,14 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
     (!Array.isArray(body.copyFiles) || body.copyFiles.some((value) => typeof value !== "string"))
   ) {
     return err(`copyFiles must be an array of strings, got ${typeName(body.copyFiles)}`, 400);
+  }
+  if (body.verify !== undefined && body.verify !== null) {
+    if (typeof body.verify !== "object" || Array.isArray(body.verify)) return err(`verify must be an object or null, got ${typeName(body.verify)}`, 400);
+    const verify = body.verify as Record<string, unknown>;
+    for (const key of Object.keys(verify)) if (!["harness", "model", "effort"].includes(key)) return err(`verify: unknown field '${key}'`, 400);
+    for (const key of ["harness", "model", "effort"] as const) {
+      if (verify[key] !== undefined && typeof verify[key] !== "string") return err(`verify.${key} must be a string, got ${typeName(verify[key])}`, 400);
+    }
   }
   return null;
 }
@@ -221,7 +250,15 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
   // the settings modal's Reset sends — back to Wisp resolving origin/HEAD.
   const base = (body.baseBranch as string | undefined) ?? existing?.baseBranch;
   if (base !== undefined && base.trim() !== "") merged.baseBranch = base.trim();
+  const verify = mergedVerifyAgent(existing, body);
+  if (verify) merged.verify = verify;
   return Object.keys(merged).length === 1 ? resolved : merged;
+}
+
+/** The verification agent after a save: omitted keeps it, null or a blank harness clears it. */
+function mergedVerifyAgent(existing: RepoConfig | undefined, body: ProjectUpdateBody): RepoConfig["verify"] {
+  if (body.verify === undefined) return existing?.verify;
+  return validateVerifyAgent(body.verify ?? undefined, "verify");
 }
 
 /** POST /api/projects */
@@ -261,6 +298,7 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
         archiveScript: saved?.archiveScript ?? "",
         copyFiles: saved?.copyFiles ?? [],
         baseBranch: saved?.baseBranch ?? "",
+        verify: saved?.verify ?? null,
       },
       before === undefined ? 201 : 200,
     );
