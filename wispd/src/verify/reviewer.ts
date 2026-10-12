@@ -22,7 +22,7 @@ import { createTaskMessage, getTask, randomId } from "../store"
 import { db } from "../store-database"
 import type { Task } from "../types"
 import { authorReviewNote, recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
-import { activeRecipe, AREA_INDEX, changedFiles, matchAreas, readRecipeFile, RECIPE_INDEX, recipeVersion } from "./recipe"
+import { activeRecipe, AREA_INDEX, changedFiles, fetchPullHead, matchAreas, readRecipeFile, RECIPE_INDEX, recipeVersion } from "./recipe"
 import {
   createRound, finishRound, getRound, markNudged, roundOfReviewer, roundsOf, roundView, setRoundReviewer, VERDICT_STATES, type RoundRow,
 } from "./rounds"
@@ -73,8 +73,10 @@ export async function startReviewer(start: ReviewerStart, input: {
   const { author, pr } = input
   const recipe = activeRecipe(author.repo_path)
   const version = recipe ? await recipeVersion(author.repo_path) : null
+  await fetchPullHead(author.repo_path, pr.number)
   const changed = await changedFiles(author.repo_path, pr.baseRefName, pr.head)
-  const { matched, unmapped } = recipe ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: [] }
+  // an unreadable diff matches no areas: the reviewer is told so and reads the diff itself
+  const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: [] }
   const previous = roundsOf(author.id, pr.number).filter((round) => VERDICT_STATES.includes(round.state)).map(roundView)
   const row = createRound({ taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, round: input.round, counted: input.counted, recipeVersion: version })
   const prompt = reviewerPrompt({

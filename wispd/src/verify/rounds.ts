@@ -90,10 +90,16 @@ export function orphanedRounds(): RoundRow[] {
       OR COALESCE(json_extract(w.params_json, '$.autoReview'), 0) != 1)`).all() as RoundRow[]
 }
 
-/** Finished rounds whose reviewer task is still on the books: what the sweep archives. */
+/**
+ * Finished rounds whose reviewer is ready to go: not archived, and settled
+ * (a superseded one goes even mid-turn). A reviewer still busy is left out
+ * here, so a pile of them can never crowd out the ones that are ready.
+ */
 export function unretiredRounds(): RoundRow[] {
   return db.query(`SELECT r.* FROM auto_review_rounds r JOIN tasks t ON t.id = r.reviewer_task_id
-    WHERE r.state != 'running' AND t.archived = 0 ORDER BY r.created_at LIMIT 20`).all() as RoundRow[]
+    WHERE r.state != 'running' AND t.archived = 0
+      AND (r.state = 'superseded' OR t.state NOT IN ('creating', 'running', 'stuck'))
+    ORDER BY r.created_at LIMIT 20`).all() as RoundRow[]
 }
 
 /** Every round still running for a task, whatever the head. */

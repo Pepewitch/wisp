@@ -182,6 +182,17 @@ describe("auto-review", () => {
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0, state: "running" });
   });
 
+  test("Continue after a Stop hold, or a row without auto-review, arms no re-review", () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoMerge: true });
+    resumeAutopilot(task.id);
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBeUndefined();
+    setAutopilot(task.id, { autoReview: true });
+    db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.stopHold', json('{\"turnCount\":1}'), '$.state', 'held') WHERE task_id = ?", [task.id]);
+    resumeAutopilot(task.id);
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBeUndefined();
+  });
+
   test("a reviewer that cannot start yet does not use up a Resume", async () => {
     const clock = { now: START + 10 * 60_000 };
     const { github } = fakeGitHub();

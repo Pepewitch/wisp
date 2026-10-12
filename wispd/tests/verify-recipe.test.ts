@@ -164,6 +164,8 @@ describe("matching a diff to areas", () => {
     const head = git("rev-parse", "HEAD");
     expect(await changedFiles(path, "main", head)).toEqual(["apps/web/page.tsx"]);
     // a branch name git could read as an option is never passed to it
-    expect(await changedFiles(path, "--output=/tmp/x", head)).toEqual([]);
+    expect(await changedFiles(path, "--output=/tmp/x", head)).toBeNull();
+    // a head the repository does not have is "unknown", never "no files changed"
+    expect(await changedFiles(path, "main", "f".repeat(40))).toBeNull();
   });
 });

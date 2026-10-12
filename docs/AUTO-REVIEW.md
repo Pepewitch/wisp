@@ -41,7 +41,8 @@ switches, and each one opens its reviewer task.
    archived) is stopped and archived the same way.
 
 A push while a reviewer runs makes its round moot: the reviewer is stopped and
-the new head gets a fresh one.
+the new head gets a fresh one. A PR from a fork is not supported by autopilot at
+all, so it never gets a reviewer.
 
 ## Verdicts
 
@@ -157,7 +158,9 @@ problem with the recipe.
 **Every change is a draft you activate.** The recipe decides what merges, so
 lowering the bar is never an agent's call alone: an agent can propose a draft,
 and `wisp verify activate` run from an agent's turn is refused. A draft is saved
-only from its own recipe task's turn. Activation replaces the whole
+only from its own recipe task's turn. Like the round token, these checks rest on
+who the CLI says is calling: they stop an agent's mistake or shortcut, not a
+hostile process on the same machine, which already holds the daemon's token. Activation replaces the whole
 recipe with the draft in one commit, and every verdict records the version it
 was judged against.
 

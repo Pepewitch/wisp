@@ -49,7 +49,8 @@ export interface ReviewerPromptInput {
     areas: { area: RecipeArea; text: string; files: string[] }[]
     unmapped: string[]
   }
-  changed: string[]
+  /** null when Wisp could not compute the diff (never the same as a PR that changes nothing) */
+  changed: string[] | null
   previous: AutoReviewRound[]
   authorTaskId: string
 }
@@ -87,7 +88,8 @@ function recipeSection(input: ReviewerPromptInput): string[] {
     const extra = files.filter((file) => file !== `areas/${area.name}/${AREA_INDEX}`)
     if (extra.length > 0) lines.push(`Other files in this area: ${extra.slice(0, 30).join(", ")}${extra.length > 30 ? `, and ${extra.length - 30} more` : ""}`)
   }
-  if (recipe.areas.length === 0) lines.push("", "No area of the recipe covers the files this PR changes.")
+  if (input.changed === null) lines.push("", "Wisp could not compute which files this PR changes, so no area was picked for you: read the diff, then the areas it touches.")
+  else if (recipe.areas.length === 0) lines.push("", "No area of the recipe covers the files this PR changes.")
   if (recipe.unmapped.length > 0) {
     const shown = recipe.unmapped.slice(0, 15)
     lines.push("", `Changed files no area covers: ${shown.join(", ")}${recipe.unmapped.length > shown.length ? `, and ${recipe.unmapped.length - shown.length} more` : ""}. Verify them by your own judgment, and say in recipeFeedback which area should cover them.`)
@@ -98,7 +100,7 @@ function recipeSection(input: ReviewerPromptInput): string[] {
 /** The reviewer's first message: who it is, what to verify, how to judge, and how to answer. */
 export function reviewerPrompt(input: ReviewerPromptInput): string {
   const { pr } = input
-  const changed = input.changed.slice(0, 60)
+  const changed = input.changed?.slice(0, 60) ?? []
   return [
     `You are an independent reviewer for Wisp's auto-review. You did not write this change, and nobody will merge it until you pass it.`,
     "",
@@ -111,7 +113,9 @@ export function reviewerPrompt(input: ReviewerPromptInput): string {
     ...relayed(input.goal.title, 2000),
     ...(input.goal.outcome ? ["What the author's agent last reported, quoted (its own claim, which you are here to check):", ...relayed(input.goal.outcome, 600)] : []),
     "",
-    `Files changed (${input.changed.length}): ${changed.join(", ")}${input.changed.length > changed.length ? ", …" : ""}`,
+    input.changed === null
+      ? "Wisp could not compute the files this PR changes (its head or base was not in the local repository): read the diff below to find them."
+      : `Files changed (${input.changed.length}): ${changed.join(", ")}${input.changed.length > changed.length ? ", …" : ""}`,
     `Read the full diff with: git diff origin/${pr.base}...HEAD`,
     ...(previousRounds(input).length > 0 ? ["", ...previousRounds(input)] : []),
     "",

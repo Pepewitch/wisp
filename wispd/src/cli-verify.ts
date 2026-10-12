@@ -66,7 +66,8 @@ function readDraft(root: string): { path: string; content: string }[] {
   const walk = (prefix: string): void => {
     for (const name of readdirSync(join(root, prefix)).sort()) {
       const relative = prefix ? `${prefix}/${name}` : name
-      if (!prefix && name === ".git") continue
+      // hidden entries (.git, a stray .DS_Store) are no part of a recipe, as the daemon reads it too
+      if (name.startsWith(".")) continue
       const stat = lstatSync(join(root, relative))
       if (stat.isSymbolicLink()) throw new Error(`${relative} is a link; a recipe holds plain files`)
       if (stat.isDirectory()) { walk(relative); continue }

@@ -342,6 +342,20 @@ export function discardDrafts(repoPath: string, activated: Pick<RecipeDraft, "ta
   }
 }
 
+/** Undo a half-written activation: the working tree back to HEAD, or empty when there was no recipe yet. */
+async function restoreActive(root: string, hasHead: boolean): Promise<void> {
+  try {
+    if (hasHead) {
+      await git(["reset", "-q", "--hard", "HEAD"], root, true)
+      await git(["clean", "-fdq"], root, true)
+    } else {
+      for (const name of readdirSync(root)) if (name !== ".git") rmSync(join(root, name), { recursive: true, force: true })
+    }
+  } catch (error) {
+    console.error(`[wisp] verify: could not restore the recipe in ${root} after a failed activation: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 const activations = new Map<string, Promise<unknown>>()
 
 /**
@@ -359,17 +373,24 @@ export function activateDraft(repoPath: string, by: string, taskExists?: (taskId
     const root = recipeDir(repoPath)
     mkdirSync(root, { recursive: true, mode: 0o700 })
     if (!existsSync(join(root, ".git"))) await git(["init", "-q"], root, true)
-    for (const name of readdirSync(root)) if (name !== ".git") rmSync(join(root, name), { recursive: true, force: true })
-    for (const file of files) {
-      const path = join(root, file.path)
-      mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 })
-      writeFileSync(path, file.content, { mode: 0o600 })
-    }
-    await git(["add", "-A"], root, true)
-    const pending = await git(["status", "--porcelain"], root)
     const hasHead = await git(["rev-parse", "--verify", "-q", "HEAD"], root).then(() => true, () => false)
-    const changed = pending !== "" || !hasHead
-    if (changed) await git(["commit", "-q", "--allow-empty", "-m", `Activate the draft from task ${draft.taskId}`, "-m", `Activated by ${by}.`], root, true)
+    let changed: boolean
+    try {
+      for (const name of readdirSync(root)) if (name !== ".git") rmSync(join(root, name), { recursive: true, force: true })
+      for (const file of files) {
+        const path = join(root, file.path)
+        mkdirSync(join(path, ".."), { recursive: true, mode: 0o700 })
+        writeFileSync(path, file.content, { mode: 0o600 })
+      }
+      await git(["add", "-A"], root, true)
+      const pending = await git(["status", "--porcelain"], root)
+      changed = pending !== "" || !hasHead
+      if (changed) await git(["commit", "-q", "--allow-empty", "-m", `Activate the draft from task ${draft.taskId}`, "-m", `Activated by ${by}.`], root, true)
+    } catch (error) {
+      // files and version must never disagree: put the active recipe back as its commit has it
+      await restoreActive(root, hasHead)
+      throw error
+    }
     discardDrafts(repoPath, draft)
     return { version: await git(["rev-parse", "--short=12", "HEAD"], root), areas: areasOf(files), changed }
   })
@@ -390,10 +411,24 @@ export function matchAreas(areas: RecipeArea[], files: string[]): { matched: Rec
   return { matched: areas.filter((area) => matched.has(area)), unmapped }
 }
 
-/** The files a PR head changes against its base: the three-dot diff, as GitHub shows it. */
-export async function changedFiles(repoPath: string, base: string, head: string): Promise<string[]> {
+/**
+ * Bring a PR's head into the local object store: a head made on GitHub (its
+ * "Update branch", an applied suggestion, a co-author's push) is not there
+ * until fetched. Best effort; the diff says when it still cannot be read.
+ */
+export async function fetchPullHead(repoPath: string, pr: number): Promise<void> {
+  if (!Number.isSafeInteger(pr) || pr < 1) return
+  await git(["fetch", "--no-tags", "--quiet", "origin", `+refs/pull/${pr}/head`], repoPath, true).catch(() => {})
+}
+
+/**
+ * The files a PR head changes against its base: the three-dot diff, as
+ * GitHub shows it. Null when git cannot compute it (the head or base is not
+ * in the local store): never mistaken for a PR that changes nothing.
+ */
+export async function changedFiles(repoPath: string, base: string, head: string): Promise<string[] | null> {
   // names come from GitHub: a branch may start with "-", which git must never read as an option
-  if (base.startsWith("-") || head.startsWith("-")) return []
+  if (base.startsWith("-") || head.startsWith("-")) return null
   for (const ref of [`origin/${base}`, base]) {
     try {
       const out = await git(["diff", "--name-only", "-z", "--end-of-options", `${ref}...${head}`], repoPath)
@@ -402,5 +437,5 @@ export async function changedFiles(repoPath: string, base: string, head: string)
       // try the next spelling of the base
     }
   }
-  return []
+  return null
 }

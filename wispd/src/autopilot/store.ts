@@ -322,8 +322,10 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
     // auto-review's numbering goes on (round 4 of 6), its budget starts afresh
     checkpoint.reviewBase = checkpoint.reviewRounds ?? 0
   }
-  // a reviewer that gave no verdict is asked again
-  checkpoint.reviewRetry = true
+  // Resume of auto-review's own pause or needs-you asks a reviewer again;
+  // Continue after a Stop hold, or a row without auto-review, does not
+  if (paramsOf(row).autoReview && (row.state === "paused" || (checkpoint.state === "needs-you" && checkpoint.by === "auto-review"))) checkpoint.reviewRetry = true
+  else delete checkpoint.reviewRetry
   checkpoint.state = "waiting"
   // until the next look, the reason is about the resume, not the PR
   checkpoint.about = "task"
