@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
 
+import type { AutoReviewRoundsResponse, VerificationStatus } from "../../../shared/api/auto-review";
 import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
 import type { BriefView } from "../../../shared/task-brief";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
@@ -545,6 +546,37 @@ export function useAutopilotHistory(taskId: string | null, enabled: boolean) {
     queryFn: async () =>
       (await transport.request<AutopilotHistoryResponse>(`/api/tasks/${taskId}/autopilot/history`)).history,
     enabled: enabled && taskId !== null,
+  });
+}
+
+/**
+ * GET /api/tasks/:id/auto-review — the task's auto-review rounds, newest
+ * first. Nested under the task key and invalidated by the same SSE `workflow`
+ * event as the history; `enabled` carries `features.autoReview`.
+ */
+export function useAutoReviewRounds(taskId: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.task(taskId ?? ""), "auto-review"],
+    queryFn: async () =>
+      (await transport.request<AutoReviewRoundsResponse>(`/api/tasks/${taskId}/auto-review`)).rounds,
+    enabled: enabled && taskId !== null,
+  });
+}
+
+/**
+ * GET /api/projects/verification?path= — where a project's verification
+ * recipe stands. Nested under the repos key, so the `project` events that
+ * refresh the sidebar (a draft saved, a recipe activated, a recipe task
+ * started) refresh it too.
+ */
+export function useProjectVerification(path: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.repos, "verification", path ?? ""],
+    queryFn: () =>
+      transport.request<VerificationStatus>(`/api/projects/verification?path=${encodeURIComponent(path ?? "")}`),
+    enabled: enabled && path !== null,
   });
 }
 

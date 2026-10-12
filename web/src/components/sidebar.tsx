@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react"
 
-import { ChevronDown, FolderAdd, Gear, Plus, Search } from "@/components/icons"
+import { ChevronDown, FolderAdd, Gear, Plus, Search, Verify } from "@/components/icons"
 import { Button, Eyebrow, SwitchTrack } from "@/components/primitives"
 import {
   ProjectSearchInput,
@@ -8,6 +8,7 @@ import {
 } from "@/components/project-search"
 import type { ProjectSearch } from "@/hooks/useProjectSearch"
 import { TaskRow, TaskRowTouch } from "@/components/task-row"
+import { VERIFICATION_DOT, verificationTitle, verificationTone } from "@/lib/auto-review-words"
 import type { ProjectGroup } from "@/lib/projects"
 import type {
   ApiTask,
@@ -39,7 +40,10 @@ interface SidebarProps {
   showArchived: boolean
   onShowArchivedChange: (value: boolean) => void
   onNewTask: (repoPath: string) => void
-  onConfigureProject: (repoPath: string) => void
+  /** open the project's settings, scrolled to `section` when one is named */
+  onConfigureProject: (repoPath: string, section?: "verification") => void
+  /** the daemon advertises `features.autoReview`: each project row carries its verification control */
+  verification?: boolean
   /**
    * Opens Wisp's settings. Only the TOUCH footer offers it: the pointer shell
    * has the top bar's gear, and two gears for one modal is one too many. The
@@ -96,6 +100,7 @@ export function Sidebar({
   onShowArchivedChange,
   onNewTask,
   onConfigureProject,
+  verification = false,
   onOpenSettings,
   search,
   updateControl,
@@ -181,6 +186,7 @@ export function Sidebar({
                 onSelect={onSelect}
                 onNewTask={onNewTask}
                 onConfigureProject={onConfigureProject}
+                verification={verification}
                 touch={touch}
               />
             ))}
@@ -392,6 +398,48 @@ function ArchiveSections({
   })
 }
 
+/**
+ * The project's verification recipe, as one quiet glyph beside the gear. It
+ * hides until hover like the gear while there is nothing to say; a dot (a
+ * draft to activate, a recipe task working, a reviewer reporting the recipe
+ * broken) keeps it on screen. Its title says the state; a click opens the
+ * project's settings at Verification.
+ */
+function VerificationButton({
+  group,
+  summary,
+  touch,
+  onClick,
+}: {
+  group: ProjectGroup
+  summary: NonNullable<ProjectGroup["verification"]>
+  touch: boolean
+  onClick: () => void
+}) {
+  const tone = verificationTone(summary)
+  const title = verificationTitle(summary)
+  return (
+    <Button
+      size={touch ? "lg" : "sm"}
+      icon
+      aria-label={`${title} — ${group.name}`}
+      title={title}
+      data-verification={tone ?? "quiet"}
+      onClick={onClick}
+      // hover cannot reveal anything on a touch screen; a dot is always worth showing
+      className={cn("relative", touch || tone ? "inline-flex" : "hidden group-hover/project:inline-flex")}
+    >
+      <Verify />
+      {tone && (
+        <span
+          aria-hidden
+          className={cn("absolute size-1.5 rounded-full", touch ? "top-1.5 right-1.5" : "top-0.5 right-0.5", VERIFICATION_DOT[tone])}
+        />
+      )}
+    </Button>
+  )
+}
+
 /** One project: a 28px header row over its task list. */
 function ProjectSection({
   group,
@@ -401,6 +449,7 @@ function ProjectSection({
   onSelect,
   onNewTask,
   onConfigureProject,
+  verification = false,
   touch = false,
 }: {
   group: ProjectGroup
@@ -409,7 +458,8 @@ function ProjectSection({
   selectedId: string | null
   onSelect: (id: string) => void
   onNewTask: (repoPath: string) => void
-  onConfigureProject: (repoPath: string) => void
+  onConfigureProject: (repoPath: string, section?: "verification") => void
+  verification?: boolean
   touch?: boolean
 }) {
   const [open, setOpen] = useState(true)
@@ -460,6 +510,14 @@ function ProjectSection({
         >
           {group.tasks.length}
         </span>
+        {verification && group.verification && (
+          <VerificationButton
+            group={group}
+            summary={group.verification}
+            touch={touch}
+            onClick={() => onConfigureProject(group.path, "verification")}
+          />
+        )}
         <Button
           size={touch ? "lg" : "sm"}
           icon

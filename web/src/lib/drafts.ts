@@ -23,7 +23,7 @@ export interface CreateTaskDraft {
   base: string
   suffixPromptId: string | null
   /** only the autopilot switches flipped in this draft; the rest follow the model's defaults */
-  autopilot?: { autoMerge?: boolean; autoFix?: boolean }
+  autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean }
 }
 
 function key(connectionId: string, taskId: string | null): string {

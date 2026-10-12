@@ -1,5 +1,5 @@
 import type { AutopilotStatus } from "../../../shared/autopilot"
-import { autoMergeWords } from "@/lib/autopilot-words"
+import { autoMergeWords, autopilotOn } from "@/lib/autopilot-words"
 import { BranchRequest } from "@/components/icons"
 import {
   PULL_REQUEST_ICON_TONE,
@@ -51,7 +51,7 @@ const MERGE_STATE = {
  * the hover instead.
  */
 function replacesFacts(status: AutopilotStatus | null | undefined, pullRequest: PullRequestInfo): boolean {
-  return Boolean(status?.autoMerge || status?.autoFix) && status!.pr === pullRequest.number &&
+  return autopilotOn(status) && status!.pr === pullRequest.number &&
     (status!.about === "pr" || status!.state === "paused") && !pullRequest.queuedToMerge
 }
 

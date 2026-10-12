@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+import type { AutoReviewRound } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { api } from "@/lib/api"
 import { AUTOPILOT_OFF_WORDS } from "@/lib/autopilot-words"
@@ -70,7 +71,7 @@ function history(): AutopilotHistoryEntry[] {
 
 interface Call { path: string; method: string; body: unknown }
 
-function stub(features: Record<string, boolean>, entries: AutopilotHistoryEntry[] = []): Call[] {
+function stub(features: Record<string, boolean>, entries: AutopilotHistoryEntry[] = [], rounds: AutoReviewRound[] = []): Call[] {
   const calls: Call[] = []
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
@@ -78,6 +79,7 @@ function stub(features: Record<string, boolean>, entries: AutopilotHistoryEntry[
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     const body = path.endsWith("/api/harnesses") ? { harnesses: [{ name: "codex", hasBriefs: true }], features }
       : path.endsWith("/autopilot/history") ? { history: entries }
+      : path.endsWith("/auto-review") ? { rounds }
       : path.endsWith("/pull-request") ? {
         kind: "found", provider: "github",
         pullRequest: { number: 318, url: `${REPO}/pull/318`, title: "Stop duplicate saves", lifecycle: "open", queuedToMerge: false, checks: "pending", review: "none", mergeState: "unknown", updatedAt: "2026-09-30T09:00:00Z" },
@@ -246,6 +248,62 @@ describe("the Autopilot tab", () => {
     mount(<AutopilotPane task={{ ...TASK, mode: "local" }} />)
     expect(await screen.findByRole("switch", { name: "Auto-merge" })).toBeDisabled()
     expect(screen.getByText(/Needs a worktree task/)).toBeInTheDocument()
+  })
+})
+
+const round = (id: string, n: number, state: AutoReviewRound["state"], over: Partial<AutoReviewRound> = {}): AutoReviewRound => ({
+  id, pr: 318, head: `${id}c41e07aa11`, round: n, counted: true, state, summary: null, findings: [], recipeFeedback: null, recipeArea: null,
+  evidence: [], reviewerTaskId: `rev${id}`, recipeVersion: "3", createdAt: new Date(Date.now() - 5 * 60_000).toISOString(), finishedAt: null, ...over,
+})
+
+describe("auto-review in the Autopilot tab", () => {
+  const REVIEW = { ...ALL, autoReview: true }
+
+  it("an older daemon without features.autoReview has no third switch and is never asked for rounds", async () => {
+    const calls = stub(ALL)
+    mount(<AutopilotPane task={withStatus({ ...WAITING, autoReview: true })} />)
+    await screen.findByRole("switch", { name: "Auto-fix" })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(screen.queryByRole("switch", { name: "Auto-review" })).toBeNull()
+    expect(screen.queryByRole("heading", { name: "Reviews" })).toBeNull()
+    expect(asked(calls, "/auto-review")).toBe(false)
+  })
+
+  it("off, it teaches what it does; switching it on PUTs autoReview alone", async () => {
+    const calls = stub(REVIEW)
+    mount(<AutopilotPane task={TASK} />)
+    const review = await screen.findByRole("switch", { name: "Auto-review" })
+    expect(review).toHaveAttribute("aria-checked", "false")
+    expect(review.parentElement).toHaveTextContent(AUTOPILOT_OFF_WORDS["auto-review"])
+    fireEvent.click(review)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoReview: true } }))
+  })
+
+  it("speaking, it carries the live line; the current PR's rounds list under the switches, and Open selects the reviewer", async () => {
+    const reviewing: AutopilotStatus = { ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, reason: "Reviewing 2c41e07 (round 2 of 3)" }
+    stub(REVIEW, [], [
+      round("2", 2, "running"),
+      round("1", 1, "fail", { summary: "The shortcut still saves twice", finishedAt: new Date(Date.now() - 2 * 60_000).toISOString() }),
+      round("0", 1, "pass", { pr: 305 }),
+    ])
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    const review = (await screen.findByRole("switch", { name: "Auto-review" })).parentElement!
+    expect(review.querySelector("[data-tint]")).toHaveTextContent("Reviewing 2c41e07 (round 2 of 3)")
+    // auto-merge is not the speaker now: it says its one quiet fact
+    expect(screen.getByRole("switch", { name: "Auto-merge" }).parentElement).toHaveTextContent("On · merges #318 once it is ready")
+    await screen.findByRole("heading", { name: "Reviews" })
+    const rows = document.querySelectorAll("[data-round]")
+    // only PR #318's rounds, newest first
+    expect([...rows].map((row) => row.getAttribute("data-round"))).toEqual(["running", "fail"])
+    expect(rows[1]).toHaveTextContent("Round 1·1c41e07·Rejected — The shortcut still saves twice")
+    fireEvent.click(within(rows[1] as HTMLElement).getByRole("button", { name: "Open the reviewer task for round 1" }))
+    expect(uiIntentsFor(CONNECTION).taskFocusRequest()).toMatchObject({ taskId: "rev1" })
+  })
+
+  it("not speaking, it says the round it is on", async () => {
+    stub(REVIEW)
+    mount(<AutopilotPane task={withStatus({ ...WAITING, autoReview: true, reviewRounds: 2 })} />)
+    expect((await screen.findByRole("switch", { name: "Auto-review" })).parentElement).toHaveTextContent("On · round 2 of 3")
   })
 })
 

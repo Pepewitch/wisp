@@ -505,6 +505,8 @@ describe("S1 create-modal and project APIs", () => {
         archiveScript: string;
         copyFiles: string[];
         baseBranch: string;
+        verify?: unknown;
+        verification?: unknown;
         configured: boolean;
       }[];
     };
@@ -518,6 +520,8 @@ describe("S1 create-modal and project APIs", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
+      verify: null,
+      verification: { state: "none", areas: 0, draft: false, attention: false, busy: false },
       configured: true,
     });
 

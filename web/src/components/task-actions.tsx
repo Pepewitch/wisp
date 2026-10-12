@@ -1,6 +1,7 @@
 import { TaskRetentionDialog } from "./task-retention-dialog"
 import { useState } from "react"
 
+import type { AutopilotUpdate } from "../../../shared/autopilot"
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { More } from "@/components/icons"
 import { Menu, MenuCheckboxItem, MenuItem, MenuNote, MenuSeparator } from "@/components/menu"
@@ -16,7 +17,8 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
  * The task verbs that are not worth a permanent button: find, rename and
- * archive — and the brief, auto-merge and auto-fix switches, as shortcuts.
+ * archive — and the brief, auto-merge, auto-fix and auto-review switches, as
+ * shortcuts.
  * What those switches are doing (the reason, the round waiting to send, the
  * pause to resume) lives in the Autopilot tab, which has the room for it.
  * Stop/steer lives in the composer; Push stays in the header because it has a
@@ -130,8 +132,8 @@ function BriefItems({ task }: { task: ApiTask }) {
 }
 
 /**
- * Auto-merge and auto-fix: the two switches and the PR they are bound to, as
- * a keyboard and quick-toggle shortcut. The reason they are waiting and the
+ * Auto-merge, auto-fix and (on a daemon that has it) auto-review: the switches
+ * and the PR they are bound to, as a keyboard and quick-toggle shortcut. The reason they are waiting and the
  * one action it asks for (Send now / Skip, Resume, Continue now) are the
  * Autopilot tab's; a menu that repeats a paragraph is why that tab exists.
  */
@@ -142,9 +144,11 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
   const status = task.autopilot
   const merge = status?.autoMerge === true
   const fix = status?.autoFix === true
+  const review = status?.autoReview === true
+  const reviewable = features.data.autoReview === true
   const local = task.mode === "local"
   const busy = local || autopilot.isPending
-  const set = (change: { autoMerge?: boolean; autoFix?: boolean }) => autopilot.mutate({ id: task.id, set: change })
+  const set = (change: AutopilotUpdate) => autopilot.mutate({ id: task.id, set: change })
   return (
     <>
       <MenuSeparator />
@@ -154,6 +158,11 @@ function AutoMergeItems({ task }: { task: ApiTask }) {
       <MenuCheckboxItem checked={fix} disabled={busy} onCheckedChange={(checked) => set({ autoFix: checked })}>
         {fix && !merge && status?.pr ? `Auto-fix #${status.pr}` : "Auto-fix"}
       </MenuCheckboxItem>
+      {reviewable && (
+        <MenuCheckboxItem checked={review} disabled={busy} onCheckedChange={(checked) => set({ autoReview: checked })}>
+          {review && !merge && !fix && status?.pr ? `Auto-review #${status.pr}` : "Auto-review"}
+        </MenuCheckboxItem>
+      )}
       {local && <MenuNote>Needs a worktree task: this one runs in the project checkout.</MenuNote>}
       {autopilot.error && <div className="max-w-[280px]"><MenuNote>{failureReason(autopilot.error)}</MenuNote></div>}
     </>

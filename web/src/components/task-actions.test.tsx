@@ -236,6 +236,25 @@ describe("auto-merge in the overflow menu", () => {
     await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoFix: false } }))
   })
 
+  it("has an auto-review switch only on a daemon that advertises it", async () => {
+    const calls = stubApi((path) =>
+      path.endsWith("/api/harnesses")
+        ? { status: 200, body: { harnesses: [], features: { taskAutopilot: true, autoReview: true } } }
+        : { status: 200, body: armed({ autoReview: true }).autopilot },
+    )
+    const { unmount } = mount(<TaskActions task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    const review = await screen.findByRole("menuitemcheckbox", { name: /Auto-review/ })
+    expect(review).toHaveAttribute("aria-checked", "false")
+    fireEvent.click(review)
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoReview: true } }))
+    unmount()
+    daemon()
+    mount(<TaskActions task={TASK} />)
+    await open()
+    expect(screen.queryByRole("menuitemcheckbox", { name: /Auto-review/ })).toBeNull()
+  })
+
   it("is disabled, and says why, for a task that runs in the project checkout", async () => {
     daemon()
     mount(<TaskActions task={{ ...TASK, mode: "local" }} />)

@@ -478,4 +478,36 @@ describe("auto-merge and auto-fix at creation", () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(screen.queryByRole("button", { name: "Manual PR" })).toBeNull()
   })
+  it("offers auto-review on a daemon that has it, and sends it only when it is on", async () => {
+    const sent = mount({ taskAutopilot: true, autoReview: true })
+    fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Auto-merge" }))
+    expect(await screen.findByRole("button", { name: "Auto-merge" })).toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent).toHaveLength(1))
+    // off: the field is left out, so nothing new reaches the daemon
+    expect(sent[0]!.body).toMatchObject({ autopilot: { autoMerge: true, autoFix: false } })
+    expect((sent[0]!.body as { autopilot: object }).autopilot).not.toHaveProperty("autoReview")
+  })
+
+  it("sends autoReview: true once it is switched on, labelled with the rest", async () => {
+    const sent = mount({ taskAutopilot: true, autoReview: true })
+    fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Auto-review" }))
+    expect(await screen.findByRole("button", { name: "Auto-review" })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Auto-merge" }))
+    expect(await screen.findByRole("button", { name: "Auto-merge + review" })).toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent).toHaveLength(1))
+    expect(sent[0]!.body).toMatchObject({ autopilot: { autoMerge: true, autoFix: false, autoReview: true } })
+  })
+
+  it("has no auto-review switch on a daemon without features.autoReview", async () => {
+    mount({ taskAutopilot: true })
+    fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
+    await screen.findByRole("menuitemcheckbox", { name: "Auto-merge" })
+    expect(screen.queryByRole("menuitemcheckbox", { name: "Auto-review" })).toBeNull()
+  })
 })
