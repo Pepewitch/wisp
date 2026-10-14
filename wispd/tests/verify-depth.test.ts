@@ -45,8 +45,16 @@ describe("review depth", () => {
   });
 
   test("a small change outside every area of a mapped project is not light", () => {
-    expect(tierOf(signalsOf([file("shared/util.ts", 3)], { areas: 1, unmapped: 1 }))).toBe("standard");
-    expect(tierOf(signalsOf([file("shared/util.ts", 3)], { areas: 0, unmapped: 1 }))).toBe("light");
+    expect(tierOf(signalsOf([file("shared/util.ts", 3)], { areas: 1, unmapped: 1, mapped: true }))).toBe("standard");
+    // only outside every area: zero matched areas in a mapped project is still not light
+    expect(tierOf(signalsOf([file("shared/util.ts", 3)], { areas: 0, unmapped: 1, mapped: true }))).toBe("standard");
+    // a project with no areas at all
+    expect(tierOf(signalsOf([file("shared/util.ts", 3)], { areas: 0, unmapped: 0, mapped: false }))).toBe("light");
+  });
+
+  test("a rename is judged by both its names: moving a sensitive file out is still deep", () => {
+    expect(tierOf(signalsOf([{ path: "ordinary.ts", added: 0, removed: 0, from: "auth.ts" }], { areas: 0 }))).toBe("deep");
+    expect(tierOf(signalsOf([{ path: "src/old.ts", added: 0, removed: 0, from: "db/migrations/0001_init.sql" }], { areas: 0 }))).toBe("deep");
   });
 
   test("a tier only goes up within a PR", () => {
@@ -66,7 +74,7 @@ describe("review depth", () => {
     expect(parseNumstat(out)).toEqual([
       { path: "src/a.ts", added: 3, removed: 1 },
       { path: "logo.png", added: null, removed: null },
-      { path: "new/b.ts", added: 2, removed: 0 },
+      { path: "new/b.ts", added: 2, removed: 0, from: "old/b.ts" },
     ]);
   });
 });

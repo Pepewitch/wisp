@@ -16,6 +16,7 @@ import { repoConfigFor, type WispConfig } from "../config"
 import { archiveTaskRows } from "../domain/archive"
 import type { NewTask, NewTaskInput, NewTaskRefusal } from "../domain/task-create"
 import { emit } from "../events"
+import { activeLiveInput } from "../live-input"
 import { parseOutputManifest } from "../outputs"
 import { startNextQueuedMessage } from "../runner"
 import { createTaskMessage, getTask, randomId } from "../store"
@@ -82,6 +83,14 @@ export interface DiffSnapshot {
   unmapped: string[]
 }
 
+/**
+ * The snapshot each round was planned from, so its reviewers' prompts read the
+ * diff its tier was chosen on without fetching again. After a restart a
+ * launch measures afresh.
+ */
+const roundSnapshots = new Map<string, DiffSnapshot>()
+const KEPT_SNAPSHOTS = 32
+
 /** Fetch the PR's head and base, then measure the diff once. */
 export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "number" | "baseRefName" | "head">): Promise<DiffSnapshot> {
   await fetchPullHead(repoPath, pr.number)
@@ -93,7 +102,9 @@ export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "numbe
   const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: changed ?? [] }
   const settings = recipeSettings(repoPath)
   const signals = numstat
-    ? signalsOf(numstat, { areas: matched.length, unmapped: recipe ? unmapped.length : 0, sensitive: settings.sensitive, docs: settings.docs })
+    ? signalsOf(numstat, {
+      areas: matched.length, unmapped: recipe ? unmapped.length : 0, mapped: (recipe?.areas.length ?? 0) > 0, sensitive: settings.sensitive, docs: settings.docs,
+    })
     : null
   return { changed, signals, matched, unmapped: recipe ? unmapped : [] }
 }
@@ -121,6 +132,8 @@ export async function planRound(start: ReviewerStart, input: {
     taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted,
     recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried,
   })
+  roundSnapshots.set(round.id, snapshot)
+  for (const id of roundSnapshots.keys()) if (roundSnapshots.size > KEPT_SNAPSHOTS) roundSnapshots.delete(id)
   return round
 }
 
@@ -141,7 +154,7 @@ export async function launchReview(start: ReviewerStart, input: {
 }): Promise<{ launched: true } | { wait: string } | { error: string }> {
   const { author, pr, round, review } = input
   const recipe = activeRecipe(author.repo_path)
-  const snapshot = await diffSnapshot(author.repo_path, pr)
+  const snapshot = roundSnapshots.get(round.id) ?? await diffSnapshot(author.repo_path, pr)
   const previous = roundsOf(author.id, pr.number).filter((earlier) => earlier.id !== round.id && VERDICT_STATES.includes(earlier.state))
   const rules = [
     reviewRulesSection(recipe ? readRecipeFile(author.repo_path, RECIPE_INDEX) : null),
@@ -364,28 +377,49 @@ export function submitVerdict(reviewerTaskId: string, body: AutoReviewVerdictBod
  * or as the automatic answer to a question (a reviewer never waits on a
  * person). A second time ends the review as an error instead.
  */
-export function nudgeReviewer(review: ReviewRow, adapters: Record<string, AdapterDef>, cfg: WispConfig, asked: boolean): boolean {
+export async function nudgeReviewer(review: ReviewRow, adapters: Record<string, AdapterDef>, cfg: WispConfig, asked: boolean): Promise<boolean> {
   if (!review.reviewer_task_id || review.nudged > 0) return false
+  // claimed before the answer is awaited, so a concurrent pass never nudges twice
+  markReviewNudged(review.id)
+  if (asked && await answerQuestion(review.reviewer_task_id)) return true
+  // no live question channel (or it refused): a message, which the next turn reads
   const id = randomId("m", 12)
   createTaskMessage({ id, taskId: review.reviewer_task_id, text: verdictNudge(asked), attachmentHash: "", origin: "workflow" }, false)
-  markReviewNudged(review.id)
   emit({ type: "message", taskId: review.reviewer_task_id, messageId: id })
   startNextQueuedMessage(review.reviewer_task_id, adapters, cfg, id)
   return true
 }
 
+/** Answer the questionnaire a reviewer's turn is blocked on, in its harness's protocol, so the turn resumes. */
+async function answerQuestion(taskId: string): Promise<boolean> {
+  const live = activeLiveInput(taskId)
+  const pending = live?.answer ? live.question?.() : null
+  if (!live?.answer || !pending) return false
+  try {
+    await live.answer(pending.id, pending.questions.map((question) => ({ index: question.index, answer: verdictNudge(true) })))
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** How long a reviewer that has given its verdict may keep its turn going before it is stopped. */
+export const RETIRE_GRACE_MS = 5 * 60_000
+
 /**
  * A reviewer whose review has ended goes away once its turn is over (at once
- * when it was superseded or ended in error): archived, its transcript still
- * readable under archived tasks, its worktree removed. Force, because a
- * reviewer's worktree holds nothing anyone keeps.
+ * when it was superseded or ended in error, and at most RETIRE_GRACE_MS after
+ * its verdict, so a turn that never ends cannot hold a slot): archived, its
+ * transcript still readable under archived tasks, its worktree removed.
+ * Force, because a reviewer's worktree holds nothing anyone keeps.
  */
-export async function retireReviewer(review: ReviewRow, cfg: WispConfig): Promise<boolean> {
+export async function retireReviewer(review: ReviewRow, cfg: WispConfig, now = new Date()): Promise<boolean> {
   if (review.carried_from) return false
   const task = review.reviewer_task_id ? getTask(review.reviewer_task_id) : null
   if (!task || task.archived) return false
   const busy = ["creating", "running", "stuck"].includes(task.state)
-  if (busy && review.state !== "superseded" && review.state !== "error") return false
+  const lingering = review.finished_at !== null && now.getTime() - Date.parse(review.finished_at) > RETIRE_GRACE_MS
+  if (busy && review.state !== "superseded" && review.state !== "error" && !lingering) return false
   const result = await archiveTaskRows([task], true, cfg, { stopAutopilot: true, actor: "autopilot", reason: `auto-review ${review.role} review ${review.state}` })
   return !("error" in result)
 }

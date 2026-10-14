@@ -99,6 +99,9 @@ describe("the second reviewer and the rubric", () => {
     expect(await (await save({ verifySecond: "off" })).json()).toMatchObject({ verifySecond: "off" });
     expect(await (await save({ verifySecond: null })).json()).toMatchObject({ verifySecond: null });
     expect((await save({ verifySecond: 3 })).status).toBe(400);
+    // a wrong field inside the agent is the caller's mistake too, not a 500
+    expect((await save({ verifySecond: { harness: 7 } })).status).toBe(400);
+    expect((await save({ verifySecond: { harness: "codex", colour: "red" } })).status).toBe(400);
   });
 
   test("the rubric route carries the project's own review rules", async () => {

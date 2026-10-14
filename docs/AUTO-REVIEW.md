@@ -37,12 +37,12 @@ tier, and never to ask anyone how deep to go:
 
 | Tier | When | Panel |
 | --- | --- | --- |
-| light | docs only (`docs/**`, top-level `*.md`, or the recipe's `docs:`), or ≤ 40 changed lines in ≤ 3 files inside one area | A only; A may **escalate** to add B to the same round |
+| light | docs only (`docs/**`, top-level `*.md`, or the recipe's `docs:`), or ≤ 40 changed lines in ≤ 3 files inside one area (anywhere, in a project whose recipe maps no areas) | A only; A may **escalate** to add B to the same round |
 | standard | everything else | A and B |
 | deep | a sensitive path (migrations, auth, security, secrets, CI, Dockerfiles, dependency manifests, infra, agent instructions such as `AGENTS.md` and `SKILL.md`, or the recipe's `sensitive:`), > 600 lines, > 25 files, ≥ 3 areas, or a diff Wisp could not read | A and B |
 
-Lockfile lines are not counted (their manifest is what is sensitive). Within
-one PR a tier only goes up.
+Lockfile lines are not counted (their manifest is what is sensitive). A rename
+is matched by both its old and its new path. Within one PR a tier only goes up.
 
 ## How a round goes
 
@@ -62,8 +62,8 @@ one PR a tier only goes up.
    published with `wisp output add` are attached as evidence. While the round
    is open, neither reviewer can read the other's verdict.
 5. **Wisp settles the round** once every reviewer has ended, and archives each
-   reviewer once its turn ends (its transcript stays readable under archived
-   tasks). A reviewer whose round no longer matters (auto-review switched off,
+   reviewer once its turn ends, or five minutes after its verdict if the turn
+   has not (its transcript stays readable under archived tasks). A reviewer whose round no longer matters (auto-review switched off,
    the PR closed, the task archived) is stopped and archived the same way.
 
 A push while a round runs makes it moot: its reviewers are stopped at once,
@@ -134,7 +134,8 @@ kept.
 
 **A reviewer never waits on a person.** A reviewer that asks a question, or
 ends a turn without a verdict, gets one answer from Wisp: decide, note what you
-assumed, and submit. The second time, or past its tier's time limit (30, 60 or
+assumed, and submit. A question goes back through the harness's own question
+channel where it has one, so the same turn carries on; otherwise as a message. The second time, or past its tier's time limit (30, 60 or
 120 minutes for light, standard and deep), its part ends as an error.
 
 Only a reviewer can submit its own verdict. Each reviewer has a token that only
@@ -269,5 +270,7 @@ autopilot on itself.
 ## History
 
 `wisp pr <task> history` and the Autopilot tab record each round as `review`
-entries (started, the verdict, superseded, no verdict) and a held recipe as
+entries (started, a reviewer gave its verdict, the round's outcome with what
+the reviewers said, superseded, no verdict; a reviewer's words reach history
+only once the round settles) and a held recipe as
 `review-hold`, beside auto-merge's and auto-fix's own entries.

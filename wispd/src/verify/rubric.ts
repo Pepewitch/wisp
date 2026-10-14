@@ -67,12 +67,15 @@ export const TIER_COVERAGE: Record<ReviewTier, string> = {
   deep: "Apply every lens to the changed code, its callers and callees, and how it fails: migration and rollback, concurrency, adversarial input, and what an older client or data sees. Run the relevant tests, and add your own checks where the risk is.",
 }
 
+/** What can block at all: the same for every reviewer, every tier and every reader of the rubric. */
+export const SCOPE_RULES = "Only an issue this diff introduces or makes reachable can block. Style, naming and verbosity never block, nor do requests beyond the PR's goal. A blocker names its lens, a file and line for code, and what goes wrong and how it is reached."
+
 /** The whole rubric for a person or an author agent: every lens, every tier, and the project's own rules. */
 export function rubricText(projectRules: string | null): string {
   return [
     "Wisp's auto-review rubric",
     "",
-    "Only an issue this diff introduces or makes reachable can block. Style, naming and verbosity never block, nor do requests beyond the PR's goal. A blocker names its lens, a file and line for code, and what goes wrong and how it is reached.",
+    SCOPE_RULES,
     "",
     ...[...LENSES, VERIFICATION_LENS].flatMap((entry) => [`${entry.lens}: ${entry.checks}.`, `  blocks: ${entry.blocks}.`, `  notes: ${entry.notes}.`]),
     "",
@@ -91,6 +94,7 @@ export function rubricLines(input: { tier: ReviewTier; verifies: boolean; projec
     "Wisp chose this tier from the diff's size, the paths it touches and the recipe areas it falls in. It is a floor, not a ceiling: go deeper wherever something warrants it. Do not ask anyone how deep to go, or anything else: decide, and say what you assumed as a note.",
     "",
     "Every finding names its lens and its severity. Blocking means it should not merge as it is; a note is worth fixing but does not stop the merge. Mark a finding blocking only when you can say what goes wrong.",
+    SCOPE_RULES,
     ...lenses.map((entry) => `- ${entry.lens}: ${entry.checks}. Blocks: ${entry.blocks}. Notes: ${entry.notes}.`),
     ...(input.projectRules ? ["", "This project's own review rules (from its verification recipe):", input.projectRules] : []),
   ]

@@ -226,17 +226,19 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
   ) {
     return err(`copyFiles must be an array of strings, got ${typeName(body.copyFiles)}`, 400);
   }
-  if (body.verifySecond !== undefined && body.verifySecond !== null && body.verifySecond !== "off" &&
-    (typeof body.verifySecond !== "object" || Array.isArray(body.verifySecond))) {
-    return err(`verifySecond must be an agent object, "off" or null, got ${typeName(body.verifySecond)}`, 400);
-  }
-  if (body.verify !== undefined && body.verify !== null) {
-    if (typeof body.verify !== "object" || Array.isArray(body.verify)) return err(`verify must be an object or null, got ${typeName(body.verify)}`, 400);
-    const verify = body.verify as Record<string, unknown>;
-    for (const key of Object.keys(verify)) if (!["harness", "model", "effort"].includes(key)) return err(`verify: unknown field '${key}'`, 400);
-    for (const key of ["harness", "model", "effort"] as const) {
-      if (verify[key] !== undefined && typeof verify[key] !== "string") return err(`verify.${key} must be a string, got ${typeName(verify[key])}`, 400);
-    }
+  const second = body.verifySecond === "off" ? null : agentFieldError(body.verifySecond, "verifySecond", `an agent object, "off" or null`);
+  const verify = agentFieldError(body.verify, "verify", "an object or null");
+  return second ?? verify;
+}
+
+/** A verification agent in a project save: omitted or null, or an object of string harness, model and effort. */
+function agentFieldError(value: unknown, label: string, expected: string): Response | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return err(`${label} must be ${expected}, got ${typeName(value)}`, 400);
+  const agent = value as Record<string, unknown>;
+  for (const key of Object.keys(agent)) if (!["harness", "model", "effort"].includes(key)) return err(`${label}: unknown field '${key}'`, 400);
+  for (const key of ["harness", "model", "effort"] as const) {
+    if (agent[key] !== undefined && typeof agent[key] !== "string") return err(`${label}.${key} must be a string, got ${typeName(agent[key])}`, 400);
   }
   return null;
 }

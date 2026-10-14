@@ -35,10 +35,6 @@ import { err, json, jsonObjectBody } from "./http"
 
 export const AUTO_REVIEW_PATH = /^\/api\/tasks\/([a-z0-9]+)\/auto-review(?:\/(verdict))?$/
 
-const VERDICT_WORDS: Record<string, string> = {
-  pass: "passed", fail: "rejected", inconclusive: "could not verify", recipe: "could not follow the recipe",
-}
-
 export async function autoReviewRoute(req: Request, path: string): Promise<Response> {
   const match = path.match(AUTO_REVIEW_PATH)!
   const taskId = match[1]!
@@ -60,7 +56,8 @@ export async function autoReviewRoute(req: Request, path: string): Promise<Respo
     const { round, review } = submitVerdict(taskId, body as unknown as AutoReviewVerdictBody)
     const at = review.finished_at ?? new Date().toISOString()
     const who = review.role === "primary" ? "A" : "B"
-    recordWorkflow(round.workflow_id, "review", `Round ${round.round}: reviewer ${who} ${VERDICT_WORDS[review.state] ?? review.state} — ${review.summary ?? ""}`, at, null, { pr: round.pr, sha: round.head })
+    // only that it arrived: what a reviewer found stays out of shared history until the round settles
+    recordWorkflow(round.workflow_id, "review", `Round ${round.round}: reviewer ${who} gave its verdict`, at, null, { pr: round.pr, sha: round.head })
     announceWorkflow(round.task_id)
     checkAutopilotSoon(round.task_id)
     // a recipe complaint changes the project's verification state

@@ -7,7 +7,7 @@ import type { NewTaskInput } from "../src/domain/task-create";
 import { autoReviewRoute } from "../src/routes/auto-review";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { activateDraft, saveDraft } from "../src/verify/recipe";
-import { submitVerdict } from "../src/verify/reviewer";
+import { RETIRE_GRACE_MS, submitVerdict } from "../src/verify/reviewer";
 import { getRound, roundOfReviewer, roundsOf, type RoundRow } from "../src/verify/rounds";
 import { reviewTurnEnv, reviewsOf, type ReviewRow } from "../src/verify/reviews";
 import { loadConfig } from "../src/config";
@@ -333,6 +333,20 @@ describe("auto-review", () => {
     await until(() => getTask(primaryOf(round).reviewer_task_id!)!.archived === 1, "the finished reviewer to be archived");
   });
 
+  test("a reviewer whose turn never ends after its verdict is stopped once the grace runs out", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    verdict(round, { verdict: "pass" });
+    const reviewer = primaryOf(round).reviewer_task_id!;
+    db.run("UPDATE round_reviews SET finished_at = ? WHERE id = ?", [new Date(clock.now - 60_000).toISOString(), primaryOf(round).id]);
+    await rt.tick();
+    expect(getTask(reviewer)!.archived).toBe(0);
+    db.run("UPDATE round_reviews SET finished_at = ? WHERE id = ?", [new Date(clock.now - RETIRE_GRACE_MS - 60_000).toISOString(), primaryOf(round).id]);
+    await rt.tick();
+    await until(() => getTask(reviewer)!.archived === 1, "the lingering reviewer to be archived");
+  });
+
   test("switching auto-review off ends a reviewer still at work", async () => {
     const { clock, task, rt } = setup();
     await pass(rt, task.id, clock);
@@ -375,6 +389,18 @@ describe("the verdict", () => {
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ state: "pass", summary: "ok" });
     expect((await post(primaryOf(open).reviewer_task_id!, { token: primaryOf(open).token, verdict: "fail", summary: "changed my mind", findings: [{ title: "x", severity: "blocking", lens: "correctness", detail: "d", file: "a.ts" }] })).status).toBe(409);
+  });
+
+  test("what a reviewer said stays out of the task's history until the round settles", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const open = latest(task.id);
+    expect((await post(primaryOf(open).reviewer_task_id!, { token: primaryOf(open).token, verdict: "pass", summary: "WORDS_OF_A" })).status).toBe(200);
+    const said = () => autopilotHistory(task.id).filter((entry) => entry.detail.includes("WORDS_OF_A"));
+    expect(autopilotHistory(task.id).some((entry) => entry.detail.includes("reviewer A gave its verdict"))).toBe(true);
+    expect(said()).toHaveLength(0);
+    await pass(rt, task.id, clock);
+    expect(said().length).toBeGreaterThan(0);
   });
 
   test("a malformed verdict names the field", async () => {

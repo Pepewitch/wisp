@@ -26,7 +26,7 @@ import type { PrSnapshot } from "./github"
 import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
 import { activeRecipe, latestDraft, recipeActivatedAt, recipeVersion } from "../verify/recipe"
 import {
-  launchReview, nudgeReviewer, planRound, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
+  launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
 } from "../verify/reviewer"
 import {
   addSecondReview, endReview, evidenceOf, findingsOf, reviewsOf, settleRound, supersedeRound, unretiredReviews, type ReviewRow,
@@ -101,8 +101,8 @@ export function endUnwantedReviews(taskId: string, task: Task | null, autoReview
  */
 export async function sweepReviews(cfg: ReviewerStart["cfg"], now = new Date()): Promise<void> {
   for (const round of orphanedRounds()) endRound(round, "auto-review stopped for this task", cfg, now)
-  for (const review of unretiredReviews()) {
-    await retireReviewer(review, cfg).catch((error: unknown) => {
+  for (const review of unretiredReviews(new Date(now.getTime() - RETIRE_GRACE_MS).toISOString())) {
+    await retireReviewer(review, cfg, now).catch((error: unknown) => {
       console.error(`[wisp] auto-review: could not archive reviewer ${review.reviewer_task_id}: ${error instanceof Error ? error.message : String(error)}`)
     })
   }
@@ -205,7 +205,7 @@ async function driveRound(look: ReviewLook, round: RoundRow): Promise<RoundRow |
   escalate(look, round)
   const notes: string[] = []
   for (const review of reviewsOf(round.id)) {
-    const note = review.state === "pending" ? await launchPending(look, round, review) : review.state === "running" ? tendRunning(look, round, review) : null
+    const note = review.state === "pending" ? await launchPending(look, round, review) : review.state === "running" ? await tendRunning(look, round, review) : null
     if (note) notes.push(note)
   }
   const settled = settleRound(round.id, look.now)
@@ -241,7 +241,7 @@ async function launchPending(look: ReviewLook, round: RoundRow, review: ReviewRo
  * turn without a verdict gets one answer from Wisp; the second time, or past
  * the tier's time limit, or a task that failed or is gone, ends it as an error.
  */
-function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow): string | null {
+async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow): Promise<string | null> {
   const { now } = look
   const reviewer = review.reviewer_task_id ? getTask(review.reviewer_task_id) : null
   const end = (why: string): string => {
@@ -257,10 +257,10 @@ function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow): stri
     case "failed":
       return end("had its task fail")
     case "needs-input":
-      return nudgeReviewer(review, look.start.adapters, look.start.cfg, true) ? `${letter(review)} told to decide for itself` : end("asked again instead of deciding")
+      return await nudgeReviewer(review, look.start.adapters, look.start.cfg, true) ? `${letter(review)} told to decide for itself` : end("asked again instead of deciding")
     case "done":
       if (!taskIsIdle(reviewer)) return `${letter(review)} reviewing`
-      return nudgeReviewer(review, look.start.adapters, look.start.cfg, false) ? `${letter(review)} asked for its verdict` : end("ended without a verdict")
+      return await nudgeReviewer(review, look.start.adapters, look.start.cfg, false) ? `${letter(review)} asked for its verdict` : end("ended without a verdict")
     default:
       return `${letter(review)} reviewing`
   }

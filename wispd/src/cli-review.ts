@@ -4,7 +4,7 @@
  * `submit` is what a reviewer agent runs, so every answer is one short line,
  * and a mistake in its JSON names the field so it can fix it once.
  */
-import type { AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
+import type { AutoReviewReview, AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
 import type { Flags } from "./cli-args"
 import { api, CliApiError, daemonRequest, exitApi } from "./cli-api"
 import { boundedStdin } from "./cli-brief"
@@ -90,8 +90,8 @@ async function submit(flags: Flags): Promise<never> {
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) say("Verdict not sent: stdin must be one JSON object.", 1)
   try {
-    const round = await daemonRequest(`/api/tasks/${task}/auto-review/verdict`, "POST", JSON.stringify({ ...payload as object, token })) as AutoReviewRound
-    say(`Verdict recorded: round ${round.round} ${round.state}, ${round.evidence.length} image${round.evidence.length === 1 ? "" : "s"} attached. End your turn now.`, 0)
+    const review = await daemonRequest(`/api/tasks/${task}/auto-review/verdict`, "POST", JSON.stringify({ ...payload as object, token })) as AutoReviewReview
+    say(`Verdict recorded: ${review.state}, ${review.evidence.length} image${review.evidence.length === 1 ? "" : "s"} attached. End your turn now.`, 0)
   } catch (error) {
     if (error instanceof CliApiError && error.status === 400) say(`Verdict not sent: ${error.message}. See \`${COMMAND} review submit --help\`, fix it, and submit once more.`, 1)
     if (error instanceof CliApiError && error.status === 409) say(`Verdict not recorded: ${error.message}. Stop here.`, 0)

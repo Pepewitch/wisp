@@ -16,6 +16,8 @@ export interface DiffSignals {
   areas: number
   /** changed files no recipe area covers */
   unmapped: number
+  /** the project's recipe maps areas at all: zero matched areas then means "outside every area", not "no areas" */
+  mapped?: boolean
   /** changed files on a sensitive path (migrations, auth, CI…), up to a few for the prompt */
   sensitive: string[]
   testsTouched: boolean
@@ -56,10 +58,15 @@ export const DEEP_MIN_AREAS = 3
 const globsOf = (patterns: readonly string[]) => patterns.map((glob) => new Bun.Glob(glob))
 const matches = (globs: Bun.Glob[], path: string) => globs.some((glob) => glob.match(path))
 
+/** One changed file from `--numstat`; a rename also keeps the path it came from. */
+export interface NumstatEntry { path: string; added: number | null; removed: number | null; from?: string }
+
 export interface SignalOptions {
   /** recipe areas the changed files fall in, and how many files fall in none */
   areas: number
   unmapped?: number
+  /** the recipe maps areas (see DiffSignals.mapped) */
+  mapped?: boolean
   /** the project's own globs (recipe frontmatter `sensitive:` and `docs:`) */
   sensitive?: string[]
   docs?: string[]
@@ -68,11 +75,12 @@ export interface SignalOptions {
 }
 
 /** The signals from one diff's numstat and the areas matched. */
-export function signalsOf(numstat: { path: string; added: number | null; removed: number | null }[], options: SignalOptions): DiffSignals {
+export function signalsOf(numstat: NumstatEntry[], options: SignalOptions): DiffSignals {
   const sensitiveGlobs = globsOf([...SENSITIVE_GLOBS, ...(options.sensitive ?? [])])
   const uncounted = globsOf([...LOCKFILES, ...(options.generated ?? [])])
   const docGlobs = globsOf([...DOC_GLOBS, ...(options.docs ?? [])])
-  const sensitive = numstat.map((entry) => entry.path).filter((path) => matches(sensitiveGlobs, path))
+  // a rename is judged by both of its names: moving a migration out of its directory is still a migration change
+  const sensitive = numstat.flatMap((entry) => (entry.from ? [entry.from, entry.path] : [entry.path])).filter((path) => matches(sensitiveGlobs, path))
   return {
     lines: numstat.reduce((sum, entry) => {
       if (matches(uncounted, entry.path)) return sum
@@ -81,6 +89,7 @@ export function signalsOf(numstat: { path: string; added: number | null; removed
     files: numstat.length,
     areas: options.areas,
     unmapped: options.unmapped ?? 0,
+    mapped: options.mapped ?? false,
     sensitive: sensitive.slice(0, 5),
     testsTouched: numstat.some((entry) => TEST.test(entry.path)),
     docsOnly: numstat.length > 0 && numstat.every((entry) => matches(docGlobs, entry.path)),
@@ -104,11 +113,11 @@ export function tierOf(signals: DiffSignals | null): ReviewTier {
   const small = signals.lines <= LIGHT_MAX_LINES && signals.files <= LIGHT_MAX_FILES && signals.areas <= 1
   // a small change inside one area, or anywhere in a project without areas; a
   // file outside every area of a mapped project may be shared code, so it is not light
-  return small && (signals.unmapped === 0 || signals.areas === 0) ? "light" : "standard"
+  return small && (signals.unmapped === 0 || !signals.mapped) ? "light" : "standard"
 }
 
 /** `git diff --numstat` of a PR head against its base, three-dot; null when git cannot compute it. */
-export async function numstatOf(repoPath: string, base: string, head: string): Promise<{ path: string; added: number | null; removed: number | null }[] | null> {
+export async function numstatOf(repoPath: string, base: string, head: string): Promise<NumstatEntry[] | null> {
   if (base.startsWith("-") || head.startsWith("-")) return null
   for (const ref of [`origin/${base}`, base]) {
     const result = await runBounded({
@@ -125,17 +134,19 @@ export async function numstatOf(repoPath: string, base: string, head: string): P
  * `--numstat -z` output: "added\tremoved\tpath\0" per file, and for a rename
  * "added\tremoved\t\0from\0to\0". Binary files report "-" for both counts.
  */
-export function parseNumstat(out: string): { path: string; added: number | null; removed: number | null }[] {
+export function parseNumstat(out: string): NumstatEntry[] {
   const parts = out.split("\u0000")
-  const entries: { path: string; added: number | null; removed: number | null }[] = []
+  const entries: NumstatEntry[] = []
   for (let i = 0; i < parts.length; i++) {
     const head = parts[i]!
     if (head === "") continue
     const [added = "", removed = "", path = ""] = head.split("\t")
     const count = (value: string): number | null => (value === "-" ? null : Number.parseInt(value, 10))
     // a rename: the path is empty here, and the next two parts are from and to
-    const name = path !== "" ? path : (i += 2, parts[i] ?? "")
-    if (name !== "") entries.push({ path: name, added: count(added), removed: count(removed) })
+    if (path !== "") { entries.push({ path, added: count(added), removed: count(removed) }); continue }
+    const from = parts[i + 1] ?? "", to = parts[i + 2] ?? ""
+    i += 2
+    if (to !== "") entries.push({ path: to, added: count(added), removed: count(removed), ...(from ? { from } : {}) })
   }
   return entries
 }

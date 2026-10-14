@@ -119,8 +119,16 @@ export function reviewOfTask(taskId: string): ReviewRow | null {
 
 /** A pending review now has its task: it runs. */
 export function launchedReview(id: string, taskId: string, now = new Date()): boolean {
-  return db.run("UPDATE round_reviews SET reviewer_task_id = ?, state = 'running', launched_at = ? WHERE id = ? AND state = 'pending'",
-    [taskId, now.toISOString(), id]).changes === 1
+  return db.transaction(() => {
+    const launched = db.run("UPDATE round_reviews SET reviewer_task_id = ?, state = 'running', launched_at = ? WHERE id = ? AND state = 'pending'",
+      [taskId, now.toISOString(), id]).changes === 1
+    // reviewer A's task on the round too, where a client from before the panel looks for it
+    if (launched) {
+      db.run(`UPDATE auto_review_rounds SET reviewer_task_id = ?
+        WHERE id = (SELECT round_id FROM round_reviews WHERE id = ? AND role = 'primary') AND reviewer_task_id IS NULL`, [taskId, id])
+    }
+    return launched
+  })()
 }
 
 /** Record a reviewer's verdict, once, while its review runs. */
@@ -162,13 +170,14 @@ export function reviewTurnEnv(task: Task): Record<string, string> {
 
 /**
  * Ended reviews whose reviewer task is still on the books: archived once its
- * turn is over (at once for a superseded or errored one).
+ * turn is over (at once for a superseded or errored one, and regardless for
+ * one that ended before `lingeringBefore`).
  */
-export function unretiredReviews(): ReviewRow[] {
+export function unretiredReviews(lingeringBefore: string): ReviewRow[] {
   return db.query(`SELECT v.* FROM round_reviews v JOIN tasks t ON t.id = v.reviewer_task_id
     WHERE v.state NOT IN ('pending', 'running') AND v.carried_from IS NULL AND t.archived = 0
-      AND (v.state IN ('superseded', 'error') OR t.state NOT IN ('creating', 'running', 'stuck'))
-    ORDER BY v.finished_at LIMIT 20`).all() as ReviewRow[]
+      AND (v.state IN ('superseded', 'error') OR t.state NOT IN ('creating', 'running', 'stuck') OR v.finished_at < ?)
+    ORDER BY v.finished_at LIMIT 20`).all(lingeringBefore) as ReviewRow[]
 }
 
 function parsed<T>(json: string | null, fallback: T): T {

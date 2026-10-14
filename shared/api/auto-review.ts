@@ -61,6 +61,8 @@ export interface AutoReviewSignals {
   files: number
   areas: number
   unmapped: number
+  /** the recipe maps areas at all (absent on rounds measured before this was recorded) */
+  mapped?: boolean
   sensitive: string[]
   testsTouched: boolean
   docsOnly: boolean

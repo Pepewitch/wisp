@@ -85,8 +85,15 @@ describe("who is on the panel", () => {
     expect(round.tier).toBe("deep");
     expect(reviewsOf(round.id).map((review) => [review.role, review.state])).toEqual([["primary", "running"], ["second", "running"]]);
     expect(launched.map((input) => input.prompt.slice(0, 13))).toEqual(["Auto-review A", "Auto-review B"]);
+    // a client from before the panel still finds reviewer A on the round
+    expect(round.reviewer_task_id).toBe(roleOf(round, "primary").reviewer_task_id);
     expect(launched[1]!.firstTurnPrompt).toContain("You are reviewer B");
     expect(launched[1]!.firstTurnPrompt).not.toContain("output add");
+    // both reviewers hear what may block, and what never does
+    for (const input of launched) {
+      expect(input.firstTurnPrompt).toContain("Only an issue this diff introduces or makes reachable can block");
+      expect(input.firstTurnPrompt).toContain("Style, naming and verbosity never block");
+    }
   });
 
   test("a light round has reviewer A only", async () => {
