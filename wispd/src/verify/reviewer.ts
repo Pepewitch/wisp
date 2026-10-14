@@ -8,7 +8,7 @@
  * its own work by mistake or as a shortcut; it is no boundary against a
  * hostile process running as the same user, which can read Wisp's database.
  */
-import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
+import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewSignals, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
 import type { TaskBriefV1 } from "../../../shared/task-brief"
 import type { AdapterDef } from "../adapters"
 import type { PrSnapshot } from "../autopilot/github"
@@ -21,11 +21,13 @@ import { startNextQueuedMessage } from "../runner"
 import { createTaskMessage, getTask, randomId } from "../store"
 import { db } from "../store-database"
 import type { Task } from "../types"
-import { authorReviewNote, recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
-import { activeRecipe, AREA_INDEX, changedFiles, fetchPullHead, matchAreas, readRecipeFile, RECIPE_INDEX, recipeVersion } from "./recipe"
+import { maxTier, numstatOf, signalsOf, tierOf } from "./depth"
+import { recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
 import {
-  createRound, finishRound, getRound, markNudged, roundOfReviewer, roundsOf, roundView, setRoundReviewer, VERDICT_STATES, type RoundRow,
-} from "./rounds"
+  activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
+} from "./recipe"
+import { createPanelRound, endReview, finishReview, getReview, launchedReview, markReviewNudged, reviewOfTask, type PanelAgent, type ReviewRow } from "./reviews"
+import { getRound, highestTier, roundsOf, roundView, VERDICT_STATES, type RoundRow } from "./rounds"
 import { busyVerifyTask, recordVerifyTask, type VerifyMode } from "./status"
 import { resolve } from "node:path"
 
@@ -63,50 +65,120 @@ export interface ReviewerStart {
   launch: Launch
 }
 
-/**
- * Start one round: the round row first (its token must exist before the
- * reviewer's first turn), then the reviewer task. A refused start leaves no
- * round behind.
- */
-export async function startReviewer(start: ReviewerStart, input: {
-  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; budget: number
-}): Promise<{ round: RoundRow } | { wait: string }> {
-  const { author, pr } = input
-  const recipe = activeRecipe(author.repo_path)
-  const version = recipe ? await recipeVersion(author.repo_path) : null
-  await fetchPullHead(author.repo_path, pr.number)
-  const changed = await changedFiles(author.repo_path, pr.baseRefName, pr.head)
+/** Who reviews second on a project: its chosen agent, nobody ("off"), or the primary's own agent. */
+export function secondAgent(cfg: WispConfig, adapters: Record<string, AdapterDef>, repoPath: string, primary: { harness: string; model?: string; effort?: string }):
+  { harness: string; model?: string; effort?: string } | null {
+  const chosen = repoConfigFor(cfg, repoPath)?.verifySecond
+  if (chosen === "off") return null
+  if (chosen && adapters[chosen.harness]) return { harness: chosen.harness, model: chosen.model, effort: chosen.effort }
+  return primary
+}
+
+/** What a round's diff looks like: the snapshot its tier, its areas and its prompts all read. */
+export interface DiffSnapshot {
+  changed: string[] | null
+  signals: AutoReviewSignals | null
+  matched: RecipeArea[]
+  unmapped: string[]
+}
+
+/** Fetch the PR's head and base, then measure the diff once. */
+export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "number" | "baseRefName" | "head">): Promise<DiffSnapshot> {
+  await fetchPullHead(repoPath, pr.number)
+  await fetchBase(repoPath, pr.baseRefName)
+  const recipe = activeRecipe(repoPath)
+  const numstat = await numstatOf(repoPath, pr.baseRefName, pr.head)
+  const changed = numstat ? numstat.map((entry) => entry.path) : null
   // an unreadable diff matches no areas: the reviewer is told so and reads the diff itself
-  const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: [] }
-  const previous = roundsOf(author.id, pr.number).filter((round) => VERDICT_STATES.includes(round.state)).map(roundView)
-  const row = createRound({ taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted, recipeVersion: version })
+  const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: changed ?? [] }
+  const settings = recipeSettings(repoPath)
+  const signals = numstat
+    ? signalsOf(numstat, { areas: matched.length, unmapped: recipe ? unmapped.length : 0, sensitive: settings.sensitive, docs: settings.docs })
+    : null
+  return { changed, signals, matched, unmapped: recipe ? unmapped : [] }
+}
+
+/**
+ * Plan a round: measure the diff, choose its tier (never lower than an
+ * earlier round's on this PR), and write the round with every review its
+ * panel needs, in one transaction. Nothing launches here; the reviews start
+ * when slots allow (launchReview), and the panel never shrinks on its own.
+ */
+export async function planRound(start: ReviewerStart, input: {
+  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; carried?: ReviewRow[]
+}): Promise<RoundRow> {
+  const { author, pr } = input
+  const snapshot = await diffSnapshot(author.repo_path, pr)
+  const tier = maxTier(tierOf(snapshot.signals), highestTier(input.workflowId, pr.number))
+  const primary = verifyAgent(start.cfg, start.adapters, author.repo_path, author)
+  const second = tier === "light" ? null : secondAgent(start.cfg, start.adapters, author.repo_path, primary)
+  const agents: PanelAgent[] = [
+    { role: "primary", harness: primary.harness, model: primary.model ?? null, effort: primary.effort ?? null },
+    ...(second ? [{ role: "second" as const, harness: second.harness, model: second.model ?? null, effort: second.effort ?? null }] : []),
+  ]
+  const recipe = activeRecipe(author.repo_path)
+  const { round } = createPanelRound({
+    taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted,
+    recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried,
+  })
+  return round
+}
+
+/** The author's answer to the last rejection: its newest turn's final words since that round ended. */
+function authorRebuttal(author: Task, since: string | null): string | null {
+  if (!since) return null
+  const turn = db.query("SELECT result FROM turns WHERE task_id = ? AND started_at > ? AND result IS NOT NULL ORDER BY n DESC LIMIT 1").get(author.id, since) as { result: string } | null
+  return turn?.result?.trim() || null
+}
+
+/**
+ * Start one pending review's task. A refusal for capacity leaves it pending
+ * (the next look tries again); any other refusal ends it as an error, which
+ * needs a person (a harness that no longer exists, say).
+ */
+export async function launchReview(start: ReviewerStart, input: {
+  author: Task; round: RoundRow; review: ReviewRow; pr: PrSnapshot; budget: number
+}): Promise<{ launched: true } | { wait: string } | { error: string }> {
+  const { author, pr, round, review } = input
+  const recipe = activeRecipe(author.repo_path)
+  const snapshot = await diffSnapshot(author.repo_path, pr)
+  const previous = roundsOf(author.id, pr.number).filter((earlier) => earlier.id !== round.id && VERDICT_STATES.includes(earlier.state))
+  const rules = [
+    reviewRulesSection(recipe ? readRecipeFile(author.repo_path, RECIPE_INDEX) : null),
+    ...snapshot.matched.map((area) => {
+      const rules = reviewRulesSection(readRecipeFile(author.repo_path, `areas/${area.name}/${AREA_INDEX}`))
+      return rules ? `For code in area "${area.name}":\n${rules}` : null
+    }),
+  ].filter((rule): rule is string => Boolean(rule))
   const prompt = reviewerPrompt({
+    role: review.role, tier: round.tier ?? "standard", signals: snapshot.signals, projectRules: rules.length > 0 ? rules.join("\n\n") : null,
+    rebuttal: authorRebuttal(author, previous[0]?.finished_at ?? null),
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
-    round: input.round, budget: input.budget, counted: input.counted, goal: authorGoal(author), repoPath: author.repo_path, changed, previous, authorTaskId: author.id,
+    round: round.round, budget: input.budget, counted: round.counted === 1, goal: authorGoal(author), repoPath: author.repo_path,
+    changed: snapshot.changed, previous: previous.map((earlier) => roundView(earlier)), authorTaskId: author.id,
     recipe: {
-      version,
+      version: round.recipe_version,
       index: recipe ? readRecipeFile(author.repo_path, RECIPE_INDEX) : null,
-      areas: matched.map((area) => ({
+      areas: snapshot.matched.map((area) => ({
         area, text: readRecipeFile(author.repo_path, `areas/${area.name}/${AREA_INDEX}`) ?? "",
         files: recipe!.files.filter((file) => file.startsWith(`areas/${area.name}/`)),
       })),
-      unmapped,
+      unmapped: snapshot.unmapped,
     },
   })
-  const agent = verifyAgent(start.cfg, start.adapters, author.repo_path, author)
+  const label = review.role === "primary" ? "A" : "B"
   const created = await start.launch({
     repoPath: author.repo_path,
-    prompt: `Auto-review · PR #${pr.number} · round ${input.round}${input.counted ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
+    prompt: `Auto-review ${label} · PR #${pr.number} · round ${round.round}${round.counted === 1 ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
     firstTurnPrompt: prompt,
-    harness: agent.harness, model: agent.model, effort: agent.effort,
+    harness: review.harness, model: review.model ?? undefined, effort: review.effort ?? undefined,
     fast: false, brief: false, mode: "worktree", base: pr.head, actor: "autopilot", verifyRole: "reviewer",
-    prepare: (task) => setRoundReviewer(row.id, task.id),
+    prepare: (task) => { launchedReview(review.id, task.id) },
   })
-  if ("kind" in created) {
-    db.run("DELETE FROM auto_review_rounds WHERE id = ?", [row.id])
-    return { wait: created.kind === "at-capacity" ? "Waiting for a free task slot to start the reviewer" : `Could not start the reviewer: ${created.error}` }
-  }
-  return { round: getRound(row.id)! }
+  if (!("kind" in created)) return { launched: true }
+  if (created.kind === "at-capacity") return { wait: `Waiting for a free task slot to start reviewer ${label}` }
+  endReview(review.id, "error", `could not start: ${created.error}`)
+  return { error: `Could not start reviewer ${label}: ${created.error}` }
 }
 
 /** Start a recipe task: setting up the recipe, improving it, or fixing one area a reviewer could not follow. */
@@ -160,48 +232,72 @@ export function reviewerEvidence(reviewerTaskId: string): AutoReviewEvidence[] {
 
 const codePoints = (text: string): number => [...text].length
 
-const VERDICT_FIELDS = new Set(["token", "verdict", "cause", "summary", "findings", "recipeFeedback", "recipeArea"])
-const FINDING_FIELDS = new Set(["title", "detail", "file", "line"])
+const VERDICT_FIELDS = new Set(["token", "verdict", "cause", "summary", "findings", "recipeFeedback", "recipeArea", "reviewed", "rationale", "escalate"])
+const LEGACY_FINDING_FIELDS = new Set(["title", "detail", "file", "line"])
+const FINDING_FIELDS = new Set([...LEGACY_FINDING_FIELDS, "severity", "lens"])
+const LENSES = new Set(["correctness", "architecture", "slop", "security", "performance", "tests", "docs", "verification"])
+/** Lenses whose blocker must point at code: a file, and a line where it can. */
+const CODE_LENSES = new Set(["correctness", "architecture", "slop", "security", "performance"])
 const text = (value: unknown, max: number): boolean => typeof value === "string" && codePoints(value) <= max
 
+/** Who is submitting: the protocol its prompt taught it (1 before the panel), and its role. */
+export interface VerdictContext {
+  protocol: number
+  role: "primary" | "second"
+}
+
 /** Every problem with a verdict, or null. */
-export function verdictError(body: Record<string, unknown>): string | null {
+export function verdictError(body: Record<string, unknown>, context: VerdictContext = { protocol: 2, role: "primary" }): string | null {
   const unknown = Object.keys(body).find((key) => !VERDICT_FIELDS.has(key))
   if (unknown) return `unknown field '${unknown}'`
   if (typeof body.token !== "string" || body.token === "") return "token is required (WISP_REVIEW_TOKEN, set only in a reviewer's turns)"
-  return verdictShapeError(body) ?? findingsError(body.findings, body.verdict) ?? recipeFieldsError(body)
+  return verdictShapeError(body, context) ?? findingsError(body.findings, body.verdict, context) ?? recipeFieldsError(body) ?? panelFieldsError(body, context)
 }
 
-function verdictShapeError(body: Record<string, unknown>): string | null {
+function verdictShapeError(body: Record<string, unknown>, context: VerdictContext): string | null {
   if (body.verdict !== "pass" && body.verdict !== "fail" && body.verdict !== "inconclusive") return "verdict must be pass, fail or inconclusive"
   if (body.verdict === "inconclusive" && body.cause !== "change" && body.cause !== "recipe") return "an inconclusive verdict needs cause: change or recipe"
   if (body.verdict !== "inconclusive" && body.cause !== undefined) return "cause belongs to an inconclusive verdict only"
+  if (body.cause === "recipe" && context.role === "second") return "cause recipe is the verifying reviewer's: reviewer B does not run the recipe"
   if (typeof body.summary !== "string" || body.summary.trim() === "") return "summary is required"
   if (!text(body.summary, 600)) return "summary is at most 600 characters"
   return null
 }
 
-function findingsError(findings: unknown, verdict: unknown): string | null {
+function findingsError(findings: unknown, verdict: unknown, context: VerdictContext): string | null {
   if (findings === undefined) return verdict === "fail" ? "a fail verdict lists at least one finding" : null
   if (!Array.isArray(findings)) return "findings must be a list"
   if (findings.length > 20) return "at most 20 findings"
   if (verdict === "fail" && findings.length === 0) return "a fail verdict lists at least one finding"
   for (const [index, finding] of findings.entries()) {
-    const invalid = findingError(finding)
+    const invalid = findingError(finding, context)
     if (invalid) return `findings[${index}]${invalid}`
   }
+  if (context.protocol < 2) return null
+  const blocking = (findings as { severity?: string }[]).filter((finding) => finding.severity === "blocking").length
+  if (verdict === "fail" && blocking === 0) return "a fail verdict needs at least one blocking finding (notes alone do not stop a merge)"
+  if (verdict === "pass" && blocking > 0) return "a pass carries no blocking finding: fail instead, or make it a note"
   return null
 }
 
-function findingError(finding: unknown): string | null {
+function findingError(finding: unknown, context: VerdictContext): string | null {
   if (!finding || typeof finding !== "object" || Array.isArray(finding)) return " must be an object"
   const f = finding as Record<string, unknown>
-  const unknown = Object.keys(f).find((key) => !FINDING_FIELDS.has(key))
+  const allowed = context.protocol < 2 ? LEGACY_FINDING_FIELDS : FINDING_FIELDS
+  const unknown = Object.keys(f).find((key) => !allowed.has(key))
   if (unknown) return `: unknown field '${unknown}'`
   if (!text(f.title, 200) || (f.title as string).trim() === "") return ".title is required, at most 200 characters"
   if (f.detail !== undefined && !text(f.detail, 2000)) return ".detail is text, at most 2000 characters"
   if (f.file !== undefined && !text(f.file, 300)) return ".file is a path, at most 300 characters"
   if (f.line !== undefined && (!Number.isSafeInteger(f.line) || (f.line as number) < 1)) return ".line is a positive whole number"
+  if (context.protocol < 2) return null
+  if (f.severity !== "blocking" && f.severity !== "note") return ".severity is blocking or note"
+  if (typeof f.lens !== "string" || !LENSES.has(f.lens)) return `.lens is one of ${[...LENSES].join(", ")}`
+  if (f.lens === "verification" && context.role === "second") return ".lens verification is the verifying reviewer's"
+  if (f.severity === "blocking") {
+    if (typeof f.detail !== "string" || f.detail.trim() === "") return ": a blocking finding needs detail — what goes wrong, and how it is reached"
+    if (CODE_LENSES.has(f.lens) && (typeof f.file !== "string" || f.file.trim() === "")) return ": a blocking finding on code names its file"
+  }
   return null
 }
 
@@ -212,56 +308,84 @@ function recipeFieldsError(body: Record<string, unknown>): string | null {
   return null
 }
 
+function panelFieldsError(body: Record<string, unknown>, context: VerdictContext): string | null {
+  if (body.reviewed !== undefined) {
+    if (!Array.isArray(body.reviewed) || body.reviewed.length > 30 || body.reviewed.some((item) => !text(item, 200))) return "reviewed is a list of at most 30 items, each at most 200 characters"
+  }
+  if (body.rationale !== undefined && !text(body.rationale, 2000)) return "rationale is text, at most 2000 characters"
+  if (body.escalate !== undefined) {
+    if (context.role !== "primary") return "escalate is the primary reviewer's"
+    const escalate = body.escalate as Record<string, unknown> | null
+    if (!escalate || typeof escalate !== "object" || Array.isArray(escalate) || !text(escalate.reason, 400) || (escalate.reason as string).trim() === "") {
+      return "escalate is { reason }: why a second reviewer should look, at most 400 characters"
+    }
+  }
+  return null
+}
+
 export class VerdictError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
 }
 
-/** Record a reviewer's verdict. Only the round's own reviewer, while the round is open, can. */
-export function submitVerdict(reviewerTaskId: string, body: AutoReviewVerdictBody, now = new Date()): RoundRow {
-  const reviewer = getTask(reviewerTaskId)
-  if (!reviewer || reviewer.verify_role !== "reviewer") throw new VerdictError("This task is not an auto-review reviewer", 409)
-  const round = roundOfReviewer(reviewerTaskId)
-  if (!round) throw new VerdictError("This reviewer has no round", 409)
-  if (round.state !== "running") throw new VerdictError(`This round already ended (${round.state})`, 409)
-  if (body.token !== round.token) throw new VerdictError("The token does not match this round", 403)
-  const state = body.verdict === "inconclusive" ? (body.cause === "recipe" ? "recipe" : "inconclusive") : body.verdict
-  const findings: AutoReviewFinding[] = (body.findings ?? []).map((finding) => ({
-    title: finding.title.trim(), ...(finding.detail ? { detail: finding.detail } : {}), ...(finding.file ? { file: finding.file } : {}), ...(finding.line ? { line: finding.line } : {}),
-  }))
-  const ok = finishRound(round.id, {
-    state, cause: body.cause ?? null, summary: body.summary.trim(), findings,
-    recipeFeedback: body.recipeFeedback?.trim() || null, recipeArea: body.recipeArea ?? null, evidence: reviewerEvidence(reviewerTaskId),
-  }, now)
-  if (!ok) throw new VerdictError("This round already ended", 409)
-  return getRound(round.id)!
+/** The review a reviewer task submits for, and how it must answer. */
+export function verdictContextOf(reviewerTaskId: string): VerdictContext | null {
+  const review = reviewOfTask(reviewerTaskId)
+  return review ? { protocol: review.protocol, role: review.role } : null
 }
 
-/** Ask a reviewer that ended its turn without a verdict for one, once. */
-export function nudgeReviewer(round: RoundRow, adapters: Record<string, AdapterDef>, cfg: WispConfig): boolean {
-  if (!round.reviewer_task_id || round.nudged) return false
+/**
+ * Record a reviewer's verdict. Only that review's own reviewer, with its
+ * token, while its review is open, can; its token dies with the verdict.
+ */
+export function submitVerdict(reviewerTaskId: string, body: AutoReviewVerdictBody, now = new Date()): { round: RoundRow; review: ReviewRow } {
+  const reviewer = getTask(reviewerTaskId)
+  if (!reviewer || reviewer.verify_role !== "reviewer") throw new VerdictError("This task is not an auto-review reviewer", 409)
+  const review = reviewOfTask(reviewerTaskId)
+  if (!review) throw new VerdictError("This reviewer has no review", 409)
+  if (review.state !== "running") throw new VerdictError(`This review already ended (${review.state})`, 409)
+  if (body.token !== review.token) throw new VerdictError("The token does not match this review", 403)
+  const state = body.verdict === "inconclusive" ? (body.cause === "recipe" ? "recipe" : "inconclusive") : body.verdict
+  const findings: AutoReviewFinding[] = (body.findings ?? []).map((finding) => ({
+    title: finding.title.trim(), ...(finding.detail ? { detail: finding.detail } : {}), ...(finding.file ? { file: finding.file } : {}),
+    ...(finding.line ? { line: finding.line } : {}), ...(finding.severity ? { severity: finding.severity } : {}), ...(finding.lens ? { lens: finding.lens } : {}),
+  }))
+  const ok = finishReview(review.id, {
+    state, cause: body.cause ?? null, summary: body.summary.trim(), rationale: body.rationale?.trim() || null, findings,
+    reviewed: body.reviewed?.map((item) => item.trim()).filter(Boolean) ?? [], recipeFeedback: body.recipeFeedback?.trim() || null,
+    recipeArea: body.recipeArea ?? null, evidence: reviewerEvidence(reviewerTaskId).map((image) => ({ ...image, reviewerTaskId })),
+    escalated: body.escalate?.reason.trim() || null,
+  }, now)
+  if (!ok) throw new VerdictError("This review already ended", 409)
+  return { round: getRound(review.round_id)!, review: getReview(review.id)! }
+}
+
+/**
+ * Ask a reviewer for its verdict, once: after a turn that ended without one,
+ * or as the automatic answer to a question (a reviewer never waits on a
+ * person). A second time ends the review as an error instead.
+ */
+export function nudgeReviewer(review: ReviewRow, adapters: Record<string, AdapterDef>, cfg: WispConfig, asked: boolean): boolean {
+  if (!review.reviewer_task_id || review.nudged > 0) return false
   const id = randomId("m", 12)
-  createTaskMessage({ id, taskId: round.reviewer_task_id, text: verdictNudge(), attachmentHash: "", origin: "workflow" }, false)
-  markNudged(round.id)
-  emit({ type: "message", taskId: round.reviewer_task_id, messageId: id })
-  startNextQueuedMessage(round.reviewer_task_id, adapters, cfg, id)
+  createTaskMessage({ id, taskId: review.reviewer_task_id, text: verdictNudge(asked), attachmentHash: "", origin: "workflow" }, false)
+  markReviewNudged(review.id)
+  emit({ type: "message", taskId: review.reviewer_task_id, messageId: id })
+  startNextQueuedMessage(review.reviewer_task_id, adapters, cfg, id)
   return true
 }
 
 /**
- * A finished reviewer goes away once its turn is over: archived (its
- * transcript stays readable under archived tasks), its worktree removed.
- * Force, because a reviewer's worktree holds nothing anyone keeps.
+ * A reviewer whose review has ended goes away once its turn is over (at once
+ * when it was superseded or ended in error): archived, its transcript still
+ * readable under archived tasks, its worktree removed. Force, because a
+ * reviewer's worktree holds nothing anyone keeps.
  */
-export async function retireReviewer(round: RoundRow, cfg: WispConfig): Promise<boolean> {
-  const task = round.reviewer_task_id ? getTask(round.reviewer_task_id) : null
+export async function retireReviewer(review: ReviewRow, cfg: WispConfig): Promise<boolean> {
+  if (review.carried_from) return false
+  const task = review.reviewer_task_id ? getTask(review.reviewer_task_id) : null
   if (!task || task.archived) return false
   const busy = ["creating", "running", "stuck"].includes(task.state)
-  if (busy && round.state !== "superseded") return false
-  const result = await archiveTaskRows([task], true, cfg, { stopAutopilot: true, actor: "autopilot", reason: `auto-review round ${round.round} ${round.state}` })
+  if (busy && review.state !== "superseded" && review.state !== "error") return false
+  const result = await archiveTaskRows([task], true, cfg, { stopAutopilot: true, actor: "autopilot", reason: `auto-review ${review.role} review ${review.state}` })
   return !("error" in result)
-}
-
-/** The note an author's turns carry while auto-review is on. */
-export function authorNote(author: Task, which: string): string {
-  return authorReviewNote({ which, hasRecipe: activeRecipe(author.repo_path) !== null })
 }

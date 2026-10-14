@@ -57,6 +57,8 @@ export function harnessesRoute(
       // the Auto-review switch, GET /api/tasks/:id/auto-review, and
       // /api/projects/verification: each project's verification recipe
       autoReview: true,
+      // auto-review rounds carry a panel (reviews[]), a tier and the rubric; projects a second reviewer
+      reviewPanel: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

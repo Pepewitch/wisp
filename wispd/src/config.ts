@@ -67,6 +67,12 @@ export interface RepoConfig {
    * agent, model and effort.
    */
   verify?: { harness: string; model?: string; effort?: string };
+  /**
+   * The second reviewer on an auto-review panel: a chosen agent, or "off"
+   * for one reviewer always. Unset: the same agent as the first reviewer,
+   * in its own independent session.
+   */
+  verifySecond?: { harness: string; model?: string; effort?: string } | "off";
 }
 
 /** The configured entry for a repo path, if it has one. Paths are compared resolved. */
@@ -586,6 +592,8 @@ function validateRepos(raw: unknown): (string | RepoConfig)[] {
     }
     const verify = validateVerifyAgent(entry.verify, `${label}.verify`);
     if (verify) out.verify = verify;
+    const second = entry.verifySecond === "off" ? "off" : validateVerifyAgent(entry.verifySecond, `${label}.verifySecond`);
+    if (second) out.verifySecond = second;
     return out;
   });
 }

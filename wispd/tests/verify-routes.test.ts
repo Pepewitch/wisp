@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, type WispConfig } from "../src/config";
 import { verificationRoute } from "../src/routes/auto-review";
+import { addProjectRoute } from "../src/routes/projects";
 import type { ModelProbeCache } from "../src/model-probes";
 import { createTask, freeSlot, newTaskId } from "../src/store";
 import { activeRecipe } from "../src/verify/recipe";
@@ -81,5 +82,35 @@ describe("verification routes", () => {
     recipeTask(repo); // 'creating': still at work
     const res = await call(cfg, "POST", "/api/projects/verification/tasks", { path: repo, mode: "improve", harness: "fake" });
     expect(res.status).toBe(409);
+  });
+});
+
+describe("the second reviewer and the rubric", () => {
+  test("a save of the first reviewer alone (an older client's) keeps the second reviewer", async () => {
+    const cfg = loadConfig();
+    const repo = mkdtempSync(join(tmpdir(), "wisp-verify-route-"));
+    const save = (body: Record<string, unknown>) => addProjectRoute(new Request("http://wisp/api/projects", {
+      method: "POST", body: JSON.stringify({ path: repo, ...body }), headers: { "content-type": "application/json" },
+    }), cfg);
+    const first = await (await save({ verify: { harness: "claude" }, verifySecond: { harness: "codex", model: "gpt-6.1-sol" } })).json() as Record<string, unknown>;
+    expect(first).toMatchObject({ verify: { harness: "claude" }, verifySecond: { harness: "codex", model: "gpt-6.1-sol" } });
+    const later = await (await save({ verify: { harness: "droid" } })).json() as Record<string, unknown>;
+    expect(later).toMatchObject({ verify: { harness: "droid" }, verifySecond: { harness: "codex", model: "gpt-6.1-sol" } });
+    expect(await (await save({ verifySecond: "off" })).json()).toMatchObject({ verifySecond: "off" });
+    expect(await (await save({ verifySecond: null })).json()).toMatchObject({ verifySecond: null });
+    expect((await save({ verifySecond: 3 })).status).toBe(400);
+  });
+
+  test("the rubric route carries the project's own review rules", async () => {
+    const cfg = loadConfig();
+    const repo = mkdtempSync(join(tmpdir(), "wisp-verify-route-"));
+    const setup = recipeTask(repo);
+    const files = [{ path: "RECIPE.md", content: "# Fixture\n\n## Review rules\n\nNever log a user's email.\n\n## Checks\n\nbun test\n" }, RECIPE[1]];
+    expect((await call(cfg, "POST", "/api/projects/verification/draft", { task: setup, files }, "", { "x-wisp-client": "cli", "x-wisp-task": setup })).status).toBe(200);
+    await call(cfg, "POST", "/api/projects/verification/activate", { path: repo });
+    const { text } = await (await call(cfg, "GET", "/api/projects/verification/rubric", undefined, `?path=${encodeURIComponent(repo)}`)).json() as { text: string };
+    expect(text).toContain("Never log a user's email.");
+    expect(text).not.toContain("bun test");
+    expect(text).toContain("slop:");
   });
 });

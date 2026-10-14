@@ -187,6 +187,7 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
           // the placeholder naming what Wisp resolves on its own.
           baseBranch: config?.baseBranch ?? "",
           verify: config?.verify ?? null,
+          verifySecond: config?.verifySecond ?? null,
           verification: await verificationSummary(resolved),
           configured: config !== undefined || (entry !== undefined && typeof entry === "string"),
         };
@@ -205,6 +206,8 @@ interface ProjectUpdateBody {
   baseBranch?: unknown;
   /** who reviews and sets up verification: { harness, model?, effort? }; null or a blank harness clears it */
   verify?: unknown;
+  /** the second reviewer: { harness, model?, effort? }, "off", or null to clear (same agent as the first) */
+  verifySecond?: unknown;
 }
 
 function projectUpdateError(body: ProjectUpdateBody): Response | null {
@@ -222,6 +225,10 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
     (!Array.isArray(body.copyFiles) || body.copyFiles.some((value) => typeof value !== "string"))
   ) {
     return err(`copyFiles must be an array of strings, got ${typeName(body.copyFiles)}`, 400);
+  }
+  if (body.verifySecond !== undefined && body.verifySecond !== null && body.verifySecond !== "off" &&
+    (typeof body.verifySecond !== "object" || Array.isArray(body.verifySecond))) {
+    return err(`verifySecond must be an agent object, "off" or null, got ${typeName(body.verifySecond)}`, 400);
   }
   if (body.verify !== undefined && body.verify !== null) {
     if (typeof body.verify !== "object" || Array.isArray(body.verify)) return err(`verify must be an object or null, got ${typeName(body.verify)}`, 400);
@@ -252,7 +259,15 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
   if (base !== undefined && base.trim() !== "") merged.baseBranch = base.trim();
   const verify = mergedVerifyAgent(existing, body);
   if (verify) merged.verify = verify;
+  const second = mergedSecondAgent(existing, body);
+  if (second) merged.verifySecond = second;
   return Object.keys(merged).length === 1 ? resolved : merged;
+}
+
+/** The second reviewer after a save: its own key and patch, so a save of `verify` (an older client's) never touches it. */
+function mergedSecondAgent(existing: RepoConfig | undefined, body: ProjectUpdateBody): RepoConfig["verifySecond"] {
+  if (body.verifySecond === undefined) return existing?.verifySecond;
+  return body.verifySecond === "off" ? "off" : validateVerifyAgent(body.verifySecond ?? undefined, "verifySecond");
 }
 
 /** The verification agent after a save: omitted keeps it, null or a blank harness clears it. */
@@ -299,6 +314,7 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
         copyFiles: saved?.copyFiles ?? [],
         baseBranch: saved?.baseBranch ?? "",
         verify: saved?.verify ?? null,
+        verifySecond: saved?.verifySecond ?? null,
       },
       before === undefined ? 201 : 200,
     );

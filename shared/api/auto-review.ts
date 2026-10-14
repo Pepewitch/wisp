@@ -21,11 +21,28 @@ export type AutoReviewRoundState =
   /** a newer head arrived while it ran */
   | "superseded"
 
+/** How much a review covers, measured by Wisp from the diff (verify/depth.ts). */
+export type AutoReviewTier = "light" | "standard" | "deep"
+
+/** A finding's weight: blocking stops the merge, a note does not. */
+export type FindingSeverity = "blocking" | "note"
+
+/** The rubric's lenses (verify/rubric.ts); verification is the reviewer who runs the app. */
+export type FindingLens = "correctness" | "architecture" | "slop" | "security" | "performance" | "tests" | "docs" | "verification"
+
+/** On a panel: A verifies and reviews, B reviews only. */
+export type AutoReviewRole = "primary" | "second"
+
 export interface AutoReviewFinding {
   title: string
   detail?: string
   file?: string
   line?: number
+  /** absent on a finding from before the review panel (phase 1) */
+  severity?: FindingSeverity
+  lens?: FindingLens
+  /** which reviewer said it, set by Wisp (never by the reviewer) */
+  by?: AutoReviewRole
 }
 
 /** An image the reviewer published as evidence (GET /api/tasks/:reviewer/outputs/:turn/:id). */
@@ -34,6 +51,41 @@ export interface AutoReviewEvidence {
   id: string
   name: string
   mediaType: string
+  /** the reviewer task that published it; absent on phase-1 rounds (it was the round's reviewer) */
+  reviewerTaskId?: string
+}
+
+/** What Wisp measured about a round's diff to choose its tier. */
+export interface AutoReviewSignals {
+  lines: number
+  files: number
+  areas: number
+  unmapped: number
+  sensitive: string[]
+  testsTouched: boolean
+  docsOnly: boolean
+}
+
+/** One reviewer's part of a round. */
+export interface AutoReviewReview {
+  id: string
+  role: AutoReviewRole
+  agent: { harness: string; model: string | null }
+  /** pending: waiting for a task slot to start; running; or how it ended */
+  state: AutoReviewRoundState | "pending"
+  summary: string | null
+  rationale: string | null
+  findings: AutoReviewFinding[]
+  /** what the reviewer says it reviewed */
+  reviewed: string[]
+  evidence: AutoReviewEvidence[]
+  /** the primary reviewer asked for a second opinion on a light round */
+  escalated: string | null
+  /** carried over from an earlier round on the same head: it passed, and was not run again */
+  carried: boolean
+  reviewerTaskId: string | null
+  createdAt: string
+  finishedAt: string | null
 }
 
 export interface AutoReviewRound {
@@ -57,6 +109,13 @@ export interface AutoReviewRound {
   recipeVersion: string | null
   createdAt: string
   finishedAt: string | null
+  /** absent from a daemon older than the review panel */
+  tier?: AutoReviewTier | null
+  signals?: AutoReviewSignals | null
+  /** a round from before the review panel: one reviewer, no rubric, no tier */
+  legacy?: boolean
+  /** each reviewer's part; while the round runs, a reviewer's words are withheld until all have spoken */
+  reviews?: AutoReviewReview[]
 }
 
 /** GET /api/tasks/:id/auto-review, advertised by `features.autoReview`: the task's rounds, newest first. */
@@ -76,6 +135,12 @@ export interface AutoReviewVerdictBody {
   recipeFeedback?: string
   /** the recipe area the feedback is about */
   recipeArea?: string
+  /** what was reviewed: areas, files, behaviours (≤ 30 items) */
+  reviewed?: string[]
+  /** why the verdict, in a few sentences (≤ 2000 characters) */
+  rationale?: string
+  /** the primary reviewer, on a light round, asks for a second reviewer */
+  escalate?: { reason: string }
 }
 
 export interface VerificationArea {
@@ -108,6 +173,11 @@ export interface VerificationStatus {
   task: VerificationTask | null
   /** who reviews: the project's choice, or null to use each task's own agent */
   reviewer: { harness: string; model: string | null; effort: string | null } | null
+  /**
+   * the second reviewer: a chosen agent, "off" (one reviewer always), or null
+   * for the same agent as the reviewer; absent from a daemon without the panel
+   */
+  second?: { harness: string; model: string | null; effort: string | null } | "off" | null
   /** reviewer feedback about a recipe gap with no area to pin it on, since the last activation */
   attention: string | null
 }

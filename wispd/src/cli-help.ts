@@ -56,6 +56,7 @@ const COMMAND_USAGE = {
   review: `  ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json]
                                                     auto-review rounds for the task's current PR, newest first
                                                     (--round: one round in full, with findings and evidence)
+  ${COMMAND} review rubric [--project <path>]          the review rubric reviewers judge by, with the project's own rules
   ${COMMAND} review submit --stdin                    what a reviewer agent runs to give its verdict (${COMMAND} review submit --help)`,
   verify: `  ${COMMAND} verify status [project] [--json]        the project's verification recipe: areas, draft, recipe task, reviewer
   ${COMMAND} verify show [file] [--project <path>]   list the recipe's files, or print one (--draft <task> reads a draft)

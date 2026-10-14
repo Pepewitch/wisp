@@ -18,7 +18,7 @@ import {
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 import { nextDelay, type Backoff } from "./cadence"
 import { authorReviewNote } from "../verify/prompts"
-import { activeRecipe } from "../verify/recipe"
+import { activeRecipe, readRecipeFile, RECIPE_INDEX, reviewRulesSection } from "../verify/recipe"
 
 export interface AutopilotCheckpoint {
   pr?: number
@@ -555,7 +555,7 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     }
     if (autoReview) {
       const task = getTask(taskId)
-      if (task) notes.push(authorReviewNote({ which, hasRecipe: activeRecipe(task.repo_path) !== null }))
+      if (task) notes.push(authorReviewNote({ which, hasRecipe: activeRecipe(task.repo_path) !== null, projectRules: reviewRulesSection(readRecipeFile(task.repo_path, RECIPE_INDEX)) }))
     }
     if (autoFix) notes.push(signNote(taskId, which))
     return {

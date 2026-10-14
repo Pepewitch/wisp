@@ -1,0 +1,291 @@
+/**
+ * The review panel: two reviewers on standard and deep rounds, the outcome
+ * table, a reviewer that never waits on a person, and the shapes a verdict
+ * may take.
+ */
+import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { autopilotStatus, autopilotTurnNotes, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
+import { loadConfig } from "../src/config";
+import type { NewTaskInput } from "../src/domain/task-create";
+import { AUTO_REVIEW } from "../src/migration-auto-review";
+import { REVIEW_PANEL } from "../src/migration-review-panel";
+import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { submitVerdict, verdictError } from "../src/verify/reviewer";
+import { reviewsOf, reviewTokenFor, reviewView, type ReviewRow } from "../src/verify/reviews";
+import { roundsOf, type RoundRow } from "../src/verify/rounds";
+import { START, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot } from "./autopilot-harness";
+
+afterEach(forgetTasks);
+
+function launcher() {
+  const launched: NewTaskInput[] = [];
+  let refuseRole: string | null = null;
+  const launch = async (input: NewTaskInput) => {
+    if (refuseRole && input.prompt.startsWith(`Auto-review ${refuseRole}`)) return { kind: "at-capacity" as const, error: "all task slots are busy" };
+    launched.push(input);
+    const id = newTaskId();
+    createTask({ id, title: input.prompt, repo_path: input.repoPath, harness: input.harness, model: input.model ?? null, verify_role: input.verifyRole ?? null, slot: freeSlot() });
+    created.push(id);
+    setTaskFields(id, { worktree_path: `/fixture/${id}`, branch: `wisp/${id}-review` });
+    transition(id, "running");
+    input.prepare?.(getTask(id)!);
+    return { task: getTask(id)!, autopilot: autopilotStatus(id) };
+  };
+  return { launched, launch, refuse: (role: string | null) => { refuseRole = role } };
+}
+
+/** A real repository whose PR head changes a few lines: a light round. */
+function smallRepo(): { repo: string; head: string } {
+  const repo = mkdtempSync(join(tmpdir(), "wisp-panel-repo-"));
+  const git = (...args: string[]) => {
+    const run = Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: repo });
+    if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+    return run.stdout.toString().trim();
+  };
+  git("init", "-q", "-b", "main");
+  writeFileSync(join(repo, "app.ts"), "export const a = 1\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  git("checkout", "-q", "-b", "feature");
+  writeFileSync(join(repo, "app.ts"), "export const a = 2\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "change");
+  return { repo, head: git("rev-parse", "HEAD") };
+}
+
+function setup(options: { autoFix?: boolean; repo?: string; head?: string; second?: "off" | null } = {}) {
+  const clock = { now: START + 10 * 60_000 };
+  const { state, github } = fakeGitHub();
+  if (options.head) state.pr = snapshot({ head: options.head });
+  const ctl = launcher();
+  const task = doneTask(options.repo ? { repo_path: options.repo } : {});
+  setAutopilot(task.id, { autoMerge: true, autoFix: options.autoFix ?? false, autoReview: true });
+  seed(task.id, clock, options.head ? { heads: { [options.head]: new Date(START).toISOString() } } : {});
+  const repo = options.repo ?? "/fixture/repo";
+  const cfg = { ...loadConfig(), repos: [{ path: repo, ...(options.second === "off" ? { verifySecond: "off" as const } : {}) }] };
+  const rt = runtime(github, clock, {}, cfg, undefined, { launch: ctl.launch });
+  return { clock, state, task, rt, ...ctl };
+}
+
+const latest = (taskId: string) => roundsOf(taskId)[0]!;
+const roleOf = (round: RoundRow, role: "primary" | "second"): ReviewRow => reviewsOf(round.id).find((review) => review.role === role)!;
+const blocker = (title: string) => ({ title, severity: "blocking", lens: "correctness", detail: "Ran it and saw it break", file: "src/app.ts", line: 3 });
+const submit = (review: ReviewRow, body: Record<string, unknown>) =>
+  submitVerdict(review.reviewer_task_id!, { token: review.token, summary: "Checked it", ...body } as never);
+
+describe("who is on the panel", () => {
+  test("a deep round (a diff Wisp could not read) has reviewer A and reviewer B", async () => {
+    const { clock, task, rt, launched } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    expect(round.tier).toBe("deep");
+    expect(reviewsOf(round.id).map((review) => [review.role, review.state])).toEqual([["primary", "running"], ["second", "running"]]);
+    expect(launched.map((input) => input.prompt.slice(0, 13))).toEqual(["Auto-review A", "Auto-review B"]);
+    expect(launched[1]!.firstTurnPrompt).toContain("You are reviewer B");
+    expect(launched[1]!.firstTurnPrompt).not.toContain("output add");
+  });
+
+  test("a light round has reviewer A only", async () => {
+    const { repo, head } = smallRepo();
+    const { clock, task, rt, launched } = setup({ repo, head });
+    await pass(rt, task.id, clock);
+    expect(latest(task.id).tier).toBe("light");
+    expect(reviewsOf(latest(task.id).id).map((review) => review.role)).toEqual(["primary"]);
+    expect(launched[0]!.firstTurnPrompt).toContain("measured this diff as light");
+  });
+
+  test("on a light round, reviewer A can ask for a second reviewer, who joins the same round", async () => {
+    const { repo, head } = smallRepo();
+    const { clock, task, rt, launched, state } = setup({ repo, head });
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    submit(roleOf(round, "primary"), { verdict: "pass", escalate: { reason: "it touches session expiry" } });
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(latest(task.id)).toMatchObject({ id: round.id, tier: "standard" });
+    expect(state.merges).toHaveLength(0);
+    submit(roleOf(round, "second"), { verdict: "pass" });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("a second reviewer that cannot start stays pending: the round never passes on A alone", async () => {
+    const { clock, task, rt, state, refuse } = setup();
+    refuse("B");
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    expect(roleOf(round, "second").state).toBe("pending");
+    submit(roleOf(round, "primary"), { verdict: "pass" });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(0);
+    expect(autopilotStatus(task.id).reason).toContain("B waiting for a free task slot");
+    refuse(null);
+    await pass(rt, task.id, clock);
+    submit(roleOf(latest(task.id), "second"), { verdict: "pass" });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("with the second reviewer off, a deep round has one reviewer", async () => {
+    const { clock, task, rt } = setup({ second: "off" });
+    await pass(rt, task.id, clock);
+    expect(reviewsOf(latest(task.id).id).map((review) => review.role)).toEqual(["primary"]);
+  });
+});
+
+describe("the outcome table", () => {
+  async function both(a: Record<string, unknown>, b: Record<string, unknown>, options: { autoFix?: boolean } = {}) {
+    const ctx = setup(options);
+    await pass(ctx.rt, ctx.task.id, ctx.clock);
+    const round = latest(ctx.task.id);
+    if (a.end) db.run("UPDATE round_reviews SET state = 'error', summary = 'ran out of time', finished_at = ? WHERE id = ?", [new Date().toISOString(), roleOf(round, "primary").id]);
+    else submit(roleOf(round, "primary"), a);
+    submit(roleOf(round, "second"), b);
+    await pass(ctx.rt, ctx.task.id, ctx.clock);
+    return { ...ctx, round: latest(ctx.task.id) };
+  }
+
+  test("both pass: the round passes", async () => {
+    const { round, state } = await both({ verdict: "pass" }, { verdict: "pass" });
+    expect(round.state).toBe("pass");
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("A passes, B blocks: rejected, with B's finding tagged as B's", async () => {
+    const { round, task } = await both({ verdict: "pass" }, { verdict: "fail", findings: [blocker("Race in the save path")] });
+    expect(round.state).toBe("fail");
+    expect(JSON.parse(round.findings_json!)[0]).toMatchObject({ title: "Race in the save path", by: "second", severity: "blocking" });
+    expect(autopilotStatus(task.id).reason).toContain("Race in the save path");
+  });
+
+  test("A could not follow the recipe while B blocks: B's defect is not hidden behind a recipe hold", async () => {
+    const { round } = await both({ verdict: "inconclusive", cause: "recipe", recipeFeedback: "the server needs PORT" }, { verdict: "fail", findings: [blocker("Wrong total")] });
+    expect(round.state).toBe("fail");
+    expect(round.recipe_feedback).toBe("the server needs PORT");
+  });
+
+  test("A gave no verdict while B blocks: still a rejection the author can act on", async () => {
+    const { round } = await both({ end: true }, { verdict: "fail", findings: [blocker("Crash on empty input")] });
+    expect(round.state).toBe("fail");
+  });
+
+  test("A gave no verdict, B passed: needs you; Resume re-runs A only and keeps B's pass", async () => {
+    const { round, task, rt, clock, launched } = await both({ end: true }, { verdict: "pass" });
+    expect(round.state).toBe("error");
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you" });
+    expect(autopilotStatus(task.id).reason).toContain("reviewer A");
+    resumeAutopilot(task.id, new Date(clock.now));
+    await pass(rt, task.id, clock);
+    const rerun = latest(task.id);
+    expect(rerun).toMatchObject({ round: 1, counted: 0 });
+    expect(roleOf(rerun, "second")).toMatchObject({ state: "pass" });
+    expect(roleOf(rerun, "second").carried_from).not.toBeNull();
+    expect(roleOf(rerun, "primary").state).toBe("running");
+    expect(launched).toHaveLength(3);
+  });
+});
+
+describe("a reviewer never waits on a person", () => {
+  test("a question gets one answer from Wisp; asking again ends the review", async () => {
+    const { clock, task, rt } = setup({ second: "off" });
+    await pass(rt, task.id, clock);
+    const review = roleOf(latest(task.id), "primary");
+    transition(review.reviewer_task_id!, "needs-input");
+    await pass(rt, task.id, clock);
+    expect(roleOf(latest(task.id), "primary").nudged).toBe(1);
+    const message = db.query("SELECT text FROM task_messages WHERE task_id = ? ORDER BY created_at DESC LIMIT 1").get(review.reviewer_task_id!) as { text: string };
+    expect(message.text).toContain("do not ask");
+    db.run("UPDATE task_messages SET status = 'cancelled' WHERE task_id = ?", [review.reviewer_task_id!]);
+    transition(review.reviewer_task_id!, "needs-input");
+    await pass(rt, task.id, clock);
+    expect(roleOf(latest(task.id), "primary")).toMatchObject({ state: "error", summary: "asked again instead of deciding" });
+  });
+
+  test("a reviewer past its tier's time limit ends as an error", async () => {
+    const { clock, task, rt } = setup({ second: "off" });
+    await pass(rt, task.id, clock);
+    db.run("UPDATE round_reviews SET launched_at = ? WHERE round_id = ?", [new Date(clock.now - 3 * 60 * 60_000).toISOString(), latest(task.id).id]);
+    await pass(rt, task.id, clock);
+    expect(roleOf(latest(task.id), "primary")).toMatchObject({ state: "error", summary: "ran past 120 minutes" });
+  });
+});
+
+describe("tokens and independence", () => {
+  test("A's token dies with A's verdict while B still runs, and B cannot read A's words yet", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    const a = roleOf(round, "primary");
+    expect(reviewTokenFor(a.reviewer_task_id!)).toBe(a.token);
+    submit(a, { verdict: "fail", findings: [blocker("Secret in the log")] });
+    expect(reviewTokenFor(a.reviewer_task_id!)).toBeNull();
+    expect(() => submit(roleOf(round, "second"), { verdict: "pass", token: a.token })).toThrow("does not match");
+    const seen = reviewView(roleOf(round, "primary"), true);
+    expect(seen).toMatchObject({ state: "fail", summary: null, findings: [] });
+  });
+});
+
+describe("the verdict's shape", () => {
+  const ctx = { protocol: 2, role: "primary" as const };
+  const body = (extra: Record<string, unknown>) => ({ token: "t", summary: "s", ...extra });
+
+  test("a rejection needs a blocking finding, and a pass carries none", () => {
+    expect(verdictError(body({ verdict: "fail", findings: [{ ...blocker("x"), severity: "note" }] }), ctx)).toContain("at least one blocking finding");
+    expect(verdictError(body({ verdict: "pass", findings: [blocker("x")] }), ctx)).toContain("carries no blocking finding");
+    expect(verdictError(body({ verdict: "fail", findings: [blocker("x")] }), ctx)).toBeNull();
+  });
+
+  test("a blocker on code names its file and says what goes wrong", () => {
+    expect(verdictError(body({ verdict: "fail", findings: [{ ...blocker("x"), file: undefined }] }), ctx)).toContain("names its file");
+    expect(verdictError(body({ verdict: "fail", findings: [{ ...blocker("x"), detail: undefined }] }), ctx)).toContain("needs detail");
+    expect(verdictError(body({ verdict: "fail", findings: [{ ...blocker("x"), lens: "docs", file: undefined }] }), ctx)).toBeNull();
+  });
+
+  test("reviewer B cannot blame the recipe or claim verification; only A escalates", () => {
+    const b = { protocol: 2, role: "second" as const };
+    expect(verdictError(body({ verdict: "inconclusive", cause: "recipe", recipeFeedback: "x" }), b)).toContain("reviewer B does not run the recipe");
+    expect(verdictError(body({ verdict: "pass", findings: [{ title: "y", severity: "note", lens: "verification" }] }), b)).toContain("verifying reviewer's");
+    expect(verdictError(body({ verdict: "pass", escalate: { reason: "r" } }), b)).toContain("primary reviewer's");
+  });
+
+  test("a reviewer from before the panel answers in the old shape, and it is accepted", () => {
+    const legacy = { protocol: 1, role: "primary" as const };
+    expect(verdictError(body({ verdict: "fail", findings: [{ title: "x" }] }), legacy)).toBeNull();
+    expect(verdictError(body({ verdict: "fail", findings: [{ title: "x", severity: "blocking" }] }), legacy)).toContain("unknown field");
+  });
+});
+
+describe("the author's side", () => {
+  test("the author's note carries the rubric: the same bar both sides work to", () => {
+    const task = doneTask();
+    setAutopilot(task.id, { autoReview: true });
+    const notes = autopilotTurnNotes(task.id).notes.join("\n");
+    expect(notes).toContain("only what this diff introduces can block");
+    expect(notes).toContain("review rubric");
+  });
+});
+
+describe("migration 24", () => {
+  test("a phase-1 round becomes its primary review, keeping its token, and the delete trigger covers reviews", () => {
+    const sqlite = new Database(":memory:");
+    sqlite.exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, harness TEXT)");
+    sqlite.exec("CREATE TABLE workflows (id TEXT PRIMARY KEY)");
+    AUTO_REVIEW.up(sqlite);
+    sqlite.run("INSERT INTO tasks(id, harness) VALUES ('tauth', 'claude'), ('trev', 'codex')");
+    sqlite.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, round, counted, reviewer_task_id, token, state, created_at)
+      VALUES ('rold', 'tauth', 'w1', 7, 'abc', 1, 1, 'trev', 'secret', 'running', '2026-10-01T00:00:00Z')`);
+    REVIEW_PANEL.up(sqlite);
+    REVIEW_PANEL.up(sqlite);
+    const review = sqlite.query("SELECT * FROM round_reviews").get() as Record<string, unknown>;
+    expect(review).toMatchObject({ round_id: "rold", role: "primary", protocol: 1, reviewer_task_id: "trev", harness: "codex", token: "secret", state: "running" });
+    expect(sqlite.query("SELECT protocol, roles FROM auto_review_rounds").get()).toEqual({ protocol: 1, roles: '["primary"]' });
+    sqlite.run("DELETE FROM tasks WHERE id = 'trev'");
+    expect(sqlite.query("SELECT reviewer_task_id FROM round_reviews").get()).toEqual({ reviewer_task_id: null });
+    sqlite.run("DELETE FROM tasks WHERE id = 'tauth'");
+    expect(sqlite.query("SELECT COUNT(*) AS n FROM round_reviews").get()).toEqual({ n: 0 });
+  });
+});

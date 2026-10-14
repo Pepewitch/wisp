@@ -62,7 +62,9 @@ export async function verificationStatus(repoPath: string, cfg: WispConfig): Pro
   }
   const loose = complaints.find((complaint) => !complaint.area || !names.has(complaint.area))
   const draft = latestDraft(repoPath, draftTaskExists)
-  const reviewer = repoConfigFor(cfg, repoPath)?.verify
+  const config = repoConfigFor(cfg, repoPath)
+  const reviewer = config?.verify
+  const second = config?.verifySecond
   return {
     state: recipe ? "active" : "none",
     version, activatedAt,
@@ -70,6 +72,7 @@ export async function verificationStatus(repoPath: string, cfg: WispConfig): Pro
     draft: draft ? { taskId: draft.taskId, savedAt: draft.savedAt, areas: draft.areas } : null,
     task: currentVerifyTask(repoPath),
     reviewer: reviewer ? { harness: reviewer.harness, model: reviewer.model ?? null, effort: reviewer.effort ?? null } : null,
+    second: second === "off" ? "off" : second ? { harness: second.harness, model: second.model ?? null, effort: second.effort ?? null } : null,
     attention: loose?.feedback ?? null,
   }
 }

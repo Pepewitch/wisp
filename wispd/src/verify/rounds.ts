@@ -1,15 +1,12 @@
 /**
- * Auto-review rounds: one row per reviewer task, each about one head of the
- * author task's PR. The autopilot row decides when a round starts and what a
- * verdict does; this module only keeps the rows honest.
+ * Auto-review rounds: one row per review of one head of the author task's
+ * PR. A round's reviewers are its reviews (verify/reviews.ts); the round's
+ * own columns are their aggregate. The autopilot row decides when a round
+ * starts and what its verdict does; this module only keeps the rows honest.
  */
-import { randomBytes } from "node:crypto"
 import { resolve } from "node:path"
-import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewRound, AutoReviewRoundState } from "../../../shared/api/auto-review"
+import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewRound, AutoReviewRoundState, AutoReviewSignals, AutoReviewTier } from "../../../shared/api/auto-review"
 import { db } from "../store-database"
-import { randomId } from "../store"
-import { REVIEW_TOKEN_ENV } from "../turn-input"
-import type { Task } from "../types"
 
 export interface RoundRow {
   id: string
@@ -34,6 +31,13 @@ export interface RoundRow {
   nudged: number
   created_at: string
   finished_at: string | null
+  /** null on a phase-1 round */
+  tier?: AutoReviewTier | null
+  signals_json?: string | null
+  /** the panel's required roles, as JSON */
+  roles?: string | null
+  /** 1: a phase-1 round (one reviewer, no rubric); 2: a panel */
+  protocol?: number
 }
 
 /** How many counted rounds one PR gets before auto-review pauses for a person. */
@@ -42,22 +46,8 @@ export const MAX_REVIEW_ROUNDS = 3
 /** A verdict that ends the round (the rest are what became of it). */
 export const VERDICT_STATES: readonly AutoReviewRoundState[] = ["pass", "fail", "inconclusive", "recipe"]
 
-export function createRound(input: {
-  taskId: string; workflowId: string; pr: number; head: string; base: string; round: number; counted: boolean; recipeVersion: string | null
-}, now = new Date()): RoundRow {
-  const id = randomId("r", 12)
-  db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?)`,
-  [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, randomBytes(24).toString("base64url"), input.recipeVersion, now.toISOString()])
-  return getRound(id)!
-}
-
 export function getRound(id: string): RoundRow | null {
   return db.query("SELECT * FROM auto_review_rounds WHERE id = ?").get(id) as RoundRow | null
-}
-
-export function setRoundReviewer(id: string, reviewerTaskId: string): void {
-  db.run("UPDATE auto_review_rounds SET reviewer_task_id = ? WHERE id = ?", [reviewerTaskId, id])
 }
 
 /** The newest round about this very head of this PR, against this base. */
@@ -73,8 +63,17 @@ export function roundsOf(taskId: string, pr?: number): RoundRow[] {
     : db.query("SELECT * FROM auto_review_rounds WHERE task_id = ? AND pr = ? ORDER BY created_at DESC, rowid DESC LIMIT 200").all(taskId, pr)) as RoundRow[]
 }
 
+/** The round a reviewer task works for (through its review). */
 export function roundOfReviewer(reviewerTaskId: string): RoundRow | null {
-  return db.query("SELECT * FROM auto_review_rounds WHERE reviewer_task_id = ? ORDER BY created_at DESC LIMIT 1").get(reviewerTaskId) as RoundRow | null
+  return db.query(`SELECT r.* FROM auto_review_rounds r JOIN round_reviews v ON v.round_id = r.id
+    WHERE v.reviewer_task_id = ? ORDER BY v.created_at DESC LIMIT 1`).get(reviewerTaskId) as RoundRow | null
+}
+
+/** The highest tier this PR's rounds have had: within one PR a tier only goes up. */
+export function highestTier(workflowId: string, pr: number): AutoReviewTier | null {
+  const rows = db.query("SELECT DISTINCT tier FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND tier IS NOT NULL").all(workflowId, pr) as { tier: AutoReviewTier }[]
+  const order: AutoReviewTier[] = ["deep", "standard", "light"]
+  return order.find((tier) => rows.some((row) => row.tier === tier)) ?? null
 }
 
 /** Rounds still running on another head or base than the PR's now: a push or a retarget made them moot. */
@@ -92,58 +91,18 @@ export function orphanedRounds(): RoundRow[] {
       OR COALESCE(json_extract(w.params_json, '$.autoReview'), 0) != 1)`).all() as RoundRow[]
 }
 
-/**
- * Finished rounds whose reviewer is ready to go: not archived, and settled
- * (a superseded one goes even mid-turn). A reviewer still busy is left out
- * here, so a pile of them can never crowd out the ones that are ready.
- */
-export function unretiredRounds(): RoundRow[] {
-  return db.query(`SELECT r.* FROM auto_review_rounds r JOIN tasks t ON t.id = r.reviewer_task_id
-    WHERE r.state != 'running' AND t.archived = 0
-      AND (r.state = 'superseded' OR t.state NOT IN ('creating', 'running', 'stuck'))
-    ORDER BY r.created_at LIMIT 20`).all() as RoundRow[]
-}
-
 /** Every round still running for a task, whatever the head. */
 export function runningRounds(taskId: string): RoundRow[] {
   return db.query("SELECT * FROM auto_review_rounds WHERE task_id = ? AND state = 'running'").all(taskId) as RoundRow[]
 }
 
-/** The token a reviewer's turns carry: only while its round still waits for a verdict. */
-export function reviewTokenFor(reviewerTaskId: string): string | null {
-  const row = db.query("SELECT token FROM auto_review_rounds WHERE reviewer_task_id = ? AND state = 'running' LIMIT 1").get(reviewerTaskId) as { token: string } | null
-  return row?.token ?? null
-}
-
-/** The environment a reviewer's turn adds: its round's token, while the round is open. */
-export function reviewTurnEnv(task: Task): Record<string, string> {
-  if (task.verify_role !== "reviewer") return {}
-  const token = reviewTokenFor(task.id)
-  return token ? { [REVIEW_TOKEN_ENV]: token } : {}
-}
-
-/** Record a verdict, once: a round that already ended keeps what it said. */
-export function finishRound(id: string, verdict: {
-  state: AutoReviewRoundState; cause?: string | null; summary?: string | null; findings?: AutoReviewFinding[]
-  recipeFeedback?: string | null; recipeArea?: string | null; evidence?: AutoReviewEvidence[]
-}, now = new Date()): boolean {
-  const result = db.run(`UPDATE auto_review_rounds SET state = ?, cause = ?, summary = ?, findings_json = ?, recipe_feedback = ?,
-    recipe_area = ?, evidence_json = ?, finished_at = ? WHERE id = ? AND state = 'running'`, [
-    verdict.state, verdict.cause ?? null, verdict.summary ?? null, JSON.stringify(verdict.findings ?? []),
-    verdict.recipeFeedback ?? null, verdict.recipeArea ?? null, JSON.stringify(verdict.evidence ?? []), now.toISOString(), id,
-  ])
-  return result.changes === 1
-}
-
-export function markNudged(id: string): void {
-  db.run("UPDATE auto_review_rounds SET nudged = 1 WHERE id = ?", [id])
-}
-
 /** Reviewer feedback about the recipe, from rounds that blamed it after a moment (an activation), newest first. */
 export function recipeComplaints(repoPath: string, since: string | null): { round: RoundRow; area: string | null; feedback: string }[] {
   const target = resolve(repoPath)
+  // a recipe hold, or a rejection whose primary also could not follow the recipe
   const rows = db.query(`SELECT r.*, t.repo_path AS repo FROM auto_review_rounds r JOIN tasks t ON t.id = r.task_id
-    WHERE r.state = 'recipe' AND (?1 IS NULL OR r.finished_at > ?1) ORDER BY r.finished_at DESC LIMIT 200`)
+    WHERE (r.state = 'recipe' OR (r.state = 'fail' AND r.recipe_feedback IS NOT NULL))
+      AND (?1 IS NULL OR r.finished_at > ?1) ORDER BY r.finished_at DESC LIMIT 200`)
     .all(since) as (RoundRow & { repo: string })[]
   return rows.filter((row) => resolve(row.repo) === target).slice(0, 20).map((round) => ({
     round, area: round.recipe_area, feedback: round.recipe_feedback ?? round.summary ?? "The recipe failed the reviewer",
@@ -159,11 +118,12 @@ function parsed<T>(json: string | null, fallback: T): T {
   }
 }
 
-export function roundView(row: RoundRow): AutoReviewRound {
+export function roundView(row: RoundRow, reviews: AutoReviewRound["reviews"] = []): AutoReviewRound {
   return {
     id: row.id, pr: row.pr, head: row.head, round: row.round, counted: row.counted === 1, state: row.state,
     summary: row.summary, findings: parsed<AutoReviewFinding[]>(row.findings_json, []), recipeFeedback: row.recipe_feedback, recipeArea: row.recipe_area,
     evidence: parsed<AutoReviewEvidence[]>(row.evidence_json, []), reviewerTaskId: row.reviewer_task_id,
     recipeVersion: row.recipe_version, createdAt: row.created_at, finishedAt: row.finished_at,
+    tier: row.tier ?? null, signals: parsed<AutoReviewSignals | null>(row.signals_json ?? null, null), legacy: (row.protocol ?? 1) < 2, reviews,
   }
 }

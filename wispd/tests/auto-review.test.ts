@@ -8,7 +8,9 @@ import { autoReviewRoute } from "../src/routes/auto-review";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { activateDraft, saveDraft } from "../src/verify/recipe";
 import { submitVerdict } from "../src/verify/reviewer";
-import { getRound, reviewTurnEnv, roundOfReviewer, roundsOf, type RoundRow } from "../src/verify/rounds";
+import { getRound, roundOfReviewer, roundsOf, type RoundRow } from "../src/verify/rounds";
+import { reviewTurnEnv, reviewsOf, type ReviewRow } from "../src/verify/reviews";
+import { loadConfig } from "../src/config";
 import { verifyTaskOf } from "../src/verify/status";
 import { HEAD, START, capture, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot, until } from "./autopilot-harness";
 
@@ -40,21 +42,46 @@ function armed(options: { autoMerge?: boolean; autoFix?: boolean; repo?: string;
   return task;
 }
 
-function setup(options: Parameters<typeof armed>[0] & { adapters?: Record<string, never> } = {}) {
-  const clock = { now: START + 10 * 60_000 };
+/**
+ * The project's config: one reviewer unless `panel` (the second reviewer then
+ * defaults to the first's agent; a fixture repo's diff cannot be read, so its
+ * rounds are deep and get both).
+ */
+function cfgFor(repo: string, panel: boolean) {
+  return { ...loadConfig(), repos: [{ path: repo, ...(panel ? {} : { verifySecond: "off" as const }) }] };
+}
+
+function setup(options: Parameters<typeof armed>[0] & { adapters?: Record<string, never>; panel?: boolean; realClock?: boolean } = {}) {
+  // a recipe activation is stamped with the real time: a test that activates one runs on it too
+  const clock = { now: options.realClock ? Date.now() : START + 10 * 60_000 };
   const { state, github } = fakeGitHub();
   const { launched, launch, ids } = launcher();
   const task = armed(options);
   seed(task.id, clock);
-  const rt = runtime(github, clock, options.adapters ?? {}, undefined, undefined, { launch });
+  const rt = runtime(github, clock, options.adapters ?? {}, cfgFor(options.repo ?? "/fixture/repo", options.panel === true), undefined, { launch });
   return { clock, state, launched, ids, task, rt };
 }
 
-const reviewerOf = (round: RoundRow) => getTask(round.reviewer_task_id!)!;
+const primaryOf = (round: RoundRow): ReviewRow => reviewsOf(round.id).find((review) => review.role === "primary")!;
+const secondOf = (round: RoundRow): ReviewRow | undefined => reviewsOf(round.id).find((review) => review.role === "second");
+const reviewerOf = (round: RoundRow) => getTask(primaryOf(round).reviewer_task_id!)!;
 const latest = (taskId: string) => roundsOf(taskId)[0]!;
 
+/** A verdict in the panel's shape: a rejection's findings block and name a file unless the test says otherwise. */
+function shaped(body: Record<string, unknown>): Record<string, unknown> {
+  const findings = (body.findings as Record<string, unknown>[] | undefined)?.map((finding) => ({
+    severity: body.verdict === "fail" ? "blocking" : "note", lens: "correctness", detail: "Seen broken", file: "src/app.ts", ...finding,
+  }));
+  return { summary: "Checked it", ...body, ...(findings ? { findings } : {}) };
+}
+
+function submitFor(review: ReviewRow, body: Record<string, unknown>) {
+  return submitVerdict(review.reviewer_task_id!, { token: review.token, ...shaped(body) } as never);
+}
+
+/** The primary reviewer's verdict (the only reviewer unless the round has a panel). */
 function verdict(round: RoundRow, body: Record<string, unknown>) {
-  return submitVerdict(round.reviewer_task_id!, { token: round.token, summary: "Checked it", ...body } as never);
+  return submitFor(primaryOf(round), body);
 }
 
 describe("auto-review", () => {
@@ -66,7 +93,7 @@ describe("auto-review", () => {
     expect(launched[0]!.firstTurnPrompt).toContain("Round 1 of 3");
     expect(launched[0]!.firstTurnPrompt).toContain("review submit --stdin");
     expect(autopilotStatus(task.id)).toMatchObject({ autoReview: true, state: "waiting", by: "auto-review", reviewRounds: 1 });
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3 is running");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A reviewing");
     expect(state.merges).toHaveLength(0);
 
     // still running: no second reviewer
@@ -100,7 +127,8 @@ describe("auto-review", () => {
     verdict(round, { verdict: "fail", summary: "The save button does nothing", findings: [{ title: "Save is dead" }] });
     await pass(rt, task.id, clock);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", by: "auto-review" });
-    expect(autopilotStatus(task.id).reason).toBe(`Auto-review rejected ${HEAD.slice(0, 7)}: The save button does nothing`);
+    // the headline is the first blocking finding
+    expect(autopilotStatus(task.id).reason).toBe(`Auto-review rejected ${HEAD.slice(0, 7)}: Save is dead`);
   });
 
   test("with auto-fix, a rejection goes back to the author once, with the findings beside its data", async () => {
@@ -167,7 +195,7 @@ describe("auto-review", () => {
     // numbering goes on, and the budget is three more
     expect(latest(task.id)).toMatchObject({ round: 4, counted: 1 });
     expect(launched[3]!.firstTurnPrompt).toContain("Round 4 of 6");
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 of 6 is running");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 of 6: A reviewing");
   });
 
   test("Resume has a rejected head looked at again, without a push and without spending a round", async () => {
@@ -193,7 +221,7 @@ describe("auto-review", () => {
     expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBeUndefined();
   });
 
-  test("a reviewer that cannot start yet does not use up a Resume", async () => {
+  test("a reviewer that cannot start yet stays pending on its round, and starts when a slot frees", async () => {
     const clock = { now: START + 10 * 60_000 };
     const { github } = fakeGitHub();
     const { launched, launch } = launcher();
@@ -203,19 +231,20 @@ describe("auto-review", () => {
       : launch(input);
     const task = armed();
     seed(task.id, clock);
-    const rt = runtime(github, clock, {}, undefined, undefined, { launch: gated });
+    const rt = runtime(github, clock, {}, cfgFor("/fixture/repo", false), undefined, { launch: gated });
     await pass(rt, task.id, clock);
     verdict(latest(task.id), { verdict: "fail", findings: [{ title: "flaky" }] });
     await pass(rt, task.id, clock);
     resumeAutopilot(task.id, new Date(clock.now));
     refuse = true;
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id).reason).toBe("Waiting for a free task slot to start the reviewer");
-    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBe(true);
+    // the round exists with its reviewer pending: it starts when a slot frees, the panel never shrinks
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A waiting for a free task slot");
+    expect(primaryOf(latest(task.id)).state).toBe("pending");
     refuse = false;
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(2);
-    expect(checkpointOf(autopilotRow(task.id)!).reviewRetry).toBeUndefined();
+    expect(primaryOf(latest(task.id)).state).toBe("running");
   });
 
   test("a recipe the reviewer could not follow holds the PR, spends no round, and is fixed before a re-run", async () => {
@@ -223,7 +252,7 @@ describe("auto-review", () => {
     // an active recipe whose web area the reviewer will find broken
     saveDraft(repo, "tfirst", [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }]);
     await activateDraft(repo, "test");
-    const { clock, launched, ids, task, rt } = setup({ repo });
+    const { clock, launched, ids, task, rt } = setup({ repo, realClock: true });
     await pass(rt, task.id, clock);
     const round = latest(task.id);
     verdict(round, { verdict: "inconclusive", cause: "recipe", recipeFeedback: "the dev server needs PORT", recipeArea: "web" });
@@ -267,8 +296,8 @@ describe("auto-review", () => {
     const round = latest(task.id);
     transition(reviewerOf(round).id, "done");
     await pass(rt, task.id, clock);
-    expect(getRound(round.id)!.nudged).toBe(1);
-    expect(autopilotStatus(task.id).reason).toBe("Asked the reviewer of round 1 for its verdict");
+    expect(primaryOf(round).nudged).toBe(1);
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A asked for its verdict");
     // the nudge's turn could not start (no harness here): once the reviewer is idle again, the round ends
     db.run("UPDATE task_messages SET status = 'cancelled' WHERE task_id = ?", [reviewerOf(round).id]);
     transition(reviewerOf(round).id, "done");
@@ -289,7 +318,7 @@ describe("auto-review", () => {
     setAutopilot(task.id, { autoMerge: false, autoReview: false });
     await rt.tick();
     expect(getRound(round.id)).toMatchObject({ state: "superseded", summary: "auto-review stopped for this task" });
-    await until(() => getTask(round.reviewer_task_id!)!.archived === 1, "the superseded reviewer to be archived");
+    await until(() => getTask(primaryOf(round).reviewer_task_id!)!.archived === 1, "the superseded reviewer to be archived");
   });
 
   test("a passing reviewer still mid-turn is archived by a later sweep, after the merge moved on", async () => {
@@ -299,10 +328,10 @@ describe("auto-review", () => {
     verdict(round, { verdict: "pass" });
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(1);
-    expect(getTask(round.reviewer_task_id!)!.archived).toBe(0);
-    transition(round.reviewer_task_id!, "done");
+    expect(getTask(primaryOf(round).reviewer_task_id!)!.archived).toBe(0);
+    transition(primaryOf(round).reviewer_task_id!, "done");
     await rt.tick();
-    await until(() => getTask(round.reviewer_task_id!)!.archived === 1, "the finished reviewer to be archived");
+    await until(() => getTask(primaryOf(round).reviewer_task_id!)!.archived === 1, "the finished reviewer to be archived");
   });
 
   test("switching auto-review off ends a reviewer still at work", async () => {
@@ -321,7 +350,7 @@ describe("auto-review", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoReview: true });
     seed(task.id, clock);
-    const rt = runtime(github, clock, {}, undefined, undefined, { launch });
+    const rt = runtime(github, clock, {}, cfgFor("/fixture/repo", false), undefined, { launch });
     await pass(rt, task.id, clock);
     verdict(latest(task.id), { verdict: "pass" });
     await pass(rt, task.id, clock);
@@ -342,17 +371,17 @@ describe("the verdict", () => {
 
   test("only the round's own token is taken, once", async () => {
     const open = await round();
-    expect((await post(open.reviewer_task_id!, { token: "guess", verdict: "pass", summary: "ok" })).status).toBe(403);
-    const ok = await post(open.reviewer_task_id!, { token: open.token, verdict: "pass", summary: "ok" });
+    expect((await post(primaryOf(open).reviewer_task_id!, { token: "guess", verdict: "pass", summary: "ok" })).status).toBe(403);
+    const ok = await post(primaryOf(open).reviewer_task_id!, { token: primaryOf(open).token, verdict: "pass", summary: "ok" });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ state: "pass", summary: "ok" });
-    expect((await post(open.reviewer_task_id!, { token: open.token, verdict: "fail", summary: "changed my mind", findings: [{ title: "x" }] })).status).toBe(409);
+    expect((await post(primaryOf(open).reviewer_task_id!, { token: primaryOf(open).token, verdict: "fail", summary: "changed my mind", findings: [{ title: "x", severity: "blocking", lens: "correctness", detail: "d", file: "a.ts" }] })).status).toBe(409);
   });
 
   test("a malformed verdict names the field", async () => {
     const open = await round();
     const check = async (body: Record<string, unknown>, says: string) => {
-      const res = await post(open.reviewer_task_id!, { token: open.token, summary: "s", ...body });
+      const res = await post(primaryOf(open).reviewer_task_id!, { token: primaryOf(open).token, summary: "s", ...body });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { error: string }).error).toContain(says);
     };
@@ -368,10 +397,10 @@ describe("the verdict", () => {
   test("an ordinary task is no reviewer, and its turns carry no token", async () => {
     const open = await round();
     const author = getTask(open.task_id)!;
-    expect((await post(author.id, { token: open.token, verdict: "pass", summary: "ok" })).status).toBe(409);
+    expect((await post(author.id, { token: primaryOf(open).token, verdict: "pass", summary: "ok" })).status).toBe(409);
     expect(reviewTurnEnv(author)).toEqual({});
-    expect(reviewTurnEnv(getTask(open.reviewer_task_id!)!)).toEqual({ WISP_REVIEW_TOKEN: open.token });
-    expect(roundOfReviewer(open.reviewer_task_id!)?.id).toBe(open.id);
+    expect(reviewTurnEnv(getTask(primaryOf(open).reviewer_task_id!)!)).toEqual({ WISP_REVIEW_TOKEN: primaryOf(open).token });
+    expect(roundOfReviewer(primaryOf(open).reviewer_task_id!)?.id).toBe(open.id);
   });
 });
 
