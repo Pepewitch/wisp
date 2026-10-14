@@ -90,7 +90,8 @@ export async function launchChrome(path: string, id: string, proxyPort: number, 
  * process is signalled only while its own command line names that profile.
  */
 export function isCaptureChrome(pid: number, profile: string): boolean {
-  const ps = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" })
+  // -ww: without a terminal, procps cuts the command line at 80 columns, and Chrome's profile flag comes late
+  const ps = Bun.spawnSync(["ps", "-ww", "-o", "command=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" })
   return ps.exitCode === 0 && ps.stdout.toString().includes(`--user-data-dir=${profile}`)
 }
 

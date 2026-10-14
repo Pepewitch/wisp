@@ -45,14 +45,15 @@ describe("the boot sweep of capture browsers", () => {
 describe("where a captured page was served from", () => {
   test("a listener running in the worktree is the worktree's; anywhere else is elsewhere; a closed port is unknown", async () => {
     const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    const port = server.port!;
     try {
       // this test process is the listener: its working directory decides
-      expect(await servedFrom(server.port, process.cwd())).toBe("worktree");
-      expect(await servedFrom(server.port, mkdtempSync(join(tmpdir(), "wisp-not-the-worktree-")))).toBe("elsewhere");
-      expect(await servedFrom(server.port, null)).toBe("unknown");
+      expect(await servedFrom(port, process.cwd())).toBe("worktree");
+      expect(await servedFrom(port, mkdtempSync(join(tmpdir(), "wisp-not-the-worktree-")))).toBe("elsewhere");
+      expect(await servedFrom(port, null)).toBe("unknown");
     } finally {
       server.stop(true);
     }
-    expect(await servedFrom(server.port, process.cwd())).toBe("unknown");
+    expect(await servedFrom(port, process.cwd())).toBe("unknown");
   });
 });
